@@ -23,6 +23,17 @@ Use `make test` for local verification. It runs generated manifests, code genera
 make test
 ```
 
+Before adding feature logic, keep the bootstrap gates green:
+
+```sh
+make manifests generate
+git diff --exit-code
+test -z "$(git status --porcelain --untracked-files=normal)"
+make lint
+make test
+make helm-lint helm-template
+```
+
 Do not run e2e tests against the testbed kubeconfig. E2E tests require a `kind-*` context.
 
 ```sh
@@ -32,6 +43,14 @@ make test-e2e
 ```
 
 If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local kind kubeconfig.
+
+## Helm
+
+The initial Helm chart is intentionally small and mirrors the current bootstrap surface: CRDs, manager Deployment, service account, controller RBAC, and leader-election RBAC.
+
+```sh
+helm template gearedge charts/gearedge --namespace gearedge-system
+```
 
 ## License
 

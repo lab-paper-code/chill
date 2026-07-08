@@ -1,0 +1,33 @@
+nameOverride: ""
+fullnameOverride: ""
+
+crds:
+  enabled: true
+
+controller:
+  replicaCount: 1
+  image:
+    repository: gearedge/manager
+    tag: latest
+    pullPolicy: IfNotPresent
+  metricsBindAddress: "0"
+  healthProbeBindAddress: ":8081"
+  leaderElection: true
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+serviceAccount:
+  create: true
+  name: ""
