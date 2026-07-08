@@ -40,11 +40,6 @@ spec:
             type: object
           spec:
             description: ModelSpecSpec defines the desired state of ModelSpec
-            properties:
-              foo:
-                description: Foo is an example field of ModelSpec. Edit modelspec_types.go
-                  to remove/update
-                type: string
             type: object
           status:
             description: ModelSpecStatus defines the observed state of ModelSpec

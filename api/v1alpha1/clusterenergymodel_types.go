@@ -4,23 +4,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ClusterEnergyModelSpec defines the desired state of ClusterEnergyModel
-type ClusterEnergyModelSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of ClusterEnergyModel. Edit clusterenergymodel_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
-}
+type ClusterEnergyModelSpec struct{}
 
 // ClusterEnergyModelStatus defines the observed state of ClusterEnergyModel
-type ClusterEnergyModelStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-}
+type ClusterEnergyModelStatus struct{}
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
