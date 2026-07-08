@@ -46,6 +46,11 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(MAKE) helm-sync-crds
+
+.PHONY: helm-sync-crds
+helm-sync-crds: ## Sync generated CRDs into the Helm chart.
+	./hack/sync-helm-crds.sh
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -81,8 +86,9 @@ helm-lint: ## Run Helm chart lint.
 	$(HELM) lint charts/gearedge
 
 .PHONY: helm-template
-helm-template: ## Render Helm chart.
+helm-template: kubeconform ## Render and validate Helm chart.
 	$(HELM) template gearedge charts/gearedge --namespace gearedge-system >/tmp/gearedge-helm.yaml
+	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/gearedge-helm.yaml
 
 ##@ Build
 
@@ -162,6 +168,7 @@ $(LOCALBIN):
 KUBECTL ?= kubectl
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 HELM ?= helm
+KUBECONFORM ?= $(LOCALBIN)/kubeconform
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
@@ -171,6 +178,9 @@ KUSTOMIZE_VERSION ?= v5.4.3
 CONTROLLER_TOOLS_VERSION ?= v0.16.1
 ENVTEST_VERSION ?= release-0.19
 GOLANGCI_LINT_VERSION ?= v1.64.5
+KUBECONFORM_VERSION ?= v0.6.7
+# kubeconform's Kubernetes schema catalog omits top-level CRD schemas.
+KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -186,6 +196,11 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: kubeconform
+kubeconform: $(KUBECONFORM) ## Download kubeconform locally if necessary.
+$(KUBECONFORM): $(LOCALBIN)
+	$(call go-install-tool,$(KUBECONFORM),github.com/yannh/kubeconform/cmd/kubeconform,$(KUBECONFORM_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.

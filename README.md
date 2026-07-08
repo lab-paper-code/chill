@@ -34,6 +34,8 @@ make test
 make helm-lint helm-template
 ```
 
+`make manifests` also syncs generated CRDs into the Helm chart.
+
 Do not run e2e tests against the testbed kubeconfig. E2E tests require a `kind-*` context.
 
 ```sh
