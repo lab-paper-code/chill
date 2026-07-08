@@ -1,0 +1,6 @@
+resources:
+- bases/edge.dacs.io_deviceclasses.yaml
+- bases/edge.dacs.io_modelspecs.yaml
+- bases/edge.dacs.io_deviceprofiles.yaml
+- bases/edge.dacs.io_clusterenergymodels.yaml
+# +kubebuilder:scaffold:crdkustomizeresource

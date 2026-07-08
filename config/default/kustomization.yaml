@@ -1,0 +1,7 @@
+namespace: gearedge-system
+namePrefix: gearedge-
+
+resources:
+- ../crd
+- ../rbac
+- ../manager

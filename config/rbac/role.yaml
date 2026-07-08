@@ -1,0 +1,41 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - edge.dacs.io
+  resources:
+  - clusterenergymodels
+  - deviceclasses
+  - deviceprofiles
+  - modelspecs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - edge.dacs.io
+  resources:
+  - clusterenergymodels/finalizers
+  - deviceclasses/finalizers
+  - deviceprofiles/finalizers
+  - modelspecs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - edge.dacs.io
+  resources:
+  - clusterenergymodels/status
+  - deviceclasses/status
+  - deviceprofiles/status
+  - modelspecs/status
+  verbs:
+  - get
+  - patch
+  - update
