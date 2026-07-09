@@ -227,23 +227,52 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, disco
 }
 
 func (r *DeviceDiscoveryReconciler) ensureNodeClassLabel(ctx context.Context, node *corev1.Node, className string) error {
-	labelKey := r.labelKey()
 	original := node.DeepCopy()
+	labels := mutableNodeLabels(node)
+	annotations := mutableNodeAnnotations(node)
+	reason := applyDeviceClassLabelPolicy(labels, annotations, r.labelKey(), className, r.Options.OverwriteManualLabels)
+	applyDeviceClassDiscoveryStatus(annotations, chilllabels.DiscoveryResultMatched, reason, className)
+	return r.patchNodeMetadataIfChanged(ctx, node, original, "device class label")
+}
 
+func (r *DeviceDiscoveryReconciler) ensureNodeClassDiscoveryAnnotations(ctx context.Context, node *corev1.Node, result, reason, className string) error {
+	original := node.DeepCopy()
+	annotations := mutableNodeAnnotations(node)
+	applyDeviceClassDiscoveryStatus(annotations, result, reason, className)
+	return r.patchNodeMetadataIfChanged(ctx, node, original, "device class discovery annotations")
+}
+
+func (r *DeviceDiscoveryReconciler) patchNodeMetadataIfChanged(ctx context.Context, node, original *corev1.Node, field string) error {
+	if apiequality.Semantic.DeepEqual(original.GetLabels(), node.GetLabels()) &&
+		apiequality.Semantic.DeepEqual(original.GetAnnotations(), node.GetAnnotations()) {
+		return nil
+	}
+	if err := r.Patch(ctx, node, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("patch node %q %s: %w", node.Name, field, err)
+	}
+	return nil
+}
+
+func mutableNodeLabels(node *corev1.Node) map[string]string {
 	labels := node.GetLabels()
 	if labels == nil {
 		labels = map[string]string{}
+		node.SetLabels(labels)
 	}
-	node.SetLabels(labels)
+	return labels
+}
 
+func mutableNodeAnnotations(node *corev1.Node) map[string]string {
 	annotations := node.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
+		node.SetAnnotations(annotations)
 	}
-	node.SetAnnotations(annotations)
+	return annotations
+}
 
+func applyDeviceClassLabelPolicy(labels, annotations map[string]string, labelKey, className string, overwriteManualLabels bool) string {
 	current := labels[labelKey]
-	reason := chilllabels.DiscoveryReasonCatalogMatched
 	switch {
 	case current == "":
 		labels[labelKey] = className
@@ -251,51 +280,23 @@ func (r *DeviceDiscoveryReconciler) ensureNodeClassLabel(ctx context.Context, no
 	case current == className:
 	case annotations[deviceDiscoveryManagedByKey] == deviceDiscoveryManagedBy:
 		labels[labelKey] = className
-	case r.Options.OverwriteManualLabels:
+	case overwriteManualLabels:
 		labels[labelKey] = className
 		annotations[deviceDiscoveryManagedByKey] = deviceDiscoveryManagedBy
 	default:
-		reason = chilllabels.DiscoveryReasonManualLabelPreserved
+		return chilllabels.DiscoveryReasonManualLabelPreserved
 	}
-
-	annotations[chilllabels.DeviceClassDiscoveryResult] = chilllabels.DiscoveryResultMatched
-	annotations[chilllabels.DeviceClassDiscoveryReason] = reason
-	annotations[chilllabels.DeviceClassDiscoveryClass] = className
-	node.SetAnnotations(annotations)
-
-	if apiequality.Semantic.DeepEqual(original.GetLabels(), node.GetLabels()) &&
-		apiequality.Semantic.DeepEqual(original.GetAnnotations(), node.GetAnnotations()) {
-		return nil
-	}
-	if err := r.Patch(ctx, node, client.MergeFrom(original)); err != nil {
-		return fmt.Errorf("patch node %q device class label: %w", node.Name, err)
-	}
-	return nil
+	return chilllabels.DiscoveryReasonCatalogMatched
 }
 
-func (r *DeviceDiscoveryReconciler) ensureNodeClassDiscoveryAnnotations(ctx context.Context, node *corev1.Node, result, reason, className string) error {
-	original := node.DeepCopy()
-	annotations := node.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-
+func applyDeviceClassDiscoveryStatus(annotations map[string]string, result, reason, className string) {
 	annotations[chilllabels.DeviceClassDiscoveryResult] = result
 	annotations[chilllabels.DeviceClassDiscoveryReason] = reason
 	if className == "" {
 		delete(annotations, chilllabels.DeviceClassDiscoveryClass)
-	} else {
-		annotations[chilllabels.DeviceClassDiscoveryClass] = className
+		return
 	}
-	node.SetAnnotations(annotations)
-
-	if apiequality.Semantic.DeepEqual(original.GetAnnotations(), node.GetAnnotations()) {
-		return nil
-	}
-	if err := r.Patch(ctx, node, client.MergeFrom(original)); err != nil {
-		return fmt.Errorf("patch node %q device class discovery annotations: %w", node.Name, err)
-	}
-	return nil
+	annotations[chilllabels.DeviceClassDiscoveryClass] = className
 }
 
 func catalogMissReason(catalog deviceclassdiscovery.Catalog) string {
