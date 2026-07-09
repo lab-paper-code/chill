@@ -28,16 +28,16 @@ app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "chill.controllerServiceAccountName" -}}
+{{- define "chill.operatorServiceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-{{- default (printf "%s-controller-manager" (include "chill.fullname" .)) .Values.serviceAccount.name -}}
+{{- default (printf "%s-operator" (include "chill.fullname" .)) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "chill.serviceAccountName" -}}
-{{- include "chill.controllerServiceAccountName" . -}}
+{{- include "chill.operatorServiceAccountName" . -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryServiceAccountName" -}}
@@ -64,6 +64,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-node-discovery-signatures" (include "chill.fullname" .) -}}
 {{- end -}}
 
+{{- define "chill.nodeDiscoveryConfigName" -}}
+{{- printf "%s-node-discovery-config" (include "chill.fullname" .) -}}
+{{- end -}}
+
 {{- define "chill.systemStatusName" -}}
 {{- default .Release.Name .Values.systemStatus.name -}}
 {{- end -}}
@@ -72,12 +76,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 signatures.yaml
 {{- end -}}
 
-{{- define "chill.controllerImage" -}}
-{{- printf "%s:%s" .Values.controller.image.repository (include "chill.controllerImageTag" .) -}}
+{{- define "chill.operatorImage" -}}
+{{- printf "%s:%s" .Values.operator.image.repository (include "chill.operatorImageTag" .) -}}
 {{- end -}}
 
-{{- define "chill.controllerImageTag" -}}
-{{- default .Chart.AppVersion .Values.controller.image.tag -}}
+{{- define "chill.operatorImageTag" -}}
+{{- default .Chart.AppVersion .Values.operator.image.tag -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImage" -}}

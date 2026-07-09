@@ -6,7 +6,7 @@ command="${1:-help}"
 helm_bin="${HELM:-helm}"
 kubectl_bin="${KUBECTL:-kubectl}"
 kubeconform_bin="${KUBECONFORM:-bin/kubeconform}"
-kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,DeviceClass}"
+kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition}"
 
 release_name="${HELM_RELEASE:-chill}"
 release_namespace="${HELM_NAMESPACE:-chill-system}"
@@ -14,7 +14,7 @@ chart="${HELM_CHART:-charts/chill}"
 timeout="${HELM_TIMEOUT:-2m}"
 values_file="${HELM_VALUES:-}"
 extra_helm_set="${HELM_SET:-}"
-controller_image="${CONTROLLER_IMG:-}"
+operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 
 usage() {
@@ -35,7 +35,7 @@ Environment:
   HELM_CHART             Chart path. Default: charts/chill
   HELM_VALUES            Optional values file.
   HELM_SET               Extra Helm --set arguments, for simple unquoted flags.
-  CONTROLLER_IMG         Optional controller image repository:tag.
+  OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
 EOF
 }
@@ -177,31 +177,31 @@ install_base() {
 	local args=(
 		"--set" "crds.enabled=true"
 	)
-	append_image_values args controller "${controller_image}"
+	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
 	helm_upgrade "install" "${args[@]}"
 }
 
-controller_up() {
+operator_up() {
 	require_release
 	local args=(
 		"--set" "crds.enabled=true"
-		"--set" "controller.replicaCount=1"
+		"--set" "operator.replicaCount=1"
 		"--set" "nodeDiscovery.enabled=false"
 	)
-	append_image_values args controller "${controller_image}"
-	helm_upgrade_reuse "controller-up" "${args[@]}"
+	append_image_values args operator "${operator_image}"
+	helm_upgrade_reuse "operator-up" "${args[@]}"
 }
 
 discovery_up() {
 	require_release
-	controller_up
+	operator_up
 	local args=(
 		"--set" "crds.enabled=true"
-		"--set" "controller.replicaCount=1"
+		"--set" "operator.replicaCount=1"
 		"--set" "nodeDiscovery.enabled=true"
 	)
-	append_image_values args controller "${controller_image}"
+	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
 	helm_upgrade_reuse "discovery-up" "${args[@]}"
 }
@@ -213,11 +213,11 @@ discovery_down() {
 		--set nodeDiscovery.enabled=false
 }
 
-controller_down() {
+operator_down() {
 	require_release
-	helm_upgrade_reuse "controller-down" \
+	helm_upgrade_reuse "operator-down" \
 		--set crds.enabled=true \
-		--set controller.replicaCount=0 \
+		--set operator.replicaCount=0 \
 		--set nodeDiscovery.enabled=false
 }
 
@@ -228,7 +228,7 @@ start_release() {
 stop_release() {
 	if release_exists; then
 		discovery_down
-		controller_down
+		operator_down
 	fi
 }
 

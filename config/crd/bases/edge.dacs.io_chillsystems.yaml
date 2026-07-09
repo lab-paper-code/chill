@@ -23,8 +23,8 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.controllerState
-      name: Controller
+    - jsonPath: .status.operatorState
+      name: Operator
       priority: 1
       type: string
     - jsonPath: .status.nodeDiscoveryState
@@ -194,16 +194,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              controllerState:
-                description: ControllerState summarizes the controller manager Deployment
-                  state.
-                enum:
-                - Ready
-                - Progressing
-                - Disabled
-                - Degraded
-                - Unknown
-                type: string
               deviceClassCount:
                 description: DeviceClassCount is the number of DeviceClass objects
                   observed by CHILL.
@@ -226,7 +216,7 @@ spec:
                 type: string
               observedGeneration:
                 description: ObservedGeneration is the latest spec generation observed
-                  by the controller.
+                  by the operator.
                 format: int64
                 type: integer
               observedNodeCount:
@@ -235,6 +225,15 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              operatorState:
+                description: OperatorState summarizes the operator Deployment state.
+                enum:
+                - Ready
+                - Progressing
+                - Disabled
+                - Degraded
+                - Unknown
+                type: string
               phase:
                 description: Phase summarizes the current CHILL installation state.
                 enum:

@@ -49,7 +49,7 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 ## Helm
 
 The default chart follows product-style Helm UX: a plain install starts the
-controller and testbed hardware discovery with the published Docker Hub images.
+operator and testbed hardware discovery with the published Docker Hub images.
 
 ```sh
 helm template chill charts/chill --namespace chill-system
@@ -68,11 +68,11 @@ make helm-install
 Default image repositories:
 
 ```text
-daclab/chill-controller:<chart appVersion>
+daclab/chill-operator:<chart appVersion>
 daclab/chill-node-discovery:<chart appVersion>
 ```
 
-Once the controller is running, CHILL publishes a namespace-local status object:
+Once the operator is running, CHILL publishes a namespace-local status object:
 
 ```sh
 kubectl -n chill-system get chillsystem
@@ -117,7 +117,7 @@ make helm-adopt-crds \
   FROM_RELEASE_NAMESPACE=<old-namespace>
 ```
 
-For the six-node lab testbed, discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
+For the six-node lab testbed, discovery runs in two stages: the node daemon labels hardware facts from host files, then the operator matches those labels to the device catalog and creates `DeviceClass` objects.
 
 ```sh
 kubectl label node <node-name> node-role.kubernetes.io/edge=
@@ -130,8 +130,8 @@ kubectl get nodes --show-labels | grep edge.dacs.io
 kubectl get deviceclasses.edge.dacs.io
 ```
 
-For a controller-only runtime smoke with a node-local image, set
-`controller.nodeSelector` and `controller.image.pullPolicy=Never` through Helm
+For an operator-only runtime smoke with a node-local image, set
+`operator.nodeSelector` and `operator.image.pullPolicy=Never` through Helm
 instead of patching the Deployment by hand.
 
 ```sh
@@ -139,11 +139,11 @@ helm upgrade chill charts/chill \
   --namespace chill-system \
   --set crds.enabled=false \
   --set discovery.enabled=false \
-  --set controller.replicaCount=1 \
-  --set controller.image.repository=chill/controller \
-  --set controller.image.tag=<local-tag> \
-  --set controller.image.pullPolicy=Never \
-  --set 'controller.nodeSelector.kubernetes\.io/hostname=<node-name>'
+  --set operator.replicaCount=1 \
+  --set operator.image.repository=chill/operator \
+  --set operator.image.tag=<local-tag> \
+  --set operator.image.pullPolicy=Never \
+  --set 'operator.nodeSelector.kubernetes\.io/hostname=<node-name>'
 ```
 
 Useful diagnosis is written to node annotations:

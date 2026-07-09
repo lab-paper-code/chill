@@ -1,10 +1,9 @@
 # Image URLs to use for building and pushing component images.
-# IMG is kept as a controller-image alias for Kubebuilder scaffold compatibility.
 IMAGE_NAMESPACE ?= daclab
 CHART_APP_VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' charts/chill/Chart.yaml)
 IMAGE_TAG ?= $(CHART_APP_VERSION)
-IMG ?= $(IMAGE_NAMESPACE)/chill-controller:$(IMAGE_TAG)
-CONTROLLER_IMG ?= $(IMG)
+IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
+OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
@@ -31,7 +30,7 @@ HELM_SET ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" CONTROLLER_IMG="$(CONTROLLER_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -62,7 +61,7 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=operator-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 	$(MAKE) helm-sync-crds
 	$(MAKE) helm-sync-rbac
 
@@ -137,7 +136,7 @@ helm-install-smoke: ## Install or upgrade the chart without starting pods or man
 		--create-namespace \
 		"$${values_args[@]}" \
 		--set crds.enabled=false \
-		--set controller.replicaCount=0 \
+		--set operator.replicaCount=0 \
 		--set nodeDiscovery.enabled=false \
 		$(HELM_SET) \
 		--wait \
@@ -170,60 +169,60 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build controller and node-discovery binaries.
-	go build -o bin/manager cmd/main.go
+build: manifests generate fmt vet ## Build operator and node-discovery binaries.
+	go build -o bin/operator cmd/main.go
 	go build -o bin/node-discovery ./cmd/node-discovery
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
+run: manifests generate fmt vet ## Run the operator from your host.
 	go run ./cmd/main.go --system-status-namespace=$(RUN_NAMESPACE) $(RUN_ARGS)
 
 # If you wish to build images targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: docker-build-controller ## Build the controller image.
+docker-build: docker-build-operator ## Build the operator image.
 
-.PHONY: docker-build-controller
-docker-build-controller: ## Build the controller image.
-	$(CONTAINER_TOOL) build -f build/docker/controller.Dockerfile -t $(CONTROLLER_IMG) .
+.PHONY: docker-build-operator
+docker-build-operator: ## Build the operator image.
+	$(CONTAINER_TOOL) build -f build/docker/operator.Dockerfile -t $(OPERATOR_IMG) .
 
 .PHONY: docker-build-node-discovery
 docker-build-node-discovery: ## Build the node-discovery image.
 	$(CONTAINER_TOOL) build -f build/docker/node-discovery.Dockerfile -t $(NODE_DISCOVERY_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-controller docker-build-node-discovery ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery ## Build all component images.
 
 .PHONY: docker-push
-docker-push: docker-push-controller ## Push the controller image.
+docker-push: docker-push-operator ## Push the operator image.
 
-.PHONY: docker-push-controller
-docker-push-controller: ## Push the controller image.
-	$(CONTAINER_TOOL) push $(CONTROLLER_IMG)
+.PHONY: docker-push-operator
+docker-push-operator: ## Push the operator image.
+	$(CONTAINER_TOOL) push $(OPERATOR_IMG)
 
 .PHONY: docker-push-node-discovery
 docker-push-node-discovery: ## Push the node-discovery image.
 	$(CONTAINER_TOOL) push $(NODE_DISCOVERY_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-controller docker-push-node-discovery ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
-# architectures. (i.e. make docker-buildx-all CONTROLLER_IMG=myregistry/chill/controller:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
+# architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
 .PHONY: docker-buildx
-docker-buildx: docker-buildx-controller ## Build and push the controller image for cross-platform support.
+docker-buildx: docker-buildx-operator ## Build and push the operator image for cross-platform support.
 
-.PHONY: docker-buildx-controller
-docker-buildx-controller: ## Build and push the controller image for cross-platform support.
+.PHONY: docker-buildx-operator
+docker-buildx-operator: ## Build and push the operator image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/controller.Dockerfile --tag $(CONTROLLER_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/operator.Dockerfile --tag $(OPERATOR_IMG) .
 
 .PHONY: docker-buildx-node-discovery
 docker-buildx-node-discovery: ## Build and push the node-discovery image for cross-platform support.
@@ -232,12 +231,12 @@ docker-buildx-node-discovery: ## Build and push the node-discovery image for cro
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-discovery.Dockerfile --tag $(NODE_DISCOVERY_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-controller docker-buildx-node-discovery ## Build and push all component images for cross-platform support.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery ## Build and push all component images for cross-platform support.
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(CONTROLLER_IMG)
+	cd config/operator && $(KUSTOMIZE) edit set image operator=$(OPERATOR_IMG)
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 ##@ Deployment
@@ -255,12 +254,12 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(CONTROLLER_IMG)
+deploy: manifests kustomize ## Deploy the operator to the K8s cluster specified in ~/.kube/config.
+	cd config/operator && $(KUSTOMIZE) edit set image operator=$(OPERATOR_IMG)
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+undeploy: kustomize ## Undeploy the operator from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
@@ -287,7 +286,7 @@ GOLANGCI_LINT_VERSION ?= v1.64.5
 KUBECONFORM_VERSION ?= v0.6.7
 # kubeconform's Kubernetes schema catalog omits top-level CRD schemas and CR
 # instances whose schema is provided by those CRDs in the same rendered chart.
-KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,DeviceClass
+KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

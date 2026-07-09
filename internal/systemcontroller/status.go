@@ -10,11 +10,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/components"
 )
 
 const (
-	ComponentController    = "controller"
-	ComponentNodeDiscovery = "node-discovery"
+	ComponentOperator      = components.Operator
+	ComponentNodeDiscovery = components.NodeDiscovery
 
 	reasonReady              = "Ready"
 	reasonReconciling        = "Reconciling"
@@ -34,9 +35,9 @@ type Observation struct {
 
 	Namespace string
 
-	ControllerDeploymentName string
-	ControllerDeployment     *appsv1.Deployment
-	ControllerError          error
+	OperatorDeploymentName string
+	OperatorDeployment     *appsv1.Deployment
+	OperatorError          error
 
 	NodeDiscoveryEnabled       bool
 	NodeDiscoveryDaemonSetName string
@@ -51,12 +52,12 @@ type Observation struct {
 
 func buildStatus(observed Observation, previousConditions []metav1.Condition, now metav1.Time) edgev1alpha1.ChillSystemStatus {
 	conditions := append([]metav1.Condition(nil), previousConditions...)
-	controller := deploymentComponentStatus(
-		ComponentController,
+	operator := deploymentComponentStatus(
+		ComponentOperator,
 		observed.Namespace,
-		observed.ControllerDeploymentName,
-		observed.ControllerDeployment,
-		observed.ControllerError,
+		observed.OperatorDeploymentName,
+		observed.OperatorDeployment,
+		observed.OperatorError,
 	)
 	nodeDiscovery := daemonSetComponentStatus(
 		ComponentNodeDiscovery,
@@ -69,15 +70,15 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 
 	status := edgev1alpha1.ChillSystemStatus{
 		ObservedGeneration: observed.ObservedGeneration,
-		ControllerState:    controller.State,
+		OperatorState:      operator.State,
 		NodeDiscoveryState: nodeDiscovery.State,
 		DeviceClassCount:   observed.DeviceClassCount,
 		ObservedNodeCount:  observed.ObservedNodeCount,
-		Components:         []edgev1alpha1.ChillComponentStatus{controller, nodeDiscovery},
+		Components:         []edgev1alpha1.ChillComponentStatus{operator, nodeDiscovery},
 		Conditions:         conditions,
 	}
 
-	phase, reason, message := summarize(observed, controller, nodeDiscovery)
+	phase, reason, message := summarize(observed, operator, nodeDiscovery)
 	reason = truncateStatusText(reason, edgev1alpha1.ChillSystemReasonMaxLength)
 	message = truncateStatusText(message, edgev1alpha1.ChillSystemMessageMaxLength)
 	status.Phase = phase
@@ -244,18 +245,18 @@ func deploymentDesiredReplicas(deployment *appsv1.Deployment) int32 {
 	return *deployment.Spec.Replicas
 }
 
-func summarize(observed Observation, controller, nodeDiscovery edgev1alpha1.ChillComponentStatus) (edgev1alpha1.ChillSystemPhase, string, string) {
+func summarize(observed Observation, operator, nodeDiscovery edgev1alpha1.ChillComponentStatus) (edgev1alpha1.ChillSystemPhase, string, string) {
 	if errors := observationErrors(observed); len(errors) > 0 {
 		return edgev1alpha1.ChillSystemPhaseDegraded, reasonObservationFailed, strings.Join(errors, "; ")
 	}
-	if controller.State == edgev1alpha1.ComponentStateDegraded || controller.State == edgev1alpha1.ComponentStateUnknown {
-		return edgev1alpha1.ChillSystemPhaseDegraded, controller.Reason, controller.Message
+	if operator.State == edgev1alpha1.ComponentStateDegraded || operator.State == edgev1alpha1.ComponentStateUnknown {
+		return edgev1alpha1.ChillSystemPhaseDegraded, operator.Reason, operator.Message
 	}
-	if controller.State == edgev1alpha1.ComponentStateProgressing {
-		return edgev1alpha1.ChillSystemPhaseProgressing, controller.Reason, controller.Message
+	if operator.State == edgev1alpha1.ComponentStateProgressing {
+		return edgev1alpha1.ChillSystemPhaseProgressing, operator.Reason, operator.Message
 	}
-	if controller.State == edgev1alpha1.ComponentStateDisabled {
-		return edgev1alpha1.ChillSystemPhaseDegraded, controller.Reason, controller.Message
+	if operator.State == edgev1alpha1.ComponentStateDisabled {
+		return edgev1alpha1.ChillSystemPhaseDegraded, operator.Reason, operator.Message
 	}
 
 	if nodeDiscovery.State == edgev1alpha1.ComponentStateDegraded || nodeDiscovery.State == edgev1alpha1.ComponentStateUnknown {
@@ -265,9 +266,9 @@ func summarize(observed Observation, controller, nodeDiscovery edgev1alpha1.Chil
 		return edgev1alpha1.ChillSystemPhaseProgressing, nodeDiscovery.Reason, nodeDiscovery.Message
 	}
 	if nodeDiscovery.State == edgev1alpha1.ComponentStateDisabled {
-		return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL controller is running; node-discovery is disabled"
+		return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL operator is running; node-discovery is disabled"
 	}
-	return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL controller and node-discovery are ready"
+	return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL operator and node-discovery are ready"
 }
 
 func observationErrors(observed Observation) []string {

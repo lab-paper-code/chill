@@ -21,9 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - component: controller
-            dockerfile: build/docker/controller.Dockerfile
-            image: chill-controller
+          - component: operator
+            dockerfile: build/docker/operator.Dockerfile
+            image: chill-operator
           - component: node-discovery
             dockerfile: build/docker/node-discovery.Dockerfile
             image: chill-node-discovery

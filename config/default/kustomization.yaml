@@ -4,4 +4,4 @@ namePrefix: chill-
 resources:
 - ../crd
 - ../rbac
-- ../manager
+- ../operator

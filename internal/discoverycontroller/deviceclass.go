@@ -50,3 +50,24 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, disco
 	}
 	return nil
 }
+
+func (r *DeviceDiscoveryReconciler) pruneDeviceClasses(ctx context.Context, discovered map[string]struct{}) error {
+	deviceClasses := &edgev1alpha1.DeviceClassList{}
+	if err := r.List(ctx, deviceClasses); err != nil {
+		return fmt.Errorf("list DeviceClasses for pruning: %w", err)
+	}
+
+	for i := range deviceClasses.Items {
+		deviceClass := &deviceClasses.Items[i]
+		if deviceClass.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
+			continue
+		}
+		if _, ok := discovered[deviceClass.Name]; ok {
+			continue
+		}
+		if err := r.Delete(ctx, deviceClass); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete stale DeviceClass %q: %w", deviceClass.Name, err)
+		}
+	}
+	return nil
+}

@@ -17,19 +17,19 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		ObservedGeneration: system.Generation,
 		Namespace:          r.namespace(),
 
-		ControllerDeploymentName: r.controllerDeploymentName(),
+		OperatorDeploymentName: r.operatorDeploymentName(),
 
 		NodeDiscoveryEnabled:       r.Options.NodeDiscoveryEnabled,
 		NodeDiscoveryDaemonSetName: r.nodeDiscoveryDaemonSetName(),
 	}
 
-	controller := &appsv1.Deployment{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: r.namespace(), Name: r.controllerDeploymentName()}, controller); err != nil {
+	operator := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.namespace(), Name: r.operatorDeploymentName()}, operator); err != nil {
 		if !apierrors.IsNotFound(err) {
-			observed.ControllerError = fmt.Errorf("observe controller Deployment: %w", err)
+			observed.OperatorError = fmt.Errorf("observe operator Deployment: %w", err)
 		}
 	} else {
-		observed.ControllerDeployment = controller
+		observed.OperatorDeployment = operator
 	}
 
 	if r.Options.NodeDiscoveryEnabled {

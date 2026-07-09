@@ -12,7 +12,7 @@ Rook-Ceph exposes this pattern through its root cluster CR: users inspect one re
 
 ## Decision
 
-Introduce a namespaced `ChillSystem` root status resource. The controller automatically creates one instance in the management namespace, named after the Helm release by default.
+Introduce a namespaced `ChillSystem` root status resource. The operator automatically creates one instance in the management namespace, named after the Helm release by default.
 
 The public operational flow becomes:
 
@@ -21,22 +21,22 @@ kubectl -n chill-system get chillsystem
 kubectl -n chill-system describe chillsystem chill
 ```
 
-`ChillSystem.status` uses Kubernetes `conditions` as the durable API and keeps printer-column fields such as `phase`, `ready`, `controllerState`, `nodeDiscoveryState`, `message`, and resource counts for quick `kubectl get` output.
+`ChillSystem.status` uses Kubernetes `conditions` as the durable API and keeps printer-column fields such as `phase`, `ready`, `operatorState`, `nodeDiscoveryState`, `message`, and resource counts for quick `kubectl get` output.
 
 The first status implementation observes:
 
-- controller Deployment readiness
+- operator Deployment readiness
 - node-discovery DaemonSet readiness or disabled state
 - observed Node count
 - observed DeviceClass count
 - observation errors such as missing RBAC
 
-Helm does not create the `ChillSystem` custom resource directly. The controller owns the singleton creation to avoid coupling custom resource creation to same-chart CRD installation timing.
+Helm does not create the `ChillSystem` custom resource directly. The operator owns the singleton creation to avoid coupling custom resource creation to same-chart CRD installation timing.
 
 ## Consequences
 
 Operators get a single CHILL-native status object without learning the internal release-flow phase graph.
 
-The status controller becomes the extension point for future modules. New components should add structured component status and conditions before adding ad hoc troubleshooting output elsewhere.
+The status reconciler becomes the extension point for future modules. New components should add structured component status and conditions before adding ad hoc troubleshooting output elsewhere.
 
-Because the controller writes this status, it cannot update status while the controller Deployment is scaled to zero. If CHILL needs offline uninstall status later, that should be handled by a separate uninstall job or Helm hook, not by overloading runtime controller status.
+Because the operator writes this status, it cannot update status while the operator Deployment is scaled to zero. If CHILL needs offline uninstall status later, that should be handled outside the runtime status object rather than overloading `ChillSystem.status`.

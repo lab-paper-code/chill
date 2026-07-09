@@ -1,56 +1,60 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "chill.fullname" . }}-controller-manager
+  name: {{ include "chill.fullname" . }}-operator
   namespace: {{ .Release.Namespace }}
   labels:
-    control-plane: controller-manager
+    app.kubernetes.io/component: operator
     {{- include "chill.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.controller.replicaCount }}
+  replicas: {{ .Values.operator.replicaCount }}
   selector:
     matchLabels:
-      control-plane: controller-manager
+      app.kubernetes.io/component: operator
       {{- include "chill.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: manager
+        kubectl.kubernetes.io/default-container: operator
       labels:
-        control-plane: controller-manager
+        app.kubernetes.io/component: operator
         {{- include "chill.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "chill.controllerServiceAccountName" . }}
+      serviceAccountName: {{ include "chill.operatorServiceAccountName" . }}
       securityContext:
-        {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
-      {{- with .Values.controller.nodeSelector }}
+        {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+      {{- with .Values.operator.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.controller.affinity }}
+      {{- with .Values.operator.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.controller.tolerations }}
+      {{- with .Values.operator.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: manager
-          image: "{{ include "chill.controllerImage" . }}"
-          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+        - name: operator
+          image: "{{ include "chill.operatorImage" . }}"
+          imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           command:
-            - /manager
+            - /operator
           args:
-            - --metrics-bind-address={{ .Values.controller.metricsBindAddress }}
-            - --health-probe-bind-address={{ .Values.controller.healthProbeBindAddress }}
+            - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
             - --system-status-name={{ include "chill.systemStatusName" . }}
             - --system-status-namespace={{ .Release.Namespace }}
-            - --system-status-controller-deployment-name={{ include "chill.fullname" . }}-controller-manager
+            - --system-status-operator-deployment-name={{ include "chill.fullname" . }}-operator
             - --system-status-node-discovery-daemonset-name={{ include "chill.fullname" . }}-node-discovery
             - --system-status-node-discovery-enabled={{ .Values.nodeDiscovery.enabled }}
             - --system-status-refresh-interval={{ .Values.systemStatus.refreshInterval }}
-            {{- if .Values.controller.leaderElection }}
+            - --node-discovery-config-name={{ include "chill.nodeDiscoveryConfigName" . }}
+            - --node-discovery-config-namespace={{ .Release.Namespace }}
+            - --node-discovery-config-key=config.yaml
+            - --node-discovery-reconcile-interval={{ .Values.nodeDiscovery.reconcileInterval }}
+            {{- if .Values.operator.leaderElection }}
             - --leader-elect
             {{- end }}
             {{- if .Values.discovery.enabled }}
@@ -71,7 +75,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           securityContext:
-            {{- toYaml .Values.controller.securityContext | nindent 12 }}
+            {{- toYaml .Values.operator.securityContext | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -85,5 +89,5 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
-            {{- toYaml .Values.controller.resources | nindent 12 }}
+            {{- toYaml .Values.operator.resources | nindent 12 }}
       terminationGracePeriodSeconds: 10

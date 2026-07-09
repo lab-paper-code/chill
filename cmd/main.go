@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclasscatalog"
 	"github.com/lab-paper-code/chill/internal/discoverycontroller"
 	chilllabels "github.com/lab-paper-code/chill/internal/labels"
+	"github.com/lab-paper-code/chill/internal/nodediscoverycontroller"
 	"github.com/lab-paper-code/chill/internal/systemcontroller"
 	// +kubebuilder:scaffold:imports
 )
@@ -52,16 +53,20 @@ func main() {
 	var deviceDiscoveryCatalogKey string
 	var systemStatusName string
 	var systemStatusNamespace string
-	var systemStatusControllerDeploymentName string
+	var systemStatusOperatorDeploymentName string
 	var systemStatusNodeDiscoveryDaemonSetName string
 	var systemStatusNodeDiscoveryEnabled bool
 	var systemStatusRefreshInterval time.Duration
+	var nodeDiscoveryConfigNamespace string
+	var nodeDiscoveryConfigName string
+	var nodeDiscoveryConfigKey string
+	var nodeDiscoveryReconcileInterval time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+		"Enable leader election for the CHILL operator. "+
+			"Enabling this will ensure there is only one active operator.")
 	flag.BoolVar(&enableDeviceDiscovery, "device-discovery-enabled", false,
 		"Enable node-based DeviceClass discovery.")
 	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chilllabels.DeviceClass,
@@ -82,8 +87,8 @@ func main() {
 		"Name of the namespace-local ChillSystem status resource.")
 	flag.StringVar(&systemStatusNamespace, "system-status-namespace", systemcontroller.DefaultNamespace(),
 		"Namespace containing the namespace-local ChillSystem status resource.")
-	flag.StringVar(&systemStatusControllerDeploymentName, "system-status-controller-deployment-name", "",
-		"Name of the controller Deployment reported in ChillSystem status.")
+	flag.StringVar(&systemStatusOperatorDeploymentName, "system-status-operator-deployment-name", "",
+		"Name of the operator Deployment reported in ChillSystem status.")
 	flag.StringVar(&systemStatusNodeDiscoveryDaemonSetName, "system-status-node-discovery-daemonset-name", "",
 		"Name of the node-discovery DaemonSet reported in ChillSystem status.")
 	flag.BoolVar(&systemStatusNodeDiscoveryEnabled, "system-status-node-discovery-enabled", false,
@@ -93,6 +98,17 @@ func main() {
 		"system-status-refresh-interval",
 		systemcontroller.DefaultRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
+	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
+		"Namespace containing the node-discovery operator config ConfigMap.")
+	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
+		"Name of the node-discovery operator config ConfigMap.")
+	flag.StringVar(&nodeDiscoveryConfigKey, "node-discovery-config-key", nodediscoverycontroller.DefaultConfigKey,
+		"Data key containing node-discovery operator config.")
+	flag.DurationVar(
+		&nodeDiscoveryReconcileInterval,
+		"node-discovery-reconcile-interval",
+		nodediscoverycontroller.DefaultReconcileInterval,
+		"Periodic refresh interval for node-discovery reconciliation.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -104,7 +120,7 @@ func main() {
 	systemStatusOptions := systemcontroller.Options{
 		SystemName:                 systemStatusName,
 		Namespace:                  systemStatusNamespace,
-		ControllerDeploymentName:   systemStatusControllerDeploymentName,
+		OperatorDeploymentName:     systemStatusOperatorDeploymentName,
 		NodeDiscoveryDaemonSetName: systemStatusNodeDiscoveryDaemonSetName,
 		NodeDiscoveryEnabled:       systemStatusNodeDiscoveryEnabled,
 		RefreshInterval:            systemStatusRefreshInterval,
@@ -112,6 +128,9 @@ func main() {
 	if err := systemStatusOptions.DefaultAndValidate(); err != nil {
 		setupLog.Error(err, "invalid ChillSystem status configuration")
 		os.Exit(1)
+	}
+	if nodeDiscoveryConfigNamespace == "" {
+		nodeDiscoveryConfigNamespace = systemStatusOptions.Namespace
 	}
 
 	metricsServerOptions := metricsserver.Options{
@@ -145,7 +164,7 @@ func main() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "DeviceClass")
+		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceClass")
 		os.Exit(1)
 	}
 	if err = (&systemcontroller.ChillSystemReconciler{
@@ -153,7 +172,23 @@ func main() {
 		Scheme:  mgr.GetScheme(),
 		Options: systemStatusOptions,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ChillSystem")
+		setupLog.Error(err, "unable to register reconciler", "resource", "ChillSystem")
+		os.Exit(1)
+	}
+	if err = (&nodediscoverycontroller.Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Options: nodediscoverycontroller.Options{
+			Enabled:           systemStatusNodeDiscoveryEnabled,
+			SystemName:        systemStatusName,
+			Namespace:         nodeDiscoveryConfigNamespace,
+			DaemonSetName:     systemStatusNodeDiscoveryDaemonSetName,
+			ConfigMapName:     nodeDiscoveryConfigName,
+			ConfigMapKey:      nodeDiscoveryConfigKey,
+			ReconcileInterval: nodeDiscoveryReconcileInterval,
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register reconciler", "resource", "NodeDiscovery")
 		os.Exit(1)
 	}
 	if enableDeviceDiscovery {
@@ -169,7 +204,7 @@ func main() {
 				CatalogKey:            deviceDiscoveryCatalogKey,
 			},
 		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "DeviceDiscovery")
+			setupLog.Error(err, "unable to register reconciler", "resource", "DeviceDiscovery")
 			os.Exit(1)
 		}
 	}
@@ -177,21 +212,21 @@ func main() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ModelSpec")
+		setupLog.Error(err, "unable to register reconciler", "resource", "ModelSpec")
 		os.Exit(1)
 	}
 	if err = (&controller.DeviceProfileReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "DeviceProfile")
+		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceProfile")
 		os.Exit(1)
 	}
 	if err = (&controller.ClusterEnergyModelReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterEnergyModel")
+		setupLog.Error(err, "unable to register reconciler", "resource", "ClusterEnergyModel")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

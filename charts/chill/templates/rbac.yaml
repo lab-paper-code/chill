@@ -1,25 +1,25 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "chill.fullname" . }}-manager-role
+  name: {{ include "chill.fullname" . }}-operator-role
   labels:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
-{{ include "chill.managerRoleRules" . | nindent 2 }}
+{{ include "chill.operatorRoleRules" . | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "chill.fullname" . }}-manager-rolebinding
+  name: {{ include "chill.fullname" . }}-operator-rolebinding
   labels:
     {{- include "chill.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "chill.fullname" . }}-manager-role
+  name: {{ include "chill.fullname" . }}-operator-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "chill.controllerServiceAccountName" . }}
+    name: {{ include "chill.operatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- if .Values.nodeDiscovery.enabled }}
 ---
@@ -109,5 +109,5 @@ roleRef:
   name: {{ include "chill.fullname" . }}-leader-election-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "chill.controllerServiceAccountName" . }}
+    name: {{ include "chill.operatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}

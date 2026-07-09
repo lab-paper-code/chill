@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   labels:
-    control-plane: controller-manager
+    app.kubernetes.io/component: operator
     app.kubernetes.io/name: chill
     app.kubernetes.io/managed-by: kustomize
   name: system
@@ -10,34 +10,34 @@ metadata:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: controller-manager
+  name: operator
   namespace: system
   labels:
-    control-plane: controller-manager
+    app.kubernetes.io/component: operator
     app.kubernetes.io/name: chill
     app.kubernetes.io/managed-by: kustomize
 spec:
   selector:
     matchLabels:
-      control-plane: controller-manager
+      app.kubernetes.io/component: operator
   replicas: 1
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: manager
+        kubectl.kubernetes.io/default-container: operator
       labels:
-        control-plane: controller-manager
+        app.kubernetes.io/component: operator
     spec:
       securityContext:
         runAsNonRoot: true
       containers:
       - command:
-        - /manager
+        - /operator
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: controller:latest
-        name: manager
+        image: operator:latest
+        name: operator
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -67,5 +67,5 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-      serviceAccountName: controller-manager
+      serviceAccountName: operator
       terminationGracePeriodSeconds: 10

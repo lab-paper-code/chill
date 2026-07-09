@@ -17,8 +17,8 @@ func TestOptionsDefaultAndValidate(t *testing.T) {
 	if options.Namespace != "chill-system" {
 		t.Fatalf("Namespace = %q, want chill-system", options.Namespace)
 	}
-	if options.ControllerDeploymentName != DefaultControllerDeploymentName() {
-		t.Fatalf("ControllerDeploymentName = %q, want %q", options.ControllerDeploymentName, DefaultControllerDeploymentName())
+	if options.OperatorDeploymentName != DefaultOperatorDeploymentName() {
+		t.Fatalf("OperatorDeploymentName = %q, want %q", options.OperatorDeploymentName, DefaultOperatorDeploymentName())
 	}
 	if options.NodeDiscoveryDaemonSetName != DefaultNodeDiscoveryDaemonSetName() {
 		t.Fatalf("NodeDiscoveryDaemonSetName = %q, want %q", options.NodeDiscoveryDaemonSetName, DefaultNodeDiscoveryDaemonSetName())
@@ -40,8 +40,8 @@ func TestOptionsSystemNameDoesNotChangeWorkloadDefaults(t *testing.T) {
 	if options.SystemName != "custom-status" {
 		t.Fatalf("SystemName = %q, want custom-status", options.SystemName)
 	}
-	if options.ControllerDeploymentName != DefaultControllerDeploymentName() {
-		t.Fatalf("ControllerDeploymentName = %q, want %q", options.ControllerDeploymentName, DefaultControllerDeploymentName())
+	if options.OperatorDeploymentName != DefaultOperatorDeploymentName() {
+		t.Fatalf("OperatorDeploymentName = %q, want %q", options.OperatorDeploymentName, DefaultOperatorDeploymentName())
 	}
 	if options.NodeDiscoveryDaemonSetName != DefaultNodeDiscoveryDaemonSetName() {
 		t.Fatalf("NodeDiscoveryDaemonSetName = %q, want %q", options.NodeDiscoveryDaemonSetName, DefaultNodeDiscoveryDaemonSetName())

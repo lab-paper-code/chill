@@ -22,7 +22,7 @@ import (
 // SetupWithManager sets up event-driven and periodic status refreshes.
 func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := r.Options.DefaultAndValidate(); err != nil {
-		return fmt.Errorf("validate ChillSystem controller options: %w", err)
+		return fmt.Errorf("validate ChillSystem status options: %w", err)
 	}
 
 	mapToSystem := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -31,7 +31,7 @@ func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("chillsystem-status").
 		For(&edgev1alpha1.ChillSystem{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&appsv1.Deployment{}, mapToSystem, builder.WithPredicates(namedObjectPredicate(r.namespace(), r.controllerDeploymentName()))).
+		Watches(&appsv1.Deployment{}, mapToSystem, builder.WithPredicates(namedObjectPredicate(r.namespace(), r.operatorDeploymentName()))).
 		Watches(&appsv1.DaemonSet{}, mapToSystem, builder.WithPredicates(namedObjectPredicate(r.namespace(), r.nodeDiscoveryDaemonSetName()))).
 		Watches(&edgev1alpha1.DeviceClass{}, mapToSystem, builder.WithPredicates(createDeletePredicate())).
 		Watches(&corev1.Node{}, mapToSystem, builder.WithPredicates(createDeletePredicate())).

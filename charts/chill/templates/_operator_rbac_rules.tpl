@@ -1,4 +1,4 @@
-{{- define "chill.managerRoleRules" -}}
+{{- define "chill.operatorRoleRules" -}}
 - apiGroups:
   - ""
   resources:
@@ -21,6 +21,17 @@
   - apps
   resources:
   - daemonsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
   - deployments
   verbs:
   - get

@@ -1,0 +1,47 @@
+{{- if .Values.nodeDiscovery.enabled }}
+{{- $kubeAPIServer := include "chill.nodeDiscoveryKubernetesAPIServer" . }}
+{{- $nodeSelector := default .Values.nodeSelection.nodeSelector .Values.nodeDiscovery.nodeSelector }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.nodeDiscoveryConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-discovery
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    image: {{ include "chill.nodeDiscoveryImage" . | quote }}
+    imagePullPolicy: {{ include "chill.nodeDiscoveryImagePullPolicy" . | quote }}
+    serviceAccountName: {{ include "chill.nodeDiscoveryServiceAccountName" . | quote }}
+    hostRoot: {{ .Values.nodeDiscovery.hostRoot | quote }}
+    interval: {{ .Values.nodeDiscovery.interval | quote }}
+    signatureFile: {{ .Values.nodeDiscovery.signatureFile | quote }}
+    signatureConfigMapName: {{ include "chill.nodeDiscoverySignatureCatalogName" . | quote }}
+    signatureConfigMapKey: {{ include "chill.nodeDiscoverySignatureKey" . | quote }}
+    cleanupOnExit: {{ .Values.nodeDiscovery.cleanupOnExit }}
+    cleanupTimeout: {{ .Values.nodeDiscovery.cleanupTimeout | quote }}
+    kubeAPIServer: {{ $kubeAPIServer | quote }}
+    kubeAPITokenFile: {{ .Values.nodeDiscovery.kubernetesClient.tokenFile | quote }}
+    kubeAPICAFile: {{ .Values.nodeDiscovery.kubernetesClient.caFile | quote }}
+    nodeSelector:
+{{- toYaml $nodeSelector | nindent 6 }}
+    excludeNodeNames:
+{{- toYaml .Values.nodeDiscovery.excludeNodeNames | nindent 6 }}
+    {{- with .Values.nodeDiscovery.affinity }}
+    affinity:
+{{- toYaml . | nindent 6 }}
+    {{- end }}
+    tolerations:
+{{- toYaml .Values.nodeDiscovery.tolerations | nindent 6 }}
+    resources:
+{{- toYaml .Values.nodeDiscovery.resources | nindent 6 }}
+    podSecurityContext:
+{{- toYaml .Values.nodeDiscovery.podSecurityContext | nindent 6 }}
+    securityContext:
+{{- toYaml .Values.nodeDiscovery.securityContext | nindent 6 }}
+    hostPaths:
+{{- toYaml .Values.nodeDiscovery.hostPaths | nindent 6 }}
+    updateStrategy:
+{{- toYaml .Values.nodeDiscovery.updateStrategy | nindent 6 }}
+{{- end }}

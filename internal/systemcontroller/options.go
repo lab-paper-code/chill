@@ -5,10 +5,12 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/components"
 )
 
 const (
-	DefaultSystemName      = "chill"
+	DefaultSystemName      = components.DefaultSystemName
 	DefaultRefreshInterval = 30 * time.Second
 
 	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -18,13 +20,13 @@ const (
 type Options struct {
 	SystemName                 string
 	Namespace                  string
-	ControllerDeploymentName   string
+	OperatorDeploymentName     string
 	NodeDiscoveryDaemonSetName string
 	NodeDiscoveryEnabled       bool
 	RefreshInterval            time.Duration
 }
 
-// DefaultNamespace returns the controller Pod namespace when it can be resolved.
+// DefaultNamespace returns the operator Pod namespace when it can be resolved.
 func DefaultNamespace() string {
 	if namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); namespace != "" {
 		return namespace
@@ -40,13 +42,13 @@ func (o Options) Defaulted() Options {
 	defaulted := Options{
 		SystemName:                 defaultString(o.SystemName, DefaultSystemName),
 		Namespace:                  strings.TrimSpace(o.Namespace),
-		ControllerDeploymentName:   strings.TrimSpace(o.ControllerDeploymentName),
+		OperatorDeploymentName:     strings.TrimSpace(o.OperatorDeploymentName),
 		NodeDiscoveryDaemonSetName: strings.TrimSpace(o.NodeDiscoveryDaemonSetName),
 		NodeDiscoveryEnabled:       o.NodeDiscoveryEnabled,
 		RefreshInterval:            o.RefreshInterval,
 	}
-	if defaulted.ControllerDeploymentName == "" {
-		defaulted.ControllerDeploymentName = DefaultControllerDeploymentName()
+	if defaulted.OperatorDeploymentName == "" {
+		defaulted.OperatorDeploymentName = DefaultOperatorDeploymentName()
 	}
 	if defaulted.NodeDiscoveryDaemonSetName == "" {
 		defaulted.NodeDiscoveryDaemonSetName = DefaultNodeDiscoveryDaemonSetName()
@@ -69,12 +71,12 @@ func (o *Options) DefaultAndValidate() error {
 	return nil
 }
 
-func DefaultControllerDeploymentName() string {
-	return DefaultSystemName + "-controller-manager"
+func DefaultOperatorDeploymentName() string {
+	return components.OperatorDeploymentName(DefaultSystemName)
 }
 
 func DefaultNodeDiscoveryDaemonSetName() string {
-	return DefaultSystemName + "-node-discovery"
+	return components.NodeDiscoveryDaemonSetName(DefaultSystemName)
 }
 
 func defaultString(value, fallback string) string {
@@ -93,8 +95,8 @@ func (r *ChillSystemReconciler) namespace() string {
 	return r.Options.Defaulted().Namespace
 }
 
-func (r *ChillSystemReconciler) controllerDeploymentName() string {
-	return r.Options.Defaulted().ControllerDeploymentName
+func (r *ChillSystemReconciler) operatorDeploymentName() string {
+	return r.Options.Defaulted().OperatorDeploymentName
 }
 
 func (r *ChillSystemReconciler) nodeDiscoveryDaemonSetName() string {

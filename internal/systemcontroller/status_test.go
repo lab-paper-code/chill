@@ -13,22 +13,22 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-const testControllerDesiredReplicas = int32(1)
+const testOperatorDesiredReplicas = int32(1)
 
 var (
-	testControllerDeploymentName   = DefaultControllerDeploymentName()
+	testOperatorDeploymentName     = DefaultOperatorDeploymentName()
 	testNodeDiscoveryDaemonSetName = DefaultNodeDiscoveryDaemonSetName()
 )
 
 func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 	status := buildStatus(Observation{
-		ObservedGeneration:       7,
-		Namespace:                "chill-system",
-		ControllerDeploymentName: testControllerDeploymentName,
-		ControllerDeployment:     deployment(1),
-		NodeDiscoveryEnabled:     false,
-		DeviceClassCount:         int32Ptr(3),
-		ObservedNodeCount:        int32Ptr(6),
+		ObservedGeneration:     7,
+		Namespace:              "chill-system",
+		OperatorDeploymentName: testOperatorDeploymentName,
+		OperatorDeployment:     deployment(1),
+		NodeDiscoveryEnabled:   false,
+		DeviceClassCount:       int32Ptr(3),
+		ObservedNodeCount:      int32Ptr(6),
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseReady {
@@ -37,8 +37,8 @@ func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 	if status.Ready != metav1.ConditionTrue {
 		t.Fatalf("Ready = %q, want True", status.Ready)
 	}
-	if status.ControllerState != edgev1alpha1.ComponentStateReady {
-		t.Fatalf("ControllerState = %q, want Ready", status.ControllerState)
+	if status.OperatorState != edgev1alpha1.ComponentStateReady {
+		t.Fatalf("OperatorState = %q, want Ready", status.OperatorState)
 	}
 	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDisabled {
 		t.Fatalf("NodeDiscoveryState = %q, want Disabled", status.NodeDiscoveryState)
@@ -55,8 +55,8 @@ func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
 	status := buildStatus(Observation{
 		Namespace:                  "chill-system",
-		ControllerDeploymentName:   testControllerDeploymentName,
-		ControllerDeployment:       deployment(1),
+		OperatorDeploymentName:     testOperatorDeploymentName,
+		OperatorDeployment:         deployment(1),
 		NodeDiscoveryEnabled:       true,
 		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
 		NodeDiscoveryDaemonSet:     daemonSet(6, 4),
@@ -77,8 +77,8 @@ func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
 func TestBuildStatusDegradedWhenRequiredComponentMissing(t *testing.T) {
 	status := buildStatus(Observation{
 		Namespace:                  "chill-system",
-		ControllerDeploymentName:   testControllerDeploymentName,
-		ControllerDeployment:       deployment(1),
+		OperatorDeploymentName:     testOperatorDeploymentName,
+		OperatorDeployment:         deployment(1),
 		NodeDiscoveryEnabled:       true,
 		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
 	}, nil, metav1.Now())
@@ -96,8 +96,8 @@ func TestBuildStatusDegradedWhenRequiredComponentMissing(t *testing.T) {
 }
 
 func TestBuildStatusDegradedWhenDeploymentTimedOut(t *testing.T) {
-	controller := deployment(0)
-	controller.Status.Conditions = []appsv1.DeploymentCondition{
+	operator := deployment(0)
+	operator.Status.Conditions = []appsv1.DeploymentCondition{
 		{
 			Type:    appsv1.DeploymentProgressing,
 			Status:  corev1.ConditionFalse,
@@ -107,17 +107,17 @@ func TestBuildStatusDegradedWhenDeploymentTimedOut(t *testing.T) {
 	}
 
 	status := buildStatus(Observation{
-		Namespace:                "chill-system",
-		ControllerDeploymentName: testControllerDeploymentName,
-		ControllerDeployment:     controller,
-		NodeDiscoveryEnabled:     false,
+		Namespace:              "chill-system",
+		OperatorDeploymentName: testOperatorDeploymentName,
+		OperatorDeployment:     operator,
+		NodeDiscoveryEnabled:   false,
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
 		t.Fatalf("Phase = %q, want Degraded", status.Phase)
 	}
-	if status.ControllerState != edgev1alpha1.ComponentStateDegraded {
-		t.Fatalf("ControllerState = %q, want Degraded", status.ControllerState)
+	if status.OperatorState != edgev1alpha1.ComponentStateDegraded {
+		t.Fatalf("OperatorState = %q, want Degraded", status.OperatorState)
 	}
 	if status.Message != "ReplicaSet has timed out progressing." {
 		t.Fatalf("Message = %q, want Deployment condition message", status.Message)
@@ -125,9 +125,9 @@ func TestBuildStatusDegradedWhenDeploymentTimedOut(t *testing.T) {
 }
 
 func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
-	controller := deployment(0)
+	operator := deployment(0)
 	longMessage := strings.Repeat("x", edgev1alpha1.ChillSystemMessageMaxLength+1)
-	controller.Status.Conditions = []appsv1.DeploymentCondition{
+	operator.Status.Conditions = []appsv1.DeploymentCondition{
 		{
 			Type:    appsv1.DeploymentProgressing,
 			Status:  corev1.ConditionFalse,
@@ -137,10 +137,10 @@ func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
 	}
 
 	status := buildStatus(Observation{
-		Namespace:                "chill-system",
-		ControllerDeploymentName: testControllerDeploymentName,
-		ControllerDeployment:     controller,
-		NodeDiscoveryEnabled:     false,
+		Namespace:              "chill-system",
+		OperatorDeploymentName: testOperatorDeploymentName,
+		OperatorDeployment:     operator,
+		NodeDiscoveryEnabled:   false,
 	}, nil, metav1.Now())
 
 	if len([]rune(status.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
@@ -168,8 +168,8 @@ func TestBuildStatusDegradedWhenDaemonSetHasReplicaFailure(t *testing.T) {
 
 	status := buildStatus(Observation{
 		Namespace:                  "chill-system",
-		ControllerDeploymentName:   testControllerDeploymentName,
-		ControllerDeployment:       deployment(1),
+		OperatorDeploymentName:     testOperatorDeploymentName,
+		OperatorDeployment:         deployment(1),
 		NodeDiscoveryEnabled:       true,
 		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
 		NodeDiscoveryDaemonSet:     nodeDiscovery,
@@ -188,11 +188,11 @@ func TestBuildStatusDegradedWhenDaemonSetHasReplicaFailure(t *testing.T) {
 
 func TestBuildStatusDegradedOnObservationError(t *testing.T) {
 	status := buildStatus(Observation{
-		Namespace:                "chill-system",
-		ControllerDeploymentName: testControllerDeploymentName,
-		ControllerDeployment:     deployment(1),
-		NodeDiscoveryEnabled:     false,
-		DeviceClassError:         errors.New("observe DeviceClasses: forbidden"),
+		Namespace:              "chill-system",
+		OperatorDeploymentName: testOperatorDeploymentName,
+		OperatorDeployment:     deployment(1),
+		NodeDiscoveryEnabled:   false,
+		DeviceClassError:       errors.New("observe DeviceClasses: forbidden"),
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
@@ -206,11 +206,11 @@ func TestBuildStatusDegradedOnObservationError(t *testing.T) {
 func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 	firstTransition := metav1.Now()
 	status := buildStatus(Observation{
-		ObservedGeneration:       1,
-		Namespace:                "chill-system",
-		ControllerDeploymentName: testControllerDeploymentName,
-		ControllerDeployment:     deployment(1),
-		NodeDiscoveryEnabled:     false,
+		ObservedGeneration:     1,
+		Namespace:              "chill-system",
+		OperatorDeploymentName: testOperatorDeploymentName,
+		OperatorDeployment:     deployment(1),
+		NodeDiscoveryEnabled:   false,
 	}, []metav1.Condition{
 		{
 			Type:               edgev1alpha1.ChillSystemConditionReady,
@@ -218,7 +218,7 @@ func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 			ObservedGeneration: 1,
 			LastTransitionTime: firstTransition,
 			Reason:             reasonReady,
-			Message:            "CHILL controller is running; node-discovery is disabled",
+			Message:            "CHILL operator is running; node-discovery is disabled",
 		},
 	}, metav1.Now())
 
@@ -233,9 +233,9 @@ func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 
 func deployment(available int32) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: testControllerDeploymentName},
+		ObjectMeta: metav1.ObjectMeta{Name: testOperatorDeploymentName},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(testControllerDesiredReplicas),
+			Replicas: int32Ptr(testOperatorDesiredReplicas),
 		},
 		Status: appsv1.DeploymentStatus{
 			ReadyReplicas:     available,

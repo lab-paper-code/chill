@@ -21,7 +21,6 @@ discovery:
   requireCatalogMatch: true
   catalog:
     enabled: true
-    createDeviceClasses: true
     name: ""
     key: catalog.yaml
     classes:
@@ -133,6 +132,7 @@ discovery:
 nodeDiscovery:
   enabled: true
   interval: 10m
+  reconcileInterval: 30s
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml
   cleanupOnExit: true
@@ -274,10 +274,10 @@ nodeDiscovery:
     create: true
     name: ""
 
-controller:
+operator:
   replicaCount: 1
   image:
-    repository: daclab/chill-controller
+    repository: daclab/chill-operator
     tag: ""
     pullPolicy: IfNotPresent
   metricsBindAddress: "0"

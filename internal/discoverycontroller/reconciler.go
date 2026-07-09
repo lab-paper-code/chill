@@ -39,7 +39,7 @@ type DeviceDiscoveryReconciler struct {
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile syncs discovered DeviceClasses and node labels from the current node set.
 func (r *DeviceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -58,6 +58,7 @@ func (r *DeviceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, fmt.Errorf("list nodes: %w", err)
 	}
 
+	discoveredClasses := map[string]struct{}{}
 	for i := range nodes.Items {
 		node := &nodes.Items[i]
 		discovered, ok, err := deviceclasscatalog.Discover(node, catalog, deviceclasscatalog.Options{
@@ -77,9 +78,14 @@ func (r *DeviceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if err := r.ensureDeviceClass(ctx, discovered); err != nil {
 			return ctrl.Result{}, err
 		}
+		discoveredClasses[discovered.Name] = struct{}{}
 		if err := r.ensureNodeClassLabel(ctx, node, discovered.Name); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	if err := r.pruneDeviceClasses(ctx, discoveredClasses); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil

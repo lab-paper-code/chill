@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Helm applies resources in a fixed kind/name order, not as an application-specific dependency graph. CHILL is still small, but future modules will add more runtime dependencies: controller, node discovery, device-class reconciliation, and later scheduling or power-control components.
+Helm applies resources in a fixed kind/name order, not as an application-specific dependency graph. CHILL is still small, but future modules will add more runtime dependencies: operator, node discovery, device-class reconciliation, and later scheduling or power-control components.
 
 The public operator UX should stay Helm-shaped. Exposing a separate CHILL lifecycle command set would make users think about internal phase boundaries that should remain implementation detail.
 
@@ -30,14 +30,14 @@ preflight -> install
 ```
 
 `helm-install` follows product-style Helm UX and installs the runtime selected
-by Helm values. The default chart starts the controller from the published
+by Helm values. The default chart starts the operator from the published
 Docker Hub image. Site-specific values may also enable node-discovery during
 install.
 
 The internal cleanup direction is:
 
 ```text
-stop(node-discovery -> controller) -> uninstall -> purge-crds
+stop(node-discovery -> operator) -> uninstall -> purge-crds
 ```
 
 `helm-start` remains available for restarting a stopped release or enabling
@@ -45,7 +45,7 @@ runtime components after changing image values. `helm-stop` disables them in
 reverse order.
 
 `helm-uninstall` removes the Helm release after runtime components are disabled
-and deletes the controller-created singleton `ChillSystem` status object. CRDs
+and deletes the operator-created singleton `ChillSystem` status object. CRDs
 remain by default. `helm-purge-crds` is a separate guarded destructive action.
 
 ## Consequences

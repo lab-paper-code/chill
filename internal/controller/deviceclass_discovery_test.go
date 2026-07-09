@@ -139,6 +139,40 @@ var _ = Describe("DeviceClass discovery", func() {
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "unknown-8g"}, deviceClass)
 		Expect(err).To(HaveOccurred())
 	})
+
+	It("deletes stale CHILL-managed DeviceClasses", func() {
+		ctx := context.Background()
+		runID := uniqueDiscoveryRunID()
+		namespace := createDiscoveryCatalogNamespace(ctx, runID)
+		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoveryNode(ctx, "prune-"+runID, runID, map[string]string{
+			"jetson-model": "orin-nano",
+		})
+		stale := &edgev1alpha1.DeviceClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "stale-" + runID,
+				Annotations: map[string]string{
+					chilllabels.ManagedBy: chilllabels.ManagedByDeviceDiscovery,
+				},
+			},
+			Spec: edgev1alpha1.DeviceClassSpec{
+				NodeSelector: map[string]string{chilllabels.DeviceClass: "stale-" + runID},
+				Architecture: "arm64",
+				MemoryBytes:  resource.MustParse("1Gi"),
+				Accelerator:  "none",
+				PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, stale)).To(Succeed())
+
+		reconciler := discoveryReconciler(namespace.Name, runID)
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
+		Expect(err).NotTo(HaveOccurred())
+
+		deviceClass := &edgev1alpha1.DeviceClass{}
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: stale.Name}, deviceClass)
+		Expect(err).To(HaveOccurred())
+	})
 })
 
 func discoveryReconciler(namespace, runID string) *discoverycontroller.DeviceDiscoveryReconciler {

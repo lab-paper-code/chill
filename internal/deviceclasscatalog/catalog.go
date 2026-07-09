@@ -27,7 +27,7 @@ type Options struct {
 	RequireCatalogMatch bool
 }
 
-// Catalog is the device-class discovery catalog loaded by the controller.
+// Catalog is the device-class discovery catalog loaded by the operator.
 type Catalog struct {
 	Classes []CatalogEntry `json:"classes"`
 }

@@ -51,7 +51,7 @@ type ChillSystemSpec struct{}
 
 // ChillSystemStatus defines the observed state of CHILL in one management namespace.
 type ChillSystemStatus struct {
-	// ObservedGeneration is the latest spec generation observed by the controller.
+	// ObservedGeneration is the latest spec generation observed by the operator.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
@@ -70,10 +70,10 @@ type ChillSystemStatus struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
 
-	// ControllerState summarizes the controller manager Deployment state.
+	// OperatorState summarizes the operator Deployment state.
 	// +optional
 	// +kubebuilder:validation:Enum=Ready;Progressing;Disabled;Degraded;Unknown
-	ControllerState ComponentState `json:"controllerState,omitempty"`
+	OperatorState ComponentState `json:"operatorState,omitempty"`
 
 	// NodeDiscoveryState summarizes the node-discovery DaemonSet state.
 	// +optional
@@ -152,7 +152,7 @@ type ChillComponentStatus struct {
 // +kubebuilder:resource:scope=Namespaced,shortName=csys
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.ready`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Controller",type=string,JSONPath=`.status.controllerState`,priority=1
+// +kubebuilder:printcolumn:name="Operator",type=string,JSONPath=`.status.operatorState`,priority=1
 // +kubebuilder:printcolumn:name="NodeDiscovery",type=string,JSONPath=`.status.nodeDiscoveryState`,priority=1
 // +kubebuilder:printcolumn:name="Classes",type=integer,JSONPath=`.status.deviceClassCount`,priority=1
 // +kubebuilder:printcolumn:name="Nodes",type=integer,JSONPath=`.status.observedNodeCount`,priority=1

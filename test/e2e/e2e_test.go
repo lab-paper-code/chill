@@ -13,15 +13,15 @@ import (
 
 const namespace = "chill-system"
 
-var _ = Describe("controller", Ordered, func() {
+var _ = Describe("operator", Ordered, func() {
 	BeforeAll(func() {
-		By("creating manager namespace")
+		By("creating operator namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
 		_, _ = utils.Run(cmd)
 	})
 
 	AfterAll(func() {
-		By("undeploying the controller-manager")
+		By("undeploying the operator")
 		cmd := exec.Command("make", "undeploy", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
@@ -29,25 +29,25 @@ var _ = Describe("controller", Ordered, func() {
 		cmd = exec.Command("make", "uninstall", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
-		By("removing manager namespace")
+		By("removing operator namespace")
 		cmd = exec.Command("kubectl", "delete", "ns", namespace, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 	})
 
 	Context("Operator", func() {
 		It("should run successfully", func() {
-			var controllerPodName string
+			var operatorPodName string
 			var err error
 
 			// projectimage stores the name of the image used in the example
-			var projectimage = "example.com/chill/controller:v0.0.1"
+			var projectimage = "example.com/chill/operator:v0.0.1"
 
-			By("building the manager(Operator) image")
+			By("building the operator image")
 			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectimage))
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-			By("loading the the manager(Operator) image on Kind")
+			By("loading the operator image on Kind")
 			err = utils.LoadImageToKindClusterWithName(projectimage)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
@@ -56,17 +56,17 @@ var _ = Describe("controller", Ordered, func() {
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-			By("deploying the controller-manager")
+			By("deploying the operator")
 			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectimage))
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-			By("validating that the controller-manager pod is running as expected")
-			verifyControllerUp := func() error {
+			By("validating that the operator pod is running as expected")
+			verifyOperatorUp := func() error {
 				// Get pod name
 
 				cmd = exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
+					"pods", "-l", "app.kubernetes.io/component=operator",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
 						"{{ .metadata.name }}"+
@@ -78,24 +78,24 @@ var _ = Describe("controller", Ordered, func() {
 				ExpectWithOffset(2, err).NotTo(HaveOccurred())
 				podNames := utils.GetNonEmptyLines(string(podOutput))
 				if len(podNames) != 1 {
-					return fmt.Errorf("expect 1 controller pods running, but got %d", len(podNames))
+					return fmt.Errorf("expect 1 operator pod running, but got %d", len(podNames))
 				}
-				controllerPodName = podNames[0]
-				ExpectWithOffset(2, controllerPodName).Should(ContainSubstring("controller-manager"))
+				operatorPodName = podNames[0]
+				ExpectWithOffset(2, operatorPodName).Should(ContainSubstring("operator"))
 
 				// Validate pod status
 				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
+					"pods", operatorPodName, "-o", "jsonpath={.status.phase}",
 					"-n", namespace,
 				)
 				status, err := utils.Run(cmd)
 				ExpectWithOffset(2, err).NotTo(HaveOccurred())
 				if string(status) != "Running" {
-					return fmt.Errorf("controller pod in %s status", status)
+					return fmt.Errorf("operator pod in %s status", status)
 				}
 				return nil
 			}
-			EventuallyWithOffset(1, verifyControllerUp, time.Minute, time.Second).Should(Succeed())
+			EventuallyWithOffset(1, verifyOperatorUp, time.Minute, time.Second).Should(Succeed())
 
 		})
 	})
