@@ -1,6 +1,6 @@
 # Image URLs to use for building and pushing component images.
 IMAGE_NAMESPACE ?= daclab
-CHART_APP_VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' charts/chill/Chart.yaml)
+CHART_APP_VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' charts/chill-operator/Chart.yaml)
 IMAGE_TAG ?= $(CHART_APP_VERSION)
 IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
@@ -22,15 +22,19 @@ endif
 CONTAINER_TOOL ?= docker
 BUILDX_BUILDER ?= chill-builder
 HELM_RELEASE ?= chill
+HELM_OPERATOR_RELEASE ?= chill-operator
 HELM_NAMESPACE ?= chill-system
 HELM_CHART ?= charts/chill
+HELM_OPERATOR_CHART ?= charts/chill-operator
 HELM_TIMEOUT ?= 2m
 HELM_VALUES ?=
+HELM_OPERATOR_VALUES ?=
 HELM_SET ?=
+HELM_OPERATOR_SET ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_OPERATOR_RELEASE=$(HELM_OPERATOR_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_OPERATOR_CHART=$(HELM_OPERATOR_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_OPERATOR_VALUES="$(HELM_OPERATOR_VALUES)" HELM_SET="$(HELM_SET)" HELM_OPERATOR_SET="$(HELM_OPERATOR_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -106,39 +110,44 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint.
-	values_args=(); \
-	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
-	$(HELM) lint $(HELM_CHART) "$${values_args[@]}"
+	operator_values_args=(); \
+	if [ -n "$(HELM_OPERATOR_VALUES)" ]; then operator_values_args+=("-f" "$(HELM_OPERATOR_VALUES)"); fi; \
+	system_values_args=(); \
+	if [ -n "$(HELM_VALUES)" ]; then system_values_args+=("-f" "$(HELM_VALUES)"); fi; \
+	$(HELM) lint $(HELM_OPERATOR_CHART) "$${operator_values_args[@]}"; \
+	$(HELM) lint $(HELM_CHART) "$${system_values_args[@]}"
 
 .PHONY: helm-template
 helm-template: kubeconform ## Render and validate Helm chart.
-	values_args=(); \
-	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
+	operator_values_args=(); \
+	if [ -n "$(HELM_OPERATOR_VALUES)" ]; then operator_values_args+=("-f" "$(HELM_OPERATOR_VALUES)"); fi; \
+	system_values_args=(); \
+	if [ -n "$(HELM_VALUES)" ]; then system_values_args+=("-f" "$(HELM_VALUES)"); fi; \
 	out="$$(mktemp --suffix=.yaml)"; \
 	trap 'rm -f "$$out"' EXIT; \
-	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${values_args[@]}" >"$$out"; \
+	$(HELM) template $(HELM_OPERATOR_RELEASE) $(HELM_OPERATOR_CHART) --namespace $(HELM_NAMESPACE) "$${operator_values_args[@]}" >"$$out"; \
+	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${system_values_args[@]}" >>"$$out"; \
 	$(KUBECONFORM) $(KUBECONFORM_FLAGS) "$$out"
 
 .PHONY: helm-crd-check
 helm-crd-check: ## Check whether live CRDs can be managed by the Helm release.
-	RELEASE_NAME=$(HELM_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) ./hack/helm-crd-ownership.sh check
+	RELEASE_NAME=$(HELM_OPERATOR_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) ./hack/helm-crd-ownership.sh check
 
 .PHONY: helm-adopt-crds
 helm-adopt-crds: ## Adopt existing CRDs into the Helm release; use FROM_RELEASE_NAME/FROM_RELEASE_NAMESPACE for old Helm owners.
-	RELEASE_NAME=$(HELM_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) FROM_RELEASE_NAME="$(FROM_RELEASE_NAME)" FROM_RELEASE_NAMESPACE="$(FROM_RELEASE_NAMESPACE)" ./hack/helm-crd-ownership.sh adopt
+	RELEASE_NAME=$(HELM_OPERATOR_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) FROM_RELEASE_NAME="$(FROM_RELEASE_NAME)" FROM_RELEASE_NAMESPACE="$(FROM_RELEASE_NAMESPACE)" ./hack/helm-crd-ownership.sh adopt
 
 .PHONY: helm-install-smoke
-helm-install-smoke: ## Install or upgrade the chart without starting pods or managing CRDs.
-	values_args=(); \
-	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
-	$(HELM) upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+helm-install-smoke: ## Install or upgrade the operator chart without starting pods or managing CRDs.
+	operator_values_args=(); \
+	if [ -n "$(HELM_OPERATOR_VALUES)" ]; then operator_values_args+=("-f" "$(HELM_OPERATOR_VALUES)"); fi; \
+	$(HELM) upgrade --install $(HELM_OPERATOR_RELEASE) $(HELM_OPERATOR_CHART) \
 		--namespace $(HELM_NAMESPACE) \
 		--create-namespace \
-		"$${values_args[@]}" \
+		"$${operator_values_args[@]}" \
 		--set crds.enabled=false \
 		--set operator.replicaCount=0 \
-		--set nodeDiscovery.enabled=false \
-		$(HELM_SET) \
+		$(HELM_OPERATOR_SET) \
 		--wait \
 		--timeout $(HELM_TIMEOUT)
 
@@ -147,19 +156,11 @@ helm-preflight: kubeconform ## Validate chart rendering and live CRD ownership.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) preflight
 
 .PHONY: helm-install
-helm-install: kubeconform ## Install or upgrade CHILL using the runtime selected by Helm values.
+helm-install: kubeconform ## Install or upgrade the CHILL operator and system releases.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) install
 
-.PHONY: helm-start
-helm-start: ## Start the CHILL runtime components.
-	@$(HELM_FLOW_ENV) $(HELM_FLOW) start
-
-.PHONY: helm-stop
-helm-stop: ## Stop CHILL runtime components.
-	@$(HELM_FLOW_ENV) $(HELM_FLOW) stop
-
 .PHONY: helm-uninstall
-helm-uninstall: ## Stop CHILL and uninstall the Helm release while keeping CRDs.
+helm-uninstall: ## Uninstall the CHILL system, then operator, while keeping CRDs.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) uninstall
 
 .PHONY: helm-purge-crds
@@ -286,7 +287,7 @@ GOLANGCI_LINT_VERSION ?= v1.64.5
 KUBECONFORM_VERSION ?= v0.6.7
 # kubeconform's Kubernetes schema catalog omits top-level CRD schemas and CR
 # instances whose schema is provided by those CRDs in the same rendered chart.
-KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition
+KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,ChillSystem
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

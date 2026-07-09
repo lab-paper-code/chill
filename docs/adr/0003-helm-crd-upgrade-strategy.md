@@ -10,7 +10,7 @@ CHILL will be wrapped as a Helm chart. During `v1alpha1`, the CRD schemas are ex
 
 ## Decision
 
-When the chart is introduced, keep `v1alpha1` CRDs under `charts/chill/templates/crds/` so Helm manages alpha CRD updates.
+Keep `v1alpha1` CRDs under `charts/chill-operator/templates/crds/` so the operator release manages alpha CRD updates.
 
 Add `helm.sh/resource-policy: keep` to CRDs to reduce accidental deletion risk.
 

@@ -28,18 +28,6 @@ app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "chill.operatorServiceAccountName" -}}
-{{- if .Values.serviceAccount.create -}}
-{{- default (printf "%s-operator" (include "chill.fullname" .)) .Values.serviceAccount.name -}}
-{{- else -}}
-{{- default "default" .Values.serviceAccount.name -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "chill.serviceAccountName" -}}
-{{- include "chill.operatorServiceAccountName" . -}}
-{{- end -}}
-
 {{- define "chill.nodeDiscoveryServiceAccountName" -}}
 {{- if .Values.nodeDiscovery.serviceAccount.create -}}
 {{- default (printf "%s-node-discovery" (include "chill.fullname" .)) .Values.nodeDiscovery.serviceAccount.name -}}
@@ -68,20 +56,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-node-discovery-config" (include "chill.fullname" .) -}}
 {{- end -}}
 
-{{- define "chill.systemStatusName" -}}
-{{- default .Release.Name .Values.systemStatus.name -}}
+{{- define "chill.systemName" -}}
+{{- default .Release.Name .Values.system.name -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoverySignatureKey" -}}
 signatures.yaml
-{{- end -}}
-
-{{- define "chill.operatorImage" -}}
-{{- printf "%s:%s" .Values.operator.image.repository (include "chill.operatorImageTag" .) -}}
-{{- end -}}
-
-{{- define "chill.operatorImageTag" -}}
-{{- default .Chart.AppVersion .Values.operator.image.tag -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImage" -}}

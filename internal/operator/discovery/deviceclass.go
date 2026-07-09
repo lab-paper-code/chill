@@ -8,12 +8,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 )
 
-func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, discovered deviceclass.DiscoveredClass) error {
+func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, system *edgev1alpha1.ChillSystem, discovered deviceclass.DiscoveredClass) error {
 	existing := &edgev1alpha1.DeviceClass{}
 	if err := r.Get(ctx, types.NamespacedName{Name: discovered.Name}, existing); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -30,6 +31,9 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, disco
 			},
 			Spec: discovered.Spec,
 		}
+		if err := controllerutil.SetControllerReference(system, deviceClass, r.Scheme); err != nil {
+			return fmt.Errorf("set DeviceClass %q owner reference: %w", discovered.Name, err)
+		}
 		if err := r.Create(ctx, deviceClass); err != nil {
 			return fmt.Errorf("create DeviceClass %q: %w", discovered.Name, err)
 		}
@@ -39,12 +43,14 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, disco
 	if existing.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
 		return nil
 	}
-	if deviceclass.SpecEqual(existing.Spec, discovered.Spec) {
-		return nil
-	}
 
 	original := existing.DeepCopy()
-	existing.Spec = discovered.Spec
+	if !deviceclass.SpecEqual(existing.Spec, discovered.Spec) {
+		existing.Spec = discovered.Spec
+	}
+	if err := controllerutil.SetControllerReference(system, existing, r.Scheme); err != nil {
+		return fmt.Errorf("set DeviceClass %q owner reference: %w", discovered.Name, err)
+	}
 	if err := r.Patch(ctx, existing, client.MergeFrom(original)); err != nil {
 		return fmt.Errorf("patch DeviceClass %q: %w", discovered.Name, err)
 	}

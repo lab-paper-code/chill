@@ -12,44 +12,43 @@ The public operator UX should stay Helm-shaped. Exposing a separate CHILL lifecy
 
 ## Decision
 
-Keep the Helm chart as the resource packaging unit and keep dependency ordering inside `hack/helm-release-flow.sh`.
+Keep Helm charts as the resource packaging unit and keep dependency ordering inside `hack/helm-release-flow.sh`.
+
+Split packaging into two releases:
+
+- `chill-operator`: CRDs, operator RBAC, and the operator Deployment.
+- `chill`: the cluster-scoped `ChillSystem` root CR and system config.
 
 Public Make targets stay intent-oriented:
 
 - `helm-preflight`
 - `helm-install`
-- `helm-start`
-- `helm-stop`
 - `helm-uninstall`
 - `helm-purge-crds`
 
 The internal install direction is:
 
 ```text
-preflight -> install
+preflight -> install-operator -> install-system
 ```
 
-`helm-install` follows product-style Helm UX and installs the runtime selected
-by Helm values. The default chart starts the operator from the published
-Docker Hub image. Site-specific values may also enable node-discovery during
-install.
+`helm-install` follows product-style Helm UX and installs the operator first,
+then creates the `ChillSystem` root resource that drives runtime reconciliation.
 
 The internal cleanup direction is:
 
 ```text
-stop(node-discovery -> operator) -> uninstall -> purge-crds
+uninstall-system(ChillSystem finalizer cleanup) -> uninstall-operator -> purge-crds
 ```
 
-`helm-start` remains available for restarting a stopped release or enabling
-runtime components after changing image values. `helm-stop` disables them in
-reverse order.
-
-`helm-uninstall` removes the Helm release after runtime components are disabled
-and deletes the operator-created singleton `ChillSystem` status object. CRDs
-remain by default. `helm-purge-crds` is a separate guarded destructive action.
+`helm-uninstall` removes the system release first. Deleting the `ChillSystem`
+root CR triggers operator finalization, which removes operator-managed
+DaemonSets, node metadata, and CHILL `DeviceClass` resources before the
+operator release is removed. CRDs remain by default. `helm-purge-crds` is a
+separate guarded destructive action.
 
 ## Consequences
 
-Operators get a small Helm-oriented command surface, while CHILL-specific dependency intent remains centralized in one internal script.
+Operators get a small Helm-oriented command surface, while CHILL-specific dependency intent remains centralized in Kubernetes reconciliation and one internal script.
 
-Future runtime modules should extend the internal release flow first, then wire Helm values or manifests behind the public intent-oriented targets.
+Future runtime modules should be modeled under the `ChillSystem` root resource first. Helm should package the desired root/config resources, not become a CHILL-specific lifecycle engine.

@@ -1,31 +1,14 @@
 {{- define "chill.validateValues" -}}
-{{- $operatorPlaceholderRepository := "chill/operator" -}}
-{{- $operatorPlaceholderTag := "latest" -}}
 {{- $nodeDiscoveryPlaceholderRepository := "chill/node-discovery" -}}
 {{- $nodeDiscoveryPlaceholderTag := "latest" -}}
-{{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
-{{- if empty .Values.operator.image.repository -}}
-{{- fail "operator.image.repository must not be empty" -}}
-{{- end -}}
-{{- if empty $operatorImageTag -}}
-{{- fail "operator.image.tag or Chart.appVersion must not be empty" -}}
-{{- end -}}
-{{- if empty .Values.operator.image.pullPolicy -}}
-{{- fail "operator.image.pullPolicy must not be empty" -}}
-{{- end -}}
-{{- if gt (int .Values.operator.replicaCount) 0 -}}
-{{- if and (eq .Values.operator.image.repository $operatorPlaceholderRepository) (eq $operatorImageTag $operatorPlaceholderTag) (ne .Values.operator.image.pullPolicy "Never") -}}
-{{- fail "operator image chill/operator:latest is a local development placeholder, not a published runtime image; set operator.image.repository/tag to a published image or use operator.image.pullPolicy=Never with a node-local image" -}}
-{{- end -}}
+{{- if empty (include "chill.systemName" .) -}}
+{{- fail "system.name or release name must not be empty" -}}
 {{- end -}}
 {{- if and .Values.discovery.enabled .Values.discovery.requireCatalogMatch .Values.discovery.catalog.enabled (empty .Values.discovery.catalog.classes) -}}
 {{- fail "discovery.catalog.classes must contain at least one class when discovery.requireCatalogMatch=true" -}}
 {{- end -}}
 {{- if .Values.nodeDiscovery.enabled -}}
-{{- if empty .Values.nodeDiscovery.reconcileInterval -}}
-{{- fail "nodeDiscovery.reconcileInterval must not be empty when nodeDiscovery.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.nodeDiscovery.image.repository -}}
 {{- fail "nodeDiscovery.image.repository must not be empty when nodeDiscovery.enabled=true" -}}
 {{- end -}}

@@ -17,14 +17,12 @@ const (
 	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
-// Options configures the namespace-local CHILL status surface.
+// Options configures CHILL system reconciliation defaults.
 type Options struct {
-	SystemName                 string
-	Namespace                  string
-	OperatorDeploymentName     string
-	NodeDiscoveryDaemonSetName string
-	NodeDiscoveryEnabled       bool
-	RefreshInterval            time.Duration
+	SystemName             string
+	Namespace              string
+	OperatorDeploymentName string
+	RefreshInterval        time.Duration
 }
 
 // DefaultNamespace returns the operator Pod namespace when it can be resolved.
@@ -41,18 +39,13 @@ func DefaultNamespace() string {
 
 func (o Options) Defaulted() Options {
 	defaulted := Options{
-		SystemName:                 defaults.String(o.SystemName, DefaultSystemName),
-		Namespace:                  strings.TrimSpace(o.Namespace),
-		OperatorDeploymentName:     strings.TrimSpace(o.OperatorDeploymentName),
-		NodeDiscoveryDaemonSetName: strings.TrimSpace(o.NodeDiscoveryDaemonSetName),
-		NodeDiscoveryEnabled:       o.NodeDiscoveryEnabled,
-		RefreshInterval:            o.RefreshInterval,
+		SystemName:             defaults.String(o.SystemName, DefaultSystemName),
+		Namespace:              strings.TrimSpace(o.Namespace),
+		OperatorDeploymentName: strings.TrimSpace(o.OperatorDeploymentName),
+		RefreshInterval:        o.RefreshInterval,
 	}
 	if defaulted.OperatorDeploymentName == "" {
 		defaulted.OperatorDeploymentName = DefaultOperatorDeploymentName()
-	}
-	if defaulted.NodeDiscoveryDaemonSetName == "" {
-		defaulted.NodeDiscoveryDaemonSetName = DefaultNodeDiscoveryDaemonSetName()
 	}
 	if defaulted.RefreshInterval == 0 {
 		defaulted.RefreshInterval = DefaultRefreshInterval
@@ -90,10 +83,6 @@ func (r *ChillSystemReconciler) namespace() string {
 
 func (r *ChillSystemReconciler) operatorDeploymentName() string {
 	return r.Options.Defaulted().OperatorDeploymentName
-}
-
-func (r *ChillSystemReconciler) nodeDiscoveryDaemonSetName() string {
-	return r.Options.Defaulted().NodeDiscoveryDaemonSetName
 }
 
 func (r *ChillSystemReconciler) refreshInterval() time.Duration {

@@ -20,7 +20,6 @@ rules:
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - apps
@@ -47,12 +46,21 @@ rules:
   resources:
   - chillsystems
   verbs:
-  - create
   - get
   - list
   - patch
   - update
   - watch
+- apiGroups:
+  - edge.dacs.io
+  resources:
+  - chillsystems/finalizers
+  - clusterenergymodels/finalizers
+  - deviceclasses/finalizers
+  - deviceprofiles/finalizers
+  - modelspecs/finalizers
+  verbs:
+  - update
 - apiGroups:
   - edge.dacs.io
   resources:
@@ -80,12 +88,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - edge.dacs.io
-  resources:
-  - clusterenergymodels/finalizers
-  - deviceclasses/finalizers
-  - deviceprofiles/finalizers
-  - modelspecs/finalizers
-  verbs:
-  - update

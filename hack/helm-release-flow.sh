@@ -6,14 +6,18 @@ command="${1:-help}"
 helm_bin="${HELM:-helm}"
 kubectl_bin="${KUBECTL:-kubectl}"
 kubeconform_bin="${KUBECONFORM:-bin/kubeconform}"
-kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition}"
+kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,ChillSystem}"
 
-release_name="${HELM_RELEASE:-chill}"
+system_release="${HELM_RELEASE:-chill}"
+operator_release="${HELM_OPERATOR_RELEASE:-chill-operator}"
 release_namespace="${HELM_NAMESPACE:-chill-system}"
-chart="${HELM_CHART:-charts/chill}"
+system_chart="${HELM_CHART:-charts/chill}"
+operator_chart="${HELM_OPERATOR_CHART:-charts/chill-operator}"
 timeout="${HELM_TIMEOUT:-2m}"
-values_file="${HELM_VALUES:-}"
-extra_helm_set="${HELM_SET:-}"
+system_values_file="${HELM_VALUES:-}"
+operator_values_file="${HELM_OPERATOR_VALUES:-}"
+system_extra_set="${HELM_SET:-}"
+operator_extra_set="${HELM_OPERATOR_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 
@@ -23,33 +27,43 @@ Usage: $0 <command>
 
 Commands:
   preflight             Validate chart rendering and CRD ownership.
-  install               Install or upgrade CHILL using the runtime selected by Helm values.
-  start                 Start runtime components in dependency order.
-  stop                  Stop runtime components in cleanup order.
-  uninstall             Stop runtime components, uninstall the release, keep CRDs.
-  purge-crds             Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=${release_name}.
+  install               Install or upgrade CHILL operator, then CHILL system.
+  uninstall             Uninstall CHILL system, then CHILL operator.
+  purge-crds            Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=${operator_release}.
 
 Environment:
-  HELM_RELEASE           Helm release name. Default: chill
+  HELM_OPERATOR_RELEASE  Operator Helm release name. Default: chill-operator
+  HELM_RELEASE           CHILL system Helm release name. Default: chill
   HELM_NAMESPACE         Helm release namespace. Default: chill-system
-  HELM_CHART             Chart path. Default: charts/chill
-  HELM_VALUES            Optional values file.
-  HELM_SET               Extra Helm --set arguments, for simple unquoted flags.
+  HELM_OPERATOR_CHART    Operator chart path. Default: charts/chill-operator
+  HELM_CHART             System chart path. Default: charts/chill
+  HELM_OPERATOR_VALUES   Optional operator values file.
+  HELM_VALUES            Optional system values file.
+  HELM_OPERATOR_SET      Extra operator Helm flags.
+  HELM_SET               Extra system Helm flags.
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
 EOF
 }
 
-values_args=()
-if [[ -n "${values_file}" ]]; then
-	values_args+=("-f" "${values_file}")
+operator_values_args=()
+if [[ -n "${operator_values_file}" ]]; then
+	operator_values_args+=("-f" "${operator_values_file}")
 fi
 
-extra_args=()
-if [[ -n "${extra_helm_set}" ]]; then
-	# Intentionally supports simple flag lists such as:
-	# HELM_SET='--set foo=bar --set baz=qux'
-	extra_args=(${extra_helm_set})
+system_values_args=()
+if [[ -n "${system_values_file}" ]]; then
+	system_values_args+=("-f" "${system_values_file}")
+fi
+
+operator_extra_args=()
+if [[ -n "${operator_extra_set}" ]]; then
+	operator_extra_args=(${operator_extra_set})
+fi
+
+system_extra_args=()
+if [[ -n "${system_extra_set}" ]]; then
+	system_extra_args=(${system_extra_set})
 fi
 
 split_image_ref() {
@@ -73,71 +87,34 @@ append_image_values() {
 	target_args+=("--set" "${prefix}.image.tag=${image##*:}")
 }
 
-helm_upgrade() {
-	local phase="$1"
-	shift
-	helm_upgrade_args "${phase}" "--wait" "$@"
-}
-
-helm_upgrade_reuse() {
-	local phase="$1"
-	shift
-	helm_upgrade_args "${phase}" "--reuse-values" "--wait" "$@"
-}
-
-helm_upgrade_reuse_nowait() {
-	local phase="$1"
-	shift
-	helm_upgrade_args "${phase}" "--reuse-values" "$@"
-}
-
-helm_upgrade_args() {
-	local phase="$1"
-	shift
-	echo "==> ${phase}"
-	"${helm_bin}" upgrade --install "${release_name}" "${chart}" \
-		--namespace "${release_namespace}" \
-		--create-namespace \
-		"${values_args[@]}" \
-		"$@" \
-		"${extra_args[@]}" \
-		--timeout "${timeout}"
-}
-
 render_validate() {
 	local out
 	out="$(mktemp --suffix=.yaml)"
-	"${helm_bin}" lint "${chart}" "${values_args[@]}"
-	"${helm_bin}" template "${release_name}" "${chart}" \
+	trap 'rm -f "${out}"' EXIT
+
+	"${helm_bin}" lint "${operator_chart}" "${operator_values_args[@]}"
+	"${helm_bin}" lint "${system_chart}" "${system_values_args[@]}"
+	"${helm_bin}" template "${operator_release}" "${operator_chart}" \
 		--namespace "${release_namespace}" \
-		"${values_args[@]}" \
+		"${operator_values_args[@]}" \
 		>"${out}"
+	"${helm_bin}" template "${system_release}" "${system_chart}" \
+		--namespace "${release_namespace}" \
+		"${system_values_args[@]}" \
+		>>"${out}"
 	if [[ -x "${kubeconform_bin}" ]]; then
 		"${kubeconform_bin}" ${kubeconform_flags} "${out}"
 	else
 		echo "skip kubeconform: ${kubeconform_bin} is not executable" >&2
 	fi
-	rm -f "${out}"
 }
 
 crd_check() {
-	RELEASE_NAME="${release_name}" \
+	RELEASE_NAME="${operator_release}" \
 	RELEASE_NAMESPACE="${release_namespace}" \
 	CRD_DIR=config/crd/bases \
 	KUBECTL="${kubectl_bin}" \
 		./hack/helm-crd-ownership.sh check
-}
-
-release_exists() {
-	"${helm_bin}" status "${release_name}" --namespace "${release_namespace}" >/dev/null 2>&1
-}
-
-require_release() {
-	if release_exists; then
-		return
-	fi
-	echo "Helm release ${release_name}/${release_namespace} is not installed. Run helm-install first." >&2
-	exit 1
 }
 
 preflight() {
@@ -145,114 +122,64 @@ preflight() {
 	crd_check
 }
 
-release_system_status_name() {
-	local status_name=""
-	if release_exists; then
-		status_name="$("${helm_bin}" get manifest "${release_name}" --namespace "${release_namespace}" |
-			awk -F'--system-status-name=' 'NF > 1 {print $2; exit}' |
-			xargs)"
-	fi
-	if [[ -z "${status_name}" ]]; then
-		status_name="${release_name}"
-	fi
-	printf "%s\n" "${status_name}"
-}
-
-cleanup_system_status() {
-	local status_name="$1"
-	if [[ -z "${status_name}" ]]; then
-		return
-	fi
-	if ! "${kubectl_bin}" get crd chillsystems.edge.dacs.io >/dev/null 2>&1; then
-		echo "skip ChillSystem cleanup: CRD chillsystems.edge.dacs.io is not installed"
-		return
-	fi
-	echo "==> cleanup-system-status"
-	"${kubectl_bin}" delete chillsystem.edge.dacs.io "${status_name}" \
+install_operator() {
+	local args=()
+	append_image_values args operator "${operator_image}"
+	echo "==> install-operator"
+	"${helm_bin}" upgrade --install "${operator_release}" "${operator_chart}" \
 		--namespace "${release_namespace}" \
-		--ignore-not-found
+		--create-namespace \
+		"${operator_values_args[@]}" \
+		"${args[@]}" \
+		"${operator_extra_args[@]}" \
+		--wait \
+		--timeout "${timeout}"
 }
 
-install_base() {
-	local args=(
-		"--set" "crds.enabled=true"
-	)
-	append_image_values args operator "${operator_image}"
+install_system() {
+	local args=()
 	append_image_values args nodeDiscovery "${node_discovery_image}"
-	helm_upgrade "install" "${args[@]}"
+	echo "==> install-system"
+	"${helm_bin}" upgrade --install "${system_release}" "${system_chart}" \
+		--namespace "${release_namespace}" \
+		--create-namespace \
+		"${system_values_args[@]}" \
+		"${args[@]}" \
+		"${system_extra_args[@]}" \
+		--wait \
+		--timeout "${timeout}"
 }
 
-operator_up() {
-	require_release
-	local args=(
-		"--set" "crds.enabled=true"
-		"--set" "operator.replicaCount=1"
-		"--set" "nodeDiscovery.enabled=false"
-	)
-	append_image_values args operator "${operator_image}"
-	helm_upgrade_reuse "operator-up" "${args[@]}"
-}
-
-discovery_up() {
-	require_release
-	operator_up
-	local args=(
-		"--set" "crds.enabled=true"
-		"--set" "operator.replicaCount=1"
-		"--set" "nodeDiscovery.enabled=true"
-	)
-	append_image_values args operator "${operator_image}"
-	append_image_values args nodeDiscovery "${node_discovery_image}"
-	helm_upgrade_reuse "discovery-up" "${args[@]}"
-}
-
-discovery_down() {
-	require_release
-	helm_upgrade_reuse_nowait "discovery-down" \
-		--set crds.enabled=true \
-		--set nodeDiscovery.enabled=false
-}
-
-operator_down() {
-	require_release
-	helm_upgrade_reuse "operator-down" \
-		--set crds.enabled=true \
-		--set operator.replicaCount=0 \
-		--set nodeDiscovery.enabled=false
-}
-
-start_release() {
-	discovery_up
-}
-
-stop_release() {
-	if release_exists; then
-		discovery_down
-		operator_down
-	fi
+install_release() {
+	preflight
+	install_operator
+	install_system
 }
 
 uninstall_release() {
-	local status_name
-	status_name="$(release_system_status_name)"
-	stop_release
-	echo "==> uninstall"
-	"${helm_bin}" uninstall "${release_name}" \
+	echo "==> uninstall-system"
+	"${helm_bin}" uninstall "${system_release}" \
 		--namespace "${release_namespace}" \
 		--ignore-not-found \
 		--cascade foreground \
 		--wait \
 		--timeout "${timeout}"
-	cleanup_system_status "${status_name}"
+	echo "==> uninstall-operator"
+	"${helm_bin}" uninstall "${operator_release}" \
+		--namespace "${release_namespace}" \
+		--ignore-not-found \
+		--cascade foreground \
+		--wait \
+		--timeout "${timeout}"
 }
 
 purge_crds() {
-	if [[ "${CONFIRM_PURGE_CRDS:-}" != "${release_name}" ]]; then
-		echo "Refusing to delete CRDs. Set CONFIRM_PURGE_CRDS=${release_name} to continue." >&2
+	if [[ "${CONFIRM_PURGE_CRDS:-}" != "${operator_release}" ]]; then
+		echo "Refusing to delete CRDs. Set CONFIRM_PURGE_CRDS=${operator_release} to continue." >&2
 		exit 1
 	fi
-	if release_exists; then
-		echo "Refusing to delete CRDs while Helm release ${release_name}/${release_namespace} is installed. Run helm-uninstall first." >&2
+	if "${helm_bin}" status "${operator_release}" --namespace "${release_namespace}" >/dev/null 2>&1; then
+		echo "Refusing to delete CRDs while Helm release ${operator_release}/${release_namespace} is installed. Run helm-uninstall first." >&2
 		exit 1
 	fi
 	"${kubectl_bin}" delete -f config/crd/bases --ignore-not-found
@@ -263,14 +190,7 @@ preflight)
 	preflight
 	;;
 install)
-	preflight
-	install_base
-	;;
-start)
-	start_release
-	;;
-stop)
-	stop_release
+	install_release
 	;;
 uninstall)
 	uninstall_release

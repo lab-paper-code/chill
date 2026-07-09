@@ -13,29 +13,29 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
 
-func (r *DeviceDiscoveryReconciler) labelKey() string {
-	if r.Options.LabelKey != "" {
-		return r.Options.LabelKey
+func labelKey(options DeviceDiscoveryOptions) string {
+	if options.LabelKey != "" {
+		return options.LabelKey
 	}
 	return defaultDeviceDiscoveryLabelKey
 }
 
-func (r *DeviceDiscoveryReconciler) nodeListOptions() ([]client.ListOption, error) {
-	if r.Options.NodeLabelSelector == "" {
+func nodeListOptions(nodeLabelSelector string) ([]client.ListOption, error) {
+	if nodeLabelSelector == "" {
 		return nil, nil
 	}
-	selector, err := k8slabels.Parse(r.Options.NodeLabelSelector)
+	selector, err := k8slabels.Parse(nodeLabelSelector)
 	if err != nil {
-		return nil, fmt.Errorf("parse device discovery node label selector %q: %w", r.Options.NodeLabelSelector, err)
+		return nil, fmt.Errorf("parse device discovery node label selector %q: %w", nodeLabelSelector, err)
 	}
 	return []client.ListOption{client.MatchingLabelsSelector{Selector: selector}}, nil
 }
 
-func (r *DeviceDiscoveryReconciler) ensureNodeClassLabel(ctx context.Context, node *corev1.Node, className string) error {
+func (r *DeviceDiscoveryReconciler) ensureNodeClassLabel(ctx context.Context, node *corev1.Node, options DeviceDiscoveryOptions, className string) error {
 	original := node.DeepCopy()
 	labels := mutableNodeLabels(node)
 	annotations := mutableNodeAnnotations(node)
-	reason := applyDeviceClassLabelPolicy(labels, annotations, r.labelKey(), className, r.Options.OverwriteManualLabels)
+	reason := applyDeviceClassLabelPolicy(labels, annotations, labelKey(options), className, options.OverwriteManualLabels)
 	applyDeviceClassDiscoveryStatus(annotations, chillmeta.DiscoveryResultMatched, reason, className)
 	return r.patchNodeMetadataIfChanged(ctx, node, original, "device class label")
 }

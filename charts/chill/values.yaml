@@ -1,12 +1,8 @@
 nameOverride: ""
 fullnameOverride: ""
 
-crds:
-  enabled: true
-
-systemStatus:
+system:
   name: ""
-  refreshInterval: 30s
 
 nodeSelection:
   labelSelector: node-role.kubernetes.io/edge
@@ -132,7 +128,6 @@ discovery:
 nodeDiscovery:
   enabled: true
   interval: 10m
-  reconcileInterval: 30s
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml
   cleanupOnExit: true
@@ -273,34 +268,3 @@ nodeDiscovery:
   serviceAccount:
     create: true
     name: ""
-
-operator:
-  replicaCount: 1
-  image:
-    repository: daclab/chill-operator
-    tag: ""
-    pullPolicy: IfNotPresent
-  metricsBindAddress: "0"
-  healthProbeBindAddress: ":8081"
-  leaderElection: true
-  nodeSelector: {}
-  affinity: {}
-  tolerations: []
-  resources:
-    limits:
-      cpu: 500m
-      memory: 128Mi
-    requests:
-      cpu: 10m
-      memory: 64Mi
-  podSecurityContext:
-    runAsNonRoot: true
-  securityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-
-serviceAccount:
-  create: true
-  name: ""

@@ -28,9 +28,8 @@ Helm install and cleanup ordering is implemented behind the repo Make targets:
 
 ```sh
 make helm-install
-make helm-start
 make helm-uninstall
 ```
 
 `make helm-purge-crds` is intentionally guarded and requires
-`CONFIRM_PURGE_CRDS=chill`.
+`CONFIRM_PURGE_CRDS=chill-operator`.

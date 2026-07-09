@@ -6,14 +6,16 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
+
+const finalizerName = "edge.dacs.io/chillsystem-finalizer"
 
 // ChillSystemReconciler maintains the root CHILL status resource.
 type ChillSystemReconciler struct {
@@ -22,44 +24,55 @@ type ChillSystemReconciler struct {
 	Options Options
 }
 
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;create;patch;update
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments;daemonsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/finalizers,verbs=update
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;delete
 
-// Reconcile updates the singleton ChillSystem status.
+// Reconcile updates ChillSystem finalization and status.
 func (r *ChillSystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	if req.NamespacedName != r.systemKey() {
-		return ctrl.Result{}, nil
+	if req.Name == "" {
+		req.Name = r.systemName()
 	}
-	return r.reconcileSystem(ctx)
+	return r.reconcileSystem(ctx, req.Name)
 }
 
-func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context) (ctrl.Result, error) {
-	key := r.systemKey()
+func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context, name string) (ctrl.Result, error) {
+	key := types.NamespacedName{Name: name}
 	system := &edgev1alpha1.ChillSystem{}
 	if err := r.Get(ctx, key, system); err != nil {
 		if apierrors.IsNotFound(err) {
-			system = &edgev1alpha1.ChillSystem{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      key.Name,
-					Namespace: key.Namespace,
-				},
-			}
-			if _, err := r.setSystemOwnerReference(ctx, system); err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.Create(ctx, system); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, fmt.Errorf("create ChillSystem %s: %w", key.String(), err)
-			}
-			return ctrl.Result{RequeueAfter: time.Second}, nil
+			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("get ChillSystem %s: %w", key.String(), err)
 	}
-	if changed, err := r.ensureSystemOwnerReference(ctx, system); err != nil {
-		return ctrl.Result{}, err
-	} else if changed {
+
+	if !system.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(system, finalizerName) {
+			return ctrl.Result{}, nil
+		}
+		if done, err := r.finalize(ctx, system); err != nil {
+			return ctrl.Result{}, err
+		} else if !done {
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		}
+		original := system.DeepCopy()
+		controllerutil.RemoveFinalizer(system, finalizerName)
+		if err := r.Patch(ctx, system, client.MergeFrom(original)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("remove ChillSystem finalizer %s: %w", key.String(), err)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(system, finalizerName) {
+		original := system.DeepCopy()
+		controllerutil.AddFinalizer(system, finalizerName)
+		if err := r.Patch(ctx, system, client.MergeFrom(original)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add ChillSystem finalizer %s: %w", key.String(), err)
+		}
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -72,8 +85,4 @@ func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context) (ctrl.Resul
 		return ctrl.Result{}, fmt.Errorf("update ChillSystem %s status: %w", key.String(), err)
 	}
 	return ctrl.Result{}, nil
-}
-
-func (r *ChillSystemReconciler) systemKey() types.NamespacedName {
-	return types.NamespacedName{Namespace: r.namespace(), Name: r.systemName()}
 }

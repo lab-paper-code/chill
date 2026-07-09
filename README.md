@@ -48,21 +48,26 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 
 ## Helm
 
-The default chart follows product-style Helm UX: a plain install starts the
-operator and testbed hardware discovery with the published Docker Hub images.
+CHILL uses two Helm releases:
+
+- `charts/chill-operator`: CRDs, RBAC, and the operator Deployment.
+- `charts/chill`: the cluster-scoped `ChillSystem` root CR and system config.
 
 ```sh
-helm template chill charts/chill --namespace chill-system
-helm install chill charts/chill --namespace chill-system --create-namespace
+helm install chill-operator charts/chill-operator \
+  --namespace chill-system \
+  --create-namespace
+
+helm install chill charts/chill \
+  --namespace chill-system
 ```
 
-For cluster operations, prefer the repo Make targets. They keep component
-ordering and cleanup guards inside the repo tooling instead of exposing an
-application-specific phase graph to operators.
+The repo Make targets run the same order:
 
 ```sh
 make helm-preflight
 make helm-install
+make helm-uninstall
 ```
 
 Default image repositories:
@@ -72,34 +77,25 @@ daclab/chill-operator:<chart appVersion>
 daclab/chill-node-discovery:<chart appVersion>
 ```
 
-Once the operator is running, CHILL publishes a namespace-local status object:
+Once the system is installed, CHILL publishes a cluster-scoped status object:
 
 ```sh
-kubectl -n chill-system get chillsystem
-kubectl -n chill-system describe chillsystem chill
-```
-
-Cleanup is also exposed as high-level Helm operations:
-
-```sh
-make helm-stop
-make helm-uninstall
+kubectl get chillsystem
+kubectl describe chillsystem chill
 ```
 
 CRD deletion is a separate guarded action:
 
 ```sh
-make helm-purge-crds CONFIRM_PURGE_CRDS=chill
+make helm-purge-crds CONFIRM_PURGE_CRDS=chill-operator
 ```
 
-For a real-cluster install smoke, keep the first pass inert: do not let Helm
-claim CRDs and do not start pods. This catches RBAC, namespace, ConfigMap, and
-Deployment rendering issues without depending on a registry image.
+For an operator-only smoke without starting pods:
 
 ```sh
 make helm-install-smoke
 kubectl api-resources --api-group=edge.dacs.io
-kubectl -n chill-system get deploy,cm,sa,role,rolebinding
+kubectl -n chill-system get deploy,sa,role,rolebinding
 ```
 
 Before a full Helm install that manages CRDs, check whether existing CRDs are
@@ -115,35 +111,6 @@ If this repo is taking over CRDs from a retired release, adopt them explicitly:
 make helm-adopt-crds \
   FROM_RELEASE_NAME=<old-release> \
   FROM_RELEASE_NAMESPACE=<old-namespace>
-```
-
-For the six-node lab testbed, discovery runs in two stages: the node daemon labels hardware facts from host files, then the operator matches those labels to the device catalog and creates `DeviceClass` objects.
-
-```sh
-kubectl label node <node-name> node-role.kubernetes.io/edge=
-
-helm upgrade --install chill charts/chill \
-  --namespace chill-system \
-  --create-namespace
-
-kubectl get nodes --show-labels | grep edge.dacs.io
-kubectl get deviceclasses.edge.dacs.io
-```
-
-For an operator-only runtime smoke with a node-local image, set
-`operator.nodeSelector` and `operator.image.pullPolicy=Never` through Helm
-instead of patching the Deployment by hand.
-
-```sh
-helm upgrade chill charts/chill \
-  --namespace chill-system \
-  --set crds.enabled=false \
-  --set discovery.enabled=false \
-  --set operator.replicaCount=1 \
-  --set operator.image.repository=chill/operator \
-  --set operator.image.tag=<local-tag> \
-  --set operator.image.pullPolicy=Never \
-  --set 'operator.nodeSelector.kubernetes\.io/hostname=<node-name>'
 ```
 
 Useful diagnosis is written to node annotations:

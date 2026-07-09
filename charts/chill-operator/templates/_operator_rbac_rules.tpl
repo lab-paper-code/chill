@@ -1,4 +1,4 @@
-{{- define "chill.operatorRoleRules" -}}
+{{- define "chilloperator.operatorRoleRules" -}}
 - apiGroups:
   - ""
   resources:
@@ -15,7 +15,6 @@
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - apps
@@ -42,12 +41,21 @@
   resources:
   - chillsystems
   verbs:
-  - create
   - get
   - list
   - patch
   - update
   - watch
+- apiGroups:
+  - edge.dacs.io
+  resources:
+  - chillsystems/finalizers
+  - clusterenergymodels/finalizers
+  - deviceclasses/finalizers
+  - deviceprofiles/finalizers
+  - modelspecs/finalizers
+  verbs:
+  - update
 - apiGroups:
   - edge.dacs.io
   resources:
@@ -75,13 +83,4 @@
   - patch
   - update
   - watch
-- apiGroups:
-  - edge.dacs.io
-  resources:
-  - clusterenergymodels/finalizers
-  - deviceclasses/finalizers
-  - deviceprofiles/finalizers
-  - modelspecs/finalizers
-  verbs:
-  - update
 {{- end -}}

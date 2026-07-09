@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -26,6 +27,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
 		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoverySystem(ctx, namespace.Name, runID)
 		node := createDiscoveryNode(ctx, "orin-nano-"+runID, runID, map[string]string{
 			"jetson-model": "orin-nano",
 		})
@@ -61,6 +63,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
 		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoverySystem(ctx, namespace.Name, runID)
 		node := createDiscoveryNode(ctx, "manual-"+runID, runID, map[string]string{
 			"jetson-model":        "orin-nano",
 			chillmeta.DeviceClass: "manual-class",
@@ -90,6 +93,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
 		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoverySystem(ctx, namespace.Name, runID)
 		node := createDiscoveryNodeWithAnnotations(ctx, "managed-"+runID, runID, map[string]string{
 			"jetson-model":        "orin-nano",
 			chillmeta.DeviceClass: "stale-class",
@@ -119,6 +123,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
 		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoverySystem(ctx, namespace.Name, runID)
 		node := createDiscoveryNode(ctx, "unmatched-"+runID, runID, map[string]string{
 			"jetson-model": "unknown",
 		})
@@ -144,6 +149,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
 		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
+		createDiscoverySystem(ctx, namespace.Name, runID)
 		createDiscoveryNode(ctx, "prune-"+runID, runID, map[string]string{
 			"jetson-model": "orin-nano",
 		})
@@ -177,7 +183,10 @@ var _ = Describe("DeviceClass discovery", func() {
 func discoveryReconciler(namespace, runID string) *DeviceDiscoveryReconciler {
 	return &DeviceDiscoveryReconciler{
 		Client: k8sClient,
+		Scheme: scheme.Scheme,
 		Options: DeviceDiscoveryOptions{
+			SystemName:          discoverySystemName(runID),
+			Namespace:           namespace,
 			LabelKey:            chillmeta.DeviceClass,
 			NodeLabelSelector:   "edge.dacs.io/test-run=" + runID,
 			RequireCatalogMatch: true,
@@ -185,6 +194,35 @@ func discoveryReconciler(namespace, runID string) *DeviceDiscoveryReconciler {
 			CatalogName:         discoveryCatalogName,
 		},
 	}
+}
+
+func createDiscoverySystem(ctx context.Context, namespace, runID string) {
+	requireCatalogMatch := true
+	system := &edgev1alpha1.ChillSystem{
+		ObjectMeta: metav1.ObjectMeta{Name: discoverySystemName(runID)},
+		Spec: edgev1alpha1.ChillSystemSpec{
+			ManagementNamespace: namespace,
+			DeviceDiscovery: edgev1alpha1.ChillDeviceDiscoverySpec{
+				Enabled:             true,
+				LabelKey:            chillmeta.DeviceClass,
+				NodeLabelSelector:   "edge.dacs.io/test-run=" + runID,
+				RequireCatalogMatch: &requireCatalogMatch,
+				Catalog: edgev1alpha1.ChillConfigMapKeyRef{
+					Namespace: namespace,
+					Name:      discoveryCatalogName,
+					Key:       deviceclass.CatalogDataKey,
+				},
+			},
+		},
+	}
+	Expect(k8sClient.Create(ctx, system)).To(Succeed())
+	DeferCleanup(func() {
+		_ = k8sClient.Delete(ctx, system)
+	})
+}
+
+func discoverySystemName(runID string) string {
+	return "system-" + runID
 }
 
 func createDiscoveryCatalogNamespace(ctx context.Context, runID string) *corev1.Namespace {

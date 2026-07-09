@@ -16,7 +16,7 @@ spec:
     shortNames:
     - csys
     singular: chillsystem
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.ready
@@ -47,8 +47,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ChillSystem is the namespace-local status surface for a CHILL
-          installation.
+        description: ChillSystem is the cluster-scoped root resource for a CHILL installation.
         properties:
           apiVersion:
             description: |-
@@ -68,12 +67,79 @@ spec:
           metadata:
             type: object
           spec:
-            description: ChillSystemSpec defines the desired state of the CHILL management
-              surface.
+            description: ChillSystemSpec defines one CHILL system instance managed
+              by the operator.
+            properties:
+              deviceDiscovery:
+                description: DeviceDiscovery configures node-based DeviceClass discovery.
+                properties:
+                  catalog:
+                    description: Catalog references the ConfigMap containing the DeviceClass
+                      catalog.
+                    properties:
+                      key:
+                        description: Key is the ConfigMap data key.
+                        type: string
+                      name:
+                        description: Name is the ConfigMap name.
+                        type: string
+                      namespace:
+                        description: Namespace is the ConfigMap namespace. When omitted,
+                          managementNamespace is used.
+                        type: string
+                    type: object
+                  enabled:
+                    description: Enabled controls whether the operator should derive
+                      DeviceClasses from Nodes.
+                    type: boolean
+                  labelKey:
+                    description: LabelKey is the Node label key used to bind Nodes
+                      to DeviceClasses.
+                    type: string
+                  nodeLabelSelector:
+                    description: NodeLabelSelector limits which Nodes participate
+                      in discovery.
+                    type: string
+                  overwriteManualLabels:
+                    description: OverwriteManualLabels allows discovery to replace
+                      existing non-CHILL device-class labels.
+                    type: boolean
+                  requireCatalogMatch:
+                    description: |-
+                      RequireCatalogMatch controls whether Nodes must match the catalog before a DeviceClass is created.
+                      When omitted, the operator uses the safe default of true.
+                    type: boolean
+                type: object
+              managementNamespace:
+                description: |-
+                  ManagementNamespace contains the namespaced CHILL support resources for this system.
+                  When omitted, the operator namespace is used.
+                type: string
+              nodeDiscovery:
+                description: NodeDiscovery configures the operator-managed node-discovery
+                  DaemonSet.
+                properties:
+                  configMapKey:
+                    description: ConfigMapKey is the data key containing node-discovery
+                      config.
+                    type: string
+                  configMapName:
+                    description: ConfigMapName overrides the generated node-discovery
+                      config ConfigMap name.
+                    type: string
+                  daemonSetName:
+                    description: DaemonSetName overrides the generated node-discovery
+                      DaemonSet name.
+                    type: string
+                  enabled:
+                    description: Enabled controls whether the operator should run
+                      node-discovery.
+                    type: boolean
+                type: object
             type: object
           status:
-            description: ChillSystemStatus defines the observed state of CHILL in
-              one management namespace.
+            description: ChillSystemStatus defines the observed state of one CHILL
+              system instance.
             properties:
               components:
                 description: Components reports detailed per-component status.

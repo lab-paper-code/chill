@@ -1,32 +1,8 @@
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ include "chill.fullname" . }}-operator-role
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-rules:
-{{ include "chill.operatorRoleRules" . | nindent 2 }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "chill.fullname" . }}-operator-rolebinding
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "chill.fullname" . }}-operator-role
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "chill.operatorServiceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
 {{- if .Values.nodeDiscovery.enabled }}
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "chill.fullname" . }}-node-discovery-role
+  name: {{ include "chill.fullname" . }}-node-discovery
   labels:
     app.kubernetes.io/component: node-discovery
     {{- include "chill.labels" . | nindent 4 }}
@@ -42,72 +18,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "chill.fullname" . }}-node-discovery-rolebinding
+  name: {{ include "chill.fullname" . }}-node-discovery
   labels:
     app.kubernetes.io/component: node-discovery
     {{- include "chill.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "chill.fullname" . }}-node-discovery-role
+  name: {{ include "chill.fullname" . }}-node-discovery
 subjects:
   - kind: ServiceAccount
     name: {{ include "chill.nodeDiscoveryServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "chill.fullname" . }}-leader-election-role
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "chill.fullname" . }}-leader-election-rolebinding
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "chill.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "chill.fullname" . }}-leader-election-role
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "chill.operatorServiceAccountName" . }}
-    namespace: {{ .Release.Namespace }}

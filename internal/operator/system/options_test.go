@@ -20,9 +20,6 @@ func TestOptionsDefaultAndValidate(t *testing.T) {
 	if options.OperatorDeploymentName != DefaultOperatorDeploymentName() {
 		t.Fatalf("OperatorDeploymentName = %q, want %q", options.OperatorDeploymentName, DefaultOperatorDeploymentName())
 	}
-	if options.NodeDiscoveryDaemonSetName != DefaultNodeDiscoveryDaemonSetName() {
-		t.Fatalf("NodeDiscoveryDaemonSetName = %q, want %q", options.NodeDiscoveryDaemonSetName, DefaultNodeDiscoveryDaemonSetName())
-	}
 	if options.RefreshInterval != DefaultRefreshInterval {
 		t.Fatalf("RefreshInterval = %s, want %s", options.RefreshInterval, DefaultRefreshInterval)
 	}
@@ -42,9 +39,6 @@ func TestOptionsSystemNameDoesNotChangeWorkloadDefaults(t *testing.T) {
 	}
 	if options.OperatorDeploymentName != DefaultOperatorDeploymentName() {
 		t.Fatalf("OperatorDeploymentName = %q, want %q", options.OperatorDeploymentName, DefaultOperatorDeploymentName())
-	}
-	if options.NodeDiscoveryDaemonSetName != DefaultNodeDiscoveryDaemonSetName() {
-		t.Fatalf("NodeDiscoveryDaemonSetName = %q, want %q", options.NodeDiscoveryDaemonSetName, DefaultNodeDiscoveryDaemonSetName())
 	}
 }
 

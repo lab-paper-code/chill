@@ -43,7 +43,6 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
-	var enableDeviceDiscovery bool
 	var deviceDiscoveryLabelKey string
 	var deviceDiscoveryOverwriteManualLabels bool
 	var deviceDiscoveryNodeLabelSelector string
@@ -51,11 +50,9 @@ func main() {
 	var deviceDiscoveryCatalogNamespace string
 	var deviceDiscoveryCatalogName string
 	var deviceDiscoveryCatalogKey string
-	var systemStatusName string
-	var systemStatusNamespace string
+	var systemName string
+	var systemNamespace string
 	var systemStatusOperatorDeploymentName string
-	var systemStatusNodeDiscoveryDaemonSetName string
-	var systemStatusNodeDiscoveryEnabled bool
 	var systemStatusRefreshInterval time.Duration
 	var nodeDiscoveryConfigNamespace string
 	var nodeDiscoveryConfigName string
@@ -67,32 +64,26 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for the CHILL operator. "+
 			"Enabling this will ensure there is only one active operator.")
-	flag.BoolVar(&enableDeviceDiscovery, "device-discovery-enabled", false,
-		"Enable node-based DeviceClass discovery.")
 	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chillmeta.DeviceClass,
-		"Node label key used to bind nodes to discovered DeviceClasses.")
+		"Default Node label key used to bind nodes to discovered DeviceClasses.")
 	flag.BoolVar(&deviceDiscoveryOverwriteManualLabels, "device-discovery-overwrite-manual-labels", false,
-		"Overwrite existing node device-class labels during discovery.")
+		"Default policy for overwriting existing node device-class labels during discovery.")
 	flag.StringVar(&deviceDiscoveryNodeLabelSelector, "device-discovery-node-label-selector", "",
-		"Label selector limiting which Nodes participate in device discovery.")
+		"Default label selector limiting which Nodes participate in device discovery.")
 	flag.BoolVar(&deviceDiscoveryRequireCatalogMatch, "device-discovery-require-catalog-match", true,
-		"Only discover DeviceClasses for Nodes matched by the discovery catalog.")
+		"Default policy requiring Nodes to match the discovery catalog.")
 	flag.StringVar(&deviceDiscoveryCatalogNamespace, "device-discovery-catalog-namespace", os.Getenv("POD_NAMESPACE"),
-		"Namespace containing the optional device discovery catalog ConfigMap.")
+		"Default namespace containing the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogName, "device-discovery-catalog-name", "",
-		"Name of the optional device discovery catalog ConfigMap.")
+		"Default name of the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclass.CatalogDataKey,
-		"Data key containing the device discovery catalog in the ConfigMap.")
-	flag.StringVar(&systemStatusName, "system-status-name", system.DefaultSystemName,
-		"Name of the namespace-local ChillSystem status resource.")
-	flag.StringVar(&systemStatusNamespace, "system-status-namespace", system.DefaultNamespace(),
-		"Namespace containing the namespace-local ChillSystem status resource.")
+		"Default data key containing the device discovery catalog in the ConfigMap.")
+	flag.StringVar(&systemName, "system-status-name", system.DefaultSystemName,
+		"Default ChillSystem name used by compatibility refresh paths.")
+	flag.StringVar(&systemNamespace, "system-status-namespace", system.DefaultNamespace(),
+		"Operator namespace and default CHILL management namespace.")
 	flag.StringVar(&systemStatusOperatorDeploymentName, "system-status-operator-deployment-name", "",
 		"Name of the operator Deployment reported in ChillSystem status.")
-	flag.StringVar(&systemStatusNodeDiscoveryDaemonSetName, "system-status-node-discovery-daemonset-name", "",
-		"Name of the node-discovery DaemonSet reported in ChillSystem status.")
-	flag.BoolVar(&systemStatusNodeDiscoveryEnabled, "system-status-node-discovery-enabled", false,
-		"Report node-discovery as an enabled component in ChillSystem status.")
 	flag.DurationVar(
 		&systemStatusRefreshInterval,
 		"system-status-refresh-interval",
@@ -118,12 +109,10 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	systemStatusOptions := system.Options{
-		SystemName:                 systemStatusName,
-		Namespace:                  systemStatusNamespace,
-		OperatorDeploymentName:     systemStatusOperatorDeploymentName,
-		NodeDiscoveryDaemonSetName: systemStatusNodeDiscoveryDaemonSetName,
-		NodeDiscoveryEnabled:       systemStatusNodeDiscoveryEnabled,
-		RefreshInterval:            systemStatusRefreshInterval,
+		SystemName:             systemName,
+		Namespace:              systemNamespace,
+		OperatorDeploymentName: systemStatusOperatorDeploymentName,
+		RefreshInterval:        systemStatusRefreshInterval,
 	}
 	if err := systemStatusOptions.DefaultAndValidate(); err != nil {
 		setupLog.Error(err, "invalid ChillSystem status configuration")
@@ -131,6 +120,9 @@ func main() {
 	}
 	if nodeDiscoveryConfigNamespace == "" {
 		nodeDiscoveryConfigNamespace = systemStatusOptions.Namespace
+	}
+	if deviceDiscoveryCatalogNamespace == "" {
+		deviceDiscoveryCatalogNamespace = systemStatusOptions.Namespace
 	}
 
 	metricsServerOptions := metricsserver.Options{
@@ -168,10 +160,8 @@ func main() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Options: nodediscovery.Options{
-			Enabled:           systemStatusNodeDiscoveryEnabled,
-			SystemName:        systemStatusName,
+			SystemName:        systemName,
 			Namespace:         nodeDiscoveryConfigNamespace,
-			DaemonSetName:     systemStatusNodeDiscoveryDaemonSetName,
 			ConfigMapName:     nodeDiscoveryConfigName,
 			ConfigMapKey:      nodeDiscoveryConfigKey,
 			ReconcileInterval: nodeDiscoveryReconcileInterval,
@@ -180,22 +170,23 @@ func main() {
 		setupLog.Error(err, "unable to register reconciler", "resource", "NodeDiscovery")
 		os.Exit(1)
 	}
-	if enableDeviceDiscovery {
-		if err = (&discovery.DeviceDiscoveryReconciler{
-			Client: mgr.GetClient(),
-			Options: discovery.DeviceDiscoveryOptions{
-				LabelKey:              deviceDiscoveryLabelKey,
-				OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
-				NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,
-				RequireCatalogMatch:   deviceDiscoveryRequireCatalogMatch,
-				CatalogNamespace:      deviceDiscoveryCatalogNamespace,
-				CatalogName:           deviceDiscoveryCatalogName,
-				CatalogKey:            deviceDiscoveryCatalogKey,
-			},
-		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to register reconciler", "resource", "DeviceDiscovery")
-			os.Exit(1)
-		}
+	if err = (&discovery.DeviceDiscoveryReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Options: discovery.DeviceDiscoveryOptions{
+			SystemName:            systemName,
+			Namespace:             systemStatusOptions.Namespace,
+			LabelKey:              deviceDiscoveryLabelKey,
+			OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
+			NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,
+			RequireCatalogMatch:   deviceDiscoveryRequireCatalogMatch,
+			CatalogNamespace:      deviceDiscoveryCatalogNamespace,
+			CatalogName:           deviceDiscoveryCatalogName,
+			CatalogKey:            deviceDiscoveryCatalogKey,
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceDiscovery")
+		os.Exit(1)
 	}
 	if err = (&resources.ModelSpecReconciler{
 		Client: mgr.GetClient(),

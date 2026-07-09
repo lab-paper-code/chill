@@ -41,7 +41,7 @@ jobs:
         id: chart
         shell: bash
         run: |
-          app_version="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' charts/chill/Chart.yaml)"
+          app_version="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' charts/chill-operator/Chart.yaml)"
           test -n "${app_version}"
           echo "app_version=${app_version}" >> "${GITHUB_OUTPUT}"
 

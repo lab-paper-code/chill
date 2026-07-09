@@ -15,12 +15,12 @@ import (
 func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha1.ChillSystem) Observation {
 	observed := Observation{
 		ObservedGeneration: system.Generation,
-		Namespace:          r.namespace(),
+		Namespace:          r.managementNamespace(system),
 
 		OperatorDeploymentName: r.operatorDeploymentName(),
 
-		NodeDiscoveryEnabled:       r.Options.NodeDiscoveryEnabled,
-		NodeDiscoveryDaemonSetName: r.nodeDiscoveryDaemonSetName(),
+		NodeDiscoveryEnabled:       system.Spec.NodeDiscovery.Enabled,
+		NodeDiscoveryDaemonSetName: nodeDiscoveryDaemonSetName(system),
 	}
 
 	operator := &appsv1.Deployment{}
@@ -32,9 +32,9 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		observed.OperatorDeployment = operator
 	}
 
-	if r.Options.NodeDiscoveryEnabled {
+	if observed.NodeDiscoveryEnabled {
 		daemonSet := &appsv1.DaemonSet{}
-		if err := r.Get(ctx, types.NamespacedName{Namespace: r.namespace(), Name: r.nodeDiscoveryDaemonSetName()}, daemonSet); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Namespace: observed.Namespace, Name: observed.NodeDiscoveryDaemonSetName}, daemonSet); err != nil {
 			if !apierrors.IsNotFound(err) {
 				observed.NodeDiscoveryError = fmt.Errorf("observe node-discovery DaemonSet: %w", err)
 			}

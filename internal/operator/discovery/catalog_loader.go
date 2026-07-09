@@ -12,22 +12,22 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 )
 
-func (r *DeviceDiscoveryReconciler) catalogKey() string {
-	if r.Options.CatalogKey != "" {
-		return r.Options.CatalogKey
+func catalogKey(options DeviceDiscoveryOptions) string {
+	if options.CatalogKey != "" {
+		return options.CatalogKey
 	}
 	return deviceclass.CatalogDataKey
 }
 
-func (r *DeviceDiscoveryReconciler) loadCatalog(ctx context.Context) (deviceclass.Catalog, error) {
-	if r.Options.CatalogName == "" {
+func (r *DeviceDiscoveryReconciler) loadCatalog(ctx context.Context, options DeviceDiscoveryOptions) (deviceclass.Catalog, error) {
+	if options.CatalogName == "" {
 		return deviceclass.Catalog{}, nil
 	}
 
 	configMap := &corev1.ConfigMap{}
 	key := types.NamespacedName{
-		Namespace: r.Options.CatalogNamespace,
-		Name:      r.Options.CatalogName,
+		Namespace: options.CatalogNamespace,
+		Name:      options.CatalogName,
 	}
 	if err := r.Get(ctx, key, configMap); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -36,7 +36,7 @@ func (r *DeviceDiscoveryReconciler) loadCatalog(ctx context.Context) (deviceclas
 		return deviceclass.Catalog{}, fmt.Errorf("get discovery catalog configmap %s/%s: %w", key.Namespace, key.Name, err)
 	}
 
-	raw := configMap.Data[r.catalogKey()]
+	raw := configMap.Data[catalogKey(options)]
 	if raw == "" {
 		return deviceclass.Catalog{}, nil
 	}

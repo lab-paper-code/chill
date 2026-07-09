@@ -16,7 +16,6 @@ const (
 
 // Options selects the node-discovery DaemonSet managed by the operator.
 type Options struct {
-	Enabled           bool
 	SystemName        string
 	Namespace         string
 	DaemonSetName     string
@@ -28,7 +27,6 @@ type Options struct {
 func (o Options) Defaulted() Options {
 	systemName := defaults.String(o.SystemName, component.DefaultSystemName)
 	defaulted := Options{
-		Enabled:           o.Enabled,
 		SystemName:        systemName,
 		Namespace:         strings.TrimSpace(o.Namespace),
 		DaemonSetName:     strings.TrimSpace(o.DaemonSetName),

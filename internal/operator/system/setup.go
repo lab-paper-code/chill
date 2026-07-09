@@ -12,7 +12,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -26,13 +25,22 @@ func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	mapToSystem := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		return []reconcile.Request{{NamespacedName: r.systemKey()}}
+		systems := &edgev1alpha1.ChillSystemList{}
+		if err := r.List(ctx, systems); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "list ChillSystems for status refresh")
+			return nil
+		}
+		requests := make([]reconcile.Request, 0, len(systems.Items))
+		for i := range systems.Items {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Name: systems.Items[i].Name}})
+		}
+		return requests
 	})
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("chillsystem-status").
-		For(&edgev1alpha1.ChillSystem{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&edgev1alpha1.ChillSystem{}).
 		Watches(&appsv1.Deployment{}, mapToSystem, builder.WithPredicates(watch.NamedObject(r.namespace(), r.operatorDeploymentName()))).
-		Watches(&appsv1.DaemonSet{}, mapToSystem, builder.WithPredicates(watch.NamedObject(r.namespace(), r.nodeDiscoveryDaemonSetName()))).
+		Watches(&appsv1.DaemonSet{}, mapToSystem).
 		Watches(&edgev1alpha1.DeviceClass{}, mapToSystem, builder.WithPredicates(watch.CreateDelete())).
 		Watches(&corev1.Node{}, mapToSystem, builder.WithPredicates(watch.CreateDelete())).
 		Complete(r); err != nil {
@@ -44,8 +52,15 @@ func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return fmt.Errorf("wait for cache sync")
 		}
 		wait.UntilWithContext(ctx, func(ctx context.Context) {
-			if _, err := r.reconcileSystem(ctx); err != nil {
-				ctrl.LoggerFrom(ctx).Error(err, "refresh ChillSystem status")
+			systems := &edgev1alpha1.ChillSystemList{}
+			if err := r.List(ctx, systems); err != nil {
+				ctrl.LoggerFrom(ctx).Error(err, "list ChillSystems for periodic status refresh")
+				return
+			}
+			for i := range systems.Items {
+				if _, err := r.reconcileSystem(ctx, systems.Items[i].Name); err != nil {
+					ctrl.LoggerFrom(ctx).Error(err, "refresh ChillSystem status", "chillsystem", systems.Items[i].Name)
+				}
 			}
 		}, r.refreshInterval())
 		return nil

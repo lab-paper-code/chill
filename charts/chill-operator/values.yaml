@@ -1,0 +1,40 @@
+nameOverride: ""
+fullnameOverride: ""
+
+crds:
+  enabled: true
+
+system:
+  name: chill
+  refreshInterval: 30s
+
+operator:
+  replicaCount: 1
+  image:
+    repository: daclab/chill-operator
+    tag: ""
+    pullPolicy: IfNotPresent
+  metricsBindAddress: "0"
+  healthProbeBindAddress: ":8081"
+  leaderElection: true
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+serviceAccount:
+  create: true
+  name: ""
