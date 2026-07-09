@@ -26,8 +26,13 @@ Public Make targets stay intent-oriented:
 The internal install direction is:
 
 ```text
-preflight -> install -> start(controller -> node-discovery)
+preflight -> install
 ```
+
+`helm-install` follows product-style Helm UX and installs the runtime selected
+by Helm values. The default chart starts the controller from the published
+Docker Hub image. Site-specific values may also enable node-discovery during
+install.
 
 The internal cleanup direction is:
 
@@ -35,9 +40,13 @@ The internal cleanup direction is:
 stop(node-discovery -> controller) -> uninstall -> purge-crds
 ```
 
-`helm-install` creates or updates CRDs, RBAC, ConfigMaps, ServiceAccounts, and inert workload objects. It does not start controller or node-discovery pods. `helm-start` enables runtime components in dependency order. `helm-stop` disables them in reverse order.
+`helm-start` remains available for restarting a stopped release or enabling
+runtime components after changing image values. `helm-stop` disables them in
+reverse order.
 
-`helm-uninstall` removes the Helm release after runtime components are disabled. CRDs remain by default. `helm-purge-crds` is a separate guarded destructive action.
+`helm-uninstall` removes the Helm release after runtime components are disabled
+and deletes the controller-created singleton `ChillSystem` status object. CRDs
+remain by default. `helm-purge-crds` is a separate guarded destructive action.
 
 ## Consequences
 

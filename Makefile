@@ -1,8 +1,11 @@
 # Image URLs to use for building and pushing component images.
 # IMG is kept as a controller-image alias for Kubebuilder scaffold compatibility.
-IMG ?= chill/controller:latest
+IMAGE_NAMESPACE ?= daclab
+CHART_APP_VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' charts/chill/Chart.yaml)
+IMAGE_TAG ?= $(CHART_APP_VERSION)
+IMG ?= $(IMAGE_NAMESPACE)/chill-controller:$(IMAGE_TAG)
 CONTROLLER_IMG ?= $(IMG)
-NODE_DISCOVERY_IMG ?= chill/node-discovery:latest
+NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -112,8 +115,10 @@ helm-lint: ## Run Helm chart lint.
 helm-template: kubeconform ## Render and validate Helm chart.
 	values_args=(); \
 	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
-	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${values_args[@]}" >/tmp/chill-helm.yaml
-	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/chill-helm.yaml
+	out="$$(mktemp --suffix=.yaml)"; \
+	trap 'rm -f "$$out"' EXIT; \
+	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${values_args[@]}" >"$$out"; \
+	$(KUBECONFORM) $(KUBECONFORM_FLAGS) "$$out"
 
 .PHONY: helm-crd-check
 helm-crd-check: ## Check whether live CRDs can be managed by the Helm release.
@@ -143,7 +148,7 @@ helm-preflight: kubeconform ## Validate chart rendering and live CRD ownership.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) preflight
 
 .PHONY: helm-install
-helm-install: kubeconform ## Install or upgrade CHILL without starting runtime pods.
+helm-install: kubeconform ## Install or upgrade CHILL using the runtime selected by Helm values.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) install
 
 .PHONY: helm-start

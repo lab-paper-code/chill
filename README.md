@@ -48,10 +48,14 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 
 ## Helm
 
-The default chart installs the operator surface without enabling hardware discovery. This keeps a plain install inert until a site-specific catalog is provided.
+The default chart follows product-style Helm UX: a plain install starts the
+controller with the published Docker Hub image. Hardware discovery remains
+disabled until a site-specific catalog and node-discovery configuration are
+provided.
 
 ```sh
 helm template chill charts/chill --namespace chill-system
+helm install chill charts/chill --namespace chill-system --create-namespace
 ```
 
 For cluster operations, prefer the repo Make targets. They keep component
@@ -63,13 +67,11 @@ make helm-preflight HELM_VALUES=charts/chill/values-testbed.yaml
 make helm-install HELM_VALUES=charts/chill/values-testbed.yaml
 ```
 
-Start runtime components after images are available:
+Default image repositories:
 
-```sh
-make helm-start \
-  HELM_VALUES=charts/chill/values-testbed.yaml \
-  CONTROLLER_IMG=<registry>/chill/controller:<tag> \
-  NODE_DISCOVERY_IMG=<registry>/chill/node-discovery:<tag>
+```text
+daclab/chill-controller:<chart appVersion>
+daclab/chill-node-discovery:<chart appVersion>
 ```
 
 Once the controller is running, CHILL publishes a namespace-local status object:
@@ -120,20 +122,12 @@ make helm-adopt-crds \
 For the six-node lab testbed, use the testbed values file. Discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
 
 ```sh
-make docker-buildx-all \
-  CONTROLLER_IMG=<registry>/chill/controller:<tag> \
-  NODE_DISCOVERY_IMG=<registry>/chill/node-discovery:<tag>
-
 kubectl label node <node-name> node-role.kubernetes.io/edge=
 
 helm upgrade --install chill charts/chill \
   --namespace chill-system \
   --create-namespace \
-  -f charts/chill/values-testbed.yaml \
-  --set controller.image.repository=<registry>/chill/controller \
-  --set controller.image.tag=<tag> \
-  --set nodeDiscovery.image.repository=<registry>/chill/node-discovery \
-  --set nodeDiscovery.image.tag=<tag>
+  -f charts/chill/values-testbed.yaml
 
 kubectl get nodes --show-labels | grep edge.dacs.io
 kubectl get deviceclasses.edge.dacs.io

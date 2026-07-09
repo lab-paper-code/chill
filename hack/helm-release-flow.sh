@@ -23,7 +23,7 @@ Usage: $0 <command>
 
 Commands:
   preflight             Validate chart rendering and CRD ownership.
-  install               Install CRDs and base resources without starting pods.
+  install               Install or upgrade CHILL using the runtime selected by Helm values.
   start                 Start runtime components in dependency order.
   stop                  Stop runtime components in cleanup order.
   uninstall             Stop runtime components, uninstall the release, keep CRDs.
@@ -145,11 +145,41 @@ preflight() {
 	crd_check
 }
 
+release_system_status_name() {
+	local status_name=""
+	if release_exists; then
+		status_name="$("${helm_bin}" get manifest "${release_name}" --namespace "${release_namespace}" |
+			awk -F'--system-status-name=' 'NF > 1 {print $2; exit}' |
+			xargs)"
+	fi
+	if [[ -z "${status_name}" ]]; then
+		status_name="${release_name}"
+	fi
+	printf "%s\n" "${status_name}"
+}
+
+cleanup_system_status() {
+	local status_name="$1"
+	if [[ -z "${status_name}" ]]; then
+		return
+	fi
+	if ! "${kubectl_bin}" get crd chillsystems.edge.dacs.io >/dev/null 2>&1; then
+		echo "skip ChillSystem cleanup: CRD chillsystems.edge.dacs.io is not installed"
+		return
+	fi
+	echo "==> cleanup-system-status"
+	"${kubectl_bin}" delete chillsystem.edge.dacs.io "${status_name}" \
+		--namespace "${release_namespace}" \
+		--ignore-not-found
+}
+
 install_base() {
-	helm_upgrade "install" \
-		--set crds.enabled=true \
-		--set controller.replicaCount=0 \
-		--set nodeDiscovery.enabled=false
+	local args=(
+		"--set" "crds.enabled=true"
+	)
+	append_image_values args controller "${controller_image}"
+	append_image_values args nodeDiscovery "${node_discovery_image}"
+	helm_upgrade "install" "${args[@]}"
 }
 
 controller_up() {
@@ -203,6 +233,8 @@ stop_release() {
 }
 
 uninstall_release() {
+	local status_name
+	status_name="$(release_system_status_name)"
 	stop_release
 	echo "==> uninstall"
 	"${helm_bin}" uninstall "${release_name}" \
@@ -211,6 +243,7 @@ uninstall_release() {
 		--cascade foreground \
 		--wait \
 		--timeout "${timeout}"
+	cleanup_system_status "${status_name}"
 }
 
 purge_crds() {

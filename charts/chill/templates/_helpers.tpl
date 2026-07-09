@@ -73,11 +73,19 @@ signatures.yaml
 {{- end -}}
 
 {{- define "chill.controllerImage" -}}
-{{- printf "%s:%s" .Values.controller.image.repository .Values.controller.image.tag -}}
+{{- printf "%s:%s" .Values.controller.image.repository (include "chill.controllerImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.controllerImageTag" -}}
+{{- default .Chart.AppVersion .Values.controller.image.tag -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImage" -}}
-{{- printf "%s:%s" .Values.nodeDiscovery.image.repository .Values.nodeDiscovery.image.tag -}}
+{{- printf "%s:%s" .Values.nodeDiscovery.image.repository (include "chill.nodeDiscoveryImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoveryImageTag" -}}
+{{- default .Chart.AppVersion .Values.nodeDiscovery.image.tag -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImagePullPolicy" -}}
