@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/lab-paper-code/gearedge/test/utils"
+	"github.com/lab-paper-code/chill/test/utils"
 )
 
 var _ = BeforeSuite(func() {
@@ -17,6 +17,6 @@ var _ = BeforeSuite(func() {
 // Run e2e tests using the Ginkgo runner.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting gearedge suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting chill suite\n")
 	RunSpecs(t, "e2e suite")
 }

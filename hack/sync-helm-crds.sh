@@ -2,7 +2,7 @@
 set -euo pipefail
 
 src_dir="${1:-config/crd/bases}"
-dst_dir="${2:-charts/gearedge/templates/crds}"
+dst_dir="${2:-charts/chill/templates/crds}"
 
 mkdir -p "${dst_dir}"
 find "${dst_dir}" -maxdepth 1 -type f -name '*.yaml' -delete

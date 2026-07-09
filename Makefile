@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= gearedge/manager:latest
+IMG ?= chill/manager:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -83,12 +83,12 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint.
-	$(HELM) lint charts/gearedge
+	$(HELM) lint charts/chill
 
 .PHONY: helm-template
 helm-template: kubeconform ## Render and validate Helm chart.
-	$(HELM) template gearedge charts/gearedge --namespace gearedge-system >/tmp/gearedge-helm.yaml
-	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/gearedge-helm.yaml
+	$(HELM) template chill charts/chill --namespace chill-system >/tmp/chill-helm.yaml
+	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/chill-helm.yaml
 
 ##@ Build
 
@@ -122,10 +122,10 @@ PLATFORMS ?= linux/arm64,linux/amd64
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name gearedge-builder
-	$(CONTAINER_TOOL) buildx use gearedge-builder
+	- $(CONTAINER_TOOL) buildx create --name chill-builder
+	$(CONTAINER_TOOL) buildx use chill-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm gearedge-builder
+	- $(CONTAINER_TOOL) buildx rm chill-builder
 	rm Dockerfile.cross
 
 .PHONY: build-installer

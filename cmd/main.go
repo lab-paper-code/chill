@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	edgev1alpha1 "github.com/lab-paper-code/gearedge/api/v1alpha1"
-	"github.com/lab-paper-code/gearedge/internal/controller"
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

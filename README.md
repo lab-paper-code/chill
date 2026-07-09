@@ -1,6 +1,6 @@
-# GearEdge
+# CHILL
 
-GearEdge is a Kubernetes-native research operator for latency-SLO-aware energy control on heterogeneous edge clusters.
+CHILL (Cost-aware Heterogeneous Inference for Latency and Load) is a Kubernetes-native research operator for energy-minimal edge inference under tail-latency SLOs.
 
 The current repo is an early scaffold. Public implementation decisions live in:
 
@@ -10,7 +10,7 @@ Detailed research notes and unpublished design context are kept outside the publ
 
 ## Baseline
 
-- Go module: `github.com/lab-paper-code/gearedge`
+- Go module: `github.com/lab-paper-code/chill`
 - Kubernetes baseline: `1.31`
 - Kubebuilder: `v4.2.0`
 - API group/version: `edge.dacs.io/v1alpha1`
@@ -40,7 +40,7 @@ Do not run e2e tests against the testbed kubeconfig. E2E tests require a `kind-*
 
 ```sh
 ./hack/kind-up.sh
-export KUBECONFIG="$PWD/.kube/gearedge-kind.config"
+export KUBECONFIG="$PWD/.kube/chill-kind.config"
 make test-e2e
 ```
 
@@ -51,7 +51,7 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 The initial Helm chart is intentionally small and mirrors the current bootstrap surface: CRDs, manager Deployment, service account, controller RBAC, and leader-election RBAC.
 
 ```sh
-helm template gearedge charts/gearedge --namespace gearedge-system
+helm template chill charts/chill --namespace chill-system
 ```
 
 ## License

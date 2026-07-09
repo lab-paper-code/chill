@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-GearEdge is a Kubernetes-native scheduler/operator project. The repo needs CRD type generation, controller-runtime integration, envtest support, and a path to Helm packaging without adding OLM as a required layer.
+CHILL is a Kubernetes-native scheduler/operator project. The repo needs CRD type generation, controller-runtime integration, envtest support, and a path to Helm packaging without adding OLM as a required layer.
 
 The testbed API server is Kubernetes `v1.31.13`.
 
@@ -14,7 +14,7 @@ The testbed API server is Kubernetes `v1.31.13`.
 
 Use Go with Kubebuilder. Scaffold with Kubebuilder `v4.2.0`, which generates the tested Kubernetes `1.31` dependency set:
 
-- Go module: `github.com/lab-paper-code/gearedge`
+- Go module: `github.com/lab-paper-code/chill`
 - Go directive: `1.22.12`
 - Kubernetes libraries: `k8s.io/* v0.31.0`
 - controller-runtime: `v0.19.0`

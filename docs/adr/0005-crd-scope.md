@@ -25,7 +25,7 @@ Generate all four first-wave CRDs as cluster-scoped resources.
 
 `ClusterEnergyModel` is explicitly a cluster-level model.
 
-`ModelSpec` is the only ambiguous resource. It could become tenant-owned in a multi-tenant serving platform, but GearEdge starts as a single research-cluster controller where a cluster-scoped catalog is simpler and avoids namespace duplication.
+`ModelSpec` is the only ambiguous resource. It could become tenant-owned in a multi-tenant serving platform, but CHILL starts as a single research-cluster controller where a cluster-scoped catalog is simpler and avoids namespace duplication.
 
 ## Consequences
 

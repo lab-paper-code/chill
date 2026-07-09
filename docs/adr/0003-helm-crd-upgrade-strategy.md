@@ -6,11 +6,11 @@ Accepted
 
 ## Context
 
-GearEdge will be wrapped as a Helm chart. During `v1alpha1`, the CRD schemas are expected to change often. Helm's top-level `crds/` directory installs CRDs only on first install and does not manage normal upgrades, which is a poor fit for an alpha research repo.
+CHILL will be wrapped as a Helm chart. During `v1alpha1`, the CRD schemas are expected to change often. Helm's top-level `crds/` directory installs CRDs only on first install and does not manage normal upgrades, which is a poor fit for an alpha research repo.
 
 ## Decision
 
-When the chart is introduced, keep `v1alpha1` CRDs under `charts/gearedge/templates/crds/` so Helm manages alpha CRD updates.
+When the chart is introduced, keep `v1alpha1` CRDs under `charts/chill/templates/crds/` so Helm manages alpha CRD updates.
 
 Add `helm.sh/resource-policy: keep` to CRDs to reduce accidental deletion risk.
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLUSTER_NAME="${KIND_CLUSTER_NAME:-gearedge}"
-KUBECONFIG_PATH="${GEAREDGE_KIND_KUBECONFIG:-${ROOT_DIR}/.kube/gearedge-kind.config}"
+CLUSTER_NAME="${KIND_CLUSTER_NAME:-chill}"
+KUBECONFIG_PATH="${CHILL_KIND_KUBECONFIG:-${ROOT_DIR}/.kube/chill-kind.config}"
 
 mkdir -p "$(dirname "${KUBECONFIG_PATH}")"
 

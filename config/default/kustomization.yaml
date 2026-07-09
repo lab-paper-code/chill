@@ -1,5 +1,5 @@
-namespace: gearedge-system
-namePrefix: gearedge-
+namespace: chill-system
+namePrefix: chill-
 
 resources:
 - ../crd

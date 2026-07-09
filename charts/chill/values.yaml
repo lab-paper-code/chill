@@ -7,7 +7,7 @@ crds:
 controller:
   replicaCount: 1
   image:
-    repository: gearedge/manager
+    repository: chill/manager
     tag: latest
     pullPolicy: IfNotPresent
   metricsBindAddress: "0"

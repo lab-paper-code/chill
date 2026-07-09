@@ -5,8 +5,8 @@
 domain: dacs.io
 layout:
 - go.kubebuilder.io/v4
-projectName: gearedge
-repo: github.com/lab-paper-code/gearedge
+projectName: chill
+repo: github.com/lab-paper-code/chill
 resources:
 - api:
     crdVersion: v1
@@ -14,7 +14,7 @@ resources:
   domain: dacs.io
   group: edge
   kind: DeviceClass
-  path: github.com/lab-paper-code/gearedge/api/v1alpha1
+  path: github.com/lab-paper-code/chill/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -22,7 +22,7 @@ resources:
   domain: dacs.io
   group: edge
   kind: ModelSpec
-  path: github.com/lab-paper-code/gearedge/api/v1alpha1
+  path: github.com/lab-paper-code/chill/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -30,7 +30,7 @@ resources:
   domain: dacs.io
   group: edge
   kind: DeviceProfile
-  path: github.com/lab-paper-code/gearedge/api/v1alpha1
+  path: github.com/lab-paper-code/chill/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -38,6 +38,6 @@ resources:
   domain: dacs.io
   group: edge
   kind: ClusterEnergyModel
-  path: github.com/lab-paper-code/gearedge/api/v1alpha1
+  path: github.com/lab-paper-code/chill/api/v1alpha1
   version: v1alpha1
 version: "3"

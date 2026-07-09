@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	edgev1alpha1 "github.com/lab-paper-code/gearedge/api/v1alpha1"
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
 var _ = Describe("OwnerReference scope", func() {

@@ -1,8 +1,8 @@
-{{- define "gearedge.name" -}}
+{{- define "chill.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "gearedge.fullname" -}}
+{{- define "chill.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -15,22 +15,22 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "gearedge.labels" -}}
+{{- define "chill.labels" -}}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-app.kubernetes.io/name: {{ include "gearedge.name" . }}
+app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "gearedge.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "gearedge.name" . }}
+{{- define "chill.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "gearedge.serviceAccountName" -}}
+{{- define "chill.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-{{- default (printf "%s-controller-manager" (include "gearedge.fullname" .)) .Values.serviceAccount.name -}}
+{{- default (printf "%s-controller-manager" (include "chill.fullname" .)) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}

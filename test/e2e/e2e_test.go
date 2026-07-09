@@ -8,10 +8,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/lab-paper-code/gearedge/test/utils"
+	"github.com/lab-paper-code/chill/test/utils"
 )
 
-const namespace = "gearedge-system"
+const namespace = "chill-system"
 
 var _ = Describe("controller", Ordered, func() {
 	BeforeAll(func() {
@@ -25,7 +25,7 @@ var _ = Describe("controller", Ordered, func() {
 		cmd := exec.Command("make", "undeploy", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
-		By("uninstalling GearEdge CRDs")
+		By("uninstalling CHILL CRDs")
 		cmd = exec.Command("make", "uninstall", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
@@ -40,7 +40,7 @@ var _ = Describe("controller", Ordered, func() {
 			var err error
 
 			// projectimage stores the name of the image used in the example
-			var projectimage = "example.com/gearedge/manager:v0.0.1"
+			var projectimage = "example.com/chill/manager:v0.0.1"
 
 			By("building the manager(Operator) image")
 			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectimage))

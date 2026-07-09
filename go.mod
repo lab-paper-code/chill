@@ -1,4 +1,4 @@
-module github.com/lab-paper-code/gearedge
+module github.com/lab-paper-code/chill
 
 go 1.22.12
 
