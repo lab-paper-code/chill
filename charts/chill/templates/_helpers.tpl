@@ -73,11 +73,9 @@ signatures.yaml
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImage" -}}
-{{- $repository := default .Values.controller.image.repository .Values.nodeDiscovery.image.repository -}}
-{{- $tag := default .Values.controller.image.tag .Values.nodeDiscovery.image.tag -}}
-{{- printf "%s:%s" $repository $tag -}}
+{{- printf "%s:%s" .Values.nodeDiscovery.image.repository .Values.nodeDiscovery.image.tag -}}
 {{- end -}}
 
 {{- define "chill.nodeDiscoveryImagePullPolicy" -}}
-{{- default .Values.controller.image.pullPolicy .Values.nodeDiscovery.image.pullPolicy -}}
+{{- .Values.nodeDiscovery.image.pullPolicy -}}
 {{- end -}}

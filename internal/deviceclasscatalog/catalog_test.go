@@ -1,10 +1,10 @@
-package deviceclassdiscovery
+package deviceclasscatalog
 
 import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/chilllabels"
+	"github.com/lab-paper-code/chill/internal/labels"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,7 +13,7 @@ import (
 func TestDiscoverCatalogMatch(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1ObjectMeta(map[string]string{
-			chilllabels.DeviceModel: "orin-nano",
+			labels.DeviceModel: "orin-nano",
 		}),
 		Status: corev1.NodeStatus{
 			NodeInfo: corev1.NodeSystemInfo{Architecture: "arm64"},
@@ -24,7 +24,7 @@ func TestDiscoverCatalogMatch(t *testing.T) {
 			{
 				Name: "jetson-orin-nano-8g",
 				MatchLabels: map[string]string{
-					chilllabels.DeviceModel: "orin-nano",
+					labels.DeviceModel: "orin-nano",
 				},
 				Architecture: "arm64",
 				Memory:       resource.MustParse("8Gi"),
@@ -37,7 +37,7 @@ func TestDiscoverCatalogMatch(t *testing.T) {
 	}
 
 	discovered, ok, err := Discover(node, catalog, Options{
-		LabelKey:            chilllabels.DeviceClass,
+		LabelKey:            labels.DeviceClass,
 		RequireCatalogMatch: true,
 	})
 	if err != nil {
@@ -49,7 +49,7 @@ func TestDiscoverCatalogMatch(t *testing.T) {
 	if discovered.Name != "jetson-orin-nano-8g" {
 		t.Fatalf("Name = %q, want jetson-orin-nano-8g", discovered.Name)
 	}
-	if discovered.Spec.NodeSelector[chilllabels.DeviceClass] != "jetson-orin-nano-8g" {
+	if discovered.Spec.NodeSelector[labels.DeviceClass] != "jetson-orin-nano-8g" {
 		t.Fatalf("NodeSelector = %#v", discovered.Spec.NodeSelector)
 	}
 }
@@ -57,7 +57,7 @@ func TestDiscoverCatalogMatch(t *testing.T) {
 func TestDiscoverSkipsUnmatchedNodeWhenCatalogRequired(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1ObjectMeta(map[string]string{
-			chilllabels.DeviceModel: "unknown",
+			labels.DeviceModel: "unknown",
 		}),
 	}
 	catalog := Catalog{
@@ -65,7 +65,7 @@ func TestDiscoverSkipsUnmatchedNodeWhenCatalogRequired(t *testing.T) {
 			{
 				Name: "jetson-orin-nano-8g",
 				MatchLabels: map[string]string{
-					chilllabels.DeviceModel: "orin-nano",
+					labels.DeviceModel: "orin-nano",
 				},
 				PowerModes: []edgev1alpha1.PowerMode{{Name: "15W"}},
 			},
@@ -83,13 +83,13 @@ func TestDiscoverSkipsUnmatchedNodeWhenCatalogRequired(t *testing.T) {
 
 func TestSpecEqualUsesQuantitySemanticEquality(t *testing.T) {
 	a := edgev1alpha1.DeviceClassSpec{
-		NodeSelector: map[string]string{chilllabels.DeviceClass: "class-a"},
+		NodeSelector: map[string]string{labels.DeviceClass: "class-a"},
 		Architecture: "arm64",
 		MemoryBytes:  resource.MustParse("1024Mi"),
 		PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
 	}
 	b := edgev1alpha1.DeviceClassSpec{
-		NodeSelector: map[string]string{chilllabels.DeviceClass: "class-a"},
+		NodeSelector: map[string]string{labels.DeviceClass: "class-a"},
 		Architecture: "arm64",
 		MemoryBytes:  resource.MustParse("1Gi"),
 		PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},

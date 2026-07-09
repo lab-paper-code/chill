@@ -57,12 +57,20 @@ helm template chill charts/chill --namespace chill-system
 For the six-node lab testbed, use the testbed values file. Discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
 
 ```sh
+make docker-buildx-all \
+  CONTROLLER_IMG=<registry>/chill/controller:<tag> \
+  NODE_DISCOVERY_IMG=<registry>/chill/node-discovery:<tag>
+
 kubectl label node <node-name> node-role.kubernetes.io/edge=
 
 helm upgrade --install chill charts/chill \
   --namespace chill-system \
   --create-namespace \
-  -f charts/chill/values-testbed.yaml
+  -f charts/chill/values-testbed.yaml \
+  --set controller.image.repository=<registry>/chill/controller \
+  --set controller.image.tag=<tag> \
+  --set nodeDiscovery.image.repository=<registry>/chill/node-discovery \
+  --set nodeDiscovery.image.tag=<tag>
 
 kubectl get nodes --show-labels | grep edge.dacs.io
 kubectl get deviceclasses.edge.dacs.io

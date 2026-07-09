@@ -1,4 +1,4 @@
-package chilllabels
+package labels
 
 const (
 	Prefix = "edge.dacs.io"

@@ -17,9 +17,10 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/chilllabels"
 	"github.com/lab-paper-code/chill/internal/controller"
-	"github.com/lab-paper-code/chill/internal/deviceclassdiscovery"
+	"github.com/lab-paper-code/chill/internal/deviceclasscatalog"
+	"github.com/lab-paper-code/chill/internal/discoverycontroller"
+	chilllabels "github.com/lab-paper-code/chill/internal/labels"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -67,7 +68,7 @@ func main() {
 		"Namespace containing the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogName, "device-discovery-catalog-name", "",
 		"Name of the optional device discovery catalog ConfigMap.")
-	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclassdiscovery.CatalogDataKey,
+	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclasscatalog.CatalogDataKey,
 		"Data key containing the device discovery catalog in the ConfigMap.")
 	opts := zap.Options{
 		Development: true,
@@ -112,9 +113,9 @@ func main() {
 		os.Exit(1)
 	}
 	if enableDeviceDiscovery {
-		if err = (&controller.DeviceDiscoveryReconciler{
+		if err = (&discoverycontroller.DeviceDiscoveryReconciler{
 			Client: mgr.GetClient(),
-			Options: controller.DeviceDiscoveryOptions{
+			Options: discoverycontroller.DeviceDiscoveryOptions{
 				LabelKey:              deviceDiscoveryLabelKey,
 				OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
 				NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,

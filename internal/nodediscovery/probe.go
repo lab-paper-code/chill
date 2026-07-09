@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/chilllabels"
+	chilllabels "github.com/lab-paper-code/chill/internal/labels"
 	"sigs.k8s.io/yaml"
 )
 

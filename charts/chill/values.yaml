@@ -29,9 +29,9 @@ nodeDiscovery:
   sources: []
   signatures: []
   image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
+    repository: chill/node-discovery
+    tag: latest
+    pullPolicy: IfNotPresent
   nodeSelector: {}
   hostPaths:
     - name: host-proc
@@ -66,7 +66,7 @@ nodeDiscovery:
 controller:
   replicaCount: 1
   image:
-    repository: chill/manager
+    repository: chill/controller
     tag: latest
     pullPolicy: IfNotPresent
   metricsBindAddress: "0"

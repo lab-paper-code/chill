@@ -1,5 +1,8 @@
-# Image URL to use all building/pushing image targets
-IMG ?= chill/manager:latest
+# Image URLs to use for building and pushing component images.
+# IMG is kept as a controller-image alias for Kubebuilder scaffold compatibility.
+IMG ?= chill/controller:latest
+CONTROLLER_IMG ?= $(IMG)
+NODE_DISCOVERY_IMG ?= chill/node-discovery:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -15,6 +18,7 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+BUILDX_BUILDER ?= chill-builder
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -98,7 +102,7 @@ helm-template: kubeconform ## Render and validate Helm chart.
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet ## Build controller and node-discovery binaries.
 	go build -o bin/manager cmd/main.go
 	go build -o bin/node-discovery ./cmd/node-discovery
 
@@ -106,38 +110,66 @@ build: manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
 
-# If you wish to build the manager image targeting other platforms you can use the --platform flag.
+# If you wish to build images targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+docker-build: docker-build-controller ## Build the controller image.
+
+.PHONY: docker-build-controller
+docker-build-controller: ## Build the controller image.
+	$(CONTAINER_TOOL) build -f build/docker/controller.Dockerfile -t $(CONTROLLER_IMG) .
+
+.PHONY: docker-build-node-discovery
+docker-build-node-discovery: ## Build the node-discovery image.
+	$(CONTAINER_TOOL) build -f build/docker/node-discovery.Dockerfile -t $(NODE_DISCOVERY_IMG) .
+
+.PHONY: docker-build-all
+docker-build-all: docker-build-controller docker-build-node-discovery ## Build all component images.
 
 .PHONY: docker-push
-docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
+docker-push: docker-push-controller ## Push the controller image.
 
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
+.PHONY: docker-push-controller
+docker-push-controller: ## Push the controller image.
+	$(CONTAINER_TOOL) push $(CONTROLLER_IMG)
+
+.PHONY: docker-push-node-discovery
+docker-push-node-discovery: ## Push the node-discovery image.
+	$(CONTAINER_TOOL) push $(NODE_DISCOVERY_IMG)
+
+.PHONY: docker-push-all
+docker-push-all: docker-push-controller docker-push-node-discovery ## Push all component images.
+
+# PLATFORMS defines the target platforms for images built to provide support to multiple
+# architectures. (i.e. make docker-buildx-all CONTROLLER_IMG=myregistry/chill/controller:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
+# - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
 .PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name chill-builder
-	$(CONTAINER_TOOL) buildx use chill-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm chill-builder
-	rm Dockerfile.cross
+docker-buildx: docker-buildx-controller ## Build and push the controller image for cross-platform support.
+
+.PHONY: docker-buildx-controller
+docker-buildx-controller: ## Build and push the controller image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/controller.Dockerfile --tag $(CONTROLLER_IMG) .
+
+.PHONY: docker-buildx-node-discovery
+docker-buildx-node-discovery: ## Build and push the node-discovery image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-discovery.Dockerfile --tag $(NODE_DISCOVERY_IMG) .
+
+.PHONY: docker-buildx-all
+docker-buildx-all: docker-buildx-controller docker-buildx-node-discovery ## Build and push all component images for cross-platform support.
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(CONTROLLER_IMG)
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 ##@ Deployment
@@ -156,7 +188,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(CONTROLLER_IMG)
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy

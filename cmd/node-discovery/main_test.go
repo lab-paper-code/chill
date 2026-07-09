@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/lab-paper-code/chill/internal/chilllabels"
+	"github.com/lab-paper-code/chill/internal/labels"
 )
 
 func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
@@ -19,7 +19,7 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				"kubernetes.io/hostname": "edge-01",
-				chilllabels.DeviceClass:  "manual-class",
+				labels.DeviceClass:       "manual-class",
 			},
 			Annotations: map[string]string{
 				"existing": "value",
@@ -28,9 +28,9 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 	}
 
 	patch, changed, err := buildNodePatch(node, map[string]string{
-		chilllabels.DeviceModel: "orin-nano",
+		labels.DeviceModel: "orin-nano",
 	}, map[string]string{
-		chilllabels.DiscoverySource: chilllabels.SourceNodeDiscovery,
+		labels.DiscoverySource: labels.SourceNodeDiscovery,
 	})
 	if err != nil {
 		t.Fatalf("buildNodePatch() error = %v", err)
@@ -48,11 +48,11 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 	if err := json.Unmarshal(patch, &payload); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if _, ok := payload.Metadata.Labels[chilllabels.DeviceClass]; ok {
+	if _, ok := payload.Metadata.Labels[labels.DeviceClass]; ok {
 		t.Fatalf("device class label was included in node-discovery patch")
 	}
-	if payload.Metadata.Labels[chilllabels.DeviceModel] != "orin-nano" {
-		t.Fatalf("device model label = %q, want orin-nano", payload.Metadata.Labels[chilllabels.DeviceModel])
+	if payload.Metadata.Labels[labels.DeviceModel] != "orin-nano" {
+		t.Fatalf("device model label = %q, want orin-nano", payload.Metadata.Labels[labels.DeviceModel])
 	}
 	if _, ok := payload.Metadata.Annotations["existing"]; ok {
 		t.Fatalf("unmanaged annotation was included in node-discovery patch")
@@ -77,13 +77,13 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if node.Annotations[chilllabels.NodeDiscoveryResult] != chilllabels.DiscoveryResultUnmatched {
-		t.Fatalf("node discovery result = %q, want %q", node.Annotations[chilllabels.NodeDiscoveryResult], chilllabels.DiscoveryResultUnmatched)
+	if node.Annotations[labels.NodeDiscoveryResult] != labels.DiscoveryResultUnmatched {
+		t.Fatalf("node discovery result = %q, want %q", node.Annotations[labels.NodeDiscoveryResult], labels.DiscoveryResultUnmatched)
 	}
-	if node.Annotations[chilllabels.NodeDiscoveryReason] != chilllabels.DiscoveryReasonNoSourceFacts {
-		t.Fatalf("node discovery reason = %q, want %q", node.Annotations[chilllabels.NodeDiscoveryReason], chilllabels.DiscoveryReasonNoSourceFacts)
+	if node.Annotations[labels.NodeDiscoveryReason] != labels.DiscoveryReasonNoSourceFacts {
+		t.Fatalf("node discovery reason = %q, want %q", node.Annotations[labels.NodeDiscoveryReason], labels.DiscoveryReasonNoSourceFacts)
 	}
-	if _, ok := node.Labels[chilllabels.DeviceClass]; ok {
+	if _, ok := node.Labels[labels.DeviceClass]; ok {
 		t.Fatalf("node-discovery set DeviceClass label")
 	}
 }

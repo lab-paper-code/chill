@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/chilllabels"
+	chilllabels "github.com/lab-paper-code/chill/internal/labels"
 )
 
 func TestProbeDetectsJetsonOrinNano(t *testing.T) {
@@ -31,12 +31,12 @@ func TestProbeDetectsJetsonOrinNano(t *testing.T) {
 		t.Fatalf("Accelerator = %q, want nvidia-jetson-orin-nano", facts.Accelerator)
 	}
 
-	labels := facts.Labels()
-	if labels[chilllabels.DeviceModel] != "orin-nano" {
-		t.Fatalf("DeviceModel label = %q, want orin-nano", labels[chilllabels.DeviceModel])
+	gotLabels := facts.Labels()
+	if gotLabels[chilllabels.DeviceModel] != "orin-nano" {
+		t.Fatalf("DeviceModel label = %q, want orin-nano", gotLabels[chilllabels.DeviceModel])
 	}
-	if labels[chilllabels.Accelerator] != "nvidia-jetson-orin-nano" {
-		t.Fatalf("Accelerator label = %q, want nvidia-jetson-orin-nano", labels[chilllabels.Accelerator])
+	if gotLabels[chilllabels.Accelerator] != "nvidia-jetson-orin-nano" {
+		t.Fatalf("Accelerator label = %q, want nvidia-jetson-orin-nano", gotLabels[chilllabels.Accelerator])
 	}
 }
 

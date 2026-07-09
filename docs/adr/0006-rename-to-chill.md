@@ -14,7 +14,7 @@ The repository is still in the early scaffold phase, so changing user-facing nam
 
 Rename the project to `CHILL`, expanded as `Cost-aware Heterogeneous Inference for Latency and Load`.
 
-Use `CHILL` for display text and `chill` for code/package identifiers, including the Go module path, Helm chart, default image repository, Kubernetes namespace, kind cluster, and local kubeconfig.
+Use `CHILL` for display text and `chill` for code/package identifiers, including the Go module path, Helm chart, default image repositories, Kubernetes namespace, kind cluster, and local kubeconfig.
 
 Use `lab-paper-code/chill` as the GitHub repository slug and `/home/genesis1/ETRI/chill` as the local checkout path.
 
@@ -22,7 +22,7 @@ Keep the API group `edge.dacs.io/v1alpha1`. The API group represents the CRD dom
 
 ## Consequences
 
-Local imports, Helm paths, README examples, default images, and e2e namespaces move from `gearedge` to `chill`.
+Local imports, Helm paths, README examples, default image repositories, and e2e namespaces move from `gearedge` to `chill`.
 
 The local checkout and Git remote should move to the `chill` slug. The GitHub repository itself must be renamed before pushes to `git@github.com:lab-paper-code/chill.git` can succeed.
 

@@ -1,4 +1,4 @@
-package deviceclassdiscovery
+package deviceclasscatalog
 
 import (
 	"os"
