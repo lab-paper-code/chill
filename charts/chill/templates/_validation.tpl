@@ -22,6 +22,9 @@
 {{- if and .Values.discovery.enabled .Values.discovery.requireCatalogMatch .Values.discovery.catalog.enabled (empty .Values.discovery.catalog.classes) -}}
 {{- fail "discovery.catalog.classes must contain at least one class when discovery.requireCatalogMatch=true" -}}
 {{- end -}}
+{{- if and .Values.discovery.catalog.enabled .Values.discovery.catalog.createDeviceClasses (empty .Values.discovery.catalog.classes) -}}
+{{- fail "discovery.catalog.classes must contain at least one class when discovery.catalog.createDeviceClasses=true" -}}
+{{- end -}}
 {{- if .Values.nodeDiscovery.enabled -}}
 {{- if empty .Values.nodeDiscovery.image.repository -}}
 {{- fail "nodeDiscovery.image.repository must not be empty when nodeDiscovery.enabled=true" -}}
@@ -31,6 +34,18 @@
 {{- end -}}
 {{- if empty .Values.nodeDiscovery.image.pullPolicy -}}
 {{- fail "nodeDiscovery.image.pullPolicy must not be empty when nodeDiscovery.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeDiscovery.updateStrategy.type -}}
+{{- fail "nodeDiscovery.updateStrategy.type must not be empty when nodeDiscovery.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.nodeDiscovery.excludeNodeNames .Values.nodeDiscovery.affinity.nodeAffinity -}}
+{{- fail "nodeDiscovery.excludeNodeNames cannot be used together with nodeDiscovery.affinity.nodeAffinity" -}}
+{{- end -}}
+{{- if and .Values.nodeDiscovery.kubernetesClient (empty .Values.nodeDiscovery.kubernetesClient.tokenFile) -}}
+{{- fail "nodeDiscovery.kubernetesClient.tokenFile must not be empty when nodeDiscovery.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.nodeDiscovery.kubernetesClient (empty .Values.nodeDiscovery.kubernetesClient.caFile) -}}
+{{- fail "nodeDiscovery.kubernetesClient.caFile must not be empty when nodeDiscovery.enabled=true" -}}
 {{- end -}}
 {{- if and (eq .Values.nodeDiscovery.image.repository $nodeDiscoveryPlaceholderRepository) (eq $nodeDiscoveryImageTag $nodeDiscoveryPlaceholderTag) (ne .Values.nodeDiscovery.image.pullPolicy "Never") -}}
 {{- fail "nodeDiscovery image chill/node-discovery:latest is a local development placeholder, not a published runtime image; set nodeDiscovery.image.repository/tag to a published image or use nodeDiscovery.image.pullPolicy=Never with a node-local image" -}}

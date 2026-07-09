@@ -8,8 +8,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestTestbedDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
-	raw, err := os.ReadFile("../../charts/chill/values-testbed.yaml")
+func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
+	raw, err := os.ReadFile("../../charts/chill/values.yaml")
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
@@ -25,10 +25,10 @@ func TestTestbedDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
 	}
 
 	if len(values.Discovery.Catalog.Classes) == 0 {
-		t.Fatal("testbed discovery catalog has no classes")
+		t.Fatal("default discovery catalog has no classes")
 	}
 	if len(values.NodeDiscovery.Signatures) == 0 {
-		t.Fatal("testbed node discovery has no signatures")
+		t.Fatal("default node discovery has no signatures")
 	}
 
 	signatureLabels := make([]map[string]string, 0, len(values.NodeDiscovery.Signatures))

@@ -285,8 +285,9 @@ CONTROLLER_TOOLS_VERSION ?= v0.16.1
 ENVTEST_VERSION ?= release-0.19
 GOLANGCI_LINT_VERSION ?= v1.64.5
 KUBECONFORM_VERSION ?= v0.6.7
-# kubeconform's Kubernetes schema catalog omits top-level CRD schemas.
-KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition
+# kubeconform's Kubernetes schema catalog omits top-level CRD schemas and CR
+# instances whose schema is provided by those CRDs in the same rendered chart.
+KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,DeviceClass
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

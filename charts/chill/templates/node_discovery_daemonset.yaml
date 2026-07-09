@@ -1,4 +1,5 @@
 {{- if .Values.nodeDiscovery.enabled }}
+{{- $kubeAPIServer := include "chill.nodeDiscoveryKubernetesAPIServer" . }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -8,12 +9,20 @@ metadata:
     app.kubernetes.io/component: node-discovery
     {{- include "chill.labels" . | nindent 4 }}
 spec:
+  updateStrategy:
+    type: {{ .Values.nodeDiscovery.updateStrategy.type }}
+    {{- with .Values.nodeDiscovery.updateStrategy.rollingUpdate }}
+    rollingUpdate:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/component: node-discovery
       {{- include "chill.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/node-discovery-signatures: {{ include (print $.Template.BasePath "/node_discovery_signatures.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/component: node-discovery
         {{- include "chill.selectorLabels" . | nindent 8 }}
@@ -26,9 +35,21 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.nodeDiscovery.affinity }}
+      {{- if or .Values.nodeDiscovery.affinity .Values.nodeDiscovery.excludeNodeNames }}
       affinity:
+        {{- with .Values.nodeDiscovery.affinity }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.nodeDiscovery.excludeNodeNames }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      {{- toYaml . | nindent 22 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeDiscovery.tolerations }}
       tolerations:
@@ -44,11 +65,24 @@ spec:
             - --host-root={{ .Values.nodeDiscovery.hostRoot }}
             - --interval={{ .Values.nodeDiscovery.interval }}
             - --signature-file={{ .Values.nodeDiscovery.signatureFile }}
+            {{- if .Values.nodeDiscovery.cleanupOnExit }}
+            - --cleanup-on-exit
+            - --cleanup-timeout={{ .Values.nodeDiscovery.cleanupTimeout }}
+            {{- end }}
+            {{- if $kubeAPIServer }}
+            - --kube-api-server={{ $kubeAPIServer }}
+            {{- end }}
+            - --kube-api-token-file={{ .Values.nodeDiscovery.kubernetesClient.tokenFile }}
+            - --kube-api-ca-file={{ .Values.nodeDiscovery.kubernetesClient.caFile }}
           env:
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            {{- if $kubeAPIServer }}
+            - name: CHILL_KUBE_API_SERVER
+              value: {{ $kubeAPIServer | quote }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.nodeDiscovery.securityContext | nindent 12 }}
           resources:

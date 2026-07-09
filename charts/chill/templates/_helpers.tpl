@@ -91,3 +91,21 @@ signatures.yaml
 {{- define "chill.nodeDiscoveryImagePullPolicy" -}}
 {{- .Values.nodeDiscovery.image.pullPolicy -}}
 {{- end -}}
+
+{{- define "chill.nodeDiscoveryKubernetesAPIServer" -}}
+{{- if .Values.nodeDiscovery.kubernetesClient.apiServer -}}
+{{- .Values.nodeDiscovery.kubernetesClient.apiServer -}}
+{{- else if .Values.nodeDiscovery.kubernetesClient.discoverFromDefaultEndpoint -}}
+{{- $endpoint := lookup "v1" "Endpoints" "default" "kubernetes" -}}
+{{- if and $endpoint $endpoint.subsets -}}
+{{- $subset := index $endpoint.subsets 0 -}}
+{{- if and $subset.addresses $subset.ports -}}
+{{- $address := index $subset.addresses 0 -}}
+{{- $port := index $subset.ports 0 -}}
+{{- if and $address.ip $port.port -}}
+{{- printf "https://%s:%v" $address.ip $port.port -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

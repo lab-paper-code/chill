@@ -6,7 +6,7 @@ command="${1:-help}"
 helm_bin="${HELM:-helm}"
 kubectl_bin="${KUBECTL:-kubectl}"
 kubeconform_bin="${KUBECONFORM:-bin/kubeconform}"
-kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition}"
+kubeconform_flags="${KUBECONFORM_FLAGS:--strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,DeviceClass}"
 
 release_name="${HELM_RELEASE:-chill}"
 release_namespace="${HELM_NAMESPACE:-chill-system}"

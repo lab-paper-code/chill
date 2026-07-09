@@ -49,9 +49,7 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 ## Helm
 
 The default chart follows product-style Helm UX: a plain install starts the
-controller with the published Docker Hub image. Hardware discovery remains
-disabled until a site-specific catalog and node-discovery configuration are
-provided.
+controller and testbed hardware discovery with the published Docker Hub images.
 
 ```sh
 helm template chill charts/chill --namespace chill-system
@@ -63,8 +61,8 @@ ordering and cleanup guards inside the repo tooling instead of exposing an
 application-specific phase graph to operators.
 
 ```sh
-make helm-preflight HELM_VALUES=charts/chill/values-testbed.yaml
-make helm-install HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-preflight
+make helm-install
 ```
 
 Default image repositories:
@@ -84,8 +82,8 @@ kubectl -n chill-system describe chillsystem chill
 Cleanup is also exposed as high-level Helm operations:
 
 ```sh
-make helm-stop HELM_VALUES=charts/chill/values-testbed.yaml
-make helm-uninstall HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-stop
+make helm-uninstall
 ```
 
 CRD deletion is a separate guarded action:
@@ -99,7 +97,7 @@ claim CRDs and do not start pods. This catches RBAC, namespace, ConfigMap, and
 Deployment rendering issues without depending on a registry image.
 
 ```sh
-make helm-install-smoke HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-install-smoke
 kubectl api-resources --api-group=edge.dacs.io
 kubectl -n chill-system get deploy,cm,sa,role,rolebinding
 ```
@@ -119,15 +117,14 @@ make helm-adopt-crds \
   FROM_RELEASE_NAMESPACE=<old-namespace>
 ```
 
-For the six-node lab testbed, use the testbed values file. Discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
+For the six-node lab testbed, discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
 
 ```sh
 kubectl label node <node-name> node-role.kubernetes.io/edge=
 
 helm upgrade --install chill charts/chill \
   --namespace chill-system \
-  --create-namespace \
-  -f charts/chill/values-testbed.yaml
+  --create-namespace
 
 kubectl get nodes --show-labels | grep edge.dacs.io
 kubectl get deviceclasses.edge.dacs.io
@@ -140,7 +137,6 @@ instead of patching the Deployment by hand.
 ```sh
 helm upgrade chill charts/chill \
   --namespace chill-system \
-  -f charts/chill/values-testbed.yaml \
   --set crds.enabled=false \
   --set discovery.enabled=false \
   --set controller.replicaCount=1 \

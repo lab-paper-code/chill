@@ -8,6 +8,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY cmd/node-discovery/ cmd/node-discovery/
+COPY internal/kubeclient/ internal/kubeclient/
 COPY internal/labels/ internal/labels/
 COPY internal/nodediscovery/ internal/nodediscovery/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/node-discovery ./cmd/node-discovery

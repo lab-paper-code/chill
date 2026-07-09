@@ -27,9 +27,9 @@ Use `make helm-adopt-crds` only for an intentional release migration.
 Helm install and cleanup ordering is implemented behind the repo Make targets:
 
 ```sh
-make helm-install HELM_VALUES=charts/chill/values-testbed.yaml
-make helm-start HELM_VALUES=charts/chill/values-testbed.yaml
-make helm-uninstall HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-install
+make helm-start
+make helm-uninstall
 ```
 
 `make helm-purge-crds` is intentionally guarded and requires
