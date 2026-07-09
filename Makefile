@@ -70,7 +70,7 @@ helm-sync-crds: ## Sync generated CRDs into the Helm chart.
 	./hack/sync-helm-crds.sh
 
 .PHONY: helm-sync-rbac
-helm-sync-rbac: ## Sync generated manager ClusterRole rules into the Helm chart.
+helm-sync-rbac: ## Sync generated operator ClusterRole rules into the Helm chart.
 	./hack/sync-helm-rbac.sh
 
 .PHONY: generate

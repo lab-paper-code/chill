@@ -44,21 +44,24 @@ type HostPathMount struct {
 
 func (c Config) Validate() error {
 	var problems []string
-	required := map[string]string{
-		"image":                  c.Image,
-		"imagePullPolicy":        string(c.ImagePullPolicy),
-		"serviceAccountName":     c.ServiceAccountName,
-		"hostRoot":               c.HostRoot,
-		"interval":               c.Interval,
-		"signatureFile":          c.SignatureFile,
-		"signatureConfigMapName": c.SignatureConfigMapName,
-		"signatureConfigMapKey":  c.SignatureConfigMapKey,
-		"kubeAPITokenFile":       c.KubeAPITokenFile,
-		"kubeAPICAFile":          c.KubeAPICAFile,
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "image", value: c.Image},
+		{name: "imagePullPolicy", value: string(c.ImagePullPolicy)},
+		{name: "serviceAccountName", value: c.ServiceAccountName},
+		{name: "hostRoot", value: c.HostRoot},
+		{name: "interval", value: c.Interval},
+		{name: "signatureFile", value: c.SignatureFile},
+		{name: "signatureConfigMapName", value: c.SignatureConfigMapName},
+		{name: "signatureConfigMapKey", value: c.SignatureConfigMapKey},
+		{name: "kubeAPITokenFile", value: c.KubeAPITokenFile},
+		{name: "kubeAPICAFile", value: c.KubeAPICAFile},
 	}
-	for field, value := range required {
-		if strings.TrimSpace(value) == "" {
-			problems = append(problems, field+" is required")
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			problems = append(problems, field.name+" is required")
 		}
 	}
 	if _, err := time.ParseDuration(c.Interval); c.Interval != "" && err != nil {
