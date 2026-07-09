@@ -22,7 +22,7 @@ type ChillSystemReconciler struct {
 	Options Options
 }
 
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;create;patch;update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
@@ -47,12 +47,20 @@ func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context) (ctrl.Resul
 					Namespace: key.Namespace,
 				},
 			}
+			if _, err := r.setSystemOwnerReference(ctx, system); err != nil {
+				return ctrl.Result{}, err
+			}
 			if err := r.Create(ctx, system); err != nil && !apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{}, fmt.Errorf("create ChillSystem %s: %w", key.String(), err)
 			}
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("get ChillSystem %s: %w", key.String(), err)
+	}
+	if changed, err := r.ensureSystemOwnerReference(ctx, system); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	next := buildStatus(r.observe(ctx, system), system.Status.Conditions, metav1Now())

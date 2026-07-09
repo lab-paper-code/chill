@@ -45,6 +45,8 @@
   - create
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - edge.dacs.io
