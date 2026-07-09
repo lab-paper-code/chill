@@ -14,6 +14,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/chilllabels"
 	"github.com/lab-paper-code/chill/internal/deviceclassdiscovery"
 )
 
@@ -48,6 +49,9 @@ var _ = Describe("DeviceClass discovery", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels[defaultDeviceDiscoveryLabelKey]).To(Equal("jetson-orin-nano-8g"))
 		Expect(updatedNode.Annotations[deviceDiscoveryManagedByKey]).To(Equal(deviceDiscoveryManagedBy))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryResult]).To(Equal(chilllabels.DiscoveryResultMatched))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryReason]).To(Equal(chilllabels.DiscoveryReasonCatalogMatched))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryClass]).To(Equal("jetson-orin-nano-8g"))
 	})
 
 	It("does not overwrite an existing manual node label by default", func() {
@@ -67,6 +71,39 @@ var _ = Describe("DeviceClass discovery", func() {
 		updatedNode := &corev1.Node{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels[defaultDeviceDiscoveryLabelKey]).To(Equal("manual-class"))
+		Expect(updatedNode.Annotations).NotTo(HaveKey(deviceDiscoveryManagedByKey))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryResult]).To(Equal(chilllabels.DiscoveryResultMatched))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryReason]).To(Equal(chilllabels.DiscoveryReasonManualLabelPreserved))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryClass]).To(Equal("jetson-orin-nano-8g"))
+
+		deviceClass := &edgev1alpha1.DeviceClass{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "jetson-orin-nano-8g"}, deviceClass)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, deviceClass)
+		})
+	})
+
+	It("updates an existing CHILL-managed node label by default", func() {
+		ctx := context.Background()
+		runID := uniqueDiscoveryRunID()
+		namespace := createDiscoveryCatalogNamespace(ctx, runID)
+		createDiscoveryCatalog(ctx, namespace.Name, "catalog", orinNanoCatalogYAML())
+		node := createDiscoveryNodeWithAnnotations(ctx, "managed-"+runID, runID, map[string]string{
+			"jetson-model":                 "orin-nano",
+			defaultDeviceDiscoveryLabelKey: "stale-class",
+		}, map[string]string{
+			deviceDiscoveryManagedByKey: deviceDiscoveryManagedBy,
+		})
+
+		reconciler := discoveryReconciler(namespace.Name, "catalog", runID, true)
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
+		Expect(err).NotTo(HaveOccurred())
+
+		updatedNode := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
+		Expect(updatedNode.Labels[defaultDeviceDiscoveryLabelKey]).To(Equal("jetson-orin-nano-8g"))
+		Expect(updatedNode.Annotations[deviceDiscoveryManagedByKey]).To(Equal(deviceDiscoveryManagedBy))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryReason]).To(Equal(chilllabels.DiscoveryReasonCatalogMatched))
 
 		deviceClass := &edgev1alpha1.DeviceClass{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "jetson-orin-nano-8g"}, deviceClass)).To(Succeed())
@@ -91,6 +128,9 @@ var _ = Describe("DeviceClass discovery", func() {
 		updatedNode := &corev1.Node{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels).NotTo(HaveKey(defaultDeviceDiscoveryLabelKey))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryResult]).To(Equal(chilllabels.DiscoveryResultUnmatched))
+		Expect(updatedNode.Annotations[chilllabels.DeviceClassDiscoveryReason]).To(Equal(chilllabels.DiscoveryReasonNoCatalogMatch))
+		Expect(updatedNode.Annotations).NotTo(HaveKey(chilllabels.DeviceClassDiscoveryClass))
 
 		deviceClass := &edgev1alpha1.DeviceClass{}
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "unknown-8g"}, deviceClass)
@@ -136,6 +176,10 @@ func createDiscoveryCatalog(ctx context.Context, namespace, name, catalog string
 }
 
 func createDiscoveryNode(ctx context.Context, name, runID string, extraLabels map[string]string) *corev1.Node {
+	return createDiscoveryNodeWithAnnotations(ctx, name, runID, extraLabels, nil)
+}
+
+func createDiscoveryNodeWithAnnotations(ctx context.Context, name, runID string, extraLabels, extraAnnotations map[string]string) *corev1.Node {
 	labels := map[string]string{
 		"edge.dacs.io/test-run": runID,
 		corev1.LabelArchStable:  "arm64",
@@ -143,11 +187,16 @@ func createDiscoveryNode(ctx context.Context, name, runID string, extraLabels ma
 	for key, value := range extraLabels {
 		labels[key] = value
 	}
+	annotations := map[string]string{}
+	for key, value := range extraAnnotations {
+		annotations[key] = value
+	}
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
-			Labels: labels,
+			Name:        name,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Status: corev1.NodeStatus{
 			Capacity: corev1.ResourceList{

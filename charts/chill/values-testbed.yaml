@@ -1,4 +1,5 @@
 nodeDiscovery:
+  enabled: true
   sources:
     - paths:
         - proc/device-tree/model
@@ -71,6 +72,7 @@ nodeDiscovery:
         accelerator: none
 
 discovery:
+  enabled: true
   catalog:
     classes:
       - name: jetson-agx-orin-64g

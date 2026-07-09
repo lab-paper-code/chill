@@ -10,7 +10,7 @@ nodeSelection:
     node-role.kubernetes.io/edge: ""
 
 discovery:
-  enabled: true
+  enabled: false
   labelKey: edge.dacs.io/device-class
   overwriteManualLabels: false
   nodeLabelSelector: ""
@@ -22,7 +22,7 @@ discovery:
     classes: []
 
 nodeDiscovery:
-  enabled: true
+  enabled: false
   interval: 10m
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml

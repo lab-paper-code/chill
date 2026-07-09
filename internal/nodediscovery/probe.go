@@ -73,11 +73,23 @@ func (f Facts) Labels() map[string]string {
 // Annotations returns Kubernetes node annotations for non-selector discovery details.
 func (f Facts) Annotations() map[string]string {
 	annotations := map[string]string{}
+	labels := f.Labels()
+
 	if f.RawModel != "" {
 		annotations[chilllabels.DeviceModelRaw] = f.RawModel
 	}
-	if len(f.Labels()) > 0 || f.RawModel != "" {
-		annotations[chilllabels.DiscoverySource] = chilllabels.SourceNodeDiscovery
+	annotations[chilllabels.DiscoverySource] = chilllabels.SourceNodeDiscovery
+
+	switch {
+	case len(labels) > 0:
+		annotations[chilllabels.NodeDiscoveryResult] = chilllabels.DiscoveryResultMatched
+		annotations[chilllabels.NodeDiscoveryReason] = chilllabels.DiscoveryReasonSignatureMatched
+	case f.RawModel != "":
+		annotations[chilllabels.NodeDiscoveryResult] = chilllabels.DiscoveryResultUnmatched
+		annotations[chilllabels.NodeDiscoveryReason] = chilllabels.DiscoveryReasonNoSignatureMatch
+	default:
+		annotations[chilllabels.NodeDiscoveryResult] = chilllabels.DiscoveryResultUnmatched
+		annotations[chilllabels.NodeDiscoveryReason] = chilllabels.DiscoveryReasonNoSourceFacts
 	}
 	return annotations
 }

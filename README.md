@@ -48,10 +48,30 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 
 ## Helm
 
-The initial Helm chart is intentionally small and mirrors the current bootstrap surface: CRDs, manager Deployment, service account, controller RBAC, and leader-election RBAC.
+The default chart installs the operator surface without enabling hardware discovery. This keeps a plain install inert until a site-specific catalog is provided.
 
 ```sh
 helm template chill charts/chill --namespace chill-system
+```
+
+For the six-node lab testbed, use the testbed values file. Discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
+
+```sh
+kubectl label node <node-name> node-role.kubernetes.io/edge=
+
+helm upgrade --install chill charts/chill \
+  --namespace chill-system \
+  --create-namespace \
+  -f charts/chill/values-testbed.yaml
+
+kubectl get nodes --show-labels | grep edge.dacs.io
+kubectl get deviceclasses.edge.dacs.io
+```
+
+Useful diagnosis is written to node annotations:
+
+```sh
+kubectl describe node <node-name> | grep edge.dacs.io
 ```
 
 ## License

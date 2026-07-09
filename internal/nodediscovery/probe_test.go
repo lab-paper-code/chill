@@ -76,6 +76,24 @@ func TestProbeLeavesUnknownDeviceUnlabeled(t *testing.T) {
 	if facts.Annotations()[chilllabels.DeviceModelRaw] != "Generic PC" {
 		t.Fatalf("raw model annotation = %q, want Generic PC", facts.Annotations()[chilllabels.DeviceModelRaw])
 	}
+	if facts.Annotations()[chilllabels.NodeDiscoveryReason] != chilllabels.DiscoveryReasonNoSignatureMatch {
+		t.Fatalf("node discovery reason = %q, want %q", facts.Annotations()[chilllabels.NodeDiscoveryReason], chilllabels.DiscoveryReasonNoSignatureMatch)
+	}
+}
+
+func TestProbeAnnotatesNoSourceFacts(t *testing.T) {
+	facts, err := Probe(t.TempDir(), SignatureCatalog{})
+	if err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+
+	annotations := facts.Annotations()
+	if annotations[chilllabels.NodeDiscoveryResult] != chilllabels.DiscoveryResultUnmatched {
+		t.Fatalf("node discovery result = %q, want %q", annotations[chilllabels.NodeDiscoveryResult], chilllabels.DiscoveryResultUnmatched)
+	}
+	if annotations[chilllabels.NodeDiscoveryReason] != chilllabels.DiscoveryReasonNoSourceFacts {
+		t.Fatalf("node discovery reason = %q, want %q", annotations[chilllabels.NodeDiscoveryReason], chilllabels.DiscoveryReasonNoSourceFacts)
+	}
 }
 
 func TestLoadSignatureCatalog(t *testing.T) {
