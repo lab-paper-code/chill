@@ -19,6 +19,12 @@ endif
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 BUILDX_BUILDER ?= chill-builder
+HELM_RELEASE ?= chill
+HELM_NAMESPACE ?= chill-system
+HELM_CHART ?= charts/chill
+HELM_TIMEOUT ?= 2m
+HELM_VALUES ?=
+HELM_SET ?=
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -98,6 +104,29 @@ helm-lint: ## Run Helm chart lint.
 helm-template: kubeconform ## Render and validate Helm chart.
 	$(HELM) template chill charts/chill --namespace chill-system >/tmp/chill-helm.yaml
 	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/chill-helm.yaml
+
+.PHONY: helm-crd-check
+helm-crd-check: ## Check whether live CRDs can be managed by the Helm release.
+	RELEASE_NAME=$(HELM_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) ./hack/helm-crd-ownership.sh check
+
+.PHONY: helm-adopt-crds
+helm-adopt-crds: ## Adopt existing CRDs into the Helm release; use FROM_RELEASE_NAME/FROM_RELEASE_NAMESPACE for old Helm owners.
+	RELEASE_NAME=$(HELM_RELEASE) RELEASE_NAMESPACE=$(HELM_NAMESPACE) CRD_DIR=config/crd/bases KUBECTL=$(KUBECTL) FROM_RELEASE_NAME="$(FROM_RELEASE_NAME)" FROM_RELEASE_NAMESPACE="$(FROM_RELEASE_NAMESPACE)" ./hack/helm-crd-ownership.sh adopt
+
+.PHONY: helm-install-smoke
+helm-install-smoke: ## Install or upgrade the chart without starting pods or managing CRDs.
+	values_args=(); \
+	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
+	$(HELM) upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		"$${values_args[@]}" \
+		--set crds.enabled=false \
+		--set controller.replicaCount=0 \
+		--set nodeDiscovery.enabled=false \
+		$(HELM_SET) \
+		--wait \
+		--timeout $(HELM_TIMEOUT)
 
 ##@ Build
 

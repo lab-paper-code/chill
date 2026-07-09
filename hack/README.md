@@ -14,3 +14,12 @@ Do not use the testbed kubeconfig as the default shell context inside this repo.
 ```sh
 KUBECONFIG=/path/to/testbed.kubeconfig kubectl get nodes
 ```
+
+Before installing the Helm chart with `crds.enabled=true` on a shared cluster,
+check CRD ownership:
+
+```sh
+make helm-crd-check
+```
+
+Use `make helm-adopt-crds` only for an intentional release migration.

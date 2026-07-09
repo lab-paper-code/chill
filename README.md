@@ -54,6 +54,31 @@ The default chart installs the operator surface without enabling hardware discov
 helm template chill charts/chill --namespace chill-system
 ```
 
+For a real-cluster install smoke, keep the first pass inert: do not let Helm
+claim CRDs and do not start pods. This catches RBAC, namespace, ConfigMap, and
+Deployment rendering issues without depending on a registry image.
+
+```sh
+make helm-install-smoke HELM_VALUES=charts/chill/values-testbed.yaml
+kubectl api-resources --api-group=edge.dacs.io
+kubectl -n chill-system get deploy,cm,sa,role,rolebinding
+```
+
+Before a full Helm install that manages CRDs, check whether existing CRDs are
+already owned by another Helm release.
+
+```sh
+make helm-crd-check
+```
+
+If this repo is taking over CRDs from a retired release, adopt them explicitly:
+
+```sh
+make helm-adopt-crds \
+  FROM_RELEASE_NAME=<old-release> \
+  FROM_RELEASE_NAMESPACE=<old-namespace>
+```
+
 For the six-node lab testbed, use the testbed values file. Discovery runs in two stages: the node daemon labels hardware facts from host files, then the controller matches those labels to the device catalog and creates `DeviceClass` objects.
 
 ```sh
@@ -74,6 +99,23 @@ helm upgrade --install chill charts/chill \
 
 kubectl get nodes --show-labels | grep edge.dacs.io
 kubectl get deviceclasses.edge.dacs.io
+```
+
+For a controller-only runtime smoke with a node-local image, set
+`controller.nodeSelector` and `controller.image.pullPolicy=Never` through Helm
+instead of patching the Deployment by hand.
+
+```sh
+helm upgrade chill charts/chill \
+  --namespace chill-system \
+  -f charts/chill/values-testbed.yaml \
+  --set crds.enabled=false \
+  --set discovery.enabled=false \
+  --set controller.replicaCount=1 \
+  --set controller.image.repository=chill/controller \
+  --set controller.image.tag=<local-tag> \
+  --set controller.image.pullPolicy=Never \
+  --set 'controller.nodeSelector.kubernetes\.io/hostname=<node-name>'
 ```
 
 Useful diagnosis is written to node annotations:

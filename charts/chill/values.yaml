@@ -33,6 +33,7 @@ nodeDiscovery:
     tag: latest
     pullPolicy: IfNotPresent
   nodeSelector: {}
+  affinity: {}
   hostPaths:
     - name: host-proc
       hostPath: /proc
@@ -72,6 +73,9 @@ controller:
   metricsBindAddress: "0"
   healthProbeBindAddress: ":8081"
   leaderElection: true
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
   resources:
     limits:
       cpu: 500m

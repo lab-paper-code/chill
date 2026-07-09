@@ -26,6 +26,10 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.nodeDiscovery.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeDiscovery.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
