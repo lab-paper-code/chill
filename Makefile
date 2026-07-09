@@ -25,6 +25,8 @@ HELM_CHART ?= charts/chill
 HELM_TIMEOUT ?= 2m
 HELM_VALUES ?=
 HELM_SET ?=
+HELM_FLOW = ./hack/helm-release-flow.sh
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" CONTROLLER_IMG="$(CONTROLLER_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -96,13 +98,19 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
+##@ Helm
+
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint.
-	$(HELM) lint charts/chill
+	values_args=(); \
+	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
+	$(HELM) lint $(HELM_CHART) "$${values_args[@]}"
 
 .PHONY: helm-template
 helm-template: kubeconform ## Render and validate Helm chart.
-	$(HELM) template chill charts/chill --namespace chill-system >/tmp/chill-helm.yaml
+	values_args=(); \
+	if [ -n "$(HELM_VALUES)" ]; then values_args+=("-f" "$(HELM_VALUES)"); fi; \
+	$(HELM) template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) "$${values_args[@]}" >/tmp/chill-helm.yaml
 	$(KUBECONFORM) $(KUBECONFORM_FLAGS) /tmp/chill-helm.yaml
 
 .PHONY: helm-crd-check
@@ -127,6 +135,30 @@ helm-install-smoke: ## Install or upgrade the chart without starting pods or man
 		$(HELM_SET) \
 		--wait \
 		--timeout $(HELM_TIMEOUT)
+
+.PHONY: helm-preflight
+helm-preflight: kubeconform ## Validate chart rendering and live CRD ownership.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) preflight
+
+.PHONY: helm-install
+helm-install: kubeconform ## Install or upgrade CHILL without starting runtime pods.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) install
+
+.PHONY: helm-start
+helm-start: ## Start the CHILL runtime components.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) start
+
+.PHONY: helm-stop
+helm-stop: ## Stop CHILL runtime components.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) stop
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Stop CHILL and uninstall the Helm release while keeping CRDs.
+	@$(HELM_FLOW_ENV) $(HELM_FLOW) uninstall
+
+.PHONY: helm-purge-crds
+helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEASE).
+	@$(HELM_FLOW_ENV) CONFIRM_PURGE_CRDS="$(CONFIRM_PURGE_CRDS)" $(HELM_FLOW) purge-crds
 
 ##@ Build
 

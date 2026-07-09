@@ -54,6 +54,37 @@ The default chart installs the operator surface without enabling hardware discov
 helm template chill charts/chill --namespace chill-system
 ```
 
+For cluster operations, prefer the repo Make targets. They keep component
+ordering and cleanup guards inside the repo tooling instead of exposing an
+application-specific phase graph to operators.
+
+```sh
+make helm-preflight HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-install HELM_VALUES=charts/chill/values-testbed.yaml
+```
+
+Start runtime components after images are available:
+
+```sh
+make helm-start \
+  HELM_VALUES=charts/chill/values-testbed.yaml \
+  CONTROLLER_IMG=<registry>/chill/controller:<tag> \
+  NODE_DISCOVERY_IMG=<registry>/chill/node-discovery:<tag>
+```
+
+Cleanup is also exposed as high-level Helm operations:
+
+```sh
+make helm-stop HELM_VALUES=charts/chill/values-testbed.yaml
+make helm-uninstall HELM_VALUES=charts/chill/values-testbed.yaml
+```
+
+CRD deletion is a separate guarded action:
+
+```sh
+make helm-purge-crds CONFIRM_PURGE_CRDS=chill
+```
+
 For a real-cluster install smoke, keep the first pass inert: do not let Helm
 claim CRDs and do not start pods. This catches RBAC, namespace, ConfigMap, and
 Deployment rendering issues without depending on a registry image.
