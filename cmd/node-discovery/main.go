@@ -17,9 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/lab-paper-code/chill/internal/kubeclient"
-	chilllabels "github.com/lab-paper-code/chill/internal/labels"
-	"github.com/lab-paper-code/chill/internal/nodediscovery"
+	"github.com/lab-paper-code/chill/internal/kubeconfig"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/nodeprobe"
 )
 
 func main() {
@@ -42,16 +42,16 @@ func main() {
 		"/etc/chill/node-discovery/signatures.yaml",
 		"YAML file containing node discovery signatures.",
 	)
-	flag.DurationVar(&interval, "interval", 10*time.Minute, "How often to refresh node discovery labels.")
+	flag.DurationVar(&interval, "interval", 10*time.Minute, "How often to refresh node discovery metadata.")
 	flag.BoolVar(&once, "once", false, "Run one discovery pass and exit.")
 	flag.BoolVar(&cleanupOnExit, "cleanup-on-exit", false,
 		"Remove CHILL-managed labels from this Node before exiting on signal.")
 	flag.DurationVar(&cleanupTimeout, "cleanup-timeout", 10*time.Second, "Maximum time allowed for exit cleanup.")
 	flag.StringVar(&kubeAPIServer, "kube-api-server", os.Getenv("CHILL_KUBE_API_SERVER"),
 		"Kubernetes API server URL. Leave empty to use standard in-cluster config.")
-	flag.StringVar(&kubeAPITokenFile, "kube-api-token-file", kubeclient.DefaultServiceAccountTokenFile,
+	flag.StringVar(&kubeAPITokenFile, "kube-api-token-file", kubeconfig.DefaultServiceAccountTokenFile,
 		"Path to the service account bearer token file.")
-	flag.StringVar(&kubeAPICAFile, "kube-api-ca-file", kubeclient.DefaultServiceAccountCAFile,
+	flag.StringVar(&kubeAPICAFile, "kube-api-ca-file", kubeconfig.DefaultServiceAccountCAFile,
 		"Path to the Kubernetes API CA file.")
 	flag.Parse()
 
@@ -59,7 +59,7 @@ func main() {
 		log.Fatal("node name is required; set NODE_NAME or --node-name")
 	}
 
-	config, err := kubeclient.BuildConfig(kubeclient.Options{
+	config, err := kubeconfig.BuildConfig(kubeconfig.Options{
 		APIServer: kubeAPIServer,
 		TokenFile: kubeAPITokenFile,
 		CAFile:    kubeAPICAFile,
@@ -102,12 +102,12 @@ func main() {
 }
 
 func runOnce(ctx context.Context, clientset kubernetes.Interface, nodeName, hostRoot, signatureFile string) error {
-	catalog, err := nodediscovery.LoadSignatureCatalog(signatureFile)
+	catalog, err := nodeprobe.LoadSignatureCatalog(signatureFile)
 	if err != nil {
 		return fmt.Errorf("load node discovery signatures: %w", err)
 	}
 
-	facts, err := nodediscovery.Probe(hostRoot, catalog)
+	facts, err := nodeprobe.Probe(hostRoot, catalog)
 	if err != nil {
 		return fmt.Errorf("probe host: %w", err)
 	}
@@ -233,30 +233,30 @@ func buildNodeCleanupPatch(node *corev1.Node) ([]byte, bool, error) {
 	labels := node.GetLabels()
 	annotations := node.GetAnnotations()
 
-	if annotations[chilllabels.DiscoverySource] == chilllabels.SourceNodeDiscovery {
+	if annotations[chillmeta.DiscoverySource] == chillmeta.SourceNodeDiscovery {
 		addDeleteKeys(patchLabels,
-			chilllabels.DeviceVendor,
-			chilllabels.DeviceFamily,
-			chilllabels.DeviceModel,
-			chilllabels.Accelerator,
+			chillmeta.DeviceVendor,
+			chillmeta.DeviceFamily,
+			chillmeta.DeviceModel,
+			chillmeta.Accelerator,
 		)
 		addDeleteKeys(patchAnnotations,
-			chilllabels.DeviceModelRaw,
-			chilllabels.DiscoverySource,
-			chilllabels.NodeDiscoveryResult,
-			chilllabels.NodeDiscoveryReason,
+			chillmeta.DeviceModelRaw,
+			chillmeta.DiscoverySource,
+			chillmeta.NodeDiscoveryResult,
+			chillmeta.NodeDiscoveryReason,
 		)
 	}
 
-	if annotations[chilllabels.ManagedBy] == chilllabels.ManagedByDeviceDiscovery {
-		addDeleteKeys(patchLabels, chilllabels.DeviceClass)
-		addDeleteKeys(patchAnnotations, chilllabels.ManagedBy)
+	if annotations[chillmeta.ManagedBy] == chillmeta.ManagedByDeviceDiscovery {
+		addDeleteKeys(patchLabels, chillmeta.DeviceClass)
+		addDeleteKeys(patchAnnotations, chillmeta.ManagedBy)
 	}
 
 	addDeleteKeys(patchAnnotations,
-		chilllabels.DeviceClassDiscoveryResult,
-		chilllabels.DeviceClassDiscoveryReason,
-		chilllabels.DeviceClassDiscoveryClass,
+		chillmeta.DeviceClassDiscoveryResult,
+		chillmeta.DeviceClassDiscoveryReason,
+		chillmeta.DeviceClassDiscoveryClass,
 	)
 
 	pruneAbsentDeleteKeys(patchLabels, labels)

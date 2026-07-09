@@ -18,12 +18,12 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/controller"
-	"github.com/lab-paper-code/chill/internal/deviceclasscatalog"
-	"github.com/lab-paper-code/chill/internal/discoverycontroller"
-	chilllabels "github.com/lab-paper-code/chill/internal/labels"
-	"github.com/lab-paper-code/chill/internal/nodediscoverycontroller"
-	"github.com/lab-paper-code/chill/internal/systemcontroller"
+	"github.com/lab-paper-code/chill/internal/deviceclass"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/operator/discovery"
+	"github.com/lab-paper-code/chill/internal/operator/nodediscovery"
+	"github.com/lab-paper-code/chill/internal/operator/resources"
+	"github.com/lab-paper-code/chill/internal/operator/system"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -69,7 +69,7 @@ func main() {
 			"Enabling this will ensure there is only one active operator.")
 	flag.BoolVar(&enableDeviceDiscovery, "device-discovery-enabled", false,
 		"Enable node-based DeviceClass discovery.")
-	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chilllabels.DeviceClass,
+	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chillmeta.DeviceClass,
 		"Node label key used to bind nodes to discovered DeviceClasses.")
 	flag.BoolVar(&deviceDiscoveryOverwriteManualLabels, "device-discovery-overwrite-manual-labels", false,
 		"Overwrite existing node device-class labels during discovery.")
@@ -81,11 +81,11 @@ func main() {
 		"Namespace containing the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogName, "device-discovery-catalog-name", "",
 		"Name of the optional device discovery catalog ConfigMap.")
-	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclasscatalog.CatalogDataKey,
+	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclass.CatalogDataKey,
 		"Data key containing the device discovery catalog in the ConfigMap.")
-	flag.StringVar(&systemStatusName, "system-status-name", systemcontroller.DefaultSystemName,
+	flag.StringVar(&systemStatusName, "system-status-name", system.DefaultSystemName,
 		"Name of the namespace-local ChillSystem status resource.")
-	flag.StringVar(&systemStatusNamespace, "system-status-namespace", systemcontroller.DefaultNamespace(),
+	flag.StringVar(&systemStatusNamespace, "system-status-namespace", system.DefaultNamespace(),
 		"Namespace containing the namespace-local ChillSystem status resource.")
 	flag.StringVar(&systemStatusOperatorDeploymentName, "system-status-operator-deployment-name", "",
 		"Name of the operator Deployment reported in ChillSystem status.")
@@ -96,18 +96,18 @@ func main() {
 	flag.DurationVar(
 		&systemStatusRefreshInterval,
 		"system-status-refresh-interval",
-		systemcontroller.DefaultRefreshInterval,
+		system.DefaultRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
 	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing the node-discovery operator config ConfigMap.")
 	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
 		"Name of the node-discovery operator config ConfigMap.")
-	flag.StringVar(&nodeDiscoveryConfigKey, "node-discovery-config-key", nodediscoverycontroller.DefaultConfigKey,
+	flag.StringVar(&nodeDiscoveryConfigKey, "node-discovery-config-key", nodediscovery.DefaultConfigKey,
 		"Data key containing node-discovery operator config.")
 	flag.DurationVar(
 		&nodeDiscoveryReconcileInterval,
 		"node-discovery-reconcile-interval",
-		nodediscoverycontroller.DefaultReconcileInterval,
+		nodediscovery.DefaultReconcileInterval,
 		"Periodic refresh interval for node-discovery reconciliation.")
 	opts := zap.Options{
 		Development: true,
@@ -117,7 +117,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	systemStatusOptions := systemcontroller.Options{
+	systemStatusOptions := system.Options{
 		SystemName:                 systemStatusName,
 		Namespace:                  systemStatusNamespace,
 		OperatorDeploymentName:     systemStatusOperatorDeploymentName,
@@ -149,14 +149,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.DeviceClassReconciler{
+	if err = (&resources.DeviceClassReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceClass")
 		os.Exit(1)
 	}
-	if err = (&systemcontroller.ChillSystemReconciler{
+	if err = (&system.ChillSystemReconciler{
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
 		Options: systemStatusOptions,
@@ -164,10 +164,10 @@ func main() {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ChillSystem")
 		os.Exit(1)
 	}
-	if err = (&nodediscoverycontroller.Reconciler{
+	if err = (&nodediscovery.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Options: nodediscoverycontroller.Options{
+		Options: nodediscovery.Options{
 			Enabled:           systemStatusNodeDiscoveryEnabled,
 			SystemName:        systemStatusName,
 			Namespace:         nodeDiscoveryConfigNamespace,
@@ -181,9 +181,9 @@ func main() {
 		os.Exit(1)
 	}
 	if enableDeviceDiscovery {
-		if err = (&discoverycontroller.DeviceDiscoveryReconciler{
+		if err = (&discovery.DeviceDiscoveryReconciler{
 			Client: mgr.GetClient(),
-			Options: discoverycontroller.DeviceDiscoveryOptions{
+			Options: discovery.DeviceDiscoveryOptions{
 				LabelKey:              deviceDiscoveryLabelKey,
 				OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
 				NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,
@@ -197,21 +197,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err = (&controller.ModelSpecReconciler{
+	if err = (&resources.ModelSpecReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ModelSpec")
 		os.Exit(1)
 	}
-	if err = (&controller.DeviceProfileReconciler{
+	if err = (&resources.DeviceProfileReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceProfile")
 		os.Exit(1)
 	}
-	if err = (&controller.ClusterEnergyModelReconciler{
+	if err = (&resources.ClusterEnergyModelReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {

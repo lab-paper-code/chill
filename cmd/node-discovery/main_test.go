@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/lab-paper-code/chill/internal/labels"
+	"github.com/lab-paper-code/chill/internal/metadata"
 )
 
 func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
@@ -19,7 +19,7 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				"kubernetes.io/hostname": "edge-01",
-				labels.DeviceClass:       "manual-class",
+				metadata.DeviceClass:     "manual-class",
 			},
 			Annotations: map[string]string{
 				"existing": "value",
@@ -28,9 +28,9 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 	}
 
 	patch, changed, err := buildNodePatch(node, map[string]string{
-		labels.DeviceModel: "orin-nano",
+		metadata.DeviceModel: "orin-nano",
 	}, map[string]string{
-		labels.DiscoverySource: labels.SourceNodeDiscovery,
+		metadata.DiscoverySource: metadata.SourceNodeDiscovery,
 	})
 	if err != nil {
 		t.Fatalf("buildNodePatch() error = %v", err)
@@ -48,11 +48,11 @@ func TestBuildNodePatchPreservesExistingMetadata(t *testing.T) {
 	if err := json.Unmarshal(patch, &payload); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if _, ok := payload.Metadata.Labels[labels.DeviceClass]; ok {
+	if _, ok := payload.Metadata.Labels[metadata.DeviceClass]; ok {
 		t.Fatalf("device class label was included in node-discovery patch")
 	}
-	if payload.Metadata.Labels[labels.DeviceModel] != "orin-nano" {
-		t.Fatalf("device model label = %q, want orin-nano", payload.Metadata.Labels[labels.DeviceModel])
+	if payload.Metadata.Labels[metadata.DeviceModel] != "orin-nano" {
+		t.Fatalf("device model label = %q, want orin-nano", payload.Metadata.Labels[metadata.DeviceModel])
 	}
 	if _, ok := payload.Metadata.Annotations["existing"]; ok {
 		t.Fatalf("unmanaged annotation was included in node-discovery patch")
@@ -77,21 +77,21 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if node.Annotations[labels.NodeDiscoveryResult] != labels.DiscoveryResultUnmatched {
+	if node.Annotations[metadata.NodeDiscoveryResult] != metadata.DiscoveryResultUnmatched {
 		t.Fatalf(
 			"node discovery result = %q, want %q",
-			node.Annotations[labels.NodeDiscoveryResult],
-			labels.DiscoveryResultUnmatched,
+			node.Annotations[metadata.NodeDiscoveryResult],
+			metadata.DiscoveryResultUnmatched,
 		)
 	}
-	if node.Annotations[labels.NodeDiscoveryReason] != labels.DiscoveryReasonNoSourceFacts {
+	if node.Annotations[metadata.NodeDiscoveryReason] != metadata.DiscoveryReasonNoSourceFacts {
 		t.Fatalf(
 			"node discovery reason = %q, want %q",
-			node.Annotations[labels.NodeDiscoveryReason],
-			labels.DiscoveryReasonNoSourceFacts,
+			node.Annotations[metadata.NodeDiscoveryReason],
+			metadata.DiscoveryReasonNoSourceFacts,
 		)
 	}
-	if _, ok := node.Labels[labels.DeviceClass]; ok {
+	if _, ok := node.Labels[metadata.DeviceClass]; ok {
 		t.Fatalf("node-discovery set DeviceClass label")
 	}
 }
@@ -100,23 +100,23 @@ func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				labels.DeviceVendor: "nvidia",
-				labels.DeviceFamily: "jetson",
-				labels.DeviceModel:  "orin-nano",
-				labels.Accelerator:  "nvidia-jetson-orin-nano",
-				labels.DeviceClass:  "jetson-orin-nano-8g",
-				"keep":              "true",
+				metadata.DeviceVendor: "nvidia",
+				metadata.DeviceFamily: "jetson",
+				metadata.DeviceModel:  "orin-nano",
+				metadata.Accelerator:  "nvidia-jetson-orin-nano",
+				metadata.DeviceClass:  "jetson-orin-nano-8g",
+				"keep":                "true",
 			},
 			Annotations: map[string]string{
-				labels.DiscoverySource:            labels.SourceNodeDiscovery,
-				labels.NodeDiscoveryResult:        labels.DiscoveryResultMatched,
-				labels.NodeDiscoveryReason:        labels.DiscoveryReasonSignatureMatched,
-				labels.ManagedBy:                  labels.ManagedByDeviceDiscovery,
-				labels.DeviceClassDiscoveryResult: labels.DiscoveryResultMatched,
-				labels.DeviceClassDiscoveryReason: labels.DiscoveryReasonCatalogMatched,
-				labels.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
-				labels.DeviceModelRaw:             "NVIDIA Jetson Orin Nano",
-				"keep":                            "true",
+				metadata.DiscoverySource:            metadata.SourceNodeDiscovery,
+				metadata.NodeDiscoveryResult:        metadata.DiscoveryResultMatched,
+				metadata.NodeDiscoveryReason:        metadata.DiscoveryReasonSignatureMatched,
+				metadata.ManagedBy:                  metadata.ManagedByDeviceDiscovery,
+				metadata.DeviceClassDiscoveryResult: metadata.DiscoveryResultMatched,
+				metadata.DeviceClassDiscoveryReason: metadata.DiscoveryReasonCatalogMatched,
+				metadata.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
+				metadata.DeviceModelRaw:             "NVIDIA Jetson Orin Nano",
+				"keep":                              "true",
 			},
 		},
 	}
@@ -139,11 +139,11 @@ func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	for _, key := range []string{
-		labels.DeviceVendor,
-		labels.DeviceFamily,
-		labels.DeviceModel,
-		labels.Accelerator,
-		labels.DeviceClass,
+		metadata.DeviceVendor,
+		metadata.DeviceFamily,
+		metadata.DeviceModel,
+		metadata.Accelerator,
+		metadata.DeviceClass,
 	} {
 		if _, ok := payload.Metadata.Labels[key]; !ok {
 			t.Fatalf("cleanup patch missing label delete for %s", key)
@@ -153,14 +153,14 @@ func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
 		t.Fatalf("cleanup patch deletes unrelated label")
 	}
 	for _, key := range []string{
-		labels.DiscoverySource,
-		labels.NodeDiscoveryResult,
-		labels.NodeDiscoveryReason,
-		labels.ManagedBy,
-		labels.DeviceClassDiscoveryResult,
-		labels.DeviceClassDiscoveryReason,
-		labels.DeviceClassDiscoveryClass,
-		labels.DeviceModelRaw,
+		metadata.DiscoverySource,
+		metadata.NodeDiscoveryResult,
+		metadata.NodeDiscoveryReason,
+		metadata.ManagedBy,
+		metadata.DeviceClassDiscoveryResult,
+		metadata.DeviceClassDiscoveryReason,
+		metadata.DeviceClassDiscoveryClass,
+		metadata.DeviceModelRaw,
 	} {
 		if _, ok := payload.Metadata.Annotations[key]; !ok {
 			t.Fatalf("cleanup patch missing annotation delete for %s", key)
@@ -175,12 +175,12 @@ func TestBuildNodeCleanupPatchPreservesManualDeviceClassLabel(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				labels.DeviceClass: "manual-class",
+				metadata.DeviceClass: "manual-class",
 			},
 			Annotations: map[string]string{
-				labels.DeviceClassDiscoveryResult: labels.DiscoveryResultMatched,
-				labels.DeviceClassDiscoveryReason: labels.DiscoveryReasonManualLabelPreserved,
-				labels.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
+				metadata.DeviceClassDiscoveryResult: metadata.DiscoveryResultMatched,
+				metadata.DeviceClassDiscoveryReason: metadata.DiscoveryReasonManualLabelPreserved,
+				metadata.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
 			},
 		},
 	}
@@ -202,10 +202,10 @@ func TestBuildNodeCleanupPatchPreservesManualDeviceClassLabel(t *testing.T) {
 	if err := json.Unmarshal(patch, &payload); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if _, ok := payload.Metadata.Labels[labels.DeviceClass]; ok {
+	if _, ok := payload.Metadata.Labels[metadata.DeviceClass]; ok {
 		t.Fatalf("cleanup patch deletes manual device-class label")
 	}
-	if _, ok := payload.Metadata.Annotations[labels.DeviceClassDiscoveryResult]; !ok {
+	if _, ok := payload.Metadata.Annotations[metadata.DeviceClassDiscoveryResult]; !ok {
 		t.Fatalf("cleanup patch should remove stale discovery status")
 	}
 }
