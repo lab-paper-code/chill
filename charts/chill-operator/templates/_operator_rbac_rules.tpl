@@ -25,7 +25,6 @@
   - delete
   - get
   - list
-  - patch
   - update
   - watch
 - apiGroups:
@@ -44,7 +43,6 @@
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - edge.dacs.io

@@ -48,11 +48,13 @@ var _ = Describe("DeviceClass discovery", func() {
 		Expect(deviceClass.Spec.MemoryBytes.Cmp(resource.MustParse("8Gi"))).To(Equal(0))
 		Expect(deviceClass.Spec.Accelerator).To(Equal("nvidia-jetson-orin-nano"))
 		Expect(deviceClass.Spec.PowerModes).To(HaveLen(2))
+		Expect(deviceClass.Labels[chillmeta.System]).To(Equal(discoverySystemName(runID)))
 
 		updatedNode := &corev1.Node{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels[chillmeta.DeviceClass]).To(Equal("jetson-orin-nano-8g"))
 		Expect(updatedNode.Annotations[chillmeta.ManagedBy]).To(Equal(chillmeta.ManagedByDeviceDiscovery))
+		Expect(updatedNode.Annotations[chillmeta.System]).To(Equal(discoverySystemName(runID)))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryResult]).To(Equal(chillmeta.DiscoveryResultMatched))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryReason]).To(Equal(chillmeta.DiscoveryReasonCatalogMatched))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryClass]).To(Equal("jetson-orin-nano-8g"))
@@ -77,6 +79,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels[chillmeta.DeviceClass]).To(Equal("manual-class"))
 		Expect(updatedNode.Annotations).NotTo(HaveKey(chillmeta.ManagedBy))
+		Expect(updatedNode.Annotations[chillmeta.System]).To(Equal(discoverySystemName(runID)))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryResult]).To(Equal(chillmeta.DiscoveryResultMatched))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryReason]).To(Equal(chillmeta.DiscoveryReasonManualLabelPreserved))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryClass]).To(Equal("jetson-orin-nano-8g"))
@@ -109,6 +112,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels[chillmeta.DeviceClass]).To(Equal("jetson-orin-nano-8g"))
 		Expect(updatedNode.Annotations[chillmeta.ManagedBy]).To(Equal(chillmeta.ManagedByDeviceDiscovery))
+		Expect(updatedNode.Annotations[chillmeta.System]).To(Equal(discoverySystemName(runID)))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryReason]).To(Equal(chillmeta.DiscoveryReasonCatalogMatched))
 
 		deviceClass := &edgev1alpha1.DeviceClass{}
@@ -135,6 +139,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		updatedNode := &corev1.Node{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: node.Name}, updatedNode)).To(Succeed())
 		Expect(updatedNode.Labels).NotTo(HaveKey(chillmeta.DeviceClass))
+		Expect(updatedNode.Annotations[chillmeta.System]).To(Equal(discoverySystemName(runID)))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryResult]).To(Equal(chillmeta.DiscoveryResultUnmatched))
 		Expect(updatedNode.Annotations[chillmeta.DeviceClassDiscoveryReason]).To(Equal(chillmeta.DiscoveryReasonNoCatalogMatch))
 		Expect(updatedNode.Annotations).NotTo(HaveKey(chillmeta.DeviceClassDiscoveryClass))
@@ -156,6 +161,9 @@ var _ = Describe("DeviceClass discovery", func() {
 		stale := &edgev1alpha1.DeviceClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "stale-" + runID,
+				Labels: map[string]string{
+					chillmeta.System: discoverySystemName(runID),
+				},
 				Annotations: map[string]string{
 					chillmeta.ManagedBy: chillmeta.ManagedByDeviceDiscovery,
 				},
@@ -169,6 +177,14 @@ var _ = Describe("DeviceClass discovery", func() {
 			},
 		}
 		Expect(k8sClient.Create(ctx, stale)).To(Succeed())
+		otherSystem := stale.DeepCopy()
+		otherSystem.Name = "other-" + runID
+		otherSystem.ResourceVersion = ""
+		otherSystem.Labels[chillmeta.System] = "other-system"
+		Expect(k8sClient.Create(ctx, otherSystem)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, otherSystem)
+		})
 
 		reconciler := discoveryReconciler(namespace.Name, runID)
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
@@ -177,6 +193,8 @@ var _ = Describe("DeviceClass discovery", func() {
 		deviceClass := &edgev1alpha1.DeviceClass{}
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: stale.Name}, deviceClass)
 		Expect(err).To(HaveOccurred())
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: otherSystem.Name}, deviceClass)
+		Expect(err).NotTo(HaveOccurred())
 	})
 })
 

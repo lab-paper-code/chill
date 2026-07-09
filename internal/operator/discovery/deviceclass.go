@@ -12,6 +12,8 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/operator/ownership"
 )
 
 func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, system *edgev1alpha1.ChillSystem, discovered deviceclass.DiscoveredClass) error {
@@ -24,6 +26,9 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 		deviceClass := &edgev1alpha1.DeviceClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: discovered.Name,
+				Labels: map[string]string{
+					chillmeta.System: system.Name,
+				},
 				Annotations: map[string]string{
 					deviceDiscoveryManagedByKey: deviceDiscoveryManagedBy,
 					deviceDiscoverySourceKey:    deviceDiscoverySourceNode,
@@ -43,8 +48,12 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 	if existing.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
 		return nil
 	}
+	if !ownership.BelongsToChillSystem(existing, system) {
+		return nil
+	}
 
 	original := existing.DeepCopy()
+	ownership.EnsureSystemLabel(existing, system.Name)
 	if !deviceclass.SpecEqual(existing.Spec, discovered.Spec) {
 		existing.Spec = discovered.Spec
 	}
@@ -57,7 +66,7 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 	return nil
 }
 
-func (r *DeviceDiscoveryReconciler) pruneDeviceClasses(ctx context.Context, discovered map[string]struct{}) error {
+func (r *DeviceDiscoveryReconciler) pruneDeviceClasses(ctx context.Context, system *edgev1alpha1.ChillSystem, discovered map[string]struct{}) error {
 	deviceClasses := &edgev1alpha1.DeviceClassList{}
 	if err := r.List(ctx, deviceClasses); err != nil {
 		return fmt.Errorf("list DeviceClasses for pruning: %w", err)
@@ -66,6 +75,9 @@ func (r *DeviceDiscoveryReconciler) pruneDeviceClasses(ctx context.Context, disc
 	for i := range deviceClasses.Items {
 		deviceClass := &deviceClasses.Items[i]
 		if deviceClass.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
+			continue
+		}
+		if !ownership.BelongsToChillSystem(deviceClass, system) {
 			continue
 		}
 		if _, ok := discovered[deviceClass.Name]; ok {

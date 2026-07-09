@@ -69,7 +69,7 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := runOnce(ctx, clientset, "edge-01", t.TempDir(), signatureFile); err != nil {
+	if err := runOnce(ctx, clientset, "edge-01", "chill", t.TempDir(), signatureFile); err != nil {
 		t.Fatalf("runOnce() error = %v", err)
 	}
 
@@ -94,6 +94,9 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 	if _, ok := node.Labels[metadata.DeviceClass]; ok {
 		t.Fatalf("node-discovery set DeviceClass label")
 	}
+	if node.Annotations[metadata.System] != "chill" {
+		t.Fatalf("system annotation = %q, want chill", node.Annotations[metadata.System])
+	}
 }
 
 func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
@@ -112,6 +115,7 @@ func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
 				metadata.NodeDiscoveryResult:        metadata.DiscoveryResultMatched,
 				metadata.NodeDiscoveryReason:        metadata.DiscoveryReasonSignatureMatched,
 				metadata.ManagedBy:                  metadata.ManagedByDeviceDiscovery,
+				metadata.System:                     "chill",
 				metadata.DeviceClassDiscoveryResult: metadata.DiscoveryResultMatched,
 				metadata.DeviceClassDiscoveryReason: metadata.DiscoveryReasonCatalogMatched,
 				metadata.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
@@ -161,6 +165,7 @@ func TestBuildNodeCleanupPatchRemovesOnlyCHILLManagedMetadata(t *testing.T) {
 		metadata.DeviceClassDiscoveryReason,
 		metadata.DeviceClassDiscoveryClass,
 		metadata.DeviceModelRaw,
+		metadata.System,
 	} {
 		if _, ok := payload.Metadata.Annotations[key]; !ok {
 			t.Fatalf("cleanup patch missing annotation delete for %s", key)

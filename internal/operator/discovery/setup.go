@@ -1,33 +1,17 @@
 package discovery
 
 import (
-	"context"
-
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/operator/watch"
 )
 
 // SetupWithManager sets up node and catalog watches for device discovery.
 func (r *DeviceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	mapToSystems := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		systems := &edgev1alpha1.ChillSystemList{}
-		if err := r.List(ctx, systems); err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "list ChillSystems for DeviceClass discovery")
-			return nil
-		}
-		requests := make([]reconcile.Request, 0, len(systems.Items))
-		for i := range systems.Items {
-			if !systems.Items[i].Spec.DeviceDiscovery.Enabled {
-				continue
-			}
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Name: systems.Items[i].Name}})
-		}
-		return requests
+	mapToSystems := watch.EnqueueChillSystems(r.Client, func(system edgev1alpha1.ChillSystem) bool {
+		return system.Spec.DeviceDiscovery.Enabled
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).

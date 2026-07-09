@@ -36,14 +36,14 @@ func (r *DeviceDiscoveryReconciler) ensureNodeClassLabel(ctx context.Context, no
 	labels := mutableNodeLabels(node)
 	annotations := mutableNodeAnnotations(node)
 	reason := applyDeviceClassLabelPolicy(labels, annotations, labelKey(options), className, options.OverwriteManualLabels)
-	applyDeviceClassDiscoveryStatus(annotations, chillmeta.DiscoveryResultMatched, reason, className)
+	applyDeviceClassDiscoveryStatus(annotations, options.SystemName, chillmeta.DiscoveryResultMatched, reason, className)
 	return r.patchNodeMetadataIfChanged(ctx, node, original, "device class label")
 }
 
-func (r *DeviceDiscoveryReconciler) ensureNodeClassDiscoveryAnnotations(ctx context.Context, node *corev1.Node, result, reason, className string) error {
+func (r *DeviceDiscoveryReconciler) ensureNodeClassDiscoveryAnnotations(ctx context.Context, node *corev1.Node, options DeviceDiscoveryOptions, result, reason, className string) error {
 	original := node.DeepCopy()
 	annotations := mutableNodeAnnotations(node)
-	applyDeviceClassDiscoveryStatus(annotations, result, reason, className)
+	applyDeviceClassDiscoveryStatus(annotations, options.SystemName, result, reason, className)
 	return r.patchNodeMetadataIfChanged(ctx, node, original, "device class discovery annotations")
 }
 
@@ -94,7 +94,10 @@ func applyDeviceClassLabelPolicy(labels, annotations map[string]string, labelKey
 	return chillmeta.DiscoveryReasonCatalogMatched
 }
 
-func applyDeviceClassDiscoveryStatus(annotations map[string]string, result, reason, className string) {
+func applyDeviceClassDiscoveryStatus(annotations map[string]string, systemName, result, reason, className string) {
+	if systemName != "" {
+		annotations[chillmeta.System] = systemName
+	}
 	annotations[chillmeta.DeviceClassDiscoveryResult] = result
 	annotations[chillmeta.DeviceClassDiscoveryReason] = reason
 	if className == "" {

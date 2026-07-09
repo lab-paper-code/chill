@@ -91,16 +91,24 @@ render_validate() {
 	local out
 	out="$(mktemp --suffix=.yaml)"
 	trap 'rm -f "${out}"' EXIT
+	local operator_args=("--set" "system.name=${system_release}")
+	local system_args=("--set" "system.name=${system_release}")
+	append_image_values operator_args operator "${operator_image}"
+	append_image_values system_args nodeDiscovery "${node_discovery_image}"
 
-	"${helm_bin}" lint "${operator_chart}" "${operator_values_args[@]}"
-	"${helm_bin}" lint "${system_chart}" "${system_values_args[@]}"
+	"${helm_bin}" lint "${operator_chart}" "${operator_values_args[@]}" "${operator_args[@]}" "${operator_extra_args[@]}"
+	"${helm_bin}" lint "${system_chart}" "${system_values_args[@]}" "${system_args[@]}" "${system_extra_args[@]}"
 	"${helm_bin}" template "${operator_release}" "${operator_chart}" \
 		--namespace "${release_namespace}" \
 		"${operator_values_args[@]}" \
+		"${operator_args[@]}" \
+		"${operator_extra_args[@]}" \
 		>"${out}"
 	"${helm_bin}" template "${system_release}" "${system_chart}" \
 		--namespace "${release_namespace}" \
 		"${system_values_args[@]}" \
+		"${system_args[@]}" \
+		"${system_extra_args[@]}" \
 		>>"${out}"
 	if [[ -x "${kubeconform_bin}" ]]; then
 		"${kubeconform_bin}" ${kubeconform_flags} "${out}"
@@ -123,7 +131,7 @@ preflight() {
 }
 
 install_operator() {
-	local args=()
+	local args=("--set" "system.name=${system_release}")
 	append_image_values args operator "${operator_image}"
 	echo "==> install-operator"
 	"${helm_bin}" upgrade --install "${operator_release}" "${operator_chart}" \
@@ -137,7 +145,7 @@ install_operator() {
 }
 
 install_system() {
-	local args=()
+	local args=("--set" "system.name=${system_release}")
 	append_image_values args nodeDiscovery "${node_discovery_image}"
 	echo "==> install-system"
 	"${helm_bin}" upgrade --install "${system_release}" "${system_chart}" \
@@ -178,8 +186,17 @@ purge_crds() {
 		echo "Refusing to delete CRDs. Set CONFIRM_PURGE_CRDS=${operator_release} to continue." >&2
 		exit 1
 	fi
+	if "${helm_bin}" status "${system_release}" --namespace "${release_namespace}" >/dev/null 2>&1; then
+		echo "Refusing to delete CRDs while Helm release ${system_release}/${release_namespace} is installed. Run helm-uninstall first." >&2
+		exit 1
+	fi
 	if "${helm_bin}" status "${operator_release}" --namespace "${release_namespace}" >/dev/null 2>&1; then
 		echo "Refusing to delete CRDs while Helm release ${operator_release}/${release_namespace} is installed. Run helm-uninstall first." >&2
+		exit 1
+	fi
+	if "${kubectl_bin}" get crd chillsystems.edge.dacs.io >/dev/null 2>&1 &&
+		[[ -n "$("${kubectl_bin}" get chillsystems.edge.dacs.io -o name --ignore-not-found 2>/dev/null)" ]]; then
+		echo "Refusing to delete CRDs while ChillSystem resources still exist. Delete them and wait for finalizers first." >&2
 		exit 1
 	fi
 	"${kubectl_bin}" delete -f config/crd/bases --ignore-not-found

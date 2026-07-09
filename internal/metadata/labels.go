@@ -9,6 +9,7 @@ const (
 	DeviceModel  = Prefix + "/device-model"
 	Accelerator  = Prefix + "/accelerator"
 
+	System          = Prefix + "/system"
 	ManagedBy       = Prefix + "/managed-by"
 	DiscoverySource = Prefix + "/discovery-source"
 	DeviceModelRaw  = Prefix + "/device-model-raw"

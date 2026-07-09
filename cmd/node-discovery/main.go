@@ -24,6 +24,7 @@ import (
 
 func main() {
 	var nodeName string
+	var systemName string
 	var hostRoot string
 	var signatureFile string
 	var interval time.Duration
@@ -35,6 +36,12 @@ func main() {
 	var kubeAPICAFile string
 
 	flag.StringVar(&nodeName, "node-name", os.Getenv("NODE_NAME"), "Kubernetes Node name to patch.")
+	flag.StringVar(
+		&systemName,
+		"system-name",
+		os.Getenv("CHILL_SYSTEM_NAME"),
+		"ChillSystem name that owns this node-discovery instance.",
+	)
 	flag.StringVar(&hostRoot, "host-root", "/host", "Root path containing read-only host mounts.")
 	flag.StringVar(
 		&signatureFile,
@@ -79,7 +86,7 @@ func main() {
 			cleanupOnSignal(cleanupOnExit, cleanupTimeout, clientset, nodeName)
 			return
 		}
-		if err := runOnce(ctx, clientset, nodeName, hostRoot, signatureFile); err != nil {
+		if err := runOnce(ctx, clientset, nodeName, systemName, hostRoot, signatureFile); err != nil {
 			log.Printf("node discovery failed: %v", err)
 		}
 		if once {
@@ -101,7 +108,14 @@ func main() {
 	}
 }
 
-func runOnce(ctx context.Context, clientset kubernetes.Interface, nodeName, hostRoot, signatureFile string) error {
+func runOnce(
+	ctx context.Context,
+	clientset kubernetes.Interface,
+	nodeName,
+	systemName,
+	hostRoot,
+	signatureFile string,
+) error {
 	catalog, err := nodeprobe.LoadSignatureCatalog(signatureFile)
 	if err != nil {
 		return fmt.Errorf("load node discovery signatures: %w", err)
@@ -114,6 +128,9 @@ func runOnce(ctx context.Context, clientset kubernetes.Interface, nodeName, host
 
 	labels := facts.Labels()
 	annotations := facts.Annotations()
+	if systemName != "" {
+		annotations[chillmeta.System] = systemName
+	}
 	if len(labels) == 0 && len(annotations) == 0 {
 		log.Printf("no known device facts discovered for node %q", nodeName)
 		return nil
@@ -234,18 +251,8 @@ func buildNodeCleanupPatch(node *corev1.Node) ([]byte, bool, error) {
 	annotations := node.GetAnnotations()
 
 	if annotations[chillmeta.DiscoverySource] == chillmeta.SourceNodeDiscovery {
-		addDeleteKeys(patchLabels,
-			chillmeta.DeviceVendor,
-			chillmeta.DeviceFamily,
-			chillmeta.DeviceModel,
-			chillmeta.Accelerator,
-		)
-		addDeleteKeys(patchAnnotations,
-			chillmeta.DeviceModelRaw,
-			chillmeta.DiscoverySource,
-			chillmeta.NodeDiscoveryResult,
-			chillmeta.NodeDiscoveryReason,
-		)
+		addDeleteKeys(patchLabels, chillmeta.NodeDiscoveryLabelKeys()...)
+		addDeleteKeys(patchAnnotations, chillmeta.NodeDiscoveryAnnotationKeys()...)
 	}
 
 	if annotations[chillmeta.ManagedBy] == chillmeta.ManagedByDeviceDiscovery {
@@ -253,11 +260,8 @@ func buildNodeCleanupPatch(node *corev1.Node) ([]byte, bool, error) {
 		addDeleteKeys(patchAnnotations, chillmeta.ManagedBy)
 	}
 
-	addDeleteKeys(patchAnnotations,
-		chillmeta.DeviceClassDiscoveryResult,
-		chillmeta.DeviceClassDiscoveryReason,
-		chillmeta.DeviceClassDiscoveryClass,
-	)
+	addDeleteKeys(patchAnnotations, chillmeta.DeviceDiscoveryAnnotationKeys()...)
+	addDeleteKeys(patchAnnotations, chillmeta.System)
 
 	pruneAbsentDeleteKeys(patchLabels, labels)
 	pruneAbsentDeleteKeys(patchAnnotations, annotations)

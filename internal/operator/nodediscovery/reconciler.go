@@ -24,7 +24,7 @@ type Reconciler struct {
 
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;update;watch
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;update;watch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	if err := r.Options.DefaultAndValidate(); err != nil {

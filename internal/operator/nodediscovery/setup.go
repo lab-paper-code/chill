@@ -8,12 +8,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/operator/watch"
 )
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -21,18 +19,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("validate node-discovery operator options: %w", err)
 	}
 
-	mapToSystem := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		systems := &edgev1alpha1.ChillSystemList{}
-		if err := r.List(ctx, systems); err != nil {
-			ctrl.LoggerFrom(ctx).Error(err, "list ChillSystems for node-discovery")
-			return nil
-		}
-		requests := make([]reconcile.Request, 0, len(systems.Items))
-		for i := range systems.Items {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Name: systems.Items[i].Name}})
-		}
-		return requests
-	})
+	mapToSystem := watch.EnqueueChillSystems(r.Client, nil)
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("node-discovery").
 		For(&edgev1alpha1.ChillSystem{}).

@@ -30,7 +30,6 @@ rules:
   - delete
   - get
   - list
-  - patch
   - update
   - watch
 - apiGroups:
@@ -49,7 +48,6 @@ rules:
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - edge.dacs.io

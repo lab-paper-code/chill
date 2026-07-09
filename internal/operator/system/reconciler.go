@@ -24,7 +24,7 @@ type ChillSystemReconciler struct {
 	Options Options
 }
 
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/finalizers,verbs=update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;delete

@@ -44,10 +44,10 @@ spec:
           args:
             - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
             - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
-            - --system-status-name={{ .Values.system.name }}
-            - --system-status-namespace={{ .Release.Namespace }}
-            - --system-status-operator-deployment-name={{ include "chilloperator.fullname" . }}
-            - --system-status-refresh-interval={{ .Values.system.refreshInterval }}
+            - --system-name={{ .Values.system.name }}
+            - --operator-namespace={{ .Release.Namespace }}
+            - --operator-deployment-name={{ include "chilloperator.fullname" . }}
+            - --system-refresh-interval={{ .Values.system.refreshInterval }}
             {{- if .Values.operator.leaderElection }}
             - --leader-elect
             {{- end }}

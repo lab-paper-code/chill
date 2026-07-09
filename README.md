@@ -94,7 +94,6 @@ For an operator-only smoke without starting pods:
 
 ```sh
 make helm-install-smoke
-kubectl api-resources --api-group=edge.dacs.io
 kubectl -n chill-system get deploy,sa,role,rolebinding
 ```
 

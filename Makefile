@@ -108,8 +108,17 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 
 ##@ Helm
 
+.PHONY: helm-version-check
+helm-version-check: ## Check operator and system chart versions stay in sync.
+	operator_version="$$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' $(HELM_OPERATOR_CHART)/Chart.yaml)"; \
+	system_version="$$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' $(HELM_CHART)/Chart.yaml)"; \
+	operator_app_version="$$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' $(HELM_OPERATOR_CHART)/Chart.yaml)"; \
+	system_app_version="$$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' $(HELM_CHART)/Chart.yaml)"; \
+	test "$$operator_version" = "$$system_version"; \
+	test "$$operator_app_version" = "$$system_app_version"
+
 .PHONY: helm-lint
-helm-lint: ## Run Helm chart lint.
+helm-lint: helm-version-check ## Run Helm chart lint.
 	operator_values_args=(); \
 	if [ -n "$(HELM_OPERATOR_VALUES)" ]; then operator_values_args+=("-f" "$(HELM_OPERATOR_VALUES)"); fi; \
 	system_values_args=(); \
@@ -164,7 +173,7 @@ helm-uninstall: ## Uninstall the CHILL system, then operator, while keeping CRDs
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) uninstall
 
 .PHONY: helm-purge-crds
-helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEASE).
+helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_OPERATOR_RELEASE).
 	@$(HELM_FLOW_ENV) CONFIRM_PURGE_CRDS="$(CONFIRM_PURGE_CRDS)" $(HELM_FLOW) purge-crds
 
 ##@ Build
@@ -176,7 +185,7 @@ build: manifests generate fmt vet ## Build operator and node-discovery binaries.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
-	go run ./cmd/main.go --system-status-namespace=$(RUN_NAMESPACE) $(RUN_ARGS)
+	go run ./cmd/main.go --operator-namespace=$(RUN_NAMESPACE) $(RUN_ARGS)
 
 # If you wish to build images targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -247,20 +256,20 @@ ifndef ignore-not-found
 endif
 
 .PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
+install: manifests kustomize ## Developer-only: install CRDs with Kustomize.
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+uninstall: manifests kustomize ## Developer-only: uninstall CRDs with Kustomize.
 	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy the operator to the K8s cluster specified in ~/.kube/config.
+deploy: manifests kustomize ## Developer-only: deploy the operator with Kustomize.
 	cd config/operator && $(KUSTOMIZE) edit set image operator=$(OPERATOR_IMG)
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy the operator from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+undeploy: kustomize ## Developer-only: undeploy the operator with Kustomize.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies

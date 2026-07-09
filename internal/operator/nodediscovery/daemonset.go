@@ -45,8 +45,8 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 							Image:           config.Image,
 							ImagePullPolicy: config.ImagePullPolicy,
 							Command:         []string{"/node-discovery"},
-							Args:            nodeDiscoveryArgs(config),
-							Env:             nodeDiscoveryEnv(config),
+							Args:            nodeDiscoveryArgs(options, config),
+							Env:             nodeDiscoveryEnv(options, config),
 							SecurityContext: config.SecurityContext,
 							Resources:       config.Resources,
 							VolumeMounts:    volumeMounts(config),
@@ -104,8 +104,9 @@ func buildAffinity(config Config) *corev1.Affinity {
 	return affinity
 }
 
-func nodeDiscoveryArgs(config Config) []string {
+func nodeDiscoveryArgs(options Options, config Config) []string {
 	args := []string{
+		"--system-name=" + options.SystemName,
 		"--host-root=" + config.HostRoot,
 		"--interval=" + config.Interval,
 		"--signature-file=" + config.SignatureFile,
@@ -123,13 +124,17 @@ func nodeDiscoveryArgs(config Config) []string {
 	return args
 }
 
-func nodeDiscoveryEnv(config Config) []corev1.EnvVar {
+func nodeDiscoveryEnv(options Options, config Config) []corev1.EnvVar {
 	env := []corev1.EnvVar{
 		{
 			Name: "NODE_NAME",
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"},
 			},
+		},
+		{
+			Name:  "CHILL_SYSTEM_NAME",
+			Value: options.SystemName,
 		},
 	}
 	if config.KubeAPIServer != "" {

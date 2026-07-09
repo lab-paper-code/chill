@@ -52,8 +52,8 @@ func main() {
 	var deviceDiscoveryCatalogKey string
 	var systemName string
 	var systemNamespace string
-	var systemStatusOperatorDeploymentName string
-	var systemStatusRefreshInterval time.Duration
+	var operatorDeploymentName string
+	var systemRefreshInterval time.Duration
 	var nodeDiscoveryConfigNamespace string
 	var nodeDiscoveryConfigName string
 	var nodeDiscoveryConfigKey string
@@ -78,17 +78,28 @@ func main() {
 		"Default name of the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclass.CatalogDataKey,
 		"Default data key containing the device discovery catalog in the ConfigMap.")
-	flag.StringVar(&systemName, "system-status-name", system.DefaultSystemName,
+	flag.StringVar(&systemName, "system-name", system.DefaultSystemName,
 		"Default ChillSystem name used by compatibility refresh paths.")
-	flag.StringVar(&systemNamespace, "system-status-namespace", system.DefaultNamespace(),
+	flag.StringVar(&systemName, "system-status-name", system.DefaultSystemName,
+		"Deprecated alias for --system-name.")
+	flag.StringVar(&systemNamespace, "operator-namespace", system.DefaultNamespace(),
 		"Operator namespace and default CHILL management namespace.")
-	flag.StringVar(&systemStatusOperatorDeploymentName, "system-status-operator-deployment-name", "",
+	flag.StringVar(&systemNamespace, "system-status-namespace", system.DefaultNamespace(),
+		"Deprecated alias for --operator-namespace.")
+	flag.StringVar(&operatorDeploymentName, "operator-deployment-name", "",
 		"Name of the operator Deployment reported in ChillSystem status.")
+	flag.StringVar(&operatorDeploymentName, "system-status-operator-deployment-name", "",
+		"Deprecated alias for --operator-deployment-name.")
 	flag.DurationVar(
-		&systemStatusRefreshInterval,
-		"system-status-refresh-interval",
+		&systemRefreshInterval,
+		"system-refresh-interval",
 		system.DefaultRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
+	flag.DurationVar(
+		&systemRefreshInterval,
+		"system-status-refresh-interval",
+		system.DefaultRefreshInterval,
+		"Deprecated alias for --system-refresh-interval.")
 	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing the node-discovery operator config ConfigMap.")
 	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
@@ -108,21 +119,21 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	systemStatusOptions := system.Options{
+	systemOptions := system.Options{
 		SystemName:             systemName,
 		Namespace:              systemNamespace,
-		OperatorDeploymentName: systemStatusOperatorDeploymentName,
-		RefreshInterval:        systemStatusRefreshInterval,
+		OperatorDeploymentName: operatorDeploymentName,
+		RefreshInterval:        systemRefreshInterval,
 	}
-	if err := systemStatusOptions.DefaultAndValidate(); err != nil {
-		setupLog.Error(err, "invalid ChillSystem status configuration")
+	if err := systemOptions.DefaultAndValidate(); err != nil {
+		setupLog.Error(err, "invalid ChillSystem configuration")
 		os.Exit(1)
 	}
 	if nodeDiscoveryConfigNamespace == "" {
-		nodeDiscoveryConfigNamespace = systemStatusOptions.Namespace
+		nodeDiscoveryConfigNamespace = systemOptions.Namespace
 	}
 	if deviceDiscoveryCatalogNamespace == "" {
-		deviceDiscoveryCatalogNamespace = systemStatusOptions.Namespace
+		deviceDiscoveryCatalogNamespace = systemOptions.Namespace
 	}
 
 	metricsServerOptions := metricsserver.Options{
@@ -151,7 +162,7 @@ func main() {
 	if err = (&system.ChillSystemReconciler{
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
-		Options: systemStatusOptions,
+		Options: systemOptions,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ChillSystem")
 		os.Exit(1)
@@ -175,7 +186,7 @@ func main() {
 		Scheme: mgr.GetScheme(),
 		Options: discovery.DeviceDiscoveryOptions{
 			SystemName:            systemName,
-			Namespace:             systemStatusOptions.Namespace,
+			Namespace:             systemOptions.Namespace,
 			LabelKey:              deviceDiscoveryLabelKey,
 			OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
 			NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,

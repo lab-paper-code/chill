@@ -39,12 +39,13 @@ func TestRemoveManagedNodeMetadata(t *testing.T) {
 				chillmeta.DeviceClassDiscoveryResult: chillmeta.DiscoveryResultMatched,
 				chillmeta.DeviceClassDiscoveryReason: chillmeta.DiscoveryReasonCatalogMatched,
 				chillmeta.DeviceClassDiscoveryClass:  "jetson-orin-nano-8g",
+				chillmeta.System:                     "chill",
 				"manual.edge.dacs.io/annotation":     manualMetadataValue,
 			},
 		},
 	}
 
-	if !removeManagedNodeMetadata(node) {
+	if !removeManagedNodeMetadata(node, "chill") {
 		t.Fatal("removeManagedNodeMetadata() changed = false, want true")
 	}
 	if node.Labels[chillmeta.DeviceClass] != "" || node.Labels[chillmeta.DeviceVendor] != "" {
@@ -53,11 +54,33 @@ func TestRemoveManagedNodeMetadata(t *testing.T) {
 	if node.Labels["manual"] != manualMetadataValue {
 		t.Fatalf("manual label = %q, want %s", node.Labels["manual"], manualMetadataValue)
 	}
-	if node.Annotations[chillmeta.ManagedBy] != "" || node.Annotations[chillmeta.DeviceClassDiscoveryResult] != "" {
+	if node.Annotations[chillmeta.ManagedBy] != "" || node.Annotations[chillmeta.DeviceClassDiscoveryResult] != "" || node.Annotations[chillmeta.System] != "" {
 		t.Fatalf("managed annotations were not removed: %#v", node.Annotations)
 	}
 	if node.Annotations["manual.edge.dacs.io/annotation"] != manualMetadataValue {
 		t.Fatalf("manual annotation = %q, want %s", node.Annotations["manual.edge.dacs.io/annotation"], manualMetadataValue)
+	}
+}
+
+func TestRemoveManagedNodeMetadataSkipsOtherSystems(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "edge-1",
+			Labels: map[string]string{
+				chillmeta.DeviceClass: "jetson-orin-nano-8g",
+			},
+			Annotations: map[string]string{
+				chillmeta.ManagedBy: chillmeta.ManagedByDeviceDiscovery,
+				chillmeta.System:    "other-system",
+			},
+		},
+	}
+
+	if removeManagedNodeMetadata(node, "chill") {
+		t.Fatal("removeManagedNodeMetadata() changed = true, want false for another system")
+	}
+	if node.Labels[chillmeta.DeviceClass] != "jetson-orin-nano-8g" {
+		t.Fatalf("DeviceClass label = %q, want preserved", node.Labels[chillmeta.DeviceClass])
 	}
 }
 
@@ -92,11 +115,17 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 			},
 			Annotations: map[string]string{
 				chillmeta.ManagedBy: chillmeta.ManagedByDeviceDiscovery,
+				chillmeta.System:    "chill",
 			},
 		},
 	}
 	deviceClass := &edgev1alpha1.DeviceClass{
-		ObjectMeta: metav1.ObjectMeta{Name: "manual-or-discovered"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "manual-or-discovered",
+			Labels: map[string]string{
+				chillmeta.System: "chill",
+			},
+		},
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{chillmeta.DeviceClass: "manual-or-discovered"},
 			Architecture: "arm64",
@@ -105,8 +134,11 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 			PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
 		},
 	}
+	otherDeviceClass := deviceClass.DeepCopy()
+	otherDeviceClass.Name = "other-system-class"
+	otherDeviceClass.Labels = map[string]string{chillmeta.System: "other-system"}
 	reconciler := &ChillSystemReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, node, deviceClass).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, node, deviceClass, otherDeviceClass).Build(),
 		Options: Options{
 			Namespace:              "chill-system",
 			OperatorDeploymentName: "chill-operator",
@@ -136,5 +168,8 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 	remaining := &edgev1alpha1.DeviceClass{}
 	if err := reconciler.Get(ctx, types.NamespacedName{Name: deviceClass.Name}, remaining); err == nil {
 		t.Fatal("DeviceClass still exists after finalize")
+	}
+	if err := reconciler.Get(ctx, types.NamespacedName{Name: otherDeviceClass.Name}, remaining); err != nil {
+		t.Fatalf("other-system DeviceClass was deleted: %v", err)
 	}
 }

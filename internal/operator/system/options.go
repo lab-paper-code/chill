@@ -56,7 +56,7 @@ func (o Options) Defaulted() Options {
 func (o *Options) DefaultAndValidate() error {
 	defaulted := o.Defaulted()
 	if defaulted.Namespace == "" {
-		return fmt.Errorf("system status namespace is required; set --system-status-namespace or POD_NAMESPACE")
+		return fmt.Errorf("operator namespace is required; set --operator-namespace or POD_NAMESPACE")
 	}
 	if defaulted.RefreshInterval <= 0 {
 		return fmt.Errorf("system status refresh interval must be positive")

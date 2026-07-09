@@ -12,16 +12,17 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/operator/ownership"
 )
 
 func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {
 	if done, err := r.deleteNodeDiscoveryDaemonSet(ctx, system); err != nil || !done {
 		return done, err
 	}
-	if err := r.cleanupNodes(ctx); err != nil {
+	if err := r.cleanupNodes(ctx, system); err != nil {
 		return false, err
 	}
-	if err := r.deleteDeviceClasses(ctx); err != nil {
+	if err := r.deleteDeviceClasses(ctx, system); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -45,7 +46,7 @@ func (r *ChillSystemReconciler) deleteNodeDiscoveryDaemonSet(ctx context.Context
 	return false, nil
 }
 
-func (r *ChillSystemReconciler) cleanupNodes(ctx context.Context) error {
+func (r *ChillSystemReconciler) cleanupNodes(ctx context.Context, system *edgev1alpha1.ChillSystem) error {
 	nodes := &corev1.NodeList{}
 	if err := r.List(ctx, nodes); err != nil {
 		return fmt.Errorf("list Nodes during finalization: %w", err)
@@ -53,7 +54,7 @@ func (r *ChillSystemReconciler) cleanupNodes(ctx context.Context) error {
 	for i := range nodes.Items {
 		node := &nodes.Items[i]
 		original := node.DeepCopy()
-		if !removeManagedNodeMetadata(node) {
+		if !removeManagedNodeMetadata(node, system.Name) {
 			continue
 		}
 		if err := r.Patch(ctx, node, client.MergeFrom(original)); err != nil {
@@ -63,24 +64,17 @@ func (r *ChillSystemReconciler) cleanupNodes(ctx context.Context) error {
 	return nil
 }
 
-func removeManagedNodeMetadata(node *corev1.Node) bool {
+func removeManagedNodeMetadata(node *corev1.Node, systemName string) bool {
 	labels := node.GetLabels()
 	annotations := node.GetAnnotations()
 	changed := false
+	if annotations[chillmeta.System] != systemName {
+		return false
+	}
 
 	if annotations[chillmeta.DiscoverySource] == chillmeta.SourceNodeDiscovery {
-		changed = deleteMapKeys(labels,
-			chillmeta.DeviceVendor,
-			chillmeta.DeviceFamily,
-			chillmeta.DeviceModel,
-			chillmeta.Accelerator,
-		) || changed
-		changed = deleteMapKeys(annotations,
-			chillmeta.DeviceModelRaw,
-			chillmeta.DiscoverySource,
-			chillmeta.NodeDiscoveryResult,
-			chillmeta.NodeDiscoveryReason,
-		) || changed
+		changed = deleteMapKeys(labels, chillmeta.NodeDiscoveryLabelKeys()...) || changed
+		changed = deleteMapKeys(annotations, chillmeta.NodeDiscoveryAnnotationKeys()...) || changed
 	}
 
 	if annotations[chillmeta.ManagedBy] == chillmeta.ManagedByDeviceDiscovery {
@@ -88,11 +82,8 @@ func removeManagedNodeMetadata(node *corev1.Node) bool {
 		changed = deleteMapKeys(annotations, chillmeta.ManagedBy) || changed
 	}
 
-	changed = deleteMapKeys(annotations,
-		chillmeta.DeviceClassDiscoveryResult,
-		chillmeta.DeviceClassDiscoveryReason,
-		chillmeta.DeviceClassDiscoveryClass,
-	) || changed
+	changed = deleteMapKeys(annotations, chillmeta.DeviceDiscoveryAnnotationKeys()...) || changed
+	changed = deleteMapKeys(annotations, chillmeta.System) || changed
 
 	if len(labels) == 0 && node.Labels != nil {
 		node.Labels = nil
@@ -114,13 +105,16 @@ func deleteMapKeys(values map[string]string, keys ...string) bool {
 	return changed
 }
 
-func (r *ChillSystemReconciler) deleteDeviceClasses(ctx context.Context) error {
+func (r *ChillSystemReconciler) deleteDeviceClasses(ctx context.Context, system *edgev1alpha1.ChillSystem) error {
 	deviceClasses := &edgev1alpha1.DeviceClassList{}
 	if err := r.List(ctx, deviceClasses); err != nil {
 		return fmt.Errorf("list DeviceClasses during finalization: %w", err)
 	}
 	for i := range deviceClasses.Items {
 		deviceClass := &deviceClasses.Items[i]
+		if !ownership.BelongsToChillSystem(deviceClass, system) {
+			continue
+		}
 		if err := r.Delete(ctx, deviceClass); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete DeviceClass %q during finalization: %w", deviceClass.Name, err)
 		}
