@@ -4,6 +4,65 @@ fullnameOverride: ""
 crds:
   enabled: true
 
+nodeSelection:
+  labelSelector: node-role.kubernetes.io/edge
+  nodeSelector:
+    node-role.kubernetes.io/edge: ""
+
+discovery:
+  enabled: true
+  labelKey: edge.dacs.io/device-class
+  overwriteManualLabels: false
+  nodeLabelSelector: ""
+  requireCatalogMatch: true
+  catalog:
+    enabled: true
+    name: ""
+    key: catalog.yaml
+    classes: []
+
+nodeDiscovery:
+  enabled: true
+  interval: 10m
+  hostRoot: /host
+  signatureFile: /etc/chill/node-discovery/signatures.yaml
+  sources: []
+  signatures: []
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  nodeSelector: {}
+  hostPaths:
+    - name: host-proc
+      hostPath: /proc
+      mountPath: /proc
+    - name: host-sys
+      hostPath: /sys
+      mountPath: /sys
+    - name: host-etc
+      hostPath: /etc
+      mountPath: /etc
+  tolerations: []
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 5m
+      memory: 32Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+
 controller:
   replicaCount: 1
   image:

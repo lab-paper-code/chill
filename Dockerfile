@@ -1,4 +1,4 @@
-# Build the manager binary
+# Build the CHILL binaries
 FROM golang:1.22 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -12,9 +12,12 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY cmd/main.go cmd/main.go
+COPY cmd/ cmd/
 COPY api/ api/
+COPY internal/chilllabels/ internal/chilllabels/
 COPY internal/controller/ internal/controller/
+COPY internal/deviceclassdiscovery/ internal/deviceclassdiscovery/
+COPY internal/nodediscovery/ internal/nodediscovery/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
@@ -22,12 +25,14 @@ COPY internal/controller/ internal/controller/
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o node-discovery ./cmd/node-discovery
 
-# Use distroless as minimal base image to package the manager binary
+# Use distroless as minimal base image to package CHILL binaries
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/node-discovery .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

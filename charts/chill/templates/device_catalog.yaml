@@ -1,0 +1,13 @@
+{{- if and .Values.discovery.enabled .Values.discovery.catalog.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.discoveryCatalogName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ include "chill.discoveryCatalogKey" . }}: |
+    classes:
+{{- toYaml .Values.discovery.catalog.classes | nindent 6 }}
+{{- end }}

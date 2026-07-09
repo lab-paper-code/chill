@@ -1,0 +1,16 @@
+{{- if .Values.nodeDiscovery.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.nodeDiscoverySignatureCatalogName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-discovery
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ include "chill.nodeDiscoverySignatureKey" . }}: |
+    sources:
+{{- toYaml .Values.nodeDiscovery.sources | nindent 6 }}
+    signatures:
+{{- toYaml .Values.nodeDiscovery.signatures | nindent 6 }}
+{{- end }}

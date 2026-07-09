@@ -47,10 +47,15 @@ help: ## Display this help.
 manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 	$(MAKE) helm-sync-crds
+	$(MAKE) helm-sync-rbac
 
 .PHONY: helm-sync-crds
 helm-sync-crds: ## Sync generated CRDs into the Helm chart.
 	./hack/sync-helm-crds.sh
+
+.PHONY: helm-sync-rbac
+helm-sync-rbac: ## Sync generated manager ClusterRole rules into the Helm chart.
+	./hack/sync-helm-rbac.sh
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -95,6 +100,7 @@ helm-template: kubeconform ## Render and validate Helm chart.
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
+	go build -o bin/node-discovery ./cmd/node-discovery
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

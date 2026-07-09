@@ -1,9 +1,4 @@
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: manager-role
-rules:
+{{- define "chill.managerRoleRules" -}}
 - apiGroups:
   - ""
   resources:
@@ -57,3 +52,4 @@ rules:
   - get
   - patch
   - update
+{{- end -}}

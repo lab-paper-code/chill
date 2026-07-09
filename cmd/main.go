@@ -17,7 +17,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/chilllabels"
 	"github.com/lab-paper-code/chill/internal/controller"
+	"github.com/lab-paper-code/chill/internal/deviceclassdiscovery"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -37,12 +39,36 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var enableDeviceDiscovery bool
+	var deviceDiscoveryLabelKey string
+	var deviceDiscoveryOverwriteManualLabels bool
+	var deviceDiscoveryNodeLabelSelector string
+	var deviceDiscoveryRequireCatalogMatch bool
+	var deviceDiscoveryCatalogNamespace string
+	var deviceDiscoveryCatalogName string
+	var deviceDiscoveryCatalogKey string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&enableDeviceDiscovery, "device-discovery-enabled", false,
+		"Enable node-based DeviceClass discovery.")
+	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chilllabels.DeviceClass,
+		"Node label key used to bind nodes to discovered DeviceClasses.")
+	flag.BoolVar(&deviceDiscoveryOverwriteManualLabels, "device-discovery-overwrite-manual-labels", false,
+		"Overwrite existing node device-class labels during discovery.")
+	flag.StringVar(&deviceDiscoveryNodeLabelSelector, "device-discovery-node-label-selector", "",
+		"Label selector limiting which Nodes participate in device discovery.")
+	flag.BoolVar(&deviceDiscoveryRequireCatalogMatch, "device-discovery-require-catalog-match", true,
+		"Only discover DeviceClasses for Nodes matched by the discovery catalog.")
+	flag.StringVar(&deviceDiscoveryCatalogNamespace, "device-discovery-catalog-namespace", os.Getenv("POD_NAMESPACE"),
+		"Namespace containing the optional device discovery catalog ConfigMap.")
+	flag.StringVar(&deviceDiscoveryCatalogName, "device-discovery-catalog-name", "",
+		"Name of the optional device discovery catalog ConfigMap.")
+	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclassdiscovery.CatalogDataKey,
+		"Data key containing the device discovery catalog in the ConfigMap.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -84,6 +110,23 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DeviceClass")
 		os.Exit(1)
+	}
+	if enableDeviceDiscovery {
+		if err = (&controller.DeviceDiscoveryReconciler{
+			Client: mgr.GetClient(),
+			Options: controller.DeviceDiscoveryOptions{
+				LabelKey:              deviceDiscoveryLabelKey,
+				OverwriteManualLabels: deviceDiscoveryOverwriteManualLabels,
+				NodeLabelSelector:     deviceDiscoveryNodeLabelSelector,
+				RequireCatalogMatch:   deviceDiscoveryRequireCatalogMatch,
+				CatalogNamespace:      deviceDiscoveryCatalogNamespace,
+				CatalogName:           deviceDiscoveryCatalogName,
+				CatalogKey:            deviceDiscoveryCatalogKey,
+			},
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "DeviceDiscovery")
+			os.Exit(1)
+		}
 	}
 	if err = (&controller.ModelSpecReconciler{
 		Client: mgr.GetClient(),

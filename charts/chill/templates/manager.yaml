@@ -20,12 +20,12 @@ spec:
         control-plane: controller-manager
         {{- include "chill.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "chill.serviceAccountName" . }}
+      serviceAccountName: {{ include "chill.controllerServiceAccountName" . }}
       securityContext:
         {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
       containers:
         - name: manager
-          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
+          image: "{{ include "chill.controllerImage" . }}"
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           command:
             - /manager
@@ -35,6 +35,23 @@ spec:
             {{- if .Values.controller.leaderElection }}
             - --leader-elect
             {{- end }}
+            {{- if .Values.discovery.enabled }}
+            - --device-discovery-enabled
+            - --device-discovery-label-key={{ .Values.discovery.labelKey }}
+            - --device-discovery-overwrite-manual-labels={{ .Values.discovery.overwriteManualLabels }}
+            - --device-discovery-node-label-selector={{ include "chill.discoveryNodeLabelSelector" . }}
+            - --device-discovery-require-catalog-match={{ .Values.discovery.requireCatalogMatch }}
+            {{- if .Values.discovery.catalog.enabled }}
+            - --device-discovery-catalog-name={{ include "chill.discoveryCatalogName" . }}
+            - --device-discovery-catalog-namespace={{ .Release.Namespace }}
+            - --device-discovery-catalog-key={{ include "chill.discoveryCatalogKey" . }}
+            {{- end }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           securityContext:
             {{- toYaml .Values.controller.securityContext | nindent 12 }}
           livenessProbe:

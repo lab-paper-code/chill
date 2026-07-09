@@ -1,0 +1,12 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: DeviceClass
+metadata:
+  name: example-device-class
+spec:
+  nodeSelector:
+    edge.dacs.io/device-class: example-device-class
+  architecture: arm64
+  memory: 8Gi
+  accelerator: none
+  powerModes:
+  - name: fixed

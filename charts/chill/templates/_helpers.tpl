@@ -28,10 +28,56 @@ app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "chill.serviceAccountName" -}}
+{{- define "chill.controllerServiceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (printf "%s-controller-manager" (include "chill.fullname" .)) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "chill.serviceAccountName" -}}
+{{- include "chill.controllerServiceAccountName" . -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoveryServiceAccountName" -}}
+{{- if .Values.nodeDiscovery.serviceAccount.create -}}
+{{- default (printf "%s-node-discovery" (include "chill.fullname" .)) .Values.nodeDiscovery.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.nodeDiscovery.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.discoveryCatalogName" -}}
+{{- default (printf "%s-device-catalog" (include "chill.fullname" .)) .Values.discovery.catalog.name -}}
+{{- end -}}
+
+{{- define "chill.discoveryCatalogKey" -}}
+{{- default "catalog.yaml" .Values.discovery.catalog.key -}}
+{{- end -}}
+
+{{- define "chill.discoveryNodeLabelSelector" -}}
+{{- default .Values.nodeSelection.labelSelector .Values.discovery.nodeLabelSelector -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoverySignatureCatalogName" -}}
+{{- printf "%s-node-discovery-signatures" (include "chill.fullname" .) -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoverySignatureKey" -}}
+signatures.yaml
+{{- end -}}
+
+{{- define "chill.controllerImage" -}}
+{{- printf "%s:%s" .Values.controller.image.repository .Values.controller.image.tag -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoveryImage" -}}
+{{- $repository := default .Values.controller.image.repository .Values.nodeDiscovery.image.repository -}}
+{{- $tag := default .Values.controller.image.tag .Values.nodeDiscovery.image.tag -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
+
+{{- define "chill.nodeDiscoveryImagePullPolicy" -}}
+{{- default .Values.controller.image.pullPolicy .Values.nodeDiscovery.image.pullPolicy -}}
 {{- end -}}

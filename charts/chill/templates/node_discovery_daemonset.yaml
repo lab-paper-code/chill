@@ -1,0 +1,74 @@
+{{- if .Values.nodeDiscovery.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "chill.fullname" . }}-node-discovery
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-discovery
+    {{- include "chill.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: node-discovery
+      {{- include "chill.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: node-discovery
+        {{- include "chill.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "chill.nodeDiscoveryServiceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.nodeDiscovery.podSecurityContext | nindent 8 }}
+      {{- $nodeSelector := default .Values.nodeSelection.nodeSelector .Values.nodeDiscovery.nodeSelector }}
+      {{- with $nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeDiscovery.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: node-discovery
+          image: "{{ include "chill.nodeDiscoveryImage" . }}"
+          imagePullPolicy: {{ include "chill.nodeDiscoveryImagePullPolicy" . }}
+          command:
+            - /node-discovery
+          args:
+            - --host-root={{ .Values.nodeDiscovery.hostRoot }}
+            - --interval={{ .Values.nodeDiscovery.interval }}
+            - --signature-file={{ .Values.nodeDiscovery.signatureFile }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            {{- toYaml .Values.nodeDiscovery.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.nodeDiscovery.resources | nindent 12 }}
+          volumeMounts:
+            - name: node-discovery-signatures
+              mountPath: {{ dir .Values.nodeDiscovery.signatureFile }}
+              readOnly: true
+            {{- range .Values.nodeDiscovery.hostPaths }}
+            - name: {{ .name }}
+              mountPath: {{ $.Values.nodeDiscovery.hostRoot }}{{ .mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: node-discovery-signatures
+          configMap:
+            name: {{ include "chill.nodeDiscoverySignatureCatalogName" . }}
+            items:
+              - key: {{ include "chill.nodeDiscoverySignatureKey" . }}
+                path: {{ base .Values.nodeDiscovery.signatureFile }}
+        {{- range .Values.nodeDiscovery.hostPaths }}
+        - name: {{ .name }}
+          hostPath:
+            path: {{ .hostPath }}
+            type: Directory
+        {{- end }}
+{{- end }}

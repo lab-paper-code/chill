@@ -5,41 +5,7 @@ metadata:
   labels:
     {{- include "chill.labels" . | nindent 4 }}
 rules:
-  - apiGroups:
-      - edge.dacs.io
-    resources:
-      - clusterenergymodels
-      - deviceclasses
-      - deviceprofiles
-      - modelspecs
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - edge.dacs.io
-    resources:
-      - clusterenergymodels/finalizers
-      - deviceclasses/finalizers
-      - deviceprofiles/finalizers
-      - modelspecs/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - edge.dacs.io
-    resources:
-      - clusterenergymodels/status
-      - deviceclasses/status
-      - deviceprofiles/status
-      - modelspecs/status
-    verbs:
-      - get
-      - patch
-      - update
+{{ include "chill.managerRoleRules" . | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -53,8 +19,42 @@ roleRef:
   name: {{ include "chill.fullname" . }}-manager-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "chill.serviceAccountName" . }}
+    name: {{ include "chill.controllerServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.nodeDiscovery.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-node-discovery-role
+  labels:
+    app.kubernetes.io/component: node-discovery
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-node-discovery-rolebinding
+  labels:
+    app.kubernetes.io/component: node-discovery
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" . }}-node-discovery-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.nodeDiscoveryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -109,5 +109,5 @@ roleRef:
   name: {{ include "chill.fullname" . }}-leader-election-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "chill.serviceAccountName" . }}
+    name: {{ include "chill.controllerServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}

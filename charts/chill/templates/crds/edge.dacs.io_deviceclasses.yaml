@@ -40,10 +40,65 @@ spec:
             type: object
           spec:
             description: DeviceClassSpec defines the desired state of DeviceClass
+            properties:
+              accelerator:
+                description: Accelerator names the accelerator family exposed by this
+                  class, or "none".
+                type: string
+              architecture:
+                description: Architecture is the CPU architecture exposed by Kubernetes
+                  for this class.
+                minLength: 1
+                type: string
+              memory:
+                anyOf:
+                - type: integer
+                - type: string
+                description: MemoryBytes is the total unified or system memory available
+                  on this class.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector selects nodes that belong to this device class.
+                  Discovery starts as explicit label matching; automatic node feature
+                  discovery is intentionally outside this resource's first schema.
+                minProperties: 1
+                type: object
+              powerModes:
+                description: PowerModes lists the power modes supported by this class.
+                items:
+                  description: PowerMode describes one runtime-selectable power mode
+                    for a DeviceClass.
+                  properties:
+                    name:
+                      description: Name is the human-readable platform power mode
+                        name.
+                      minLength: 1
+                      type: string
+                    nvpId:
+                      description: NvpID is the nvpmodel -m identifier for Jetson
+                        devices.
+                      minimum: 0
+                      type: integer
+                  required:
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - architecture
+            - memory
+            - nodeSelector
+            - powerModes
             type: object
           status:
             description: DeviceClassStatus defines the observed state of DeviceClass
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true
