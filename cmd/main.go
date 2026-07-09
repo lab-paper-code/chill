@@ -80,7 +80,7 @@ func main() {
 		"Data key containing the device discovery catalog in the ConfigMap.")
 	flag.StringVar(&systemStatusName, "system-status-name", systemcontroller.DefaultSystemName,
 		"Name of the namespace-local ChillSystem status resource.")
-	flag.StringVar(&systemStatusNamespace, "system-status-namespace", defaultSystemStatusNamespace(),
+	flag.StringVar(&systemStatusNamespace, "system-status-namespace", systemcontroller.DefaultNamespace(),
 		"Namespace containing the namespace-local ChillSystem status resource.")
 	flag.StringVar(&systemStatusControllerDeploymentName, "system-status-controller-deployment-name", "",
 		"Name of the controller Deployment reported in ChillSystem status.")
@@ -88,7 +88,10 @@ func main() {
 		"Name of the node-discovery DaemonSet reported in ChillSystem status.")
 	flag.BoolVar(&systemStatusNodeDiscoveryEnabled, "system-status-node-discovery-enabled", false,
 		"Report node-discovery as an enabled component in ChillSystem status.")
-	flag.DurationVar(&systemStatusRefreshInterval, "system-status-refresh-interval", systemcontroller.DefaultRefreshInterval,
+	flag.DurationVar(
+		&systemStatusRefreshInterval,
+		"system-status-refresh-interval",
+		systemcontroller.DefaultRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
 	opts := zap.Options{
 		Development: true,
@@ -97,6 +100,19 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	systemStatusOptions := systemcontroller.Options{
+		SystemName:                 systemStatusName,
+		Namespace:                  systemStatusNamespace,
+		ControllerDeploymentName:   systemStatusControllerDeploymentName,
+		NodeDiscoveryDaemonSetName: systemStatusNodeDiscoveryDaemonSetName,
+		NodeDiscoveryEnabled:       systemStatusNodeDiscoveryEnabled,
+		RefreshInterval:            systemStatusRefreshInterval,
+	}
+	if err := systemStatusOptions.DefaultAndValidate(); err != nil {
+		setupLog.Error(err, "invalid ChillSystem status configuration")
+		os.Exit(1)
+	}
 
 	metricsServerOptions := metricsserver.Options{
 		BindAddress: metricsAddr,
@@ -133,16 +149,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&systemcontroller.ChillSystemReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Options: systemcontroller.Options{
-			SystemName:                 systemStatusName,
-			Namespace:                  systemStatusNamespace,
-			ControllerDeploymentName:   systemStatusControllerDeploymentName,
-			NodeDiscoveryDaemonSetName: systemStatusNodeDiscoveryDaemonSetName,
-			NodeDiscoveryEnabled:       systemStatusNodeDiscoveryEnabled,
-			RefreshInterval:            systemStatusRefreshInterval,
-		},
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Options: systemStatusOptions,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ChillSystem")
 		os.Exit(1)
@@ -201,11 +210,4 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-}
-
-func defaultSystemStatusNamespace() string {
-	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
-		return namespace
-	}
-	return "default"
 }

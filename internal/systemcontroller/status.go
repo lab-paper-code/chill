@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -12,10 +13,6 @@ import (
 )
 
 const (
-	ConditionReady       = "Ready"
-	ConditionProgressing = "Progressing"
-	ConditionDegraded    = "Degraded"
-
 	ComponentController    = "controller"
 	ComponentNodeDiscovery = "node-discovery"
 
@@ -26,6 +23,9 @@ const (
 	reasonUnavailable        = "Unavailable"
 	reasonObservationFailed  = "ObservationFailed"
 	reasonNodeDiscoveryReady = "NodeDiscoveryReady"
+
+	deploymentTimedOutReason             = "ProgressDeadlineExceeded"
+	daemonSetReplicaFailureConditionType = appsv1.DaemonSetConditionType("ReplicaFailure")
 )
 
 // Observation contains the raw Kubernetes state used to build ChillSystem status.
@@ -43,9 +43,9 @@ type Observation struct {
 	NodeDiscoveryDaemonSet     *appsv1.DaemonSet
 	NodeDiscoveryError         error
 
-	DeviceClassCount  int32
+	DeviceClassCount  *int32
 	DeviceClassError  error
-	ObservedNodeCount int32
+	ObservedNodeCount *int32
 	NodeError         error
 }
 
@@ -78,12 +78,14 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 	}
 
 	phase, reason, message := summarize(observed, controller, nodeDiscovery)
+	reason = truncateStatusText(reason, edgev1alpha1.ChillSystemReasonMaxLength)
+	message = truncateStatusText(message, edgev1alpha1.ChillSystemMessageMaxLength)
 	status.Phase = phase
 	status.Message = message
 	status.Ready = conditionStatus(phase == edgev1alpha1.ChillSystemPhaseReady)
 
 	setCondition(&status, metav1.Condition{
-		Type:               ConditionReady,
+		Type:               edgev1alpha1.ChillSystemConditionReady,
 		Status:             status.Ready,
 		ObservedGeneration: observed.ObservedGeneration,
 		LastTransitionTime: now,
@@ -91,7 +93,7 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 		Message:            message,
 	})
 	setCondition(&status, metav1.Condition{
-		Type:               ConditionProgressing,
+		Type:               edgev1alpha1.ChillSystemConditionProgressing,
 		Status:             conditionStatus(phase == edgev1alpha1.ChillSystemPhaseProgressing),
 		ObservedGeneration: observed.ObservedGeneration,
 		LastTransitionTime: now,
@@ -99,7 +101,7 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 		Message:            message,
 	})
 	setCondition(&status, metav1.Condition{
-		Type:               ConditionDegraded,
+		Type:               edgev1alpha1.ChillSystemConditionDegraded,
 		Status:             conditionStatus(phase == edgev1alpha1.ChillSystemPhaseDegraded),
 		ObservedGeneration: observed.ObservedGeneration,
 		LastTransitionTime: now,
@@ -120,7 +122,7 @@ func deploymentComponentStatus(name, namespace, workloadName string, deployment 
 	if err != nil {
 		component.State = edgev1alpha1.ComponentStateUnknown
 		component.Reason = reasonObservationFailed
-		component.Message = err.Error()
+		component.Message = statusMessage(err.Error(), "failed to observe Deployment")
 		return component
 	}
 	if deployment == nil {
@@ -137,6 +139,12 @@ func deploymentComponentStatus(name, namespace, workloadName string, deployment 
 		component.State = edgev1alpha1.ComponentStateDisabled
 		component.Reason = reasonDisabled
 		component.Message = fmt.Sprintf("Deployment %q is scaled to zero", deployment.Name)
+		return component
+	}
+	if condition := deploymentFailureCondition(deployment); condition != nil {
+		component.State = edgev1alpha1.ComponentStateDegraded
+		component.Reason = statusReason(condition.Reason, reasonUnavailable)
+		component.Message = statusMessage(condition.Message, fmt.Sprintf("Deployment %q is degraded", deployment.Name))
 		return component
 	}
 	if deployment.Status.AvailableReplicas >= component.Desired {
@@ -167,7 +175,7 @@ func daemonSetComponentStatus(name, namespace, workloadName string, enabled bool
 	if err != nil {
 		component.State = edgev1alpha1.ComponentStateUnknown
 		component.Reason = reasonObservationFailed
-		component.Message = err.Error()
+		component.Message = statusMessage(err.Error(), "failed to observe DaemonSet")
 		return component
 	}
 	if daemonSet == nil {
@@ -186,6 +194,12 @@ func daemonSetComponentStatus(name, namespace, workloadName string, enabled bool
 		component.Message = fmt.Sprintf("DaemonSet %q has no scheduled nodes yet", daemonSet.Name)
 		return component
 	}
+	if condition := daemonSetFailureCondition(daemonSet); condition != nil {
+		component.State = edgev1alpha1.ComponentStateDegraded
+		component.Reason = statusReason(condition.Reason, reasonUnavailable)
+		component.Message = statusMessage(condition.Message, fmt.Sprintf("DaemonSet %q is degraded", daemonSet.Name))
+		return component
+	}
 	if daemonSet.Status.NumberReady >= daemonSet.Status.DesiredNumberScheduled {
 		component.State = edgev1alpha1.ComponentStateReady
 		component.Reason = reasonNodeDiscoveryReady
@@ -196,6 +210,31 @@ func daemonSetComponentStatus(name, namespace, workloadName string, enabled bool
 	component.Reason = reasonUnavailable
 	component.Message = fmt.Sprintf("DaemonSet %q is ready on %d/%d nodes", daemonSet.Name, daemonSet.Status.NumberReady, daemonSet.Status.DesiredNumberScheduled)
 	return component
+}
+
+func deploymentFailureCondition(deployment *appsv1.Deployment) *appsv1.DeploymentCondition {
+	for i := range deployment.Status.Conditions {
+		condition := &deployment.Status.Conditions[i]
+		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
+			return condition
+		}
+		if condition.Type == appsv1.DeploymentProgressing &&
+			condition.Status == corev1.ConditionFalse &&
+			condition.Reason == deploymentTimedOutReason {
+			return condition
+		}
+	}
+	return nil
+}
+
+func daemonSetFailureCondition(daemonSet *appsv1.DaemonSet) *appsv1.DaemonSetCondition {
+	for i := range daemonSet.Status.Conditions {
+		condition := &daemonSet.Status.Conditions[i]
+		if condition.Type == daemonSetReplicaFailureConditionType && condition.Status == corev1.ConditionTrue {
+			return condition
+		}
+	}
+	return nil
 }
 
 func deploymentDesiredReplicas(deployment *appsv1.Deployment) int32 {
@@ -250,4 +289,36 @@ func conditionStatus(ok bool) metav1.ConditionStatus {
 
 func setCondition(status *edgev1alpha1.ChillSystemStatus, condition metav1.Condition) {
 	meta.SetStatusCondition(&status.Conditions, condition)
+}
+
+func statusReason(value, fallback string) string {
+	return truncateStatusText(statusText(value, fallback), edgev1alpha1.ChillSystemReasonMaxLength)
+}
+
+func statusMessage(value, fallback string) string {
+	return truncateStatusText(statusText(value, fallback), edgev1alpha1.ChillSystemMessageMaxLength)
+}
+
+func statusText(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func truncateStatusText(value string, maxLength int) string {
+	runes := []rune(value)
+	if len(runes) <= maxLength {
+		return value
+	}
+	suffix := []rune("...")
+	if maxLength <= len(suffix) {
+		return string(runes[:maxLength])
+	}
+	return string(runes[:maxLength-len(suffix)]) + string(suffix)
+}
+
+func int32Ptr(value int32) *int32 {
+	return &value
 }

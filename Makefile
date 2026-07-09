@@ -25,6 +25,8 @@ HELM_CHART ?= charts/chill
 HELM_TIMEOUT ?= 2m
 HELM_VALUES ?=
 HELM_SET ?=
+RUN_NAMESPACE ?= $(HELM_NAMESPACE)
+RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
 HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" CONTROLLER_IMG="$(CONTROLLER_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
 
@@ -169,7 +171,7 @@ build: manifests generate fmt vet ## Build controller and node-discovery binarie
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	go run ./cmd/main.go --system-status-namespace=$(RUN_NAMESPACE) $(RUN_ARGS)
 
 # If you wish to build images targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

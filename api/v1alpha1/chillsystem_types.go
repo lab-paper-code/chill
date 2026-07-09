@@ -14,6 +14,22 @@ const (
 	ChillSystemPhaseDegraded ChillSystemPhase = "Degraded"
 )
 
+const (
+	// ChillSystemConditionReady reports whether the CHILL installation is usable.
+	ChillSystemConditionReady = "Ready"
+	// ChillSystemConditionProgressing reports whether CHILL is still reconciling.
+	ChillSystemConditionProgressing = "Progressing"
+	// ChillSystemConditionDegraded reports whether CHILL needs operator attention.
+	ChillSystemConditionDegraded = "Degraded"
+)
+
+const (
+	// ChillSystemReasonMaxLength is the status reason length allowed by the CRD schema.
+	ChillSystemReasonMaxLength = 128
+	// ChillSystemMessageMaxLength is the status message length allowed by the CRD schema.
+	ChillSystemMessageMaxLength = 1024
+)
+
 // ComponentState summarizes one CHILL component.
 type ComponentState string
 
@@ -46,10 +62,12 @@ type ChillSystemStatus struct {
 
 	// Ready mirrors the Ready condition for kubectl printer columns.
 	// +optional
+	// +kubebuilder:validation:Enum=True;False;Unknown
 	Ready metav1.ConditionStatus `json:"ready,omitempty"`
 
 	// Message is a concise human-readable status summary.
 	// +optional
+	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
 
 	// ControllerState summarizes the controller manager Deployment state.
@@ -63,10 +81,14 @@ type ChillSystemStatus struct {
 	NodeDiscoveryState ComponentState `json:"nodeDiscoveryState,omitempty"`
 
 	// DeviceClassCount is the number of DeviceClass objects observed by CHILL.
-	DeviceClassCount int32 `json:"deviceClassCount"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	DeviceClassCount *int32 `json:"deviceClassCount,omitempty"`
 
 	// ObservedNodeCount is the number of Kubernetes Nodes observed by CHILL.
-	ObservedNodeCount int32 `json:"observedNodeCount"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ObservedNodeCount *int32 `json:"observedNodeCount,omitempty"`
 
 	// Components reports detailed per-component status.
 	// +optional
@@ -101,22 +123,27 @@ type ChillComponentStatus struct {
 
 	// Reason is a short machine-readable reason for State.
 	// +optional
+	// +kubebuilder:validation:MaxLength=128
 	Reason string `json:"reason,omitempty"`
 
 	// Message is a concise human-readable explanation for State.
 	// +optional
+	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
 
 	// Desired is the desired number of component replicas or scheduled pods.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	Desired int32 `json:"desired,omitempty"`
 
 	// Ready is the number of ready component replicas or scheduled pods.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	Ready int32 `json:"ready,omitempty"`
 
 	// Available is the number of available component replicas.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	Available int32 `json:"available,omitempty"`
 }
 
@@ -125,10 +152,10 @@ type ChillComponentStatus struct {
 // +kubebuilder:resource:scope=Namespaced,shortName=csys
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.ready`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Controller",type=string,JSONPath=`.status.controllerState`
-// +kubebuilder:printcolumn:name="NodeDiscovery",type=string,JSONPath=`.status.nodeDiscoveryState`
-// +kubebuilder:printcolumn:name="Classes",type=integer,JSONPath=`.status.deviceClassCount`
-// +kubebuilder:printcolumn:name="Nodes",type=integer,JSONPath=`.status.observedNodeCount`
+// +kubebuilder:printcolumn:name="Controller",type=string,JSONPath=`.status.controllerState`,priority=1
+// +kubebuilder:printcolumn:name="NodeDiscovery",type=string,JSONPath=`.status.nodeDiscoveryState`,priority=1
+// +kubebuilder:printcolumn:name="Classes",type=integer,JSONPath=`.status.deviceClassCount`,priority=1
+// +kubebuilder:printcolumn:name="Nodes",type=integer,JSONPath=`.status.observedNodeCount`,priority=1
 // +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`
 
 // ChillSystem is the namespace-local status surface for a CHILL installation.

@@ -2,23 +2,33 @@ package systemcontroller
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+)
+
+const testControllerDesiredReplicas = int32(1)
+
+var (
+	testControllerDeploymentName   = DefaultControllerDeploymentName()
+	testNodeDiscoveryDaemonSetName = DefaultNodeDiscoveryDaemonSetName()
 )
 
 func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 	status := buildStatus(Observation{
 		ObservedGeneration:       7,
 		Namespace:                "chill-system",
-		ControllerDeploymentName: "chill-controller-manager",
-		ControllerDeployment:     deployment("chill-controller-manager", 1, 1),
+		ControllerDeploymentName: testControllerDeploymentName,
+		ControllerDeployment:     deployment(1),
 		NodeDiscoveryEnabled:     false,
-		DeviceClassCount:         3,
-		ObservedNodeCount:        6,
+		DeviceClassCount:         int32Ptr(3),
+		ObservedNodeCount:        int32Ptr(6),
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseReady {
@@ -33,10 +43,10 @@ func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDisabled {
 		t.Fatalf("NodeDiscoveryState = %q, want Disabled", status.NodeDiscoveryState)
 	}
-	if status.DeviceClassCount != 3 || status.ObservedNodeCount != 6 {
-		t.Fatalf("counts = classes:%d nodes:%d, want classes:3 nodes:6", status.DeviceClassCount, status.ObservedNodeCount)
+	if status.DeviceClassCount == nil || *status.DeviceClassCount != 3 || status.ObservedNodeCount == nil || *status.ObservedNodeCount != 6 {
+		t.Fatalf("counts = classes:%s nodes:%s, want classes:3 nodes:6", countString(status.DeviceClassCount), countString(status.ObservedNodeCount))
 	}
-	ready := findCondition(status.Conditions, ConditionReady)
+	ready := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionReady)
 	if ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != 7 {
 		t.Fatalf("Ready condition = %#v, want true observedGeneration=7", ready)
 	}
@@ -45,11 +55,11 @@ func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
 	status := buildStatus(Observation{
 		Namespace:                  "chill-system",
-		ControllerDeploymentName:   "chill-controller-manager",
-		ControllerDeployment:       deployment("chill-controller-manager", 1, 1),
+		ControllerDeploymentName:   testControllerDeploymentName,
+		ControllerDeployment:       deployment(1),
 		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: "chill-node-discovery",
-		NodeDiscoveryDaemonSet:     daemonSet("chill-node-discovery", 6, 4),
+		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
+		NodeDiscoveryDaemonSet:     daemonSet(6, 4),
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseProgressing {
@@ -58,7 +68,7 @@ func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
 	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateProgressing {
 		t.Fatalf("NodeDiscoveryState = %q, want Progressing", status.NodeDiscoveryState)
 	}
-	progressing := findCondition(status.Conditions, ConditionProgressing)
+	progressing := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionProgressing)
 	if progressing == nil || progressing.Status != metav1.ConditionTrue {
 		t.Fatalf("Progressing condition = %#v, want true", progressing)
 	}
@@ -67,10 +77,10 @@ func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
 func TestBuildStatusDegradedWhenRequiredComponentMissing(t *testing.T) {
 	status := buildStatus(Observation{
 		Namespace:                  "chill-system",
-		ControllerDeploymentName:   "chill-controller-manager",
-		ControllerDeployment:       deployment("chill-controller-manager", 1, 1),
+		ControllerDeploymentName:   testControllerDeploymentName,
+		ControllerDeployment:       deployment(1),
 		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: "chill-node-discovery",
+		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
 	}, nil, metav1.Now())
 
 	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
@@ -79,17 +89,108 @@ func TestBuildStatusDegradedWhenRequiredComponentMissing(t *testing.T) {
 	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDegraded {
 		t.Fatalf("NodeDiscoveryState = %q, want Degraded", status.NodeDiscoveryState)
 	}
-	degraded := findCondition(status.Conditions, ConditionDegraded)
+	degraded := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionDegraded)
 	if degraded == nil || degraded.Status != metav1.ConditionTrue {
 		t.Fatalf("Degraded condition = %#v, want true", degraded)
+	}
+}
+
+func TestBuildStatusDegradedWhenDeploymentTimedOut(t *testing.T) {
+	controller := deployment(0)
+	controller.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:    appsv1.DeploymentProgressing,
+			Status:  corev1.ConditionFalse,
+			Reason:  deploymentTimedOutReason,
+			Message: "ReplicaSet has timed out progressing.",
+		},
+	}
+
+	status := buildStatus(Observation{
+		Namespace:                "chill-system",
+		ControllerDeploymentName: testControllerDeploymentName,
+		ControllerDeployment:     controller,
+		NodeDiscoveryEnabled:     false,
+	}, nil, metav1.Now())
+
+	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
+		t.Fatalf("Phase = %q, want Degraded", status.Phase)
+	}
+	if status.ControllerState != edgev1alpha1.ComponentStateDegraded {
+		t.Fatalf("ControllerState = %q, want Degraded", status.ControllerState)
+	}
+	if status.Message != "ReplicaSet has timed out progressing." {
+		t.Fatalf("Message = %q, want Deployment condition message", status.Message)
+	}
+}
+
+func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
+	controller := deployment(0)
+	longMessage := strings.Repeat("x", edgev1alpha1.ChillSystemMessageMaxLength+1)
+	controller.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:    appsv1.DeploymentProgressing,
+			Status:  corev1.ConditionFalse,
+			Reason:  deploymentTimedOutReason,
+			Message: longMessage,
+		},
+	}
+
+	status := buildStatus(Observation{
+		Namespace:                "chill-system",
+		ControllerDeploymentName: testControllerDeploymentName,
+		ControllerDeployment:     controller,
+		NodeDiscoveryEnabled:     false,
+	}, nil, metav1.Now())
+
+	if len([]rune(status.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
+		t.Fatalf("Message length = %d, want <= %d", len([]rune(status.Message)), edgev1alpha1.ChillSystemMessageMaxLength)
+	}
+	if len([]rune(status.Components[0].Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
+		t.Fatalf(
+			"component message length = %d, want <= %d",
+			len([]rune(status.Components[0].Message)),
+			edgev1alpha1.ChillSystemMessageMaxLength,
+		)
+	}
+}
+
+func TestBuildStatusDegradedWhenDaemonSetHasReplicaFailure(t *testing.T) {
+	nodeDiscovery := daemonSet(6, 4)
+	nodeDiscovery.Status.Conditions = []appsv1.DaemonSetCondition{
+		{
+			Type:    daemonSetReplicaFailureConditionType,
+			Status:  corev1.ConditionTrue,
+			Reason:  "FailedCreate",
+			Message: "Failed to create pod.",
+		},
+	}
+
+	status := buildStatus(Observation{
+		Namespace:                  "chill-system",
+		ControllerDeploymentName:   testControllerDeploymentName,
+		ControllerDeployment:       deployment(1),
+		NodeDiscoveryEnabled:       true,
+		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
+		NodeDiscoveryDaemonSet:     nodeDiscovery,
+	}, nil, metav1.Now())
+
+	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
+		t.Fatalf("Phase = %q, want Degraded", status.Phase)
+	}
+	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDegraded {
+		t.Fatalf("NodeDiscoveryState = %q, want Degraded", status.NodeDiscoveryState)
+	}
+	if status.Message != "Failed to create pod." {
+		t.Fatalf("Message = %q, want DaemonSet condition message", status.Message)
 	}
 }
 
 func TestBuildStatusDegradedOnObservationError(t *testing.T) {
 	status := buildStatus(Observation{
 		Namespace:                "chill-system",
-		ControllerDeploymentName: "chill-controller-manager",
-		ControllerDeployment:     deployment("chill-controller-manager", 1, 1),
+		ControllerDeploymentName: testControllerDeploymentName,
+		ControllerDeployment:     deployment(1),
 		NodeDiscoveryEnabled:     false,
 		DeviceClassError:         errors.New("observe DeviceClasses: forbidden"),
 	}, nil, metav1.Now())
@@ -107,12 +208,12 @@ func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 	status := buildStatus(Observation{
 		ObservedGeneration:       1,
 		Namespace:                "chill-system",
-		ControllerDeploymentName: "chill-controller-manager",
-		ControllerDeployment:     deployment("chill-controller-manager", 1, 1),
+		ControllerDeploymentName: testControllerDeploymentName,
+		ControllerDeployment:     deployment(1),
 		NodeDiscoveryEnabled:     false,
 	}, []metav1.Condition{
 		{
-			Type:               ConditionReady,
+			Type:               edgev1alpha1.ChillSystemConditionReady,
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: 1,
 			LastTransitionTime: firstTransition,
@@ -121,7 +222,7 @@ func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 		},
 	}, metav1.Now())
 
-	ready := findCondition(status.Conditions, ConditionReady)
+	ready := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionReady)
 	if ready == nil {
 		t.Fatal("Ready condition not found")
 	}
@@ -130,11 +231,11 @@ func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 	}
 }
 
-func deployment(name string, desired, available int32) *appsv1.Deployment {
+func deployment(available int32) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: testControllerDeploymentName},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: &desired,
+			Replicas: int32Ptr(testControllerDesiredReplicas),
 		},
 		Status: appsv1.DeploymentStatus{
 			ReadyReplicas:     available,
@@ -143,9 +244,9 @@ func deployment(name string, desired, available int32) *appsv1.Deployment {
 	}
 }
 
-func daemonSet(name string, desired, ready int32) *appsv1.DaemonSet {
+func daemonSet(desired, ready int32) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: testNodeDiscoveryDaemonSetName},
 		Status: appsv1.DaemonSetStatus{
 			DesiredNumberScheduled: desired,
 			NumberReady:            ready,
@@ -161,4 +262,11 @@ func findCondition(conditions []metav1.Condition, conditionType string) *metav1.
 		}
 	}
 	return nil
+}
+
+func countString(count *int32) string {
+	if count == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%d", *count)
 }

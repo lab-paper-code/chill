@@ -9,11 +9,7 @@ RUN go mod download
 
 COPY cmd/main.go cmd/main.go
 COPY api/ api/
-COPY internal/controller/ internal/controller/
-COPY internal/deviceclasscatalog/ internal/deviceclasscatalog/
-COPY internal/discoverycontroller/ internal/discoverycontroller/
-COPY internal/labels/ internal/labels/
-COPY internal/systemcontroller/ internal/systemcontroller/
+COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/manager cmd/main.go
 
 FROM gcr.io/distroless/static:nonroot

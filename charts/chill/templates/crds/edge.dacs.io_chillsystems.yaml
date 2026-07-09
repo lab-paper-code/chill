@@ -27,15 +27,19 @@ spec:
       type: string
     - jsonPath: .status.controllerState
       name: Controller
+      priority: 1
       type: string
     - jsonPath: .status.nodeDiscoveryState
       name: NodeDiscovery
+      priority: 1
       type: string
     - jsonPath: .status.deviceClassCount
       name: Classes
+      priority: 1
       type: integer
     - jsonPath: .status.observedNodeCount
       name: Nodes
+      priority: 1
       type: integer
     - jsonPath: .status.message
       name: Message
@@ -81,11 +85,13 @@ spec:
                       description: Available is the number of available component
                         replicas.
                       format: int32
+                      minimum: 0
                       type: integer
                     desired:
                       description: Desired is the desired number of component replicas
                         or scheduled pods.
                       format: int32
+                      minimum: 0
                       type: integer
                     kind:
                       description: Kind is the Kubernetes workload kind backing this
@@ -94,6 +100,7 @@ spec:
                     message:
                       description: Message is a concise human-readable explanation
                         for State.
+                      maxLength: 1024
                       type: string
                     name:
                       description: Name is the stable component identifier.
@@ -106,9 +113,11 @@ spec:
                       description: Ready is the number of ready component replicas
                         or scheduled pods.
                       format: int32
+                      minimum: 0
                       type: integer
                     reason:
                       description: Reason is a short machine-readable reason for State.
+                      maxLength: 128
                       type: string
                     state:
                       description: State summarizes the observed component state.
@@ -201,9 +210,11 @@ spec:
                 description: DeviceClassCount is the number of DeviceClass objects
                   observed by CHILL.
                 format: int32
+                minimum: 0
                 type: integer
               message:
                 description: Message is a concise human-readable status summary.
+                maxLength: 1024
                 type: string
               nodeDiscoveryState:
                 description: NodeDiscoveryState summarizes the node-discovery DaemonSet
@@ -224,6 +235,7 @@ spec:
                 description: ObservedNodeCount is the number of Kubernetes Nodes observed
                   by CHILL.
                 format: int32
+                minimum: 0
                 type: integer
               phase:
                 description: Phase summarizes the current CHILL installation state.
@@ -235,10 +247,11 @@ spec:
               ready:
                 description: Ready mirrors the Ready condition for kubectl printer
                   columns.
+                enum:
+                - "True"
+                - "False"
+                - Unknown
                 type: string
-            required:
-            - deviceClassCount
-            - observedNodeCount
             type: object
         type: object
     served: true

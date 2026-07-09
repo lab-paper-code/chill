@@ -28,7 +28,12 @@ func main() {
 
 	flag.StringVar(&nodeName, "node-name", os.Getenv("NODE_NAME"), "Kubernetes Node name to patch.")
 	flag.StringVar(&hostRoot, "host-root", "/host", "Root path containing read-only host mounts.")
-	flag.StringVar(&signatureFile, "signature-file", "/etc/chill/node-discovery/signatures.yaml", "YAML file containing node discovery signatures.")
+	flag.StringVar(
+		&signatureFile,
+		"signature-file",
+		"/etc/chill/node-discovery/signatures.yaml",
+		"YAML file containing node discovery signatures.",
+	)
 	flag.DurationVar(&interval, "interval", 10*time.Minute, "How often to refresh node discovery labels.")
 	flag.BoolVar(&once, "once", false, "Run one discovery pass and exit.")
 	flag.Parse()
@@ -93,7 +98,13 @@ func runOnce(ctx context.Context, clientset kubernetes.Interface, nodeName, host
 		return nil
 	}
 
-	if _, err := clientset.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+	if _, err := clientset.CoreV1().Nodes().Patch(
+		ctx,
+		nodeName,
+		types.MergePatchType,
+		patch,
+		metav1.PatchOptions{},
+	); err != nil {
 		return fmt.Errorf("patch node %q: %w", nodeName, err)
 	}
 	log.Printf("patched node %q with discovery labels=%v annotations=%v", nodeName, labels, annotations)

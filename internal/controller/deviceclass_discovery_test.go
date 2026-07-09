@@ -19,17 +19,19 @@ import (
 	chilllabels "github.com/lab-paper-code/chill/internal/labels"
 )
 
+const discoveryCatalogName = "catalog"
+
 var _ = Describe("DeviceClass discovery", func() {
 	It("creates a catalog-matched DeviceClass and labels the node", func() {
 		ctx := context.Background()
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
-		createDiscoveryCatalog(ctx, namespace.Name, "catalog", orinNanoCatalogYAML())
+		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
 		node := createDiscoveryNode(ctx, "orin-nano-"+runID, runID, map[string]string{
 			"jetson-model": "orin-nano",
 		})
 
-		reconciler := discoveryReconciler(namespace.Name, "catalog", runID, true)
+		reconciler := discoveryReconciler(namespace.Name, runID)
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -59,13 +61,13 @@ var _ = Describe("DeviceClass discovery", func() {
 		ctx := context.Background()
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
-		createDiscoveryCatalog(ctx, namespace.Name, "catalog", orinNanoCatalogYAML())
+		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
 		node := createDiscoveryNode(ctx, "manual-"+runID, runID, map[string]string{
 			"jetson-model":          "orin-nano",
 			chilllabels.DeviceClass: "manual-class",
 		})
 
-		reconciler := discoveryReconciler(namespace.Name, "catalog", runID, true)
+		reconciler := discoveryReconciler(namespace.Name, runID)
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -88,7 +90,7 @@ var _ = Describe("DeviceClass discovery", func() {
 		ctx := context.Background()
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
-		createDiscoveryCatalog(ctx, namespace.Name, "catalog", orinNanoCatalogYAML())
+		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
 		node := createDiscoveryNodeWithAnnotations(ctx, "managed-"+runID, runID, map[string]string{
 			"jetson-model":          "orin-nano",
 			chilllabels.DeviceClass: "stale-class",
@@ -96,7 +98,7 @@ var _ = Describe("DeviceClass discovery", func() {
 			chilllabels.ManagedBy: chilllabels.ManagedByDeviceDiscovery,
 		})
 
-		reconciler := discoveryReconciler(namespace.Name, "catalog", runID, true)
+		reconciler := discoveryReconciler(namespace.Name, runID)
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -117,12 +119,12 @@ var _ = Describe("DeviceClass discovery", func() {
 		ctx := context.Background()
 		runID := uniqueDiscoveryRunID()
 		namespace := createDiscoveryCatalogNamespace(ctx, runID)
-		createDiscoveryCatalog(ctx, namespace.Name, "catalog", orinNanoCatalogYAML())
+		createDiscoveryCatalog(ctx, namespace.Name, orinNanoCatalogYAML())
 		node := createDiscoveryNode(ctx, "unmatched-"+runID, runID, map[string]string{
 			"jetson-model": "unknown",
 		})
 
-		reconciler := discoveryReconciler(namespace.Name, "catalog", runID, true)
+		reconciler := discoveryReconciler(namespace.Name, runID)
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -139,15 +141,15 @@ var _ = Describe("DeviceClass discovery", func() {
 	})
 })
 
-func discoveryReconciler(namespace, catalogName, runID string, requireCatalogMatch bool) *discoverycontroller.DeviceDiscoveryReconciler {
+func discoveryReconciler(namespace, runID string) *discoverycontroller.DeviceDiscoveryReconciler {
 	return &discoverycontroller.DeviceDiscoveryReconciler{
 		Client: k8sClient,
 		Options: discoverycontroller.DeviceDiscoveryOptions{
 			LabelKey:            chilllabels.DeviceClass,
 			NodeLabelSelector:   "edge.dacs.io/test-run=" + runID,
-			RequireCatalogMatch: requireCatalogMatch,
+			RequireCatalogMatch: true,
 			CatalogNamespace:    namespace,
-			CatalogName:         catalogName,
+			CatalogName:         discoveryCatalogName,
 		},
 	}
 }
@@ -163,11 +165,11 @@ func createDiscoveryCatalogNamespace(ctx context.Context, runID string) *corev1.
 	return namespace
 }
 
-func createDiscoveryCatalog(ctx context.Context, namespace, name, catalog string) {
+func createDiscoveryCatalog(ctx context.Context, namespace, catalog string) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
-			Name:      name,
+			Name:      discoveryCatalogName,
 		},
 		Data: map[string]string{
 			deviceclasscatalog.CatalogDataKey: catalog,

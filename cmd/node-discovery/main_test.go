@@ -78,10 +78,18 @@ func TestRunOnceAnnotatesNoSourceFacts(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	if node.Annotations[labels.NodeDiscoveryResult] != labels.DiscoveryResultUnmatched {
-		t.Fatalf("node discovery result = %q, want %q", node.Annotations[labels.NodeDiscoveryResult], labels.DiscoveryResultUnmatched)
+		t.Fatalf(
+			"node discovery result = %q, want %q",
+			node.Annotations[labels.NodeDiscoveryResult],
+			labels.DiscoveryResultUnmatched,
+		)
 	}
 	if node.Annotations[labels.NodeDiscoveryReason] != labels.DiscoveryReasonNoSourceFacts {
-		t.Fatalf("node discovery reason = %q, want %q", node.Annotations[labels.NodeDiscoveryReason], labels.DiscoveryReasonNoSourceFacts)
+		t.Fatalf(
+			"node discovery reason = %q, want %q",
+			node.Annotations[labels.NodeDiscoveryReason],
+			labels.DiscoveryReasonNoSourceFacts,
+		)
 	}
 	if _, ok := node.Labels[labels.DeviceClass]; ok {
 		t.Fatalf("node-discovery set DeviceClass label")
