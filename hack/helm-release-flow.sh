@@ -90,7 +90,7 @@ append_image_values() {
 render_validate() {
 	local out
 	out="$(mktemp --suffix=.yaml)"
-	trap 'rm -f "${out}"' EXIT
+	trap "rm -f '${out}'" EXIT
 	local operator_args=("--set" "system.name=${system_release}")
 	local system_args=("--set" "system.name=${system_release}")
 	append_image_values operator_args operator "${operator_image}"

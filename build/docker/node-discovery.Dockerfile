@@ -8,6 +8,7 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY cmd/node-discovery/ cmd/node-discovery/
+COPY internal/defaults/ internal/defaults/
 COPY internal/kubeconfig/ internal/kubeconfig/
 COPY internal/metadata/ internal/metadata/
 COPY internal/nodeprobe/ internal/nodeprobe/
