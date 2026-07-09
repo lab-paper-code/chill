@@ -72,6 +72,13 @@ make helm-start \
   NODE_DISCOVERY_IMG=<registry>/chill/node-discovery:<tag>
 ```
 
+Once the controller is running, CHILL publishes a namespace-local status object:
+
+```sh
+kubectl -n chill-system get chillsystem
+kubectl -n chill-system describe chillsystem chill
+```
+
 Cleanup is also exposed as high-level Helm operations:
 
 ```sh

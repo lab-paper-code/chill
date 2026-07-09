@@ -44,6 +44,12 @@ spec:
           args:
             - --metrics-bind-address={{ .Values.controller.metricsBindAddress }}
             - --health-probe-bind-address={{ .Values.controller.healthProbeBindAddress }}
+            - --system-status-name={{ include "chill.systemStatusName" . }}
+            - --system-status-namespace={{ .Release.Namespace }}
+            - --system-status-controller-deployment-name={{ include "chill.fullname" . }}-controller-manager
+            - --system-status-node-discovery-daemonset-name={{ include "chill.fullname" . }}-node-discovery
+            - --system-status-node-discovery-enabled={{ .Values.nodeDiscovery.enabled }}
+            - --system-status-refresh-interval={{ .Values.systemStatus.refreshInterval }}
             {{- if .Values.controller.leaderElection }}
             - --leader-elect
             {{- end }}

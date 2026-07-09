@@ -64,6 +64,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-node-discovery-signatures" (include "chill.fullname" .) -}}
 {{- end -}}
 
+{{- define "chill.systemStatusName" -}}
+{{- default .Release.Name .Values.systemStatus.name -}}
+{{- end -}}
+
 {{- define "chill.nodeDiscoverySignatureKey" -}}
 signatures.yaml
 {{- end -}}

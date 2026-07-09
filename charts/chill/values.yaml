@@ -4,6 +4,10 @@ fullnameOverride: ""
 crds:
   enabled: true
 
+systemStatus:
+  name: ""
+  refreshInterval: 30s
+
 nodeSelection:
   labelSelector: node-role.kubernetes.io/edge
   nodeSelector:

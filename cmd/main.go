@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -21,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclasscatalog"
 	"github.com/lab-paper-code/chill/internal/discoverycontroller"
 	chilllabels "github.com/lab-paper-code/chill/internal/labels"
+	"github.com/lab-paper-code/chill/internal/systemcontroller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -48,6 +50,12 @@ func main() {
 	var deviceDiscoveryCatalogNamespace string
 	var deviceDiscoveryCatalogName string
 	var deviceDiscoveryCatalogKey string
+	var systemStatusName string
+	var systemStatusNamespace string
+	var systemStatusControllerDeploymentName string
+	var systemStatusNodeDiscoveryDaemonSetName string
+	var systemStatusNodeDiscoveryEnabled bool
+	var systemStatusRefreshInterval time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -70,6 +78,18 @@ func main() {
 		"Name of the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclasscatalog.CatalogDataKey,
 		"Data key containing the device discovery catalog in the ConfigMap.")
+	flag.StringVar(&systemStatusName, "system-status-name", systemcontroller.DefaultSystemName,
+		"Name of the namespace-local ChillSystem status resource.")
+	flag.StringVar(&systemStatusNamespace, "system-status-namespace", defaultSystemStatusNamespace(),
+		"Namespace containing the namespace-local ChillSystem status resource.")
+	flag.StringVar(&systemStatusControllerDeploymentName, "system-status-controller-deployment-name", "",
+		"Name of the controller Deployment reported in ChillSystem status.")
+	flag.StringVar(&systemStatusNodeDiscoveryDaemonSetName, "system-status-node-discovery-daemonset-name", "",
+		"Name of the node-discovery DaemonSet reported in ChillSystem status.")
+	flag.BoolVar(&systemStatusNodeDiscoveryEnabled, "system-status-node-discovery-enabled", false,
+		"Report node-discovery as an enabled component in ChillSystem status.")
+	flag.DurationVar(&systemStatusRefreshInterval, "system-status-refresh-interval", systemcontroller.DefaultRefreshInterval,
+		"Periodic refresh interval for ChillSystem status.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -110,6 +130,21 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DeviceClass")
+		os.Exit(1)
+	}
+	if err = (&systemcontroller.ChillSystemReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Options: systemcontroller.Options{
+			SystemName:                 systemStatusName,
+			Namespace:                  systemStatusNamespace,
+			ControllerDeploymentName:   systemStatusControllerDeploymentName,
+			NodeDiscoveryDaemonSetName: systemStatusNodeDiscoveryDaemonSetName,
+			NodeDiscoveryEnabled:       systemStatusNodeDiscoveryEnabled,
+			RefreshInterval:            systemStatusRefreshInterval,
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ChillSystem")
 		os.Exit(1)
 	}
 	if enableDeviceDiscovery {
@@ -166,4 +201,11 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func defaultSystemStatusNamespace() string {
+	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+		return namespace
+	}
+	return "default"
 }

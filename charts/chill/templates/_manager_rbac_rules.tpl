@@ -18,8 +18,18 @@
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - edge.dacs.io
   resources:
+  - chillsystems
   - clusterenergymodels
   - deviceclasses
   - deviceprofiles
@@ -35,6 +45,7 @@
 - apiGroups:
   - edge.dacs.io
   resources:
+  - chillsystems/finalizers
   - clusterenergymodels/finalizers
   - deviceclasses/finalizers
   - deviceprofiles/finalizers
@@ -44,6 +55,7 @@
 - apiGroups:
   - edge.dacs.io
   resources:
+  - chillsystems/status
   - clusterenergymodels/status
   - deviceclasses/status
   - deviceprofiles/status
