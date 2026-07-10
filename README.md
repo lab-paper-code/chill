@@ -67,9 +67,10 @@ make helm-install
 make helm-uninstall
 ```
 
-`helm uninstall` runs a pre-delete cleanup hook that deletes the root
-`ChillSystem` and waits for finalizers before the operator Deployment is
-removed.
+`make helm-uninstall` separates responsibilities: it first deletes the root
+`ChillSystem` and waits for CHILL finalizers through the Kubernetes API, then
+removes the Helm release with hooks disabled. The chart still includes a
+Helm `pre-delete` hook as a safety net for direct `helm uninstall`.
 
 Default image repositories:
 

@@ -16,6 +16,7 @@ values_file="${HELM_VALUES:-}"
 extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
+system_name="${CHILL_SYSTEM_NAME:-}"
 
 usage() {
 	cat <<EOF
@@ -24,7 +25,7 @@ Usage: $0 <command>
 Commands:
   preflight             Validate chart rendering and CRD ownership.
   install               Install or upgrade CHILL.
-  uninstall             Uninstall CHILL while keeping CRDs.
+  uninstall             Delete CHILL runtime root, then uninstall Helm release while keeping CRDs.
   purge-crds            Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=${release}.
 
 Environment:
@@ -33,6 +34,7 @@ Environment:
   HELM_CHART             Chart path. Default: charts/chill
   HELM_VALUES            Optional values file.
   HELM_SET               Extra Helm flags.
+  CHILL_SYSTEM_NAME      Optional ChillSystem name for cleanup. Default: discover by release labels, then HELM_RELEASE.
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
 EOF
@@ -120,11 +122,68 @@ install_release() {
 		--timeout "${timeout}"
 }
 
+discover_chill_system_name() {
+	if [[ -n "${system_name}" ]]; then
+		printf '%s\n' "${system_name}"
+		return
+	fi
+	if ! "${kubectl_bin}" get crd chillsystems.edge.dacs.io >/dev/null 2>&1; then
+		printf '%s\n' "${release}"
+		return
+	fi
+
+	local names
+	names="$("${kubectl_bin}" get chillsystems.edge.dacs.io \
+		-l "app.kubernetes.io/instance=${release},app.kubernetes.io/managed-by=Helm" \
+		-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+		--ignore-not-found 2>/dev/null || true)"
+
+	local found=()
+	while IFS= read -r name; do
+		if [[ -n "${name}" ]]; then
+			found+=("${name}")
+		fi
+	done <<<"${names}"
+
+	if (( ${#found[@]} > 1 )); then
+		echo "Multiple ChillSystem resources found for release ${release}: ${found[*]}" >&2
+		echo "Set CHILL_SYSTEM_NAME to select one explicitly." >&2
+		exit 1
+	fi
+	if (( ${#found[@]} == 1 )); then
+		printf '%s\n' "${found[0]}"
+		return
+	fi
+	printf '%s\n' "${release}"
+}
+
+delete_chill_runtime_root() {
+	echo "==> chill-cleanup"
+	if ! "${kubectl_bin}" get crd chillsystems.edge.dacs.io >/dev/null 2>&1; then
+		echo "skip ChillSystem cleanup: CRD chillsystems.edge.dacs.io is not installed"
+		return
+	fi
+
+	local name
+	name="$(discover_chill_system_name)"
+	if ! "${kubectl_bin}" get "chillsystems.edge.dacs.io/${name}" >/dev/null 2>&1; then
+		echo "skip ChillSystem cleanup: ${name} not found"
+		return
+	fi
+
+	"${kubectl_bin}" delete "chillsystems.edge.dacs.io/${name}" \
+		--ignore-not-found=true \
+		--wait=true \
+		--timeout="${timeout}"
+}
+
 uninstall_release() {
-	echo "==> uninstall"
+	delete_chill_runtime_root
+	echo "==> helm-uninstall"
 	"${helm_bin}" uninstall "${release}" \
 		--namespace "${release_namespace}" \
 		--ignore-not-found \
+		--no-hooks \
 		--cascade foreground \
 		--wait \
 		--timeout "${timeout}"

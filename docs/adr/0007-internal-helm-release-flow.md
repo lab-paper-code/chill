@@ -16,9 +16,9 @@ This ADR is retained only as historical context. It previously used two Helm
 releases to preserve install and teardown ordering while the bootstrap surface
 was changing.
 
-The current decision is ADR 0009: use one `charts/chill` release and preserve
-teardown ordering with a Helm `pre-delete` hook that deletes the root
-`ChillSystem` before the operator Deployment is removed.
+The current decision is ADR 0009: use one `charts/chill` release, make CHILL
+runtime cleanup an explicit root-CR/finalizer contract, and keep Helm hook
+cleanup only as a safety net for direct `helm uninstall`.
 
 ## Consequences
 

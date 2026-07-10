@@ -31,11 +31,17 @@ packages:
 - the cluster-scoped `ChillSystem` root CR
 - node-discovery ServiceAccount, RBAC, config, and discovery catalog
 
-The public flow is:
+The single-release install flow is:
 
 ```sh
 helm install chill charts/chill --namespace chill-system --create-namespace
-helm uninstall chill --namespace chill-system
+```
+
+The repo-supported uninstall flow separates responsibilities:
+
+```sh
+kubectl delete chillsystem chill --wait
+helm uninstall chill --namespace chill-system --no-hooks
 ```
 
 The operator does not auto-create its own `ChillSystem` root. Helm owns the
@@ -50,15 +56,17 @@ CRDs stay templated under `charts/chill/templates/crds/` during `v1alpha1` so
 Helm upgrades can update alpha schemas. CRDs keep `helm.sh/resource-policy:
 keep`; destructive CRD deletion remains a guarded explicit action.
 
-`helm uninstall` uses a `pre-delete` hook Job to delete the root
-`ChillSystem` and wait for finalizer completion while the operator Deployment
-is still present. This preserves the teardown ordering previously encoded by
-the two-release workflow without exposing that ordering as a user-facing
-install procedure.
+`make helm-uninstall` uses that split directly: CHILL cleanup is the
+`ChillSystem` deletion and finalizer wait, while Helm is responsible only for
+removing packaged release resources afterward. The chart also keeps a
+`pre-delete` hook Job that performs the same root deletion as a safety net for
+direct `helm uninstall`; the hook is not the primary lifecycle contract.
 
 ## Consequences
 
-Install and uninstall become one Helm command each.
+Install remains one Helm release. Official uninstall is one Make target but
+two responsibility phases: CHILL root finalization first, Helm release removal
+second.
 
 Existing clusters that previously installed `chill-operator` may retain CRDs
 annotated as owned by `chill-operator/chill-system`. Those CRDs must be adopted

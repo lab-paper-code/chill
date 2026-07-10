@@ -159,7 +159,7 @@ helm-install: kubeconform ## Install or upgrade the CHILL Helm release.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) install
 
 .PHONY: helm-uninstall
-helm-uninstall: ## Uninstall the CHILL Helm release while keeping CRDs.
+helm-uninstall: ## Delete CHILL runtime root, then uninstall the Helm release while keeping CRDs.
 	@$(HELM_FLOW_ENV) $(HELM_FLOW) uninstall
 
 .PHONY: helm-purge-crds

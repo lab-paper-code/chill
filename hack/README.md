@@ -31,5 +31,10 @@ make helm-install
 make helm-uninstall
 ```
 
+`make helm-uninstall` treats runtime cleanup as CHILL's responsibility: it
+deletes the root `ChillSystem` and waits for finalizers before calling Helm
+with hooks disabled. The chart hook remains only as a safety net for direct
+`helm uninstall`.
+
 `make helm-purge-crds` is intentionally guarded and requires
 `CONFIRM_PURGE_CRDS=chill`.
