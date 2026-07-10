@@ -28,6 +28,7 @@ HELM_CHART ?= charts/chill
 HELM_TIMEOUT ?= 2m
 HELM_VALUES ?=
 HELM_SET ?=
+FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
@@ -235,7 +236,7 @@ docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery ## Build 
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.
-	./hack/fast-deploy.sh
+	./hack/fast-deploy.sh $(FAST_DEPLOY_ARGS)
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

@@ -116,10 +116,22 @@ The first implementation should be a local/manual wrapper, for example
 `make fast-deploy` or `hack/fast-deploy.sh`. It should build, push, deploy, and
 observe from the developer's selected checkout/ref.
 
+The Make entry point accepts wrapper arguments without introducing a second
+configuration surface:
+
+```sh
+make fast-deploy FAST_DEPLOY_ARGS="--components operator --observe summary"
+```
+
 The wrapper builds the same component matrix:
 
 - `chill-operator` from `build/docker/operator.Dockerfile`
 - `chill-node-discovery` from `build/docker/node-discovery.Dockerfile`
+
+The default remains `all`, but an explicit component selection may rebuild
+only `operator` or `node-discovery`. The wrapper must resolve and reuse the
+currently deployed image for the component it does not rebuild; it must fail
+before uninstall if that image cannot be resolved.
 
 Recommended trigger policy for the fast loop:
 
@@ -151,9 +163,10 @@ make helm-template
 
 Recommended speed policy:
 
-- Build only the platform needed by the current testbed while the fast loop is
-  being stabilized.
-- Add multi-arch builds only when the current testbed requires them.
+- Build only changed components when the caller can identify them explicitly.
+- Build independent component images concurrently.
+- Push directly from BuildKit to the internal registry when supported, with the
+  validated `ctr --plain-http` path retained as a fallback.
 - Add registry-backed BuildKit cache only after the basic loop is useful.
 
 ## Deployment Flow
@@ -324,6 +337,11 @@ Each run should report:
 - pod status;
 - recent warning events;
 - recent bounded operator and node-discovery logs.
+
+`summary` observation mode reports rollout state, pod image IDs, and warning
+events. `full` mode additionally collects all recent events and bounded logs.
+The default remains `full`; developers may select `summary` for a faster repeat
+loop.
 
 This gives developers enough information to decide whether the code change is
 visible in the current Kubernetes environment.

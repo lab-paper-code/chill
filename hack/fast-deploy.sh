@@ -13,6 +13,9 @@ node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
 pull_policy="${CHILL_FAST_PULL_POLICY:-Always}"
+components="${CHILL_FAST_COMPONENTS:-all}"
+observe_mode="${CHILL_FAST_OBSERVE_MODE:-full}"
+direct_push_fallback="${CHILL_FAST_DIRECT_PUSH_FALLBACK:-true}"
 
 helm_bin="${HELM:-helm}"
 kubectl_bin="${KUBECTL:-kubectl}"
@@ -45,7 +48,9 @@ Options:
   --image-namespace NAME       Registry repository prefix. Default: ${image_namespace}
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
-  --push-mode MODE             auto, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
+  --components NAME            all, operator, or node-discovery. Default: ${components}
+  --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
+  --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
   --helm-namespace NAME        Helm namespace. Default: ${release_namespace}
   --timeout DURATION           Helm/kubectl wait timeout. Default: ${timeout}
@@ -64,6 +69,10 @@ Environment:
   BUILDX_BUILDER               Optional buildx builder for multi-platform builds.
   HELM_VALUES                  Optional Helm values file.
   HELM_SET                     Extra Helm --set flags.
+  CHILL_FAST_COMPONENTS        Components to build. Default: all
+  CHILL_FAST_OBSERVE_MODE      Observation detail: summary or full. Default: full
+  CHILL_FAST_DIRECT_PUSH_FALLBACK
+                               Fall back to ctr-plain-http if direct registry push fails. Default: true
   CHILL_FAST_CTR               ctr command for ctr-plain-http mode. Default: sudo -n ctr
   CHILL_FAST_OBSERVE_ATTEMPTS  2-second polling attempts for operator-created resources. Default: 30
 EOF
@@ -121,7 +130,7 @@ choose_push_mode() {
 	fi
 	case "${registry}" in
 	155.230.35.213:5000|localhost:5000|127.0.0.1:5000)
-		printf '%s\n' "ctr-plain-http"
+		printf '%s\n' "registry-direct"
 		;;
 	*)
 		printf '%s\n' "docker"
@@ -147,8 +156,16 @@ while [[ $# -gt 0 ]]; do
 		platforms="$2"
 		shift 2
 		;;
+	--components)
+		components="$2"
+		shift 2
+		;;
 	--push-mode)
 		push_mode="$2"
+		shift 2
+		;;
+	--observe)
+		observe_mode="$2"
 		shift 2
 		;;
 	--helm-release)
@@ -195,6 +212,22 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+case "${components}" in
+all|operator|node-discovery) ;;
+*)
+	echo "unsupported --components value: ${components}" >&2
+	exit 1
+	;;
+esac
+
+case "${observe_mode}" in
+summary|full) ;;
+*)
+	echo "unsupported --observe mode: ${observe_mode}" >&2
+	exit 1
+	;;
+esac
+
 if [[ "${registry}" == http://* || "${registry}" == https://* ]]; then
 	echo "--registry must be HOST[:PORT], not a URL: ${registry}" >&2
 	exit 1
@@ -214,33 +247,73 @@ if [[ -z "${image_tag}" ]]; then
 	fi
 fi
 
-operator_image="${operator_image:-${registry}/${image_namespace}/chill-operator:${image_tag}}"
-node_discovery_image="${node_discovery_image:-${registry}/${image_namespace}/chill-node-discovery:${image_tag}}"
+operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator"
+node_discovery_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-discovery"
+
+component_selected() {
+	local component="$1"
+	[[ "${components}" == "all" || "${components}" == "${component}" ]]
+}
+
+deployed_image() {
+	local component="$1"
+	local image
+	case "${component}" in
+	operator)
+		image="$("${kubectl_bin}" -n "${release_namespace}" get deployment \
+			-l "${operator_selector}" \
+			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+		;;
+	node-discovery)
+		image="$("${kubectl_bin}" -n "${release_namespace}" get daemonset \
+			-l "${node_discovery_selector}" \
+			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+		;;
+	esac
+	if [[ -z "${image}" ]]; then
+		echo "cannot resolve currently deployed ${component} image; set its image environment variable explicitly" >&2
+		return 1
+	fi
+	printf '%s\n' "${image}"
+}
+
+require_cmd git
+require_cmd "${container_tool}"
+require_cmd "${helm_bin}"
+require_cmd "${kubectl_bin}"
+
+if [[ -z "${operator_image}" ]]; then
+	if component_selected operator; then
+		operator_image="${registry}/${image_namespace}/chill-operator:${image_tag}"
+	else
+		operator_image="$(deployed_image operator)"
+	fi
+fi
+if [[ -z "${node_discovery_image}" ]]; then
+	if component_selected node-discovery; then
+		node_discovery_image="${registry}/${image_namespace}/chill-node-discovery:${image_tag}"
+	else
+		node_discovery_image="$(deployed_image node-discovery)"
+	fi
+fi
 push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
 split_image_ref "${node_discovery_image}" "node-discovery"
 
-operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator"
-node_discovery_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-discovery"
 if [[ -n "${extra_helm_set}" ]]; then
 	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy}"
 else
 	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy}"
 fi
 
-require_cmd git
-require_cmd make
-require_cmd "${container_tool}"
-require_cmd "${helm_bin}"
-require_cmd "${kubectl_bin}"
-
-if [[ "${push_mode}" == "ctr-plain-http" ]]; then
+if [[ "${push_mode}" == "ctr-plain-http" ]] ||
+	{ [[ "${push_mode}" == "registry-direct" ]] && is_true "${direct_push_fallback}"; }; then
 	require_cmd ctr
 fi
 
 case "${push_mode}" in
-docker|buildx|ctr-plain-http|none) ;;
+docker|buildx|registry-direct|ctr-plain-http|none) ;;
 *)
 	echo "unsupported --push-mode: ${push_mode}" >&2
 	exit 1
@@ -248,7 +321,7 @@ docker|buildx|ctr-plain-http|none) ;;
 esac
 
 if is_true "${skip_push}" && ! is_true "${skip_build}" &&
-	[[ "${push_mode}" == "buildx" || "${push_mode}" == "ctr-plain-http" ]]; then
+	[[ "${push_mode}" == "buildx" || "${push_mode}" == "registry-direct" || "${push_mode}" == "ctr-plain-http" ]]; then
 	echo "--skip-push cannot be combined with push mode ${push_mode}; use --push-mode none for a local-only build" >&2
 	exit 1
 fi
@@ -260,11 +333,13 @@ echo "chart: ${chart}"
 echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
 echo "platforms: ${platforms}"
+echo "components: ${components}"
 if [[ -n "${buildx_builder}" ]]; then
 	echo "buildx builder: ${buildx_builder}"
 fi
 echo "push mode: ${push_mode}"
 echo "pull policy: ${pull_policy}"
+echo "observation: ${observe_mode}"
 
 if is_true "${auto_dirty_tag}"; then
 	echo "dirty worktree: using unique image tag ${image_tag}" >&2
@@ -296,24 +371,21 @@ wait_for_daemonset_object() {
 	return 1
 }
 
-build_with_docker() {
-	run make docker-build-all \
-		CONTAINER_TOOL="${container_tool}" \
-		OPERATOR_IMG="${operator_image}" \
-		NODE_DISCOVERY_IMG="${node_discovery_image}"
-}
-
-push_with_docker() {
-	run make docker-push-all \
-		CONTAINER_TOOL="${container_tool}" \
-		OPERATOR_IMG="${operator_image}" \
-		NODE_DISCOVERY_IMG="${node_discovery_image}"
-}
-
 buildx_args() {
 	if [[ -n "${buildx_builder}" ]]; then
 		printf '%s\n' "--builder" "${buildx_builder}"
 	fi
+}
+
+docker_build_one() {
+	local dockerfile="$1"
+	local image="$2"
+	run "${container_tool}" build --file "${dockerfile}" --tag "${image}" .
+}
+
+docker_push_one() {
+	local image="$2"
+	run "${container_tool}" push "${image}"
 }
 
 buildx_push_one() {
@@ -333,12 +405,25 @@ buildx_push_one() {
 		.
 }
 
-buildx_push() {
-	buildx_push_one "build/docker/operator.Dockerfile" "${operator_image}"
-	buildx_push_one "build/docker/node-discovery.Dockerfile" "${node_discovery_image}"
+registry_direct_build_push_one() {
+	local dockerfile="$1"
+	local image="$2"
+	local args=()
+	while IFS= read -r arg; do
+		[[ -n "${arg}" ]] && args+=("${arg}")
+	done < <(buildx_args)
+
+	run "${container_tool}" buildx build \
+		"${args[@]}" \
+		--platform="${platforms}" \
+		--file "${dockerfile}" \
+		--tag "${image}" \
+		--output "type=registry,registry.insecure=true" \
+		.
 }
 
-ctr_plain_http_build_push_one() {
+ctr_plain_http_build_push_one() (
+	set -e
 	local name="$1"
 	local dockerfile="$2"
 	local image="$3"
@@ -349,6 +434,7 @@ ctr_plain_http_build_push_one() {
 	done < <(buildx_args)
 	tmpdir="$(mktemp -d)"
 	archive="${tmpdir}/${name}.oci.tar"
+	trap 'rm -rf "${tmpdir}"' EXIT
 
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
@@ -368,24 +454,87 @@ ctr_plain_http_build_push_one() {
 	run "${ctr_cmd[@]}" -n "${containerd_namespace}" images push \
 		--plain-http \
 		"${image}"
-	rm -rf "${tmpdir}"
+)
+
+run_selected_components() {
+	local function_name="$1"
+	local pids=()
+	local names=()
+	local failed="false"
+
+	if component_selected operator; then
+		"${function_name}" "build/docker/operator.Dockerfile" "${operator_image}" &
+		pids+=("$!")
+		names+=("operator")
+	fi
+	if component_selected node-discovery; then
+		"${function_name}" "build/docker/node-discovery.Dockerfile" "${node_discovery_image}" &
+		pids+=("$!")
+		names+=("node-discovery")
+	fi
+
+	for i in "${!pids[@]}"; do
+		if ! wait "${pids[$i]}"; then
+			echo "${names[$i]} build/push failed" >&2
+			failed="true"
+		fi
+	done
+	! is_true "${failed}"
+}
+
+run_ctr_plain_http_components() {
+	local pids=()
+	local names=()
+	local failed="false"
+
+	if component_selected operator; then
+		ctr_plain_http_build_push_one operator \
+			"build/docker/operator.Dockerfile" "${operator_image}" &
+		pids+=("$!")
+		names+=("operator")
+	fi
+	if component_selected node-discovery; then
+		ctr_plain_http_build_push_one node-discovery \
+			"build/docker/node-discovery.Dockerfile" "${node_discovery_image}" &
+		pids+=("$!")
+		names+=("node-discovery")
+	fi
+
+	for i in "${!pids[@]}"; do
+		if ! wait "${pids[$i]}"; then
+			echo "${names[$i]} ctr fallback failed" >&2
+			failed="true"
+		fi
+	done
+	! is_true "${failed}"
 }
 
 if ! is_true "${skip_build}"; then
 	case "${push_mode}" in
 	docker|none)
 		echo "==> build"
-		build_with_docker
+		run_selected_components docker_build_one
 		;;
 	buildx)
 		echo "==> build-and-push"
-		buildx_push
+		run_selected_components buildx_push_one
+		skip_push="true"
+		;;
+	registry-direct)
+		echo "==> direct-build-and-push"
+		if ! run_selected_components registry_direct_build_push_one; then
+			if ! is_true "${direct_push_fallback}"; then
+				echo "direct registry push failed and fallback is disabled" >&2
+				exit 1
+			fi
+			echo "==> direct push failed; falling back to ctr-plain-http" >&2
+			run_ctr_plain_http_components
+		fi
 		skip_push="true"
 		;;
 	ctr-plain-http)
 		echo "==> build-and-push"
-		ctr_plain_http_build_push_one "operator" "build/docker/operator.Dockerfile" "${operator_image}"
-		ctr_plain_http_build_push_one "node-discovery" "build/docker/node-discovery.Dockerfile" "${node_discovery_image}"
+		run_ctr_plain_http_components
 		skip_push="true"
 		;;
 	esac
@@ -395,12 +544,12 @@ if ! is_true "${skip_push}"; then
 	case "${push_mode}" in
 	docker)
 		echo "==> push"
-		push_with_docker
+		run_selected_components docker_push_one
 		;;
 	none)
 		echo "skip push: push mode is none"
 		;;
-	buildx|ctr-plain-http)
+	buildx|registry-direct|ctr-plain-http)
 		echo "skip push: push already happened during build"
 		;;
 	esac
@@ -458,6 +607,10 @@ try "${kubectl_bin}" -n "${release_namespace}" get pods \
 	-o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,IMAGE:.spec.containers[*].image,IMAGE_ID:.status.containerStatuses[*].imageID'
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${operator_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_discovery_selector}" "--timeout=${timeout}"
-try "${kubectl_bin}" -n "${release_namespace}" get events --sort-by=.lastTimestamp
-try "${kubectl_bin}" -n "${release_namespace}" logs -l "${operator_selector}" --all-containers=true --tail=120 --prefix
-try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_discovery_selector}" --all-containers=true --tail=120 --prefix
+try "${kubectl_bin}" -n "${release_namespace}" get events \
+	--field-selector type=Warning --sort-by=.lastTimestamp
+if [[ "${observe_mode}" == "full" ]]; then
+	try "${kubectl_bin}" -n "${release_namespace}" get events --sort-by=.lastTimestamp
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${operator_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_discovery_selector}" --all-containers=true --tail=120 --prefix
+fi
