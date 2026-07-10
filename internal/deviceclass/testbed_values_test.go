@@ -41,6 +41,34 @@ func TestDefaultDeviceCatalogMatchesNodeDiscoverySignatures(t *testing.T) {
 			t.Errorf("catalog class %q cannot be reached by any nodeDiscovery.signature facts", class.Name)
 		}
 	}
+
+	serverModels := map[string]bool{
+		"z370-aorus-gaming-7": false,
+		"z370-aorus-gaming-3": false,
+		"z390-gaming-x":       false,
+	}
+	serverClassFound := false
+	for _, class := range values.Discovery.Catalog.Classes {
+		if class.Name != "edge-server-rtx-2080-ti-64g" {
+			continue
+		}
+		serverClassFound = true
+		for _, signature := range values.NodeDiscovery.Signatures {
+			if matchLabels(signature.Facts.Labels(), class.MatchLabels) {
+				if _, ok := serverModels[signature.Facts.Model]; ok {
+					serverModels[signature.Facts.Model] = true
+				}
+			}
+		}
+	}
+	if !serverClassFound {
+		t.Fatal("default discovery catalog has no edge-server-rtx-2080-ti-64g class")
+	}
+	for model, found := range serverModels {
+		if !found {
+			t.Errorf("server model %q cannot reach edge-server-rtx-2080-ti-64g", model)
+		}
+	}
 }
 
 func hasMatchingSignature(selector map[string]string, signatureLabels []map[string]string) bool {

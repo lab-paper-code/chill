@@ -62,9 +62,9 @@ uninstallCleanup:
         - ALL
 
 nodeSelection:
-  labelSelector: node-role.kubernetes.io/edge
+  labelSelector: kubernetes.io/os=linux
   nodeSelector:
-    node-role.kubernetes.io/edge: ""
+    kubernetes.io/os: linux
 
 discovery:
   enabled: true
@@ -183,6 +183,15 @@ discovery:
         accelerator: none
         powerModes:
           - name: fixed
+      - name: edge-server-rtx-2080-ti-64g
+        matchLabels:
+          edge.dacs.io/device-family: edge-server
+          edge.dacs.io/accelerator: nvidia-geforce-rtx-2080-ti
+        architecture: amd64
+        memory: 64Gi
+        accelerator: nvidia-geforce-rtx-2080-ti
+        powerModes:
+          - name: fixed
 
 nodeDiscovery:
   enabled: true
@@ -286,6 +295,24 @@ nodeDiscovery:
         family: lattepanda
         model: lattepanda-3-delta
         accelerator: none
+    - contains: ["gigabyte technology", "z370 aorus gaming 7"]
+      facts:
+        vendor: gigabyte
+        family: edge-server
+        model: z370-aorus-gaming-7
+        accelerator: nvidia-geforce-rtx-2080-ti
+    - contains: ["gigabyte technology", "z370 aorus gaming 3"]
+      facts:
+        vendor: gigabyte
+        family: edge-server
+        model: z370-aorus-gaming-3
+        accelerator: nvidia-geforce-rtx-2080-ti
+    - contains: ["gigabyte technology", "z390 gaming x"]
+      facts:
+        vendor: gigabyte
+        family: edge-server
+        model: z390-gaming-x
+        accelerator: nvidia-geforce-rtx-2080-ti
   image:
     repository: daclab/chill-node-discovery
     tag: ""
