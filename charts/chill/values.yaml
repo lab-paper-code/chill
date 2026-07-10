@@ -18,6 +18,8 @@ operator:
   metricsBindAddress: "0"
   healthProbeBindAddress: ":8081"
   leaderElection: true
+  leaderElectionID: 1ba2121f.dacs.io
+  nodeDiscoveryReconcileInterval: 30s
   nodeSelector: {}
   affinity: {}
   tolerations: []
@@ -70,6 +72,8 @@ discovery:
   overwriteManualLabels: false
   nodeLabelSelector: ""
   requireCatalogMatch: true
+  fallbackPowerModes:
+    - name: fixed
   catalog:
     enabled: true
     name: ""
@@ -182,6 +186,7 @@ discovery:
 
 nodeDiscovery:
   enabled: true
+  configMapKey: config.yaml
   interval: 10m
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml

@@ -19,14 +19,6 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
 
-const (
-	defaultDeviceDiscoveryLabelKey = chillmeta.DeviceClass
-	deviceDiscoveryManagedBy       = chillmeta.ManagedByDeviceDiscovery
-	deviceDiscoveryManagedByKey    = chillmeta.ManagedBy
-	deviceDiscoverySourceKey       = chillmeta.DiscoverySource
-	deviceDiscoverySourceNode      = chillmeta.SourceNode
-)
-
 // DeviceDiscoveryOptions configures node-based DeviceClass discovery.
 type DeviceDiscoveryOptions struct {
 	SystemName            string
@@ -35,6 +27,7 @@ type DeviceDiscoveryOptions struct {
 	OverwriteManualLabels bool
 	NodeLabelSelector     string
 	RequireCatalogMatch   bool
+	FallbackPowerModes    []edgev1alpha1.PowerMode
 	CatalogNamespace      string
 	CatalogName           string
 	CatalogKey            string
@@ -90,6 +83,7 @@ func (r *DeviceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		discovered, ok, err := deviceclass.Discover(node, catalog, deviceclass.Options{
 			LabelKey:            labelKey(options),
 			RequireCatalogMatch: options.RequireCatalogMatch,
+			FallbackPowerModes:  options.FallbackPowerModes,
 		})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("discover device class for node %q: %w", node.Name, err)
@@ -124,18 +118,27 @@ func (r *DeviceDiscoveryReconciler) systemName() string {
 func (r *DeviceDiscoveryReconciler) runtimeOptions(system *edgev1alpha1.ChillSystem) DeviceDiscoveryOptions {
 	spec := system.Spec.DeviceDiscovery
 	catalog := spec.Catalog
-	requireCatalogMatch := true
+	requireCatalogMatch := r.Options.RequireCatalogMatch
 	if spec.RequireCatalogMatch != nil {
 		requireCatalogMatch = *spec.RequireCatalogMatch
+	}
+	overwriteManualLabels := r.Options.OverwriteManualLabels
+	if spec.OverwriteManualLabels != nil {
+		overwriteManualLabels = *spec.OverwriteManualLabels
+	}
+	fallbackPowerModes := append([]edgev1alpha1.PowerMode(nil), r.Options.FallbackPowerModes...)
+	if len(spec.FallbackPowerModes) > 0 {
+		fallbackPowerModes = append([]edgev1alpha1.PowerMode(nil), spec.FallbackPowerModes...)
 	}
 	namespace := defaults.String(strings.TrimSpace(system.Spec.ManagementNamespace), strings.TrimSpace(r.Options.Namespace))
 	return DeviceDiscoveryOptions{
 		SystemName:            system.Name,
 		Namespace:             namespace,
 		LabelKey:              defaults.String(strings.TrimSpace(spec.LabelKey), r.Options.LabelKey),
-		OverwriteManualLabels: spec.OverwriteManualLabels,
+		OverwriteManualLabels: overwriteManualLabels,
 		NodeLabelSelector:     defaults.String(strings.TrimSpace(spec.NodeLabelSelector), r.Options.NodeLabelSelector),
 		RequireCatalogMatch:   requireCatalogMatch,
+		FallbackPowerModes:    fallbackPowerModes,
 		CatalogNamespace:      defaults.String(strings.TrimSpace(catalog.Namespace), namespace),
 		CatalogName:           defaults.String(strings.TrimSpace(catalog.Name), r.Options.CatalogName),
 		CatalogKey:            defaults.String(strings.TrimSpace(catalog.Key), r.Options.CatalogKey),

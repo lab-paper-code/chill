@@ -69,10 +69,6 @@ func DefaultOperatorDeploymentName() string {
 	return component.OperatorDeploymentName(DefaultSystemName)
 }
 
-func DefaultNodeDiscoveryDaemonSetName() string {
-	return component.NodeDiscoveryDaemonSetName(DefaultSystemName)
-}
-
 func (r *ChillSystemReconciler) systemName() string {
 	return r.Options.Defaulted().SystemName
 }

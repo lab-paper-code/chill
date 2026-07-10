@@ -11,13 +11,17 @@ spec:
     enabled: {{ .Values.nodeDiscovery.enabled }}
     daemonSetName: {{ printf "%s-node-discovery" (include "chill.fullname" .) | quote }}
     configMapName: {{ include "chill.nodeDiscoveryConfigName" . | quote }}
-    configMapKey: config.yaml
+    configMapKey: {{ .Values.nodeDiscovery.configMapKey | quote }}
   deviceDiscovery:
     enabled: {{ .Values.discovery.enabled }}
     labelKey: {{ .Values.discovery.labelKey | quote }}
     overwriteManualLabels: {{ .Values.discovery.overwriteManualLabels }}
     nodeLabelSelector: {{ include "chill.discoveryNodeLabelSelector" . | quote }}
     requireCatalogMatch: {{ .Values.discovery.requireCatalogMatch }}
+    {{- with .Values.discovery.fallbackPowerModes }}
+    fallbackPowerModes:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     catalog:
       namespace: {{ .Release.Namespace | quote }}
       name: {{ include "chill.discoveryCatalogName" . | quote }}

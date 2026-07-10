@@ -35,6 +35,7 @@ type Observation struct {
 
 	Namespace string
 
+	OperatorNamespace      string
 	OperatorDeploymentName string
 	OperatorDeployment     *appsv1.Deployment
 	OperatorError          error
@@ -54,7 +55,7 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 	conditions := append([]metav1.Condition(nil), previousConditions...)
 	operator := deploymentComponentStatus(
 		ComponentOperator,
-		observed.Namespace,
+		operatorNamespace(observed),
 		observed.OperatorDeploymentName,
 		observed.OperatorDeployment,
 		observed.OperatorError,
@@ -111,6 +112,13 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 	})
 
 	return status
+}
+
+func operatorNamespace(observed Observation) string {
+	if observed.OperatorNamespace != "" {
+		return observed.OperatorNamespace
+	}
+	return observed.Namespace
 }
 
 func deploymentComponentStatus(name, namespace, workloadName string, deployment *appsv1.Deployment, err error) edgev1alpha1.ChillComponentStatus {

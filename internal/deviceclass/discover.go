@@ -1,18 +1,19 @@
 package deviceclass
 
 import (
+	"fmt"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const fallbackPowerModeName = "fixed"
-
 // Options configures pure DeviceClass discovery policy.
 type Options struct {
 	LabelKey            string
 	RequireCatalogMatch bool
+	FallbackPowerModes  []edgev1alpha1.PowerMode
 }
 
 // DiscoveredClass is the class name and spec inferred for one node.
@@ -32,6 +33,9 @@ func Discover(node *corev1.Node, catalog Catalog, opts Options) (DiscoveredClass
 	entry, matched := catalog.match(labels)
 	if !matched && opts.RequireCatalogMatch {
 		return DiscoveredClass{}, false, nil
+	}
+	if !matched && len(opts.FallbackPowerModes) == 0 {
+		return DiscoveredClass{}, false, fmt.Errorf("fallback power modes are required when catalog match is not required")
 	}
 
 	name := entry.Name
@@ -56,7 +60,7 @@ func Discover(node *corev1.Node, catalog Catalog, opts Options) (DiscoveredClass
 
 	powerModes := entry.PowerModes
 	if len(powerModes) == 0 && !matched {
-		powerModes = []edgev1alpha1.PowerMode{{Name: fallbackPowerModeName}}
+		powerModes = append([]edgev1alpha1.PowerMode(nil), opts.FallbackPowerModes...)
 	}
 
 	return DiscoveredClass{

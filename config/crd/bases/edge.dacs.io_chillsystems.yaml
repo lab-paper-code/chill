@@ -90,6 +90,28 @@ spec:
                     description: Enabled controls whether the operator should derive
                       DeviceClasses from Nodes.
                     type: boolean
+                  fallbackPowerModes:
+                    description: |-
+                      FallbackPowerModes are used for inferred DeviceClasses when catalog matching is not required
+                      and a Node does not match a catalog entry.
+                    items:
+                      description: PowerMode describes one runtime-selectable power
+                        mode for a DeviceClass.
+                      properties:
+                        name:
+                          description: Name is the human-readable platform power mode
+                            name.
+                          minLength: 1
+                          type: string
+                        nvpId:
+                          description: NvpID is the nvpmodel -m identifier for Jetson
+                            devices.
+                          minimum: 0
+                          type: integer
+                      required:
+                      - name
+                      type: object
+                    type: array
                   labelKey:
                     description: LabelKey is the Node label key used to bind Nodes
                       to DeviceClasses.
@@ -99,8 +121,9 @@ spec:
                       in discovery.
                     type: string
                   overwriteManualLabels:
-                    description: OverwriteManualLabels allows discovery to replace
-                      existing non-CHILL device-class labels.
+                    description: |-
+                      OverwriteManualLabels allows discovery to replace existing non-CHILL device-class labels.
+                      When omitted, the operator default is used.
                     type: boolean
                   requireCatalogMatch:
                     description: |-

@@ -92,8 +92,9 @@ type ChillDeviceDiscoverySpec struct {
 	LabelKey string `json:"labelKey,omitempty"`
 
 	// OverwriteManualLabels allows discovery to replace existing non-CHILL device-class labels.
+	// When omitted, the operator default is used.
 	// +optional
-	OverwriteManualLabels bool `json:"overwriteManualLabels,omitempty"`
+	OverwriteManualLabels *bool `json:"overwriteManualLabels,omitempty"`
 
 	// NodeLabelSelector limits which Nodes participate in discovery.
 	// +optional
@@ -103,6 +104,11 @@ type ChillDeviceDiscoverySpec struct {
 	// When omitted, the operator uses the safe default of true.
 	// +optional
 	RequireCatalogMatch *bool `json:"requireCatalogMatch,omitempty"`
+
+	// FallbackPowerModes are used for inferred DeviceClasses when catalog matching is not required
+	// and a Node does not match a catalog entry.
+	// +optional
+	FallbackPowerModes []PowerMode `json:"fallbackPowerModes,omitempty"`
 
 	// Catalog references the ConfigMap containing the DeviceClass catalog.
 	// +optional

@@ -17,6 +17,7 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		ObservedGeneration: system.Generation,
 		Namespace:          r.managementNamespace(system),
 
+		OperatorNamespace:      r.namespace(),
 		OperatorDeploymentName: r.operatorDeploymentName(),
 
 		NodeDiscoveryEnabled:       system.Spec.NodeDiscovery.Enabled,

@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/component: node-discovery
     {{- include "chill.labels" . | nindent 4 }}
 data:
-  config.yaml: |
+  {{ .Values.nodeDiscovery.configMapKey | quote }}: |
     image: {{ include "chill.nodeDiscoveryImage" . | quote }}
     imagePullPolicy: {{ include "chill.nodeDiscoveryImagePullPolicy" . | quote }}
     serviceAccountName: {{ include "chill.nodeDiscoveryServiceAccountName" . | quote }}

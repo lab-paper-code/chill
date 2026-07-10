@@ -30,8 +30,8 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 					chillmeta.System: system.Name,
 				},
 				Annotations: map[string]string{
-					deviceDiscoveryManagedByKey: deviceDiscoveryManagedBy,
-					deviceDiscoverySourceKey:    deviceDiscoverySourceNode,
+					chillmeta.ManagedBy:       chillmeta.ManagedByDeviceDiscovery,
+					chillmeta.DiscoverySource: chillmeta.SourceNode,
 				},
 			},
 			Spec: discovered.Spec,
@@ -45,7 +45,7 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 		return nil
 	}
 
-	if existing.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
+	if existing.Annotations[chillmeta.ManagedBy] != chillmeta.ManagedByDeviceDiscovery {
 		return nil
 	}
 	if !ownership.BelongsToChillSystem(existing, system) {
@@ -74,7 +74,7 @@ func (r *DeviceDiscoveryReconciler) pruneDeviceClasses(ctx context.Context, syst
 
 	for i := range deviceClasses.Items {
 		deviceClass := &deviceClasses.Items[i]
-		if deviceClass.Annotations[deviceDiscoveryManagedByKey] != deviceDiscoveryManagedBy {
+		if deviceClass.Annotations[chillmeta.ManagedBy] != chillmeta.ManagedByDeviceDiscovery {
 			continue
 		}
 		if !ownership.BelongsToChillSystem(deviceClass, system) {

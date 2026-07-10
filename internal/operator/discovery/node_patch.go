@@ -17,7 +17,7 @@ func labelKey(options DeviceDiscoveryOptions) string {
 	if options.LabelKey != "" {
 		return options.LabelKey
 	}
-	return defaultDeviceDiscoveryLabelKey
+	return chillmeta.DeviceClass
 }
 
 func nodeListOptions(nodeLabelSelector string) ([]client.ListOption, error) {
@@ -81,13 +81,13 @@ func applyDeviceClassLabelPolicy(labels, annotations map[string]string, labelKey
 	switch {
 	case current == "":
 		labels[labelKey] = className
-		annotations[deviceDiscoveryManagedByKey] = deviceDiscoveryManagedBy
+		annotations[chillmeta.ManagedBy] = chillmeta.ManagedByDeviceDiscovery
 	case current == className:
-	case annotations[deviceDiscoveryManagedByKey] == deviceDiscoveryManagedBy:
+	case annotations[chillmeta.ManagedBy] == chillmeta.ManagedByDeviceDiscovery:
 		labels[labelKey] = className
 	case overwriteManualLabels:
 		labels[labelKey] = className
-		annotations[deviceDiscoveryManagedByKey] = deviceDiscoveryManagedBy
+		annotations[chillmeta.ManagedBy] = chillmeta.ManagedByDeviceDiscovery
 	default:
 		return chillmeta.DiscoveryReasonManualLabelPreserved
 	}

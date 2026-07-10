@@ -1,6 +1,6 @@
 package component
 
-import "strings"
+import "github.com/lab-paper-code/chill/internal/defaults"
 
 const (
 	DefaultSystemName = "chill"
@@ -22,9 +22,5 @@ func NodeDiscoveryConfigMapName(systemName string) string {
 }
 
 func defaultSystemName(systemName string) string {
-	systemName = strings.TrimSpace(systemName)
-	if systemName == "" {
-		return DefaultSystemName
-	}
-	return systemName
+	return defaults.String(systemName, DefaultSystemName)
 }

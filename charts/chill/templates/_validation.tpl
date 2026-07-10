@@ -15,6 +15,12 @@
 {{- if empty .Values.operator.image.pullPolicy -}}
 {{- fail "operator.image.pullPolicy must not be empty" -}}
 {{- end -}}
+{{- if empty .Values.operator.nodeDiscoveryReconcileInterval -}}
+{{- fail "operator.nodeDiscoveryReconcileInterval must not be empty" -}}
+{{- end -}}
+{{- if and .Values.operator.leaderElection (empty .Values.operator.leaderElectionID) -}}
+{{- fail "operator.leaderElectionID must not be empty when operator.leaderElection=true" -}}
+{{- end -}}
 {{- if and (not .Values.operator.serviceAccount.create) (empty .Values.operator.serviceAccount.name) -}}
 {{- fail "operator.serviceAccount.name must be set when operator.serviceAccount.create=false" -}}
 {{- end -}}
@@ -35,10 +41,29 @@
 {{- fail "uninstallCleanup.serviceAccount.name must be set when uninstallCleanup.serviceAccount.create=false" -}}
 {{- end -}}
 {{- end -}}
+{{- if and .Values.discovery.enabled .Values.discovery.requireCatalogMatch (not .Values.discovery.catalog.enabled) (empty .Values.discovery.catalog.name) -}}
+{{- fail "discovery.catalog.name must be set when discovery.requireCatalogMatch=true and discovery.catalog.enabled=false" -}}
+{{- end -}}
 {{- if and .Values.discovery.enabled .Values.discovery.requireCatalogMatch .Values.discovery.catalog.enabled (empty .Values.discovery.catalog.classes) -}}
 {{- fail "discovery.catalog.classes must contain at least one class when discovery.requireCatalogMatch=true" -}}
 {{- end -}}
+{{- if and .Values.discovery.enabled (not .Values.discovery.requireCatalogMatch) (empty .Values.discovery.fallbackPowerModes) -}}
+{{- fail "discovery.fallbackPowerModes must contain at least one mode when discovery.requireCatalogMatch=false" -}}
+{{- end -}}
+{{- if and .Values.discovery.enabled .Values.discovery.fallbackPowerModes -}}
+{{- range $index, $mode := .Values.discovery.fallbackPowerModes -}}
+{{- if not (kindIs "map" $mode) -}}
+{{- fail (printf "discovery.fallbackPowerModes[%d].name must be set" $index) -}}
+{{- end -}}
+{{- if empty $mode.name -}}
+{{- fail (printf "discovery.fallbackPowerModes[%d].name must be set" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.nodeDiscovery.enabled -}}
+{{- if empty .Values.nodeDiscovery.configMapKey -}}
+{{- fail "nodeDiscovery.configMapKey must not be empty when nodeDiscovery.enabled=true" -}}
+{{- end -}}
 {{- if empty .Values.nodeDiscovery.image.repository -}}
 {{- fail "nodeDiscovery.image.repository must not be empty when nodeDiscovery.enabled=true" -}}
 {{- end -}}

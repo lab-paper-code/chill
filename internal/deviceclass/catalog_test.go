@@ -81,6 +81,53 @@ func TestDiscoverSkipsUnmatchedNodeWhenCatalogRequired(t *testing.T) {
 	}
 }
 
+func TestDiscoverInfersUnmatchedNodeWithFallbackPowerModes(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1ObjectMeta(map[string]string{
+			metadata.DeviceModel: "custom-board",
+		}),
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+			NodeInfo: corev1.NodeSystemInfo{Architecture: "arm64"},
+		},
+	}
+
+	discovered, ok, err := Discover(node, Catalog{}, Options{
+		RequireCatalogMatch: false,
+		FallbackPowerModes:  []edgev1alpha1.PowerMode{{Name: "fixed"}},
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("Discover() ok = false, want true")
+	}
+	if discovered.Name != "custom-board-2g" {
+		t.Fatalf("Name = %q, want custom-board-2g", discovered.Name)
+	}
+	if len(discovered.Spec.PowerModes) != 1 || discovered.Spec.PowerModes[0].Name != "fixed" {
+		t.Fatalf("PowerModes = %#v, want fixed fallback", discovered.Spec.PowerModes)
+	}
+}
+
+func TestDiscoverRequiresFallbackPowerModesWhenCatalogOptional(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1ObjectMeta(map[string]string{
+			metadata.DeviceModel: "custom-board",
+		}),
+	}
+
+	_, ok, err := Discover(node, Catalog{}, Options{RequireCatalogMatch: false})
+	if err == nil {
+		t.Fatal("Discover() error = nil, want fallback power mode validation error")
+	}
+	if ok {
+		t.Fatal("Discover() ok = true, want false")
+	}
+}
+
 func TestSpecEqualUsesQuantitySemanticEquality(t *testing.T) {
 	a := edgev1alpha1.DeviceClassSpec{
 		NodeSelector: map[string]string{metadata.DeviceClass: "class-a"},

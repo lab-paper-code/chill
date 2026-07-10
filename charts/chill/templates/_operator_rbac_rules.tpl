@@ -49,20 +49,12 @@
   - edge.dacs.io
   resources:
   - chillsystems/finalizers
-  - clusterenergymodels/finalizers
-  - deviceclasses/finalizers
-  - deviceprofiles/finalizers
-  - modelspecs/finalizers
   verbs:
   - update
 - apiGroups:
   - edge.dacs.io
   resources:
   - chillsystems/status
-  - clusterenergymodels/status
-  - deviceclasses/status
-  - deviceprofiles/status
-  - modelspecs/status
   verbs:
   - get
   - patch
@@ -70,16 +62,12 @@
 - apiGroups:
   - edge.dacs.io
   resources:
-  - clusterenergymodels
   - deviceclasses
-  - deviceprofiles
-  - modelspecs
   verbs:
   - create
   - delete
   - get
   - list
   - patch
-  - update
   - watch
 {{- end -}}

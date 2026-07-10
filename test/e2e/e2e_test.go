@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -39,16 +40,18 @@ var _ = Describe("operator", Ordered, func() {
 			var operatorPodName string
 			var err error
 
-			// projectimage stores the name of the image used in the example
-			var projectimage = "example.com/chill/operator:v0.0.1"
+			projectImage := os.Getenv("IMG")
+			if projectImage == "" {
+				projectImage = "chill-operator:e2e"
+			}
 
 			By("building the operator image")
-			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectimage))
+			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
 			By("loading the operator image on Kind")
-			err = utils.LoadImageToKindClusterWithName(projectimage)
+			err = utils.LoadImageToKindClusterWithName(projectImage)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
 			By("installing CRDs")
@@ -57,7 +60,7 @@ var _ = Describe("operator", Ordered, func() {
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
 			By("deploying the operator")
-			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectimage))
+			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 

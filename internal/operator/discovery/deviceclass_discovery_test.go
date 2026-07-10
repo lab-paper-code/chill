@@ -196,6 +196,46 @@ var _ = Describe("DeviceClass discovery", func() {
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: otherSystem.Name}, deviceClass)
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	It("fails without pruning when the required catalog is missing", func() {
+		ctx := context.Background()
+		runID := uniqueDiscoveryRunID()
+		namespace := createDiscoveryCatalogNamespace(ctx, runID)
+		createDiscoverySystem(ctx, namespace.Name, runID)
+		createDiscoveryNode(ctx, "missing-catalog-"+runID, runID, map[string]string{
+			"jetson-model": "orin-nano",
+		})
+		stale := &edgev1alpha1.DeviceClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "missing-catalog-stale-" + runID,
+				Labels: map[string]string{
+					chillmeta.System: discoverySystemName(runID),
+				},
+				Annotations: map[string]string{
+					chillmeta.ManagedBy: chillmeta.ManagedByDeviceDiscovery,
+				},
+			},
+			Spec: edgev1alpha1.DeviceClassSpec{
+				NodeSelector: map[string]string{chillmeta.DeviceClass: "missing-catalog-stale-" + runID},
+				Architecture: "arm64",
+				MemoryBytes:  resource.MustParse("1Gi"),
+				Accelerator:  "none",
+				PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, stale)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, stale)
+		})
+
+		reconciler := discoveryReconciler(namespace.Name, runID)
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("not found"))
+
+		deviceClass := &edgev1alpha1.DeviceClass{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: stale.Name}, deviceClass)).To(Succeed())
+	})
 })
 
 func discoveryReconciler(namespace, runID string) *DeviceDiscoveryReconciler {

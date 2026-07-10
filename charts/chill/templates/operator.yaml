@@ -46,8 +46,11 @@ spec:
             - --operator-namespace={{ .Release.Namespace }}
             - --operator-deployment-name={{ include "chill.operatorName" . }}
             - --system-refresh-interval={{ .Values.system.refreshInterval }}
+            - --node-discovery-config-key={{ .Values.nodeDiscovery.configMapKey }}
+            - --node-discovery-reconcile-interval={{ .Values.operator.nodeDiscoveryReconcileInterval }}
             {{- if .Values.operator.leaderElection }}
             - --leader-elect
+            - --leader-election-id={{ .Values.operator.leaderElectionID }}
             {{- end }}
           env:
             - name: POD_NAMESPACE

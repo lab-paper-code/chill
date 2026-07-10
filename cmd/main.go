@@ -22,7 +22,6 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/operator/discovery"
 	"github.com/lab-paper-code/chill/internal/operator/nodediscovery"
-	"github.com/lab-paper-code/chill/internal/operator/resources"
 	"github.com/lab-paper-code/chill/internal/operator/system"
 	// +kubebuilder:scaffold:imports
 )
@@ -42,6 +41,7 @@ func init() {
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
+	var leaderElectionID string
 	var probeAddr string
 	var deviceDiscoveryLabelKey string
 	var deviceDiscoveryOverwriteManualLabels bool
@@ -64,6 +64,8 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for the CHILL operator. "+
 			"Enabling this will ensure there is only one active operator.")
+	flag.StringVar(&leaderElectionID, "leader-election-id", "1ba2121f.dacs.io",
+		"Leader election lock identity used when leader election is enabled.")
 	flag.StringVar(&deviceDiscoveryLabelKey, "device-discovery-label-key", chillmeta.DeviceClass,
 		"Default Node label key used to bind nodes to discovered DeviceClasses.")
 	flag.BoolVar(&deviceDiscoveryOverwriteManualLabels, "device-discovery-overwrite-manual-labels", false,
@@ -80,26 +82,15 @@ func main() {
 		"Default data key containing the device discovery catalog in the ConfigMap.")
 	flag.StringVar(&systemName, "system-name", system.DefaultSystemName,
 		"Default ChillSystem name used by compatibility refresh paths.")
-	flag.StringVar(&systemName, "system-status-name", system.DefaultSystemName,
-		"Deprecated alias for --system-name.")
 	flag.StringVar(&systemNamespace, "operator-namespace", system.DefaultNamespace(),
 		"Operator namespace and default CHILL management namespace.")
-	flag.StringVar(&systemNamespace, "system-status-namespace", system.DefaultNamespace(),
-		"Deprecated alias for --operator-namespace.")
 	flag.StringVar(&operatorDeploymentName, "operator-deployment-name", "",
 		"Name of the operator Deployment reported in ChillSystem status.")
-	flag.StringVar(&operatorDeploymentName, "system-status-operator-deployment-name", "",
-		"Deprecated alias for --operator-deployment-name.")
 	flag.DurationVar(
 		&systemRefreshInterval,
 		"system-refresh-interval",
 		system.DefaultRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
-	flag.DurationVar(
-		&systemRefreshInterval,
-		"system-status-refresh-interval",
-		system.DefaultRefreshInterval,
-		"Deprecated alias for --system-refresh-interval.")
 	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing the node-discovery operator config ConfigMap.")
 	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
@@ -145,20 +136,13 @@ func main() {
 		Metrics:                metricsServerOptions,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "1ba2121f.dacs.io",
+		LeaderElectionID:       leaderElectionID,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start operator")
 		os.Exit(1)
 	}
 
-	if err = (&resources.DeviceClassReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceClass")
-		os.Exit(1)
-	}
 	if err = (&system.ChillSystemReconciler{
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
@@ -197,27 +181,6 @@ func main() {
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceDiscovery")
-		os.Exit(1)
-	}
-	if err = (&resources.ModelSpecReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "ModelSpec")
-		os.Exit(1)
-	}
-	if err = (&resources.DeviceProfileReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "DeviceProfile")
-		os.Exit(1)
-	}
-	if err = (&resources.ClusterEnergyModelReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "ClusterEnergyModel")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

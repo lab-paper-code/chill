@@ -11,13 +11,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const testOperatorDesiredReplicas = int32(1)
 
 var (
 	testOperatorDeploymentName     = DefaultOperatorDeploymentName()
-	testNodeDiscoveryDaemonSetName = DefaultNodeDiscoveryDaemonSetName()
+	testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(DefaultSystemName)
 )
 
 func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
@@ -203,6 +204,27 @@ func TestBuildStatusDegradedOnObservationError(t *testing.T) {
 	}
 }
 
+func TestBuildStatusReportsSeparateOperatorNamespace(t *testing.T) {
+	status := buildStatus(Observation{
+		Namespace:                  "managed-system",
+		OperatorNamespace:          "operator-system",
+		OperatorDeploymentName:     testOperatorDeploymentName,
+		OperatorDeployment:         deployment(1),
+		NodeDiscoveryEnabled:       true,
+		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
+		NodeDiscoveryDaemonSet:     daemonSet(1, 1),
+	}, nil, metav1.Now())
+
+	operator := findComponent(status.Components, ComponentOperator)
+	if operator == nil || operator.Namespace != "operator-system" {
+		t.Fatalf("operator component = %#v, want namespace operator-system", operator)
+	}
+	nodeDiscovery := findComponent(status.Components, ComponentNodeDiscovery)
+	if nodeDiscovery == nil || nodeDiscovery.Namespace != "managed-system" {
+		t.Fatalf("node-discovery component = %#v, want namespace managed-system", nodeDiscovery)
+	}
+}
+
 func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
 	firstTransition := metav1.Now()
 	status := buildStatus(Observation{
@@ -259,6 +281,15 @@ func findCondition(conditions []metav1.Condition, conditionType string) *metav1.
 	for i := range conditions {
 		if conditions[i].Type == conditionType {
 			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+func findComponent(components []edgev1alpha1.ChillComponentStatus, name string) *edgev1alpha1.ChillComponentStatus {
+	for i := range components {
+		if components[i].Name == name {
+			return &components[i]
 		}
 	}
 	return nil

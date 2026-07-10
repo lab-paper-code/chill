@@ -11,7 +11,7 @@ import (
 
 // Run executes the provided command within this context
 func Run(cmd *exec.Cmd) ([]byte, error) {
-	dir, _ := GetProjectDir()
+	dir, _ := getProjectDir()
 	cmd.Dir = dir
 
 	if err := os.Chdir(cmd.Dir); err != nil {
@@ -31,14 +31,26 @@ func Run(cmd *exec.Cmd) ([]byte, error) {
 
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
-	cluster := "kind"
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
-	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
+	kindOptions := []string{"load", "docker-image", name, "--name", kindClusterName()}
 	cmd := exec.Command("kind", kindOptions...)
 	_, err := Run(cmd)
 	return err
+}
+
+func kindClusterName() string {
+	if value := strings.TrimSpace(os.Getenv("KIND_CLUSTER_NAME")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(os.Getenv("KIND_CLUSTER")); value != "" {
+		return value
+	}
+	if output, err := exec.Command("kubectl", "config", "current-context").Output(); err == nil {
+		contextName := strings.TrimSpace(string(output))
+		if strings.HasPrefix(contextName, "kind-") {
+			return strings.TrimPrefix(contextName, "kind-")
+		}
+	}
+	return "chill"
 }
 
 // GetNonEmptyLines converts given command output string into individual objects
@@ -68,8 +80,7 @@ func RequireKindContext() error {
 	return nil
 }
 
-// GetProjectDir will return the directory where the project is
-func GetProjectDir() (string, error) {
+func getProjectDir() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return wd, err

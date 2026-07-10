@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,6 +22,9 @@ func catalogKey(options DeviceDiscoveryOptions) string {
 
 func (r *DeviceDiscoveryReconciler) loadCatalog(ctx context.Context, options DeviceDiscoveryOptions) (deviceclass.Catalog, error) {
 	if options.CatalogName == "" {
+		if options.RequireCatalogMatch {
+			return deviceclass.Catalog{}, fmt.Errorf("discovery catalog name is required when catalog match is required")
+		}
 		return deviceclass.Catalog{}, nil
 	}
 
@@ -31,13 +35,20 @@ func (r *DeviceDiscoveryReconciler) loadCatalog(ctx context.Context, options Dev
 	}
 	if err := r.Get(ctx, key, configMap); err != nil {
 		if apierrors.IsNotFound(err) {
+			if options.RequireCatalogMatch {
+				return deviceclass.Catalog{}, fmt.Errorf("discovery catalog configmap %s/%s not found", key.Namespace, key.Name)
+			}
 			return deviceclass.Catalog{}, nil
 		}
 		return deviceclass.Catalog{}, fmt.Errorf("get discovery catalog configmap %s/%s: %w", key.Namespace, key.Name, err)
 	}
 
-	raw := configMap.Data[catalogKey(options)]
-	if raw == "" {
+	keyName := catalogKey(options)
+	raw := configMap.Data[keyName]
+	if strings.TrimSpace(raw) == "" {
+		if options.RequireCatalogMatch {
+			return deviceclass.Catalog{}, fmt.Errorf("discovery catalog configmap %s/%s is missing data key %q", key.Namespace, key.Name, keyName)
+		}
 		return deviceclass.Catalog{}, nil
 	}
 
