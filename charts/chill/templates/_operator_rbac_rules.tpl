@@ -1,4 +1,4 @@
-{{- define "chilloperator.operatorRoleRules" -}}
+{{- define "chill.operatorRoleRules" -}}
 - apiGroups:
   - ""
   resources:

@@ -2,8 +2,38 @@
 {{- $nodeDiscoveryPlaceholderRepository := "chill/node-discovery" -}}
 {{- $nodeDiscoveryPlaceholderTag := "latest" -}}
 {{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
+{{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
+{{- end -}}
+{{- if empty .Values.operator.image.repository -}}
+{{- fail "operator.image.repository must not be empty" -}}
+{{- end -}}
+{{- if empty $operatorImageTag -}}
+{{- fail "operator.image.tag or Chart.appVersion must not be empty" -}}
+{{- end -}}
+{{- if empty .Values.operator.image.pullPolicy -}}
+{{- fail "operator.image.pullPolicy must not be empty" -}}
+{{- end -}}
+{{- if and (not .Values.operator.serviceAccount.create) (empty .Values.operator.serviceAccount.name) -}}
+{{- fail "operator.serviceAccount.name must be set when operator.serviceAccount.create=false" -}}
+{{- end -}}
+{{- if .Values.uninstallCleanup.enabled -}}
+{{- if empty .Values.uninstallCleanup.image.repository -}}
+{{- fail "uninstallCleanup.image.repository must not be empty when uninstallCleanup.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.uninstallCleanup.image.tag -}}
+{{- fail "uninstallCleanup.image.tag must not be empty when uninstallCleanup.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.uninstallCleanup.image.pullPolicy -}}
+{{- fail "uninstallCleanup.image.pullPolicy must not be empty when uninstallCleanup.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.uninstallCleanup.timeout -}}
+{{- fail "uninstallCleanup.timeout must not be empty when uninstallCleanup.enabled=true" -}}
+{{- end -}}
+{{- if and (not .Values.uninstallCleanup.serviceAccount.create) (empty .Values.uninstallCleanup.serviceAccount.name) -}}
+{{- fail "uninstallCleanup.serviceAccount.name must be set when uninstallCleanup.serviceAccount.create=false" -}}
+{{- end -}}
 {{- end -}}
 {{- if and .Values.discovery.enabled .Values.discovery.requireCatalogMatch .Values.discovery.catalog.enabled (empty .Values.discovery.catalog.classes) -}}
 {{- fail "discovery.catalog.classes must contain at least one class when discovery.requireCatalogMatch=true" -}}

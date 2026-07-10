@@ -12,7 +12,7 @@ Rook-Ceph exposes this pattern through its root cluster CR: users inspect one re
 
 ## Decision
 
-Introduce a cluster-scoped `ChillSystem` root resource. The system Helm chart creates this root CR, and the operator reconciles status and children from it.
+Introduce a cluster-scoped `ChillSystem` root resource. The single CHILL Helm chart creates this root CR, and the operator reconciles status and children from it.
 
 The public operational flow becomes:
 
@@ -31,7 +31,7 @@ The first status implementation observes:
 - observed DeviceClass count
 - observation errors such as missing RBAC
 
-The root CR has a finalizer. Deleting the system Helm release deletes the root CR first, allowing the operator to remove child runtime resources, node metadata, and CHILL `DeviceClass` resources before the operator release is removed.
+The root CR has a finalizer. Deleting the CHILL Helm release deletes the root CR, allowing the operator to remove child runtime resources, node metadata, and CHILL `DeviceClass` resources during release teardown.
 
 ## Consequences
 
@@ -39,4 +39,4 @@ Operators get a single CHILL-native root and status object without learning the 
 
 The status reconciler becomes the extension point for future modules. New components should add structured component status and conditions before adding ad hoc troubleshooting output elsewhere.
 
-Because the operator owns finalization, the operator release must remain installed until the system release has been uninstalled successfully.
+Because the operator owns finalization, the single chart must keep the operator and root CR in the same release instead of exposing separate public release ordering.

@@ -48,27 +48,28 @@ If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local k
 
 ## Helm
 
-CHILL uses two Helm releases:
+CHILL uses one Helm release:
 
-- `charts/chill-operator`: CRDs, RBAC, and the operator Deployment.
-- `charts/chill`: the cluster-scoped `ChillSystem` root CR and system config.
+- `charts/chill`: CRDs, operator RBAC/Deployment, the cluster-scoped
+  `ChillSystem` root CR, and system config.
 
 ```sh
-helm install chill-operator charts/chill-operator \
+helm install chill charts/chill \
   --namespace chill-system \
   --create-namespace
-
-helm install chill charts/chill \
-  --namespace chill-system
 ```
 
-The repo Make targets run the same order:
+The repo Make targets run the same release flow:
 
 ```sh
 make helm-preflight
 make helm-install
 make helm-uninstall
 ```
+
+`helm uninstall` runs a pre-delete cleanup hook that deletes the root
+`ChillSystem` and waits for finalizers before the operator Deployment is
+removed.
 
 Default image repositories:
 
@@ -87,10 +88,10 @@ kubectl describe chillsystem chill
 CRD deletion is a separate guarded action:
 
 ```sh
-make helm-purge-crds CONFIRM_PURGE_CRDS=chill-operator
+make helm-purge-crds CONFIRM_PURGE_CRDS=chill
 ```
 
-For an operator-only smoke without starting pods:
+For an install smoke without starting CHILL pods:
 
 ```sh
 make helm-install-smoke
@@ -108,8 +109,8 @@ If this repo is taking over CRDs from a retired release, adopt them explicitly:
 
 ```sh
 make helm-adopt-crds \
-  FROM_RELEASE_NAME=<old-release> \
-  FROM_RELEASE_NAMESPACE=<old-namespace>
+  FROM_RELEASE_NAME=chill-operator \
+  FROM_RELEASE_NAMESPACE=chill-system
 ```
 
 Useful diagnosis is written to node annotations:

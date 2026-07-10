@@ -1,3 +1,0 @@
-{{- if not .Values.system.name }}
-{{- fail "system.name is required" }}
-{{- end }}

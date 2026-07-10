@@ -28,6 +28,48 @@ app.kubernetes.io/name: {{ include "chill.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "chill.operatorName" -}}
+{{- printf "%s-operator" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.operatorSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "chill.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: operator
+{{- end -}}
+
+{{- define "chill.operatorServiceAccountName" -}}
+{{- if .Values.operator.serviceAccount.create -}}
+{{- default (include "chill.operatorName" .) .Values.operator.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.operator.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.operatorImage" -}}
+{{- printf "%s:%s" .Values.operator.image.repository (include "chill.operatorImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.operatorImageTag" -}}
+{{- default .Chart.AppVersion .Values.operator.image.tag -}}
+{{- end -}}
+
+{{- define "chill.uninstallCleanupName" -}}
+{{- printf "%s-uninstall-cleanup" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.uninstallCleanupServiceAccountName" -}}
+{{- if .Values.uninstallCleanup.serviceAccount.create -}}
+{{- default (include "chill.uninstallCleanupName" .) .Values.uninstallCleanup.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.uninstallCleanup.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.uninstallCleanupImage" -}}
+{{- printf "%s:%s" .Values.uninstallCleanup.image.repository .Values.uninstallCleanup.image.tag -}}
+{{- end -}}
+
 {{- define "chill.nodeDiscoveryServiceAccountName" -}}
 {{- if .Values.nodeDiscovery.serviceAccount.create -}}
 {{- default (printf "%s-node-discovery" (include "chill.fullname" .)) .Values.nodeDiscovery.serviceAccount.name -}}

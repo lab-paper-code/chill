@@ -24,7 +24,7 @@ make helm-crd-check
 
 Use `make helm-adopt-crds` only for an intentional release migration.
 
-Helm install and cleanup ordering is implemented behind the repo Make targets:
+Helm install and cleanup is implemented behind the repo Make targets:
 
 ```sh
 make helm-install
@@ -32,4 +32,4 @@ make helm-uninstall
 ```
 
 `make helm-purge-crds` is intentionally guarded and requires
-`CONFIRM_PURGE_CRDS=chill-operator`.
+`CONFIRM_PURGE_CRDS=chill`.

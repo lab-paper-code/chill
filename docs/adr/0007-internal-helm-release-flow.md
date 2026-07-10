@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [0009 Single Helm Release Lifecycle](0009-single-helm-release-lifecycle.md)
 
 ## Context
 
@@ -12,40 +12,13 @@ The public operator UX should stay Helm-shaped. Exposing a separate CHILL lifecy
 
 ## Decision
 
-Keep Helm charts as the resource packaging unit and keep dependency ordering inside `hack/helm-release-flow.sh`.
+This ADR is retained only as historical context. It previously used two Helm
+releases to preserve install and teardown ordering while the bootstrap surface
+was changing.
 
-Split packaging into two releases:
-
-- `chill-operator`: CRDs, operator RBAC, and the operator Deployment.
-- `chill`: the cluster-scoped `ChillSystem` root CR and system config.
-
-Public Make targets stay intent-oriented:
-
-- `helm-preflight`
-- `helm-install`
-- `helm-uninstall`
-- `helm-purge-crds`
-
-The internal install direction is:
-
-```text
-preflight -> install-operator -> install-system
-```
-
-`helm-install` follows product-style Helm UX and installs the operator first,
-then creates the `ChillSystem` root resource that drives runtime reconciliation.
-
-The internal cleanup direction is:
-
-```text
-uninstall-system(ChillSystem finalizer cleanup) -> uninstall-operator -> purge-crds
-```
-
-`helm-uninstall` removes the system release first. Deleting the `ChillSystem`
-root CR triggers operator finalization, which removes operator-managed
-DaemonSets, node metadata, and CHILL `DeviceClass` resources before the
-operator release is removed. CRDs remain by default. `helm-purge-crds` is a
-separate guarded destructive action.
+The current decision is ADR 0009: use one `charts/chill` release and preserve
+teardown ordering with a Helm `pre-delete` hook that deletes the root
+`ChillSystem` before the operator Deployment is removed.
 
 ## Consequences
 

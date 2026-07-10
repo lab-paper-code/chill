@@ -2,7 +2,62 @@ nameOverride: ""
 fullnameOverride: ""
 
 system:
+  enabled: true
   name: ""
+  refreshInterval: 30s
+
+crds:
+  enabled: true
+
+operator:
+  replicaCount: 1
+  image:
+    repository: daclab/chill-operator
+    tag: ""
+    pullPolicy: IfNotPresent
+  metricsBindAddress: "0"
+  healthProbeBindAddress: ":8081"
+  leaderElection: true
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+
+uninstallCleanup:
+  enabled: true
+  timeout: 120s
+  backoffLimit: 0
+  image:
+    repository: registry.k8s.io/kubectl
+    tag: "v1.31.0"
+    pullPolicy: IfNotPresent
+  serviceAccount:
+    create: true
+    name: ""
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsUser: 65532
+    capabilities:
+      drop:
+        - ALL
 
 nodeSelection:
   labelSelector: node-role.kubernetes.io/edge

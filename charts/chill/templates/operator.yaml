@@ -1,26 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "chilloperator.fullname" . }}
+  name: {{ include "chill.operatorName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: operator
-    {{- include "chilloperator.labels" . | nindent 4 }}
+    {{- include "chill.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.operator.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/component: operator
-      {{- include "chilloperator.selectorLabels" . | nindent 6 }}
+      {{- include "chill.operatorSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: operator
       labels:
-        app.kubernetes.io/component: operator
-        {{- include "chilloperator.selectorLabels" . | nindent 8 }}
+        {{- include "chill.operatorSelectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "chilloperator.serviceAccountName" . }}
+      serviceAccountName: {{ include "chill.operatorServiceAccountName" . }}
       securityContext:
         {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
       {{- with .Values.operator.nodeSelector }}
@@ -37,16 +35,16 @@ spec:
       {{- end }}
       containers:
         - name: operator
-          image: "{{ include "chilloperator.image" . }}"
+          image: "{{ include "chill.operatorImage" . }}"
           imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
           command:
             - /operator
           args:
             - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
             - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
-            - --system-name={{ .Values.system.name }}
+            - --system-name={{ include "chill.systemName" . }}
             - --operator-namespace={{ .Release.Namespace }}
-            - --operator-deployment-name={{ include "chilloperator.fullname" . }}
+            - --operator-deployment-name={{ include "chill.operatorName" . }}
             - --system-refresh-interval={{ .Values.system.refreshInterval }}
             {{- if .Values.operator.leaderElection }}
             - --leader-elect
