@@ -45,7 +45,7 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 							Image:           config.Image,
 							ImagePullPolicy: config.ImagePullPolicy,
 							Command:         []string{"/node-discovery"},
-							Args:            nodeDiscoveryArgs(options, config),
+							Args:            nodeDiscoveryArgs(config),
 							Env:             nodeDiscoveryEnv(options, config),
 							SecurityContext: config.SecurityContext,
 							Resources:       config.Resources,
@@ -104,9 +104,8 @@ func buildAffinity(config Config) *corev1.Affinity {
 	return affinity
 }
 
-func nodeDiscoveryArgs(options Options, config Config) []string {
+func nodeDiscoveryArgs(config Config) []string {
 	args := []string{
-		"--system-name=" + options.SystemName,
 		"--host-root=" + config.HostRoot,
 		"--interval=" + config.Interval,
 		"--signature-file=" + config.SignatureFile,

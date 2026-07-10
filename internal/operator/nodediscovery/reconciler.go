@@ -3,17 +3,22 @@ package nodediscovery
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
+
+var daemonSetResource = schema.GroupResource{Group: "apps", Resource: "daemonsets"}
 
 // Reconciler manages the node-discovery DaemonSet from operator configuration.
 type Reconciler struct {
@@ -24,7 +29,7 @@ type Reconciler struct {
 
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;update;watch
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;update;watch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	if err := r.Options.DefaultAndValidate(); err != nil {
@@ -56,18 +61,56 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string) (ctrl.Res
 	}
 
 	desired := buildDaemonSet(options, config)
-	daemonSet := &appsv1.DaemonSet{
-		ObjectMeta: desired.ObjectMeta,
-	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, daemonSet, func() error {
-		daemonSet.Labels = desired.Labels
-		daemonSet.Spec = desired.Spec
-		return controllerutil.SetControllerReference(system, daemonSet, r.Scheme)
-	}); err != nil {
+	if err := r.applyDaemonSet(ctx, system, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile node-discovery DaemonSet %s/%s: %w", options.Namespace, options.DaemonSetName, err)
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: options.ReconcileInterval}, nil
+}
+
+func (r *Reconciler) applyDaemonSet(ctx context.Context, system *edgev1alpha1.ChillSystem, desired *appsv1.DaemonSet) error {
+	key := types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &appsv1.DaemonSet{}
+		if err := r.Get(ctx, key, current); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			toCreate := desired.DeepCopy()
+			if err := controllerutil.SetControllerReference(system, toCreate, r.Scheme); err != nil {
+				return err
+			}
+			if err := r.Create(ctx, toCreate); err != nil {
+				if apierrors.IsAlreadyExists(err) {
+					return apierrors.NewConflict(daemonSetResource, desired.Name, err)
+				}
+				return err
+			}
+			return nil
+		}
+
+		if !reflect.DeepEqual(current.Spec.Selector, desired.Spec.Selector) {
+			if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+			return apierrors.NewConflict(daemonSetResource, desired.Name, fmt.Errorf("deleted DaemonSet with immutable selector drift"))
+		}
+
+		original := current.DeepCopy()
+		current.Labels = desired.Labels
+		current.Annotations = desired.Annotations
+		current.Spec = desired.Spec
+		if err := controllerutil.SetControllerReference(system, current, r.Scheme); err != nil {
+			return err
+		}
+		if reflect.DeepEqual(original.Labels, current.Labels) &&
+			reflect.DeepEqual(original.Annotations, current.Annotations) &&
+			reflect.DeepEqual(original.OwnerReferences, current.OwnerReferences) &&
+			reflect.DeepEqual(original.Spec, current.Spec) {
+			return nil
+		}
+		return r.Patch(ctx, current, client.MergeFrom(original))
+	})
 }
 
 func (r *Reconciler) deleteDaemonSet(ctx context.Context, options Options) error {

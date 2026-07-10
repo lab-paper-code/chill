@@ -8,6 +8,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -76,13 +77,24 @@ func (r *ChillSystemReconciler) reconcileSystem(ctx context.Context, name string
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	next := buildStatus(r.observe(ctx, system), system.Status.Conditions, metav1Now())
-	if statusesEqual(system.Status, next) {
-		return ctrl.Result{}, nil
-	}
-	system.Status = next
-	if err := r.Status().Update(ctx, system); err != nil {
+	if err := r.patchStatus(ctx, key); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update ChillSystem %s status: %w", key.String(), err)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.refreshInterval()}, nil
+}
+
+func (r *ChillSystemReconciler) patchStatus(ctx context.Context, key types.NamespacedName) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		system := &edgev1alpha1.ChillSystem{}
+		if err := r.Get(ctx, key, system); err != nil {
+			return err
+		}
+		next := buildStatus(r.observe(ctx, system), system.Status.Conditions, metav1Now())
+		if statusesEqual(system.Status, next) {
+			return nil
+		}
+		original := system.DeepCopy()
+		system.Status = next
+		return r.Status().Patch(ctx, system, client.MergeFrom(original))
+	})
 }

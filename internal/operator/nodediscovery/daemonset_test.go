@@ -28,6 +28,12 @@ func TestBuildDaemonSet(t *testing.T) {
 	if !containsArg(container.Args, "--cleanup-on-exit") {
 		t.Fatalf("Args = %v, want cleanup-on-exit", container.Args)
 	}
+	if containsArgPrefix(container.Args, "--system-name=") {
+		t.Fatalf("Args = %v, want system name passed by environment only", container.Args)
+	}
+	if !containsEnv(container.Env, "CHILL_SYSTEM_NAME", "chill") {
+		t.Fatalf("Env = %v, want CHILL_SYSTEM_NAME=chill", container.Env)
+	}
 	if daemonSet.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.
 		NodeSelectorTerms[0].MatchExpressions[0].Values[0] != "bad-edge" {
 		t.Fatalf("Affinity = %#v, want excluded node", daemonSet.Spec.Template.Spec.Affinity)
@@ -82,6 +88,24 @@ func validConfig() Config {
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsArgPrefix(args []string, want string) bool {
+	for _, arg := range args {
+		if len(arg) >= len(want) && arg[:len(want)] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsEnv(env []corev1.EnvVar, name, value string) bool {
+	for _, item := range env {
+		if item.Name == name && item.Value == value {
 			return true
 		}
 	}

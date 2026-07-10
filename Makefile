@@ -1,7 +1,8 @@
 # Image URLs to use for building and pushing component images.
 IMAGE_NAMESPACE ?= daclab
 CHART_APP_VERSION ?= $(shell sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$$/\1/p' charts/chill-operator/Chart.yaml)
-IMAGE_TAG ?= $(CHART_APP_VERSION)
+GIT_SHORT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+IMAGE_TAG ?= $(if $(GIT_SHORT_SHA),sha-$(GIT_SHORT_SHA),$(CHART_APP_VERSION))
 IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)

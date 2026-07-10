@@ -25,6 +25,7 @@
   - delete
   - get
   - list
+  - patch
   - update
   - watch
 - apiGroups:
