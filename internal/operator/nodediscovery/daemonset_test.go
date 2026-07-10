@@ -21,6 +21,12 @@ func TestBuildDaemonSet(t *testing.T) {
 	if daemonSet.Spec.Template.Spec.ServiceAccountName != "chill-node-discovery" {
 		t.Fatalf("ServiceAccountName = %q, want chill-node-discovery", daemonSet.Spec.Template.Spec.ServiceAccountName)
 	}
+	if !daemonSet.Spec.Template.Spec.HostNetwork {
+		t.Fatal("HostNetwork = false, want true")
+	}
+	if daemonSet.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+		t.Fatalf("DNSPolicy = %q, want %q", daemonSet.Spec.Template.Spec.DNSPolicy, corev1.DNSClusterFirstWithHostNet)
+	}
 	container := daemonSet.Spec.Template.Spec.Containers[0]
 	if container.Image != "daclab/chill-node-discovery:0.1.4" {
 		t.Fatalf("Image = %q, want daclab/chill-node-discovery:0.1.4", container.Image)
@@ -78,6 +84,7 @@ func validConfig() Config {
 		CleanupTimeout:         "10s",
 		KubeAPITokenFile:       "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		KubeAPICAFile:          "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+		HostNetwork:            true,
 		HostPaths: []HostPathMount{
 			{Name: "host-proc", HostPath: "/proc", MountPath: "/proc"},
 		},

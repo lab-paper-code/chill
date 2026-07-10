@@ -35,6 +35,8 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 				ObjectMeta: metav1.ObjectMeta{Labels: selectorLabels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: config.ServiceAccountName,
+					HostNetwork:        config.HostNetwork,
+					DNSPolicy:          dnsPolicy(config),
 					SecurityContext:    config.PodSecurityContext,
 					NodeSelector:       config.NodeSelector,
 					Affinity:           buildAffinity(config),
@@ -57,6 +59,13 @@ func buildDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 			},
 		},
 	}
+}
+
+func dnsPolicy(config Config) corev1.DNSPolicy {
+	if config.HostNetwork {
+		return corev1.DNSClusterFirstWithHostNet
+	}
+	return corev1.DNSClusterFirst
 }
 
 func workloadLabels(systemName string) map[string]string {

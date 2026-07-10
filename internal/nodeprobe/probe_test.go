@@ -10,7 +10,7 @@ import (
 
 func TestProbeDetectsJetsonOrinNano(t *testing.T) {
 	hostRoot := t.TempDir()
-	writeHostFile(t, hostRoot, "proc/device-tree/model", "NVIDIA Jetson Orin Nano Developer Kit\x00")
+	writeHostFile(t, hostRoot, "proc/device-tree/model", "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super\x00")
 	writeHostFile(t, hostRoot, "etc/nv_tegra_release", "# R36 (release), REVISION: 4.0")
 
 	facts, err := Probe(hostRoot, testSignatureCatalog())

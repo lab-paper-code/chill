@@ -186,6 +186,7 @@ discovery:
 
 nodeDiscovery:
   enabled: true
+  hostNetwork: true
   configMapKey: config.yaml
   interval: 10m
   hostRoot: /host

@@ -25,6 +25,7 @@ type Config struct {
 	KubeAPIServer          string                         `json:"kubeAPIServer,omitempty"`
 	KubeAPITokenFile       string                         `json:"kubeAPITokenFile"`
 	KubeAPICAFile          string                         `json:"kubeAPICAFile"`
+	HostNetwork            bool                           `json:"hostNetwork,omitempty"`
 	NodeSelector           map[string]string              `json:"nodeSelector,omitempty"`
 	ExcludeNodeNames       []string                       `json:"excludeNodeNames,omitempty"`
 	Affinity               *corev1.Affinity               `json:"affinity,omitempty"`
