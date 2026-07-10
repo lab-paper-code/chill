@@ -3,16 +3,22 @@ package system
 import (
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 func TestOptionsDefaultAndValidate(t *testing.T) {
-	options := Options{Namespace: " chill-system "}
+	refreshInterval := 45 * time.Second
+	options := Options{
+		Namespace:       " chill-system ",
+		RefreshInterval: refreshInterval,
+	}
 	if err := options.DefaultAndValidate(); err != nil {
 		t.Fatalf("DefaultAndValidate() error = %v", err)
 	}
 
-	if options.SystemName != DefaultSystemName {
-		t.Fatalf("SystemName = %q, want %q", options.SystemName, DefaultSystemName)
+	if options.SystemName != component.DefaultSystemName {
+		t.Fatalf("SystemName = %q, want %q", options.SystemName, component.DefaultSystemName)
 	}
 	if options.Namespace != "chill-system" {
 		t.Fatalf("Namespace = %q, want chill-system", options.Namespace)
@@ -20,15 +26,16 @@ func TestOptionsDefaultAndValidate(t *testing.T) {
 	if options.OperatorDeploymentName != DefaultOperatorDeploymentName() {
 		t.Fatalf("OperatorDeploymentName = %q, want %q", options.OperatorDeploymentName, DefaultOperatorDeploymentName())
 	}
-	if options.RefreshInterval != DefaultRefreshInterval {
-		t.Fatalf("RefreshInterval = %s, want %s", options.RefreshInterval, DefaultRefreshInterval)
+	if options.RefreshInterval != refreshInterval {
+		t.Fatalf("RefreshInterval = %s, want %s", options.RefreshInterval, refreshInterval)
 	}
 }
 
 func TestOptionsSystemNameDoesNotChangeWorkloadDefaults(t *testing.T) {
 	options := Options{
-		SystemName: "custom-status",
-		Namespace:  "chill-system",
+		SystemName:      "custom-status",
+		Namespace:       "chill-system",
+		RefreshInterval: 30 * time.Second,
 	}
 	if err := options.DefaultAndValidate(); err != nil {
 		t.Fatalf("DefaultAndValidate() error = %v", err)
@@ -54,6 +61,13 @@ func TestOptionsRejectNegativeRefreshInterval(t *testing.T) {
 		Namespace:       "chill-system",
 		RefreshInterval: -1 * time.Second,
 	}
+	if err := options.DefaultAndValidate(); err == nil {
+		t.Fatal("DefaultAndValidate() error = nil, want refresh interval error")
+	}
+}
+
+func TestOptionsRequireRefreshInterval(t *testing.T) {
+	options := Options{Namespace: "chill-system"}
 	if err := options.DefaultAndValidate(); err == nil {
 		t.Fatal("DefaultAndValidate() error = nil, want refresh interval error")
 	}

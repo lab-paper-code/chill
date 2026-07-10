@@ -18,7 +18,7 @@ const testOperatorDesiredReplicas = int32(1)
 
 var (
 	testOperatorDeploymentName     = DefaultOperatorDeploymentName()
-	testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(DefaultSystemName)
+	testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
 )
 
 func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {

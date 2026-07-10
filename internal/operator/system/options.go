@@ -10,13 +10,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
-const (
-	DefaultSystemName      = component.DefaultSystemName
-	DefaultRefreshInterval = 30 * time.Second
-
-	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-)
-
 // Options configures CHILL system reconciliation defaults.
 type Options struct {
 	SystemName             string
@@ -30,25 +23,18 @@ func DefaultNamespace() string {
 	if namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); namespace != "" {
 		return namespace
 	}
-	data, err := os.ReadFile(serviceAccountNamespaceFile)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return ""
 }
 
 func (o Options) Defaulted() Options {
 	defaulted := Options{
-		SystemName:             defaults.String(o.SystemName, DefaultSystemName),
+		SystemName:             defaults.String(o.SystemName, component.DefaultSystemName),
 		Namespace:              strings.TrimSpace(o.Namespace),
 		OperatorDeploymentName: strings.TrimSpace(o.OperatorDeploymentName),
 		RefreshInterval:        o.RefreshInterval,
 	}
 	if defaulted.OperatorDeploymentName == "" {
 		defaulted.OperatorDeploymentName = DefaultOperatorDeploymentName()
-	}
-	if defaulted.RefreshInterval == 0 {
-		defaulted.RefreshInterval = DefaultRefreshInterval
 	}
 	return defaulted
 }
@@ -66,7 +52,7 @@ func (o *Options) DefaultAndValidate() error {
 }
 
 func DefaultOperatorDeploymentName() string {
-	return component.OperatorDeploymentName(DefaultSystemName)
+	return component.OperatorDeploymentName(component.DefaultSystemName)
 }
 
 func (r *ChillSystemReconciler) systemName() string {

@@ -18,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/operator/discovery"
@@ -53,7 +54,7 @@ func main() {
 	var systemName string
 	var systemNamespace string
 	var operatorDeploymentName string
-	var systemRefreshInterval time.Duration
+	var systemRefreshInterval = 30 * time.Second
 	var nodeDiscoveryConfigNamespace string
 	var nodeDiscoveryConfigName string
 	var nodeDiscoveryConfigKey string
@@ -80,7 +81,7 @@ func main() {
 		"Default name of the optional device discovery catalog ConfigMap.")
 	flag.StringVar(&deviceDiscoveryCatalogKey, "device-discovery-catalog-key", deviceclass.CatalogDataKey,
 		"Default data key containing the device discovery catalog in the ConfigMap.")
-	flag.StringVar(&systemName, "system-name", system.DefaultSystemName,
+	flag.StringVar(&systemName, "system-name", component.DefaultSystemName,
 		"Default ChillSystem name used by compatibility refresh paths.")
 	flag.StringVar(&systemNamespace, "operator-namespace", system.DefaultNamespace(),
 		"Operator namespace and default CHILL management namespace.")
@@ -89,7 +90,7 @@ func main() {
 	flag.DurationVar(
 		&systemRefreshInterval,
 		"system-refresh-interval",
-		system.DefaultRefreshInterval,
+		systemRefreshInterval,
 		"Periodic refresh interval for ChillSystem status.")
 	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing the node-discovery operator config ConfigMap.")
