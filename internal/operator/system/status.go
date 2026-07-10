@@ -10,230 +10,107 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const (
-	ComponentOperator      = component.Operator
-	ComponentNodeDiscovery = component.NodeDiscovery
+	reasonNodeDiscoveryDisabled    = "NodeDiscoveryDisabled"
+	reasonNodeDiscoveryReady       = "NodeDiscoveryReady"
+	reasonNodeDiscoveryMissing     = "NodeDiscoveryMissing"
+	reasonNodeDiscoveryPending     = "NodeDiscoveryPending"
+	reasonNodeDiscoveryProgressing = "NodeDiscoveryProgressing"
+	reasonNodeDiscoveryDegraded    = "NodeDiscoveryDegraded"
+	reasonObservationFailed        = "ObservationFailed"
 
-	reasonReady              = "Ready"
-	reasonReconciling        = "Reconciling"
-	reasonDisabled           = "Disabled"
-	reasonMissing            = "Missing"
-	reasonUnavailable        = "Unavailable"
-	reasonObservationFailed  = "ObservationFailed"
-	reasonNodeDiscoveryReady = "NodeDiscoveryReady"
-
-	deploymentTimedOutReason             = "ProgressDeadlineExceeded"
 	daemonSetReplicaFailureConditionType = appsv1.DaemonSetConditionType("ReplicaFailure")
 )
 
-// Observation contains the raw Kubernetes state used to build ChillSystem status.
+// Observation contains the Kubernetes state needed to report ChillSystem readiness.
 type Observation struct {
 	ObservedGeneration int64
 
 	Namespace string
 
-	OperatorNamespace      string
-	OperatorDeploymentName string
-	OperatorDeployment     *appsv1.Deployment
-	OperatorError          error
-
 	NodeDiscoveryEnabled       bool
 	NodeDiscoveryDaemonSetName string
 	NodeDiscoveryDaemonSet     *appsv1.DaemonSet
 	NodeDiscoveryError         error
-
-	DeviceClassCount  *int32
-	DeviceClassError  error
-	ObservedNodeCount *int32
-	NodeError         error
 }
 
 func buildStatus(observed Observation, previousConditions []metav1.Condition, now metav1.Time) edgev1alpha1.ChillSystemStatus {
-	conditions := append([]metav1.Condition(nil), previousConditions...)
-	operator := deploymentComponentStatus(
-		ComponentOperator,
-		operatorNamespace(observed),
-		observed.OperatorDeploymentName,
-		observed.OperatorDeployment,
-		observed.OperatorError,
-	)
-	nodeDiscovery := daemonSetComponentStatus(
-		ComponentNodeDiscovery,
-		observed.Namespace,
-		observed.NodeDiscoveryDaemonSetName,
-		observed.NodeDiscoveryEnabled,
-		observed.NodeDiscoveryDaemonSet,
-		observed.NodeDiscoveryError,
-	)
-
 	status := edgev1alpha1.ChillSystemStatus{
 		ObservedGeneration: observed.ObservedGeneration,
-		OperatorState:      operator.State,
-		NodeDiscoveryState: nodeDiscovery.State,
-		DeviceClassCount:   observed.DeviceClassCount,
-		ObservedNodeCount:  observed.ObservedNodeCount,
-		Components:         []edgev1alpha1.ChillComponentStatus{operator, nodeDiscovery},
-		Conditions:         conditions,
+	}
+	if previous := meta.FindStatusCondition(previousConditions, edgev1alpha1.ChillSystemConditionReady); previous != nil {
+		status.Conditions = append(status.Conditions, *previous)
 	}
 
-	phase, reason, message := summarize(observed, operator, nodeDiscovery)
-	reason = truncateStatusText(reason, edgev1alpha1.ChillSystemReasonMaxLength)
-	message = truncateStatusText(message, edgev1alpha1.ChillSystemMessageMaxLength)
-	status.Phase = phase
-	status.Message = message
-	status.Ready = conditionStatus(phase == edgev1alpha1.ChillSystemPhaseReady)
-
-	setCondition(&status, metav1.Condition{
-		Type:               edgev1alpha1.ChillSystemConditionReady,
-		Status:             status.Ready,
-		ObservedGeneration: observed.ObservedGeneration,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-	})
-	setCondition(&status, metav1.Condition{
-		Type:               edgev1alpha1.ChillSystemConditionProgressing,
-		Status:             conditionStatus(phase == edgev1alpha1.ChillSystemPhaseProgressing),
-		ObservedGeneration: observed.ObservedGeneration,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-	})
-	setCondition(&status, metav1.Condition{
-		Type:               edgev1alpha1.ChillSystemConditionDegraded,
-		Status:             conditionStatus(phase == edgev1alpha1.ChillSystemPhaseDegraded),
-		ObservedGeneration: observed.ObservedGeneration,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-	})
+	condition := nodeDiscoveryReadyCondition(observed)
+	condition.Type = edgev1alpha1.ChillSystemConditionReady
+	condition.ObservedGeneration = observed.ObservedGeneration
+	condition.LastTransitionTime = now
+	condition.Reason = truncateStatusText(condition.Reason, edgev1alpha1.ChillSystemReasonMaxLength)
+	condition.Message = truncateStatusText(condition.Message, edgev1alpha1.ChillSystemMessageMaxLength)
+	meta.SetStatusCondition(&status.Conditions, condition)
 
 	return status
 }
 
-func operatorNamespace(observed Observation) string {
-	if observed.OperatorNamespace != "" {
-		return observed.OperatorNamespace
+func nodeDiscoveryReadyCondition(observed Observation) metav1.Condition {
+	if !observed.NodeDiscoveryEnabled {
+		return metav1.Condition{
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonNodeDiscoveryDisabled,
+			Message: "node-discovery is disabled",
+		}
 	}
-	return observed.Namespace
-}
-
-func deploymentComponentStatus(name, namespace, workloadName string, deployment *appsv1.Deployment, err error) edgev1alpha1.ChillComponentStatus {
-	component := edgev1alpha1.ChillComponentStatus{
-		Name:      name,
-		Kind:      "Deployment",
-		Namespace: namespace,
-		State:     edgev1alpha1.ComponentStateUnknown,
+	if observed.NodeDiscoveryError != nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionUnknown,
+			Reason:  reasonObservationFailed,
+			Message: statusMessage(observed.NodeDiscoveryError.Error(), "failed to observe node-discovery DaemonSet"),
+		}
 	}
-	if err != nil {
-		component.State = edgev1alpha1.ComponentStateUnknown
-		component.Reason = reasonObservationFailed
-		component.Message = statusMessage(err.Error(), "failed to observe Deployment")
-		return component
-	}
-	if deployment == nil {
-		component.State = edgev1alpha1.ComponentStateDegraded
-		component.Reason = reasonMissing
-		component.Message = fmt.Sprintf("Deployment %q is missing", workloadName)
-		return component
+	if observed.NodeDiscoveryDaemonSet == nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonNodeDiscoveryMissing,
+			Message: fmt.Sprintf("node-discovery DaemonSet %q is missing", observed.NodeDiscoveryDaemonSetName),
+		}
 	}
 
-	component.Desired = deploymentDesiredReplicas(deployment)
-	component.Ready = deployment.Status.ReadyReplicas
-	component.Available = deployment.Status.AvailableReplicas
-	if component.Desired == 0 {
-		component.State = edgev1alpha1.ComponentStateDisabled
-		component.Reason = reasonDisabled
-		component.Message = fmt.Sprintf("Deployment %q is scaled to zero", deployment.Name)
-		return component
-	}
-	if condition := deploymentFailureCondition(deployment); condition != nil {
-		component.State = edgev1alpha1.ComponentStateDegraded
-		component.Reason = statusReason(condition.Reason, reasonUnavailable)
-		component.Message = statusMessage(condition.Message, fmt.Sprintf("Deployment %q is degraded", deployment.Name))
-		return component
-	}
-	if deployment.Status.AvailableReplicas >= component.Desired {
-		component.State = edgev1alpha1.ComponentStateReady
-		component.Reason = reasonReady
-		component.Message = fmt.Sprintf("Deployment %q is available", deployment.Name)
-		return component
-	}
-	component.State = edgev1alpha1.ComponentStateProgressing
-	component.Reason = reasonUnavailable
-	component.Message = fmt.Sprintf("Deployment %q has %d/%d available replicas", deployment.Name, deployment.Status.AvailableReplicas, component.Desired)
-	return component
-}
-
-func daemonSetComponentStatus(name, namespace, workloadName string, enabled bool, daemonSet *appsv1.DaemonSet, err error) edgev1alpha1.ChillComponentStatus {
-	component := edgev1alpha1.ChillComponentStatus{
-		Name:      name,
-		Kind:      "DaemonSet",
-		Namespace: namespace,
-		State:     edgev1alpha1.ComponentStateUnknown,
-	}
-	if !enabled {
-		component.State = edgev1alpha1.ComponentStateDisabled
-		component.Reason = reasonDisabled
-		component.Message = "node-discovery is disabled"
-		return component
-	}
-	if err != nil {
-		component.State = edgev1alpha1.ComponentStateUnknown
-		component.Reason = reasonObservationFailed
-		component.Message = statusMessage(err.Error(), "failed to observe DaemonSet")
-		return component
-	}
-	if daemonSet == nil {
-		component.State = edgev1alpha1.ComponentStateDegraded
-		component.Reason = reasonMissing
-		component.Message = fmt.Sprintf("DaemonSet %q is missing", workloadName)
-		return component
-	}
-
-	component.Desired = daemonSet.Status.DesiredNumberScheduled
-	component.Ready = daemonSet.Status.NumberReady
-	component.Available = daemonSet.Status.NumberAvailable
-	if daemonSet.Status.DesiredNumberScheduled == 0 {
-		component.State = edgev1alpha1.ComponentStateProgressing
-		component.Reason = reasonReconciling
-		component.Message = fmt.Sprintf("DaemonSet %q has no scheduled nodes yet", daemonSet.Name)
-		return component
-	}
+	daemonSet := observed.NodeDiscoveryDaemonSet
 	if condition := daemonSetFailureCondition(daemonSet); condition != nil {
-		component.State = edgev1alpha1.ComponentStateDegraded
-		component.Reason = statusReason(condition.Reason, reasonUnavailable)
-		component.Message = statusMessage(condition.Message, fmt.Sprintf("DaemonSet %q is degraded", daemonSet.Name))
-		return component
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonNodeDiscoveryDegraded,
+			Message: statusMessage(condition.Message, fmt.Sprintf("node-discovery DaemonSet %q is degraded", daemonSet.Name)),
+		}
 	}
-	if daemonSet.Status.NumberReady >= daemonSet.Status.DesiredNumberScheduled {
-		component.State = edgev1alpha1.ComponentStateReady
-		component.Reason = reasonNodeDiscoveryReady
-		component.Message = fmt.Sprintf("DaemonSet %q is ready on %d nodes", daemonSet.Name, daemonSet.Status.NumberReady)
-		return component
+	if daemonSet.Status.DesiredNumberScheduled == 0 {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonNodeDiscoveryPending,
+			Message: fmt.Sprintf("node-discovery DaemonSet %q has no scheduled Nodes", daemonSet.Name),
+		}
 	}
-	component.State = edgev1alpha1.ComponentStateProgressing
-	component.Reason = reasonUnavailable
-	component.Message = fmt.Sprintf("DaemonSet %q is ready on %d/%d nodes", daemonSet.Name, daemonSet.Status.NumberReady, daemonSet.Status.DesiredNumberScheduled)
-	return component
-}
+	if daemonSet.Status.NumberReady < daemonSet.Status.DesiredNumberScheduled {
+		return metav1.Condition{
+			Status: metav1.ConditionFalse,
+			Reason: reasonNodeDiscoveryProgressing,
+			Message: fmt.Sprintf(
+				"node-discovery DaemonSet %q is Ready on %d/%d Nodes",
+				daemonSet.Name,
+				daemonSet.Status.NumberReady,
+				daemonSet.Status.DesiredNumberScheduled,
+			),
+		}
+	}
 
-func deploymentFailureCondition(deployment *appsv1.Deployment) *appsv1.DeploymentCondition {
-	for i := range deployment.Status.Conditions {
-		condition := &deployment.Status.Conditions[i]
-		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
-			return condition
-		}
-		if condition.Type == appsv1.DeploymentProgressing &&
-			condition.Status == corev1.ConditionFalse &&
-			condition.Reason == deploymentTimedOutReason {
-			return condition
-		}
+	return metav1.Condition{
+		Status:  metav1.ConditionTrue,
+		Reason:  reasonNodeDiscoveryReady,
+		Message: fmt.Sprintf("node-discovery DaemonSet %q is Ready", daemonSet.Name),
 	}
-	return nil
 }
 
 func daemonSetFailureCondition(daemonSet *appsv1.DaemonSet) *appsv1.DaemonSetCondition {
@@ -246,74 +123,12 @@ func daemonSetFailureCondition(daemonSet *appsv1.DaemonSet) *appsv1.DaemonSetCon
 	return nil
 }
 
-func deploymentDesiredReplicas(deployment *appsv1.Deployment) int32 {
-	if deployment.Spec.Replicas == nil {
-		return 1
-	}
-	return *deployment.Spec.Replicas
-}
-
-func summarize(observed Observation, operator, nodeDiscovery edgev1alpha1.ChillComponentStatus) (edgev1alpha1.ChillSystemPhase, string, string) {
-	if errors := observationErrors(observed); len(errors) > 0 {
-		return edgev1alpha1.ChillSystemPhaseDegraded, reasonObservationFailed, strings.Join(errors, "; ")
-	}
-	if operator.State == edgev1alpha1.ComponentStateDegraded || operator.State == edgev1alpha1.ComponentStateUnknown {
-		return edgev1alpha1.ChillSystemPhaseDegraded, operator.Reason, operator.Message
-	}
-	if operator.State == edgev1alpha1.ComponentStateProgressing {
-		return edgev1alpha1.ChillSystemPhaseProgressing, operator.Reason, operator.Message
-	}
-	if operator.State == edgev1alpha1.ComponentStateDisabled {
-		return edgev1alpha1.ChillSystemPhaseDegraded, operator.Reason, operator.Message
-	}
-
-	if nodeDiscovery.State == edgev1alpha1.ComponentStateDegraded || nodeDiscovery.State == edgev1alpha1.ComponentStateUnknown {
-		return edgev1alpha1.ChillSystemPhaseDegraded, nodeDiscovery.Reason, nodeDiscovery.Message
-	}
-	if nodeDiscovery.State == edgev1alpha1.ComponentStateProgressing {
-		return edgev1alpha1.ChillSystemPhaseProgressing, nodeDiscovery.Reason, nodeDiscovery.Message
-	}
-	if nodeDiscovery.State == edgev1alpha1.ComponentStateDisabled {
-		return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL operator is running; node-discovery is disabled"
-	}
-	return edgev1alpha1.ChillSystemPhaseReady, reasonReady, "CHILL operator and node-discovery are ready"
-}
-
-func observationErrors(observed Observation) []string {
-	var errors []string
-	for _, err := range []error{observed.DeviceClassError, observed.NodeError} {
-		if err != nil {
-			errors = append(errors, err.Error())
-		}
-	}
-	return errors
-}
-
-func conditionStatus(ok bool) metav1.ConditionStatus {
-	if ok {
-		return metav1.ConditionTrue
-	}
-	return metav1.ConditionFalse
-}
-
-func setCondition(status *edgev1alpha1.ChillSystemStatus, condition metav1.Condition) {
-	meta.SetStatusCondition(&status.Conditions, condition)
-}
-
-func statusReason(value, fallback string) string {
-	return truncateStatusText(statusText(value, fallback), edgev1alpha1.ChillSystemReasonMaxLength)
-}
-
 func statusMessage(value, fallback string) string {
-	return truncateStatusText(statusText(value, fallback), edgev1alpha1.ChillSystemMessageMaxLength)
-}
-
-func statusText(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
 	}
-	return value
+	return truncateStatusText(value, edgev1alpha1.ChillSystemMessageMaxLength)
 }
 
 func truncateStatusText(value string, maxLength int) string {
@@ -326,8 +141,4 @@ func truncateStatusText(value string, maxLength int) string {
 		return string(runes[:maxLength])
 	}
 	return string(runes[:maxLength-len(suffix)]) + string(suffix)
-}
-
-func int32Ptr(value int32) *int32 {
-	return &value
 }

@@ -6,37 +6,65 @@ Accepted
 
 ## Context
 
-CHILL has internal ordering for install, startup, discovery, and cleanup, but that ordering should not become an operator-facing command model. Operators need a single status surface that answers whether the CHILL installation is ready, progressing, or degraded, and why.
+`ChillSystem` is the cluster-scoped root for the runtime resources reconciled by
+CHILL. Operators need one Kubernetes-native answer to whether the desired CHILL
+runtime represented by that root resource is ready.
 
-Rook-Ceph exposes this pattern through its root cluster CR: users inspect one resource for phase, message, health, and detailed conditions. CHILL needs the same UX shape, but with Kubernetes-native conditions as the primary status contract.
+Kubernetes workloads and Nodes already expose their own lifecycle, health,
+replica, and resource status. Copying those APIs into parallel phase fields,
+component records, messages, or aggregate counts would create duplicate and
+eventually inconsistent representations. The CHILL operator also cannot provide
+a reliable self-liveness report through a status that stops updating when the
+operator itself is unavailable.
 
 ## Decision
 
-Introduce a cluster-scoped `ChillSystem` root resource. The single CHILL Helm chart creates this root CR, and the operator reconciles status and children from it.
+Keep `ChillSystem.status` limited to:
 
-The public operational flow becomes:
+- `observedGeneration`, identifying the latest reconciled `ChillSystem` spec
+- a standard `Ready` condition with status, reason, message,
+  `observedGeneration`, and transition time
 
-```sh
-kubectl get chillsystem
-kubectl describe chillsystem chill
-```
+`Ready` reports whether the runtime resources currently required by the
+`ChillSystem` spec are ready. The initial implementation owns node discovery:
 
-`ChillSystem.status` uses Kubernetes `conditions` as the durable API and keeps printer-column fields such as `phase`, `ready`, `operatorState`, `nodeDiscoveryState`, `message`, and resource counts for quick `kubectl get` output.
+- node discovery disabled: `Ready=True`
+- required node-discovery DaemonSet fully Ready: `Ready=True`
+- DaemonSet missing, pending, progressing, or degraded: `Ready=False`
+- DaemonSet observation failed: `Ready=Unknown`
 
-The first status implementation observes:
+The condition reason and message explain progress or failure. Separate phase,
+ready mirror, top-level message, Progressing/Degraded conditions, component
+records, and Node or `DeviceClass` counts are not part of the status API.
 
-- operator Deployment readiness
-- node-discovery DaemonSet readiness or disabled state
-- observed Node count
-- observed DeviceClass count
-- observation errors such as missing RBAC
+The default `kubectl get chillsystem` view exposes only `READY` from the Ready
+condition and `AGE`. Detailed diagnostics remain available from
+`kubectl describe chillsystem` and the authoritative Kubernetes resources.
 
-The root CR has a finalizer. Deleting the CHILL Helm release deletes the root CR, allowing the operator to remove child runtime resources, node metadata, and CHILL `DeviceClass` resources during release teardown.
+The operator Deployment is not summarized in `ChillSystem.status`. Kubernetes
+Deployment status and the operator health/readiness probes remain authoritative
+for the operator itself.
+
+The reconciler is level-based. It observes the current desired runtime and
+writes the status subresource only when the resulting condition changes. Watches
+on owned runtime resources request reconciliation; periodic status polling is
+not required for normal operation.
+
+Future CHILL modules extend readiness only when the `ChillSystem` spec owns their
+desired lifecycle and their reconciler can report an observable condition. New
+status fields are not added solely for dashboard convenience.
 
 ## Consequences
 
-Operators get a single CHILL-native root and status object without learning the internal release-flow phase graph.
+`ChillSystem` provides one compact readiness contract without re-modeling
+Deployments, DaemonSets, Nodes, or domain resources. Reason and message retain
+the information needed to distinguish disabled, progressing, missing, degraded,
+and unobservable runtime states.
 
-The status reconciler becomes the extension point for future modules. New components should add structured component status and conditions before adding ad hoc troubleshooting output elsewhere.
+Removing duplicated fields is an intentional `v1alpha1` API change. Existing
+stored status is replaced by the minimal condition on the next successful
+reconciliation, and generated CRDs and printer columns follow the reduced API.
 
-Because the operator owns finalization, the single chart must keep the operator and root CR in the same release instead of exposing separate public release ordering.
+Operators use standard Kubernetes queries for component replica details, Node
+health, and domain-resource inventory. CHILL status remains reserved for state
+owned by CHILL reconciliation.

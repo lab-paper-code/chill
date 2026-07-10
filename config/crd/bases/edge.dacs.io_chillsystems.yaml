@@ -17,31 +17,12 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.ready
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
-    - jsonPath: .status.phase
-      name: Phase
-      type: string
-    - jsonPath: .status.operatorState
-      name: Operator
-      priority: 1
-      type: string
-    - jsonPath: .status.nodeDiscoveryState
-      name: NodeDiscovery
-      priority: 1
-      type: string
-    - jsonPath: .status.deviceClassCount
-      name: Classes
-      priority: 1
-      type: integer
-    - jsonPath: .status.observedNodeCount
-      name: Nodes
-      priority: 1
-      type: integer
-    - jsonPath: .status.message
-      name: Message
-      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -162,67 +143,6 @@ spec:
             description: ChillSystemStatus defines the observed state of one CHILL
               system instance.
             properties:
-              components:
-                description: Components reports detailed per-component status.
-                items:
-                  description: ChillComponentStatus reports one CHILL runtime or control-plane
-                    component.
-                  properties:
-                    available:
-                      description: Available is the number of available component
-                        replicas.
-                      format: int32
-                      minimum: 0
-                      type: integer
-                    desired:
-                      description: Desired is the desired number of component replicas
-                        or scheduled pods.
-                      format: int32
-                      minimum: 0
-                      type: integer
-                    kind:
-                      description: Kind is the Kubernetes workload kind backing this
-                        component.
-                      type: string
-                    message:
-                      description: Message is a concise human-readable explanation
-                        for State.
-                      maxLength: 1024
-                      type: string
-                    name:
-                      description: Name is the stable component identifier.
-                      minLength: 1
-                      type: string
-                    namespace:
-                      description: Namespace is the namespace containing this component.
-                      type: string
-                    ready:
-                      description: Ready is the number of ready component replicas
-                        or scheduled pods.
-                      format: int32
-                      minimum: 0
-                      type: integer
-                    reason:
-                      description: Reason is a short machine-readable reason for State.
-                      maxLength: 128
-                      type: string
-                    state:
-                      description: State summarizes the observed component state.
-                      enum:
-                      - Ready
-                      - Progressing
-                      - Disabled
-                      - Degraded
-                      - Unknown
-                      type: string
-                  required:
-                  - name
-                  - state
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
               conditions:
                 description: Conditions follow the Kubernetes status condition convention.
                 items:
@@ -283,61 +203,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              deviceClassCount:
-                description: DeviceClassCount is the number of DeviceClass objects
-                  observed by CHILL.
-                format: int32
-                minimum: 0
-                type: integer
-              message:
-                description: Message is a concise human-readable status summary.
-                maxLength: 1024
-                type: string
-              nodeDiscoveryState:
-                description: NodeDiscoveryState summarizes the node-discovery DaemonSet
-                  state.
-                enum:
-                - Ready
-                - Progressing
-                - Disabled
-                - Degraded
-                - Unknown
-                type: string
               observedGeneration:
                 description: ObservedGeneration is the latest spec generation observed
                   by the operator.
                 format: int64
                 type: integer
-              observedNodeCount:
-                description: ObservedNodeCount is the number of Kubernetes Nodes observed
-                  by CHILL.
-                format: int32
-                minimum: 0
-                type: integer
-              operatorState:
-                description: OperatorState summarizes the operator Deployment state.
-                enum:
-                - Ready
-                - Progressing
-                - Disabled
-                - Degraded
-                - Unknown
-                type: string
-              phase:
-                description: Phase summarizes the current CHILL installation state.
-                enum:
-                - Ready
-                - Progressing
-                - Degraded
-                type: string
-              ready:
-                description: Ready mirrors the Ready condition for kubectl printer
-                  columns.
-                enum:
-                - "True"
-                - "False"
-                - Unknown
-                type: string
             type: object
         type: object
     served: true

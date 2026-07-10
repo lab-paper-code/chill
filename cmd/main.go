@@ -53,8 +53,6 @@ func main() {
 	var deviceDiscoveryCatalogKey string
 	var systemName string
 	var systemNamespace string
-	var operatorDeploymentName string
-	var systemRefreshInterval = 30 * time.Second
 	var nodeDiscoveryConfigNamespace string
 	var nodeDiscoveryConfigName string
 	var nodeDiscoveryConfigKey string
@@ -85,13 +83,6 @@ func main() {
 		"Default ChillSystem name used by compatibility refresh paths.")
 	flag.StringVar(&systemNamespace, "operator-namespace", system.DefaultNamespace(),
 		"Operator namespace and default CHILL management namespace.")
-	flag.StringVar(&operatorDeploymentName, "operator-deployment-name", "",
-		"Name of the operator Deployment reported in ChillSystem status.")
-	flag.DurationVar(
-		&systemRefreshInterval,
-		"system-refresh-interval",
-		systemRefreshInterval,
-		"Periodic refresh interval for ChillSystem status.")
 	flag.StringVar(&nodeDiscoveryConfigNamespace, "node-discovery-config-namespace", os.Getenv("POD_NAMESPACE"),
 		"Namespace containing the node-discovery operator config ConfigMap.")
 	flag.StringVar(&nodeDiscoveryConfigName, "node-discovery-config-name", "",
@@ -112,10 +103,8 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	systemOptions := system.Options{
-		SystemName:             systemName,
-		Namespace:              systemNamespace,
-		OperatorDeploymentName: operatorDeploymentName,
-		RefreshInterval:        systemRefreshInterval,
+		SystemName: systemName,
+		Namespace:  systemNamespace,
 	}
 	if err := systemOptions.DefaultAndValidate(); err != nil {
 		setupLog.Error(err, "invalid ChillSystem configuration")

@@ -29,14 +29,6 @@
   - update
   - watch
 - apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - edge.dacs.io
   resources:
   - chillsystems

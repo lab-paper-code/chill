@@ -3,7 +3,6 @@ package system
 import (
 	"context"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -141,9 +140,7 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 	reconciler := &ChillSystemReconciler{
 		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, node, deviceClass, otherDeviceClass).Build(),
 		Options: Options{
-			Namespace:              "chill-system",
-			OperatorDeploymentName: "chill-operator",
-			RefreshInterval:        30 * time.Second,
+			Namespace: "chill-system",
 		},
 	}
 

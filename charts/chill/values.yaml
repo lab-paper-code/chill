@@ -4,7 +4,6 @@ fullnameOverride: ""
 system:
   enabled: true
   name: ""
-  refreshInterval: 30s
 
 crds:
   enabled: true

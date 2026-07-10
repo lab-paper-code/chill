@@ -2,7 +2,6 @@ package system
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -14,255 +13,148 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 )
 
-const testOperatorDesiredReplicas = int32(1)
-
-var (
-	testOperatorDeploymentName     = DefaultOperatorDeploymentName()
-	testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
-)
+var testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
 
 func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
 	status := buildStatus(Observation{
-		ObservedGeneration:     7,
-		Namespace:              "chill-system",
-		OperatorDeploymentName: testOperatorDeploymentName,
-		OperatorDeployment:     deployment(1),
-		NodeDiscoveryEnabled:   false,
-		DeviceClassCount:       int32Ptr(3),
-		ObservedNodeCount:      int32Ptr(6),
+		ObservedGeneration:   7,
+		NodeDiscoveryEnabled: false,
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseReady {
-		t.Fatalf("Phase = %q, want Ready", status.Phase)
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionTrue || ready.Reason != reasonNodeDiscoveryDisabled {
+		t.Fatalf("Ready condition = %#v, want True/%s", ready, reasonNodeDiscoveryDisabled)
 	}
-	if status.Ready != metav1.ConditionTrue {
-		t.Fatalf("Ready = %q, want True", status.Ready)
-	}
-	if status.OperatorState != edgev1alpha1.ComponentStateReady {
-		t.Fatalf("OperatorState = %q, want Ready", status.OperatorState)
-	}
-	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDisabled {
-		t.Fatalf("NodeDiscoveryState = %q, want Disabled", status.NodeDiscoveryState)
-	}
-	if status.DeviceClassCount == nil || *status.DeviceClassCount != 3 || status.ObservedNodeCount == nil || *status.ObservedNodeCount != 6 {
-		t.Fatalf("counts = classes:%s nodes:%s, want classes:3 nodes:6", countString(status.DeviceClassCount), countString(status.ObservedNodeCount))
-	}
-	ready := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionReady)
-	if ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != 7 {
-		t.Fatalf("Ready condition = %#v, want true observedGeneration=7", ready)
+	if ready.ObservedGeneration != 7 || status.ObservedGeneration != 7 {
+		t.Fatalf("observed generations = condition:%d status:%d, want 7", ready.ObservedGeneration, status.ObservedGeneration)
 	}
 }
 
-func TestBuildStatusProgressingWhenNodeDiscoveryRollsOut(t *testing.T) {
+func TestBuildStatusReadyWhenNodeDiscoveryIsReady(t *testing.T) {
 	status := buildStatus(Observation{
-		Namespace:                  "chill-system",
-		OperatorDeploymentName:     testOperatorDeploymentName,
-		OperatorDeployment:         deployment(1),
-		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
-		NodeDiscoveryDaemonSet:     daemonSet(6, 4),
+		NodeDiscoveryEnabled:   true,
+		NodeDiscoveryDaemonSet: daemonSet(6, 6),
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseProgressing {
-		t.Fatalf("Phase = %q, want Progressing", status.Phase)
-	}
-	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateProgressing {
-		t.Fatalf("NodeDiscoveryState = %q, want Progressing", status.NodeDiscoveryState)
-	}
-	progressing := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionProgressing)
-	if progressing == nil || progressing.Status != metav1.ConditionTrue {
-		t.Fatalf("Progressing condition = %#v, want true", progressing)
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionTrue || ready.Reason != reasonNodeDiscoveryReady {
+		t.Fatalf("Ready condition = %#v, want True/%s", ready, reasonNodeDiscoveryReady)
 	}
 }
 
-func TestBuildStatusDegradedWhenRequiredComponentMissing(t *testing.T) {
+func TestBuildStatusNotReadyWhileNodeDiscoveryRollsOut(t *testing.T) {
 	status := buildStatus(Observation{
-		Namespace:                  "chill-system",
-		OperatorDeploymentName:     testOperatorDeploymentName,
-		OperatorDeployment:         deployment(1),
+		NodeDiscoveryEnabled:   true,
+		NodeDiscoveryDaemonSet: daemonSet(6, 4),
+	}, nil, metav1.Now())
+
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryProgressing {
+		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryProgressing)
+	}
+	if !strings.Contains(ready.Message, "4/6") {
+		t.Fatalf("Ready message = %q, want replica progress", ready.Message)
+	}
+}
+
+func TestBuildStatusNotReadyWhenNodeDiscoveryIsMissing(t *testing.T) {
+	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:       true,
 		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
-		t.Fatalf("Phase = %q, want Degraded", status.Phase)
-	}
-	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDegraded {
-		t.Fatalf("NodeDiscoveryState = %q, want Degraded", status.NodeDiscoveryState)
-	}
-	degraded := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionDegraded)
-	if degraded == nil || degraded.Status != metav1.ConditionTrue {
-		t.Fatalf("Degraded condition = %#v, want true", degraded)
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryMissing {
+		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryMissing)
 	}
 }
 
-func TestBuildStatusDegradedWhenDeploymentTimedOut(t *testing.T) {
-	operator := deployment(0)
-	operator.Status.Conditions = []appsv1.DeploymentCondition{
-		{
-			Type:    appsv1.DeploymentProgressing,
-			Status:  corev1.ConditionFalse,
-			Reason:  deploymentTimedOutReason,
-			Message: "ReplicaSet has timed out progressing.",
-		},
-	}
-
+func TestBuildStatusUnknownOnObservationFailure(t *testing.T) {
 	status := buildStatus(Observation{
-		Namespace:              "chill-system",
-		OperatorDeploymentName: testOperatorDeploymentName,
-		OperatorDeployment:     operator,
-		NodeDiscoveryEnabled:   false,
+		NodeDiscoveryEnabled: true,
+		NodeDiscoveryError:   errors.New("forbidden"),
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
-		t.Fatalf("Phase = %q, want Degraded", status.Phase)
-	}
-	if status.OperatorState != edgev1alpha1.ComponentStateDegraded {
-		t.Fatalf("OperatorState = %q, want Degraded", status.OperatorState)
-	}
-	if status.Message != "ReplicaSet has timed out progressing." {
-		t.Fatalf("Message = %q, want Deployment condition message", status.Message)
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionUnknown || ready.Reason != reasonObservationFailed {
+		t.Fatalf("Ready condition = %#v, want Unknown/%s", ready, reasonObservationFailed)
 	}
 }
 
-func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
-	operator := deployment(0)
-	longMessage := strings.Repeat("x", edgev1alpha1.ChillSystemMessageMaxLength+1)
-	operator.Status.Conditions = []appsv1.DeploymentCondition{
-		{
-			Type:    appsv1.DeploymentProgressing,
-			Status:  corev1.ConditionFalse,
-			Reason:  deploymentTimedOutReason,
-			Message: longMessage,
-		},
-	}
-
-	status := buildStatus(Observation{
-		Namespace:              "chill-system",
-		OperatorDeploymentName: testOperatorDeploymentName,
-		OperatorDeployment:     operator,
-		NodeDiscoveryEnabled:   false,
-	}, nil, metav1.Now())
-
-	if len([]rune(status.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
-		t.Fatalf("Message length = %d, want <= %d", len([]rune(status.Message)), edgev1alpha1.ChillSystemMessageMaxLength)
-	}
-	if len([]rune(status.Components[0].Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
-		t.Fatalf(
-			"component message length = %d, want <= %d",
-			len([]rune(status.Components[0].Message)),
-			edgev1alpha1.ChillSystemMessageMaxLength,
-		)
-	}
-}
-
-func TestBuildStatusDegradedWhenDaemonSetHasReplicaFailure(t *testing.T) {
-	nodeDiscovery := daemonSet(6, 4)
-	nodeDiscovery.Status.Conditions = []appsv1.DaemonSetCondition{
+func TestBuildStatusNotReadyOnDaemonSetFailure(t *testing.T) {
+	daemonSet := daemonSet(6, 4)
+	daemonSet.Status.Conditions = []appsv1.DaemonSetCondition{
 		{
 			Type:    daemonSetReplicaFailureConditionType,
 			Status:  corev1.ConditionTrue,
 			Reason:  "FailedCreate",
-			Message: "Failed to create pod.",
+			Message: "Failed to create Pod.",
 		},
 	}
 
 	status := buildStatus(Observation{
-		Namespace:                  "chill-system",
-		OperatorDeploymentName:     testOperatorDeploymentName,
-		OperatorDeployment:         deployment(1),
-		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
-		NodeDiscoveryDaemonSet:     nodeDiscovery,
+		NodeDiscoveryEnabled:   true,
+		NodeDiscoveryDaemonSet: daemonSet,
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
-		t.Fatalf("Phase = %q, want Degraded", status.Phase)
+	ready := requireReadyCondition(t, status)
+	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryDegraded {
+		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryDegraded)
 	}
-	if status.NodeDiscoveryState != edgev1alpha1.ComponentStateDegraded {
-		t.Fatalf("NodeDiscoveryState = %q, want Degraded", status.NodeDiscoveryState)
-	}
-	if status.Message != "Failed to create pod." {
-		t.Fatalf("Message = %q, want DaemonSet condition message", status.Message)
+	if ready.Message != "Failed to create Pod." {
+		t.Fatalf("Ready message = %q, want DaemonSet failure message", ready.Message)
 	}
 }
 
-func TestBuildStatusDegradedOnObservationError(t *testing.T) {
+func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
+	longMessage := strings.Repeat("x", edgev1alpha1.ChillSystemMessageMaxLength+1)
 	status := buildStatus(Observation{
-		Namespace:              "chill-system",
-		OperatorDeploymentName: testOperatorDeploymentName,
-		OperatorDeployment:     deployment(1),
-		NodeDiscoveryEnabled:   false,
-		DeviceClassError:       errors.New("observe DeviceClasses: forbidden"),
+		NodeDiscoveryEnabled: true,
+		NodeDiscoveryError:   errors.New(longMessage),
 	}, nil, metav1.Now())
 
-	if status.Phase != edgev1alpha1.ChillSystemPhaseDegraded {
-		t.Fatalf("Phase = %q, want Degraded", status.Phase)
-	}
-	if status.Message != "observe DeviceClasses: forbidden" {
-		t.Fatalf("Message = %q, want observation error", status.Message)
+	ready := requireReadyCondition(t, status)
+	if len([]rune(ready.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
+		t.Fatalf("Ready message length = %d, want <= %d", len([]rune(ready.Message)), edgev1alpha1.ChillSystemMessageMaxLength)
 	}
 }
 
-func TestBuildStatusReportsSeparateOperatorNamespace(t *testing.T) {
-	status := buildStatus(Observation{
-		Namespace:                  "managed-system",
-		OperatorNamespace:          "operator-system",
-		OperatorDeploymentName:     testOperatorDeploymentName,
-		OperatorDeployment:         deployment(1),
-		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
-		NodeDiscoveryDaemonSet:     daemonSet(1, 1),
-	}, nil, metav1.Now())
-
-	operator := findComponent(status.Components, ComponentOperator)
-	if operator == nil || operator.Namespace != "operator-system" {
-		t.Fatalf("operator component = %#v, want namespace operator-system", operator)
-	}
-	nodeDiscovery := findComponent(status.Components, ComponentNodeDiscovery)
-	if nodeDiscovery == nil || nodeDiscovery.Namespace != "managed-system" {
-		t.Fatalf("node-discovery component = %#v, want namespace managed-system", nodeDiscovery)
-	}
-}
-
-func TestBuildStatusPreservesTransitionTimeWithoutStateChange(t *testing.T) {
+func TestBuildStatusPreservesTransitionTimeWithoutStatusChange(t *testing.T) {
 	firstTransition := metav1.Now()
 	status := buildStatus(Observation{
-		ObservedGeneration:     1,
-		Namespace:              "chill-system",
-		OperatorDeploymentName: testOperatorDeploymentName,
-		OperatorDeployment:     deployment(1),
-		NodeDiscoveryEnabled:   false,
+		ObservedGeneration:   2,
+		NodeDiscoveryEnabled: false,
 	}, []metav1.Condition{
 		{
 			Type:               edgev1alpha1.ChillSystemConditionReady,
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: 1,
 			LastTransitionTime: firstTransition,
-			Reason:             reasonReady,
-			Message:            "CHILL operator is running; node-discovery is disabled",
+			Reason:             reasonNodeDiscoveryDisabled,
+			Message:            "node-discovery is disabled",
 		},
 	}, metav1.Now())
 
-	ready := findCondition(status.Conditions, edgev1alpha1.ChillSystemConditionReady)
-	if ready == nil {
-		t.Fatal("Ready condition not found")
-	}
+	ready := requireReadyCondition(t, status)
 	if !ready.LastTransitionTime.Equal(&firstTransition) {
 		t.Fatalf("LastTransitionTime = %s, want %s", ready.LastTransitionTime, firstTransition)
 	}
+	if ready.ObservedGeneration != 2 {
+		t.Fatalf("ObservedGeneration = %d, want 2", ready.ObservedGeneration)
+	}
 }
 
-func deployment(available int32) *appsv1.Deployment {
-	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: testOperatorDeploymentName},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(testOperatorDesiredReplicas),
-		},
-		Status: appsv1.DeploymentStatus{
-			ReadyReplicas:     available,
-			AvailableReplicas: available,
-		},
+func TestBuildStatusDropsObsoleteConditions(t *testing.T) {
+	status := buildStatus(Observation{
+		NodeDiscoveryEnabled: false,
+	}, []metav1.Condition{
+		{Type: edgev1alpha1.ChillSystemConditionReady, Status: metav1.ConditionTrue, Reason: "Ready"},
+		{Type: "Progressing", Status: metav1.ConditionFalse, Reason: "Ready"},
+		{Type: "Degraded", Status: metav1.ConditionFalse, Reason: "Ready"},
+	}, metav1.Now())
+
+	if len(status.Conditions) != 1 || status.Conditions[0].Type != edgev1alpha1.ChillSystemConditionReady {
+		t.Fatalf("Conditions = %#v, want only Ready", status.Conditions)
 	}
 }
 
@@ -277,27 +169,13 @@ func daemonSet(desired, ready int32) *appsv1.DaemonSet {
 	}
 }
 
-func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == conditionType {
-			return &conditions[i]
+func requireReadyCondition(t *testing.T, status edgev1alpha1.ChillSystemStatus) *metav1.Condition {
+	t.Helper()
+	for i := range status.Conditions {
+		if status.Conditions[i].Type == edgev1alpha1.ChillSystemConditionReady {
+			return &status.Conditions[i]
 		}
 	}
+	t.Fatal("Ready condition not found")
 	return nil
-}
-
-func findComponent(components []edgev1alpha1.ChillComponentStatus, name string) *edgev1alpha1.ChillComponentStatus {
-	for i := range components {
-		if components[i].Name == name {
-			return &components[i]
-		}
-	}
-	return nil
-}
-
-func countString(count *int32) string {
-	if count == nil {
-		return "<nil>"
-	}
-	return fmt.Sprintf("%d", *count)
 }

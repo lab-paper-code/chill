@@ -4,9 +4,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operator/watch"
@@ -22,9 +20,6 @@ func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("chillsystem").
 		For(&edgev1alpha1.ChillSystem{}).
-		Watches(&appsv1.Deployment{}, mapToSystem, builder.WithPredicates(watch.NamedObject(r.namespace(), r.operatorDeploymentName()))).
 		Watches(&appsv1.DaemonSet{}, mapToSystem).
-		Watches(&edgev1alpha1.DeviceClass{}, mapToSystem, builder.WithPredicates(watch.CreateDelete())).
-		Watches(&corev1.Node{}, mapToSystem, builder.WithPredicates(watch.CreateDelete())).
 		Complete(r)
 }

@@ -44,8 +44,6 @@ spec:
             - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
             - --system-name={{ include "chill.systemName" . }}
             - --operator-namespace={{ .Release.Namespace }}
-            - --operator-deployment-name={{ include "chill.operatorName" . }}
-            - --system-refresh-interval={{ .Values.system.refreshInterval }}
             - --node-discovery-config-key={{ .Values.nodeDiscovery.configMapKey }}
             - --node-discovery-reconcile-interval={{ .Values.operator.nodeDiscoveryReconcileInterval }}
             {{- if .Values.operator.leaderElection }}

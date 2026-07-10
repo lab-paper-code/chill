@@ -5,13 +5,8 @@ import "github.com/lab-paper-code/chill/internal/defaults"
 const (
 	DefaultSystemName = "chill"
 
-	Operator      = "operator"
 	NodeDiscovery = "node-discovery"
 )
-
-func OperatorDeploymentName(systemName string) string {
-	return defaultSystemName(systemName) + "-operator"
-}
 
 func NodeDiscoveryDaemonSetName(systemName string) string {
 	return defaultSystemName(systemName) + "-node-discovery"
