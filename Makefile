@@ -233,6 +233,10 @@ docker-buildx-node-discovery: ## Build and push the node-discovery image for cro
 .PHONY: docker-buildx-all
 docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery ## Build and push all component images for cross-platform support.
 
+.PHONY: fast-deploy
+fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.
+	./hack/fast-deploy.sh
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist

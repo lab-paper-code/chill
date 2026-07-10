@@ -17,6 +17,7 @@ extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 system_name="${CHILL_SYSTEM_NAME:-}"
+skip_preflight="${HELM_SKIP_PREFLIGHT:-false}"
 
 usage() {
 	cat <<EOF
@@ -37,6 +38,7 @@ Environment:
   CHILL_SYSTEM_NAME      Optional ChillSystem name for cleanup. Default: discover by release labels, then HELM_RELEASE.
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
+  HELM_SKIP_PREFLIGHT    Skip helm lint/template/kubeconform and CRD ownership check during install. Default: false.
 EOF
 }
 
@@ -107,7 +109,11 @@ preflight() {
 }
 
 install_release() {
-	preflight
+	if [[ "${skip_preflight}" == "1" || "${skip_preflight}" == "true" ]]; then
+		echo "==> skip-preflight"
+	else
+		preflight
+	fi
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
