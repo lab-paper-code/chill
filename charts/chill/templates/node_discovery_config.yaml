@@ -19,8 +19,6 @@ data:
     signatureFile: {{ .Values.nodeDiscovery.signatureFile | quote }}
     signatureConfigMapName: {{ include "chill.nodeDiscoverySignatureCatalogName" . | quote }}
     signatureConfigMapKey: {{ include "chill.nodeDiscoverySignatureKey" . | quote }}
-    cleanupOnExit: {{ .Values.nodeDiscovery.cleanupOnExit }}
-    cleanupTimeout: {{ .Values.nodeDiscovery.cleanupTimeout | quote }}
     kubeAPIServer: {{ $kubeAPIServer | quote }}
     kubeAPITokenFile: {{ .Values.nodeDiscovery.kubernetesClient.tokenFile | quote }}
     kubeAPICAFile: {{ .Values.nodeDiscovery.kubernetesClient.caFile | quote }}

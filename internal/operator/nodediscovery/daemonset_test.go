@@ -31,8 +31,8 @@ func TestBuildDaemonSet(t *testing.T) {
 	if container.Image != "daclab/chill-node-discovery:0.1.4" {
 		t.Fatalf("Image = %q, want daclab/chill-node-discovery:0.1.4", container.Image)
 	}
-	if !containsArg(container.Args, "--cleanup-on-exit") {
-		t.Fatalf("Args = %v, want cleanup-on-exit", container.Args)
+	if containsArg(container.Args, "--cleanup-on-exit") {
+		t.Fatalf("Args = %v, node agent must not delete durable discovery metadata on exit", container.Args)
 	}
 	if containsArgPrefix(container.Args, "--system-name=") {
 		t.Fatalf("Args = %v, want system name passed by environment only", container.Args)
@@ -80,8 +80,6 @@ func validConfig() Config {
 		SignatureFile:          "/etc/chill/node-discovery/signatures.yaml",
 		SignatureConfigMapName: "chill-node-discovery-signatures",
 		SignatureConfigMapKey:  "signatures.yaml",
-		CleanupOnExit:          true,
-		CleanupTimeout:         "10s",
 		KubeAPITokenFile:       "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		KubeAPICAFile:          "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 		HostNetwork:            true,

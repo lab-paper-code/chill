@@ -199,8 +199,6 @@ nodeDiscovery:
   interval: 10m
   hostRoot: /host
   signatureFile: /etc/chill/node-discovery/signatures.yaml
-  cleanupOnExit: true
-  cleanupTimeout: 10s
   kubernetesClient:
     apiServer: ""
     discoverFromDefaultEndpoint: true

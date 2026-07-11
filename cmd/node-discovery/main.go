@@ -29,8 +29,6 @@ func main() {
 	var signatureFile string
 	var interval time.Duration
 	var once bool
-	var cleanupOnExit bool
-	var cleanupTimeout time.Duration
 	var kubeAPIServer string
 	var kubeAPITokenFile string
 	var kubeAPICAFile string
@@ -51,9 +49,6 @@ func main() {
 	)
 	flag.DurationVar(&interval, "interval", 10*time.Minute, "How often to refresh node discovery metadata.")
 	flag.BoolVar(&once, "once", false, "Run one discovery pass and exit.")
-	flag.BoolVar(&cleanupOnExit, "cleanup-on-exit", false,
-		"Remove CHILL-managed labels from this Node before exiting on signal.")
-	flag.DurationVar(&cleanupTimeout, "cleanup-timeout", 10*time.Second, "Maximum time allowed for exit cleanup.")
 	flag.StringVar(&kubeAPIServer, "kube-api-server", os.Getenv("CHILL_KUBE_API_SERVER"),
 		"Kubernetes API server URL. Leave empty to use standard in-cluster config.")
 	flag.StringVar(&kubeAPITokenFile, "kube-api-token-file", kubeconfig.DefaultServiceAccountTokenFile,
@@ -83,7 +78,6 @@ func main() {
 	defer stop()
 	for {
 		if ctx.Err() != nil {
-			cleanupOnSignal(cleanupOnExit, cleanupTimeout, clientset, nodeName)
 			return
 		}
 		if err := runOnce(ctx, clientset, nodeName, systemName, hostRoot, signatureFile); err != nil {
@@ -101,7 +95,6 @@ func main() {
 				default:
 				}
 			}
-			cleanupOnSignal(cleanupOnExit, cleanupTimeout, clientset, nodeName)
 			return
 		case <-timer.C:
 		}
@@ -166,48 +159,6 @@ func runOnce(
 	return nil
 }
 
-func cleanupOnSignal(cleanupOnExit bool, timeout time.Duration, clientset kubernetes.Interface, nodeName string) {
-	if !cleanupOnExit {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	if err := cleanupNodeMetadata(ctx, clientset, nodeName); err != nil {
-		log.Printf("node discovery cleanup failed: %v", err)
-	}
-}
-
-func cleanupNodeMetadata(ctx context.Context, clientset kubernetes.Interface, nodeName string) error {
-	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get node %q: %w", nodeName, err)
-	}
-
-	patch, changed, err := buildNodeCleanupPatch(node)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		log.Printf("node %q has no CHILL-managed discovery metadata to clean", nodeName)
-		return nil
-	}
-
-	if _, err := clientset.CoreV1().Nodes().Patch(
-		ctx,
-		nodeName,
-		types.MergePatchType,
-		patch,
-		metav1.PatchOptions{},
-	); err != nil {
-		return fmt.Errorf("patch node %q cleanup metadata: %w", nodeName, err)
-	}
-	log.Printf("cleaned CHILL-managed discovery metadata from node %q", nodeName)
-	return nil
-}
-
 func buildNodePatch(node *corev1.Node, labels, annotations map[string]string) ([]byte, bool, error) {
 	patchLabels := map[string]string{}
 	patchAnnotations := map[string]string{}
@@ -242,57 +193,4 @@ func buildNodePatch(node *corev1.Node, labels, annotations map[string]string) ([
 		return nil, false, fmt.Errorf("marshal node patch: %w", err)
 	}
 	return patch, true, nil
-}
-
-func buildNodeCleanupPatch(node *corev1.Node) ([]byte, bool, error) {
-	patchLabels := map[string]*string{}
-	patchAnnotations := map[string]*string{}
-	labels := node.GetLabels()
-	annotations := node.GetAnnotations()
-
-	if annotations[chillmeta.DiscoverySource] == chillmeta.SourceNodeDiscovery {
-		addDeleteKeys(patchLabels, chillmeta.NodeDiscoveryLabelKeys()...)
-		addDeleteKeys(patchAnnotations, chillmeta.NodeDiscoveryAnnotationKeys()...)
-	}
-
-	if annotations[chillmeta.ManagedBy] == chillmeta.ManagedByDeviceDiscovery {
-		addDeleteKeys(patchLabels, chillmeta.DeviceClass)
-		addDeleteKeys(patchAnnotations, chillmeta.ManagedBy)
-	}
-
-	addDeleteKeys(patchAnnotations, chillmeta.DeviceDiscoveryAnnotationKeys()...)
-	addDeleteKeys(patchAnnotations, chillmeta.System)
-
-	pruneAbsentDeleteKeys(patchLabels, labels)
-	pruneAbsentDeleteKeys(patchAnnotations, annotations)
-	if len(patchLabels) == 0 && len(patchAnnotations) == 0 {
-		return nil, false, nil
-	}
-
-	metadata := map[string]any{}
-	if len(patchLabels) > 0 {
-		metadata["labels"] = patchLabels
-	}
-	if len(patchAnnotations) > 0 {
-		metadata["annotations"] = patchAnnotations
-	}
-	patch, err := json.Marshal(map[string]any{"metadata": metadata})
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal node cleanup patch: %w", err)
-	}
-	return patch, true, nil
-}
-
-func addDeleteKeys(values map[string]*string, keys ...string) {
-	for _, key := range keys {
-		values[key] = nil
-	}
-}
-
-func pruneAbsentDeleteKeys(deleteKeys map[string]*string, existing map[string]string) {
-	for key := range deleteKeys {
-		if _, ok := existing[key]; !ok {
-			delete(deleteKeys, key)
-		}
-	}
 }

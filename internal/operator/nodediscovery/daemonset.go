@@ -119,9 +119,6 @@ func nodeDiscoveryArgs(config Config) []string {
 		"--interval=" + config.Interval,
 		"--signature-file=" + config.SignatureFile,
 	}
-	if config.CleanupOnExit {
-		args = append(args, "--cleanup-on-exit", "--cleanup-timeout="+config.CleanupTimeout)
-	}
 	if config.KubeAPIServer != "" {
 		args = append(args, "--kube-api-server="+config.KubeAPIServer)
 	}

@@ -20,8 +20,6 @@ type Config struct {
 	SignatureFile          string                         `json:"signatureFile"`
 	SignatureConfigMapName string                         `json:"signatureConfigMapName"`
 	SignatureConfigMapKey  string                         `json:"signatureConfigMapKey"`
-	CleanupOnExit          bool                           `json:"cleanupOnExit"`
-	CleanupTimeout         string                         `json:"cleanupTimeout"`
 	KubeAPIServer          string                         `json:"kubeAPIServer,omitempty"`
 	KubeAPITokenFile       string                         `json:"kubeAPITokenFile"`
 	KubeAPICAFile          string                         `json:"kubeAPICAFile"`
@@ -67,13 +65,6 @@ func (c Config) Validate() error {
 	}
 	if _, err := time.ParseDuration(c.Interval); c.Interval != "" && err != nil {
 		problems = append(problems, fmt.Sprintf("interval must be a duration: %v", err))
-	}
-	if c.CleanupOnExit {
-		if strings.TrimSpace(c.CleanupTimeout) == "" {
-			problems = append(problems, "cleanupTimeout is required when cleanupOnExit=true")
-		} else if _, err := time.ParseDuration(c.CleanupTimeout); err != nil {
-			problems = append(problems, fmt.Sprintf("cleanupTimeout must be a duration: %v", err))
-		}
 	}
 	if c.UpdateStrategy.Type == "" {
 		problems = append(problems, "updateStrategy.type is required")

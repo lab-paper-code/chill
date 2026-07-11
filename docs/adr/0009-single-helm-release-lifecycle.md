@@ -49,6 +49,12 @@ root declaration; the operator owns runtime reconciliation below that root,
 including finalization, node-discovery DaemonSets, node metadata cleanup, and
 CHILL-managed `DeviceClass` resources.
 
+Node-discovery metadata outlives any individual DaemonSet Pod. Pod replacement,
+eviction, or temporary node pressure does not prove that previously observed
+hardware facts are invalid, so the node agent never removes metadata on exit.
+Only `ChillSystem` finalization removes CHILL-owned Node metadata and
+`DeviceClass` resources as part of an explicit system lifecycle transition.
+
 `system.enabled=false` is reserved for install-only smoke tests and migration
 windows. The default install creates the root `ChillSystem`.
 
