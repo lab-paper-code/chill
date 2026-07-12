@@ -1,0 +1,24 @@
+2026-07-12 05:32:55.639076554 [W:onnxruntime:Default, tensorrt_execution_provider.h:77 log] [2026-07-12 05:32:55 WARNING] onnx2trt_utils.cpp:375: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
+2026-07-12 05:32:57.790030881 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2173 Compile] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+
+--- CHILL DERIVED EXECUTION CONTRACT -------------------------
+policy                  : OnePodPerNodeExclusiveGPU
+contract source         : SpikeManifestPinnedFromLiveNodeAndArtifactFacts
+device class            : jetson-xavier-nx-8g
+accelerator             : nvidia-jetson-xavier-nx
+Kubernetes resource     : nvidia.com/gpu=1
+power mode              : MODE_15W_6CORE (nvpmodel 2)
+runtime                 : ONNX Runtime 1.16.0
+primary provider        : TensorrtExecutionProvider
+requested fallback      : CUDAExecutionProvider
+registered providers    : TensorrtExecutionProvider -> CUDAExecutionProvider -> CPUExecutionProvider
+compute device          : NVIDIA Xavier NX GPU
+inference precision     : fp32
+graph partition evidence: not captured
+JetPack / L4T           : R35.4.1
+selected batch          : 1
+engine cache lifecycle  : Pod-local spike cache
+---------------------------------------------------------------
+2026-07-12T05:32:59.782286Z INFO  [runtime] TensorRT session ready | buildSeconds=11.553
+2026-07-12 05:32:59.794323544 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2608 operator()] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+EXPERIMENT_RESULT_JSON {"artifactDigest":"sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30","bSat":null,"batchSize":1,"energyPerRequest":null,"execution":{"computeDevice":"nvidia-gpu","graphPartitionEvidence":{"cpuFallbackNodeCount":null,"cudaFallbackNodeCount":null,"status":"NotCaptured","tensorrtNodeCount":null},"precision":"fp32","primaryProvider":"TensorrtExecutionProvider","registeredProviderChain":["TensorrtExecutionProvider","CUDAExecutionProvider","CPUExecutionProvider"],"requestedFallbackProviders":["CUDAExecutionProvider"]},"inferenceCount":684,"latencyMs":{"mean":43.91,"p50":43.598,"p95":46.287,"p99":48.438},"measurementEndedAt":"2026-07-12T05:37:41.395931Z","measurementStartedAt":"2026-07-12T05:37:11.350438Z","model":"efficientnet-b4","nodeName":"jetsonx","provider":"TensorrtExecutionProvider","runtime":"onnxruntime","runtimeContract":{"engineCacheLifecycle":"pod-local-spike","gpuCount":1,"jetpackL4T":"R35.4.1","kubernetesResource":"nvidia.com/gpu","nvpmodelId":2,"powerMode":"MODE_15W_6CORE"},"runtimeVersion":"1.16.0","schemaVersion":"chill.dacs.io/batch-characterization.v1alpha1","sessionBuildSeconds":11.553,"status":"Succeeded","throughputItemsPerSecond":22.774}

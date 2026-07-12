@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+# TODO(internal): Replace this Xavier-NX-specific Job with a profiler controller
+# template derived from DeviceClass, ModelArtifact, RuntimeCapability, and an
+# immutable profiling Run contract.
+kind: Job
+metadata:
+  name: efficientnet-b4-jetson-trt-smoke
+  namespace: chill-batch-characterization
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chill-jetson-trt-characterization
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        # TODO(internal): Resolve an eligible DeviceClass member rather than
+        # exposing a node-selection label in the profiling request.
+        edge.dacs.io/device-class: jetson-xavier-nx-8g
+      tolerations:
+        - key: node-role.kubernetes.io/edge
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: artifact
+          image: 155.230.35.213:5000/chill/spike-efficientnet-b4-artifact:onnx-v1
+          command: ["sh", "-ec", "cp /artifact/model.onnx /model/model.onnx"]
+          volumeMounts:
+            - {name: model, mountPath: /model}
+      containers:
+        - name: runtime
+          image: 155.230.35.213:5000/chill/spike-batch-characterization:jetson-trt-v2
+          env:
+            - {name: MODEL_PATH, value: /model/model.onnx}
+            - {name: ARTIFACT_DIGEST, value: "sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30"}
+            - {name: BATCH_SIZE, value: "1"}
+            - {name: INFERENCE_PRECISION, value: fp32}
+            - {name: WARMUP_ITERATIONS, value: "10"}
+            - {name: MEASUREMENT_DURATION_SECONDS, value: "30"}
+            - {name: TRT_ENGINE_CACHE_PATH, value: /engine-cache}
+            - {name: OBSERVER_READY_FILE, value: /coordination/observer-ready}
+            - {name: MEASUREMENT_SIGNAL_FILE, value: /coordination/measurement-start}
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 5Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - {name: model, mountPath: /model, readOnly: true}
+            - {name: coordination, mountPath: /coordination}
+            - {name: engine-cache, mountPath: /engine-cache}
+        - name: power-observer
+          image: 155.230.35.213:5000/chill/spike-power-observer:arm64-v2
+          args:
+            - -node-name=jetsonx
+            - -resolved-endpoint=http://155.230.34.179:9102/metrics
+            - -interval=1s
+            - -duration=30s
+            - -request-timeout=500ms
+            - -ready-file=/coordination/observer-ready
+            - -start-signal-file=/coordination/measurement-start
+            - -start-signal-timeout=10m
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: coordination, mountPath: /coordination}
+      volumes:
+        - {name: model, emptyDir: {}}
+        - {name: coordination, emptyDir: {}}
+        - name: engine-cache
+          # TODO(internal): A reusable, device/runtime-bound engine artifact or
+          # managed cache replaces this Pod-local lifecycle after the spike.
+          emptyDir: {}

@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mobilenet-v2-050-ort-cpu
+  namespace: chill-model-spike
+  labels:
+    app.kubernetes.io/name: chill-model-runtime-spike
+    app.kubernetes.io/component: inference-probe
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chill-model-runtime-spike
+        app.kubernetes.io/component: inference-probe
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        edge.dacs.io/device-class: lattepanda-3-delta-8g
+      tolerations:
+        - key: node-role.kubernetes.io/edge
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: artifact
+          image: 155.230.35.213:5000/chill/spike-mobilenet-v2-050-artifact:cpu-v1
+          imagePullPolicy: Always
+          command: ["sh", "-ec"]
+          args:
+            - |
+              echo '=== CHILL Artifact Delivery ==================================='
+              echo 'source      : /artifact/mobilenet-v2-050.onnx'
+              echo 'destination : /model/model.onnx'
+              echo 'sha256      : 8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2'
+              echo '================================================================'
+              echo '[1/2] Copying model artifact...'
+              cp /artifact/mobilenet-v2-050.onnx /model/model.onnx
+              echo '[2/2] Verifying model digest...'
+              echo '8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2  /model/model.onnx' | sha256sum -c -
+              echo 'Artifact delivery completed.'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: model
+              mountPath: /model
+      containers:
+        - name: runtime
+          image: 155.230.35.213:5000/chill/spike-ort-runtime:cpu-v1
+          imagePullPolicy: Always
+          env:
+            - name: MODEL_NAME
+              value: mobilenet-v2-050
+            - name: MODEL_PATH
+              value: /model/model.onnx
+            - name: ARTIFACT_DIGEST
+              value: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+            - name: RUNTIME_PROVIDER
+              value: CPUExecutionProvider
+            - name: BATCH_SIZE
+              value: "1"
+            - name: WARMUP
+              value: "3"
+            - name: ITERATIONS
+              value: "10"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 512Mi
+          volumeMounts:
+            - name: model
+              mountPath: /model
+              readOnly: true
+      volumes:
+        - name: model
+          emptyDir: {}

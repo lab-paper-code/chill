@@ -1,0 +1,12 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: DeviceClass
+metadata:
+  name: lattepanda-3-delta-8g
+spec:
+  nodeSelector:
+    edge.dacs.io/device-class: lattepanda-3-delta-8g
+  architecture: amd64
+  memory: 8Gi
+  accelerator: none
+  powerModes:
+    - name: fixed

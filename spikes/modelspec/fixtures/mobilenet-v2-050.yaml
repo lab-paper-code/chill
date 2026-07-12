@@ -1,0 +1,48 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: ModelSpec
+metadata:
+  name: mobilenet-v2-050
+spec:
+  artifacts:
+    - name: canonical-onnx
+      format: onnx
+      digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+
+    - name: rk3588-bs1
+      format: rknn
+      digest: sha256:ba3224391d45e19eff09cdfce96040a3614cc8cfde5319f919f40630a99f8c26
+      derivedFrom:
+        artifact: canonical-onnx
+      build:
+        targetPlatform: rk3588
+        batchSize: 1
+        quantized: false
+
+  executionPaths:
+    - name: ort-tensorrt-arm64
+      artifact: canonical-onnx
+      runtime:
+        family: onnxruntime
+        provider: TensorrtExecutionProvider
+      requirements:
+        architectures: [arm64]
+        accelerators:
+          - nvidia-jetson-agx-orin
+          - nvidia-jetson-orin-nano
+          - nvidia-jetson-xavier-nx
+          - nvidia-jetson-nano
+      batching:
+        mode: dynamic
+
+    - name: rknnlite-rk3588-bs1
+      artifact: rk3588-bs1
+      runtime:
+        family: rknnlite
+        provider: RKNPUExecutionProvider
+      requirements:
+        architectures: [arm64]
+        accelerators: [rk3588-npu]
+        targetPlatform: rk3588
+      batching:
+        mode: fixed
+        size: 1

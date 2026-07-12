@@ -1,0 +1,15 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: ModelSpec
+metadata:
+  name: mobilenet-v2-050
+spec:
+  artifacts:
+    - name: canonical-onnx
+      format: onnx
+      digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+  executionPaths:
+    - name: ort-cpu
+      artifact: canonical-onnx
+      runtime:
+        family: onnxruntime
+        backend: CPUExecutionProvider

@@ -37,11 +37,95 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelSpecSpec defines the desired state of ModelSpec
+            description: |-
+              ModelSpecSpec defines the stable model artifacts and their execution-path
+              requirements.
+            properties:
+              artifacts:
+                description: Artifacts contains immutable executable representations
+                  of this logical model.
+                items:
+                  description: ModelArtifact identifies one immutable executable representation.
+                  properties:
+                    digest:
+                      description: Digest identifies the exact artifact bytes. The
+                        first schema accepts SHA-256.
+                      pattern: ^sha256:[0-9a-f]{64}$
+                      type: string
+                    format:
+                      description: Format names the artifact representation, such
+                        as onnx.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: Name is unique within one ModelSpec and is referenced
+                        by execution paths.
+                      minLength: 1
+                      type: string
+                  required:
+                  - digest
+                  - format
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              executionPaths:
+                description: ExecutionPaths binds artifacts to required runtime families
+                  and backends.
+                items:
+                  description: ModelExecutionPath describes one stable artifact/runtime
+                    requirement.
+                  properties:
+                    artifact:
+                      description: |-
+                        Artifact references a ModelArtifact name in this ModelSpec.
+                        Reference resolution is semantic validation, not OpenAPI structure.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: Name is unique within one ModelSpec.
+                      minLength: 1
+                      type: string
+                    runtime:
+                      description: Runtime contains the software path required to
+                        consume the artifact.
+                      properties:
+                        backend:
+                          description: Backend names the required backend within the
+                            runtime-family context.
+                          minLength: 1
+                          type: string
+                        family:
+                          description: Family names the required runtime family, such
+                            as onnxruntime.
+                          minLength: 1
+                          type: string
+                      required:
+                      - backend
+                      - family
+                      type: object
+                  required:
+                  - artifact
+                  - name
+                  - runtime
+                  type: object
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - artifacts
+            - executionPaths
             type: object
           status:
             description: ModelSpecStatus defines the observed state of ModelSpec
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

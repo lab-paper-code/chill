@@ -1,0 +1,174 @@
+apiVersion: batch/v1
+# TODO(internal): This Job is a controller-rendered child of an immutable
+# profiling Run. Images, Node selection, batches, observer target, duration,
+# resources, and evidence identity must come from resolved Kubernetes objects.
+kind: Job
+metadata:
+  name: mobilenet-v2-050-ort-cpu-batch-sweep
+  namespace: chill-batch-characterization
+  labels:
+    app.kubernetes.io/name: chill-batch-characterization
+    app.kubernetes.io/component: fixed-batch-probe
+spec:
+  completionMode: Indexed
+  completions: 5
+  parallelism: 1
+  backoffLimitPerIndex: 0
+  maxFailedIndexes: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chill-batch-characterization
+        app.kubernetes.io/component: fixed-batch-probe
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        # TODO(internal): Select an eligible Node from DeviceClass inventory;
+        # do not pin the testbed class in the reusable controller template.
+        edge.dacs.io/device-class: lattepanda-3-delta-8g
+      tolerations:
+        - key: node-role.kubernetes.io/edge
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: artifact
+          image: 155.230.35.213:5000/chill/spike-mobilenet-v2-050-artifact:cpu-v1
+          imagePullPolicy: Always
+          command: ["sh", "-ec"]
+          args:
+            - |
+              cp /artifact/mobilenet-v2-050.onnx /model/model.onnx
+              echo '8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2  /model/model.onnx' | sha256sum -c -
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: model
+              mountPath: /model
+      containers:
+        - name: runtime
+          image: 155.230.35.213:5000/chill/spike-batch-characterization:cpu-v1
+          imagePullPolicy: Always
+          env:
+            - name: MODEL_NAME
+              value: mobilenet-v2-050
+            - name: MODEL_PATH
+              value: /model/model.onnx
+            - name: ARTIFACT_DIGEST
+              value: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+            - name: RUNTIME_PROVIDER
+              value: CPUExecutionProvider
+            - name: BATCH_SIZES
+              value: "1,2,4,8,16"
+            - name: WARMUP_ITERATIONS
+              value: "20"
+            - name: MEASUREMENT_ITERATIONS
+              value: "100"
+            - name: REPETITIONS
+              value: "1"
+            - name: MEASUREMENT_DURATION_SECONDS
+              value: "30"
+            - name: OBSERVER_READY_FILE
+              value: /coordination/observer-ready
+            - name: MEASUREMENT_SIGNAL_FILE
+              value: /coordination/measurement-start
+            - name: EXECUTION_CONTRACT_FILE
+              value: /evidence/execution-contract.json
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: EXPERIMENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: SWEEP_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 512Mi
+          volumeMounts:
+            - name: model
+              mountPath: /model
+              readOnly: true
+            - name: coordination
+              mountPath: /coordination
+            - name: execution-contract
+              mountPath: /evidence
+              readOnly: true
+        - name: power-observer
+          image: 155.230.35.213:5000/chill/spike-power-observer:v0
+          # TODO(internal): The controller resolves Node -> PowerSource and
+          # passes a versioned observation request; endpoint details stay out
+          # of the user-facing profiling API.
+          imagePullPolicy: Always
+          args:
+            - -node-name=$(NODE_NAME)
+            - -resolved-endpoint=$(POWER_ENDPOINT)
+            - -interval=1s
+            - -duration=30s
+            - -request-timeout=500ms
+            - -ready-file=/coordination/observer-ready
+            - -start-signal-file=/coordination/measurement-start
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POWER_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: power-observer-target
+                  key: endpoint
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: coordination
+              mountPath: /coordination
+      volumes:
+        - name: model
+          emptyDir: {}
+        - name: coordination
+          emptyDir: {}
+        - name: execution-contract
+          configMap:
+            name: batch-execution-contract
+            items:
+              - key: execution-contract.json
+                path: execution-contract.json

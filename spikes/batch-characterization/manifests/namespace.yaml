@@ -1,0 +1,8 @@
+apiVersion: v1
+# TODO(internal): Production Runs live in the configured CHILL workload
+# namespace and are owner-referenced; this isolated namespace is spike-only.
+kind: Namespace
+metadata:
+  name: chill-batch-characterization
+  labels:
+    app.kubernetes.io/part-of: chill-spikes

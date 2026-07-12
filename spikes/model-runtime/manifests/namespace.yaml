@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chill-model-spike
+  labels:
+    app.kubernetes.io/part-of: chill
+    edge.dacs.io/purpose: model-runtime-spike

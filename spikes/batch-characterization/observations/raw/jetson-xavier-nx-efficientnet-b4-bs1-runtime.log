@@ -1,0 +1,18 @@
+2026-07-12 05:01:16.040032610 [W:onnxruntime:Default, tensorrt_execution_provider.h:77 log] [2026-07-12 05:01:16 WARNING] onnx2trt_utils.cpp:375: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
+2026-07-12 05:01:18.320246537 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2173 Compile] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+
+--- CHILL DERIVED EXECUTION CONTRACT -------------------------
+policy                  : OnePodPerNodeExclusiveGPU
+contract source         : SpikeManifestPinnedFromLiveNodeAndArtifactFacts
+device class            : jetson-xavier-nx-8g
+accelerator             : nvidia-jetson-xavier-nx
+Kubernetes resource     : nvidia.com/gpu=1
+power mode              : MODE_15W_6CORE (nvpmodel 2)
+runtime                 : ORT 1.16.0 / TensorRT EP
+JetPack / L4T           : R35.4.1
+selected batch          : 1
+engine cache lifecycle  : Pod-local spike cache
+---------------------------------------------------------------
+2026-07-12T05:01:21.408684Z INFO  [runtime] TensorRT session ready | buildSeconds=13.410
+2026-07-12 05:01:21.425932513 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2608 operator()] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+EXPERIMENT_RESULT_JSON {"artifactDigest":"sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30","bSat":null,"batchSize":1,"energyPerRequest":null,"inferenceCount":680,"latencyMs":{"mean":44.151,"p50":43.876,"p95":46.317,"p99":48.424},"measurementEndedAt":"2026-07-12T05:06:13.789093Z","measurementStartedAt":"2026-07-12T05:05:43.755558Z","model":"efficientnet-b4","nodeName":"jetsonx","provider":"TensorrtExecutionProvider","runtime":"onnxruntime","runtimeContract":{"engineCacheLifecycle":"pod-local-spike","gpuCount":1,"jetpackL4T":"R35.4.1","kubernetesResource":"nvidia.com/gpu","nvpmodelId":2,"powerMode":"MODE_15W_6CORE"},"runtimeVersion":"1.16.0","schemaVersion":"chill.dacs.io/batch-characterization.v1alpha1","sessionBuildSeconds":13.41,"status":"Succeeded","throughputItemsPerSecond":22.65}

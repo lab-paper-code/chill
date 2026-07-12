@@ -31,3 +31,5 @@ docs/postmortems/*.md
 *.swp
 *.swo
 *~
+__pycache__/
+spikes/batch-characterization/results/

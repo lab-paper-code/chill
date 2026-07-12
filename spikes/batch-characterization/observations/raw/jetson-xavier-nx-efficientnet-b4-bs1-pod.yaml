@@ -1,0 +1,220 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2026-07-12T04:59:35Z"
+  generateName: efficientnet-b4-jetson-trt-smoke-
+  labels:
+    app.kubernetes.io/name: chill-jetson-trt-characterization
+    batch.kubernetes.io/controller-uid: e5afdbca-7d95-467b-96a3-6b9d0a2fabf7
+    batch.kubernetes.io/job-name: efficientnet-b4-jetson-trt-smoke
+    controller-uid: e5afdbca-7d95-467b-96a3-6b9d0a2fabf7
+    job-name: efficientnet-b4-jetson-trt-smoke
+  name: efficientnet-b4-jetson-trt-smoke-v6tmc
+  namespace: chill-batch-characterization
+  ownerReferences:
+  - apiVersion: batch/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: Job
+    name: efficientnet-b4-jetson-trt-smoke
+    uid: e5afdbca-7d95-467b-96a3-6b9d0a2fabf7
+  resourceVersion: "250882570"
+  uid: 7f38afc0-51e4-4e9b-bd8f-ab4e6c90598d
+spec:
+  automountServiceAccountToken: false
+  containers:
+  - env:
+    - name: MODEL_PATH
+      value: /model/model.onnx
+    - name: ARTIFACT_DIGEST
+      value: sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30
+    - name: BATCH_SIZE
+      value: "1"
+    - name: WARMUP_ITERATIONS
+      value: "10"
+    - name: MEASUREMENT_DURATION_SECONDS
+      value: "30"
+    - name: TRT_ENGINE_CACHE_PATH
+      value: /engine-cache
+    - name: OBSERVER_READY_FILE
+      value: /coordination/observer-ready
+    - name: MEASUREMENT_SIGNAL_FILE
+      value: /coordination/measurement-start
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: 155.230.35.213:5000/chill/spike-batch-characterization:jetson-trt-v1
+    imagePullPolicy: IfNotPresent
+    name: runtime
+    resources:
+      limits:
+        cpu: "4"
+        memory: 5Gi
+        nvidia.com/gpu: "1"
+      requests:
+        cpu: "2"
+        memory: 2Gi
+        nvidia.com/gpu: "1"
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /model
+      name: model
+      readOnly: true
+    - mountPath: /coordination
+      name: coordination
+    - mountPath: /engine-cache
+      name: engine-cache
+  - args:
+    - -node-name=jetsonx
+    - -resolved-endpoint=http://155.230.34.179:9102/metrics
+    - -interval=1s
+    - -duration=30s
+    - -request-timeout=500ms
+    - -ready-file=/coordination/observer-ready
+    - -start-signal-file=/coordination/measurement-start
+    - -start-signal-timeout=10m
+    image: 155.230.35.213:5000/chill/spike-power-observer:arm64-v2
+    imagePullPolicy: IfNotPresent
+    name: power-observer
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 16Mi
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /coordination
+      name: coordination
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  initContainers:
+  - command:
+    - sh
+    - -ec
+    - cp /artifact/model.onnx /model/model.onnx
+    image: 155.230.35.213:5000/chill/spike-efficientnet-b4-artifact:onnx-v1
+    imagePullPolicy: IfNotPresent
+    name: artifact
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /model
+      name: model
+  nodeName: jetsonx
+  nodeSelector:
+    edge.dacs.io/device-class: jetson-xavier-nx-8g
+  preemptionPolicy: PreemptLowerPriority
+  priority: 0
+  restartPolicy: Never
+  schedulerName: default-scheduler
+  securityContext: {}
+  serviceAccount: default
+  serviceAccountName: default
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/edge
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - emptyDir: {}
+    name: model
+  - emptyDir: {}
+    name: coordination
+  - emptyDir: {}
+    name: engine-cache
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-07-12T05:06:17Z"
+    status: "False"
+    type: PodReadyToStartContainers
+  - lastProbeTime: null
+    lastTransitionTime: "2026-07-12T04:59:40Z"
+    reason: PodCompleted
+    status: "True"
+    type: Initialized
+  - lastProbeTime: null
+    lastTransitionTime: "2026-07-12T05:06:14Z"
+    reason: PodCompleted
+    status: "False"
+    type: Ready
+  - lastProbeTime: null
+    lastTransitionTime: "2026-07-12T05:06:14Z"
+    reason: PodCompleted
+    status: "False"
+    type: ContainersReady
+  - lastProbeTime: null
+    lastTransitionTime: "2026-07-12T04:59:35Z"
+    status: "True"
+    type: PodScheduled
+  containerStatuses:
+  - containerID: containerd://1dd9ee6c69809fddb70249e886b235fd666effaa10e870ee6a48818f6238fe2c
+    image: 155.230.35.213:5000/chill/spike-power-observer:arm64-v2
+    imageID: 155.230.35.213:5000/chill/spike-power-observer@sha256:ee296588d9b1a7aba6168b123c83a39273f5d6b2fc74aa363643b39160327ac7
+    lastState: {}
+    name: power-observer
+    ready: false
+    restartCount: 0
+    started: false
+    state:
+      terminated:
+        containerID: containerd://1dd9ee6c69809fddb70249e886b235fd666effaa10e870ee6a48818f6238fe2c
+        exitCode: 0
+        finishedAt: "2026-07-12T05:06:13Z"
+        reason: Completed
+        startedAt: "2026-07-12T05:01:09Z"
+  - containerID: containerd://7216003a0ed0602ec18fba526c6608d1f14acf22cb1ee06a398b709478fb25c5
+    image: 155.230.35.213:5000/chill/spike-batch-characterization:jetson-trt-v1
+    imageID: 155.230.35.213:5000/chill/spike-batch-characterization@sha256:fa570c363fe8bee9e6d75a3abd5756f21bfcb06f699b5135babd9ca612f3e2f1
+    lastState: {}
+    name: runtime
+    ready: false
+    restartCount: 0
+    started: false
+    state:
+      terminated:
+        containerID: containerd://7216003a0ed0602ec18fba526c6608d1f14acf22cb1ee06a398b709478fb25c5
+        exitCode: 0
+        finishedAt: "2026-07-12T05:06:15Z"
+        reason: Completed
+        startedAt: "2026-07-12T05:01:06Z"
+  hostIP: 155.230.34.179
+  hostIPs:
+  - ip: 155.230.34.179
+  initContainerStatuses:
+  - containerID: containerd://3c3f54fef8c398bffe9690f8c060980c47988400202de58fb85bc5e7e14df24d
+    image: 155.230.35.213:5000/chill/spike-efficientnet-b4-artifact:onnx-v1
+    imageID: 155.230.35.213:5000/chill/spike-efficientnet-b4-artifact@sha256:36fe11b096f3d4e71f0c84963110b45ba7bd2f28a5f8b3a256fc0dd2dae02698
+    lastState: {}
+    name: artifact
+    ready: true
+    restartCount: 0
+    started: false
+    state:
+      terminated:
+        containerID: containerd://3c3f54fef8c398bffe9690f8c060980c47988400202de58fb85bc5e7e14df24d
+        exitCode: 0
+        finishedAt: "2026-07-12T04:59:39Z"
+        reason: Completed
+        startedAt: "2026-07-12T04:59:39Z"
+  phase: Succeeded
+  podIP: 10.88.0.109
+  podIPs:
+  - ip: 10.88.0.109
+  qosClass: Burstable
+  startTime: "2026-07-12T04:59:35Z"

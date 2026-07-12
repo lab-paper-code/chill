@@ -1,0 +1,57 @@
+apiVersion: chill.dacs.io/v1alpha1
+# TODO(internal): This file is an experiment note, not the future public API.
+# Split desired campaign policy, resolved execution contract, immutable Run
+# evidence, and derived DeviceProfile status into their owning objects.
+kind: BatchCharacterizationProtocol
+metadata:
+  name: mobilenet-v2-050-ort-cpu-lattepanda
+spec:
+  state:
+    deviceClass: lattepanda-3-delta-8g
+    model: mobilenet-v2-050
+    artifactDigest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+    runtime: onnxruntime
+    provider: CPUExecutionProvider
+  batchSearch:
+    strategy: exponentialUntilFirstRiseThenDiscreteBinary
+    initialBatch: 1
+    growthFactor: 2
+    maximumBatch: 16
+    riseCondition: strictEnergyIncrease
+    refinement: compareMidAndSuccessor
+    resultBoundary: candidateOnly
+    # TODO(internal): Define repetition, uncertainty, tolerance, invalid-run,
+    # and non-unimodal fallback policy before candidateBSat can be accepted.
+  warmupIterations: 20
+  measurementDurationSeconds: 30
+  repetitions: 1
+  execution:
+    order: ascending
+    parallelism: 1
+    cpuContract:
+      policy: OnePodPerNodeFullCPU
+      budgetSource: KubernetesNodeStatusAllocatable
+      runtimeThreadRule: intraOpEqualsBudgetInterOpOne
+      schedulingRequestStatus: unresolved
+      # TODO(internal): Resolve request/limit/isolation through admission and
+      # record the effective cgroup/cpuset contract observed by the Run.
+  power:
+    source: edge-metrics/shelly_power_total_watts
+    pollingInterval: 1s
+    requestTimeout: 500ms
+    status: integrated-spike
+  rknnContract:
+    targetPlatform: rk3588
+    executionPolicy: OnePodPerNodeSingleNPUCore
+    coreMask: NPU_CORE_0
+    sourceModelLayout: NCHW
+    runtimeInputLayout: NHWC
+    requireOutputValidation: true
+    artifactStates:
+      - shapeMode: static
+        supportedBatches: [2]
+      - shapeMode: enumerated-dynamic
+        supportedBatches: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    schedulingIsolationStatus: unresolved
+    # TODO(internal): Decide NPU sharing/exclusivity and enforce it with an
+    # extended resource or device-plugin allocation.
