@@ -2,8 +2,9 @@
 
 ## Status
 
-Roadmap with Plan 1 implemented. This document itself is not an implementation
-plan and does not authorize later API or internal changes.
+Roadmap with the first three leaf plans implemented. This document itself is
+not an implementation plan and does not authorize later API or internal
+changes.
 
 ## Purpose
 
@@ -72,6 +73,19 @@ Answers only:
 Its first pure read-only plan is approved against the retained real Run
 evidence. Persistence remains deferred until the output contract survives
 adversarial and live-evidence review.
+
+### 4. Minimal Profiler control path — proposed
+
+[minimal-profiler-control-path.md](minimal-profiler-control-path.md)
+
+Answers only:
+
+> Can an operator-managed CHILL Profiler own one exact ProfilingRun from a
+> compatible request through durable evidence and single-Run admission?
+
+This is the first proposed operational consumer of Plans 1-3. It intentionally
+does not orchestrate a batch campaign, derive `b_sat`, publish a
+`DeviceProfile`, or connect to the scheduler.
 
 ## Supporting records
 
