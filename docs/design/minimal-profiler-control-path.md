@@ -196,10 +196,9 @@ or being scientifically admitted. Native replica counts and individual Run
 state are not duplicated into `ChillSystem.status`.
 
 Profiler operating resources are colocated in the CHILL release namespace,
-which is `chill-system` in the current deployment. The first Profiler requires
-the `ChillSystem` management namespace to equal that release namespace. It does
-not move Helm-owned identities or authorization into a namespace selected at
-runtime.
+which is `chill-system` in the current deployment. The Profiler API does not
+introduce an independent namespace setting; its Deployment, configuration,
+runtime identity, Runs, and Jobs share this namespace.
 
 The Profiler watches `ProfilingRun` only in this namespace, and each Run owns
 its Job there. Read-only access to referenced cluster-scoped Nodes,
@@ -327,10 +326,7 @@ structure while preserving every identity required by current validation.
 
 Recommended decision: one enabled Profiler operand per `ChillSystem` and one
 Run in the CHILL release namespace with immutable execution inputs; no campaign
-fields and no mutable desired/current phase model. When an enabled Profiler's
-management namespace differs from the release namespace, the Operator does not
-create its Deployment and reports `ProfilerAvailable=False` with a stable
-`UnsupportedManagementNamespace` reason.
+fields, namespace override, or mutable desired/current phase model.
 
 ### Checkpoint 2: Node-to-power-source resolution
 
@@ -372,8 +368,8 @@ deterministic observable outcomes.
    configuration.
 3. Add `internal/operator/profiler` so the CHILL Operator reconciles only the
    Profiler Deployment, exact ConfigMap rollout input, and availability.
-4. Verify enable, update, disable, restart, ownership, namespace rejection, and
-   component readiness before introducing a Run API.
+4. Verify enable, update, disable, restart, ownership, and component readiness
+   before introducing a Run API.
 5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
    fake adapters; do not add Kubernetes dependencies.
 6. Add the namespaced `ProfilingRun` API and schema tests.
@@ -407,12 +403,8 @@ The first Profiler is complete only when:
   Operator or a human CLI, to own the complete one-Run lifecycle;
 - the Operator and Profiler use separate runtime identities and least-privilege
   RBAC without overlapping reconciliation ownership;
-- the first Profiler operates only when the CHILL management namespace equals
-  the release namespace, currently `chill-system`;
-- a namespace mismatch prevents Deployment creation and is reported through a
-  stable `ProfilerAvailable=False`/`UnsupportedManagementNamespace` condition;
-- the Profiler watches Runs only in that namespace, and each Run owns a Job in
-  the same namespace;
+- the Profiler has no independent namespace setting, watches Runs in the CHILL
+  release namespace, currently `chill-system`, and keeps each owned Job there;
 - Deployment and Job events map through direct owners, ConfigMap events map
   through their exact reference, and unrelated events do not enqueue every
   root resource;
