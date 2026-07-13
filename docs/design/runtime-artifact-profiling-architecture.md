@@ -105,8 +105,13 @@ plans or competing architecture authorities:
   execution-path requirements, not execution results.
 - Kubernetes owns admission, placement, allocation, Job retry, and Pod
   lifecycle.
+- Helm owns installation-time identities, permissions, and base configuration;
+  controllers are not granted authority to create or bind their own RBAC.
 - CHILL owns its desired Run decision, runtime-specific validation, evidence
   admission, and derived scheduler facts.
+- The Profiler controller is a time-bounded, reconstructable control plane.
+  The one-shot profiling Job is the execution plane that runs inference,
+  observes power, and persists raw evidence.
 - `internal/powerobserver` remains a bounded raw-observation library. It does
   not own profiling policy or `b_sat`.
 - SLO classification consumes an admitted profile; it does not decide whether
@@ -115,24 +120,27 @@ plans or competing architecture authorities:
 ## Dependency rule
 
 ```text
-cmd / internal/operator
-        |
-        v
-Kubernetes adapters and composition
-        |
-        v
-plain domain or runtime-specific leaf packages
+operator / Profiler controller entrypoints
+        -> Kubernetes adapters
+        -> application orchestration
+        -> plain domain leaf packages
+
+one-shot measurement worker
+        -> runtime-specific execution adapter
+        -> internal/powerobserver
+        -> durable evidence sink
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or
-controller-runtime. Kubernetes adapters may import pure packages, never the
-reverse.
+controller-runtime. Kubernetes adapters and execution entrypoints may import
+pure packages, never the reverse. Reconciliation derives its next action from
+durable objects and does not perform measurement or retain authoritative Run
+state in process memory.
 
 ## Not authorized by this roadmap
 
 - a shared `ExecutionContract` package
 - a generic runtime plugin, registry, planner, or validator framework
-- a public profiling Run API
 - a compatibility controller or materialized compatibility status
 - Node runtime/driver state in `DeviceClass`
 - profile status or scheduler integration
