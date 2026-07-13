@@ -117,6 +117,21 @@ def cgroup_cpu_limit_cores() -> float | None:
     return None if quota == "max" else int(quota) / int(period)
 
 
+def cpuset_effective() -> str | None:
+    return read_text("/sys/fs/cgroup/cpuset.cpus.effective") or read_text("/sys/fs/cgroup/cpuset.cpus")
+
+
+def validate_outputs(outputs: list[np.ndarray], batch_size: int) -> dict[str, object]:
+    if not outputs:
+        fail("output", "InferenceOutputMissing", batchSize=batch_size)
+    shapes = [list(output.shape) for output in outputs]
+    if any(output.size == 0 for output in outputs):
+        fail("output", "InferenceOutputEmpty", batchSize=batch_size, shapes=shapes)
+    if any(output.ndim < 1 or output.shape[0] != batch_size for output in outputs):
+        fail("output", "InferenceOutputBatchMismatch", batchSize=batch_size, shapes=shapes)
+    return {"method": "nonempty-shape-batch-v1", "passed": True, "outputShapes": shapes}
+
+
 def main() -> None:
     model_path = Path(os.environ["MODEL_PATH"])
     expected_digest = os.environ["ARTIFACT_DIGEST"]
@@ -166,8 +181,9 @@ def main() -> None:
     if actual_digest != expected_digest:
         fail("artifact", "ArtifactDigestMismatch", expected=expected_digest, actual=actual_digest)
 
-    if provider not in ort.get_available_providers():
-        fail("runtime", "RuntimeProviderUnavailable", requested=provider, available=ort.get_available_providers())
+    available_providers = ort.get_available_providers()
+    if provider not in available_providers:
+        fail("runtime", "RuntimeProviderUnavailable", requested=provider, available=available_providers)
     session_options = ort.SessionOptions()
     if intra_op is not None:
         session_options.intra_op_num_threads = int(intra_op)
@@ -187,10 +203,13 @@ def main() -> None:
 
     log("INFO", "warmup", "starting warm-up", iterations=warmup, inputShape=shape)
     try:
-        for _ in range(warmup):
+        validation_outputs = session.run(None, {input_meta.name: sample})
+        output_validation = validate_outputs(validation_outputs, batch_size)
+        for _ in range(max(0, warmup - 1)):
             session.run(None, {input_meta.name: sample})
     except Exception as error:
         fail("warmup", "WarmupFailed", batchSize=batch_size, error=repr(error))
+    warmup_completed_at = now()
 
     repetition_results: list[dict[str, object]] = []
     all_samples: list[float] = []
@@ -207,6 +226,7 @@ def main() -> None:
     cpu_stat_before = cpu_stat()
     process_cpu_before = time.process_time()
     measurement_started = now()
+    measurement_monotonic_started = time.monotonic()
     try:
         for repetition in range(repetitions):
             started_at = now()
@@ -234,6 +254,7 @@ def main() -> None:
                 meanMs=round(float(np.mean(samples)), 3), p99Ms=percentile(samples, 99))
     except Exception as error:
         fail("measure", "InferenceFailed", batchSize=batch_size, error=repr(error))
+    measurement_elapsed_seconds = time.monotonic() - measurement_monotonic_started
     measurement_ended = now()
     process_cpu_seconds = time.process_time() - process_cpu_before
     cpu_stat_after = cpu_stat()
@@ -252,9 +273,13 @@ def main() -> None:
         "runtime": "onnxruntime",
         "runtimeVersion": ort.__version__,
         "provider": actual_provider,
+        "availableProviders": available_providers,
+        "outputValidation": output_validation,
         "cpuContract": {
             "osCPUCount": os.cpu_count(),
             "affinityCPUCount": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+            "affinityCPUs": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+            "cpusetCPUsEffective": cpuset_effective(),
             "cgroupCPUMax": read_text("/sys/fs/cgroup/cpu.max"),
             "ortIntraOpThreads": int(intra_op) if intra_op is not None else "default",
             "ortInterOpThreads": int(inter_op) if inter_op is not None else "default",
@@ -265,6 +290,7 @@ def main() -> None:
         "batchSize": batch_size,
         "inputShape": shape,
         "warmupIterations": warmup,
+        "warmupCompletedAt": warmup_completed_at,
         "measurementIterations": iterations,
         "inferenceCount": len(all_samples),
         "measurementMode": "duration" if duration_seconds > 0 else "iterations",
@@ -272,6 +298,7 @@ def main() -> None:
         "repetitions": repetitions,
         "measurementStartedAt": measurement_started,
         "measurementEndedAt": measurement_ended,
+        "measurementElapsedSecondsMonotonic": round(measurement_elapsed_seconds, 6),
         "latencyMs": {
             "mean": mean_ms,
             "p50": percentile(all_samples, 50),

@@ -48,24 +48,30 @@ Answers only:
 The first read-only CPU ONNX Runtime path is implemented. Its output is a
 static candidate report, not permission to execute profiling.
 
-### 2. Profiling Run and Kubernetes execution — deferred
+### 2. Profiling Run and Kubernetes execution — implemented first path
+
+[runtime-artifact-02-profiling-run-execution.md](runtime-artifact-02-profiling-run-execution.md)
 
 Answers only:
 
 > Did Kubernetes and the selected runtime realize one immutable profiling
 > decision, and what execution evidence was observed?
 
-Its plan may now be reviewed against Plan 1's verified read-only output. Plan 2
-remains deferred until that separate plan is written and approved.
+Its first CPU ONNX Runtime plan is approved and is implemented as isolated
+plain-domain and one-shot Kubernetes boundaries before any public Run API.
 
-### 3. Profile admission and derivation — deferred
+### 3. Profile admission and derivation — implemented first read-only path
+
+[runtime-artifact-03-profile-admission-derivation.md](runtime-artifact-03-profile-admission-derivation.md)
 
 Answers only:
 
 > Are the execution and power observations sufficient to admit a profile, and
 > what energy curve and `b_sat` follow from that evidence?
 
-Its plan will be written only after real Run evidence exists.
+Its first pure read-only plan is approved against the retained real Run
+evidence. Persistence remains deferred until the output contract survives
+adversarial and live-evidence review.
 
 ## Supporting records
 

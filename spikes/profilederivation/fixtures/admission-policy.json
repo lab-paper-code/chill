@@ -1,0 +1,9 @@
+{
+  "version": "lattepanda-shelly-receipt-v1",
+  "minimumSamples": 20,
+  "maximumGapSeconds": 1.5,
+  "maximumBoundaryDistanceSeconds": 1.0,
+  "minimumCoverage": 0.95,
+  "allowReceiptTimestamps": true,
+  "rejectUnexpectedCoResidents": true
+}

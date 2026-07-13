@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha1",
+  "candidate": {
+    "reportDigest": "sha256:9bab562c5fb0679968785ef322da2152de1ddc4b5bdd0497819bca2a49bd6e55",
+    "modelSpecContentDigest": "sha256:41604f097a8cfb1672aaf5c4766ce210011f1c89e986ae4cd34d857d6141e6d4",
+    "deviceClassContentDigest": "sha256:abb7086b2a2d80a4248cc1c24ce51d42b77134ca46d03fc28170f567665f8b35",
+    "runtimeDeclarationDigest": "sha256:3d6852155ce4665c6ef6d3513c1ed75bfb17cfe958526beef079b355b21a6148",
+    "executionPath": "ort-cpu",
+    "verdict": "Compatible"
+  },
+  "state": {
+    "deviceClass": "lattepanda-3-delta-8g",
+    "model": "mobilenet-v2-050",
+    "artifact": "canonical-onnx",
+    "artifactDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
+    "runtimeFamily": "onnxruntime",
+    "backend": "CPUExecutionProvider",
+    "powerMode": "fixed"
+  },
+  "images": {
+    "runtime": "155.230.35.213:5000/chill/spike-batch-characterization@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b",
+    "artifact": "155.230.35.213:5000/chill/spike-mobilenet-v2-050-artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa",
+    "powerObserver": "155.230.35.213:5000/chill/spike-power-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
+  },
+  "targetNode": {
+    "name": "lattepanda",
+    "uid": "3e043570-7003-4aaa-aa53-422a498a17c4",
+    "resourceVersion": "251126173",
+    "architecture": "amd64",
+    "allocatableCPU": "4"
+  },
+  "cpu": {
+    "policy": "AllocatableCPUQuota",
+    "policyVersion": "v1",
+    "request": "100m",
+    "limit": "4",
+    "ortIntraOpThreads": 4,
+    "ortInterOpThreads": 1,
+    "exclusivityClaimed": false
+  },
+  "measurement": {
+    "batch": 1,
+    "warmupIterations": 20,
+    "durationSeconds": 30,
+    "repetitions": 1,
+    "workloadMode": "saturated-serial-fixed-batch",
+    "inputGenerator": "numpy-default-rng-seed-0-fp32-v1",
+    "outputValidation": "nonempty-shape-batch-v1"
+  },
+  "power": {
+    "sourceKind": "EdgeMetricsShelly",
+    "nodeName": "lattepanda",
+    "endpoint": "http://155.230.34.144:9102/metrics",
+    "metric": "shelly_power_total_watts",
+    "intervalMilliseconds": 1000,
+    "timeoutMilliseconds": 500,
+    "durationSeconds": 31
+  }
+}
