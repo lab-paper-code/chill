@@ -78,25 +78,36 @@ must remain explicit instead of introducing an unproven generic plugin system.
 
 - enabling, updating, and removing the Profiler component from `ChillSystem`
   desired state;
-- reconciling only the Profiler Deployment and its owner relationship;
+- reconciling the Profiler Deployment and its `ChillSystem` owner relationship
+  in the CHILL release namespace;
+- observing only the referenced Profiler ConfigMap identity and content version
+  needed to roll the Deployment when startup configuration changes;
 - observing Profiler workload availability; and
 - reporting component availability as part of `ChillSystem` readiness.
 
 The Operator does not watch `ProfilingRun`, create measurement Jobs, inspect
 runtime evidence, grant Profiler permissions, or make profile-admission
-decisions.
+decisions. Profiler cleanup is not added to the root `ChillSystem` finalizer;
+native owner relationships and the Profiler controllers retain that lifecycle.
 
 ### Helm release owns
 
-- the Profiler ServiceAccount;
-- the least-privilege Role and RoleBinding used by the Profiler;
+- the Profiler ServiceAccount in the CHILL release namespace;
+- a namespace-scoped Role and RoleBinding for `ProfilingRun`, Job, Pod,
+  configuration, and any selected namespaced evidence-object access;
+- a read-only ClusterRole and ClusterRoleBinding for the exact cluster-scoped
+  Node and CHILL catalog facts required to prepare a Run;
 - the default Profiler configuration referenced by `ChillSystem`; and
 - the install, upgrade, and removal lifecycle of those authorization and
   configuration objects.
 
 The Operator is not granted RBAC `bind` or `escalate` privileges. Managing the
 Profiler Deployment makes the Profiler an operator-managed operand without
-making runtime authorization part of controller reconciliation.
+making runtime authorization part of controller reconciliation. Cluster-scoped
+permissions start with `get` and expand to `list` or `watch` only when a
+concrete controller watch requires them. Exact `get`-only reads use the
+manager's uncached API reader so they do not implicitly require informer
+`list` and `watch` permissions.
 
 ### Profiler application layer owns
 
@@ -111,10 +122,12 @@ making runtime authorization part of controller reconciliation.
 
 ### Profiler controller owns
 
-- watching `ProfilingRun` resources;
+- watching `ProfilingRun` resources in the CHILL release namespace;
 - materializing the exact native Job and support objects;
 - expressing placement, resources, security, and ownership with native APIs;
-- observing Job and Pod lifecycle without replacing Kubernetes status; and
+- observing directly owned Job lifecycle without replacing Kubernetes status;
+- resolving the actual Pod identity through the Job ownership chain when
+  evidence validation requires it;
 - reading the durable evidence reference and object identities produced by the
   measurement worker;
 - applying compact status to the reconciled `ProfilingRun`; and
@@ -182,11 +195,16 @@ controller workload can accept work; it says nothing about any Run succeeding
 or being scientifically admitted. Native replica counts and individual Run
 state are not duplicated into `ChillSystem.status`.
 
-Profiler operating resources are colocated in the CHILL management namespace,
-which is `chill-system` in the current deployment. The Profiler watches only
-this namespace, and each namespaced `ProfilingRun` owns its Job there. This
-keeps ownership and permissions namespace-scoped. A Run is a request for one
-measurement, not a campaign or profile.
+Profiler operating resources are colocated in the CHILL release namespace,
+which is `chill-system` in the current deployment. The first Profiler requires
+the `ChillSystem` management namespace to equal that release namespace. It does
+not move Helm-owned identities or authorization into a namespace selected at
+runtime.
+
+The Profiler watches `ProfilingRun` only in this namespace, and each Run owns
+its Job there. Read-only access to referenced cluster-scoped Nodes,
+DeviceClasses, ModelSpecs, and the owning ChillSystem does not broaden the Run
+watch scope. A Run is a request for one measurement, not a campaign or profile.
 
 Its desired state should contain references and policy inputs sufficient to
 derive one immutable intent:
@@ -268,7 +286,9 @@ api/v1alpha1/
   -> ProfilingRun desired state and status
 
 charts/chill/
-  -> Profiler ServiceAccount, Role, RoleBinding, and base ConfigMap
+  -> Profiler ServiceAccount and base ConfigMap
+  -> namespaced Role / RoleBinding
+  -> read-only ClusterRole / ClusterRoleBinding
 ```
 
 `internal/operator/profiler` manages only the Profiler operand. It does not
@@ -286,6 +306,13 @@ The Operator and Profiler are separate binaries and runtime identities while
 remaining in the same repository and release. The Profiler never imports the
 Operator, and neither process reconciles resources owned by the other.
 
+Controller event mapping follows direct ownership and exact references. The
+Operator maps an owned Profiler Deployment and the referenced ConfigMap only to
+their `ChillSystem`; the Profiler maps an owned Job only to its `ProfilingRun`.
+Neither controller lists and enqueues every root resource for an unrelated
+event. A Pod remains owned by its Job, so Pod identity is discovered through
+the Job UID rather than by introducing a second controller owner.
+
 The existing spike remains a characterization harness and regression oracle
 until live equivalence is demonstrated. It is not imported by production code.
 
@@ -299,8 +326,11 @@ intent. The APIs must avoid embedding Deployment details or spike fixture
 structure while preserving every identity required by current validation.
 
 Recommended decision: one enabled Profiler operand per `ChillSystem` and one
-Run in the CHILL management namespace with immutable execution inputs; no
-campaign fields and no mutable desired/current phase model.
+Run in the CHILL release namespace with immutable execution inputs; no campaign
+fields and no mutable desired/current phase model. When an enabled Profiler's
+management namespace differs from the release namespace, the Operator does not
+create its Deployment and reports `ProfilerAvailable=False` with a stable
+`UnsupportedManagementNamespace` reason.
 
 ### Checkpoint 2: Node-to-power-source resolution
 
@@ -337,27 +367,31 @@ deterministic observable outcomes.
 ## Implementation sequence
 
 1. Close the five checkpoints and record the reviewed API/state contracts.
-2. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
+2. Add the minimum `ChillSystem` Profiler configuration and component
+   conditions, plus Helm-owned Profiler identity, split RBAC, and base
+   configuration.
+3. Add `internal/operator/profiler` so the CHILL Operator reconciles only the
+   Profiler Deployment, exact ConfigMap rollout input, and availability.
+4. Verify enable, update, disable, restart, ownership, namespace rejection, and
+   component readiness before introducing a Run API.
+5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
    fake adapters; do not add Kubernetes dependencies.
-3. Add the `ChillSystem` Profiler configuration, `ProfilingRun` API, and schema
-   tests.
-4. Add `cmd/profiler` and its `ProfilingRun` controller with a dedicated
-   Helm-installed ServiceAccount and namespace-scoped least-privilege RBAC.
-5. Add the one-shot measurement worker boundary, then promote only the proven
+6. Add the namespaced `ProfilingRun` API and schema tests.
+7. Add `cmd/profiler` and its `ProfilingRun` controller using the dedicated
+   Helm-installed runtime identity and direct owner-based event mapping.
+8. Add the one-shot measurement worker boundary, then promote only the proven
    CPU ORT execution and PowerObserver behavior from the spike into it.
-6. Add the edge-metrics Node resolver and selected durable evidence sink.
-7. Add `internal/operator/profiler` so the CHILL Operator reconciles the
-   Profiler Deployment and availability only.
-8. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
-   permissions and upgrade behavior.
-9. Verify failure, cancellation, identity drift, duplicate events, and both
-   controller restarts with envtest and unit tests.
-10. Run one live Lattepanda measurement and compare the new evidence and
-   admission output with the spike path.
-11. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
+9. Add the edge-metrics Node resolver and selected durable evidence sink.
+10. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
+    permissions, configuration rollout, and upgrade behavior.
+11. Verify failure, cancellation, identity drift, duplicate events, and both
+    controller restarts with envtest and unit tests.
+12. Run one live Lattepanda measurement and compare the new evidence and
+    admission output with the spike path.
+13. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
     through `kubectl get/describe profilingrun`, its owned Job, and the evidence
     digest.
-12. Remove no spike path until equivalent evidence and fail-closed behavior are
+14. Remove no spike path until equivalent evidence and fail-closed behavior are
     confirmed.
 
 ## Acceptance gates
@@ -367,13 +401,23 @@ The first Profiler is complete only when:
 - enabling the Profiler in `ChillSystem` causes the CHILL Operator to maintain
   an available Profiler Deployment and only that component lifecycle;
 - the Helm release, not the Operator, owns the Profiler ServiceAccount,
-  Role, RoleBinding, and default configuration;
+  namespace-scoped Role and RoleBinding, read-only ClusterRole and
+  ClusterRoleBinding, and default configuration;
 - creating one `ProfilingRun` causes the Profiler controller, not the CHILL
   Operator or a human CLI, to own the complete one-Run lifecycle;
 - the Operator and Profiler use separate runtime identities and least-privilege
   RBAC without overlapping reconciliation ownership;
-- the first Profiler watches only the CHILL management namespace, currently
-  `chill-system`, and each Run owns a Job in that same namespace;
+- the first Profiler operates only when the CHILL management namespace equals
+  the release namespace, currently `chill-system`;
+- a namespace mismatch prevents Deployment creation and is reported through a
+  stable `ProfilerAvailable=False`/`UnsupportedManagementNamespace` condition;
+- the Profiler watches Runs only in that namespace, and each Run owns a Job in
+  the same namespace;
+- Deployment and Job events map through direct owners, ConfigMap events map
+  through their exact reference, and unrelated events do not enqueue every
+  root resource;
+- the root `ChillSystem` finalizer does not acquire Profiler Run, Job, or
+  evidence cleanup responsibilities;
 - `ChillSystem` reports component availability conditions and derives `Ready`
   only from enabled components without duplicating native workload status;
 - each controller remains idempotent across duplicate events and its own
