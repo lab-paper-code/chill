@@ -2,8 +2,9 @@
 
 ## Status
 
-Roadmap with the first three leaf plans implemented. This document itself is
-not an implementation plan and does not authorize later API or internal
+Roadmap with the first three leaf plans and the operator-managed Profiler
+operand foundation implemented. The `ProfilingRun` control path is not yet
+implemented. This document itself does not authorize later API or internal
 changes.
 
 ## Purpose
@@ -74,7 +75,7 @@ Its first pure read-only plan is approved against the retained real Run
 evidence. Persistence remains deferred until the output contract survives
 adversarial and live-evidence review.
 
-### 4. Minimal Profiler control path — proposed
+### 4. Minimal Profiler control path — operand foundation implemented
 
 [minimal-profiler-control-path.md](minimal-profiler-control-path.md)
 
@@ -83,9 +84,11 @@ Answers only:
 > Can an operator-managed CHILL Profiler own one exact ProfilingRun from a
 > compatible request through durable evidence and single-Run admission?
 
-This is the first proposed operational consumer of Plans 1-3. It intentionally
-does not orchestrate a batch campaign, derive `b_sat`, publish a
-`DeviceProfile`, or connect to the scheduler.
+The Operator now manages a separately deployed Profiler operand and reports its
+component availability. The operand does not yet reconcile `ProfilingRun` or
+execute measurement work. The completed and remaining scope intentionally does
+not orchestrate a batch campaign, derive `b_sat`, publish a `DeviceProfile`, or
+connect to the scheduler.
 
 ## Supporting records
 

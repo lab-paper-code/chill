@@ -5,8 +5,10 @@
 Approved implementation plan. The operator-managed Profiler operand foundation
 is implemented: `ChillSystem` configuration and conditions, the standalone
 Profiler process, Operator-owned Deployment lifecycle, and Helm-owned runtime
-identity and configuration. `ProfilingRun` reconciliation and measurement
-execution remain unimplemented and are gated below.
+identity and configuration. The foundation has passed API, envtest, Helm,
+multi-architecture image, and live-cluster lifecycle verification.
+`ProfilingRun` reconciliation and measurement execution remain unimplemented
+and are gated below.
 
 ## Purpose
 
@@ -370,8 +372,8 @@ deterministic observable outcomes.
 2. Add `internal/operator/profiler` so the CHILL Operator reconciles only the
    Profiler Deployment and availability. Implemented.
 3. Verify enable, update, disable, ownership, component readiness, API schema,
-   image construction, and Helm rendering. Implemented locally; live rollout
-   remains.
+   image construction, and Helm rendering. Implemented and verified locally and
+   on the live cluster.
 4. Close the five Run-path checkpoints and record the reviewed API/state
    contracts.
 5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
