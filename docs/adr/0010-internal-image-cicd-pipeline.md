@@ -6,8 +6,8 @@ Accepted
 
 ## Context
 
-CHILL already has a public image workflow that builds `chill-operator` and
-`chill-node-discovery` images for Docker Hub. That path should remain the
+CHILL has component image workflows for `chill-operator`,
+`chill-node-discovery`, and `chill-profiler`. The public path remains the
 external release and distribution path.
 
 For day-to-day development, however, Docker Hub is not the fastest feedback
@@ -21,9 +21,11 @@ The repository already has the main integration points needed for a parallel
 internal path:
 
 - `Makefile` image variables: `IMAGE_NAMESPACE`, `OPERATOR_IMG`,
-  `NODE_DISCOVERY_IMG`, `IMAGE_TAG`.
-- Docker build targets for the operator and node-discovery components.
-- Helm values for `operator.image.*` and `nodeDiscovery.image.*`.
+  `NODE_DISCOVERY_IMG`, `PROFILER_IMG`, `IMAGE_TAG`.
+- Docker build targets for the operator, node-discovery, and Profiler
+  components.
+- Helm values for `operator.image.*`, `nodeDiscovery.image.*`, and
+  `profiler.image.*`.
 - A safe install-only Helm smoke path that can install the chart without
   starting CHILL runtime pods.
 
@@ -63,6 +65,7 @@ Use a private registry namespace for development images, for example:
 ```text
 registry.internal/chill/chill-operator
 registry.internal/chill/chill-node-discovery
+registry.internal/chill/chill-profiler
 ```
 
 For the current Kubernetes testbed, use the existing internal registry:
@@ -70,6 +73,7 @@ For the current Kubernetes testbed, use the existing internal registry:
 ```text
 155.230.35.213:5000/chill/chill-operator
 155.230.35.213:5000/chill/chill-node-discovery
+155.230.35.213:5000/chill/chill-profiler
 ```
 
 The long-term registry implementation can still change while this ADR is
@@ -194,10 +198,12 @@ The reset deploy should reuse the existing Helm lifecycle targets:
 ```sh
 OPERATOR_IMG=registry.internal/chill/chill-operator:sha-<git-sha> \
 NODE_DISCOVERY_IMG=registry.internal/chill/chill-node-discovery:sha-<git-sha> \
+PROFILER_IMG=registry.internal/chill/chill-profiler:sha-<git-sha> \
 make helm-uninstall
 
 OPERATOR_IMG=registry.internal/chill/chill-operator:sha-<git-sha> \
 NODE_DISCOVERY_IMG=registry.internal/chill/chill-node-discovery:sha-<git-sha> \
+PROFILER_IMG=registry.internal/chill/chill-profiler:sha-<git-sha> \
 make helm-install
 ```
 

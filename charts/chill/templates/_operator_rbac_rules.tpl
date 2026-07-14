@@ -20,6 +20,7 @@
   - apps
   resources:
   - daemonsets
+  - deployments
   verbs:
   - create
   - delete

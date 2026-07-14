@@ -1,10 +1,17 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 const (
 	// ChillSystemConditionReady reports whether the CHILL installation is usable.
 	ChillSystemConditionReady = "Ready"
+	// ChillSystemConditionNodeDiscoveryAvailable reports node-discovery workload availability.
+	ChillSystemConditionNodeDiscoveryAvailable = "NodeDiscoveryAvailable"
+	// ChillSystemConditionProfilerAvailable reports Profiler controller workload availability.
+	ChillSystemConditionProfilerAvailable = "ProfilerAvailable"
 )
 
 const (
@@ -28,6 +35,21 @@ type ChillSystemSpec struct {
 	// DeviceDiscovery configures node-based DeviceClass discovery.
 	// +optional
 	DeviceDiscovery ChillDeviceDiscoverySpec `json:"deviceDiscovery,omitempty"`
+
+	// Profiler configures the operator-managed Profiler controller.
+	// +optional
+	Profiler ChillProfilerSpec `json:"profiler,omitempty"`
+}
+
+// ChillProfilerSpec configures the Profiler controller owned by a ChillSystem.
+type ChillProfilerSpec struct {
+	// Enabled controls whether the operator should run the Profiler controller.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ConfigRef references the Profiler workload configuration in the CHILL release namespace.
+	// +optional
+	ConfigRef corev1.LocalObjectReference `json:"configRef,omitempty"`
 }
 
 // ChillNodeDiscoverySpec configures the node-discovery DaemonSet owned by a ChillSystem.

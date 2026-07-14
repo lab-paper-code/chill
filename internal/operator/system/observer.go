@@ -17,6 +17,9 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		Namespace:                  r.managementNamespace(system),
 		NodeDiscoveryEnabled:       system.Spec.NodeDiscovery.Enabled,
 		NodeDiscoveryDaemonSetName: nodeDiscoveryDaemonSetName(system),
+		ProfilerEnabled:            system.Spec.Profiler.Enabled,
+		ProfilerNamespace:          r.namespace(),
+		ProfilerDeploymentName:     r.profilerDeploymentName(system),
 	}
 
 	if observed.NodeDiscoveryEnabled {
@@ -27,6 +30,18 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 			}
 		} else {
 			observed.NodeDiscoveryDaemonSet = daemonSet
+		}
+	}
+
+	if observed.ProfilerEnabled {
+		deployment := &appsv1.Deployment{}
+		key := types.NamespacedName{Namespace: observed.ProfilerNamespace, Name: observed.ProfilerDeploymentName}
+		if err := r.Get(ctx, key, deployment); err != nil {
+			if !apierrors.IsNotFound(err) {
+				observed.ProfilerError = fmt.Errorf("observe Profiler Deployment: %w", err)
+			}
+		} else {
+			observed.ProfilerDeployment = deployment
 		}
 	}
 

@@ -16,6 +16,7 @@ values_file="${HELM_VALUES:-}"
 extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
+profiler_image="${PROFILER_IMG:-}"
 system_name="${CHILL_SYSTEM_NAME:-}"
 skip_preflight="${HELM_SKIP_PREFLIGHT:-false}"
 
@@ -38,6 +39,7 @@ Environment:
   CHILL_SYSTEM_NAME      Optional ChillSystem name for cleanup. Default: discover by release labels, then HELM_RELEASE.
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
+  PROFILER_IMG           Optional Profiler image repository:tag.
   HELM_SKIP_PREFLIGHT    Skip helm lint/template/kubeconform and CRD ownership check during install. Default: false.
 EOF
 }
@@ -80,6 +82,7 @@ render_validate() {
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
+	append_image_values args profiler "${profiler_image}"
 
 	"${helm_bin}" lint "${chart}" "${values_args[@]}" "${args[@]}" "${extra_args[@]}"
 	"${helm_bin}" template "${release}" "${chart}" \
@@ -117,6 +120,7 @@ install_release() {
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
+	append_image_values args profiler "${profiler_image}"
 	echo "==> install"
 	"${helm_bin}" upgrade --install "${release}" "${chart}" \
 		--namespace "${release_namespace}" \

@@ -10,6 +10,7 @@ image_tag="${IMAGE_TAG:-}"
 auto_dirty_tag="false"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
+profiler_image="${PROFILER_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
 pull_policy="${CHILL_FAST_PULL_POLICY:-Always}"
@@ -48,7 +49,7 @@ Options:
   --image-namespace NAME       Registry repository prefix. Default: ${image_namespace}
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
-  --components NAME            all, operator, or node-discovery. Default: ${components}
+  --components NAME            all, operator, node-discovery, or profiler. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -64,6 +65,7 @@ Options:
 Environment:
   OPERATOR_IMG                 Full operator image ref. Overrides registry/tag defaults.
   NODE_DISCOVERY_IMG           Full node-discovery image ref. Overrides registry/tag defaults.
+  PROFILER_IMG                 Full Profiler image ref. Overrides registry/tag defaults.
   IMAGE_TAG                    Image tag when --tag is not provided.
   CONTAINER_TOOL               docker-compatible build tool. Default: docker
   BUILDX_BUILDER               Optional buildx builder for multi-platform builds.
@@ -213,7 +215,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery) ;;
+all|operator|node-discovery|profiler) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -249,6 +251,7 @@ fi
 
 operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator"
 node_discovery_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-discovery"
+profiler_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=profiler"
 
 component_selected() {
 	local component="$1"
@@ -267,6 +270,11 @@ deployed_image() {
 	node-discovery)
 		image="$("${kubectl_bin}" -n "${release_namespace}" get daemonset \
 			-l "${node_discovery_selector}" \
+			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+		;;
+	profiler)
+		image="$("${kubectl_bin}" -n "${release_namespace}" get deployment \
+			-l "${profiler_selector}" \
 			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 		;;
 	esac
@@ -296,15 +304,21 @@ if [[ -z "${node_discovery_image}" ]]; then
 		node_discovery_image="$(deployed_image node-discovery)"
 	fi
 fi
+if [[ -z "${profiler_image}" ]] && component_selected profiler; then
+	profiler_image="${registry}/${image_namespace}/chill-profiler:${image_tag}"
+fi
 push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
 split_image_ref "${node_discovery_image}" "node-discovery"
+if [[ -n "${profiler_image}" ]]; then
+	split_image_ref "${profiler_image}" "profiler"
+fi
 
 if [[ -n "${extra_helm_set}" ]]; then
-	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy}"
+	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy}"
 else
-	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy}"
+	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy}"
 fi
 
 if [[ "${push_mode}" == "ctr-plain-http" ]] ||
@@ -332,6 +346,7 @@ echo "namespace: ${release_namespace}"
 echo "chart: ${chart}"
 echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
+echo "profiler image: ${profiler_image:-chart default}"
 echo "platforms: ${platforms}"
 echo "components: ${components}"
 if [[ -n "${buildx_builder}" ]]; then
@@ -472,6 +487,11 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("node-discovery")
 	fi
+	if component_selected profiler; then
+		"${function_name}" "build/docker/profiler.Dockerfile" "${profiler_image}" &
+		pids+=("$!")
+		names+=("profiler")
+	fi
 
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}"; then
@@ -498,6 +518,12 @@ run_ctr_plain_http_components() {
 			"build/docker/node-discovery.Dockerfile" "${node_discovery_image}" &
 		pids+=("$!")
 		names+=("node-discovery")
+	fi
+	if component_selected profiler; then
+		ctr_plain_http_build_push_one profiler \
+			"build/docker/profiler.Dockerfile" "${profiler_image}" &
+		pids+=("$!")
+		names+=("profiler")
 	fi
 
 	for i in "${!pids[@]}"; do
@@ -581,6 +607,7 @@ if ! is_true "${skip_deploy}"; then
 		"HELM_SET=${helm_set}"
 		"OPERATOR_IMG=${operator_image}"
 		"NODE_DISCOVERY_IMG=${node_discovery_image}"
+		"PROFILER_IMG=${profiler_image}"
 	)
 
 	echo "==> uninstall"
@@ -594,12 +621,17 @@ if ! is_true "${skip_deploy}"; then
 	wait_for_daemonset_object
 	run "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset \
 		-l "${node_discovery_selector}" "--timeout=${timeout}"
+	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${profiler_selector}" -o name 2>/dev/null | grep -q .; then
+		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
+			-l "${profiler_selector}" "--timeout=${timeout}"
+	fi
 fi
 
 echo "==> observation"
 echo "commit: $(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
 echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
+echo "profiler image: ${profiler_image:-chart default}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"
 try "${kubectl_bin}" get chillsystems.edge.dacs.io -A -o wide
 try "${kubectl_bin}" -n "${release_namespace}" get deployments,daemonsets,pods -o wide
@@ -607,10 +639,12 @@ try "${kubectl_bin}" -n "${release_namespace}" get pods \
 	-o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,IMAGE:.spec.containers[*].image,IMAGE_ID:.status.containerStatuses[*].imageID'
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${operator_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_discovery_selector}" "--timeout=${timeout}"
+try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${profiler_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" get events \
 	--field-selector type=Warning --sort-by=.lastTimestamp
 if [[ "${observe_mode}" == "full" ]]; then
 	try "${kubectl_bin}" -n "${release_namespace}" get events --sort-by=.lastTimestamp
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${operator_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_discovery_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${profiler_selector}" --all-containers=true --tail=120 --prefix
 fi

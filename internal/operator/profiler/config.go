@@ -1,0 +1,61 @@
+package profiler
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+// Config is the rendered Profiler Deployment contract read by the operator.
+type Config struct {
+	Replicas           int32                       `json:"replicas"`
+	Image              string                      `json:"image"`
+	ImagePullPolicy    corev1.PullPolicy           `json:"imagePullPolicy"`
+	ServiceAccountName string                      `json:"serviceAccountName"`
+	MetricsBindAddress string                      `json:"metricsBindAddress"`
+	HealthProbePort    int32                       `json:"healthProbePort"`
+	LeaderElection     bool                        `json:"leaderElection"`
+	LeaderElectionID   string                      `json:"leaderElectionID"`
+	NodeSelector       map[string]string           `json:"nodeSelector,omitempty"`
+	Affinity           *corev1.Affinity            `json:"affinity,omitempty"`
+	Tolerations        []corev1.Toleration         `json:"tolerations,omitempty"`
+	Resources          corev1.ResourceRequirements `json:"resources,omitempty"`
+	PodSecurityContext *corev1.PodSecurityContext  `json:"podSecurityContext,omitempty"`
+	SecurityContext    *corev1.SecurityContext     `json:"securityContext,omitempty"`
+}
+
+func (c Config) Validate() error {
+	var problems []string
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "image", value: c.Image},
+		{name: "imagePullPolicy", value: string(c.ImagePullPolicy)},
+		{name: "serviceAccountName", value: c.ServiceAccountName},
+		{name: "metricsBindAddress", value: c.MetricsBindAddress},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			problems = append(problems, field.name+" is required")
+		}
+	}
+	if c.Replicas < 1 {
+		problems = append(problems, "replicas must be positive")
+	}
+	if c.HealthProbePort < 1 || c.HealthProbePort > 65535 {
+		problems = append(problems, "healthProbePort must be between 1 and 65535")
+	}
+	if c.LeaderElection && strings.TrimSpace(c.LeaderElectionID) == "" {
+		problems = append(problems, "leaderElectionID is required when leaderElection is enabled")
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func healthProbeAddress(port int32) string {
+	return fmt.Sprintf(":%d", port)
+}

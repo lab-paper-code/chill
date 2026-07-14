@@ -31,6 +31,7 @@ type ChillSystemReconciler struct {
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 
 // Reconcile updates ChillSystem finalization and status.
 func (r *ChillSystemReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

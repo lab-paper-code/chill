@@ -40,6 +40,40 @@ operator:
     create: true
     name: ""
 
+profiler:
+  enabled: false
+  replicaCount: 1
+  configMapKey: config.yaml
+  image:
+    repository: daclab/chill-profiler
+    tag: ""
+    pullPolicy: IfNotPresent
+  metricsBindAddress: "0"
+  healthProbePort: 8081
+  leaderElection: true
+  leaderElectionID: profiler.edge.dacs.io
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+
 uninstallCleanup:
   enabled: true
   timeout: 120s

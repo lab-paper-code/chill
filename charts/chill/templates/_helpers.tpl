@@ -54,6 +54,30 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.operator.image.tag -}}
 {{- end -}}
 
+{{- define "chill.profilerName" -}}
+{{- printf "%s-profiler" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.profilerConfigName" -}}
+{{- printf "%s-profiler-config" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.profilerServiceAccountName" -}}
+{{- if .Values.profiler.serviceAccount.create -}}
+{{- default (include "chill.profilerName" .) .Values.profiler.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.profiler.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.profilerImage" -}}
+{{- printf "%s:%s" .Values.profiler.image.repository (include "chill.profilerImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.profilerImageTag" -}}
+{{- default .Chart.AppVersion .Values.profiler.image.tag -}}
+{{- end -}}
+
 {{- define "chill.uninstallCleanupName" -}}
 {{- printf "%s-uninstall-cleanup" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

@@ -7,7 +7,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/operator/watch"
 )
 
 // SetupWithManager sets up event-driven and periodic status refreshes.
@@ -16,10 +15,10 @@ func (r *ChillSystemReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("validate ChillSystem options: %w", err)
 	}
 
-	mapToSystem := watch.EnqueueChillSystems(r.Client, nil)
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("chillsystem").
 		For(&edgev1alpha1.ChillSystem{}).
-		Watches(&appsv1.DaemonSet{}, mapToSystem).
+		Owns(&appsv1.DaemonSet{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

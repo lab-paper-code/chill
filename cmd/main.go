@@ -23,6 +23,7 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/operator/discovery"
 	"github.com/lab-paper-code/chill/internal/operator/nodediscovery"
+	operatorprofiler "github.com/lab-paper-code/chill/internal/operator/profiler"
 	"github.com/lab-paper-code/chill/internal/operator/system"
 	// +kubebuilder:scaffold:imports
 )
@@ -153,6 +154,17 @@ func main() {
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "NodeDiscovery")
+		os.Exit(1)
+	}
+	if err = (&operatorprofiler.Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Options: operatorprofiler.Options{
+			SystemName: systemName,
+			Namespace:  systemOptions.Namespace,
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register reconciler", "resource", "ProfilerOperand")
 		os.Exit(1)
 	}
 	if err = (&discovery.DeviceDiscoveryReconciler{

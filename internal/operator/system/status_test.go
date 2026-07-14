@@ -14,128 +14,115 @@ import (
 )
 
 var testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
+var testProfilerDeploymentName = component.ProfilerDeploymentName(component.DefaultSystemName)
 
-func TestBuildStatusReadyWithDiscoveryDisabled(t *testing.T) {
-	status := buildStatus(Observation{
-		ObservedGeneration:   7,
-		NodeDiscoveryEnabled: false,
-	}, nil, metav1.Now())
-
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionTrue || ready.Reason != reasonNodeDiscoveryDisabled {
-		t.Fatalf("Ready condition = %#v, want True/%s", ready, reasonNodeDiscoveryDisabled)
+func TestBuildStatusReadyWithAllComponentsDisabled(t *testing.T) {
+	status := buildStatus(Observation{ObservedGeneration: 7}, nil, metav1.Now())
+	ready := requireCondition(t, status, edgev1alpha1.ChillSystemConditionReady)
+	if ready.Status != metav1.ConditionTrue || ready.Reason != reasonComponentsDisabled {
+		t.Fatalf("Ready condition = %#v, want True/%s", ready, reasonComponentsDisabled)
+	}
+	if len(status.Conditions) != 1 {
+		t.Fatalf("Conditions = %#v, want only Ready", status.Conditions)
 	}
 	if ready.ObservedGeneration != 7 || status.ObservedGeneration != 7 {
 		t.Fatalf("observed generations = condition:%d status:%d, want 7", ready.ObservedGeneration, status.ObservedGeneration)
 	}
 }
 
-func TestBuildStatusReadyWhenNodeDiscoveryIsReady(t *testing.T) {
+func TestBuildStatusReadyWhenEnabledComponentsAreAvailable(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
 		NodeDiscoveryDaemonSet: daemonSet(6, 6),
+		ProfilerEnabled:        true,
+		ProfilerDeployment:     deployment(1, 1),
 	}, nil, metav1.Now())
 
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionTrue || ready.Reason != reasonNodeDiscoveryReady {
-		t.Fatalf("Ready condition = %#v, want True/%s", ready, reasonNodeDiscoveryReady)
-	}
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionTrue, reasonProfilerReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionTrue, reasonComponentsAvailable)
 }
 
-func TestBuildStatusNotReadyWhileNodeDiscoveryRollsOut(t *testing.T) {
+func TestBuildStatusNotReadyWhenProfilerIsMissing(t *testing.T) {
+	status := buildStatus(Observation{
+		NodeDiscoveryEnabled:   true,
+		NodeDiscoveryDaemonSet: daemonSet(6, 6),
+		ProfilerEnabled:        true,
+		ProfilerDeploymentName: testProfilerDeploymentName,
+	}, nil, metav1.Now())
+
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerMissing)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
+}
+
+func TestBuildStatusNotReadyWhileNodeDiscoveryProgresses(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
 		NodeDiscoveryDaemonSet: daemonSet(6, 4),
 	}, nil, metav1.Now())
 
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryProgressing {
-		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryProgressing)
-	}
-	if !strings.Contains(ready.Message, "4/6") {
-		t.Fatalf("Ready message = %q, want replica progress", ready.Message)
-	}
-}
-
-func TestBuildStatusNotReadyWhenNodeDiscoveryIsMissing(t *testing.T) {
-	status := buildStatus(Observation{
-		NodeDiscoveryEnabled:       true,
-		NodeDiscoveryDaemonSetName: testNodeDiscoveryDaemonSetName,
-	}, nil, metav1.Now())
-
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryMissing {
-		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryMissing)
-	}
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionFalse, reasonNodeDiscoveryProgressing)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
 }
 
 func TestBuildStatusUnknownOnObservationFailure(t *testing.T) {
 	status := buildStatus(Observation{
-		NodeDiscoveryEnabled: true,
-		NodeDiscoveryError:   errors.New("forbidden"),
+		ProfilerEnabled: true,
+		ProfilerError:   errors.New("forbidden"),
 	}, nil, metav1.Now())
 
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionUnknown || ready.Reason != reasonObservationFailed {
-		t.Fatalf("Ready condition = %#v, want Unknown/%s", ready, reasonObservationFailed)
-	}
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionUnknown, reasonObservationFailed)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionUnknown, reasonObservationFailed)
 }
 
-func TestBuildStatusNotReadyOnDaemonSetFailure(t *testing.T) {
+func TestBuildStatusNotReadyOnNativeWorkloadFailure(t *testing.T) {
 	daemonSet := daemonSet(6, 4)
-	daemonSet.Status.Conditions = []appsv1.DaemonSetCondition{
-		{
-			Type:    daemonSetReplicaFailureConditionType,
-			Status:  corev1.ConditionTrue,
-			Reason:  "FailedCreate",
-			Message: "Failed to create Pod.",
-		},
-	}
-
+	daemonSet.Status.Conditions = []appsv1.DaemonSetCondition{{
+		Type: daemonSetReplicaFailureConditionType, Status: corev1.ConditionTrue, Message: "daemonset failed",
+	}}
+	profiler := deployment(1, 0)
+	profiler.Status.Conditions = []appsv1.DeploymentCondition{{
+		Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "deployment failed",
+	}}
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
 		NodeDiscoveryDaemonSet: daemonSet,
+		ProfilerEnabled:        true,
+		ProfilerDeployment:     profiler,
 	}, nil, metav1.Now())
 
-	ready := requireReadyCondition(t, status)
-	if ready.Status != metav1.ConditionFalse || ready.Reason != reasonNodeDiscoveryDegraded {
-		t.Fatalf("Ready condition = %#v, want False/%s", ready, reasonNodeDiscoveryDegraded)
+	nodeCondition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionFalse, reasonNodeDiscoveryDegraded)
+	if nodeCondition.Message != "daemonset failed" {
+		t.Fatalf("NodeDiscoveryAvailable message = %q", nodeCondition.Message)
 	}
-	if ready.Message != "Failed to create Pod." {
-		t.Fatalf("Ready message = %q, want DaemonSet failure message", ready.Message)
+	profilerCondition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerDegraded)
+	if profilerCondition.Message != "deployment failed" {
+		t.Fatalf("ProfilerAvailable message = %q", profilerCondition.Message)
 	}
 }
 
 func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
 	longMessage := strings.Repeat("x", edgev1alpha1.ChillSystemMessageMaxLength+1)
-	status := buildStatus(Observation{
-		NodeDiscoveryEnabled: true,
-		NodeDiscoveryError:   errors.New(longMessage),
-	}, nil, metav1.Now())
-
-	ready := requireReadyCondition(t, status)
-	if len([]rune(ready.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
-		t.Fatalf("Ready message length = %d, want <= %d", len([]rune(ready.Message)), edgev1alpha1.ChillSystemMessageMaxLength)
+	status := buildStatus(Observation{ProfilerEnabled: true, ProfilerError: errors.New(longMessage)}, nil, metav1.Now())
+	condition := requireCondition(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable)
+	if len([]rune(condition.Message)) > edgev1alpha1.ChillSystemMessageMaxLength {
+		t.Fatalf("message length = %d", len([]rune(condition.Message)))
 	}
 }
 
 func TestBuildStatusPreservesTransitionTimeWithoutStatusChange(t *testing.T) {
 	firstTransition := metav1.Now()
-	status := buildStatus(Observation{
-		ObservedGeneration:   2,
-		NodeDiscoveryEnabled: false,
-	}, []metav1.Condition{
-		{
-			Type:               edgev1alpha1.ChillSystemConditionReady,
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: 1,
-			LastTransitionTime: firstTransition,
-			Reason:             reasonNodeDiscoveryDisabled,
-			Message:            "node-discovery is disabled",
-		},
-	}, metav1.Now())
+	status := buildStatus(Observation{ObservedGeneration: 2}, []metav1.Condition{{
+		Type:               edgev1alpha1.ChillSystemConditionReady,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: 1,
+		LastTransitionTime: firstTransition,
+		Reason:             reasonComponentsDisabled,
+		Message:            "all managed components are disabled",
+	}}, metav1.Now())
 
-	ready := requireReadyCondition(t, status)
+	ready := requireCondition(t, status, edgev1alpha1.ChillSystemConditionReady)
 	if !ready.LastTransitionTime.Equal(&firstTransition) {
 		t.Fatalf("LastTransitionTime = %s, want %s", ready.LastTransitionTime, firstTransition)
 	}
@@ -144,15 +131,12 @@ func TestBuildStatusPreservesTransitionTimeWithoutStatusChange(t *testing.T) {
 	}
 }
 
-func TestBuildStatusDropsObsoleteConditions(t *testing.T) {
-	status := buildStatus(Observation{
-		NodeDiscoveryEnabled: false,
-	}, []metav1.Condition{
-		{Type: edgev1alpha1.ChillSystemConditionReady, Status: metav1.ConditionTrue, Reason: "Ready"},
-		{Type: "Progressing", Status: metav1.ConditionFalse, Reason: "Ready"},
-		{Type: "Degraded", Status: metav1.ConditionFalse, Reason: "Ready"},
+func TestBuildStatusDropsDisabledAndObsoleteConditions(t *testing.T) {
+	status := buildStatus(Observation{}, []metav1.Condition{
+		{Type: edgev1alpha1.ChillSystemConditionReady, Status: metav1.ConditionTrue},
+		{Type: edgev1alpha1.ChillSystemConditionProfilerAvailable, Status: metav1.ConditionTrue},
+		{Type: "Progressing", Status: metav1.ConditionFalse},
 	}, metav1.Now())
-
 	if len(status.Conditions) != 1 || status.Conditions[0].Type != edgev1alpha1.ChillSystemConditionReady {
 		t.Fatalf("Conditions = %#v, want only Ready", status.Conditions)
 	}
@@ -161,21 +145,34 @@ func TestBuildStatusDropsObsoleteConditions(t *testing.T) {
 func daemonSet(desired, ready int32) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testNodeDiscoveryDaemonSetName},
-		Status: appsv1.DaemonSetStatus{
-			DesiredNumberScheduled: desired,
-			NumberReady:            ready,
-			NumberAvailable:        ready,
-		},
+		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: desired, NumberReady: ready, NumberAvailable: ready},
 	}
 }
 
-func requireReadyCondition(t *testing.T, status edgev1alpha1.ChillSystemStatus) *metav1.Condition {
+func deployment(desired, available int32) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfilerDeploymentName, Generation: 1},
+		Spec:       appsv1.DeploymentSpec{Replicas: &desired},
+		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, AvailableReplicas: available},
+	}
+}
+
+func requireConditionStatus(t *testing.T, status edgev1alpha1.ChillSystemStatus, conditionType string, wantStatus metav1.ConditionStatus, wantReason string) *metav1.Condition {
+	t.Helper()
+	condition := requireCondition(t, status, conditionType)
+	if condition.Status != wantStatus || condition.Reason != wantReason {
+		t.Fatalf("%s condition = %#v, want %s/%s", conditionType, condition, wantStatus, wantReason)
+	}
+	return condition
+}
+
+func requireCondition(t *testing.T, status edgev1alpha1.ChillSystemStatus, conditionType string) *metav1.Condition {
 	t.Helper()
 	for i := range status.Conditions {
-		if status.Conditions[i].Type == edgev1alpha1.ChillSystemConditionReady {
+		if status.Conditions[i].Type == conditionType {
 			return &status.Conditions[i]
 		}
 	}
-	t.Fatal("Ready condition not found")
+	t.Fatalf("%s condition not found", conditionType)
 	return nil
 }

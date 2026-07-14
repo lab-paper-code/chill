@@ -6,6 +6,7 @@ IMAGE_TAG ?= $(if $(GIT_SHORT_SHA),sha-$(GIT_SHORT_SHA),$(CHART_APP_VERSION))
 IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
+PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -32,7 +33,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)"
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" PROFILER_IMG="$(PROFILER_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -170,9 +171,10 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build operator and node-discovery binaries.
+build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/operator cmd/main.go
 	go build -o bin/node-discovery ./cmd/node-discovery
+	go build -o bin/profiler ./cmd/profiler
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
@@ -192,8 +194,12 @@ docker-build-operator: ## Build the operator image.
 docker-build-node-discovery: ## Build the node-discovery image.
 	$(CONTAINER_TOOL) build -f build/docker/node-discovery.Dockerfile -t $(NODE_DISCOVERY_IMG) .
 
+.PHONY: docker-build-profiler
+docker-build-profiler: ## Build the Profiler image.
+	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
+
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -206,8 +212,12 @@ docker-push-operator: ## Push the operator image.
 docker-push-node-discovery: ## Push the node-discovery image.
 	$(CONTAINER_TOOL) push $(NODE_DISCOVERY_IMG)
 
+.PHONY: docker-push-profiler
+docker-push-profiler: ## Push the Profiler image.
+	$(CONTAINER_TOOL) push $(PROFILER_IMG)
+
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -231,8 +241,14 @@ docker-buildx-node-discovery: ## Build and push the node-discovery image for cro
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-discovery.Dockerfile --tag $(NODE_DISCOVERY_IMG) .
 
+.PHONY: docker-buildx-profiler
+docker-buildx-profiler: ## Build and push the Profiler image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
+
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery ## Build and push all component images for cross-platform support.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler ## Build and push all component images for cross-platform support.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

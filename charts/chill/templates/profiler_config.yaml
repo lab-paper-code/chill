@@ -1,0 +1,34 @@
+{{- if .Values.profiler.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.profilerConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: profiler
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ .Values.profiler.configMapKey | quote }}: |
+    replicas: {{ .Values.profiler.replicaCount }}
+    image: {{ include "chill.profilerImage" . | quote }}
+    imagePullPolicy: {{ .Values.profiler.image.pullPolicy | quote }}
+    serviceAccountName: {{ include "chill.profilerServiceAccountName" . | quote }}
+    metricsBindAddress: {{ .Values.profiler.metricsBindAddress | quote }}
+    healthProbePort: {{ .Values.profiler.healthProbePort }}
+    leaderElection: {{ .Values.profiler.leaderElection }}
+    leaderElectionID: {{ .Values.profiler.leaderElectionID | quote }}
+    nodeSelector:
+{{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
+    {{- with .Values.profiler.affinity }}
+    affinity:
+{{- toYaml . | nindent 6 }}
+    {{- end }}
+    tolerations:
+{{- toYaml .Values.profiler.tolerations | nindent 6 }}
+    resources:
+{{- toYaml .Values.profiler.resources | nindent 6 }}
+    podSecurityContext:
+{{- toYaml .Values.profiler.podSecurityContext | nindent 6 }}
+    securityContext:
+{{- toYaml .Values.profiler.securityContext | nindent 6 }}
+{{- end }}

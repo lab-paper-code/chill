@@ -2,15 +2,17 @@
 
 ## Status
 
-Proposed high-level implementation plan. This document defines the first
-operator-managed Profiler and its use of the existing profiling foundations;
-it does not yet authorize API or controller implementation.
+Approved implementation plan. The operator-managed Profiler operand foundation
+is implemented: `ChillSystem` configuration and conditions, the standalone
+Profiler process, Operator-owned Deployment lifecycle, and Helm-owned runtime
+identity and configuration. `ProfilingRun` reconciliation and measurement
+execution remain unimplemented and are gated below.
 
 ## Purpose
 
-CHILL currently has reusable internal functions for static compatibility,
-bounded power observation, immutable Run validation, and profile-evidence
-admission. It does not have a managed Profiler component that coordinates them.
+CHILL has reusable internal functions for static compatibility, bounded power
+observation, immutable Run validation, and profile-evidence admission. It also
+has a managed Profiler process, but that process does not yet coordinate a Run.
 
 The first Profiler answers one bounded question:
 
@@ -315,7 +317,7 @@ the Job UID rather than by introducing a second controller owner.
 The existing spike remains a characterization harness and regression oracle
 until live equivalence is demonstrated. It is not imported by production code.
 
-## Required checkpoints before implementation
+## Required checkpoints before ProfilingRun implementation
 
 ### Checkpoint 1: request and immutability boundary
 
@@ -362,18 +364,20 @@ deterministic observable outcomes.
 
 ## Implementation sequence
 
-1. Close the five checkpoints and record the reviewed API/state contracts.
-2. Add the minimum `ChillSystem` Profiler configuration and component
-   conditions, plus Helm-owned Profiler identity, split RBAC, and base
-   configuration.
-3. Add `internal/operator/profiler` so the CHILL Operator reconciles only the
-   Profiler Deployment, exact ConfigMap rollout input, and availability.
-4. Verify enable, update, disable, restart, ownership, and component readiness
-   before introducing a Run API.
+1. Add the minimum `ChillSystem` Profiler configuration and component
+   conditions, plus Helm-owned Profiler identity and base configuration.
+   Implemented.
+2. Add `internal/operator/profiler` so the CHILL Operator reconciles only the
+   Profiler Deployment and availability. Implemented.
+3. Verify enable, update, disable, ownership, component readiness, API schema,
+   image construction, and Helm rendering. Implemented locally; live rollout
+   remains.
+4. Close the five Run-path checkpoints and record the reviewed API/state
+   contracts.
 5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
    fake adapters; do not add Kubernetes dependencies.
 6. Add the namespaced `ProfilingRun` API and schema tests.
-7. Add `cmd/profiler` and its `ProfilingRun` controller using the dedicated
+7. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
 8. Add the one-shot measurement worker boundary, then promote only the proven
    CPU ORT execution and PowerObserver behavior from the spike into it.

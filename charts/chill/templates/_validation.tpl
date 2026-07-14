@@ -3,6 +3,7 @@
 {{- $nodeDiscoveryPlaceholderTag := "latest" -}}
 {{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
+{{- $profilerImageTag := include "chill.profilerImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
 {{- end -}}
@@ -23,6 +24,35 @@
 {{- end -}}
 {{- if and (not .Values.operator.serviceAccount.create) (empty .Values.operator.serviceAccount.name) -}}
 {{- fail "operator.serviceAccount.name must be set when operator.serviceAccount.create=false" -}}
+{{- end -}}
+{{- if .Values.profiler.enabled -}}
+{{- if lt (int .Values.profiler.replicaCount) 1 -}}
+{{- fail "profiler.replicaCount must be positive when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.profiler.configMapKey -}}
+{{- fail "profiler.configMapKey must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.profiler.image.repository -}}
+{{- fail "profiler.image.repository must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty $profilerImageTag -}}
+{{- fail "profiler.image.tag or Chart.appVersion must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.profiler.image.pullPolicy -}}
+{{- fail "profiler.image.pullPolicy must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.profiler.metricsBindAddress -}}
+{{- fail "profiler.metricsBindAddress must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.profiler.healthProbePort) 1) (gt (int .Values.profiler.healthProbePort) 65535) -}}
+{{- fail "profiler.healthProbePort must be between 1 and 65535 when profiler.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.profiler.leaderElection (empty .Values.profiler.leaderElectionID) -}}
+{{- fail "profiler.leaderElectionID must not be empty when profiler.leaderElection=true" -}}
+{{- end -}}
+{{- if and (not .Values.profiler.serviceAccount.create) (empty .Values.profiler.serviceAccount.name) -}}
+{{- fail "profiler.serviceAccount.name must be set when profiler.serviceAccount.create=false" -}}
+{{- end -}}
 {{- end -}}
 {{- if .Values.uninstallCleanup.enabled -}}
 {{- if empty .Values.uninstallCleanup.image.repository -}}

@@ -19,3 +19,7 @@ func nodeDiscoveryDaemonSetName(system *edgev1alpha1.ChillSystem) string {
 		component.NodeDiscoveryDaemonSetName(system.Name),
 	)
 }
+
+func (r *ChillSystemReconciler) profilerDeploymentName(system *edgev1alpha1.ChillSystem) string {
+	return component.ProfilerDeploymentName(system.Name)
+}

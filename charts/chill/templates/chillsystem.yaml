@@ -12,6 +12,12 @@ spec:
     daemonSetName: {{ printf "%s-node-discovery" (include "chill.fullname" .) | quote }}
     configMapName: {{ include "chill.nodeDiscoveryConfigName" . | quote }}
     configMapKey: {{ .Values.nodeDiscovery.configMapKey | quote }}
+  profiler:
+    enabled: {{ .Values.profiler.enabled }}
+    {{- if .Values.profiler.enabled }}
+    configRef:
+      name: {{ include "chill.profilerConfigName" . | quote }}
+    {{- end }}
   deviceDiscovery:
     enabled: {{ .Values.discovery.enabled }}
     labelKey: {{ .Values.discovery.labelKey | quote }}
