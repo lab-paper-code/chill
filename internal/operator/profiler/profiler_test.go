@@ -2,14 +2,17 @@ package profiler
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -35,6 +38,12 @@ func TestConfigValidate(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("zero replicas accepted")
 	}
+
+	config = validConfig()
+	config.ImagePullPolicy = corev1.PullPolicy("Sometimes")
+	if err := config.Validate(); err == nil {
+		t.Fatal("invalid imagePullPolicy accepted")
+	}
 }
 
 func TestBuildDeployment(t *testing.T) {
@@ -58,16 +67,7 @@ func TestBuildDeployment(t *testing.T) {
 }
 
 func TestReconcileCreatesAndDeletesOwnedDeployment(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	if err := appsv1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
+	scheme := testScheme(t)
 
 	configData, err := yaml.Marshal(validConfig())
 	if err != nil {
@@ -110,6 +110,96 @@ func TestReconcileCreatesAndDeletesOwnedDeployment(t *testing.T) {
 	if err := client.Get(context.Background(), key, deployment); err == nil {
 		t.Fatal("Profiler Deployment still exists after disable")
 	}
+}
+
+func TestReconcileDoesNotDeleteSameNamedDeploymentWithoutChillSystem(t *testing.T) {
+	scheme := testScheme(t)
+	foreign := &appsv1.Deployment{}
+	foreign.Namespace = "chill-system"
+	foreign.Name = "chill-profiler"
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(foreign).Build()
+	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}}); err != nil {
+		t.Fatalf("Reconcile(): %v", err)
+	}
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: foreign.Namespace, Name: foreign.Name}, &appsv1.Deployment{}); err != nil {
+		t.Fatalf("same-named foreign Deployment was deleted: %v", err)
+	}
+}
+
+func TestReconcileRefusesToAdoptUncontrolledDeployment(t *testing.T) {
+	scheme := testScheme(t)
+	configData, err := yaml.Marshal(validConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	system := &edgev1alpha1.ChillSystem{}
+	system.Name = "chill"
+	system.Spec.Profiler.Enabled = true
+	configMap := &corev1.ConfigMap{}
+	configMap.Namespace = "chill-system"
+	configMap.Name = "chill-profiler-config"
+	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
+	foreign := &appsv1.Deployment{}
+	foreign.Namespace = "chill-system"
+	foreign.Name = "chill-profiler"
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap, foreign).Build()
+	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}})
+	if err == nil || !strings.Contains(err.Error(), "without a controller reference") {
+		t.Fatalf("Reconcile() error = %v, want uncontrolled Deployment error", err)
+	}
+}
+
+func TestReconcileRequeuesAfterDeletingImmutableSelectorDrift(t *testing.T) {
+	scheme := testScheme(t)
+	configData, err := yaml.Marshal(validConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	system := &edgev1alpha1.ChillSystem{}
+	system.Name = "chill"
+	system.Spec.Profiler.Enabled = true
+	configMap := &corev1.ConfigMap{}
+	configMap.Namespace = "chill-system"
+	configMap.Name = "chill-profiler-config"
+	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
+	drifted := buildDeployment(validOptions(), validConfig())
+	drifted.Spec.Selector.MatchLabels["drifted"] = "true"
+	if err := controllerutil.SetControllerReference(system, drifted, scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap, drifted).Build()
+	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}})
+	if err != nil {
+		t.Fatalf("Reconcile(): %v", err)
+	}
+	if !result.Requeue {
+		t.Fatal("Reconcile() did not request recreation after selector drift")
+	}
+	key := types.NamespacedName{Namespace: drifted.Namespace, Name: drifted.Name}
+	if err := client.Get(context.Background(), key, &appsv1.Deployment{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("drifted Deployment still exists: %v", err)
+	}
+}
+
+func testScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		appsv1.AddToScheme,
+		edgev1alpha1.AddToScheme,
+	} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return scheme
 }
 
 func validOptions() Options {

@@ -20,7 +20,6 @@
   - apps
   resources:
   - daemonsets
-  - deployments
   verbs:
   - create
   - delete
@@ -28,6 +27,17 @@
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - edge.dacs.io

@@ -8,8 +8,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
-func (r *Reconciler) runtimeOptions(system *edgev1alpha1.ChillSystem) Options {
-	options := r.Options.Defaulted()
+func runtimeOptions(system *edgev1alpha1.ChillSystem, base Options) Options {
+	options := base.Defaulted()
 	options.SystemName = system.Name
 	options.DeploymentName = component.ProfilerDeploymentName(system.Name)
 	options.ConfigMapName = defaults.String(

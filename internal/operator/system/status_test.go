@@ -56,6 +56,37 @@ func TestBuildStatusNotReadyWhenProfilerIsMissing(t *testing.T) {
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
 }
 
+func TestBuildStatusNotReadyUntilProfilerUpdatedReplicasAreAvailable(t *testing.T) {
+	profiler := deployment(1, 1)
+	profiler.Status.UpdatedReplicas = 0
+	status := buildStatus(Observation{
+		ProfilerEnabled:    true,
+		ProfilerDeployment: profiler,
+	}, nil, metav1.Now())
+
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerProgressing)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
+}
+
+func TestBuildStatusDegradedWhenProfilerExceedsProgressDeadline(t *testing.T) {
+	profiler := deployment(1, 0)
+	profiler.Status.Conditions = []appsv1.DeploymentCondition{{
+		Type:    appsv1.DeploymentProgressing,
+		Status:  corev1.ConditionFalse,
+		Reason:  deploymentProgressDeadlineReason,
+		Message: "rollout exceeded its progress deadline",
+	}}
+	status := buildStatus(Observation{
+		ProfilerEnabled:    true,
+		ProfilerDeployment: profiler,
+	}, nil, metav1.Now())
+
+	condition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionFalse, reasonProfilerDegraded)
+	if condition.Message != "rollout exceeded its progress deadline" {
+		t.Fatalf("ProfilerAvailable message = %q", condition.Message)
+	}
+}
+
 func TestBuildStatusNotReadyWhileNodeDiscoveryProgresses(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
@@ -153,7 +184,7 @@ func deployment(desired, available int32) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: testProfilerDeploymentName, Generation: 1},
 		Spec:       appsv1.DeploymentSpec{Replicas: &desired},
-		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, AvailableReplicas: available},
+		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, UpdatedReplicas: available, AvailableReplicas: available},
 	}
 }
 

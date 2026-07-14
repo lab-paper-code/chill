@@ -40,7 +40,7 @@ func (r *Reconciler) mapConfigMapToSystem(ctx context.Context, object client.Obj
 		}
 		return nil
 	}
-	if !system.Spec.Profiler.Enabled || object.GetName() != r.runtimeOptions(system).ConfigMapName {
+	if !system.Spec.Profiler.Enabled || object.GetName() != runtimeOptions(system, r.Options).ConfigMapName {
 		return nil
 	}
 	return []reconcile.Request{{NamespacedName: key}}

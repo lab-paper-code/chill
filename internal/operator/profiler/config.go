@@ -44,6 +44,13 @@ func (c Config) Validate() error {
 	if c.Replicas < 1 {
 		problems = append(problems, "replicas must be positive")
 	}
+	if strings.TrimSpace(string(c.ImagePullPolicy)) != "" {
+		switch c.ImagePullPolicy {
+		case corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
+		default:
+			problems = append(problems, "imagePullPolicy must be Always, IfNotPresent, or Never")
+		}
+	}
 	if c.HealthProbePort < 1 || c.HealthProbePort > 65535 {
 		problems = append(problems, "healthProbePort must be between 1 and 65535")
 	}

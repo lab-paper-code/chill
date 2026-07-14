@@ -30,6 +30,7 @@ const (
 	reasonProfilerDegraded    = "ProfilerDegraded"
 
 	daemonSetReplicaFailureConditionType = appsv1.DaemonSetConditionType("ReplicaFailure")
+	deploymentProgressDeadlineReason     = "ProgressDeadlineExceeded"
 )
 
 // Observation contains the Kubernetes state needed to report ChillSystem readiness.
@@ -187,7 +188,9 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 	if deployment.Spec.Replicas != nil {
 		desired = *deployment.Spec.Replicas
 	}
-	if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.AvailableReplicas < desired {
+	if deployment.Status.ObservedGeneration < deployment.Generation ||
+		deployment.Status.UpdatedReplicas < desired ||
+		deployment.Status.AvailableReplicas < desired {
 		return metav1.Condition{
 			Status:  metav1.ConditionFalse,
 			Reason:  reasonProfilerProgressing,
@@ -214,7 +217,11 @@ func daemonSetFailureCondition(daemonSet *appsv1.DaemonSet) *appsv1.DaemonSetCon
 func deploymentFailureCondition(deployment *appsv1.Deployment) *appsv1.DeploymentCondition {
 	for i := range deployment.Status.Conditions {
 		condition := &deployment.Status.Conditions[i]
-		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
+		replicaFailure := condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue
+		progressDeadlineExceeded := condition.Type == appsv1.DeploymentProgressing &&
+			condition.Status == corev1.ConditionFalse &&
+			condition.Reason == deploymentProgressDeadlineReason
+		if replicaFailure || progressDeadlineExceeded {
 			return condition
 		}
 	}
