@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -15,6 +16,8 @@ import (
 
 var testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
 var testProfilerDeploymentName = component.ProfilerDeploymentName(component.DefaultSystemName)
+var testEvidenceStoreDeploymentName = component.EvidenceStoreDeploymentName(component.DefaultSystemName)
+var testEvidenceStoreBootstrapJobName = component.EvidenceStoreBootstrapJobName(component.DefaultSystemName)
 
 func TestBuildStatusReadyWithAllComponentsDisabled(t *testing.T) {
 	status := buildStatus(Observation{ObservedGeneration: 7}, nil, metav1.Now())
@@ -33,9 +36,9 @@ func TestBuildStatusReadyWithAllComponentsDisabled(t *testing.T) {
 func TestBuildStatusReadyWhenEnabledComponentsAreAvailable(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(6, 6),
+		NodeDiscoveryDaemonSet: daemonSet(6),
 		ProfilerEnabled:        true,
-		ProfilerDeployment:     deployment(1, 1),
+		ProfilerDeployment:     deployment(1),
 	}, nil, metav1.Now())
 
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
@@ -46,7 +49,7 @@ func TestBuildStatusReadyWhenEnabledComponentsAreAvailable(t *testing.T) {
 func TestBuildStatusNotReadyWhenProfilerIsMissing(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(6, 6),
+		NodeDiscoveryDaemonSet: daemonSet(6),
 		ProfilerEnabled:        true,
 		ProfilerDeploymentName: testProfilerDeploymentName,
 	}, nil, metav1.Now())
@@ -57,7 +60,7 @@ func TestBuildStatusNotReadyWhenProfilerIsMissing(t *testing.T) {
 }
 
 func TestBuildStatusNotReadyUntilProfilerUpdatedReplicasAreAvailable(t *testing.T) {
-	profiler := deployment(1, 1)
+	profiler := deployment(1)
 	profiler.Status.UpdatedReplicas = 0
 	status := buildStatus(Observation{
 		ProfilerEnabled:    true,
@@ -69,7 +72,7 @@ func TestBuildStatusNotReadyUntilProfilerUpdatedReplicasAreAvailable(t *testing.
 }
 
 func TestBuildStatusDegradedWhenProfilerExceedsProgressDeadline(t *testing.T) {
-	profiler := deployment(1, 0)
+	profiler := deployment(0)
 	profiler.Status.Conditions = []appsv1.DeploymentCondition{{
 		Type:    appsv1.DeploymentProgressing,
 		Status:  corev1.ConditionFalse,
@@ -90,7 +93,7 @@ func TestBuildStatusDegradedWhenProfilerExceedsProgressDeadline(t *testing.T) {
 func TestBuildStatusNotReadyWhileNodeDiscoveryProgresses(t *testing.T) {
 	status := buildStatus(Observation{
 		NodeDiscoveryEnabled:   true,
-		NodeDiscoveryDaemonSet: daemonSet(6, 4),
+		NodeDiscoveryDaemonSet: daemonSet(4),
 	}, nil, metav1.Now())
 
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionFalse, reasonNodeDiscoveryProgressing)
@@ -108,11 +111,11 @@ func TestBuildStatusUnknownOnObservationFailure(t *testing.T) {
 }
 
 func TestBuildStatusNotReadyOnNativeWorkloadFailure(t *testing.T) {
-	daemonSet := daemonSet(6, 4)
+	daemonSet := daemonSet(4)
 	daemonSet.Status.Conditions = []appsv1.DaemonSetCondition{{
 		Type: daemonSetReplicaFailureConditionType, Status: corev1.ConditionTrue, Message: "daemonset failed",
 	}}
-	profiler := deployment(1, 0)
+	profiler := deployment(0)
 	profiler.Status.Conditions = []appsv1.DeploymentCondition{{
 		Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "deployment failed",
 	}}
@@ -131,6 +134,99 @@ func TestBuildStatusNotReadyOnNativeWorkloadFailure(t *testing.T) {
 	if profilerCondition.Message != "deployment failed" {
 		t.Fatalf("ProfilerAvailable message = %q", profilerCondition.Message)
 	}
+}
+
+func TestBuildStatusReadyOnlyAfterEvidenceStoreBootstrapSucceeds(t *testing.T) {
+	store := deployment(1)
+	store.Name = testEvidenceStoreDeploymentName
+	status := buildStatus(Observation{
+		EvidenceStoreEnabled:          true,
+		EvidenceStoreDeployment:       store,
+		EvidenceStoreBootstrapJobName: testEvidenceStoreBootstrapJobName,
+		EvidenceStoreBootstrapJob:     bootstrapJob(batchv1.JobComplete, ""),
+	}, nil, metav1.Now())
+
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionEvidenceStoreAvailable, metav1.ConditionTrue, reasonEvidenceStoreReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionTrue, reasonComponentsAvailable)
+}
+
+func TestBuildStatusEvidenceStoreProgressesUntilDeploymentAndBootstrapAreReady(t *testing.T) {
+	tests := []struct {
+		name        string
+		observation Observation
+	}{
+		{
+			name: "deployment missing",
+			observation: Observation{
+				EvidenceStoreEnabled:        true,
+				EvidenceStoreDeploymentName: testEvidenceStoreDeploymentName,
+			},
+		},
+		{
+			name: "deployment progressing",
+			observation: Observation{
+				EvidenceStoreEnabled:    true,
+				EvidenceStoreDeployment: namedDeployment(testEvidenceStoreDeploymentName, 0),
+			},
+		},
+		{
+			name: "bootstrap pending",
+			observation: Observation{
+				EvidenceStoreEnabled:          true,
+				EvidenceStoreDeployment:       namedDeployment(testEvidenceStoreDeploymentName, 1),
+				EvidenceStoreBootstrapJobName: testEvidenceStoreBootstrapJobName,
+			},
+		},
+		{
+			name: "bootstrap running",
+			observation: Observation{
+				EvidenceStoreEnabled:      true,
+				EvidenceStoreDeployment:   namedDeployment(testEvidenceStoreDeploymentName, 1),
+				EvidenceStoreBootstrapJob: bootstrapJob("", ""),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := buildStatus(tt.observation, nil, metav1.Now())
+			condition := requireCondition(t, status, edgev1alpha1.ChillSystemConditionEvidenceStoreAvailable)
+			if condition.Status != metav1.ConditionFalse {
+				t.Fatalf("EvidenceStoreAvailable = %#v, want False", condition)
+			}
+			if tt.name == "deployment missing" {
+				if condition.Reason != reasonEvidenceStoreMissing {
+					t.Fatalf("reason = %q, want %q", condition.Reason, reasonEvidenceStoreMissing)
+				}
+			} else if condition.Reason != reasonEvidenceStoreProgressing {
+				t.Fatalf("reason = %q, want %q", condition.Reason, reasonEvidenceStoreProgressing)
+			}
+			requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionFalse, reasonComponentsNotReady)
+		})
+	}
+}
+
+func TestBuildStatusEvidenceStoreDegradedWhenBootstrapFails(t *testing.T) {
+	status := buildStatus(Observation{
+		EvidenceStoreEnabled:      true,
+		EvidenceStoreDeployment:   namedDeployment(testEvidenceStoreDeploymentName, 1),
+		EvidenceStoreBootstrapJob: bootstrapJob(batchv1.JobFailed, "bucket authorization failed"),
+	}, nil, metav1.Now())
+
+	condition := requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionEvidenceStoreAvailable, metav1.ConditionFalse, reasonEvidenceStoreDegraded)
+	if condition.Message != "bucket authorization failed" {
+		t.Fatalf("EvidenceStoreAvailable message = %q", condition.Message)
+	}
+}
+
+func TestBuildStatusEvidenceStoreUnknownOnObservationFailure(t *testing.T) {
+	status := buildStatus(Observation{
+		EvidenceStoreEnabled: true,
+		EvidenceStoreError:   errors.New("forbidden"),
+	}, nil, metav1.Now())
+
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionEvidenceStoreAvailable, metav1.ConditionUnknown, reasonObservationFailed)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionUnknown, reasonObservationFailed)
 }
 
 func TestBuildStatusTruncatesExternalMessages(t *testing.T) {
@@ -173,19 +269,36 @@ func TestBuildStatusDropsDisabledAndObsoleteConditions(t *testing.T) {
 	}
 }
 
-func daemonSet(desired, ready int32) *appsv1.DaemonSet {
+func daemonSet(ready int32) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testNodeDiscoveryDaemonSetName},
-		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: desired, NumberReady: ready, NumberAvailable: ready},
+		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 6, NumberReady: ready, NumberAvailable: ready},
 	}
 }
 
-func deployment(desired, available int32) *appsv1.Deployment {
+func deployment(available int32) *appsv1.Deployment {
+	desired := int32(1)
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: testProfilerDeploymentName, Generation: 1},
 		Spec:       appsv1.DeploymentSpec{Replicas: &desired},
 		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, UpdatedReplicas: available, AvailableReplicas: available},
 	}
+}
+
+func namedDeployment(name string, available int32) *appsv1.Deployment {
+	result := deployment(available)
+	result.Name = name
+	return result
+}
+
+func bootstrapJob(conditionType batchv1.JobConditionType, message string) *batchv1.Job {
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: testEvidenceStoreBootstrapJobName}}
+	if conditionType != "" {
+		job.Status.Conditions = []batchv1.JobCondition{{
+			Type: conditionType, Status: corev1.ConditionTrue, Message: message,
+		}}
+	}
+	return job
 }
 
 func requireConditionStatus(t *testing.T, status edgev1alpha1.ChillSystemStatus, conditionType string, wantStatus metav1.ConditionStatus, wantReason string) *metav1.Condition {

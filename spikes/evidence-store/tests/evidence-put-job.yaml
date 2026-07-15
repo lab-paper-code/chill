@@ -31,56 +31,21 @@ spec:
           effect: NoSchedule
       containers:
         - name: writer
-          image: 155.230.35.213:5000/chill/spike-s3-client@sha256:e73ec12f2bf15c397e3346264bcb7a8299c832692a96ef211968ad4d07a64dfb
+          image: 155.230.35.213:5000/chill/evidence-store-client@sha256:5df44fc881a8e3e155aaa316c5714f483ef029593a0ed2730c021374135bdd8d
           imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -eu
-            - -c
-            - |
-              actual_digest="$(sha256sum /fixture/evidence.json | awk '{print $1}')"
-              actual_size="$(wc -c < /fixture/evidence.json | tr -d ' ')"
-              test "$actual_digest" = "$EXPECTED_DIGEST"
-              test "$actual_size" = "$EXPECTED_SIZE"
-
-              if aws --endpoint-url "$STORE_ENDPOINT" s3api put-object \
-                  --bucket "$STORE_BUCKET" \
-                  --key "$STORE_KEY" \
-                  --body /fixture/evidence.json \
-                  --if-none-match '*' >/dev/null 2>/tmp/put-error; then
-                outcome=created
-              else
-                aws --endpoint-url "$STORE_ENDPOINT" s3api get-object \
-                  --bucket "$STORE_BUCKET" \
-                  --key "$STORE_KEY" \
-                  /tmp/existing.json >/dev/null
-                existing_digest="$(sha256sum /tmp/existing.json | awk '{print $1}')"
-                existing_size="$(wc -c < /tmp/existing.json | tr -d ' ')"
-                if [ "$existing_digest" != "$actual_digest" ] || \
-                   [ "$existing_size" != "$actual_size" ]; then
-                  echo "immutable object conflict: existing bytes differ" >&2
-                  cat /tmp/put-error >&2
-                  exit 42
-                fi
-                outcome=existing-exact-match
-              fi
-
-              printf '%s\n' \
-                "receipt:" \
-                "  bucket: $STORE_BUCKET" \
-                "  key: $STORE_KEY" \
-                "  sha256: $actual_digest" \
-                "  size: $actual_size" \
-                "  outcome: $outcome"
+          args:
+            - put
+            - --file
+            - /fixture/evidence.json
           env:
             - name: STORE_ENDPOINT
               value: http://chill-evidence-store-spike.chill-system.svc.cluster.local:9000
             - name: STORE_BUCKET
               value: chill-profiling-evidence
             - name: STORE_KEY
-              value: runs/sha256-165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42.json
+              value: runs/internal-plan1/sha256-165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42.json
             - name: EXPECTED_DIGEST
-              value: 165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42
+              value: sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42
             - name: EXPECTED_SIZE
               value: "389364"
             - name: AWS_ACCESS_KEY_ID
@@ -95,12 +60,6 @@ spec:
                   key: secret-key
             - name: AWS_DEFAULT_REGION
               value: us-east-1
-            - name: AWS_EC2_METADATA_DISABLED
-              value: "true"
-            - name: AWS_PAGER
-              value: ""
-            - name: HOME
-              value: /tmp
           resources:
             requests:
               cpu: 10m

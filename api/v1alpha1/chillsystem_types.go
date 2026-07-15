@@ -12,6 +12,8 @@ const (
 	ChillSystemConditionNodeDiscoveryAvailable = "NodeDiscoveryAvailable"
 	// ChillSystemConditionProfilerAvailable reports Profiler controller workload availability.
 	ChillSystemConditionProfilerAvailable = "ProfilerAvailable"
+	// ChillSystemConditionEvidenceStoreAvailable reports immutable evidence-store availability.
+	ChillSystemConditionEvidenceStoreAvailable = "EvidenceStoreAvailable"
 )
 
 const (
@@ -39,6 +41,22 @@ type ChillSystemSpec struct {
 	// Profiler configures the operator-managed Profiler controller.
 	// +optional
 	Profiler ChillProfilerSpec `json:"profiler,omitempty"`
+
+	// EvidenceStore configures the operator-managed immutable evidence store.
+	// +optional
+	EvidenceStore ChillEvidenceStoreSpec `json:"evidenceStore,omitempty"`
+}
+
+// ChillEvidenceStoreSpec configures the immutable evidence store owned by a ChillSystem.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.configRef) && self.configRef.name.size() > 0)",message="configRef.name is required when evidenceStore is enabled"
+type ChillEvidenceStoreSpec struct {
+	// Enabled controls whether the operator should run the evidence store.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ConfigRef references the evidence-store configuration in the CHILL management namespace.
+	// +optional
+	ConfigRef corev1.LocalObjectReference `json:"configRef,omitempty"`
 }
 
 // ChillProfilerSpec configures the Profiler controller owned by a ChillSystem.

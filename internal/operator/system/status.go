@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +30,11 @@ const (
 	reasonProfilerProgressing = "ProfilerProgressing"
 	reasonProfilerDegraded    = "ProfilerDegraded"
 
+	reasonEvidenceStoreReady       = "EvidenceStoreReady"
+	reasonEvidenceStoreMissing     = "EvidenceStoreMissing"
+	reasonEvidenceStoreProgressing = "EvidenceStoreProgressing"
+	reasonEvidenceStoreDegraded    = "EvidenceStoreDegraded"
+
 	daemonSetReplicaFailureConditionType = appsv1.DaemonSetConditionType("ReplicaFailure")
 	deploymentProgressDeadlineReason     = "ProgressDeadlineExceeded"
 )
@@ -49,11 +55,19 @@ type Observation struct {
 	ProfilerDeploymentName string
 	ProfilerDeployment     *appsv1.Deployment
 	ProfilerError          error
+
+	EvidenceStoreEnabled          bool
+	EvidenceStoreNamespace        string
+	EvidenceStoreDeploymentName   string
+	EvidenceStoreDeployment       *appsv1.Deployment
+	EvidenceStoreBootstrapJobName string
+	EvidenceStoreBootstrapJob     *batchv1.Job
+	EvidenceStoreError            error
 }
 
 func buildStatus(observed Observation, previousConditions []metav1.Condition, now metav1.Time) edgev1alpha1.ChillSystemStatus {
 	status := edgev1alpha1.ChillSystemStatus{ObservedGeneration: observed.ObservedGeneration}
-	components := make([]metav1.Condition, 0, 2)
+	components := make([]metav1.Condition, 0, 3)
 	if observed.NodeDiscoveryEnabled {
 		condition := nodeDiscoveryAvailableCondition(observed)
 		condition.Type = edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable
@@ -62,6 +76,11 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 	if observed.ProfilerEnabled {
 		condition := profilerAvailableCondition(observed)
 		condition.Type = edgev1alpha1.ChillSystemConditionProfilerAvailable
+		components = append(components, condition)
+	}
+	if observed.EvidenceStoreEnabled {
+		condition := evidenceStoreAvailableCondition(observed)
+		condition.Type = edgev1alpha1.ChillSystemConditionEvidenceStoreAvailable
 		components = append(components, condition)
 	}
 
@@ -202,6 +221,83 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 		Reason:  reasonProfilerReady,
 		Message: fmt.Sprintf("Profiler Deployment %q is available", deployment.Name),
 	}
+}
+
+func evidenceStoreAvailableCondition(observed Observation) metav1.Condition {
+	if observed.EvidenceStoreError != nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionUnknown,
+			Reason:  reasonObservationFailed,
+			Message: statusMessage(observed.EvidenceStoreError.Error(), "failed to observe Evidence Store"),
+		}
+	}
+	if observed.EvidenceStoreDeployment == nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreMissing,
+			Message: fmt.Sprintf("Evidence Store Deployment %q is missing", observed.EvidenceStoreDeploymentName),
+		}
+	}
+
+	deployment := observed.EvidenceStoreDeployment
+	if condition := deploymentFailureCondition(deployment); condition != nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreDegraded,
+			Message: statusMessage(condition.Message, fmt.Sprintf("Evidence Store Deployment %q is degraded", deployment.Name)),
+		}
+	}
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	if deployment.Status.ObservedGeneration < deployment.Generation ||
+		deployment.Status.UpdatedReplicas < desired ||
+		deployment.Status.AvailableReplicas < desired {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreProgressing,
+			Message: fmt.Sprintf("Evidence Store Deployment %q is progressing", deployment.Name),
+		}
+	}
+
+	job := observed.EvidenceStoreBootstrapJob
+	if job == nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreProgressing,
+			Message: fmt.Sprintf("Evidence Store bootstrap Job %q is pending", observed.EvidenceStoreBootstrapJobName),
+		}
+	}
+	if condition := jobCondition(job, batchv1.JobFailed); condition != nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreDegraded,
+			Message: statusMessage(condition.Message, fmt.Sprintf("Evidence Store bootstrap Job %q failed", job.Name)),
+		}
+	}
+	if jobCondition(job, batchv1.JobComplete) == nil {
+		return metav1.Condition{
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonEvidenceStoreProgressing,
+			Message: fmt.Sprintf("Evidence Store bootstrap Job %q is progressing", job.Name),
+		}
+	}
+	return metav1.Condition{
+		Status:  metav1.ConditionTrue,
+		Reason:  reasonEvidenceStoreReady,
+		Message: fmt.Sprintf("Evidence Store Deployment %q is available and bootstrap succeeded", deployment.Name),
+	}
+}
+
+func jobCondition(job *batchv1.Job, conditionType batchv1.JobConditionType) *batchv1.JobCondition {
+	for i := range job.Status.Conditions {
+		condition := &job.Status.Conditions[i]
+		if condition.Type == conditionType && condition.Status == corev1.ConditionTrue {
+			return condition
+		}
+	}
+	return nil
 }
 
 func daemonSetFailureCondition(daemonSet *appsv1.DaemonSet) *appsv1.DaemonSetCondition {

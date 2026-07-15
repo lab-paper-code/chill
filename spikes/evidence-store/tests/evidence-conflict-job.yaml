@@ -1,3 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chill-evidence-store-spike-conflict-fixture
+  namespace: chill-system
+  labels:
+    app.kubernetes.io/name: chill-evidence-store-conflict-probe
+    app.kubernetes.io/component: evidence-store
+    app.kubernetes.io/part-of: chill
+    app.kubernetes.io/managed-by: evidence-store-spike
+data:
+  candidate.json: '{"schemaVersion":"conflict-probe","different":true}'
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -31,60 +44,26 @@ spec:
           effect: NoSchedule
       containers:
         - name: conflict-probe
-          image: 155.230.35.213:5000/chill/spike-s3-client@sha256:e73ec12f2bf15c397e3346264bcb7a8299c832692a96ef211968ad4d07a64dfb
+          image: 155.230.35.213:5000/chill/evidence-store-client@sha256:5df44fc881a8e3e155aaa316c5714f483ef029593a0ed2730c021374135bdd8d
           imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -eu
-            - -c
-            - |
-              printf '%s\n' \
-                '{"schemaVersion":"conflict-probe","different":true}' \
-                > /tmp/candidate.json
-              candidate_digest="$(sha256sum /tmp/candidate.json | awk '{print $1}')"
-              candidate_size="$(wc -c < /tmp/candidate.json | tr -d ' ')"
-
-              if aws --endpoint-url "$STORE_ENDPOINT" s3api put-object \
-                  --bucket "$STORE_BUCKET" \
-                  --key "$STORE_KEY" \
-                  --body /tmp/candidate.json \
-                  --if-none-match '*' >/dev/null 2>/tmp/put-error; then
-                echo "conditional create unexpectedly overwrote the object" >&2
-                exit 1
-              fi
-              if ! grep -Eq 'PreconditionFailed|412' /tmp/put-error; then
-                echo "conditional create failed for an unexpected reason" >&2
-                cat /tmp/put-error >&2
-                exit 1
-              fi
-
-              aws --endpoint-url "$STORE_ENDPOINT" s3api get-object \
-                --bucket "$STORE_BUCKET" \
-                --key "$STORE_KEY" \
-                /tmp/existing.json >/dev/null
-              existing_digest="$(sha256sum /tmp/existing.json | awk '{print $1}')"
-              existing_size="$(wc -c < /tmp/existing.json | tr -d ' ')"
-              test "$existing_digest" = "$EXPECTED_EXISTING_DIGEST"
-              test "$existing_size" = "$EXPECTED_EXISTING_SIZE"
-              test "$existing_digest" != "$candidate_digest"
-
-              printf '%s\n' \
-                "conflict verification:" \
-                "  candidateSha256: $candidate_digest" \
-                "  candidateSize: $candidate_size" \
-                "  existingSha256: $existing_digest" \
-                "  existingSize: $existing_size" \
-                "  result: rejected-different-bytes"
+          args:
+            - expect-conflict
+            - --file
+            - /fixture/candidate.json
+            - --digest
+            - sha256:bfce7456c000e69697a42e6edc0b353ea37337425dec157660136d4ce8e26e83
+            - --size
+            - "51"
           env:
             - name: STORE_ENDPOINT
               value: http://chill-evidence-store-spike.chill-system.svc.cluster.local:9000
             - name: STORE_BUCKET
               value: chill-profiling-evidence
             - name: STORE_KEY
-              value: runs/sha256-165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42.json
-            - name: EXPECTED_EXISTING_DIGEST
-              value: 165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42
-            - name: EXPECTED_EXISTING_SIZE
+              value: runs/internal-plan1/sha256-165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42.json
+            - name: EXPECTED_DIGEST
+              value: sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42
+            - name: EXPECTED_SIZE
               value: "389364"
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
@@ -98,12 +77,6 @@ spec:
                   key: secret-key
             - name: AWS_DEFAULT_REGION
               value: us-east-1
-            - name: AWS_EC2_METADATA_DISABLED
-              value: "true"
-            - name: AWS_PAGER
-              value: ""
-            - name: HOME
-              value: /tmp
           resources:
             requests:
               cpu: 10m
@@ -123,8 +96,14 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
+            - name: fixture
+              mountPath: /fixture
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: fixture
+          configMap:
+            name: chill-evidence-store-spike-conflict-fixture
         - name: tmp
           emptyDir: {}

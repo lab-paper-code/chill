@@ -114,6 +114,34 @@ spec:
                       When omitted, the operator uses the safe default of true.
                     type: boolean
                 type: object
+              evidenceStore:
+                description: EvidenceStore configures the operator-managed immutable
+                  evidence store.
+                properties:
+                  configRef:
+                    description: ConfigRef references the evidence-store configuration
+                      in the CHILL management namespace.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  enabled:
+                    description: Enabled controls whether the operator should run
+                      the evidence store.
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - message: configRef.name is required when evidenceStore is enabled
+                  rule: '!has(self.enabled) || !self.enabled || (has(self.configRef)
+                    && self.configRef.name.size() > 0)'
               managementNamespace:
                 description: |-
                   ManagementNamespace contains the namespaced CHILL support resources for this system.

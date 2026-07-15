@@ -1,0 +1,180 @@
+package s3
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+)
+
+var (
+	_ evidencestore.ImmutableWriter = (*Store)(nil)
+	_ evidencestore.Reader          = (*Store)(nil)
+)
+
+type Store struct {
+	client  client
+	region  string
+	tempDir string
+}
+
+func (s *Store) PutImmutable(
+	ctx context.Context,
+	expected evidencestore.ObjectIdentity,
+	content io.Reader,
+) (evidencestore.Receipt, error) {
+	candidate, err := s.prepareCandidate(expected, content)
+	if err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	defer removeCandidate(candidate)
+
+	_, err = s.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket:        aws.String(expected.Store),
+		Key:           aws.String(expected.Key),
+		Body:          candidate,
+		ContentLength: aws.Int64(expected.Size),
+		IfNoneMatch:   aws.String("*"),
+	})
+	if err == nil {
+		return receipt(expected, evidencestore.CreateOutcomeCreated), nil
+	}
+	if !isPrecondition(err) {
+		return evidencestore.Receipt{}, translate("create evidence object", err)
+	}
+	return s.inspectExisting(ctx, expected)
+}
+
+func (s *Store) Open(
+	ctx context.Context,
+	expected evidencestore.ObjectIdentity,
+) (io.ReadCloser, error) {
+	if err := expected.Validate(); err != nil {
+		return nil, err
+	}
+	output, err := s.client.GetObject(ctx, &awss3.GetObjectInput{
+		Bucket: aws.String(expected.Store),
+		Key:    aws.String(expected.Key),
+	})
+	if err != nil {
+		return nil, translate("open evidence object", err)
+	}
+	if output == nil || output.Body == nil {
+		return nil, fmt.Errorf("%w: S3 returned an empty response body", evidencestore.ErrTransport)
+	}
+	return &translatedReadCloser{body: output.Body}, nil
+}
+
+func (s *Store) inspectExisting(
+	ctx context.Context,
+	expected evidencestore.ObjectIdentity,
+) (evidencestore.Receipt, error) {
+	content, err := s.Open(ctx, expected)
+	if err != nil {
+		if errors.Is(err, evidencestore.ErrNotFound) {
+			return evidencestore.Receipt{}, fmt.Errorf("%w: conflicting object was not readable", evidencestore.ErrPrecondition)
+		}
+		return evidencestore.Receipt{}, fmt.Errorf("inspect existing evidence object: %w", err)
+	}
+
+	verifyErr := evidencestore.Verify(content, expected)
+	closeErr := content.Close()
+	if verifyErr != nil {
+		if errors.Is(verifyErr, evidencestore.ErrContentMismatch) {
+			return evidencestore.Receipt{}, fmt.Errorf("%w: existing object has different content", evidencestore.ErrPrecondition)
+		}
+		return evidencestore.Receipt{}, fmt.Errorf("verify existing evidence object: %w", verifyErr)
+	}
+	if closeErr != nil {
+		return evidencestore.Receipt{}, translate("close existing evidence object", closeErr)
+	}
+	return receipt(expected, evidencestore.CreateOutcomeExistingExactMatch), nil
+}
+
+func (s *Store) prepareCandidate(
+	expected evidencestore.ObjectIdentity,
+	content io.Reader,
+) (*os.File, error) {
+	if err := expected.Validate(); err != nil {
+		return nil, err
+	}
+	if content == nil {
+		return nil, fmt.Errorf("%w: content reader is nil", evidencestore.ErrContentMismatch)
+	}
+
+	candidate, err := os.CreateTemp(s.tempDir, "chill-evidence-*")
+	if err != nil {
+		return nil, fmt.Errorf("create bounded evidence candidate: %w", err)
+	}
+	failed := true
+	defer func() {
+		if failed {
+			removeCandidate(candidate)
+		}
+	}()
+
+	written, err := io.CopyN(candidate, content, expected.Size)
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, fmt.Errorf("%w: expected %d bytes, read %d", evidencestore.ErrContentMismatch, expected.Size, written)
+		}
+		return nil, fmt.Errorf("stage evidence candidate: %w", err)
+	}
+	var extra [1]byte
+	if _, err := io.ReadFull(content, extra[:]); err == nil {
+		return nil, fmt.Errorf("%w: content exceeds expected size %d", evidencestore.ErrContentMismatch, expected.Size)
+	} else if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("read evidence candidate boundary: %w", err)
+	}
+	if _, err := candidate.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind evidence candidate: %w", err)
+	}
+	if err := evidencestore.Verify(candidate, expected); err != nil {
+		return nil, err
+	}
+	if _, err := candidate.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind verified evidence candidate: %w", err)
+	}
+
+	failed = false
+	return candidate, nil
+}
+
+func receipt(identity evidencestore.ObjectIdentity, outcome evidencestore.CreateOutcome) evidencestore.Receipt {
+	return evidencestore.Receipt{
+		SchemaVersion: evidencestore.ReceiptSchemaVersion,
+		Object:        identity,
+		Outcome:       outcome,
+	}
+}
+
+func removeCandidate(candidate *os.File) {
+	name := candidate.Name()
+	_ = candidate.Close()
+	_ = os.Remove(name)
+}
+
+type translatedReadCloser struct {
+	body io.ReadCloser
+}
+
+func (r *translatedReadCloser) Read(buffer []byte) (int, error) {
+	count, err := r.body.Read(buffer)
+	if err == nil || errors.Is(err, io.EOF) {
+		return count, err
+	}
+	return count, translate("read evidence object", err)
+}
+
+func (r *translatedReadCloser) Close() error {
+	if err := r.body.Close(); err != nil {
+		return translate("close evidence object", err)
+	}
+	return nil
+}

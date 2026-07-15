@@ -15,6 +15,42 @@ import (
 )
 
 var _ = Describe("ChillSystem API", func() {
+	It("preserves Evidence Store desired state", func() {
+		ctx := context.Background()
+		name := fmt.Sprintf("chillsystem-evidence-store-%d", time.Now().UnixNano())
+		system := &edgev1alpha1.ChillSystem{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: edgev1alpha1.ChillSystemSpec{
+				EvidenceStore: edgev1alpha1.ChillEvidenceStoreSpec{
+					Enabled:   true,
+					ConfigRef: corev1.LocalObjectReference{Name: "chill-evidence-store-config"},
+				},
+			},
+		}
+
+		Expect(k8sClient.Create(ctx, system)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, system) })
+
+		stored := &edgev1alpha1.ChillSystem{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, stored)).To(Succeed())
+		Expect(stored.Spec.EvidenceStore.Enabled).To(BeTrue())
+		Expect(stored.Spec.EvidenceStore.ConfigRef.Name).To(Equal("chill-evidence-store-config"))
+	})
+
+	It("rejects an enabled Evidence Store without a configuration reference", func() {
+		ctx := context.Background()
+		system := &edgev1alpha1.ChillSystem{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf("chillsystem-evidence-store-invalid-%d", time.Now().UnixNano()),
+			},
+			Spec: edgev1alpha1.ChillSystemSpec{
+				EvidenceStore: edgev1alpha1.ChillEvidenceStoreSpec{Enabled: true},
+			},
+		}
+
+		Expect(k8sClient.Create(ctx, system)).NotTo(Succeed())
+	})
+
 	It("preserves Profiler desired state and component conditions", func() {
 		ctx := context.Background()
 		name := fmt.Sprintf("chillsystem-profiler-%d", time.Now().UnixNano())

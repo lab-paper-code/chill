@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/operator/discovery"
+	operatorevidencestore "github.com/lab-paper-code/chill/internal/operator/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operator/nodediscovery"
 	operatorprofiler "github.com/lab-paper-code/chill/internal/operator/profiler"
 	"github.com/lab-paper-code/chill/internal/operator/system"
@@ -165,6 +166,17 @@ func main() {
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register reconciler", "resource", "ProfilerOperand")
+		os.Exit(1)
+	}
+	if err = (&operatorevidencestore.Reconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Options: operatorevidencestore.Options{
+			SystemName: systemName,
+			Namespace:  systemOptions.Namespace,
+		},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register reconciler", "resource", "EvidenceStoreOperand")
 		os.Exit(1)
 	}
 	if err = (&discovery.DeviceDiscoveryReconciler{

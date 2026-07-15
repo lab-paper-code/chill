@@ -7,6 +7,7 @@ const (
 
 	NodeDiscovery = "node-discovery"
 	Profiler      = "profiler"
+	EvidenceStore = "evidence-store"
 )
 
 func NodeDiscoveryDaemonSetName(systemName string) string {
@@ -23,6 +24,30 @@ func ProfilerDeploymentName(systemName string) string {
 
 func ProfilerConfigMapName(systemName string) string {
 	return defaultSystemName(systemName) + "-profiler-config"
+}
+
+func EvidenceStoreDeploymentName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store"
+}
+
+func EvidenceStoreServiceName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store"
+}
+
+func EvidenceStoreConfigMapName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store-config"
+}
+
+func EvidenceStoreCredentialsSecretName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store-credentials"
+}
+
+func EvidenceStorePersistentVolumeClaimName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store"
+}
+
+func EvidenceStoreBootstrapJobName(systemName string) string {
+	return defaultSystemName(systemName) + "-evidence-store-bootstrap"
 }
 
 func defaultSystemName(systemName string) string {

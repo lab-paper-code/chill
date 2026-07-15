@@ -23,3 +23,11 @@ func nodeDiscoveryDaemonSetName(system *edgev1alpha1.ChillSystem) string {
 func (r *ChillSystemReconciler) profilerDeploymentName(system *edgev1alpha1.ChillSystem) string {
 	return component.ProfilerDeploymentName(system.Name)
 }
+
+func (r *ChillSystemReconciler) evidenceStoreDeploymentName(system *edgev1alpha1.ChillSystem) string {
+	return component.EvidenceStoreDeploymentName(system.Name)
+}
+
+func (r *ChillSystemReconciler) evidenceStoreBootstrapJobName(system *edgev1alpha1.ChillSystem) string {
+	return component.EvidenceStoreBootstrapJobName(system.Name)
+}
