@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chill-evidence-store-spike
+  labels:
+    app.kubernetes.io/name: chill-evidence-store
+    app.kubernetes.io/component: evidence-store
+    app.kubernetes.io/part-of: chill
+    app.kubernetes.io/managed-by: evidence-store-spike
+    service.edgemesh.kubeedge.io/service-proxy-name: ""
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: chill-evidence-store
+    app.kubernetes.io/instance: spike
+  ports:
+    - name: s3
+      port: 9000
+      protocol: TCP
+      targetPort: s3
