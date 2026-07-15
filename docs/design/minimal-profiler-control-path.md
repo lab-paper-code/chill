@@ -8,7 +8,8 @@ Profiler process, Operator-owned Deployment lifecycle, and Helm-owned runtime
 identity and configuration. The foundation has passed API, envtest, Helm,
 multi-architecture image, and live-cluster lifecycle verification.
 `ProfilingRun` reconciliation and measurement execution remain unimplemented
-and are gated below.
+and are gated below. Request, source-resolution, evidence-ownership, and
+status/retry checkpoints are fixed; the measurement-worker contract remains.
 
 ## Purpose
 
@@ -394,17 +395,35 @@ research lineage references an object, CHILL performs no automatic evidence
 garbage collection. This conservative initial retention is acceptable for the
 bounded single-Run path and avoids publishing references that silently expire.
 
-This closes evidence responsibility and handoff semantics. Concrete engine,
-connectivity, credentials, object-size limit, and failure behavior still require
-an isolated CHILL-managed storage spike before the operand contract is promoted
-to production code.
+This closes evidence responsibility and handoff semantics. The promoted
+Evidence Store contract now supplies the immutable writer, independent reader,
+compact receipt identity, retained credentials, and operator-managed lifecycle
+required by this path.
 
 ### Checkpoint 4: status and retry semantics
 
-Fix condition types, reason codes, terminal behavior, cancellation, and the
-boundary between Kubernetes Job failure and CHILL evidence/admission failure.
-The first Run keeps `backoffLimit=0`; a retry is a new Run and therefore a new
-trial identity.
+The Run path preserves three different facts: whether the Kubernetes execution
+completed, whether its retained evidence was independently verified, and
+whether that verified evidence was scientifically admitted. Job success alone
+does not imply either evidence validity or admission. Admission `Rejected` or
+`Insufficient` is not rewritten as an execution failure.
+
+The first Job keeps `parallelism=1`, `completions=1`, `backoffLimit=0`, and
+`restartPolicy=Never`. A terminal Run never launches another measurement under
+the same identity. If its recorded Job disappears, the controller reports that
+the execution record was lost rather than recreating the Job. A retry is a new
+`ProfilingRun` and therefore a new Run and trial identity.
+
+Deleting a `ProfilingRun` cancels active work through native owner garbage
+collection of its Job. It does not delete committed evidence. Profiler restart,
+transient observation errors, and duplicate events re-observe the same Run,
+Job/Pod, receipt, and retained object without launching measurement again.
+
+The public API must make these outcome boundaries observable without copying
+native Job status, raw evidence, logs, credentials, or endpoints into the Run.
+Exact Condition names, reason values, and whether a summary Condition is useful
+are deferred to the reviewed `ProfilingRun` API schema. No free-form phase or
+mutable cancel field is required by this checkpoint.
 
 ### Checkpoint 5: measurement worker contract
 
