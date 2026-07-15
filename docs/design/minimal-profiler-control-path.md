@@ -229,7 +229,8 @@ Status remains compact and reconstructable:
 - Kubernetes-style conditions for execution completion and evidence admission;
 - intent digest;
 - owned Job reference and actual Node/Pod identities;
-- evidence reference and content digest; and
+- evidence store/key reference, content digest, schema version, and byte size;
+  and
 - structured admission verdict and reason codes.
 
 Raw latency arrays, power samples, full Pod snapshots, and large logs must not
@@ -339,15 +340,64 @@ Node to the existing edge-metrics deployment. Resolution failure must be a
 typed pre-execution outcome. The first implementation supports edge-metrics
 only while keeping its endpoint out of caller-facing Run intent inputs.
 
-### Checkpoint 3: durable evidence sink
+### Checkpoint 3: durable evidence ownership
 
-Select where the raw immutable bundle is stored before admission status can be
-trusted. Profiler-local files are not durable, and CR status is not a raw-data
-store. The sink must return a stable reference and content digest and must
-enforce a bounded object size.
+The raw immutable bundle belongs to the CHILL-managed evidence-store operand,
+not to CR status, a Profiler filesystem, or a Run Pod volume. The storage
+engine is a replaceable S3-compatible dependency. The Operator manages its
+Kubernetes operating resources; the Profiler consumes only the logical
+evidence-store contract. The first ownership contract is:
 
-This checkpoint is blocking. The first implementation must not publish an
-admission result whose source evidence disappears with a Profiler or Run Pod.
+- the measurement worker is the only raw-bundle writer;
+- the Profiler controller verifies evidence for the Run lifecycle, but does not
+  reconcile the storage operand;
+- the evidence object is authoritative for the exact retained Run evidence;
+- Kubernetes remains authoritative for current Job, Pod, and Node state, while
+  their copies in the bundle are historical Run snapshots;
+- profile derivation consumes only evidence that the Profiler has retrieved and
+  verified, not an unverified worker result or container log; and
+- human and research consumers read through the retained reference without
+  becoming writers to that object.
+
+Evidence identity is the digest of the exact stored bytes. A location alone is
+not identity. The compact reference carried by Run status contains a logical
+store identity and opaque object key, content digest, schema version, and byte
+size. It contains no raw samples, endpoint credentials, Secret data, or
+caller-selected storage URL. The selected store comes from CHILL system
+configuration; a Run cannot redirect evidence to an arbitrary endpoint.
+
+The worker constructs the complete bounded bundle, calculates its digest and
+size, and performs an immutable create. A repeated write of the same bytes may
+succeed idempotently; existing different bytes at the same key must fail. The
+sink must not expose a partial object as committed. After a successful commit,
+the worker emits only a small structured receipt through the native container
+termination message. The receipt is a handoff hint, not proof.
+
+The controller trusts the handoff only after it:
+
+1. observes the one owned Job and Pod attempt in a terminal state;
+2. parses the bounded receipt from the terminated worker container;
+3. retrieves the object through the configured evidence-store reader;
+4. verifies byte size, content digest, schema, Run intent digest, and relevant
+   Kubernetes object identities; and
+5. publishes the verified reference and evidence/admission Conditions.
+
+Job success without a committed and verified object is evidence failure. An
+upload failure or partial write terminates the worker unsuccessfully and cannot
+produce an admitted result. Duplicate reconcile events and Profiler restarts
+repeat the read and verification; they do not rerun measurement.
+
+The first path does not cascade evidence deletion from `ProfilingRun` or
+`ChillSystem` deletion and does not add evidence cleanup to the root finalizer.
+Until a separately reviewed retention policy can prove that no live profile or
+research lineage references an object, CHILL performs no automatic evidence
+garbage collection. This conservative initial retention is acceptable for the
+bounded single-Run path and avoids publishing references that silently expire.
+
+This closes evidence responsibility and handoff semantics. Concrete engine,
+connectivity, credentials, object-size limit, and failure behavior still require
+an isolated CHILL-managed storage spike before the operand contract is promoted
+to production code.
 
 ### Checkpoint 4: status and retry semantics
 
@@ -358,11 +408,12 @@ trial identity.
 
 ### Checkpoint 5: measurement worker contract
 
-Fix the narrow handoff from frozen intent to the one-shot Job worker and from
-the worker to the durable evidence sink. Reconciliation must remain bounded and
-reconstructable without running a measurement loop. Worker termination,
-partial uploads, controller restart, and duplicate reconcile events must have
-deterministic observable outcomes.
+Fix the concrete serialization and delivery of frozen intent to the one-shot
+Job worker, the evidence-store writer interface, the bounded termination
+receipt schema, and worker exit codes. This checkpoint implements the ownership
+and verification sequence fixed by Checkpoint 3; it does not introduce a second
+handoff through logs or controller memory. Reconciliation must remain bounded
+and reconstructable without running a measurement loop.
 
 ## Implementation sequence
 
