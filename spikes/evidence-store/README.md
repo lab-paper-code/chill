@@ -17,8 +17,8 @@ pinned to the exact amd64 manifest currently used by this spike.
 - No credential value is stored in Git.
 - The first Service is `ClusterIP`. Edge reachability is a separate observation,
   not an assumption embedded in the deployment.
-- No writer, verifier, bucket initialization, retention, or garbage collection
-  is included in this first step.
+- The base operand manifests do not embed a writer, verifier, bucket
+  initializer, retention policy, or garbage collector.
 
 ## Create credentials
 
@@ -49,3 +49,22 @@ the caller's Kubernetes access and creates
 Pod itself has no Kubernetes API token. It calls the unauthenticated health
 endpoint by both ClusterIP and Service DNS, receives no S3 credentials, and
 writes no object.
+
+## Authenticated evidence round trip
+
+The round-trip fixtures keep three responsibilities separate:
+
+- `bucket-setup-job.yaml` prepares the spike bucket on a cloud Node;
+- `evidence-put-job.yaml` runs on Lattepanda and performs one immutable create;
+- `evidence-verify-job.yaml` independently downloads and verifies exact bytes
+  on a cloud Node.
+
+The input is the existing 389,364-byte profiling evidence bundle with digest
+`sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42`.
+`prepare-evidence-fixture.sh` exposes that repository fixture to the writer as a
+ConfigMap; it is test input, not a proposed evidence persistence mechanism.
+
+The writer handles a conditional-create conflict by downloading the existing
+object. Exact bytes produce `existing-exact-match`; different bytes remain an
+immutable conflict. `evidence-conflict-job.yaml` verifies the latter without
+changing the retained object.

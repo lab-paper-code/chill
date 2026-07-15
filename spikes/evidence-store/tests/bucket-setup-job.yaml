@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: chill-evidence-store-bucket-setup-
+  namespace: chill-system
+  labels:
+    app.kubernetes.io/name: chill-evidence-store-setup
+    app.kubernetes.io/component: evidence-store
+    app.kubernetes.io/part-of: chill
+    app.kubernetes.io/managed-by: evidence-store-spike
+spec:
+  activeDeadlineSeconds: 60
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chill-evidence-store-setup
+        app.kubernetes.io/component: evidence-store
+        app.kubernetes.io/part-of: chill
+        app.kubernetes.io/managed-by: evidence-store-spike
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: setup
+          image: 155.230.35.213:5000/chill/spike-s3-client@sha256:e73ec12f2bf15c397e3346264bcb7a8299c832692a96ef211968ad4d07a64dfb
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -eu
+            - -c
+            - |
+              if aws --endpoint-url "$STORE_ENDPOINT" s3api head-bucket \
+                --bucket "$STORE_BUCKET" >/dev/null 2>&1; then
+                echo "bucket state: already present"
+              else
+                aws --endpoint-url "$STORE_ENDPOINT" s3api create-bucket \
+                  --bucket "$STORE_BUCKET" >/dev/null
+                echo "bucket state: created"
+              fi
+          env:
+            - name: STORE_ENDPOINT
+              value: http://chill-evidence-store-spike.chill-system.svc.cluster.local:9000
+            - name: STORE_BUCKET
+              value: chill-profiling-evidence
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: chill-evidence-store-spike-credentials
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chill-evidence-store-spike-credentials
+                  key: secret-key
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: AWS_PAGER
+              value: ""
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
