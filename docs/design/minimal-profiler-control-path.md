@@ -50,7 +50,8 @@ ProfilingRun desired state
   -> exact intent frozen
   -> owned Kubernetes Job
   -> measurement worker executes runtime + PowerObserver observation
-  -> immutable evidence record
+  -> immutable raw measurement object
+  -> Profiler finalizes execution evidence from terminal Kubernetes facts
   -> single-Run admission result
   -> ProfilingRun status
 ```
@@ -133,8 +134,10 @@ manager's uncached API reader so they do not implicitly require informer
 - observing directly owned Job lifecycle without replacing Kubernetes status;
 - resolving the actual Pod identity through the Job ownership chain when
   evidence validation requires it;
-- reading the durable evidence reference and object identities produced by the
+- reading and verifying the durable raw-measurement reference produced by the
   measurement worker;
+- combining that verified object with terminal Job, Pod, Node, and image facts
+  into one immutable execution-evidence record;
 - applying compact status to the reconciled `ProfilingRun`; and
 - running as a separate controller binary and operator-managed Deployment.
 
@@ -149,9 +152,11 @@ state in process memory.
 - running inside the one-shot `ProfilingRun` Job;
 - executing the frozen runtime and artifact contract;
 - invoking `internal/powerobserver` for the bounded measurement window;
-- assembling runtime and power evidence without changing the frozen intent;
-- writing the immutable raw bundle to the configured durable evidence sink;
-  and
+- assembling only runtime and power facts observable during execution without
+  changing the frozen intent;
+- writing one immutable raw-measurement object to the configured durable
+  evidence sink;
+- emitting a bounded receipt that identifies the committed object; and
 - exiting with an execution result that Kubernetes records on the Job and Pod.
 
 The worker is the execution plane. A Profiler controller restart or leader
@@ -246,9 +251,9 @@ aggregate `message` field is introduced.
 3. Resolve Node -> edge-metrics source
 4. Freeze immutable Run intent and digest
 5. Create one deterministic, ProfilingRun-owned Job
-6. Let its measurement worker execute and persist runtime + power evidence
-7. Observe native Job/Pod completion and strictly validate retained evidence
-8. Verify the retained evidence reference and content digest
+6. Let its measurement worker execute and persist raw runtime + power evidence
+7. Observe native Job/Pod completion and verify the raw-measurement receipt
+8. Finalize immutable execution evidence with terminal Kubernetes facts
 9. Apply single-Run admission policy
 10. Patch compact ProfilingRun status
 ```
@@ -343,50 +348,72 @@ only while keeping its endpoint out of caller-facing Run intent inputs.
 
 ### Checkpoint 3: durable evidence ownership
 
-The raw immutable bundle belongs to the CHILL-managed evidence-store operand,
-not to CR status, a Profiler filesystem, or a Run Pod volume. The storage
-engine is a replaceable S3-compatible dependency. The Operator manages its
-Kubernetes operating resources; the Profiler consumes only the logical
-evidence-store contract. The first ownership contract is:
+The raw measurement object and finalized execution-evidence record belong to
+the CHILL-managed evidence-store operand, not to CR status, a Profiler
+filesystem, or a Run Pod volume. The storage engine is a replaceable
+S3-compatible dependency. The Operator manages its Kubernetes operating
+resources; the Profiler consumes only the logical evidence-store contract. The
+first ownership contract is:
 
-- the measurement worker is the only raw-bundle writer;
-- the Profiler controller verifies evidence for the Run lifecycle, but does not
-  reconcile the storage operand;
-- the evidence object is authoritative for the exact retained Run evidence;
-- Kubernetes remains authoritative for current Job, Pod, and Node state, while
-  their copies in the bundle are historical Run snapshots;
+- the measurement worker is the only raw-measurement writer;
+- the Profiler controller is the only finalized execution-evidence writer and
+  does not reconcile the storage operand;
+- the raw object is authoritative for the exact retained runtime and power
+  observations;
+- Kubernetes remains authoritative for current Job, Pod, and Node state;
+- their terminal snapshots become historical facts only in the finalized
+  execution-evidence record;
 - profile derivation consumes only evidence that the Profiler has retrieved and
-  verified, not an unverified worker result or container log; and
-- human and research consumers read through the retained reference without
-  becoming writers to that object.
+  finalized, not an unverified worker result or container log; and
+- human and research consumers read through the finalized reference without
+  becoming writers to either object.
 
-Evidence identity is the digest of the exact stored bytes. A location alone is
-not identity. The compact reference carried by Run status contains a logical
-store identity and opaque object key, content digest, schema version, and byte
-size. It contains no raw samples, endpoint credentials, Secret data, or
-caller-selected storage URL. The selected store comes from CHILL system
-configuration; a Run cannot redirect evidence to an arbitrary endpoint.
+Each object identity is the digest of its exact stored bytes. A location alone
+is not identity. The finalized record contains the verified raw-measurement
+reference and its digest. The compact finalized reference carried by Run status
+contains a logical store identity and opaque object key, content digest, schema
+version, and byte size. It contains no raw samples, endpoint credentials,
+Secret data, or caller-selected storage URL. The selected store comes from
+CHILL system configuration; a Run cannot redirect evidence to an arbitrary
+endpoint.
 
-The worker constructs the complete bounded bundle, calculates its digest and
-size, and performs an immutable create. A repeated write of the same bytes may
-succeed idempotently; existing different bytes at the same key must fail. The
-sink must not expose a partial object as committed. After a successful commit,
-the worker emits only a small structured receipt through the native container
-termination message. The receipt is a handoff hint, not proof.
+The worker constructs the bounded raw-measurement object, calculates its digest
+and size, and performs an immutable create. It does not claim terminal Job or
+Pod state, because those facts do not exist until the worker has exited. A
+repeated write of the same bytes may succeed idempotently; existing different
+bytes at the same key must fail. The sink must not expose a partial object as
+committed. After a successful commit, the worker emits only a small structured
+receipt through the native container termination message. The receipt is a
+handoff hint, not proof.
 
 The controller trusts the handoff only after it:
 
 1. observes the one owned Job and Pod attempt in a terminal state;
 2. parses the bounded receipt from the terminated worker container;
 3. retrieves the object through the configured evidence-store reader;
-4. verifies byte size, content digest, schema, Run intent digest, and relevant
-   Kubernetes object identities; and
-5. publishes the verified reference and evidence/admission Conditions.
+4. verifies byte size, content digest, schema, Run intent digest, and
+   measurement identities;
+5. constructs an immutable execution-evidence record containing the verified
+   raw reference and the observed terminal Job, Pod, Node, ownership, and image
+   facts;
+6. independently retrieves and verifies that finalized record; and
+7. publishes its compact reference and evidence/admission Conditions.
 
-Job success without a committed and verified object is evidence failure. An
-upload failure or partial write terminates the worker unsuccessfully and cannot
-produce an admitted result. Duplicate reconcile events and Profiler restarts
-repeat the read and verification; they do not rerun measurement.
+Finalization uses a deterministic object key and canonical bytes derived only
+from the frozen intent, verified raw reference, and stable terminal facts. It
+projects the required UIDs, ownership, placement, requested and pulled image
+identities, termination states, and native completion timestamps rather than
+serializing entire live Kubernetes objects. Volatile `resourceVersion`, managed
+fields, unrelated metadata, and the controller's reconciliation time are not
+part of the record. Repeating finalization after a crash therefore produces the
+same bytes and the same immutable-create outcome.
+
+Job success without a committed and verified raw object and a verified finalized
+record is evidence failure. An upload failure or partial write terminates the
+worker unsuccessfully and cannot produce an admitted result. Finalization is an
+idempotent immutable write derived from already retained facts. Duplicate
+reconcile events and Profiler restarts repeat retrieval, verification, and
+finalization; they do not rerun measurement.
 
 The first path does not cascade evidence deletion from `ProfilingRun` or
 `ChillSystem` deletion and does not add evidence cleanup to the root finalizer.
@@ -417,7 +444,8 @@ the execution record was lost rather than recreating the Job. A retry is a new
 Deleting a `ProfilingRun` cancels active work through native owner garbage
 collection of its Job. It does not delete committed evidence. Profiler restart,
 transient observation errors, and duplicate events re-observe the same Run,
-Job/Pod, receipt, and retained object without launching measurement again.
+Job/Pod, receipt, raw object, and finalized record without launching measurement
+again.
 
 The public API must make these outcome boundaries observable without copying
 native Job status, raw evidence, logs, credentials, or endpoints into the Run.
@@ -428,11 +456,13 @@ mutable cancel field is required by this checkpoint.
 ### Checkpoint 5: measurement worker contract
 
 Fix the concrete serialization and delivery of frozen intent to the one-shot
-Job worker, the evidence-store writer interface, the bounded termination
-receipt schema, and worker exit codes. This checkpoint implements the ownership
-and verification sequence fixed by Checkpoint 3; it does not introduce a second
-handoff through logs or controller memory. Reconciliation must remain bounded
-and reconstructable without running a measurement loop.
+Job worker, the raw-measurement schema, the bounded termination receipt schema,
+worker exit codes, and the controller-authored execution-evidence envelope.
+Both writes use the same evidence-store contract and distinct immutable object
+identities. This checkpoint implements the ownership and verification sequence
+fixed by Checkpoint 3; it does not introduce a handoff through logs or
+controller memory. Reconciliation must remain bounded and reconstructable
+without running a measurement loop.
 
 ## Implementation sequence
 

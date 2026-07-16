@@ -74,6 +74,11 @@ alone is not a valid Run. Missing, duplicate, malformed, mismatched, or failed
 runtime evidence fails the Run evidence gate. Collection/I/O failure remains
 distinct from an observed Run failure.
 
+This collector runs outside the completed Job and can therefore observe
+terminal Kubernetes facts. Its combined spike bundle is a regression oracle,
+not a contract requiring the future in-Job measurement worker to know its own
+terminal Pod or Job state.
+
 Power samples are raw Run evidence only. Receipt timestamps are not device
 timestamps. Coverage, gaps, integration, repetitions, uncertainty, energy, and
 `b_sat` belong to Plan 3.

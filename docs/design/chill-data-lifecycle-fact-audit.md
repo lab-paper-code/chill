@@ -99,12 +99,13 @@ database, bucket, or retention policy.
 
 ## Confirmed gaps
 
-The current system has no production contract for:
+The current system has no production Profiler contract for:
 
-- a durable evidence sink or its health;
-- an immutable evidence reference containing location, digest, schema, and
-  size;
-- storage credentials and tenant isolation;
+- writing raw measurements to the managed evidence sink;
+- finalizing terminal Kubernetes facts as a separate immutable evidence
+  record;
+- publishing an immutable evidence reference containing location, digest,
+  schema, and size;
 - confirmation that evidence is durable before a Job or Run object is removed;
 - retention, pinning, garbage collection, or explicit deletion;
 - reconstruction after Profiler restart or cluster-object deletion;
@@ -116,13 +117,17 @@ needs a universal storage subsystem.
 
 ## Audit conclusion
 
-The first unresolved production boundary is the immutable single-Run evidence
-handoff:
+The first unresolved Profiler boundary is the immutable single-Run evidence
+handoff and finalization:
 
 ```text
 measurement worker
-  -> durable immutable bytes
-  -> verified location + digest + schema + size
+  -> durable immutable raw measurement + receipt
+
+Profiler controller
+  -> verify raw measurement after Job/Pod termination
+  -> combine terminal Kubernetes facts
+  -> durable immutable execution-evidence record
   -> compact ProfilingRun reference and admission status
 ```
 
@@ -139,9 +144,10 @@ object store.
 
 This does not make storage operation a Profiler responsibility. The Operator
 manages the evidence-store operand, the measurement worker writes one immutable
-Run bundle, and the Profiler controller retrieves and verifies that bundle.
-The Profiler depends on a logical CHILL evidence-store contract rather than a
-storage product or caller-provided endpoint.
+raw-measurement object, and the Profiler controller retrieves and verifies it
+before writing a separate immutable execution-evidence record. The Profiler
+depends on a logical CHILL evidence-store contract rather than a storage product
+or caller-provided endpoint.
 
 ## Current-cluster storage candidate audit
 

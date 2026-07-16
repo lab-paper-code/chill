@@ -13,7 +13,7 @@ S3-compatible storage engine remains a replaceable dependency.
 
 The first promoted path answers one question:
 
-> Can one CHILL worker commit immutable Run evidence and can a separate CHILL
+> Can CHILL producers commit immutable evidence objects and can a separate
 > reader later reconstruct and verify the exact retained bytes?
 
 This is not a general data platform, profile database, research catalog, or
@@ -54,12 +54,13 @@ CHILL Operator -> manages Evidence Store operand
 measurement worker
   -> internal evidence writer
   -> S3 adapter
-  -> immutable object + bounded receipt
+  -> immutable raw-measurement object + bounded receipt
 
 Profiler controller
   -> internal evidence reader
-  -> independent exact-byte verification
-  -> compact verified reference
+  -> independent raw-object verification
+  -> internal evidence writer
+  -> immutable execution-evidence record + compact verified reference
 ```
 
 The three parts are promoted separately. An internal storage module does not
@@ -72,8 +73,8 @@ authorize an Operator or Profiler controller change.
 | `internal/evidencestore` | Product-neutral reference, receipt, immutable-create outcomes, typed errors, exact digest and size verification |
 | S3 adapter | Conditional create, object retrieval, S3 error translation, cancellation and response cleanup |
 | CHILL Operator | Deployment, ClusterIP Service, Secret, persistent-storage attachment, and component availability |
-| Measurement worker | Assemble exact bytes, calculate identity, invoke immutable create, return a bounded receipt |
-| Profiler controller | Treat receipt as a hint, retrieve independently, verify content and Run identity, publish compact status |
+| Measurement worker | Assemble raw runtime and power bytes, calculate identity, invoke immutable create, return a bounded receipt |
+| Profiler controller | Treat receipt as a hint, retrieve independently, verify raw content, combine terminal Kubernetes facts into a separate immutable execution-evidence record, publish compact status |
 | Kubernetes, CSI, EdgeMesh, storage engine | Native workload lifecycle, volume mechanics, edge Service routing, and stored-byte serving |
 
 Important exclusions follow from this table:
@@ -216,8 +217,9 @@ Stop for review. The Operator still does not write or verify evidence.
 
 Begin only after the minimum `ProfilingRun` API and controller contract is
 approved. Inject resolved store configuration into the worker, consume its
-bounded receipt, independently verify the object, and publish the compact
-reference and Conditions.
+bounded receipt, independently verify the raw-measurement object, write and
+verify a separate execution-evidence record from terminal Kubernetes facts,
+and publish the compact finalized reference and Conditions.
 
 ## Acceptance boundary
 
@@ -238,6 +240,6 @@ The following remain outside this promotion:
 ## Review question
 
 Does this design promote only the verified immutable evidence primitive while
-keeping storage operation with the CHILL Operator, execution with the worker,
-evidence trust with the Profiler controller, and raw bytes outside Kubernetes
-status?
+keeping storage operation with the CHILL Operator, measurement execution with
+the worker, evidence finalization with the Profiler controller, and raw bytes
+outside Kubernetes status?
