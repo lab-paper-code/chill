@@ -80,7 +80,7 @@ func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (profilingrun
 		return profilingrun.Intent{}, errors.New("intent maximum size must be positive")
 	}
 	var intent profilingrun.Intent
-	if err := decodeJSONFile(path, maxBytes, &intent); err != nil {
+	if err := decodeProjectedJSONFile(path, maxBytes, &intent); err != nil {
 		return profilingrun.Intent{}, fmt.Errorf("read frozen intent file: %w", err)
 	}
 	digest, err := intent.Digest()
@@ -202,6 +202,39 @@ func decodeJSONFile(path string, maxBytes int64, target any) error {
 	if err != nil {
 		return err
 	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	if !os.SameFile(info, openedInfo) {
+		_ = file.Close()
+		return errors.New("handoff path changed while opening")
+	}
+	return decodeOpenedJSONFile(file, maxBytes, target)
+}
+
+// decodeProjectedJSONFile follows a Kubernetes projected-volume symlink, then
+// verifies and decodes the regular file held by the opened descriptor. Content
+// identity remains protected by the caller's expected digest.
+func decodeProjectedJSONFile(path string, maxBytes int64, target any) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return errors.New("projected input target is not a regular file")
+	}
+	return decodeOpenedJSONFile(file, maxBytes, target)
+}
+
+func decodeOpenedJSONFile(file *os.File, maxBytes int64, target any) error {
 	payload, readErr := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	closeErr := file.Close()
 	if readErr != nil {

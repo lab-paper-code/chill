@@ -117,6 +117,42 @@ func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
 	}
 }
 
+func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
+	intent := testIntent(t)
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	directory := t.TempDir()
+	revision := filepath.Join(directory, "..2026_07_16_00_00_00")
+	if err := os.Mkdir(revision, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(revision, "intent.json"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Base(revision), filepath.Join(directory, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "intent.json")
+	if err := os.Symlink(filepath.Join("..data", "intent.json"), path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadFrozenIntent(path, digest, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != intent.State {
+		t.Fatalf("loaded projected intent drifted: %#v", loaded)
+	}
+}
+
 func TestPublishPowerResultDoesNotReplaceExistingHandoff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "power-result.json")
 	result := testPowerResult(testIntent(t))
