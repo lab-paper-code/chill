@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,12 +47,4 @@ func (r *IntentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, fmt.Errorf("freeze ProfilingRun %s intent: %w", req.NamespacedName, err)
 	}
 	return ctrl.Result{}, nil
-}
-
-func (r *IntentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		Named("profilingrun-intent").
-		For(&edgev1alpha1.ProfilingRun{}).
-		Owns(&corev1.ConfigMap{}).
-		Complete(r)
 }

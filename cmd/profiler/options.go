@@ -1,0 +1,56 @@
+package main
+
+import (
+	"errors"
+	"flag"
+	"os"
+	"strings"
+)
+
+type options struct {
+	metricsAddr          string
+	probeAddr            string
+	watchNamespace       string
+	enableLeaderElection bool
+	leaderElectionID     string
+	factSourceConfigMap  string
+	executionFactsKey    string
+	powerSourcesKey      string
+}
+
+func (o *options) bindFlags(flags *flag.FlagSet) {
+	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
+	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
+	flags.StringVar(
+		&o.watchNamespace,
+		"watch-namespace",
+		os.Getenv("POD_NAMESPACE"),
+		"Namespace containing CHILL profiling resources.",
+	)
+	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
+	flags.StringVar(&o.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
+	flags.StringVar(&o.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
+	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
+	flags.StringVar(&o.powerSourcesKey, "power-sources-key", "", "ConfigMap key containing Node power sources.")
+}
+
+func (o options) validate() error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "watch namespace", value: o.watchNamespace},
+		{name: "fact-source ConfigMap", value: o.factSourceConfigMap},
+		{name: "execution-facts key", value: o.executionFactsKey},
+		{name: "power-sources key", value: o.powerSourcesKey},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" || strings.TrimSpace(field.value) != field.value {
+			return errors.New(field.name + " is required without surrounding whitespace")
+		}
+	}
+	if o.executionFactsKey == o.powerSourcesKey {
+		return errors.New("execution-facts and power-sources keys must be different")
+	}
+	return nil
+}

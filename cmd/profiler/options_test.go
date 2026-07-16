@@ -1,6 +1,29 @@
 package main
 
-import "testing"
+import (
+	"flag"
+	"testing"
+)
+
+func TestOptionsBindFlags(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "chill-system")
+	flags := flag.NewFlagSet("profiler", flag.ContinueOnError)
+	opts := options{}
+	opts.bindFlags(flags)
+	if err := flags.Parse([]string{
+		"--fact-source-config-map=chill-profiler-facts",
+		"--execution-facts-key=execution-facts.yaml",
+		"--power-sources-key=power-sources.yaml",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if opts.watchNamespace != "chill-system" || opts.metricsAddr != "0" || opts.probeAddr != ":8081" {
+		t.Fatalf("unexpected bound options: %#v", opts)
+	}
+}
 
 func TestOptionsValidateFactSourceContract(t *testing.T) {
 	valid := options{
