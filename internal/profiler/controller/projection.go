@@ -31,6 +31,7 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				ModelSpec:     spec.Candidate.ModelSpec,
 				DeviceClass:   spec.Candidate.DeviceClass,
 				ExecutionPath: spec.Candidate.ExecutionPath,
+				PowerMode:     spec.Candidate.PowerMode,
 			},
 			TargetNode: spec.TargetNode,
 			CPURequest: spec.CPURequest.String(),

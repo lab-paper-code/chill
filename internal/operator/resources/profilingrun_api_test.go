@@ -37,6 +37,9 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("empty ModelSpec", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Candidate.ModelSpec = ""
 		}),
+		Entry("empty power mode", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Candidate.PowerMode = ""
+		}),
 		Entry("zero batch", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Batch = 0
 		}),
@@ -110,7 +113,10 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: edgev1alpha1.ProfilingRunSpec{
 			Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-				ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g", ExecutionPath: "ort-cpu",
+				ModelSpec:     "mobilenet-v2-050",
+				DeviceClass:   "lattepanda-3-delta-8g",
+				ExecutionPath: "ort-cpu",
+				PowerMode:     "fixed",
 			},
 			TargetNode: "lattepanda",
 			CPURequest: resource.MustParse("100m"),

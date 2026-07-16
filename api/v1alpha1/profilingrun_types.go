@@ -58,6 +58,12 @@ type ProfilingRunCandidateSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	ExecutionPath string `json:"executionPath"`
+
+	// PowerMode selects one mode declared by DeviceClass. The first supported
+	// CPU path accepts only the non-actuated "fixed" mode.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	PowerMode string `json:"powerMode"`
 }
 
 type ProfilingRunMeasurementSpec struct {

@@ -25,6 +25,7 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if request.Preparation.Candidate.ModelSpec != run.Spec.Candidate.ModelSpec ||
+		request.Preparation.Candidate.PowerMode != run.Spec.Candidate.PowerMode ||
 		request.Preparation.TargetNode != run.Spec.TargetNode || request.Preparation.CPURequest != "100m" ||
 		request.Preparation.Measurement.Batch != 1 || request.Preparation.Power.IntervalMilliseconds != 1000 ||
 		request.AdmissionPolicy != run.Spec.AdmissionPolicy {
@@ -42,6 +43,11 @@ func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 	run.Spec.AdmissionPolicy = " policy "
 	if _, err := ProjectRequest(run.Spec); err == nil {
 		t.Fatal("expected admission policy whitespace rejection")
+	}
+	run = testRun()
+	run.Spec.Candidate.PowerMode = "15W"
+	if _, err := ProjectRequest(run.Spec); err == nil {
+		t.Fatal("expected unsupported power mode rejection")
 	}
 }
 
@@ -215,7 +221,10 @@ func testRun() *edgev1alpha1.ProfilingRun {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Spec: edgev1alpha1.ProfilingRunSpec{
 			Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-				ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g", ExecutionPath: "ort-cpu",
+				ModelSpec:     "mobilenet-v2-050",
+				DeviceClass:   "lattepanda-3-delta-8g",
+				ExecutionPath: "ort-cpu",
+				PowerMode:     "fixed",
 			},
 			TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{

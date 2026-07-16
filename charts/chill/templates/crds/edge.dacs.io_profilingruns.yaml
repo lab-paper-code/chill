@@ -82,10 +82,18 @@ spec:
                     maxLength: 253
                     minLength: 1
                     type: string
+                  powerMode:
+                    description: |-
+                      PowerMode selects one mode declared by DeviceClass. The first supported
+                      CPU path accepts only the non-actuated "fixed" mode.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
                 required:
                 - deviceClass
                 - executionPath
                 - modelSpec
+                - powerMode
                 type: object
               cpuRequest:
                 anyOf:

@@ -177,8 +177,10 @@ func validatePreparedForRun(
 func preparationFromIntent(intent profilingrun.Intent) profiler.PreparationRequest {
 	return profiler.PreparationRequest{
 		Candidate: profiler.CandidateSelection{
-			ModelSpec: intent.State.Model, DeviceClass: intent.State.DeviceClass,
+			ModelSpec:     intent.State.Model,
+			DeviceClass:   intent.State.DeviceClass,
 			ExecutionPath: intent.Candidate.ExecutionPath,
+			PowerMode:     intent.State.PowerMode,
 		},
 		TargetNode:  intent.TargetNode.Name,
 		CPURequest:  intent.CPU.Request,

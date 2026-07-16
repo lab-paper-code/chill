@@ -18,12 +18,14 @@ const (
 	firstExecutionPath    = "ort-cpu"
 	firstRuntimeFamily    = "onnxruntime"
 	firstRuntimeBackend   = "CPUExecutionProvider"
+	firstPowerMode        = "fixed"
 )
 
 type CandidateSelection struct {
 	ModelSpec     string
 	DeviceClass   string
 	ExecutionPath string
+	PowerMode     string
 }
 
 // PreparationRequest contains caller-selected Run inputs. Resolved endpoint,
@@ -165,6 +167,9 @@ func (p *Preparer) freeze(
 		candidate.State.DeviceClass != request.Candidate.DeviceClass {
 		return profilingrun.Intent{}, errors.New("resolved candidate does not match requested catalog objects")
 	}
+	if candidate.State.PowerMode != request.Candidate.PowerMode {
+		return profilingrun.Intent{}, errors.New("resolved candidate power mode does not match request")
+	}
 	if request.Candidate.ExecutionPath != firstExecutionPath ||
 		candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
 		return profilingrun.Intent{}, errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
@@ -225,6 +230,7 @@ func (r PreparationRequest) Validate() error {
 		"candidate ModelSpec":     r.Candidate.ModelSpec,
 		"candidate DeviceClass":   r.Candidate.DeviceClass,
 		"candidate executionPath": r.Candidate.ExecutionPath,
+		"candidate powerMode":     r.Candidate.PowerMode,
 		"target Node":             r.TargetNode,
 		"CPU request":             r.CPURequest,
 	} {
@@ -234,6 +240,9 @@ func (r PreparationRequest) Validate() error {
 	}
 	if r.Candidate.ExecutionPath != firstExecutionPath {
 		return fmt.Errorf("first path supports only executionPath %q", firstExecutionPath)
+	}
+	if r.Candidate.PowerMode != firstPowerMode {
+		return fmt.Errorf("first path supports only powerMode %q", firstPowerMode)
 	}
 	if r.Power.IntervalMilliseconds < 1 || r.Power.TimeoutMilliseconds < 1 ||
 		r.Power.TimeoutMilliseconds >= r.Power.IntervalMilliseconds ||

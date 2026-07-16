@@ -74,6 +74,13 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			match: "does not match requested catalog objects",
 		},
 		{
+			name: "candidate power mode mismatch",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.State.PowerMode = "other-mode"
+			},
+			match: "power mode does not match request",
+		},
+		{
 			name: "candidate report mismatch",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.RuntimeImage = "registry.example/runtime@sha256:" + strings.Repeat("f", 64)
@@ -173,6 +180,9 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		{name: "multiple repetitions", mutate: func(request *PreparationRequest) {
 			request.Measurement.Repetitions = 2
 		}},
+		{name: "unsupported power mode", mutate: func(request *PreparationRequest) {
+			request.Candidate.PowerMode = "15W"
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resolvers := fixtureResolvers(expected, candidateBytes)
@@ -213,6 +223,7 @@ func fixtureRequest(intent profilingrun.Intent) PreparationRequest {
 			ModelSpec:     intent.State.Model,
 			DeviceClass:   intent.State.DeviceClass,
 			ExecutionPath: intent.Candidate.ExecutionPath,
+			PowerMode:     intent.State.PowerMode,
 		},
 		TargetNode:  intent.TargetNode.Name,
 		CPURequest:  intent.CPU.Request,
