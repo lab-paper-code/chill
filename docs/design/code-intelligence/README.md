@@ -10,7 +10,7 @@ verification commands.
 
 The CI workflow runs `make arch-check`; editor and MCP client configuration are
 not installed automatically. The Phase 3 CodeGraph local pilot is in progress
-with one of three required sessions complete. It may still be rejected without
+with two of three required sessions complete. It may still be rejected without
 removing the earlier baselines. Phase 4 requires its own review.
 
 ## Decision
@@ -295,7 +295,11 @@ same-named annotation constant rather than the API field, and the affected-test
 query misses existing tests. Helm discovery does not recover the authoritative
 rendered resource set.
 
-The result supports continuing sessions 2 and 3, not baseline adoption. See the
+The result supported continuing sessions 2 and 3, not baseline adoption. A
+second session on commit `0c14bd4699537cf7dead83c8ff61797a36f89abc`
+reproduced the three useful discovery cases and all known misses. It also
+verified create, modify, rename, and delete auto-synchronization through a live
+MCP stdio connection. One independent session remains. See the
 [Phase 3 pilot record](codegraph-pilot.md) for exact results and commands.
 
 ### Isolation and configuration
@@ -431,16 +435,17 @@ temporary test change. The checked-in negative fixture verifies that
 `power-core -> api` is rejected. `make arch-graph` writes an on-demand SVG to
 the ignored `bin/` directory and is not a correctness gate.
 
-### Phase 3: run the optional CodeGraph pilot — in progress (1/3 sessions)
+### Phase 3: run the optional CodeGraph pilot — in progress (2/3 sessions)
 
 Install it only in an isolated local tool location, apply the privacy and
 instruction controls, and run the pilot gate. Do not add it to CI or require it
 for contributors.
 
 Exit condition: either record it as an optional local accelerator with its
-known blind spots, or remove its MCP configuration and local index. Session 1
-passed the provisional discovery-benefit threshold, but explicit sync does not
-yet satisfy the MCP watcher condition and two separate sessions remain.
+known blind spots, or remove its MCP configuration and local index. Sessions 1
+and 2 passed the provisional discovery-benefit threshold. Session 2 also
+passed the MCP watcher condition; one separate session remains before the
+adoption decision.
 
 ### Phase 4: add deployment graph targets
 

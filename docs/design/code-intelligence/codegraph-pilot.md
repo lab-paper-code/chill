@@ -2,15 +2,17 @@
 
 ## Status
 
-Pilot in progress: session 1 of 3 completed on 2026-07-16. CodeGraph is not an
+Pilot in progress: sessions 1 and 2 of 3 completed on 2026-07-16. CodeGraph is not an
 adopted correctness dependency, is not configured automatically as an MCP, and
 does not run in CI.
 
-The first session found enough discovery benefit to continue the pilot, but it
+Both sessions found enough discovery benefit to continue the pilot, but they
 also reproduced two material blind spots: `IntentDigest` impact resolves the
 same-named annotation constant instead of the API field, and Helm template
 conditions do not yield the rendered Profiler resource set. The affected-test
-feature remains unapproved.
+feature remains unapproved. Session 2 closed the watcher uncertainty for one
+session by driving the MCP server over stdio while exercising all four file
+change cases.
 
 ## Pinned distribution and isolation
 
@@ -34,22 +36,23 @@ feature remains unapproved.
 published release digest before extraction. No command in the pilot writes
 Codex, editor, or agent configuration.
 
-## Session 1 environment and index
+## Session environments and index
 
-The session used commit `d0786e5644bad214c5a89762c17bbd1b828c7c89` plus the
-current uncommitted Phase 0 through Phase 3 files.
+Session 1 used commit `d0786e5644bad214c5a89762c17bbd1b828c7c89` plus the
+then-uncommitted Phase 0 through Phase 3 files. Session 2 used the committed
+pilot implementation at `0c14bd4699537cf7dead83c8ff61797a36f89abc`.
 
-| Measure | Session 1 |
-|---|---:|
-| Files indexed | 279 |
-| Graph nodes | 3,266 |
-| Graph edges | 8,138 |
-| Index database | 9.87 MB |
-| CodeGraph-reported index time | 1.2 s |
-| Full `make codegraph-index` wall time | 2.36 s |
-| Maximum resident memory during indexing | 341,864 KiB |
-| Pending changes after index | 0 |
-| Database journal | WAL |
+| Measure | Session 1 | Session 2 |
+|---|---:|---:|
+| Files indexed | 279 | 279 |
+| Graph nodes | 3,266 | 3,266 |
+| Graph edges | 8,138 | 8,138 |
+| Index database | 9.87 MB | 9.88 MB |
+| CodeGraph-reported index time | 1.2 s | reused clean index |
+| Full `make codegraph-index` wall time | 2.36 s | not rebuilt |
+| Maximum resident memory during indexing | 341,864 KiB | not remeasured |
+| Pending changes after session | 0 | 0 |
+| Database journal | WAL | WAL |
 
 The ignored extracted runtime occupies about 226 MiB. It is a local tool cost,
 not a repository or image size change.
@@ -73,6 +76,20 @@ The first session reduced discovery operations for Q1, Q3, and Q4, satisfying
 the provisional three-of-six benefit threshold for this session only. It does
 not satisfy the three-session adoption gate.
 
+## Golden-query session 2
+
+The second independent coding session repeated the same automated query and
+authority sequence on the committed pilot implementation. Q1, Q2 candidate
+lookup, and all 67 production package edges passed again. Q1, Q3, and Q4 kept
+the same reduction in manual discovery reads and searches, meeting the
+three-of-six provisional benefit threshold for session 2.
+
+The result did not broaden CodeGraph's authority. Q2 still requires `gopls`
+for interface implementations. Q5 remained a known miss while source
+verification found all four authoritative `IntentDigest` locations. Q6
+remained a known miss while Helm verification preserved the `23 -> 30`
+resource result. No high-impact false statement survived those checks.
+
 ## Freshness result
 
 Explicit `codegraph sync` correctly reflected:
@@ -82,9 +99,14 @@ Explicit `codegraph sync` correctly reflected:
 - rename with the symbol rebound to the new file path; and
 - deletion with the symbol removed from search.
 
-The final status was clean with zero pending changes. Watcher debounce is not
-yet approved: it must be tested through a manually attached MCP server in
-sessions 2 and 3 rather than inferred from explicit sync.
+The final status was clean with zero pending changes.
+
+Session 2 then drove `codegraph serve --mcp` over a live stdio connection and
+waited beyond the watcher debounce after each change. The MCP query observed
+the untracked creation, replacement symbol after modification, renamed path,
+and final deletion without an explicit sync between changes. The final index
+again had zero pending changes. This passes the watcher condition for session
+2; session 3 must reproduce it once more.
 
 ## Reproduce one session
 
@@ -94,6 +116,7 @@ make codegraph-index
 make codegraph-status
 make codegraph-pilot CODEGRAPH_PILOT_SESSION=1
 make codegraph-freshness
+make codegraph-watcher
 ```
 
 Print, but do not install, the manual Codex MCP entry:
@@ -111,10 +134,9 @@ and Helm commands stay available.
 
 Before optional adoption:
 
-1. run the same script in two later, distinct coding sessions as sessions 2
-   and 3;
-2. exercise watcher debounce through the manually attached MCP server;
-3. confirm the three-of-six discovery benefit in both later sessions;
+1. run the same script in one later, distinct coding session as session 3;
+2. reproduce watcher debounce through the MCP server in session 3;
+3. confirm the three-of-six discovery benefit in session 3;
 4. confirm no high-impact false statement survives the mandatory source
    verification; and
 5. keep impact and affected-test claims unapproved unless a separate test

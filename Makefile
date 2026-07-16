@@ -148,6 +148,10 @@ codegraph-pilot: codegraph ## Run one numbered CodeGraph golden-query pilot sess
 codegraph-freshness: codegraph ## Verify explicit incremental create/modify/rename/delete synchronization.
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-freshness.sh
 
+.PHONY: codegraph-watcher
+codegraph-watcher: codegraph ## Verify MCP watcher create/modify/rename/delete auto-synchronization.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-watcher.sh
+
 .PHONY: codegraph-mcp-config
 codegraph-mcp-config: codegraph ## Print the manual Codex MCP config without modifying agent settings.
 	@printf '%s\n' \
