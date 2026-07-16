@@ -99,6 +99,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "modelPath": str(model_path),
         "observerReadyPath": str(model_path.parent / "observer-ready"),
         "measurementStartPath": str(model_path.parent / "measurement-start"),
+        "observerReadyTimeoutMilliseconds": 30_000,
         "intent": {
             "schemaVersion": runner.INTENT_SCHEMA,
             "candidate": {},
@@ -155,6 +156,15 @@ class RunnerTest(unittest.TestCase):
             request = valid_request(model)
             request["unknown"] = True
             with self.assertRaisesRegex(runner.ContractError, "unknown=\\['unknown'\\]"):
+                runner.validate_request(request)
+
+    def test_validate_request_requires_job_timing_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            del request["observerReadyTimeoutMilliseconds"]
+            with self.assertRaisesRegex(runner.ContractError, "observerReadyTimeoutMilliseconds"):
                 runner.validate_request(request)
 
     def test_publish_immutable_refuses_replacement(self) -> None:

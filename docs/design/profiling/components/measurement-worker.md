@@ -204,6 +204,11 @@ first worker, not new user knobs. The Job name is derived from the Run UID, so
 deleting or losing a recorded Job cannot be mistaken for permission to repeat
 the measurement.
 
+Job composition supplies each process with its handoff wait budget from the
+same bounded attempt timing contract. Runtime and PowerObserver entrypoints
+have no hidden default wait duration, and `ProfilingRun.spec` cannot override
+these delivery bindings.
+
 ## Responsibility and dependency boundary
 
 ```text

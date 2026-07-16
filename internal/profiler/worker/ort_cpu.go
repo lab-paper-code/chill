@@ -10,11 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha1"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha2"
 
 type ORTCPURuntimeConfig struct {
 	Command              []string
@@ -22,6 +23,7 @@ type ORTCPURuntimeConfig struct {
 	ObserverReadyPath    string
 	MeasurementStartPath string
 	ResultPath           string
+	ObserverReadyTimeout time.Duration
 	MaxResultBytes       int64
 	Stdout               io.Writer
 	Stderr               io.Writer
@@ -36,13 +38,14 @@ type ORTCPURuntime struct {
 var _ Runtime = (*ORTCPURuntime)(nil)
 
 type ortCPURequest struct {
-	SchemaVersion        string              `json:"schemaVersion"`
-	Intent               profilingrun.Intent `json:"intent"`
-	IntentDigest         string              `json:"intentDigest"`
-	PodUID               string              `json:"podUID"`
-	ModelPath            string              `json:"modelPath"`
-	ObserverReadyPath    string              `json:"observerReadyPath"`
-	MeasurementStartPath string              `json:"measurementStartPath"`
+	SchemaVersion                    string              `json:"schemaVersion"`
+	Intent                           profilingrun.Intent `json:"intent"`
+	IntentDigest                     string              `json:"intentDigest"`
+	PodUID                           string              `json:"podUID"`
+	ModelPath                        string              `json:"modelPath"`
+	ObserverReadyPath                string              `json:"observerReadyPath"`
+	MeasurementStartPath             string              `json:"measurementStartPath"`
+	ObserverReadyTimeoutMilliseconds int64               `json:"observerReadyTimeoutMilliseconds"`
 }
 
 func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
@@ -64,6 +67,9 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 	}
 	if config.MaxResultBytes < 1 {
 		return nil, errors.New("CPU ORT result maximum size must be positive")
+	}
+	if config.ObserverReadyTimeout < time.Millisecond {
+		return nil, errors.New("CPU ORT observer-ready timeout must be supplied by the Job execution contract")
 	}
 	if config.Stdout == nil || config.Stderr == nil {
 		return nil, errors.New("CPU ORT diagnostic writers are required")
@@ -93,7 +99,8 @@ func (r *ORTCPURuntime) Measure(
 	request := ortCPURequest{
 		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest, PodUID: podUID,
 		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
-		MeasurementStartPath: r.config.MeasurementStartPath,
+		MeasurementStartPath:             r.config.MeasurementStartPath,
+		ObserverReadyTimeoutMilliseconds: r.config.ObserverReadyTimeout.Milliseconds(),
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {

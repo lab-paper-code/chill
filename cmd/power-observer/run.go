@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	startSignalTimeout = 30 * time.Second
 	signalPollInterval = 10 * time.Millisecond
 )
 

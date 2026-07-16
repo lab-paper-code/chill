@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"regexp"
+	"time"
 )
 
 const (
@@ -18,11 +19,12 @@ const (
 var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type options struct {
-	intentPath      string
-	intentDigest    string
-	readyPath       string
-	startPath       string
-	powerResultPath string
+	intentPath       string
+	intentDigest     string
+	readyPath        string
+	startPath        string
+	powerResultPath  string
+	startWaitTimeout time.Duration
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -31,11 +33,15 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "observer-ready signal path")
 	set.StringVar(&o.startPath, "start-signal-file", defaultStartSignalPath, "measurement-start signal path")
 	set.StringVar(&o.powerResultPath, "result-file", defaultPowerResultPath, "atomic PowerObserver result path")
+	set.DurationVar(&o.startWaitTimeout, "start-wait-timeout", 0, "Job-derived maximum wait for measurement-start")
 }
 
 func (o options) validate() error {
 	if !canonicalDigest.MatchString(o.intentDigest) {
 		return errors.New("intent digest must be a canonical SHA-256")
+	}
+	if o.startWaitTimeout <= 0 {
+		return errors.New("start wait timeout must be supplied by the Job execution contract")
 	}
 	return nil
 }

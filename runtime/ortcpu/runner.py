@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha1"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha2"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha2"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
@@ -27,7 +27,6 @@ SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 MAX_REQUEST_BYTES = 1 << 20
-SIGNAL_TIMEOUT_SECONDS = 30.0
 SIGNAL_POLL_SECONDS = 0.01
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -113,7 +112,10 @@ def require_absolute_file_path(value: Any, name: str) -> Path:
 def validate_request(request: dict[str, Any]) -> None:
     require_fields(
         request,
-        {"schemaVersion", "intent", "intentDigest", "podUID", "modelPath", "observerReadyPath", "measurementStartPath"},
+        {
+            "schemaVersion", "intent", "intentDigest", "podUID", "modelPath", "observerReadyPath",
+            "measurementStartPath", "observerReadyTimeoutMilliseconds",
+        },
         "runtime request",
     )
     if request["schemaVersion"] != REQUEST_SCHEMA:
@@ -125,6 +127,7 @@ def validate_request(request: dict[str, Any]) -> None:
     require_absolute_file_path(request["modelPath"], "modelPath")
     require_absolute_file_path(request["observerReadyPath"], "observerReadyPath")
     require_absolute_file_path(request["measurementStartPath"], "measurementStartPath")
+    require_integer(request["observerReadyTimeoutMilliseconds"], "observerReadyTimeoutMilliseconds", 1)
 
     intent = require_object(request["intent"], "intent")
     require_fields(intent, {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "power"}, "intent")
@@ -208,8 +211,8 @@ def read_required_text(path: Path, name: str) -> str:
     return value
 
 
-def wait_for_signal(path: Path) -> None:
-    deadline = time.monotonic() + SIGNAL_TIMEOUT_SECONDS
+def wait_for_signal(path: Path, timeout_seconds: float) -> None:
+    deadline = time.monotonic() + timeout_seconds
     while True:
         try:
             info = path.lstat()
@@ -365,7 +368,9 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     shape = [measurement["batch"]] + [dimension if isinstance(dimension, int) and dimension > 0 else 1 for dimension in inputs[0].shape[1:]]
     sample = numpy.random.default_rng(0).standard_normal(shape).astype(numpy.float32)
 
-    wait_for_signal(Path(request["observerReadyPath"]))
+    wait_for_signal(
+        Path(request["observerReadyPath"]), request["observerReadyTimeoutMilliseconds"] / 1000.0
+    )
     log("warmup", "starting frozen warm-up", iterations=measurement["warmupIterations"], inputShape=shape)
     output_shapes: list[list[int]] | None = None
     try:

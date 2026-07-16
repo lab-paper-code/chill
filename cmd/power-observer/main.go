@@ -21,7 +21,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := execute(ctx, options, &http.Client{}, startSignalTimeout, signalPollInterval); err != nil {
+	if err := execute(ctx, options, &http.Client{}, options.startWaitTimeout, signalPollInterval); err != nil {
 		log.Printf("PowerObserver failed: %v", err)
 		os.Exit(4)
 	}

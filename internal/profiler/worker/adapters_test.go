@@ -66,6 +66,20 @@ func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
+	directory := t.TempDir()
+	_, err := NewORTCPURuntime(ORTCPURuntimeConfig{
+		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
+		ObserverReadyPath:    filepath.Join(directory, "observer-ready"),
+		MeasurementStartPath: filepath.Join(directory, "measurement-start"),
+		ResultPath:           filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
+		Stdout: io.Discard, Stderr: io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "supplied by the Job") {
+		t.Fatalf("expected missing observer-ready timeout rejection, got %v", err)
+	}
+}
+
 func TestPowerResultFileWaitsForAtomicResult(t *testing.T) {
 	intent := testIntent(t)
 	result := testPowerResult(intent)
@@ -262,7 +276,8 @@ func TestORTCPUHelperProcess(t *testing.T) {
 		os.Exit(10)
 	}
 	if request.SchemaVersion != ortCPURequestSchemaVersion || request.IntentDigest == "" || request.ModelPath == "" ||
-		request.ObserverReadyPath == "" || request.MeasurementStartPath == "" {
+		request.ObserverReadyPath == "" || request.MeasurementStartPath == "" ||
+		request.ObserverReadyTimeoutMilliseconds < 1 {
 		os.Exit(11)
 	}
 	digest, err := request.Intent.Digest()
@@ -302,7 +317,7 @@ func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
 		Command:   []string{os.Args[0], "-test.run=TestORTCPUHelperProcess", "--"},
 		ModelPath: filepath.Join(directory, "model.onnx"), ObserverReadyPath: filepath.Join(directory, "observer-ready"),
 		MeasurementStartPath: filepath.Join(directory, "measurement-start"), ResultPath: resultPath,
-		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
+		ObserverReadyTimeout: time.Second, MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
 	})
 	if err != nil {
 		t.Fatal(err)
