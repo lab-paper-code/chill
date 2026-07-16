@@ -2,6 +2,7 @@ package profilingrun
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,53 @@ func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
 	intent.Measurement.Repetitions = 2
 	if err := intent.Validate(); err == nil {
 		t.Fatal("expected first-path repetition rejection")
+	}
+}
+
+func TestCurrentIntentRequiresCleanArtifactPath(t *testing.T) {
+	for _, artifactPath := range []string{"", "/", "artifact/model.onnx", "/artifact/../model.onnx"} {
+		intent := validIntent()
+		intent.State.ArtifactPath = artifactPath
+		if err := intent.Validate(); err == nil {
+			t.Fatalf("expected artifact path %q rejection", artifactPath)
+		}
+	}
+}
+
+func TestLegacyIntentRemainsValidWithoutArtifactPath(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = legacyIntentSchemaVersion
+	intent.State.ArtifactPath = ""
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "artifactPath") {
+		t.Fatalf("legacy canonical intent gained artifactPath: %s", payload)
+	}
+}
+
+func TestRetainedLegacyEvidenceIntentDigestRemainsStable(t *testing.T) {
+	payload, err := os.ReadFile("../../spikes/profilingrun/observations/raw/sha256-165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		IntentDigest string `json:"intentDigest"`
+		Intent       Intent `json:"intent"`
+	}
+	if err := json.Unmarshal(payload, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := evidence.Intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != evidence.IntentDigest {
+		t.Fatalf("retained legacy intent digest changed: want %s, got %s", evidence.IntentDigest, digest)
 	}
 }
 
@@ -86,6 +134,7 @@ func validIntent() Intent {
 			Model:          "mobilenet-v2-050",
 			Artifact:       "canonical-onnx",
 			ArtifactDigest: d,
+			ArtifactPath:   "/artifact/mobilenet-v2-050.onnx",
 			RuntimeFamily:  "onnxruntime",
 			Backend:        "CPUExecutionProvider",
 			PowerMode:      "fixed",

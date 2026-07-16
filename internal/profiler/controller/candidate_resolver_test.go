@@ -21,6 +21,8 @@ import (
 
 const (
 	testArtifactDigest     = "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
+	testArtifactPath       = "/artifact/mobilenet-v2-050.onnx"
+	testArchitecture       = "amd64"
 	testRuntimeImage       = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
 	testArtifactImage      = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
 	testPowerObserverImage = "registry.example/chill/power-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
@@ -35,11 +37,12 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 		t.Fatal(err)
 	}
 	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != "fixed" ||
+		resolved.State.ArtifactPath != testArtifactPath ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
-		resolved.ArtifactArchitecture != "amd64" || resolved.ArtifactPath != "/artifact/mobilenet-v2-050.onnx" ||
+		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||
 		resolved.ArtifactDigest != testArtifactDigest ||
 		resolved.PowerObserverImage != testPowerObserverImage ||
-		resolved.DeviceArchitecture != "amd64" ||
+		resolved.DeviceArchitecture != testArchitecture ||
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
 		t.Fatalf("unexpected resolved candidate: %#v", resolved)
 	}
@@ -80,10 +83,10 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 		report.Inputs.RuntimeDeclaration.ResourceVersion != "30" ||
 		report.Inputs.RuntimeDeclaration.Key != "execution-facts.yaml" ||
 		report.Selection.PowerMode != "fixed" ||
-		report.DeviceClassFacts.Architecture != "amd64" ||
+		report.DeviceClassFacts.Architecture != testArchitecture ||
 		report.DeviceClassFacts.NodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass ||
 		report.ArtifactSupply.Image != testArtifactImage ||
-		report.ArtifactSupply.Path != "/artifact/mobilenet-v2-050.onnx" ||
+		report.ArtifactSupply.Path != testArtifactPath ||
 		report.ArtifactSupply.Digest != testArtifactDigest {
 		t.Fatalf("candidate report lost source identity: %#v", report)
 	}
@@ -208,7 +211,7 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
 				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], "/artifact/mobilenet-v2-050.onnx", "/artifact/../hidden", 1,
+					config.Data["execution-facts.yaml"], testArtifactPath, "/artifact/../hidden", 1,
 				)
 			},
 			match: "artifact path must be a clean absolute container path",
@@ -340,7 +343,7 @@ func validCandidateObjects() []client.Object {
 		},
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{"edge.dacs.io/device-class": "lattepanda-3-delta-8g"},
-			Architecture: "amd64", PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed"}},
+			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed"}},
 		},
 	}
 	configMap := &corev1.ConfigMap{

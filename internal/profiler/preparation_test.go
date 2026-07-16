@@ -12,7 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-func TestPreparerReproducesProvenFirstPathIntent(t *testing.T) {
+func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
 	preparer := newFixturePreparer(t, resolvers)
@@ -182,6 +182,14 @@ func TestPreparerRejectsInternalReportMaterialDriftBeforeNodeResolution(t *testi
 			mutate: func(candidate *ResolvedCandidate) {
 				candidate.ArtifactPath = "/artifact/other.onnx"
 			},
+			match: "does not match execution state",
+		},
+		{
+			name: "artifact path report drift",
+			mutate: func(candidate *ResolvedCandidate) {
+				candidate.State.ArtifactPath = "/artifact/other.onnx"
+				candidate.ArtifactPath = candidate.State.ArtifactPath
+			},
 			match: "artifact path mismatch",
 		},
 	}
@@ -225,6 +233,7 @@ func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *Reso
 	}
 	candidate.ArtifactArchitecture = candidate.DeviceArchitecture
 	candidate.ArtifactPath = "/artifact/model.onnx"
+	candidate.State.ArtifactPath = candidate.ArtifactPath
 	candidate.ArtifactDigest = candidate.State.ArtifactDigest
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
@@ -376,6 +385,8 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	if err := json.Unmarshal(intentBytes, &intent); err != nil {
 		t.Fatal(err)
 	}
+	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	candidateBytes, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -405,6 +416,8 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			DevicePowerModes:   []string{intent.State.PowerMode},
 			RuntimeImage:       intent.Images.Runtime,
 			ArtifactImage:      intent.Images.Artifact,
+			ArtifactPath:       intent.State.ArtifactPath,
+			ArtifactDigest:     intent.State.ArtifactDigest,
 			PowerObserverImage: intent.Images.PowerObserver,
 		}},
 		node: &fakeNodeResolver{result: intent.TargetNode},

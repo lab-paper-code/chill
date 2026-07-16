@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,12 +15,22 @@ import (
 )
 
 var (
-	digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	imagePattern  = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
+	digestPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	imagePattern        = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
+	artifactPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 )
 
 func (i Intent) Validate() error {
-	if i.SchemaVersion != SchemaVersion {
+	switch i.SchemaVersion {
+	case SchemaVersion:
+		if !validArtifactPath(i.State.ArtifactPath) {
+			return errors.New("state.artifactPath must be a clean absolute container path")
+		}
+	case legacyIntentSchemaVersion:
+		if i.State.ArtifactPath != "" {
+			return errors.New("legacy intent must not contain state.artifactPath")
+		}
+	default:
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
 	for name, value := range map[string]string{
@@ -111,6 +122,10 @@ func (i Intent) Validate() error {
 		return errors.New("invalid or under-covering power observation request")
 	}
 	return nil
+}
+
+func validArtifactPath(value string) bool {
+	return value != "/" && artifactPathPattern.MatchString(value) && path.Clean(value) == value
 }
 
 func (i Intent) CanonicalJSON() ([]byte, error) {

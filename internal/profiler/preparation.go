@@ -269,6 +269,9 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 }
 
 func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
+	if candidate.State.ArtifactPath != candidate.ArtifactPath {
+		return errors.New("resolved candidate artifact path does not match execution state")
+	}
 	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
 	if err != nil {
 		return err
@@ -283,7 +286,7 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
 		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
 		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
-		{"artifact path", candidate.ArtifactPath, report.ArtifactSupply.Path},
+		{"artifact path", candidate.State.ArtifactPath, report.ArtifactSupply.Path},
 		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
 		{"power-observer image", candidate.PowerObserverImage, report.PowerObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},

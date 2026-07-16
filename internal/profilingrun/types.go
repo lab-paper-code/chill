@@ -2,7 +2,12 @@ package profilingrun
 
 import "time"
 
-const SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha1"
+const (
+	// legacyIntentSchemaVersion remains readable so retained v1alpha1 evidence
+	// can still be validated without changing its canonical digest.
+	legacyIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha1"
+	SchemaVersion             = "chill.dacs.io/profiling-run-intent.v1alpha2"
+)
 
 type Intent struct {
 	SchemaVersion string              `json:"schemaVersion"`
@@ -29,6 +34,7 @@ type ExecutionState struct {
 	Model          string `json:"model"`
 	Artifact       string `json:"artifact"`
 	ArtifactDigest string `json:"artifactDigest"`
+	ArtifactPath   string `json:"artifactPath,omitempty"`
 	RuntimeFamily  string `json:"runtimeFamily"`
 	Backend        string `json:"backend"`
 	PowerMode      string `json:"powerMode"`

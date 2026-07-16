@@ -71,6 +71,10 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
+The current internal intent schema is `v1alpha2` and requires this path.
+Retained `v1alpha1` intents remain readable without it so their canonical bytes
+and digests do not change; new Runs are never emitted as `v1alpha1`.
+
 The following values are delivery bindings, not scientific Run inputs:
 
 - logical Evidence Store identity;

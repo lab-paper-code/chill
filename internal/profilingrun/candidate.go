@@ -180,6 +180,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 		checks = append(checks,
 			struct{ name, want, got string }{"power mode", intent.State.PowerMode, report.Selection.PowerMode},
 			struct{ name, want, got string }{"artifact image", intent.Images.Artifact, report.ArtifactSupply.Image},
+			struct{ name, want, got string }{"artifact supply path", intent.State.ArtifactPath, report.ArtifactSupply.Path},
 			struct{ name, want, got string }{"artifact supply digest", intent.State.ArtifactDigest, report.ArtifactSupply.Digest},
 			struct{ name, want, got string }{"DeviceClass architecture", intent.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
 			struct{ name, want, got string }{"artifact architecture", intent.TargetNode.Architecture, report.ArtifactSupply.Architecture},

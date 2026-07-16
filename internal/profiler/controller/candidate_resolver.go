@@ -141,6 +141,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		State: profilingrun.ExecutionState{
 			DeviceClass: selection.DeviceClass,
 			Model:       selection.ModelSpec, Artifact: artifact.Name, ArtifactDigest: artifact.Digest,
+			ArtifactPath:  declaration.Artifact.Path,
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
 			PowerMode: selection.PowerMode,
 		},
