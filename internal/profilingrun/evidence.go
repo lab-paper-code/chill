@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -134,6 +135,10 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 		len(result.RepetitionResults) != intent.Measurement.Repetitions {
 		return errors.New("runtime measurement evidence is incomplete")
 	}
+	if result.TargetDurationSeconds == nil ||
+		*result.TargetDurationSeconds != float64(intent.Measurement.DurationSeconds) {
+		return errors.New("runtime target duration does not match the measurement contract")
+	}
 	if !result.OutputValidation.Passed || result.OutputValidation.Method != intent.Measurement.OutputValidation ||
 		len(result.OutputValidation.OutputShapes) == 0 {
 		return errors.New("output validation evidence mismatch")
@@ -163,26 +168,48 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	if err != nil {
 		return errors.New("warm-up completion timestamp is invalid")
 	}
-	measurementStarted, _, err := result.MeasurementWindow()
+	measurementStarted, measurementEnded, err := result.MeasurementWindow()
 	if err != nil {
 		return err
 	}
 	if warmupCompleted.After(measurementStarted) {
 		return errors.New("warm-up does not precede the measurement window")
 	}
-	latencyCount := 0
-	for _, repetition := range result.RepetitionResults {
-		latencyCount += len(repetition.LatencyMilliseconds)
+	latencyCount, err := validateRepetitions(result.RepetitionResults, measurementStarted, measurementEnded)
+	if err != nil {
+		return err
 	}
 	if latencyCount != result.InferenceCount {
 		return errors.New("raw latency count does not match inference count")
 	}
-	for _, repetition := range result.RepetitionResults {
-		if len(repetition.LatencyMilliseconds) == 0 {
-			return errors.New("raw latency distribution is empty")
-		}
-	}
 	return nil
+}
+
+func validateRepetitions(repetitions []Repetition, measurementStarted, measurementEnded time.Time) (int, error) {
+	latencyCount := 0
+	for index, repetition := range repetitions {
+		if repetition.Repetition != index+1 {
+			return 0, errors.New("runtime repetition sequence is invalid")
+		}
+		started, err := time.Parse(time.RFC3339Nano, repetition.MeasurementStartedAt)
+		if err != nil {
+			return 0, errors.New("runtime repetition start timestamp is invalid")
+		}
+		ended, err := time.Parse(time.RFC3339Nano, repetition.MeasurementEndedAt)
+		if err != nil || !ended.After(started) || started.Before(measurementStarted) || ended.After(measurementEnded) {
+			return 0, errors.New("runtime repetition window is invalid")
+		}
+		if len(repetition.LatencyMilliseconds) == 0 {
+			return 0, errors.New("raw latency distribution is empty")
+		}
+		for _, latency := range repetition.LatencyMilliseconds {
+			if latency <= 0 || math.IsNaN(latency) || math.IsInf(latency, 0) {
+				return 0, errors.New("raw latency sample is invalid")
+			}
+		}
+		latencyCount += len(repetition.LatencyMilliseconds)
+	}
+	return latencyCount, nil
 }
 
 func contains(values []string, wanted string) bool {

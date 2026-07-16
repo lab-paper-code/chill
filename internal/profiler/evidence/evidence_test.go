@@ -176,6 +176,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 	location := time.FixedZone("KST", 9*60*60)
 	started := time.Date(2026, time.July, 16, 12, 0, 0, 0, location)
 	podUID := "profiling-pod-uid"
+	targetDuration := float64(intent.Measurement.DurationSeconds)
 	return RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
 		IntentDigest:  digest,
@@ -201,6 +202,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			MeasurementStartedAt:      started.UTC().Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30,
+			TargetDurationSeconds:     &targetDuration,
 			OutputValidation: profilingrun.OutputValidation{
 				Method:       intent.Measurement.OutputValidation,
 				Passed:       true,

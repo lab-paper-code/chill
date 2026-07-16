@@ -7,42 +7,7 @@ import (
 
 func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 	intent := validIntent()
-	digest, _ := intent.Digest()
-	valid := RuntimeResult{
-		SchemaVersion:             RuntimeResultSchemaVersion,
-		Status:                    "Succeeded",
-		SweepID:                   digest,
-		ExperimentID:              "pod-uid",
-		NodeName:                  intent.TargetNode.Name,
-		Model:                     intent.State.Model,
-		ArtifactDigest:            intent.State.ArtifactDigest,
-		Runtime:                   intent.State.RuntimeFamily,
-		RuntimeVersion:            "1",
-		Provider:                  intent.State.Backend,
-		AvailableProviders:        []string{intent.State.Backend},
-		BatchSize:                 1,
-		WarmupIterations:          20,
-		WarmupCompletedAt:         "2026-01-01T00:00:00Z",
-		InferenceCount:            1,
-		MeasurementMode:           "duration",
-		Repetitions:               1,
-		MeasurementStartedAt:      "2026-01-01T00:00:01Z",
-		MeasurementEndedAt:        "2026-01-01T00:00:31Z",
-		MeasurementElapsedSeconds: 30,
-		OutputValidation: OutputValidation{
-			Method:       intent.Measurement.OutputValidation,
-			Passed:       true,
-			OutputShapes: [][]int{{1, 1000}},
-		},
-		CPUContract: RuntimeCPU{
-			ORTIntraOpThreads: 4,
-			ORTInterOpThreads: 1,
-			AffinityCPUCount:  4,
-			CPUSetEffective:   "0-3",
-		},
-		DerivedContract:   DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
-		RepetitionResults: []Repetition{{LatencyMilliseconds: []float64{1}}},
-	}
+	valid := validRuntimeResult(intent)
 	if err := ValidateRuntime(intent, "pod-uid", valid); err != nil {
 		t.Fatal(err)
 	}
@@ -74,5 +39,67 @@ func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 	if !started.Equal(time.Date(2026, time.January, 1, 0, 0, 1, 0, time.UTC)) ||
 		!ended.Equal(time.Date(2026, time.January, 1, 0, 0, 31, 0, time.UTC)) {
 		t.Fatalf("measurement window = %s..%s", started, ended)
+	}
+}
+
+func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
+	intent := validIntent()
+	base := validRuntimeResult(intent)
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*RuntimeResult)
+	}{
+		{name: "wrong sequence", mutate: func(result *RuntimeResult) {
+			result.RepetitionResults[0].Repetition = 2
+		}},
+		{name: "window outside measurement", mutate: func(result *RuntimeResult) {
+			result.RepetitionResults[0].MeasurementStartedAt = "2025-12-31T23:59:59Z"
+		}},
+		{name: "zero latency", mutate: func(result *RuntimeResult) {
+			result.RepetitionResults[0].LatencyMilliseconds[0] = 0
+		}},
+		{name: "target duration drift", mutate: func(result *RuntimeResult) {
+			other := 10.0
+			result.TargetDurationSeconds = &other
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := base
+			candidate.RepetitionResults = append([]Repetition(nil), base.RepetitionResults...)
+			candidate.RepetitionResults[0].LatencyMilliseconds = append(
+				[]float64(nil), base.RepetitionResults[0].LatencyMilliseconds...,
+			)
+			test.mutate(&candidate)
+			if err := ValidateRuntime(intent, "pod-uid", candidate); err == nil {
+				t.Fatal("expected invalid repetition evidence rejection")
+			}
+		})
+	}
+}
+
+func validRuntimeResult(intent Intent) RuntimeResult {
+	digest, _ := intent.Digest()
+	targetDuration := float64(intent.Measurement.DurationSeconds)
+	return RuntimeResult{
+		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
+		ExperimentID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		ArtifactDigest: intent.State.ArtifactDigest, Runtime: intent.State.RuntimeFamily,
+		RuntimeVersion: "1", Provider: intent.State.Backend, AvailableProviders: []string{intent.State.Backend},
+		BatchSize: 1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
+		InferenceCount: 1, MeasurementMode: "duration", Repetitions: 1,
+		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
+		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
+		OutputValidation: OutputValidation{
+			Method: intent.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}},
+		},
+		CPUContract: RuntimeCPU{
+			ORTIntraOpThreads: 4, ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3",
+		},
+		DerivedContract: DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		RepetitionResults: []Repetition{{
+			Repetition: 1, MeasurementStartedAt: "2026-01-01T00:00:01Z",
+			MeasurementEndedAt: "2026-01-01T00:00:31Z", LatencyMilliseconds: []float64{1},
+		}},
 	}
 }
