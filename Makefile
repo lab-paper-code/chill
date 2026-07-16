@@ -7,6 +7,7 @@ IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
+POWER_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-power-observer:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -252,6 +253,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/operator cmd/main.go
 	go build -o bin/node-discovery ./cmd/node-discovery
 	go build -o bin/profiler ./cmd/profiler
+	go build -o bin/power-observer ./cmd/power-observer
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
@@ -275,8 +277,12 @@ docker-build-node-discovery: ## Build the node-discovery image.
 docker-build-profiler: ## Build the Profiler image.
 	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
 
+.PHONY: docker-build-power-observer
+docker-build-power-observer: ## Build the PowerObserver image.
+	$(CONTAINER_TOOL) build -f build/docker/power-observer.Dockerfile -t $(POWER_OBSERVER_IMG) .
+
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-power-observer ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -293,8 +299,12 @@ docker-push-node-discovery: ## Push the node-discovery image.
 docker-push-profiler: ## Push the Profiler image.
 	$(CONTAINER_TOOL) push $(PROFILER_IMG)
 
+.PHONY: docker-push-power-observer
+docker-push-power-observer: ## Push the PowerObserver image.
+	$(CONTAINER_TOOL) push $(POWER_OBSERVER_IMG)
+
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-power-observer ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -324,8 +334,14 @@ docker-buildx-profiler: ## Build and push the Profiler image for cross-platform 
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
 
+.PHONY: docker-buildx-power-observer
+docker-buildx-power-observer: ## Build and push the PowerObserver image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/power-observer.Dockerfile --tag $(POWER_OBSERVER_IMG) .
+
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler ## Build and push all component images for cross-platform support.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-power-observer ## Build and push all component images for cross-platform support.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

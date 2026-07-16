@@ -76,7 +76,7 @@ func TestPowerResultFileWaitsForAtomicResult(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		done <- writeAtomicJSON(path, result)
+		done <- PublishPowerResult(path, 1<<20, result)
 	}()
 	got, err := reader.Read(context.Background())
 	if err != nil {
@@ -87,6 +87,62 @@ func TestPowerResultFileWaitsForAtomicResult(t *testing.T) {
 	}
 	if got.Source != result.Source || got.Summary != result.Summary {
 		t.Fatalf("unexpected power result: %#v", got)
+	}
+}
+
+func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
+	intent := testIntent(t)
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "intent.json")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadFrozenIntent(path, digest, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != intent.State {
+		t.Fatalf("loaded intent drifted: %#v", loaded)
+	}
+	if _, err := LoadFrozenIntent(path, "sha256:"+strings.Repeat("0", 64), 1<<20); err == nil ||
+		!strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("expected digest mismatch, got %v", err)
+	}
+}
+
+func TestPublishPowerResultDoesNotReplaceExistingHandoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "power-result.json")
+	result := testPowerResult(testIntent(t))
+	if err := PublishPowerResult(path, 1<<20, result); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishPowerResult(path, 1<<20, result); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected immutable handoff rejection, got %v", err)
+	}
+}
+
+func TestSignalHandoffIsAtomicAndBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "measurement-start")
+	done := make(chan error, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		done <- PublishSignal(path)
+	}()
+	if err := WaitForSignal(context.Background(), path, time.Second, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishSignal(path); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected duplicate signal rejection, got %v", err)
 	}
 }
 
