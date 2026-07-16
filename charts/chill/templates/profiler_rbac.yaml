@@ -1,13 +1,38 @@
-{{- if and .Values.profiler.enabled .Values.profiler.leaderElection }}
+{{- if .Values.profiler.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "chill.profilerName" . }}-leader-election
+  name: {{ include "chill.profilerName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: profiler
     {{- include "chill.labels" . | nindent 4 }}
 rules:
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - profilingruns
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - profilingruns/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+  {{- if .Values.profiler.leaderElection }}
   - apiGroups:
       - coordination.k8s.io
     resources:
@@ -27,11 +52,12 @@ rules:
     verbs:
       - create
       - patch
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "chill.profilerName" . }}-leader-election
+  name: {{ include "chill.profilerName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: profiler
@@ -39,7 +65,45 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "chill.profilerName" . }}-leader-election
+  name: {{ include "chill.profilerName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.profilerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.profilerName" . }}
+  labels:
+    app.kubernetes.io/component: profiler
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - deviceclasses
+      - modelspecs
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.profilerName" . }}
+  labels:
+    app.kubernetes.io/component: profiler
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.profilerName" . }}
 subjects:
   - kind: ServiceAccount
     name: {{ include "chill.profilerServiceAccountName" . }}

@@ -537,9 +537,10 @@ without running a measurement loop.
 6. Add the namespaced `ProfilingRun` API and schema tests. Implemented with an
    immutable spec, compact status, generated CRD, Helm CRD, and envtest gates.
 7. Add the explicit power-mode input and Kubernetes/configuration fact adapters
-   for the proven fixed-power CPU ORT path.
+   for the proven fixed-power CPU ORT path. Implemented.
 8. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
+   Implemented through immutable intent recording; Job lifecycle remains.
 9. Add the one-shot measurement worker boundary, then promote only the proven
    CPU ORT execution and PowerObserver behavior from the spike into it.
 10. Add the selected durable evidence sink.

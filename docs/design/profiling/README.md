@@ -112,10 +112,12 @@ Answers only:
 > compatible request through durable evidence and single-Run admission?
 
 The Operator now manages a separately deployed Profiler operand and reports its
-component availability. The operand does not yet reconcile `ProfilingRun` or
-execute measurement work. The completed and remaining scope intentionally does
-not orchestrate a batch campaign, derive `b_sat`, publish a `DeviceProfile`, or
-connect to the scheduler.
+component availability. The Profiler operand reconciles the first bounded
+`ProfilingRun` transition: it resolves current trusted facts, creates an
+immutable intent record, and publishes its digest. It does not yet create a Job
+or execute measurement work. The completed and remaining scope intentionally
+does not orchestrate a batch campaign, derive `b_sat`, publish a
+`DeviceProfile`, or connect to the scheduler.
 
 ## Component contracts
 
