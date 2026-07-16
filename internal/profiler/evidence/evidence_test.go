@@ -189,6 +189,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			NodeName:                  intent.TargetNode.Name,
 			Model:                     intent.State.Model,
 			ArtifactDigest:            intent.State.ArtifactDigest,
+			Architecture:              "x86_64",
 			Runtime:                   intent.State.RuntimeFamily,
 			RuntimeVersion:            "1.16.0",
 			Provider:                  intent.State.Backend,
@@ -209,6 +210,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 				OutputShapes: [][]int{{intent.Measurement.Batch, 1000}},
 			},
 			CPUContract: profilingrun.RuntimeCPU{
+				CgroupCPUMax:       "400000 100000",
 				ORTIntraOpThreads:  intent.CPU.ORTIntraOpThreads,
 				ORTInterOpThreads:  intent.CPU.ORTInterOpThreads,
 				AffinityCPUCount:   intent.CPU.ORTIntraOpThreads,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -125,6 +126,9 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 			return fmt.Errorf("%s mismatch: wanted %q, got %q", check.name, check.want, check.got)
 		}
 	}
+	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(intent.TargetNode.Architecture) {
+		return errors.New("runtime architecture does not match the frozen Node")
+	}
 	if result.BatchSize != intent.Measurement.Batch || result.WarmupIterations != intent.Measurement.WarmupIterations ||
 		result.Repetitions != intent.Measurement.Repetitions {
 		return errors.New("measurement protocol mismatch")
@@ -156,6 +160,9 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 		strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" {
 		return errors.New("effective CPU evidence contradicts or omits the contract")
 	}
+	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
+		return err
+	}
 	if result.DerivedContract.RunIntentDigest != digest ||
 		result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("derived contract identity mismatch")
@@ -181,6 +188,35 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	}
 	if latencyCount != result.InferenceCount {
 		return errors.New("raw latency count does not match inference count")
+	}
+	return nil
+}
+
+func normalizeArchitecture(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "x86_64":
+		return "amd64"
+	case "aarch64":
+		return "arm64"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func validateCPUQuota(limit, cpuMax string) error {
+	cores, err := strconv.ParseInt(limit, 10, 64)
+	if err != nil || cores < 1 {
+		return errors.New("frozen CPU limit is not a positive integer core count")
+	}
+	fields := strings.Fields(cpuMax)
+	if len(fields) != 2 || fields[0] == "max" {
+		return errors.New("runtime cgroup CPU quota is missing or unlimited")
+	}
+	quota, quotaErr := strconv.ParseInt(fields[0], 10, 64)
+	period, periodErr := strconv.ParseInt(fields[1], 10, 64)
+	if quotaErr != nil || periodErr != nil || quota < 1 || period < 1 ||
+		quota/period != cores || quota%period != 0 {
+		return errors.New("runtime cgroup CPU quota does not match the frozen limit")
 	}
 	return nil
 }
