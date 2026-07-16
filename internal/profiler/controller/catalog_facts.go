@@ -9,6 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const fixedPowerMode = "fixed"
+
 type selectedDeviceFacts struct {
 	nodeSelector map[string]string
 	powerModes   []string
@@ -21,8 +23,8 @@ func validateDeviceClass(deviceClass *edgev1alpha1.DeviceClass, powerMode string
 	if strings.TrimSpace(deviceClass.Spec.Architecture) == "" || len(deviceClass.Spec.NodeSelector) == 0 {
 		return selectedDeviceFacts{}, errors.New("DeviceClass architecture and nodeSelector are required")
 	}
-	if len(deviceClass.Spec.PowerModes) != 1 || deviceClass.Spec.PowerModes[0].Name != "fixed" ||
-		deviceClass.Spec.PowerModes[0].NvpID != nil || powerMode != "fixed" {
+	if len(deviceClass.Spec.PowerModes) != 1 || deviceClass.Spec.PowerModes[0].Name != fixedPowerMode ||
+		deviceClass.Spec.PowerModes[0].NvpID != nil || powerMode != fixedPowerMode {
 		return selectedDeviceFacts{}, fmt.Errorf(
 			"DeviceClass %q is not the first-path non-selectable fixed-power class", deviceClass.Name,
 		)
@@ -31,7 +33,7 @@ func validateDeviceClass(deviceClass *edgev1alpha1.DeviceClass, powerMode string
 	for key, value := range deviceClass.Spec.NodeSelector {
 		selector[key] = value
 	}
-	return selectedDeviceFacts{nodeSelector: selector, powerModes: []string{"fixed"}}, nil
+	return selectedDeviceFacts{nodeSelector: selector, powerModes: []string{fixedPowerMode}}, nil
 }
 
 func selectModelPath(

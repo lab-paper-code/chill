@@ -36,7 +36,13 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != "fixed" ||
+	assertResolvedCandidate(t, resolved, selection)
+	assertCandidateReport(t, resolved, selection)
+}
+
+func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
+	t.Helper()
+	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != fixedPowerMode ||
 		resolved.State.ArtifactPath != testArtifactPath ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
 		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||
@@ -46,10 +52,13 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
 		t.Fatalf("unexpected resolved candidate: %#v", resolved)
 	}
-	if len(resolved.DevicePowerModes) != 1 || resolved.DevicePowerModes[0] != "fixed" {
+	if len(resolved.DevicePowerModes) != 1 || resolved.DevicePowerModes[0] != fixedPowerMode {
 		t.Fatalf("unexpected DeviceClass power modes: %#v", resolved.DevicePowerModes)
 	}
+}
 
+func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
+	t.Helper()
 	reportSum := sha256.Sum256(resolved.ReportBytes)
 	intent := profilingrun.Intent{
 		Candidate: profilingrun.CandidateIdentity{
@@ -82,7 +91,7 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 		report.Inputs.RuntimeDeclaration.UID != "config-uid" ||
 		report.Inputs.RuntimeDeclaration.ResourceVersion != "30" ||
 		report.Inputs.RuntimeDeclaration.Key != "execution-facts.yaml" ||
-		report.Selection.PowerMode != "fixed" ||
+		report.Selection.PowerMode != fixedPowerMode ||
 		report.DeviceClassFacts.Architecture != testArchitecture ||
 		report.DeviceClassFacts.NodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass ||
 		report.ArtifactSupply.Image != testArtifactImage ||
@@ -316,7 +325,7 @@ func candidateResolverOptions() CandidateResolverOptions {
 func validCandidateSelection() profiler.CandidateSelection {
 	return profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-		ExecutionPath: "ort-cpu", PowerMode: "fixed",
+		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
 	}
 }
 
@@ -343,7 +352,7 @@ func validCandidateObjects() []client.Object {
 		},
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{"edge.dacs.io/device-class": "lattepanda-3-delta-8g"},
-			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed"}},
+			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{Name: fixedPowerMode}},
 		},
 	}
 	configMap := &corev1.ConfigMap{

@@ -21,18 +21,10 @@ var (
 )
 
 func (i Intent) Validate() error {
-	switch i.SchemaVersion {
-	case SchemaVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-	case legacyIntentSchemaVersion:
-		if i.State.ArtifactPath != "" {
-			return errors.New("legacy intent must not contain state.artifactPath")
-		}
-	default:
-		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
+	if err := i.validateSchema(); err != nil {
+		return err
 	}
+
 	for name, value := range map[string]string{
 		"candidate.reportDigest":             i.Candidate.ReportDigest,
 		"candidate.modelSpecContentDigest":   i.Candidate.ModelSpecContentDigest,
@@ -89,6 +81,40 @@ func (i Intent) Validate() error {
 	if i.Power.NodeName != i.TargetNode.Name {
 		return errors.New("power nodeName must match target Node")
 	}
+	if err := i.validateCPUContract(); err != nil {
+		return err
+	}
+	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
+		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
+	}
+	if i.Measurement.Repetitions != 1 {
+		return errors.New("first profiling path requires exactly one measurement repetition")
+	}
+	if i.Power.IntervalMilliseconds < 1 || i.Power.TimeoutMilliseconds < 1 ||
+		i.Power.TimeoutMilliseconds >= i.Power.IntervalMilliseconds ||
+		i.Power.DurationSeconds < i.Measurement.DurationSeconds {
+		return errors.New("invalid or under-covering power observation request")
+	}
+	return nil
+}
+
+func (i Intent) validateSchema() error {
+	switch i.SchemaVersion {
+	case SchemaVersion:
+		if !validArtifactPath(i.State.ArtifactPath) {
+			return errors.New("state.artifactPath must be a clean absolute container path")
+		}
+	case legacyIntentSchemaVersion:
+		if i.State.ArtifactPath != "" {
+			return errors.New("legacy intent must not contain state.artifactPath")
+		}
+	default:
+		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
+	}
+	return nil
+}
+
+func (i Intent) validateCPUContract() error {
 	if i.CPU.ExclusivityClaimed {
 		return errors.New("first CPU policy must not claim Node exclusivity")
 	}
@@ -109,17 +135,6 @@ func (i Intent) Validate() error {
 	}
 	if i.CPU.Limit != i.TargetNode.AllocatableCPU || i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
-	}
-	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
-		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
-	}
-	if i.Measurement.Repetitions != 1 {
-		return errors.New("first profiling path requires exactly one measurement repetition")
-	}
-	if i.Power.IntervalMilliseconds < 1 || i.Power.TimeoutMilliseconds < 1 ||
-		i.Power.TimeoutMilliseconds >= i.Power.IntervalMilliseconds ||
-		i.Power.DurationSeconds < i.Measurement.DurationSeconds {
-		return errors.New("invalid or under-covering power observation request")
 	}
 	return nil
 }

@@ -18,13 +18,20 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+const (
+	testManagementNamespace = "chill-system"
+	testProfilerConfigName  = "chill-profiler-config"
+	testProfilerName        = "chill-profiler"
+	testSystemName          = "chill"
+)
+
 func TestOptionsDefaultAndValidate(t *testing.T) {
-	options := Options{Namespace: "chill-system"}
+	options := Options{Namespace: testManagementNamespace}
 	if err := options.DefaultAndValidate(); err != nil {
 		t.Fatal(err)
 	}
-	if options.SystemName != "chill" || options.DeploymentName != "chill-profiler" ||
-		options.ConfigMapName != "chill-profiler-config" || options.ConfigMapKey != DefaultConfigKey {
+	if options.SystemName != testSystemName || options.DeploymentName != testProfilerName ||
+		options.ConfigMapName != testProfilerConfigName || options.ConfigMapKey != DefaultConfigKey {
 		t.Fatalf("defaulted options = %#v", options)
 	}
 }
@@ -54,10 +61,10 @@ func TestConfigValidate(t *testing.T) {
 
 func TestBuildDeployment(t *testing.T) {
 	deployment := buildDeployment(validOptions(), validConfig())
-	if deployment.Namespace != "chill-system" || deployment.Name != "chill-profiler" {
+	if deployment.Namespace != testManagementNamespace || deployment.Name != testProfilerName {
 		t.Fatalf("Deployment key = %s/%s", deployment.Namespace, deployment.Name)
 	}
-	if deployment.Spec.Template.Spec.ServiceAccountName != "chill-profiler" {
+	if deployment.Spec.Template.Spec.ServiceAccountName != testProfilerName {
 		t.Fatalf("ServiceAccountName = %q", deployment.Spec.Template.Spec.ServiceAccountName)
 	}
 	container := deployment.Spec.Template.Spec.Containers[0]
@@ -89,30 +96,30 @@ func TestReconcileCreatesAndDeletesOwnedDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	system := &edgev1alpha1.ChillSystem{}
-	system.Name = "chill"
+	system.Name = testSystemName
 	system.Spec.Profiler.Enabled = true
 	system.Spec.Profiler.ConfigRef.Name = "custom-profiler-config"
 	configMap := &corev1.ConfigMap{}
-	configMap.Namespace = "chill-system"
+	configMap.Namespace = testManagementNamespace
 	configMap.Name = "custom-profiler-config"
 	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap).Build()
-	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: Options{SystemName: "chill", Namespace: "chill-system"}}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}}
+	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: Options{SystemName: testSystemName, Namespace: testManagementNamespace}}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: testSystemName}}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("Reconcile(create): %v", err)
 	}
 
 	deployment := &appsv1.Deployment{}
-	key := types.NamespacedName{Namespace: "chill-system", Name: "chill-profiler"}
+	key := types.NamespacedName{Namespace: testManagementNamespace, Name: testProfilerName}
 	if err := client.Get(context.Background(), key, deployment); err != nil {
 		t.Fatalf("get created Deployment: %v", err)
 	}
-	if len(deployment.OwnerReferences) != 1 || deployment.OwnerReferences[0].Name != "chill" || !*deployment.OwnerReferences[0].Controller {
+	if len(deployment.OwnerReferences) != 1 || deployment.OwnerReferences[0].Name != testSystemName || !*deployment.OwnerReferences[0].Controller {
 		t.Fatalf("owner references = %#v", deployment.OwnerReferences)
 	}
-	if err := client.Get(context.Background(), types.NamespacedName{Name: "chill"}, system); err != nil {
+	if err := client.Get(context.Background(), types.NamespacedName{Name: testSystemName}, system); err != nil {
 		t.Fatal(err)
 	}
 	system.Spec.Profiler.Enabled = false
@@ -130,12 +137,12 @@ func TestReconcileCreatesAndDeletesOwnedDeployment(t *testing.T) {
 func TestReconcileDoesNotDeleteSameNamedDeploymentWithoutChillSystem(t *testing.T) {
 	scheme := testScheme(t)
 	foreign := &appsv1.Deployment{}
-	foreign.Namespace = "chill-system"
-	foreign.Name = "chill-profiler"
+	foreign.Namespace = testManagementNamespace
+	foreign.Name = testProfilerName
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(foreign).Build()
 	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
 
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}}); err != nil {
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: testSystemName}}); err != nil {
 		t.Fatalf("Reconcile(): %v", err)
 	}
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: foreign.Namespace, Name: foreign.Name}, &appsv1.Deployment{}); err != nil {
@@ -150,19 +157,19 @@ func TestReconcileRefusesToAdoptUncontrolledDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	system := &edgev1alpha1.ChillSystem{}
-	system.Name = "chill"
+	system.Name = testSystemName
 	system.Spec.Profiler.Enabled = true
 	configMap := &corev1.ConfigMap{}
-	configMap.Namespace = "chill-system"
-	configMap.Name = "chill-profiler-config"
+	configMap.Namespace = testManagementNamespace
+	configMap.Name = testProfilerConfigName
 	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
 	foreign := &appsv1.Deployment{}
-	foreign.Namespace = "chill-system"
-	foreign.Name = "chill-profiler"
+	foreign.Namespace = testManagementNamespace
+	foreign.Name = testProfilerName
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap, foreign).Build()
 	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
-	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}})
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: testSystemName}})
 	if err == nil || !strings.Contains(err.Error(), "without a controller reference") {
 		t.Fatalf("Reconcile() error = %v, want uncontrolled Deployment error", err)
 	}
@@ -175,11 +182,11 @@ func TestReconcileRequeuesAfterDeletingImmutableSelectorDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	system := &edgev1alpha1.ChillSystem{}
-	system.Name = "chill"
+	system.Name = testSystemName
 	system.Spec.Profiler.Enabled = true
 	configMap := &corev1.ConfigMap{}
-	configMap.Namespace = "chill-system"
-	configMap.Name = "chill-profiler-config"
+	configMap.Namespace = testManagementNamespace
+	configMap.Name = testProfilerConfigName
 	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
 	drifted := buildDeployment(validOptions(), validConfig())
 	drifted.Spec.Selector.MatchLabels["drifted"] = "true"
@@ -189,7 +196,7 @@ func TestReconcileRequeuesAfterDeletingImmutableSelectorDrift(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap, drifted).Build()
 	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
-	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "chill"}})
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: testSystemName}})
 	if err != nil {
 		t.Fatalf("Reconcile(): %v", err)
 	}
@@ -219,10 +226,10 @@ func testScheme(t *testing.T) *runtime.Scheme {
 
 func validOptions() Options {
 	return Options{
-		SystemName:     "chill",
-		Namespace:      "chill-system",
-		DeploymentName: "chill-profiler",
-		ConfigMapName:  "chill-profiler-config",
+		SystemName:     testSystemName,
+		Namespace:      testManagementNamespace,
+		DeploymentName: testProfilerName,
+		ConfigMapName:  testProfilerConfigName,
 		ConfigMapKey:   DefaultConfigKey,
 	}
 }
@@ -232,7 +239,7 @@ func validConfig() Config {
 		Replicas:           1,
 		Image:              "daclab/chill-profiler:test",
 		ImagePullPolicy:    corev1.PullIfNotPresent,
-		ServiceAccountName: "chill-profiler",
+		ServiceAccountName: testProfilerName,
 		MetricsBindAddress: "0",
 		HealthProbePort:    8081,
 		LeaderElection:     true,
