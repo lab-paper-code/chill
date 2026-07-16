@@ -1,6 +1,9 @@
 package profilingrun
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 	intent := validIntent()
@@ -52,5 +55,24 @@ func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 	invalid.SweepID = "sha256:bad"
 	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
 		t.Fatal("expected identity drift rejection")
+	}
+	invalid = valid
+	invalid.MeasurementEndedAt = invalid.MeasurementStartedAt
+	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+		t.Fatal("expected empty measurement window rejection")
+	}
+	invalid = valid
+	invalid.MeasurementEndedAt = "not-a-time"
+	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+		t.Fatal("expected invalid measurement end rejection")
+	}
+
+	started, ended, err := valid.MeasurementWindow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !started.Equal(time.Date(2026, time.January, 1, 0, 0, 1, 0, time.UTC)) ||
+		!ended.Equal(time.Date(2026, time.January, 1, 0, 0, 31, 0, time.UTC)) {
+		t.Fatalf("measurement window = %s..%s", started, ended)
 	}
 }

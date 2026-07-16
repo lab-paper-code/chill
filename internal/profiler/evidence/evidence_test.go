@@ -57,6 +57,48 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
+func TestRawMeasurementRequiresOverlappingRuntimeAndPowerWindows(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	runtimeStarted, runtimeEnded, err := raw.Runtime.MeasurementWindow()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		powerStart time.Time
+		powerEnd   time.Time
+		wantError  bool
+	}{
+		{
+			name:       "partial overlap remains an admission decision",
+			powerStart: runtimeStarted.Add(time.Second), powerEnd: runtimeEnded.Add(time.Second),
+		},
+		{
+			name:       "power ends at runtime start",
+			powerStart: runtimeStarted.Add(-time.Minute), powerEnd: runtimeStarted, wantError: true,
+		},
+		{
+			name:       "power starts at runtime end",
+			powerStart: runtimeEnded, powerEnd: runtimeEnded.Add(time.Minute), wantError: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := raw
+			candidate.Power.StartedAt = test.powerStart
+			candidate.Power.EndedAt = test.powerEnd
+			candidate.Power.Samples = nil
+			candidate.Power.Summary.Attempts = 0
+			candidate.Power.Summary.SuccessfulSamples = 0
+			err := candidate.Validate(intent)
+			if (err != nil) != test.wantError {
+				t.Fatalf("Validate() error = %v, wantError=%v", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)

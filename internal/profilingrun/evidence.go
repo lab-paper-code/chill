@@ -79,6 +79,20 @@ type Repetition struct {
 	LatencyMilliseconds  []float64 `json:"latencyMs"`
 }
 
+// MeasurementWindow returns the runtime's wall-clock steady-measurement
+// interval. Scientific coverage policy remains outside RuntimeResult.
+func (r RuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
+	started, err := time.Parse(time.RFC3339Nano, r.MeasurementStartedAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("measurement start timestamp is invalid")
+	}
+	ended, err := time.Parse(time.RFC3339Nano, r.MeasurementEndedAt)
+	if err != nil || !ended.After(started) {
+		return time.Time{}, time.Time{}, errors.New("measurement end timestamp is invalid")
+	}
+	return started, ended, nil
+}
+
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	if result.SchemaVersion != RuntimeResultSchemaVersion {
@@ -149,8 +163,11 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	if err != nil {
 		return errors.New("warm-up completion timestamp is invalid")
 	}
-	measurementStarted, err := time.Parse(time.RFC3339Nano, result.MeasurementStartedAt)
-	if err != nil || warmupCompleted.After(measurementStarted) {
+	measurementStarted, _, err := result.MeasurementWindow()
+	if err != nil {
+		return err
+	}
+	if warmupCompleted.After(measurementStarted) {
 		return errors.New("warm-up does not precede the measurement window")
 	}
 	latencyCount := 0

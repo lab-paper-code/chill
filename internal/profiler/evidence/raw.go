@@ -42,6 +42,13 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 	if err := validatePower(intent, m.Power); err != nil {
 		return err
 	}
+	runtimeStarted, runtimeEnded, err := m.Runtime.MeasurementWindow()
+	if err != nil {
+		return fmt.Errorf("read runtime measurement window: %w", err)
+	}
+	if !m.Power.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(m.Power.EndedAt) {
+		return errors.New("runtime and power observation windows do not overlap")
+	}
 	return nil
 }
 
@@ -70,7 +77,7 @@ func validatePower(intent profilingrun.Intent, result powerobserver.Result) erro
 		result.Source.Metric != intent.Power.Metric {
 		return errors.New("power source identity mismatch")
 	}
-	if result.StartedAt.IsZero() || result.EndedAt.IsZero() || result.EndedAt.Before(result.StartedAt) {
+	if result.StartedAt.IsZero() || result.EndedAt.IsZero() || !result.EndedAt.After(result.StartedAt) {
 		return errors.New("power observation window is invalid")
 	}
 	if result.Summary.Attempts != len(result.Samples)+len(result.Failures) ||
