@@ -1,0 +1,40 @@
+nodes:
+  ChillSystem/edge.dacs.io/v1alpha1:
+    scope: Cluster
+    diagram_node_classname: diagrams.k8s.others.CRD
+    edges: |
+      management_namespace = query_path(resource, "spec.managementNamespace")
+
+      node_discovery_config = query_path(resource, "spec.nodeDiscovery.configMapName")
+      if node_discovery_config:
+        edges.add_edge_to(
+          "spec.nodeDiscovery.configMapName",
+          node_discovery_config,
+          management_namespace,
+          "ConfigMap",
+          "v1",
+          "REFERENCE"
+        )
+
+      profiler_config = query_path(resource, "spec.profiler.configRef.name")
+      if profiler_config:
+        edges.add_edge_to(
+          "spec.profiler.configRef.name",
+          profiler_config,
+          management_namespace,
+          "ConfigMap",
+          "v1",
+          "REFERENCE"
+        )
+
+      catalog_name = query_path(resource, "spec.deviceDiscovery.catalog.name")
+      catalog_namespace = query_path(resource, "spec.deviceDiscovery.catalog.namespace")
+      if catalog_name:
+        edges.add_edge_to(
+          "spec.deviceDiscovery.catalog.name",
+          catalog_name,
+          catalog_namespace,
+          "ConfigMap",
+          "v1",
+          "REFERENCE"
+        )

@@ -164,8 +164,23 @@ codegraph-mcp-config: codegraph ## Print the manual Codex MCP config without mod
 codegraph-uninit: codegraph ## Remove only this repository's optional CodeGraph index.
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh uninit --force $(CURDIR)
 
+.PHONY: deployment-graph-default
+deployment-graph-default: kubeconform ## Generate the default Helm deployment review graph.
+	$(DEPLOYMENT_GRAPH_ENV) ./hack/deployment-graph.sh default
+
+.PHONY: deployment-graph-profiler
+deployment-graph-profiler: kubeconform ## Generate the Profiler-enabled Helm deployment review graph.
+	$(DEPLOYMENT_GRAPH_ENV) ./hack/deployment-graph.sh profiler
+
+.PHONY: deployment-graph-check
+deployment-graph-check: kubeconform ## Generate and verify both Helm deployment review graphs.
+	$(DEPLOYMENT_GRAPH_ENV) ./hack/deployment-graph.sh check
+
 .PHONY: code-intelligence-check
 code-intelligence-check: code-intelligence-baseline gopls-check arch-check ## Verify required code-intelligence checks.
+
+.PHONY: code-intelligence-review
+code-intelligence-review: code-intelligence-check deployment-graph-check ## Run required checks plus optional deployment-graph review.
 
 ##@ Helm
 
@@ -364,6 +379,7 @@ GOPLS ?= $(LOCALBIN)/gopls
 GO_ARCH_LINT ?= $(LOCALBIN)/go-arch-lint
 ARCH_GRAPH_OUT ?= $(LOCALBIN)/chill-architecture.svg
 CODEGRAPH ?= $(LOCALBIN)/codegraph
+DEPLOYMENT_GRAPH_OUT ?= $(LOCALBIN)/code-intelligence/deployment
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.3
@@ -378,9 +394,12 @@ GO_ARCH_LINT_GO_VERSION ?= go1.26.4
 CODEGRAPH_VERSION ?= v1.4.1
 CODEGRAPH_PLATFORM ?= linux-x64
 CODEGRAPH_SHA256 ?= fb585ff5018d6faaa46d282b61f4f689bc7967ed8a1b467a5c556dd7ced9b542
+KUBEDIAGRAMS_VERSION ?= v0.8.0
+KUBEDIAGRAMS_IMAGE ?= docker.io/philippemerle/kubediagrams@sha256:e721f252097c5921f29f75615643c1ce5d649ba2811427d2dc89f7e18742aafa
 # kubeconform's Kubernetes schema catalog omits top-level CRD schemas and CR
 # instances whose schema is provided by those CRDs in the same rendered chart.
 KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,ChillSystem
+DEPLOYMENT_GRAPH_ENV = HELM=$(HELM) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" CONTAINER_TOOL=$(CONTAINER_TOOL) KUBEDIAGRAMS_VERSION=$(KUBEDIAGRAMS_VERSION) KUBEDIAGRAMS_IMAGE=$(KUBEDIAGRAMS_IMAGE) HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) DEPLOYMENT_GRAPH_OUT=$(DEPLOYMENT_GRAPH_OUT)
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

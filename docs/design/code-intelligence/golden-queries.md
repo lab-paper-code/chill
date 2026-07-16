@@ -79,7 +79,9 @@ It does not add a Profiler Deployment. Helm installs identity, configuration,
 and permissions; the CHILL Operator manages the operand Deployment.
 
 Required evidence: two validated Helm renders using the same release and
-namespace, followed by a resource-set comparison.
+namespace, followed by a resource-set comparison. The optional
+`make deployment-graph-check` command verifies the review view without
+replacing that evidence.
 
 ## Regression commands
 

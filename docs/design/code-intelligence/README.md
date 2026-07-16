@@ -11,11 +11,11 @@ source of truth by itself.
 | Actual Go package dependencies | `go list` | `go list` output |
 | Allowed package dependencies | pinned `go-arch-lint` | reviewed `.go-arch-lint.yml`; enforced in CI |
 | Fast agent discovery | pinned CodeGraph | optional candidate discovery only |
-| Desired Kubernetes topology | validated `helm template` | rendered manifests for one exact values set |
+| Desired Kubernetes topology | validated `helm template` plus pinned KubeDiagrams | rendered manifests are authoritative; diagrams are review views |
 
 CodeGraph is optional, local, absent from CI, and never required for
-contributors. KubeDiagrams is not yet adopted; Helm rendering remains the
-deployment-topology authority.
+contributors. KubeDiagrams is also local and absent from correctness CI. Helm
+rendering remains the deployment-topology authority.
 
 ## Evidence rules
 
@@ -56,6 +56,8 @@ The current six regression answers and their mandatory evidence are in
 | `make arch-graph` | ignored, on-demand package diagram; not a correctness gate |
 | `make codegraph-check` | optional CodeGraph golden-query regression check |
 | `make codegraph-watcher` | optional MCP watcher create/modify/rename/delete check |
+| `make deployment-graph-check` | validated default and Profiler-enabled deployment graphs |
+| `make code-intelligence-review` | required checks plus optional deployment-graph review |
 
 Normal build, test, generated-artifact, Helm, and live-environment validation
 remain separate from code-intelligence checks.
@@ -96,6 +98,23 @@ Therefore:
 Installation, privacy controls, local commands, and rollback are in
 [codegraph.md](codegraph.md).
 
+## Deployment topology contract
+
+KubeDiagrams converts the repository's validated Helm renders into portable
+SVG and machine-readable DOT JSON review artifacts. It does not read the chart
+directly and does not replace manifest, test, or live-cluster validation.
+
+Two canonical profiles remain separate:
+
+- default chart values; and
+- `profiler.enabled=true`.
+
+The check verifies the exact Profiler-only resource set, Profiler RBAC
+relationships, `ChillSystem` ConfigMap references, and the absence of a
+Helm-owned Profiler Deployment. The Operator remains responsible for that
+operand. Commands, artifacts, metadata, and limitations are in
+[deployment-topology.md](deployment-topology.md).
+
 ## Freshness, security, and maintenance
 
 | Artifact | Refresh rule | Stored in Git |
@@ -114,10 +133,5 @@ Installation, privacy controls, local commands, and rollback are in
   [golden-queries.md](golden-queries.md) in the same change.
 - If CodeGraph freshness or verified discovery quality regresses, remove its
   MCP entry and run `make codegraph-uninit`. Baseline development is unchanged.
-
-## Pending scope
-
-Rendered deployment diagrams remain a separate, unimplemented decision. Any
-future integration must consume validated `helm template` output for distinct
-default and Profiler-enabled profiles, pin its runtime image, and keep generated
-layout out of correctness CI.
+- If KubeDiagrams output regresses, retain `manifest.yaml` and `resources.txt`
+  as the desired-state evidence and remove only the generated graph view.

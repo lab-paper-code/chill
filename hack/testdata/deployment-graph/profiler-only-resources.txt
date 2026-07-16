@@ -1,0 +1,7 @@
+ClusterRole/chill-profiler
+ClusterRoleBinding/chill-profiler
+ConfigMap/chill-profiler-config
+ConfigMap/chill-profiler-facts
+Role/chill-profiler
+RoleBinding/chill-profiler
+ServiceAccount/chill-profiler
