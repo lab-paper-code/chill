@@ -40,4 +40,12 @@ resources:
   kind: ClusterEnergyModel
   path: github.com/lab-paper-code/chill/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+  controller: true
+  domain: dacs.io
+  group: edge
+  kind: ProfilingRun
+  path: github.com/lab-paper-code/chill/api/v1alpha1
+  version: v1alpha1
 version: "3"

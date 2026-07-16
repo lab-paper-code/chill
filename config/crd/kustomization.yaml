@@ -4,4 +4,5 @@ resources:
 - bases/edge.dacs.io_modelspecs.yaml
 - bases/edge.dacs.io_deviceprofiles.yaml
 - bases/edge.dacs.io_clusterenergymodels.yaml
+- bases/edge.dacs.io_profilingruns.yaml
 # +kubebuilder:scaffold:crdkustomizeresource

@@ -7,9 +7,11 @@ is implemented: `ChillSystem` configuration and conditions, the standalone
 Profiler process, Operator-owned Deployment lifecycle, and Helm-owned runtime
 identity and configuration. The foundation has passed API, envtest, Helm,
 multi-architecture image, and live-cluster lifecycle verification.
-`ProfilingRun` reconciliation and measurement execution remain unimplemented
-and are gated below. Request, source-resolution, evidence-ownership, and
-status/retry checkpoints are fixed; the measurement-worker contract remains.
+The immutable, namespaced `ProfilingRun` API schema and the Kubernetes-free
+preparation, lifecycle-decision, and evidence-finalization boundaries are now
+implemented. `ProfilingRun` reconciliation and measurement execution remain
+unimplemented. Request, source-resolution, evidence-ownership, and status/retry
+checkpoints are fixed; the measurement-worker contract remains.
 
 ## Purpose
 
@@ -478,8 +480,10 @@ without running a measurement loop.
 4. Close the five Run-path checkpoints and record the reviewed API/state
    contracts.
 5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
-   fake adapters; do not add Kubernetes dependencies.
-6. Add the namespaced `ProfilingRun` API and schema tests.
+   fake adapters; do not add Kubernetes dependencies. Implemented for intent
+   preparation, lifecycle decisions, and terminal evidence finalization.
+6. Add the namespaced `ProfilingRun` API and schema tests. Implemented with an
+   immutable spec, compact status, generated CRD, Helm CRD, and envtest gates.
 7. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
 8. Add the one-shot measurement worker boundary, then promote only the proven
