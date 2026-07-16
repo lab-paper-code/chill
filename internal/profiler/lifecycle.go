@@ -65,7 +65,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	if snapshot.Deleting {
 		return Decision{Action: ActionStop}, nil
 	}
-	if err := snapshot.validate(); err != nil {
+	if err := snapshot.Validate(); err != nil {
 		return Decision{}, err
 	}
 	if snapshot.Intent == nil {
@@ -97,7 +97,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	}
 }
 
-func (s Snapshot) validate() error {
+func (s Snapshot) Validate() error {
 	if s.Intent == nil {
 		if s.JobReference != "" || s.Job != JobNotObserved || s.EvidenceReference != nil || s.AdmissionRecorded {
 			return errors.New("Run facts exist before intent is frozen")

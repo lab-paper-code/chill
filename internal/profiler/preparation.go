@@ -121,7 +121,7 @@ func NewPreparer(
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
-	if err := request.validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return PreparedRun{}, err
 	}
 	candidate, err := p.candidates.ResolveCandidate(ctx, request.Candidate)
@@ -220,7 +220,7 @@ func (p *Preparer) freeze(
 	return intent, nil
 }
 
-func (r PreparationRequest) validate() error {
+func (r PreparationRequest) Validate() error {
 	for name, value := range map[string]string{
 		"candidate ModelSpec":     r.Candidate.ModelSpec,
 		"candidate DeviceClass":   r.Candidate.DeviceClass,
