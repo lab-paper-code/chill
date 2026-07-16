@@ -31,6 +31,9 @@ jobs:
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=normal)"
 
+      - name: Check package architecture
+        run: make arch-check
+
       - name: Run linter
         run: make lint
 

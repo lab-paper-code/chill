@@ -1,0 +1,129 @@
+version: 3
+workdir: .
+
+# Phase 2 governs CHILL-internal production package direction. Third-party
+# dependency policy remains owned by go.mod, vulnerability checks, and review.
+allow:
+  depOnAnyVendor: true
+  # Keep the merge gate on source import edges. Advanced DI inference assigns
+  # composition-root wiring back to concrete packages and creates false edges.
+  deepScan: false
+  ignoreNotFoundComponents: false
+
+# Spikes and tests are intentionally outside the merge-blocking architecture
+# policy. hack/ contains the negative-test fixture. Test imports are still
+# measured by hack/architecture-coverage.sh.
+exclude:
+  - spikes
+  - test
+  - hack
+excludeFiles:
+  - "^.*_test\\.go$"
+
+# Every api/, cmd/, and internal/ production package belongs to exactly one
+# component. Keep this mapping synchronized with architecture-coverage.sh.
+components:
+  api: { in: api/v1alpha1 }
+  entrypoints: { in: [cmd, cmd/**] }
+  platform-core:
+    in:
+      - internal/component
+      - internal/defaults
+      - internal/kubeconfig
+      - internal/metadata
+      - internal/nodeprobe
+  device-class: { in: internal/deviceclass }
+  operator: { in: internal/operator/** }
+  evidence-core: { in: internal/evidencestore }
+  evidence-s3: { in: internal/evidencestore/s3 }
+  power-core: { in: internal/powerobserver }
+  power-edgemetrics: { in: internal/powerobserver/edgemetrics }
+  model-compat: { in: internal/modelcompat }
+  profile-derivation: { in: internal/profilederivation }
+  profiling-run: { in: internal/profilingrun }
+  profiler-app: { in: internal/profiler }
+  profiler-controller: { in: internal/profiler/controller }
+  profiler-evidence: { in: internal/profiler/evidence }
+  profiler-evidence-kube: { in: internal/profiler/evidence/kube }
+  profiler-worker: { in: internal/profiler/worker }
+
+deps:
+  # Executables are composition roots. Their job is to assemble any internal
+  # implementation; domain packages below retain strict directional rules.
+  entrypoints:
+    anyProjectDeps: true
+
+  api:
+    anyVendorDeps: true
+
+  # These small support packages may collaborate within this reviewed group,
+  # but cannot reach upward into operators or profiler orchestration.
+  platform-core:
+    mayDependOn:
+      - platform-core
+
+  device-class:
+    mayDependOn:
+      - api
+      - platform-core
+
+  operator:
+    mayDependOn:
+      - api
+      - platform-core
+      - device-class
+      - operator
+
+  evidence-core:
+    anyVendorDeps: true
+  evidence-s3:
+    mayDependOn:
+      - evidence-core
+
+  power-core:
+    anyVendorDeps: true
+  power-edgemetrics:
+    mayDependOn:
+      - power-core
+
+  model-compat:
+    anyVendorDeps: true
+  profile-derivation:
+    anyVendorDeps: true
+  profiling-run:
+    anyVendorDeps: true
+
+  profiler-app:
+    mayDependOn:
+      - evidence-core
+      - profiling-run
+
+  profiler-evidence:
+    mayDependOn:
+      - evidence-core
+      - power-core
+      - profiling-run
+
+  profiler-evidence-kube:
+    mayDependOn:
+      - evidence-core
+      - profiler-evidence
+      - profiling-run
+
+  profiler-worker:
+    mayDependOn:
+      - evidence-core
+      - power-core
+      - profiler-evidence
+      - profiling-run
+
+  profiler-controller:
+    mayDependOn:
+      - api
+      - platform-core
+      - evidence-core
+      - model-compat
+      - power-edgemetrics
+      - profiler-app
+      - profiler-evidence
+      - profiling-run

@@ -1,0 +1,6 @@
+package powerobserver
+
+// This fixture intentionally reverses the approved dependency direction. It is
+// copied into a temporary project by architecture-negative-test.sh and is never
+// compiled as part of CHILL.
+import _ "github.com/lab-paper-code/chill/api/v1alpha1"

@@ -105,6 +105,64 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
+.PHONY: code-intelligence-baseline
+code-intelligence-baseline: ## Print the reproducible Phase 0 code-intelligence baseline.
+	./hack/code-intelligence-baseline.sh
+
+.PHONY: gopls-check
+gopls-check: gopls ## Verify the pinned gopls workspace and Phase 1 golden queries.
+	CHILL_GOPLS_VERSION=$(GOPLS_VERSION) CHILL_GOPLS_GO_VERSION=$(GOPLS_GO_VERSION) ./hack/gopls-smoke.sh
+
+.PHONY: arch-coverage
+arch-coverage: ## Verify every in-scope production package has one reviewed component.
+	./hack/architecture-coverage.sh
+
+.PHONY: arch-check
+arch-check: go-arch-lint arch-coverage ## Enforce reviewed production import boundaries and the negative fixture.
+	$(GO_ARCH_LINT) check --project-path $(CURDIR) --output-color=false
+	CHILL_GO_ARCH_LINT=$(GO_ARCH_LINT) ./hack/architecture-negative-test.sh
+
+.PHONY: arch-graph
+arch-graph: go-arch-lint ## Render the reviewed package architecture to ARCH_GRAPH_OUT.
+	mkdir -p $(dir $(ARCH_GRAPH_OUT))
+	$(GO_ARCH_LINT) graph --project-path $(CURDIR) --type di --out $(ARCH_GRAPH_OUT)
+	@echo "architecture.graph=$(ARCH_GRAPH_OUT)"
+
+.PHONY: codegraph-index
+codegraph-index: codegraph ## Build the optional local CodeGraph pilot index.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh init $(CURDIR)
+
+.PHONY: codegraph-sync
+codegraph-sync: codegraph ## Incrementally synchronize the optional local CodeGraph index.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh sync $(CURDIR)
+
+.PHONY: codegraph-status
+codegraph-status: codegraph ## Show freshness and statistics for the local CodeGraph index.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh status $(CURDIR)
+
+.PHONY: codegraph-pilot
+codegraph-pilot: codegraph ## Run one numbered CodeGraph golden-query pilot session.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) CODEGRAPH_PILOT_SESSION=$(CODEGRAPH_PILOT_SESSION) ./hack/codegraph-pilot.sh
+
+.PHONY: codegraph-freshness
+codegraph-freshness: codegraph ## Verify explicit incremental create/modify/rename/delete synchronization.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-freshness.sh
+
+.PHONY: codegraph-mcp-config
+codegraph-mcp-config: codegraph ## Print the manual Codex MCP config without modifying agent settings.
+	@printf '%s\n' \
+		'# Add manually to ~/.codex/config.toml only for the Phase 3 pilot:' \
+		'[mcp_servers.codegraph]' \
+		'command = "$(CURDIR)/hack/codegraph-chill.sh"' \
+		'args = ["serve", "--mcp"]'
+
+.PHONY: codegraph-uninit
+codegraph-uninit: codegraph ## Remove only this repository's optional CodeGraph index.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh uninit --force $(CURDIR)
+
+.PHONY: code-intelligence-check
+code-intelligence-check: code-intelligence-baseline gopls-check arch-check ## Verify Phase 0 through Phase 2 code intelligence.
+
 ##@ Helm
 
 .PHONY: helm-version-check
@@ -298,6 +356,10 @@ KUBECONFORM ?= $(LOCALBIN)/kubeconform
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOPLS ?= $(LOCALBIN)/gopls
+GO_ARCH_LINT ?= $(LOCALBIN)/go-arch-lint
+ARCH_GRAPH_OUT ?= $(LOCALBIN)/chill-architecture.svg
+CODEGRAPH ?= $(LOCALBIN)/codegraph
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.3
@@ -305,6 +367,13 @@ CONTROLLER_TOOLS_VERSION ?= v0.16.1
 ENVTEST_VERSION ?= release-0.19
 GOLANGCI_LINT_VERSION ?= v1.64.5
 KUBECONFORM_VERSION ?= v0.6.7
+GOPLS_VERSION ?= v0.23.0
+GOPLS_GO_VERSION ?= go1.26.4
+GO_ARCH_LINT_VERSION ?= v1.16.0
+GO_ARCH_LINT_GO_VERSION ?= go1.26.4
+CODEGRAPH_VERSION ?= v1.4.1
+CODEGRAPH_PLATFORM ?= linux-x64
+CODEGRAPH_SHA256 ?= fb585ff5018d6faaa46d282b61f4f689bc7967ed8a1b467a5c556dd7ced9b542
 # kubeconform's Kubernetes schema catalog omits top-level CRD schemas and CR
 # instances whose schema is provided by those CRDs in the same rendered chart.
 KUBECONFORM_FLAGS ?= -strict -summary -kubernetes-version 1.31.0 -skip CustomResourceDefinition,ChillSystem
@@ -333,6 +402,38 @@ $(KUBECONFORM): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: gopls
+gopls: $(LOCALBIN) ## Download the pinned gopls with its supported tooling Go version.
+	@[ -f "$(GOPLS)-$(GOPLS_VERSION)" ] || { \
+	set -e; \
+	package=golang.org/x/tools/gopls@$(GOPLS_VERSION) ;\
+	echo "Downloading $${package} with $(GOPLS_GO_VERSION)" ;\
+	rm -f $(GOPLS) ;\
+	GOTOOLCHAIN=$(GOPLS_GO_VERSION) GOBIN=$(LOCALBIN) go install $${package} ;\
+	mv $(GOPLS) $(GOPLS)-$(GOPLS_VERSION) ;\
+	} ;\
+	ln -sf $(GOPLS)-$(GOPLS_VERSION) $(GOPLS)
+
+.PHONY: go-arch-lint
+go-arch-lint: $(LOCALBIN) ## Download the pinned architecture linter with its supported tooling Go version.
+	@[ -f "$(GO_ARCH_LINT)-$(GO_ARCH_LINT_VERSION)" ] || { \
+	set -e; \
+	package=github.com/fe3dback/go-arch-lint@$(GO_ARCH_LINT_VERSION) ;\
+	echo "Downloading $${package} with $(GO_ARCH_LINT_GO_VERSION)" ;\
+	rm -f $(GO_ARCH_LINT) ;\
+	GOTOOLCHAIN=$(GO_ARCH_LINT_GO_VERSION) GOBIN=$(LOCALBIN) go install $${package} ;\
+	mv $(GO_ARCH_LINT) $(GO_ARCH_LINT)-$(GO_ARCH_LINT_VERSION) ;\
+	} ;\
+	ln -sf $(GO_ARCH_LINT)-$(GO_ARCH_LINT_VERSION) $(GO_ARCH_LINT)
+
+.PHONY: codegraph
+codegraph: $(LOCALBIN) ## Download the verified, repository-local CodeGraph pilot binary.
+	CHILL_LOCALBIN=$(LOCALBIN) \
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) \
+	CHILL_CODEGRAPH_PLATFORM=$(CODEGRAPH_PLATFORM) \
+	CHILL_CODEGRAPH_SHA256=$(CODEGRAPH_SHA256) \
+	./hack/codegraph-install.sh
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

@@ -9,6 +9,7 @@ flat list of equally authoritative files.
 |---|---|---|
 | Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Ordered profiling plans, reusable component contracts, and supporting fact audits |
 | Operator console | [operator-console/README.md](operator-console/README.md) | Operator-facing concepts, workflows, interfaces, use cases, and requirements |
+| Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Semantic navigation, package-boundary enforcement, optional agent indexing, and rendered deployment graphs |
 
 Architectural decisions that must remain stable across design areas belong in
 [`docs/adr/`](../adr/). Product and system requirements belong in

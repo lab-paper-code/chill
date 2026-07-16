@@ -5,6 +5,7 @@
 *.so
 *.dylib
 bin/*
+.codegraph/
 Dockerfile.cross
 .kube/
 
