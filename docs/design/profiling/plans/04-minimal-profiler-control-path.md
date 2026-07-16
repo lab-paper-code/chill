@@ -11,15 +11,17 @@ identity and configuration. The foundation has passed API, envtest, Helm,
 multi-architecture image, and live-cluster lifecycle verification.
 The immutable, namespaced `ProfilingRun` API schema and the Kubernetes-free
 preparation, lifecycle-decision, and evidence-finalization boundaries are now
-implemented. `ProfilingRun` reconciliation and measurement execution remain
-unimplemented. Request, evidence-ownership, and status/retry checkpoints are
-fixed. The Kubernetes fact adapters and measurement-worker contract remain.
+implemented. The Profiler now resolves Kubernetes/configuration facts, retains
+one immutable intent record, and publishes its digest. Job materialization and
+measurement execution remain unimplemented. Request, evidence-ownership,
+status/retry, and measurement-worker checkpoints are fixed.
 
 ## Purpose
 
 CHILL has reusable internal functions for static compatibility, bounded power
-observation, immutable Run validation, and profile-evidence admission. It also
-has a managed Profiler process, but that process does not yet coordinate a Run.
+observation, immutable Run validation, and profile-evidence admission. Its
+managed Profiler process now coordinates Run preparation through immutable
+intent publication, but does not yet create or execute a measurement Job.
 
 The first Profiler answers one bounded question:
 
@@ -53,7 +55,7 @@ ProfilingRun desired state
   -> CHILL Profiler controller
   -> exact intent frozen
   -> owned Kubernetes Job
-  -> measurement worker executes runtime + PowerObserver observation
+  -> measurement Job executes runtime worker + PowerObserver helper
   -> immutable raw measurement object
   -> Profiler finalizes execution evidence from terminal Kubernetes facts
   -> single-Run admission result
@@ -158,21 +160,28 @@ compatibility, intent, Job, and admission decisions, but it does not poll power,
 execute inference, hold a measurement window open, or retain authoritative Run
 state in process memory.
 
-### Measurement worker owns
+### Runtime measurement worker owns
 
 - running inside the one-shot `ProfilingRun` Job;
 - executing the frozen runtime and artifact contract;
-- invoking `internal/powerobserver` for the bounded measurement window;
-- assembling only runtime and power facts observable during execution without
-  changing the frozen intent;
+- coordinating the measurement window with the PowerObserver helper;
+- validating and assembling only runtime and power facts observable during
+  execution without changing the frozen intent;
 - writing one immutable raw-measurement object to the configured durable
   evidence sink;
 - emitting a bounded receipt that identifies the committed object; and
 - exiting with an execution result that Kubernetes records on the Job and Pod.
 
-The worker is the execution plane. A Profiler controller restart or leader
-change does not restart measurement in controller memory or create a second
+The Job is the execution plane. A Profiler controller restart or leader change
+does not restart measurement in controller memory or create a second
 measurement path.
+
+### PowerObserver helper owns
+
+- running beside the runtime worker in the same one-shot Job;
+- invoking `internal/powerobserver` for the bounded frozen window;
+- atomically handing one complete power result to the runtime worker; and
+- exiting without storage credentials or evidence-write authority.
 
 ### Existing leaf packages retain ownership
 
@@ -339,11 +348,14 @@ cmd/profiler/main.go
        +--> internal/profilederivation
        +--> narrow Kubernetes/source/evidence ports
 
-measurement worker entrypoint
+runtime worker entrypoint
   -> internal/profiler/runner/        one-Job execution plane
-       +--> internal/powerobserver
        +--> explicit CPU ORT execution adapter
        +--> durable evidence sink
+
+power-observer entrypoint
+  -> internal/powerobserver
+       +--> edge-metrics adapter
 
 api/v1alpha1/
   -> ChillSystem profiler configuration and availability
@@ -380,7 +392,7 @@ the Job UID rather than by introducing a second controller owner.
 The existing spike remains a characterization harness and regression oracle
 until live equivalence is demonstrated. It is not imported by production code.
 
-## Required checkpoints before ProfilingRun implementation
+## Run-path checkpoints
 
 ### Checkpoint 1: request and immutability boundary
 
@@ -510,14 +522,13 @@ mutable cancel field is required by this checkpoint.
 
 ### Checkpoint 5: measurement worker contract
 
-Fix the concrete serialization and delivery of frozen intent to the one-shot
-Job worker, the raw-measurement schema, the bounded termination receipt schema,
-worker exit codes, and the controller-authored execution-evidence envelope.
-Both writes use the same evidence-store contract and distinct immutable object
-identities. This checkpoint implements the ownership and verification sequence
-fixed by Checkpoint 3; it does not introduce a handoff through logs or
-controller memory. Reconciliation must remain bounded and reconstructable
-without running a measurement loop.
+The concrete serialization, Job-local synchronization, raw-measurement write,
+bounded termination receipt, and worker exit classes are fixed by the
+[Measurement Worker contract](../components/measurement-worker.md). It
+retains the spike-proven runtime plus PowerObserver topology without adding an
+uploader sidecar. Both durable writes use the same evidence-store contract and
+distinct immutable object identities. Logs and controller memory are not
+handoff paths.
 
 ## Implementation sequence
 
@@ -541,8 +552,8 @@ without running a measurement loop.
 8. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
    Implemented through immutable intent recording; Job lifecycle remains.
-9. Add the one-shot measurement worker boundary, then promote only the proven
-   CPU ORT execution and PowerObserver behavior from the spike into it.
+9. Add the one-shot measurement Job boundary, then promote only the proven CPU
+   ORT runtime-worker and PowerObserver-helper behavior from the spike into it.
 10. Add the selected durable evidence sink.
 11. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
     permissions, configuration rollout, and upgrade behavior.

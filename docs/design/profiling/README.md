@@ -129,6 +129,8 @@ plans but do not expand a plan's authorization:
 - [Evidence Store](components/evidence-store.md) owns immutable evidence object
   storage and verification boundaries. Its Profiler-consumption plan remains
   separately review-gated.
+- [Measurement Worker](components/measurement-worker.md) fixes the first
+  CPU-ORT Job-local execution, synchronization, raw-write, and receipt contract.
 
 ## Supporting records
 
@@ -169,10 +171,13 @@ operator / Profiler controller entrypoints
         -> application orchestration
         -> plain domain leaf packages
 
-one-shot measurement worker
-        -> runtime-specific execution adapter
+one-shot runtime worker
+        +-> runtime-specific execution adapter
+        +-> durable evidence sink
+
+bounded PowerObserver helper
         -> internal/powerobserver
-        -> durable evidence sink
+        -> edge-metrics adapter
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or
