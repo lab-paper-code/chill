@@ -1,5 +1,7 @@
 # Plan 3: Profile Evidence Admission and Layer-0 Derivation
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Implemented as a pure, read-only first path. No `DeviceProfile` API or

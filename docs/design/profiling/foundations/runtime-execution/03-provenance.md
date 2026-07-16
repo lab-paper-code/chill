@@ -1,5 +1,7 @@
 # Runtime and Artifact Execution Provenance
 
+> Navigation: [Profiling design index](../../README.md)
+
 ## Status
 
 Step 3 complete. This document defines provenance requirements and guardrails
@@ -10,8 +12,8 @@ CRD fields, compatibility rules, or an execution-contract package.
 
 This step builds on:
 
-- [`runtime-artifact-execution-fact-audit.md`](runtime-artifact-execution-fact-audit.md)
-- [`runtime-artifact-execution-commonality.md`](runtime-artifact-execution-commonality.md)
+- [`01-fact-audit.md`](01-fact-audit.md)
+- [`02-commonality.md`](02-commonality.md)
 
 The four Step 1 audit labels—verified declaration, run observation, derived
 decision, spike constant, and unknown—remain useful for reasoning. They are not

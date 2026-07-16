@@ -1,5 +1,7 @@
 # Minimal Profiler Control Path
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Approved implementation plan. The operator-managed Profiler operand foundation

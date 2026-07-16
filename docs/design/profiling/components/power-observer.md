@@ -1,5 +1,7 @@
 # PowerObserver Internal Promotion
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Implemented.

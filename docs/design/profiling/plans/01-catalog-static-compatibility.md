@@ -1,5 +1,7 @@
 # Plan 1: Catalog and Static Compatibility
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Implemented for the first CPU ONNX Runtime static-compatibility path. The

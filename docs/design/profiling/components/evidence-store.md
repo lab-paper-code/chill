@@ -1,5 +1,7 @@
 # Evidence Store Internal Promotion
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Approved high-level design. Plans 1 and 2 are implemented and live-verified.

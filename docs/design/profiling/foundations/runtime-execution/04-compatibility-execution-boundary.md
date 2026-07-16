@@ -1,5 +1,7 @@
 # Runtime and Artifact Compatibility and Execution Boundary
 
+> Navigation: [Profiling design index](../../README.md)
+
 ## Status
 
 Step 4 complete. This document separates static compatibility, pre-run

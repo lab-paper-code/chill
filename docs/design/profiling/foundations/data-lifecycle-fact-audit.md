@@ -1,5 +1,7 @@
 # CHILL Data Lifecycle Fact Audit
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Current implementation fact audit. This document inventories data boundaries

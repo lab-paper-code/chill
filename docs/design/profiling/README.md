@@ -7,6 +7,33 @@ operand foundation implemented. The `ProfilingRun` control path is not yet
 implemented. This document itself does not authorize later API or internal
 changes.
 
+## How to use this directory
+
+This file is the entry point for the profiling design. Do not read every file
+as one flat specification.
+
+```text
+README.md
+├── plans/         ordered delivery boundaries and current scope
+├── components/    reusable subsystem contracts consumed by plans
+└── foundations/   fact audits and reasoning records; no implementation authority
+```
+
+Use this reading order:
+
+1. Read this roadmap to locate the current end-to-end boundary.
+2. Read only the relevant document under `plans/` for authorized scope and
+   current implementation status.
+3. Follow a `components/` document when that plan depends on a reusable
+   subsystem contract.
+4. Consult `foundations/` only when claim provenance, rejected assumptions, or
+   boundary rationale is needed.
+
+The `Status` section in each document is authoritative for whether its scope is
+implemented, approved but incomplete, or analysis only. Repository code,
+tests, and live verification remain the source of truth for implementation
+facts; a stale document status must be corrected rather than inferred around.
+
 ## Purpose
 
 Keep the end-to-end direction visible without assigning the whole system to
@@ -40,7 +67,7 @@ separately.
 
 ### 1. Catalog and static compatibility
 
-[runtime-artifact-01-catalog-compatibility.md](runtime-artifact-01-catalog-compatibility.md)
+[plans/01-catalog-static-compatibility.md](plans/01-catalog-static-compatibility.md)
 
 Answers only:
 
@@ -52,7 +79,7 @@ static candidate report, not permission to execute profiling.
 
 ### 2. Profiling Run and Kubernetes execution — implemented first path
 
-[runtime-artifact-02-profiling-run-execution.md](runtime-artifact-02-profiling-run-execution.md)
+[plans/02-profiling-run-execution.md](plans/02-profiling-run-execution.md)
 
 Answers only:
 
@@ -64,7 +91,7 @@ plain-domain and one-shot Kubernetes boundaries before any public Run API.
 
 ### 3. Profile admission and derivation — implemented first read-only path
 
-[runtime-artifact-03-profile-admission-derivation.md](runtime-artifact-03-profile-admission-derivation.md)
+[plans/03-profile-admission-derivation.md](plans/03-profile-admission-derivation.md)
 
 Answers only:
 
@@ -77,7 +104,7 @@ adversarial and live-evidence review.
 
 ### 4. Minimal Profiler control path — operand foundation implemented
 
-[minimal-profiler-control-path.md](minimal-profiler-control-path.md)
+[plans/04-minimal-profiler-control-path.md](plans/04-minimal-profiler-control-path.md)
 
 Answers only:
 
@@ -90,15 +117,27 @@ execute measurement work. The completed and remaining scope intentionally does
 not orchestrate a batch campaign, derive `b_sat`, publish a `DeviceProfile`, or
 connect to the scheduler.
 
+## Component contracts
+
+These documents define reusable internal subsystem boundaries. They support the
+plans but do not expand a plan's authorization:
+
+- [PowerObserver](components/power-observer.md) owns bounded factual power
+  observation, not evidence-admission policy or profile derivation.
+- [Evidence Store](components/evidence-store.md) owns immutable evidence object
+  storage and verification boundaries. Its Profiler-consumption plan remains
+  separately review-gated.
+
 ## Supporting records
 
 The following documents are background analysis, not active implementation
 plans or competing architecture authorities:
 
-- `runtime-artifact-execution-fact-audit.md`
-- `runtime-artifact-execution-commonality.md`
-- `runtime-artifact-execution-provenance.md`
-- `runtime-artifact-compatibility-execution-boundary.md`
+- [Data lifecycle fact audit](foundations/data-lifecycle-fact-audit.md)
+- [Step 1: runtime execution fact audit](foundations/runtime-execution/01-fact-audit.md)
+- [Step 2: runtime execution commonality](foundations/runtime-execution/02-commonality.md)
+- [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)
+- [Step 4: compatibility and execution boundary](foundations/runtime-execution/04-compatibility-execution-boundary.md)
 
 ## Stable ownership rules
 

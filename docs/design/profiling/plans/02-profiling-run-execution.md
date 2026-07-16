@@ -1,5 +1,7 @@
 # Plan 2: Immutable Profiling Run and Execution Evidence
 
+> Navigation: [Profiling design index](../README.md)
+
 ## Status
 
 Implemented for the first CPU ONNX Runtime path. This plan does not

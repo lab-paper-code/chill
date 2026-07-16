@@ -1,0 +1,30 @@
+# CHILL Design Documents
+
+Use this directory as a set of domain-specific design collections, not as one
+flat list of equally authoritative files.
+
+## Entry points
+
+| Design area | Start here | Scope |
+|---|---|---|
+| Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Ordered profiling plans, reusable component contracts, and supporting fact audits |
+| Operator console | [operator-console/README.md](operator-console/README.md) | Operator-facing concepts, workflows, interfaces, use cases, and requirements |
+
+Architectural decisions that must remain stable across design areas belong in
+[`docs/adr/`](../adr/). Product and system requirements belong in
+[`docs/spec/`](../spec/).
+
+## Placement rule
+
+When adding a profiling document:
+
+- place an ordered implementation boundary in `profiling/plans/`;
+- place a reusable subsystem design in `profiling/components/`;
+- place fact audits and boundary-derivation records in
+  `profiling/foundations/`; and
+- update `profiling/README.md` so an agent can discover the document from the
+  domain entry point.
+
+Create another domain directory with its own `README.md` when a design does not
+belong to profiling or the operator console. Avoid adding new standalone files
+to this directory.

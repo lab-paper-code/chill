@@ -1,5 +1,7 @@
 # Runtime and Artifact Execution Fact Audit
 
+> Navigation: [Profiling design index](../../README.md)
+
 ## Status
 
 Step 1 complete. This document inventories the current CPU, RKNN, and Jetson

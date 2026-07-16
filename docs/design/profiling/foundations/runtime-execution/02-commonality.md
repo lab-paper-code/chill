@@ -1,5 +1,7 @@
 # Runtime and Artifact Execution Commonality
 
+> Navigation: [Profiling design index](../../README.md)
+
 ## Status
 
 Step 2 complete. This document separates the minimum concepts shared by the
@@ -9,7 +11,7 @@ a provenance taxonomy, compatibility API, CRD, or Go package.
 ## Input
 
 This step uses the decomposed evidence in
-[`runtime-artifact-execution-fact-audit.md`](runtime-artifact-execution-fact-audit.md).
+[`01-fact-audit.md`](01-fact-audit.md).
 It does not normalize the existing `runtimeContract` or
 `derivedExecutionContract` JSON documents.
 
