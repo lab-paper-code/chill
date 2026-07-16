@@ -4,13 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 codegraph="$repo_root/hack/codegraph-chill.sh"
-session="${CODEGRAPH_PILOT_SESSION:-1}"
 module="$(cd "$repo_root" && go list -m -f '{{.Path}}')"
-
-if [[ ! "$session" =~ ^[123]$ ]]; then
-  echo "codegraph pilot: CODEGRAPH_PILOT_SESSION must be 1, 2, or 3" >&2
-  exit 1
-fi
 
 temp_root="$(mktemp -d)"
 trap 'rm -rf "$temp_root"' EXIT
@@ -25,7 +19,7 @@ if ! jq -e '
   .pendingChanges.modified == 0 and
   .pendingChanges.removed == 0
 ' <<<"$status_json" >/dev/null; then
-  echo "codegraph pilot: index is not clean and complete; run 'make codegraph-sync'" >&2
+  echo "codegraph check: index is not clean and complete; run 'make codegraph-sync'" >&2
   jq '.' <<<"$status_json" >&2
   exit 1
 fi
@@ -84,7 +78,7 @@ go list -f '{{.ImportPath}} {{join .Imports " "}}' \
   ' | LC_ALL=C sort -u >"$go_imports"
 
 if ! diff -u "$go_imports" "$codegraph_imports" >/dev/null; then
-  echo "codegraph pilot: CodeGraph package edges disagree with go list" >&2
+  echo "codegraph check: CodeGraph package edges disagree with go list" >&2
   diff -u "$go_imports" "$codegraph_imports" >&2 || true
   exit 1
 fi
@@ -101,7 +95,7 @@ for file in \
   internal/profiler/controller/projection.go \
   test/integration/operator/profilingrun_api_test.go; do
   if ! rg -q 'IntentDigest' "$repo_root/$file"; then
-    echo "codegraph pilot: authoritative IntentDigest source missing in $file" >&2
+    echo "codegraph check: authoritative IntentDigest source missing in $file" >&2
     exit 1
   fi
 done
@@ -117,24 +111,23 @@ for expected in \
   baseline.helm_default_resources=23 \
   baseline.helm_profiler_resources=30; do
   if ! grep -Fxq "$expected" <<<"$baseline"; then
-    echo "codegraph pilot: Helm authority changed; refresh the golden answer" >&2
+    echo "codegraph check: Helm authority changed; refresh the golden answer" >&2
     exit 1
   fi
 done
 
-printf 'codegraph.pilot.session=%s\n' "$session"
-printf 'codegraph.pilot.version=%s\n' "$(jq -r '.version' <<<"$status_json")"
-printf 'codegraph.pilot.files=%s\n' "$(jq -r '.fileCount' <<<"$status_json")"
-printf 'codegraph.pilot.nodes=%s\n' "$(jq -r '.nodeCount' <<<"$status_json")"
-printf 'codegraph.pilot.edges=%s\n' "$(jq -r '.edgeCount' <<<"$status_json")"
-printf 'codegraph.pilot.q1_candidates=%s\n' "$q1"
-printf 'codegraph.pilot.q1_event_edge=framework-derived-source-required\n'
-printf 'codegraph.pilot.q2_candidates=%s\n' "$q2"
-printf 'codegraph.pilot.q2_implementation_authority=gopls-required\n'
-printf 'codegraph.pilot.q3_q4_package_edges=pass:%s\n' "$(wc -l <"$go_imports")"
-printf 'codegraph.pilot.q5_intent_digest=%s\n' "$q5"
-printf 'codegraph.pilot.q5_source_verification=pass\n'
-printf 'codegraph.pilot.q6_helm_resources=%s\n' "$q6"
-printf 'codegraph.pilot.q6_helm_verification=pass:23->30\n'
-printf 'codegraph.pilot.affected_tests=unapproved\n'
-printf 'codegraph.pilot.acceptance=in-progress:%s/3-sessions\n' "$session"
+printf 'codegraph.check.version=%s\n' "$(jq -r '.version' <<<"$status_json")"
+printf 'codegraph.check.files=%s\n' "$(jq -r '.fileCount' <<<"$status_json")"
+printf 'codegraph.check.nodes=%s\n' "$(jq -r '.nodeCount' <<<"$status_json")"
+printf 'codegraph.check.edges=%s\n' "$(jq -r '.edgeCount' <<<"$status_json")"
+printf 'codegraph.check.q1_candidates=%s\n' "$q1"
+printf 'codegraph.check.q1_event_edge=framework-derived-source-required\n'
+printf 'codegraph.check.q2_candidates=%s\n' "$q2"
+printf 'codegraph.check.q2_implementation_authority=gopls-required\n'
+printf 'codegraph.check.q3_q4_package_edges=pass:%s\n' "$(wc -l <"$go_imports")"
+printf 'codegraph.check.q5_intent_digest=%s\n' "$q5"
+printf 'codegraph.check.q5_source_verification=pass\n'
+printf 'codegraph.check.q6_helm_resources=%s\n' "$q6"
+printf 'codegraph.check.q6_helm_verification=pass:23->30\n'
+printf 'codegraph.check.affected_tests=unapproved\n'
+printf 'codegraph.check.acceptance=pass-with-recorded-limitations\n'

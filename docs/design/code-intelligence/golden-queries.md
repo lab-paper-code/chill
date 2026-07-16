@@ -1,183 +1,69 @@
 # Code Intelligence Golden Queries
 
-## Status
+This file is the current regression oracle for code discovery. It does not
+create architecture policy. Update an answer and its evidence in the same
+change when the underlying implementation intentionally changes.
 
-Phase 0 answer key captured for commit
-`d0786e5644bad214c5a89762c17bbd1b828c7c89`. The Go and Helm source paths were
-clean relative to that commit; unrelated design-document changes were present.
+## Q1. How does a ProfilingRun reach reconciliation?
 
-Phase 1 passed on 2026-07-16 with `gopls` v0.23.0 running its workspace Go
-commands through Go 1.26.4. Workspace diagnostics and error-level diagnostics
-across all non-spike Go files were zero. Advisory hints and style suggestions
-remain visible in editors but are not promoted into a new repository lint gate.
-
-Phase 2 passed on 2026-07-16 with `go-arch-lint` v1.16.0 built by the pinned Go
-1.26.4 tooling command. All 29 in-scope production packages map to 17 reviewed
-components. Test files are measured separately and are not enforced; the
-current tree has one test-only internal edge attached to a production package,
-plus three excluded `test/` packages with four internal edges. The intentional
-`power-core -> api` fixture is rejected.
-
-This is a regression oracle for code discovery. It is not an additional
-architecture authority. When the underlying code intentionally changes, update
-the answer and its evidence in the same change.
-
-## Reproduce the baseline
-
-```bash
-make code-intelligence-baseline
-```
-
-Expected snapshot on the recorded commit:
-
-| Measure | Value |
-|---|---:|
-| Non-spike Go files | 179 |
-| Non-spike Go packages | 32 |
-| Repository-internal non-spike import edges | 67 |
-| Helm template files | 24 |
-| Default rendered resources | 23 |
-| Profiler-enabled rendered resources | 30 |
-
-The command also prints the exact Profiler-only rendered resources and whether
-Go, module, or chart inputs differ from the recorded commit.
-
-## Query 1: how does a ProfilingRun reach reconciliation?
-
-### Answer
-
-The Profiler composition root constructs the concrete dependencies and calls
-`IntentReconciler.SetupWithManager` in
-`cmd/profiler/controller_setup.go`. Registration is defined in
-`internal/profiler/controller/intent_setup.go`:
+`cmd/profiler/controller_setup.go` constructs the dependencies and calls
+`IntentReconciler.SetupWithManager`. Registration in
+`internal/profiler/controller/intent_setup.go` uses:
 
 ```text
-For(ProfilingRun)
-  + Owns(ConfigMap)
+For(ProfilingRun) + Owns(ConfigMap)
   -> controller-runtime event delivery
   -> IntentReconciler.Reconcile
 ```
 
-The transition from registered events to `Reconcile` is
-`framework-derived`, not a direct Go call. The registration source and focused
-reconciler tests are required evidence.
+Required evidence: setup source and focused reconciler tests. The event edge is
+`framework-derived`, not a direct Go call.
 
-### Baseline discovery work
+## Q2. Which implementation freezes a Run intent?
 
-One symbol search and reads of the composition root, setup file, and reconciler:
-four discovery operations.
+`RunIntentFreezer` is declared in
+`internal/profiler/controller/intent_reconciler.go`. Production uses
+`IntentFreezer` from `intent_freezer.go`; `intent_reconciler_test.go` contains a
+recording fake. `cmd/profiler/controller_setup.go` constructs and injects the
+production implementation.
 
-### Phase 1 semantic check
+Required evidence: `gopls implementation` must find production and test
+implementations; the composition root determines which one production uses.
 
-`gopls definition` on the composition-root call must return
-`internal/profiler/controller/intent_setup.go`. Call hierarchy for `Reconcile`
-may show direct test callers and the `Freeze` callee; it is not expected to
-manufacture the controller-runtime event edge.
+## Q3. Where is the Evidence Store adapter boundary?
 
-## Query 2: which implementation freezes a Run intent?
+`internal/evidencestore` owns the product-neutral immutable-object contract.
+`internal/evidencestore/s3` imports that core and owns AWS-specific behavior;
+the core does not import the adapter. Production Operator packages do not
+consume the S3 client adapter.
 
-### Answer
+Required evidence: `go list` for actual imports and source for responsibilities.
 
-`RunIntentFreezer` and its `Freeze` method are declared in
-`internal/profiler/controller/intent_reconciler.go`. The production
-implementation is `IntentFreezer` in
-`internal/profiler/controller/intent_freezer.go`. A recording fake exists in
-`intent_reconciler_test.go`.
+## Q4. Where is the PowerObserver adapter boundary?
 
-`cmd/profiler/controller_setup.go` constructs `IntentFreezer` and injects it
-into `NewIntentReconciler`.
-
-### Baseline discovery work
-
-One interface search plus three source reads: four discovery operations.
-
-### Phase 1 semantic check
-
-`gopls implementation` on `RunIntentFreezer` must include both the production
-`IntentFreezer` and the test fake. Correctness claims use the composition root
-to distinguish which implementation is used in production.
-
-## Query 3: where is the Evidence Store adapter boundary?
-
-### Answer
-
-`internal/evidencestore` owns the product-neutral immutable object contract.
-`internal/evidencestore/s3` imports that core and owns AWS-specific behavior.
-The core does not import its S3 adapter.
-
-On the recorded commit, non-spike production packages consume the core but do
-not import `internal/evidencestore/s3`. The only current S3-adapter consumer is
-the retained spike client. In particular, the Operator's Evidence Store operand
-manager does not import the S3 client adapter.
-
-### Baseline discovery work
-
-One `go list` import query, one import search, and one source-boundary read:
-three discovery operations.
-
-### Verification
-
-Actual package edges come from `go list`; source confirms the responsibility of
-each side. A future package graph may display this result but does not replace
-the import query.
-
-## Query 4: where is the PowerObserver adapter boundary?
-
-### Answer
-
-`internal/powerobserver` owns bounded observation and contains no Kubernetes or
-edge-metrics dependency. `internal/powerobserver/edgemetrics` imports the core
-and implements the source adapter.
-
-`internal/profiler/controller` currently consumes the edge-metrics adapter for
-power-source fact resolution. `internal/profiler/evidence` and
-`internal/profiler/worker` consume only the plain PowerObserver contract and
+`internal/powerobserver` owns the plain observation contract.
+`internal/powerobserver/edgemetrics` imports and implements that contract.
+Profiler controller code consumes the adapter for power-source fact resolution;
+Profiler evidence and worker packages consume only the plain contract and
 result types.
 
-### Baseline discovery work
+Required evidence: `go list` for actual imports and the PowerObserver ADR for
+allowed direction. Package edges do not prove runtime sampling behavior.
 
-One `go list` import query, one import search, and two boundary reads: four
-discovery operations.
+## Q5. What changes if ProfilingRunStatus.IntentDigest changes?
 
-### Verification
+The field is declared in `api/v1alpha1/profilingrun_types.go`. Current semantic
+references include intent recovery and publication in `intent_freezer.go`,
+frozen-intent projection in `projection.go`, controller tests, and the
+ProfilingRun API integration test.
 
-Use `go list` for the actual direction and the PowerObserver ADR for the allowed
-direction. Do not infer runtime sampling behavior from the package edge.
+Required evidence: `gopls references`, direct source and tests, plus generated
+deepcopy, CRD, and Helm CRD checks for type or JSON-shape changes. CodeGraph
+impact and affected-test results are explicitly insufficient.
 
-## Query 5: what changes if ProfilingRunStatus.IntentDigest changes?
+## Q6. What does enabling the Profiler add to the Helm render?
 
-### Answer
-
-The API field is declared in `api/v1alpha1/profilingrun_types.go`. Semantic
-references include:
-
-- intent recovery and publication in
-  `internal/profiler/controller/intent_freezer.go`;
-- frozen-intent projection in
-  `internal/profiler/controller/projection.go`;
-- controller unit tests; and
-- the ProfilingRun API integration test.
-
-Generated deepcopy code is type-generated evidence, not a separately designed
-consumer. Changing JSON shape also requires generated CRD and Helm CRD checks,
-which symbol references alone do not prove.
-
-### Baseline discovery work
-
-One text search and at least three representative source/test reads: four
-discovery operations before generated-artifact verification.
-
-### Phase 1 semantic check
-
-`gopls references` on the field must include the freezer, projection, and API
-integration test locations.
-
-## Query 6: what does enabling the Profiler add to the Helm render?
-
-### Answer
-
-The default render contains 23 resources. Setting `profiler.enabled=true`
-contains 30 and adds exactly:
+Compared with the default profile, `profiler.enabled=true` adds:
 
 ```text
 ClusterRole/chill-profiler
@@ -189,56 +75,21 @@ RoleBinding/chill-profiler
 ServiceAccount/chill-profiler
 ```
 
-The Helm render does not add a Profiler Deployment. Helm installs the identity,
-configuration, and permissions; the CHILL Operator manages the Profiler operand
-Deployment. A deployment diagram must preserve this ownership distinction.
+It does not add a Profiler Deployment. Helm installs identity, configuration,
+and permissions; the CHILL Operator manages the operand Deployment.
 
-### Baseline discovery work
+Required evidence: two validated Helm renders using the same release and
+namespace, followed by a resource-set comparison.
 
-Two Helm renders plus one resource-set comparison: three discovery operations.
-
-### Verification
-
-Regenerate both manifests with the same release and namespace. Template-source
-search can explain a condition but is not the desired-state authority.
-
-## Local usage
-
-Install and validate the pinned local tool:
+## Regression commands
 
 ```bash
-make gopls
+make code-intelligence-baseline
 make gopls-check
-```
-
-Install and run the pinned package-architecture gate, including coverage and
-the intentional rejection fixture:
-
-```bash
 make arch-check
-```
-
-Render the reviewed package graph on demand to the ignored local `bin/`
-directory:
-
-```bash
-make arch-graph
-```
-
-Run the complete Phase 0 through Phase 2 verification:
-
-```bash
 make code-intelligence-check
 ```
 
-For an editor, use `hack/gopls-chill.sh` as the language-server executable. For
-a manually configured detached MCP server, use:
-
-```bash
-./hack/gopls-chill.sh mcp
-```
-
-The wrapper selects the supported tooling Go command while the module continues
-to target Go 1.22.12. It reads only the repository-local ignored binary. No
-interactive installer or automatic agent-configuration edit is part of Phase
-1.
+The baseline command prints current file, package, import-edge, and rendered
+resource counts. Treat those generated values as a snapshot, not permanent
+requirements.

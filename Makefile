@@ -106,11 +106,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
 .PHONY: code-intelligence-baseline
-code-intelligence-baseline: ## Print the reproducible Phase 0 code-intelligence baseline.
+code-intelligence-baseline: ## Print the reproducible code-intelligence baseline.
 	./hack/code-intelligence-baseline.sh
 
 .PHONY: gopls-check
-gopls-check: gopls ## Verify the pinned gopls workspace and Phase 1 golden queries.
+gopls-check: gopls ## Verify the pinned gopls workspace and semantic golden queries.
 	CHILL_GOPLS_VERSION=$(GOPLS_VERSION) CHILL_GOPLS_GO_VERSION=$(GOPLS_GO_VERSION) ./hack/gopls-smoke.sh
 
 .PHONY: arch-coverage
@@ -129,7 +129,7 @@ arch-graph: go-arch-lint ## Render the reviewed package architecture to ARCH_GRA
 	@echo "architecture.graph=$(ARCH_GRAPH_OUT)"
 
 .PHONY: codegraph-index
-codegraph-index: codegraph ## Build the optional local CodeGraph pilot index.
+codegraph-index: codegraph ## Build the optional local CodeGraph index.
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh init $(CURDIR)
 
 .PHONY: codegraph-sync
@@ -140,9 +140,9 @@ codegraph-sync: codegraph ## Incrementally synchronize the optional local CodeGr
 codegraph-status: codegraph ## Show freshness and statistics for the local CodeGraph index.
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh status $(CURDIR)
 
-.PHONY: codegraph-pilot
-codegraph-pilot: codegraph ## Run one numbered CodeGraph golden-query pilot session.
-	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) CODEGRAPH_PILOT_SESSION=$(CODEGRAPH_PILOT_SESSION) ./hack/codegraph-pilot.sh
+.PHONY: codegraph-check
+codegraph-check: codegraph ## Verify optional CodeGraph results against the golden-query authorities.
+	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-check.sh
 
 .PHONY: codegraph-freshness
 codegraph-freshness: codegraph ## Verify explicit incremental create/modify/rename/delete synchronization.
@@ -155,7 +155,7 @@ codegraph-watcher: codegraph ## Verify MCP watcher create/modify/rename/delete a
 .PHONY: codegraph-mcp-config
 codegraph-mcp-config: codegraph ## Print the manual Codex MCP config without modifying agent settings.
 	@printf '%s\n' \
-		'# Add manually to ~/.codex/config.toml only for the Phase 3 pilot:' \
+		'# Add manually to ~/.codex/config.toml only for optional local CodeGraph use:' \
 		'[mcp_servers.codegraph]' \
 		'command = "$(CURDIR)/hack/codegraph-chill.sh"' \
 		'args = ["serve", "--mcp"]'
@@ -165,7 +165,7 @@ codegraph-uninit: codegraph ## Remove only this repository's optional CodeGraph 
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) ./hack/codegraph-chill.sh uninit --force $(CURDIR)
 
 .PHONY: code-intelligence-check
-code-intelligence-check: code-intelligence-baseline gopls-check arch-check ## Verify Phase 0 through Phase 2 code intelligence.
+code-intelligence-check: code-intelligence-baseline gopls-check arch-check ## Verify required code-intelligence checks.
 
 ##@ Helm
 
@@ -432,7 +432,7 @@ go-arch-lint: $(LOCALBIN) ## Download the pinned architecture linter with its su
 	ln -sf $(GO_ARCH_LINT)-$(GO_ARCH_LINT_VERSION) $(GO_ARCH_LINT)
 
 .PHONY: codegraph
-codegraph: $(LOCALBIN) ## Download the verified, repository-local CodeGraph pilot binary.
+codegraph: $(LOCALBIN) ## Download the verified, repository-local CodeGraph binary.
 	CHILL_LOCALBIN=$(LOCALBIN) \
 	CHILL_CODEGRAPH_VERSION=$(CODEGRAPH_VERSION) \
 	CHILL_CODEGRAPH_PLATFORM=$(CODEGRAPH_PLATFORM) \

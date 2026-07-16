@@ -76,7 +76,7 @@ rm -f "$created" "$renamed"
     params: {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: {name: "chill-codegraph-pilot", version: "1.0"}
+      clientInfo: {name: "chill-codegraph-check", version: "1.0"}
     }
   }'
   jq -cn '{jsonrpc: "2.0", method: "notifications/initialized", params: {}}'
