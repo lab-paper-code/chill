@@ -152,6 +152,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		ArtifactArchitecture: declaration.Artifact.Architecture,
 		ArtifactPath:         declaration.Artifact.Path,
 		ArtifactDigest:       declaration.Artifact.Digest,
+		PowerObserverImage:   declaration.PowerObserverImage,
 	}, nil
 }
 

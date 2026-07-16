@@ -57,7 +57,8 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx", Digest: "sha256:artifact",
 		},
-		Verdict: "Compatible", Reasons: []CandidateReportReason{},
+		PowerObserverImage: "observer@sha256:digest",
+		Verdict:            "Compatible", Reasons: []CandidateReportReason{},
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {

@@ -33,8 +33,9 @@ var (
 )
 
 type executionFactsDocument struct {
-	SchemaVersion string                 `json:"schemaVersion"`
-	Declarations  []executionDeclaration `json:"declarations"`
+	SchemaVersion      string                 `json:"schemaVersion"`
+	PowerObserverImage string                 `json:"powerObserverImage"`
+	Declarations       []executionDeclaration `json:"declarations"`
 }
 
 type executionDeclaration struct {
@@ -80,6 +81,7 @@ type resolvedExecutionDeclaration struct {
 	Runtime                  runtimeDeclaration
 	RuntimeDeclarationDigest string
 	Artifact                 artifactSupply
+	PowerObserverImage       string
 }
 
 func selectExecutionDeclaration(
@@ -105,6 +107,9 @@ func selectExecutionDeclaration(
 	if document.SchemaVersion != executionFactsSchema {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
+	if !pinnedWorkloadImage.MatchString(document.PowerObserverImage) {
+		return resolvedExecutionDeclaration{}, errors.New("power-observer image must be digest-pinned")
+	}
 	if len(document.Declarations) == 0 {
 		return resolvedExecutionDeclaration{}, errors.New("Profiler execution facts require at least one declaration")
 	}
@@ -126,6 +131,7 @@ func selectExecutionDeclaration(
 			declaration.ExecutionPath == selection.ExecutionPath {
 			copy := declaration
 			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
+			copy.PowerObserverImage = document.PowerObserverImage
 			selected = &copy
 		}
 	}

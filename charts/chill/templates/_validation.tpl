@@ -44,6 +44,12 @@
 {{- if not (kindIs "slice" .Values.profiler.factSource.executionDeclarations) -}}
 {{- fail "profiler.factSource.executionDeclarations must be a list" -}}
 {{- end -}}
+{{- if and .Values.profiler.factSource.executionDeclarations (empty .Values.profiler.factSource.powerObserverImage) -}}
+{{- fail "profiler.factSource.powerObserverImage is required when execution declarations are configured" -}}
+{{- end -}}
+{{- if and .Values.profiler.factSource.powerObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.powerObserverImage)) -}}
+{{- fail "profiler.factSource.powerObserverImage must be digest-pinned" -}}
+{{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.powerSources) -}}
 {{- fail "profiler.factSource.powerSources must be a list" -}}
 {{- end -}}

@@ -76,6 +76,7 @@ profiler:
   factSource:
     executionFactsKey: execution-facts.yaml
     powerSourcesKey: power-sources.yaml
+    powerObserverImage: ""
     executionDeclarations: []
     powerSources: []
 

@@ -68,6 +68,7 @@ type ResolvedCandidate struct {
 	ArtifactArchitecture            string
 	ArtifactPath                    string
 	ArtifactDigest                  string
+	PowerObserverImage              string
 }
 
 // NodeSelection binds the requested Node to facts from the exact DeviceClass
@@ -97,12 +98,6 @@ type PowerSourceResolver interface {
 	ResolvePowerSource(context.Context, string) (ResolvedPowerSource, error)
 }
 
-type PreparationConfig struct {
-	PowerObserverImage string
-	CPUPolicy          string
-	CPUPolicyVersion   string
-}
-
 type PreparedRun struct {
 	Intent               profilingrun.Intent
 	IntentDigest         string
@@ -115,31 +110,17 @@ type Preparer struct {
 	candidates CandidateResolver
 	nodes      NodeResolver
 	power      PowerSourceResolver
-	config     PreparationConfig
 }
 
 func NewPreparer(
 	candidates CandidateResolver,
 	nodes NodeResolver,
 	power PowerSourceResolver,
-	config PreparationConfig,
 ) (*Preparer, error) {
 	if candidates == nil || nodes == nil || power == nil {
 		return nil, errors.New("candidate, Node, and power-source resolvers are required")
 	}
-	for name, value := range map[string]string{
-		"power observer image": config.PowerObserverImage,
-		"CPU policy":           config.CPUPolicy,
-		"CPU policy version":   config.CPUPolicyVersion,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return nil, fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
-	}
-	if config.CPUPolicy != firstCPUPolicy || config.CPUPolicyVersion != firstCPUPolicyVersion {
-		return nil, fmt.Errorf("first path supports only CPU policy %s/%s", firstCPUPolicy, firstCPUPolicyVersion)
-	}
-	return &Preparer{candidates: candidates, nodes: nodes, power: power, config: config}, nil
+	return &Preparer{candidates: candidates, nodes: nodes, power: power}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
@@ -237,12 +218,12 @@ func (p *Preparer) freeze(
 		Images: profilingrun.Images{
 			Runtime:       candidate.RuntimeImage,
 			Artifact:      candidate.ArtifactImage,
-			PowerObserver: p.config.PowerObserverImage,
+			PowerObserver: candidate.PowerObserverImage,
 		},
 		TargetNode: node,
 		CPU: profilingrun.CPUContract{
-			Policy:             p.config.CPUPolicy,
-			PolicyVersion:      p.config.CPUPolicyVersion,
+			Policy:             firstCPUPolicy,
+			PolicyVersion:      firstCPUPolicyVersion,
 			Request:            request.CPURequest,
 			Limit:              node.AllocatableCPU,
 			ORTIntraOpThreads:  cpu,
@@ -304,6 +285,7 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
 		{"artifact path", candidate.ArtifactPath, report.ArtifactSupply.Path},
 		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
+		{"power-observer image", candidate.PowerObserverImage, report.PowerObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
 	}
 	for _, check := range checks {

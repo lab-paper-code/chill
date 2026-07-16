@@ -11,6 +11,7 @@ metadata:
 data:
   {{ .Values.profiler.factSource.executionFactsKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha1
+    powerObserverImage: {{ .Values.profiler.factSource.powerObserverImage | quote }}
     declarations:
 {{- toYaml .Values.profiler.factSource.executionDeclarations | nindent 6 }}
   {{ .Values.profiler.factSource.powerSourcesKey | quote }}: |

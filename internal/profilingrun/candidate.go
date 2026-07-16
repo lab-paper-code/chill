@@ -20,14 +20,15 @@ const (
 // and Run preparation. It binds both catalog identities and the concrete
 // execution material selected from them.
 type CandidateReport struct {
-	SchemaVersion    string                          `json:"schemaVersion"`
-	Scope            string                          `json:"scope"`
-	Inputs           CandidateReportInputs           `json:"inputs"`
-	Selection        CandidateReportSelection        `json:"selection"`
-	DeviceClassFacts CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
-	ArtifactSupply   CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
-	Verdict          string                          `json:"verdict"`
-	Reasons          []CandidateReportReason         `json:"reasons"`
+	SchemaVersion      string                          `json:"schemaVersion"`
+	Scope              string                          `json:"scope"`
+	Inputs             CandidateReportInputs           `json:"inputs"`
+	Selection          CandidateReportSelection        `json:"selection"`
+	DeviceClassFacts   CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
+	ArtifactSupply     CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
+	PowerObserverImage string                          `json:"powerObserverImage,omitempty"`
+	Verdict            string                          `json:"verdict"`
+	Reasons            []CandidateReportReason         `json:"reasons"`
 }
 
 type CandidateReportInputs struct {
@@ -136,6 +137,7 @@ func validateInternalCandidateReport(report CandidateReport) error {
 		"artifact supply architecture":        report.ArtifactSupply.Architecture,
 		"artifact supply path":                report.ArtifactSupply.Path,
 		"artifact supply digest":              report.ArtifactSupply.Digest,
+		"power-observer image":                report.PowerObserverImage,
 		"verdict":                             report.Verdict,
 	}
 	for name, value := range required {
@@ -181,6 +183,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 			struct{ name, want, got string }{"artifact supply digest", intent.State.ArtifactDigest, report.ArtifactSupply.Digest},
 			struct{ name, want, got string }{"DeviceClass architecture", intent.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
 			struct{ name, want, got string }{"artifact architecture", intent.TargetNode.Architecture, report.ArtifactSupply.Architecture},
+			struct{ name, want, got string }{"power-observer image", intent.Images.PowerObserver, report.PowerObserverImage},
 		)
 	}
 	for _, check := range checks {

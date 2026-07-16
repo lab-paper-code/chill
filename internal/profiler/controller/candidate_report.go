@@ -91,7 +91,8 @@ func buildCandidateReport(input candidateReportInput) ([]byte, error) {
 			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
 			Path: input.Declaration.Artifact.Path, Digest: input.Declaration.Artifact.Digest,
 		},
-		Verdict: string(input.Result.Verdict), Reasons: reasons,
+		PowerObserverImage: input.Declaration.PowerObserverImage,
+		Verdict:            string(input.Result.Verdict), Reasons: reasons,
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {

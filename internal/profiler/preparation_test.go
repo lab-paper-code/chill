@@ -230,6 +230,7 @@ func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *Reso
 		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
 		Path: candidate.ArtifactPath, Digest: candidate.ArtifactDigest,
 	}
+	report.PowerObserverImage = candidate.PowerObserverImage
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
@@ -339,11 +340,6 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.candidate,
 		resolvers.node,
 		resolvers.power,
-		PreparationConfig{
-			PowerObserverImage: "155.230.35.213:5000/chill/spike-power-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c",
-			CPUPolicy:          "AllocatableCPUQuota",
-			CPUPolicyVersion:   "v1",
-		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -406,9 +402,10 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			DeviceNodeSelector: map[string]string{
 				"edge.dacs.io/device-class": intent.State.DeviceClass,
 			},
-			DevicePowerModes: []string{intent.State.PowerMode},
-			RuntimeImage:     intent.Images.Runtime,
-			ArtifactImage:    intent.Images.Artifact,
+			DevicePowerModes:   []string{intent.State.PowerMode},
+			RuntimeImage:       intent.Images.Runtime,
+			ArtifactImage:      intent.Images.Artifact,
+			PowerObserverImage: intent.Images.PowerObserver,
 		}},
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		power: &fakePowerResolver{result: ResolvedPowerSource{
