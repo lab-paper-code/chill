@@ -38,6 +38,7 @@ var _ Runtime = (*ORTCPURuntime)(nil)
 type ortCPURequest struct {
 	SchemaVersion        string              `json:"schemaVersion"`
 	Intent               profilingrun.Intent `json:"intent"`
+	IntentDigest         string              `json:"intentDigest"`
 	PodUID               string              `json:"podUID"`
 	ModelPath            string              `json:"modelPath"`
 	ObserverReadyPath    string              `json:"observerReadyPath"`
@@ -84,9 +85,13 @@ func (r *ORTCPURuntime) Measure(
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return profilingrun.RuntimeResult{}, fmt.Errorf("inspect CPU ORT result path: %w", err)
 	}
+	intentDigest, err := intent.Digest()
+	if err != nil {
+		return profilingrun.RuntimeResult{}, fmt.Errorf("validate CPU ORT intent: %w", err)
+	}
 
 	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, PodUID: podUID,
+		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest, PodUID: podUID,
 		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
 		MeasurementStartPath: r.config.MeasurementStartPath,
 	}

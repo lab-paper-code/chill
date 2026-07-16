@@ -241,7 +241,8 @@ and verified immutable evidence plus native Kubernetes observations.
 7. Compare one live Lattepanda Run byte-for-byte and fact-for-fact with the
    retained spike evidence before removing any spike path.
 
-Items 1 and 2 are implemented. Item 3 has the fail-closed process and file
-handoff adapters plus the production PowerObserver entrypoint. The production
-CPU ORT entrypoint must satisfy the remaining runtime adapter next. This
-changes no public CRD field and does not create a Job.
+Items 1 through 3 are implemented through the fail-closed worker adapters, the
+production CPU ORT subprocess, and the PowerObserver container entrypoint. The
+worker composition image, Evidence Store delivery binding, and Job
+materialization remain later steps. This changes no public CRD field and does
+not create a Job.

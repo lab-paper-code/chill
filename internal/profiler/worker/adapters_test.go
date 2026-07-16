@@ -225,8 +225,12 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if err := decoder.Decode(&request); err != nil {
 		os.Exit(10)
 	}
-	if request.SchemaVersion != ortCPURequestSchemaVersion || request.ModelPath == "" ||
+	if request.SchemaVersion != ortCPURequestSchemaVersion || request.IntentDigest == "" || request.ModelPath == "" ||
 		request.ObserverReadyPath == "" || request.MeasurementStartPath == "" {
+		os.Exit(11)
+	}
+	digest, err := request.Intent.Digest()
+	if err != nil || request.IntentDigest != digest {
 		os.Exit(11)
 	}
 	resultPath := helperResultPath(os.Args)

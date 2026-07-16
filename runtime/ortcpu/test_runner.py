@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import tempfile
+import unittest
+from contextlib import ExitStack
+from pathlib import Path
+from unittest import mock
+
+import runner
+
+
+class FakeArray:
+    shape = (1, 1000)
+    size = 1000
+
+
+class FakeInput:
+    name = "input"
+    type = "tensor(float)"
+    shape = [1, 3, 224, 224]
+
+
+class FakeSample:
+    def astype(self, _type: object) -> "FakeSample":
+        return self
+
+
+class FakeGenerator:
+    def standard_normal(self, shape: list[int]) -> FakeSample:
+        if shape != [1, 3, 224, 224]:
+            raise AssertionError(f"unexpected input shape {shape}")
+        return FakeSample()
+
+
+class FakeNumpy:
+    float32 = object()
+
+    class random:
+        @staticmethod
+        def default_rng(seed: int) -> FakeGenerator:
+            if seed != 0:
+                raise AssertionError(f"unexpected seed {seed}")
+            return FakeGenerator()
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def get_providers(self) -> list[str]:
+        return ["CPUExecutionProvider"]
+
+    def get_inputs(self) -> list[FakeInput]:
+        return [FakeInput()]
+
+    def run(self, _outputs: object, feeds: dict[str, FakeSample]) -> list[FakeArray]:
+        if set(feeds) != {"input"}:
+            raise AssertionError(f"unexpected feeds {feeds}")
+        self.calls += 1
+        return [FakeArray()]
+
+
+class FakeSessionOptions:
+    intra_op_num_threads = 0
+    inter_op_num_threads = 0
+
+
+class FakeORT:
+    __version__ = "test-ort"
+    last_session: FakeSession | None = None
+
+    @staticmethod
+    def get_available_providers() -> list[str]:
+        return ["CPUExecutionProvider"]
+
+    @staticmethod
+    def SessionOptions() -> FakeSessionOptions:
+        return FakeSessionOptions()
+
+    @classmethod
+    def InferenceSession(cls, _path: str, *, sess_options: FakeSessionOptions, providers: list[str]) -> FakeSession:
+        if sess_options.intra_op_num_threads != 4 or sess_options.inter_op_num_threads != 1:
+            raise AssertionError("ORT thread options were not frozen")
+        if providers != ["CPUExecutionProvider"]:
+            raise AssertionError(f"unexpected providers {providers}")
+        cls.last_session = FakeSession()
+        return cls.last_session
+
+
+def valid_request(model_path: Path) -> dict[str, object]:
+    artifact_digest = "sha256:" + hashlib.sha256(model_path.read_bytes()).hexdigest()
+    return {
+        "schemaVersion": runner.REQUEST_SCHEMA,
+        "intentDigest": "sha256:" + "1" * 64,
+        "podUID": "pod-uid",
+        "modelPath": str(model_path),
+        "observerReadyPath": str(model_path.parent / "observer-ready"),
+        "measurementStartPath": str(model_path.parent / "measurement-start"),
+        "intent": {
+            "schemaVersion": runner.INTENT_SCHEMA,
+            "candidate": {},
+            "state": {
+                "deviceClass": "lattepanda-3-delta-8g",
+                "model": "mobilenet-v2-050",
+                "artifact": "canonical-onnx",
+                "artifactDigest": artifact_digest,
+                "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+                "runtimeFamily": "onnxruntime",
+                "backend": "CPUExecutionProvider",
+                "powerMode": "fixed",
+            },
+            "images": {},
+            "targetNode": {
+                "name": "lattepanda",
+                "uid": "node-uid",
+                "resourceVersion": "10",
+                "architecture": "amd64",
+                "allocatableCPU": "4",
+            },
+            "cpu": {
+                "policy": "AllocatableCPUQuota",
+                "policyVersion": "v1",
+                "request": "100m",
+                "limit": "4",
+                "ortIntraOpThreads": 4,
+                "ortInterOpThreads": 1,
+                "exclusivityClaimed": False,
+            },
+            "measurement": {
+                "batch": 1,
+                "warmupIterations": 2,
+                "durationSeconds": 1,
+                "repetitions": 1,
+                "workloadMode": runner.SUPPORTED_WORKLOAD,
+                "inputGenerator": runner.SUPPORTED_INPUT_GENERATOR,
+                "outputValidation": runner.SUPPORTED_OUTPUT_VALIDATION,
+            },
+            "power": {},
+        },
+    }
+
+
+class RunnerTest(unittest.TestCase):
+    def test_decode_request_rejects_duplicate_field(self) -> None:
+        with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
+            runner.decode_request(io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}'))
+
+    def test_validate_request_rejects_unknown_contract_field(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["unknown"] = True
+            with self.assertRaisesRegex(runner.ContractError, "unknown=\\['unknown'\\]"):
+                runner.validate_request(request)
+
+    def test_publish_immutable_refuses_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = Path(directory) / "result.json"
+            runner.publish_immutable(result, b"first")
+            self.assertEqual(result.read_bytes(), b"first")
+            with self.assertRaisesRegex(runner.ContractError, "already exists"):
+                runner.publish_immutable(result, b"second")
+            self.assertEqual(result.read_bytes(), b"first")
+
+    def test_execute_produces_bound_runtime_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
+                stack.enter_context(mock.patch.object(
+                    runner, "validate_cpu_contract", return_value=("400000 100000", [0, 1, 2, 3], "0-3")
+                ))
+                stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+                publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                stack.enter_context(mock.patch.object(
+                    runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 30}]
+                ))
+                stack.enter_context(mock.patch.object(runner, "now", side_effect=[
+                    "2026-07-16T00:00:00.000000Z",
+                    "2026-07-16T00:00:00.100000Z",
+                    "2026-07-16T00:00:01.200000Z",
+                    "2026-07-16T00:00:01.300000Z",
+                    "2026-07-16T00:00:01.400000Z",
+                ]))
+                stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
+                stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]))
+                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.8]))
+                result = runner.execute(request, FakeORT, FakeNumpy)
+
+            publish.assert_called_once_with(Path(request["measurementStartPath"]), b"signal\n")
+            self.assertEqual(FakeORT.last_session.calls, 3)
+            self.assertEqual(result["status"], "Succeeded")
+            self.assertEqual(result["sweepId"], request["intentDigest"])
+            self.assertEqual(result["experimentId"], "pod-uid")
+            self.assertEqual(result["provider"], "CPUExecutionProvider")
+            self.assertEqual(result["inferenceCount"], 1)
+            self.assertEqual(result["latencyMs"]["mean"], 5.0)
+            self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
+            self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
+            self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
+
+
+if __name__ == "__main__":
+    unittest.main()
