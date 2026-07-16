@@ -10,8 +10,8 @@ multi-architecture image, and live-cluster lifecycle verification.
 The immutable, namespaced `ProfilingRun` API schema and the Kubernetes-free
 preparation, lifecycle-decision, and evidence-finalization boundaries are now
 implemented. `ProfilingRun` reconciliation and measurement execution remain
-unimplemented. Request, source-resolution, evidence-ownership, and status/retry
-checkpoints are fixed; the measurement-worker contract remains.
+unimplemented. Request, evidence-ownership, and status/retry checkpoints are
+fixed. The Kubernetes fact adapters and measurement-worker contract remain.
 
 ## Purpose
 
@@ -70,6 +70,7 @@ spike:
 
 - one statically `Compatible` candidate;
 - one selected Kubernetes Node;
+- one explicitly selected, non-actuated `fixed` power mode;
 - ONNX artifact with ONNX Runtime CPU Execution Provider;
 - one fixed batch and one immutable measurement contract;
 - one Job, one Pod attempt, and no retry;
@@ -79,6 +80,9 @@ spike:
 
 Adding another runtime is not part of this implementation. The first adapter
 must remain explicit instead of introducing an unproven generic plugin system.
+Nodes with selectable power modes are rejected until CHILL can independently
+observe and enforce their current mode; a manually asserted Jetson mode is not
+accepted as Run evidence.
 
 ## Responsibility boundary
 
@@ -105,7 +109,10 @@ native owner relationships and the Profiler controllers retain that lifecycle.
   configuration, and any selected namespaced evidence-object access;
 - a read-only ClusterRole and ClusterRoleBinding for the exact cluster-scoped
   Node and CHILL catalog facts required to prepare a Run;
-- the default Profiler configuration referenced by `ChillSystem`; and
+- the default Profiler Deployment configuration referenced by `ChillSystem`;
+- the default trusted fact-source ConfigMap referenced by that Deployment
+  configuration, including digest-pinned runtime and artifact workload images
+  and the Node-to-edge-metrics map; and
 - the install, upgrade, and removal lifecycle of those authorization and
   configuration objects.
 
@@ -223,6 +230,7 @@ derive one immutable intent:
 - exact model artifact and execution-path identity;
 - exact trusted runtime declaration and digest-pinned images;
 - selected DeviceClass and target Node;
+- selected power mode;
 - fixed batch, warm-up, duration, repetitions, and CPU policy;
 - power-source selection by Node, not a caller-supplied endpoint; and
 - admission-policy identity.
@@ -230,6 +238,48 @@ derive one immutable intent:
 The Profiler resolves the selected Node to an edge-metrics source before it
 freezes the Run intent. The resolved endpoint and source identity belong to the
 intent and evidence, not to the stable DeviceClass or ModelSpec.
+
+## Execution fact sources
+
+The first path uses existing Kubernetes objects and one installation-time
+Profiler fact-source ConfigMap. It does not introduce a runtime-declaration CRD
+or put mutable runtime state in `DeviceClass` or `ModelSpec`.
+
+| Fact | Authority | Frozen Run value |
+|---|---|---|
+| logical artifact and required execution path | referenced `ModelSpec` | object identity, artifact content digest, format, runtime family, and backend |
+| stable hardware class and declared power modes | referenced `DeviceClass` | object identity, architecture, and selected power-mode identity |
+| trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration content digest plus digest-pinned runtime and artifact workload images |
+| selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
+| Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration content digest |
+
+The Profiler Deployment configuration contains only a local ConfigMap key
+reference to these facts. The Operator passes that reference to the Deployment
+but does not parse execution declarations or source entries. Helm installs the
+default ConfigMap; an administrator may replace it only through installation
+configuration, never through a Run request.
+
+Changing fact-source content may affect new Runs but never rewrites an already
+frozen Run. The Profiler hashes the exact entries used for a candidate and
+retains that digest, the ConfigMap namespace, name, UID, resourceVersion, and
+all selected image digests in the immutable intent record.
+
+`ProfilingRun.spec.candidate.powerMode` is required. The candidate resolver
+verifies that it is declared by the selected `DeviceClass`. The first CPU path
+accepts only the non-selectable `fixed` mode. Jetson `nvpmodel`, GPU clock, and
+other selectable modes remain unsupported until a later Node-side observer or
+preflight can prove the effective mode throughout the measurement window.
+
+The concrete adapters remain narrow:
+
+- candidate resolver: `ModelSpec` + `DeviceClass` + trusted execution
+  declaration -> pure static-compatibility evaluation and exact candidate
+  report;
+- Node resolver: exact API read and class-membership validation;
+- power-source resolver: selected Node -> configured edge-metrics source.
+
+Caller-supplied image references, runtime declarations, and power endpoints are
+not accepted in `ProfilingRun`.
 
 Status remains compact and reconstructable:
 
@@ -248,10 +298,10 @@ aggregate `message` field is introduced.
 ## Reconciliation flow
 
 ```text
-1. Validate request and referenced facts
-2. Evaluate exact static compatibility
-3. Resolve Node -> edge-metrics source
-4. Freeze immutable Run intent and digest
+1. Validate request, selected power mode, and referenced facts
+2. Resolve the trusted execution declaration and evaluate exact static compatibility
+3. Resolve the exact Node snapshot and Node -> edge-metrics source
+4. Freeze all source identities, content digests, and the Run intent
 5. Create one deterministic, ProfilingRun-owned Job
 6. Let its measurement worker execute and persist raw runtime + power evidence
 7. Observe native Job/Pod completion and verify the raw-measurement receipt
@@ -484,21 +534,23 @@ without running a measurement loop.
    preparation, lifecycle decisions, and terminal evidence finalization.
 6. Add the namespaced `ProfilingRun` API and schema tests. Implemented with an
    immutable spec, compact status, generated CRD, Helm CRD, and envtest gates.
-7. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
+7. Add the explicit power-mode input and Kubernetes/configuration fact adapters
+   for the proven fixed-power CPU ORT path.
+8. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
-8. Add the one-shot measurement worker boundary, then promote only the proven
+9. Add the one-shot measurement worker boundary, then promote only the proven
    CPU ORT execution and PowerObserver behavior from the spike into it.
-9. Add the edge-metrics Node resolver and selected durable evidence sink.
-10. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
+10. Add the selected durable evidence sink.
+11. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
     permissions, configuration rollout, and upgrade behavior.
-11. Verify failure, cancellation, identity drift, duplicate events, and both
+12. Verify failure, cancellation, identity drift, duplicate events, and both
     controller restarts with envtest and unit tests.
-12. Run one live Lattepanda measurement and compare the new evidence and
+13. Run one live Lattepanda measurement and compare the new evidence and
     admission output with the spike path.
-13. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
+14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
     through `kubectl get/describe profilingrun`, its owned Job, and the evidence
     digest.
-14. Remove no spike path until equivalent evidence and fail-closed behavior are
+15. Remove no spike path until equivalent evidence and fail-closed behavior are
     confirmed.
 
 ## Acceptance gates
@@ -528,6 +580,10 @@ The first Profiler is complete only when:
 - power polling and inference execute in the one-shot Job worker, never inside
   a controller reconcile or controller-memory background loop;
 - the Run uses exact candidate, Node, artifact, image, CPU, and power identities;
+- the selected power mode is explicit and belongs to the selected DeviceClass;
+- new Runs resolve only installation-time trusted execution declarations,
+  while frozen Runs remain bound to the exact ConfigMap identity, declaration,
+  and source-entry content digests;
 - Node-to-edge-metrics resolution is explicit and captured in the frozen intent;
 - exactly one native Job/Pod attempt is attributable to the Run;
 - strict evidence validation is unchanged or stronger than the spike path;
@@ -544,6 +600,8 @@ The first Profiler is complete only when:
 - idle-baseline campaign orchestration
 - repeated-trial aggregation or `b_sat` acceptance
 - GPU, TensorRT, RKNN, or generic runtime plugin architecture
+- selectable power-mode observation or actuation
+- caller-supplied runtime images, artifact images, or power endpoints
 - automatic candidate enumeration
 - `DeviceProfile` creation or update
 - SLO classification or 24-hour serving
