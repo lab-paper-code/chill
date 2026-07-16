@@ -26,26 +26,61 @@ class FakeInput:
 class FakeSample:
     nbytes = 1 * 3 * 224 * 224 * 4
 
-    def astype(self, _type: object) -> "FakeSample":
-        return self
+    def __init__(self) -> None:
+        self.flat = FakeFlat(self.nbytes // 4)
+
+    def reshape(self, dimension: int) -> "FakeFlat":
+        if dimension != -1:
+            raise AssertionError(f"unexpected reshape dimension {dimension}")
+        return self.flat
+
+
+class FakeFlat:
+    def __init__(self, length: int) -> None:
+        self.length = length
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __setitem__(self, key: slice, values: "FakeChunk") -> None:
+        if key.start is None or key.stop is None or key.step is not None:
+            raise AssertionError(f"unexpected input slice {key}")
+        if values.length != key.stop - key.start:
+            raise AssertionError("generated chunk length does not match its destination")
+
+
+class FakeChunk:
+    def __init__(self, length: int) -> None:
+        self.length = length
 
 
 class FakeGenerator:
-    def standard_normal(self, shape: list[int]) -> FakeSample:
-        if shape != [1, 3, 224, 224]:
-            raise AssertionError(f"unexpected input shape {shape}")
-        return FakeSample()
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def standard_normal(self, length: int) -> FakeChunk:
+        self.calls.append(length)
+        return FakeChunk(length)
 
 
 class FakeNumpy:
     float32 = object()
+    last_generator: FakeGenerator | None = None
+
+    @staticmethod
+    def empty(shape: list[int], *, dtype: object) -> FakeSample:
+        if shape != [1, 3, 224, 224] or dtype is not FakeNumpy.float32:
+            raise AssertionError(f"unexpected input allocation shape={shape} dtype={dtype}")
+        return FakeSample()
 
     class random:
         @staticmethod
         def default_rng(seed: int) -> FakeGenerator:
             if seed != 0:
                 raise AssertionError(f"unexpected seed {seed}")
-            return FakeGenerator()
+            generator = FakeGenerator()
+            FakeNumpy.last_generator = generator
+            return generator
 
 
 class FakeSession:
@@ -239,6 +274,13 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
             self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
             self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
+            generator = FakeNumpy.last_generator
+            if generator is None:
+                self.fail("input generator was not created")
+            self.assertEqual(sum(generator.calls), 1 * 3 * 224 * 224)
+            self.assertLessEqual(
+                max(generator.calls), runner.INPUT_GENERATION_CHUNK_ELEMENTS
+            )
 
 
 if __name__ == "__main__":

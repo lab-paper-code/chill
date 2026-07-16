@@ -27,6 +27,7 @@ SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 MAX_REQUEST_BYTES = 1 << 20
+INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -336,6 +337,23 @@ def admitted_input_bytes(shape: list[int], max_bytes: int) -> int:
     return input_bytes
 
 
+def generate_input(numpy: Any, shape: list[int], max_bytes: int) -> Any:
+    input_bytes = admitted_input_bytes(shape, max_bytes)
+    sample = numpy.empty(shape, dtype=numpy.float32)
+    if getattr(sample, "nbytes", None) != input_bytes:
+        raise ContractError("generated input tensor does not match its admitted byte size")
+
+    # The v1 generator is defined by float64 standard_normal values cast to
+    # float32. Filling one final tensor in bounded chunks preserves that seeded
+    # sequence without retaining a full-size float64 temporary beside it.
+    flat = sample.reshape(-1)
+    generator = numpy.random.default_rng(0)
+    for start in range(0, len(flat), INPUT_GENERATION_CHUNK_ELEMENTS):
+        stop = min(start + INPUT_GENERATION_CHUNK_ELEMENTS, len(flat))
+        flat[start:stop] = generator.standard_normal(stop - start)
+    return sample
+
+
 def measurement_complete(elapsed: float, duration: int, sample_count: int, max_samples: int) -> bool:
     if elapsed >= duration:
         return True
@@ -394,10 +412,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     if len(inputs) != 1 or inputs[0].type != "tensor(float)":
         raise ContractError("input generator supports exactly one float32 tensor input")
     shape = [measurement["batch"]] + [dimension if isinstance(dimension, int) and dimension > 0 else 1 for dimension in inputs[0].shape[1:]]
-    input_bytes = admitted_input_bytes(shape, request["maxInputBytes"])
-    sample = numpy.random.default_rng(0).standard_normal(shape).astype(numpy.float32)
-    if getattr(sample, "nbytes", None) != input_bytes:
-        raise ContractError("generated input tensor does not match its admitted byte size")
+    sample = generate_input(numpy, shape, request["maxInputBytes"])
 
     wait_for_signal(
         Path(request["observerReadyPath"]), request["observerReadyTimeoutMilliseconds"] / 1000.0
