@@ -116,13 +116,14 @@ func validIntent() Intent {
 			OutputValidation: "nonempty-shape-batch-v1",
 		},
 		Power: PowerContract{
-			SourceKind:           "EdgeMetricsShelly",
-			NodeName:             "lattepanda",
-			Endpoint:             "http://edge-metric.monitoring.svc:9102/metrics",
-			Metric:               "shelly_power_total_watts",
-			IntervalMilliseconds: 1000,
-			TimeoutMilliseconds:  500,
-			DurationSeconds:      31,
+			SourceKind:                 "edge-metrics",
+			NodeName:                   "lattepanda",
+			Endpoint:                   "http://edge-metric.monitoring.svc:9102/metrics",
+			Metric:                     "shelly_power_total_watts",
+			ConfigurationContentDigest: d,
+			IntervalMilliseconds:       1000,
+			TimeoutMilliseconds:        500,
+			DurationSeconds:            31,
 		},
 	}
 }

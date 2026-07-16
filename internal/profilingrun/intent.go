@@ -33,6 +33,9 @@ func (i Intent) Validate() error {
 			return fmt.Errorf("%s must be a canonical SHA-256 digest", name)
 		}
 	}
+	if i.Power.ConfigurationContentDigest != "" && !digestPattern.MatchString(i.Power.ConfigurationContentDigest) {
+		return errors.New("power.configurationContentDigest must be a canonical SHA-256 digest")
+	}
 	if i.Candidate.Verdict != "Compatible" {
 		return fmt.Errorf("candidate verdict must be Compatible, got %q", i.Candidate.Verdict)
 	}

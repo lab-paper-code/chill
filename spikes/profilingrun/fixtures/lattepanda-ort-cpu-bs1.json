@@ -48,10 +48,11 @@
     "outputValidation": "nonempty-shape-batch-v1"
   },
   "power": {
-    "sourceKind": "EdgeMetricsShelly",
+    "sourceKind": "edge-metrics",
     "nodeName": "lattepanda",
     "endpoint": "http://155.230.34.144:9102/metrics",
     "metric": "shelly_power_total_watts",
+    "configurationContentDigest": "sha256:634e92175a2ae45832ac27d4d0980f58f341ca9bdc14cba240d77ab6c0102a99",
     "intervalMilliseconds": 1000,
     "timeoutMilliseconds": 500,
     "durationSeconds": 31

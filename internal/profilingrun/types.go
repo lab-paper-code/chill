@@ -70,11 +70,12 @@ type MeasurementContract struct {
 }
 
 type PowerContract struct {
-	SourceKind           string `json:"sourceKind"`
-	NodeName             string `json:"nodeName"`
-	Endpoint             string `json:"endpoint"`
-	Metric               string `json:"metric"`
-	IntervalMilliseconds int    `json:"intervalMilliseconds"`
-	TimeoutMilliseconds  int    `json:"timeoutMilliseconds"`
-	DurationSeconds      int    `json:"durationSeconds"`
+	SourceKind                 string `json:"sourceKind"`
+	NodeName                   string `json:"nodeName"`
+	Endpoint                   string `json:"endpoint"`
+	Metric                     string `json:"metric"`
+	ConfigurationContentDigest string `json:"configurationContentDigest,omitempty"`
+	IntervalMilliseconds       int    `json:"intervalMilliseconds"`
+	TimeoutMilliseconds        int    `json:"timeoutMilliseconds"`
+	DurationSeconds            int    `json:"durationSeconds"`
 }

@@ -79,9 +79,10 @@ type NodeSelection struct {
 }
 
 type ResolvedPowerSource struct {
-	Kind     string
-	Endpoint string
-	Metric   string
+	Kind                       string
+	Endpoint                   string
+	Metric                     string
+	ConfigurationContentDigest string
 }
 
 type CandidateResolver interface {
@@ -170,6 +171,10 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve power source: %w", err)
 	}
+	if !strings.HasPrefix(power.ConfigurationContentDigest, "sha256:") ||
+		len(power.ConfigurationContentDigest) != len("sha256:")+64 {
+		return PreparedRun{}, errors.New("resolved power source configuration digest must be a canonical SHA-256 digest")
+	}
 
 	intent, err := p.freeze(request, candidate, node, power)
 	if err != nil {
@@ -246,13 +251,14 @@ func (p *Preparer) freeze(
 		},
 		Measurement: request.Measurement,
 		Power: profilingrun.PowerContract{
-			SourceKind:           power.Kind,
-			NodeName:             node.Name,
-			Endpoint:             power.Endpoint,
-			Metric:               power.Metric,
-			IntervalMilliseconds: request.Power.IntervalMilliseconds,
-			TimeoutMilliseconds:  request.Power.TimeoutMilliseconds,
-			DurationSeconds:      request.Power.DurationSeconds,
+			SourceKind:                 power.Kind,
+			NodeName:                   node.Name,
+			Endpoint:                   power.Endpoint,
+			Metric:                     power.Metric,
+			ConfigurationContentDigest: power.ConfigurationContentDigest,
+			IntervalMilliseconds:       request.Power.IntervalMilliseconds,
+			TimeoutMilliseconds:        request.Power.TimeoutMilliseconds,
+			DurationSeconds:            request.Power.DurationSeconds,
 		},
 	}
 	if err := intent.Validate(); err != nil {

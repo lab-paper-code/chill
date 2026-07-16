@@ -128,6 +128,13 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			match: "power.endpoint is required",
 		},
 		{
+			name: "missing power source configuration identity",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.power.result.ConfigurationContentDigest = ""
+			},
+			match: "configuration digest must be a canonical SHA-256 digest",
+		},
+		{
 			name: "unsupported runtime path",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.State.Backend = "CUDAExecutionProvider"
@@ -406,6 +413,7 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		power: &fakePowerResolver{result: ResolvedPowerSource{
 			Kind: intent.Power.SourceKind, Endpoint: intent.Power.Endpoint, Metric: intent.Power.Metric,
+			ConfigurationContentDigest: intent.Power.ConfigurationContentDigest,
 		}},
 	}
 }
