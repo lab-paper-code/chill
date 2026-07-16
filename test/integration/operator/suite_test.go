@@ -1,4 +1,4 @@
-package resources
+package operatorintegration
 
 import (
 	"context"
@@ -30,10 +30,10 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 
-func TestControllers(t *testing.T) {
+func TestOperatorIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "Operator Resource Suite")
+	RunSpecs(t, "Operator Integration Suite")
 }
 
 var _ = BeforeSuite(func() {
