@@ -241,8 +241,11 @@ func (r PreparationRequest) Validate() error {
 		return errors.New("power observation policy is invalid or does not cover the measurement")
 	}
 	if r.Measurement.Batch < 1 || r.Measurement.WarmupIterations < 0 ||
-		r.Measurement.DurationSeconds < 1 || r.Measurement.Repetitions < 1 {
-		return errors.New("measurement batch, duration, and repetitions must be valid")
+		r.Measurement.DurationSeconds < 1 {
+		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
+	}
+	if r.Measurement.Repetitions != 1 {
+		return errors.New("first profiling path requires exactly one measurement repetition")
 	}
 	for name, value := range map[string]string{
 		"measurement workloadMode":     r.Measurement.WorkloadMode,

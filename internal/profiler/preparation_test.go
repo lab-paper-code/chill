@@ -165,15 +165,27 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 
 func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
-	resolvers := fixtureResolvers(expected, candidateBytes)
-	preparer := newFixturePreparer(t, resolvers)
-	request := fixtureRequest(expected)
-	request.Measurement.Batch = 0
-	if _, err := preparer.Prepare(context.Background(), request); err == nil {
-		t.Fatal("expected invalid measurement rejection")
-	}
-	if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.power.calls != 0 {
-		t.Fatal("invalid caller input reached resolver ports")
+	for _, test := range []struct {
+		name   string
+		mutate func(*PreparationRequest)
+	}{
+		{name: "zero batch", mutate: func(request *PreparationRequest) { request.Measurement.Batch = 0 }},
+		{name: "multiple repetitions", mutate: func(request *PreparationRequest) {
+			request.Measurement.Repetitions = 2
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolvers := fixtureResolvers(expected, candidateBytes)
+			preparer := newFixturePreparer(t, resolvers)
+			request := fixtureRequest(expected)
+			test.mutate(&request)
+			if _, err := preparer.Prepare(context.Background(), request); err == nil {
+				t.Fatal("expected invalid measurement rejection")
+			}
+			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.power.calls != 0 {
+				t.Fatal("invalid caller input reached resolver ports")
+			}
+		})
 	}
 }
 

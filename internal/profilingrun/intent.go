@@ -86,9 +86,11 @@ func (i Intent) Validate() error {
 	if i.CPU.Limit != i.TargetNode.AllocatableCPU || i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
 	}
-	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 ||
-		i.Measurement.Repetitions < 1 {
-		return errors.New("measurement batch, duration, and repetitions must be positive")
+	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
+		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
+	}
+	if i.Measurement.Repetitions != 1 {
+		return errors.New("first profiling path requires exactly one measurement repetition")
 	}
 	if i.Power.IntervalMilliseconds < 1 || i.Power.TimeoutMilliseconds < 1 ||
 		i.Power.TimeoutMilliseconds >= i.Power.IntervalMilliseconds ||

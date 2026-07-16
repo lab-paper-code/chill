@@ -40,6 +40,9 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("zero batch", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Batch = 0
 		}),
+		Entry("multiple repetitions", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Repetitions = 2
+		}),
 		Entry("non-positive CPU request", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.CPURequest = resource.MustParse("-1")
 		}),

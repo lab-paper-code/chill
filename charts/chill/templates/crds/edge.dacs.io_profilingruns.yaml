@@ -116,7 +116,10 @@ spec:
                     minLength: 1
                     type: string
                   repetitions:
+                    description: The first path treats each ProfilingRun as one independent
+                      trial.
                     format: int32
+                    maximum: 1
                     minimum: 1
                     type: integer
                   warmupIterations:

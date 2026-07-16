@@ -35,6 +35,14 @@ func TestIntentRejectsMutableImage(t *testing.T) {
 	}
 }
 
+func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
+	intent := validIntent()
+	intent.Measurement.Repetitions = 2
+	if err := intent.Validate(); err == nil {
+		t.Fatal("expected first-path repetition rejection")
+	}
+}
+
 func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*Intent){
 		func(i *Intent) { i.Candidate.Verdict = "Unknown" },
