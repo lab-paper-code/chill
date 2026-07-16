@@ -70,7 +70,7 @@ authorize an Operator or Profiler controller change.
 
 | Owner | Responsibility |
 |---|---|
-| `internal/evidencestore` | Product-neutral reference, receipt, immutable-create outcomes, typed errors, exact digest and size verification |
+| `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, exact digest and size verification |
 | S3 adapter | Conditional create, object retrieval, S3 error translation, cancellation and response cleanup |
 | CHILL Operator | Deployment, ClusterIP Service, Secret, persistent-storage attachment, and component availability |
 | Measurement worker | Assemble raw runtime and power bytes, calculate identity, invoke immutable create, return a bounded receipt |
@@ -123,6 +123,12 @@ The first package needs only four concepts:
 The receipt adds schema version and create outcome. It contains no endpoint,
 credential, raw samples, Pod snapshot, or backend response. A receipt alone is
 never sufficient for admission.
+
+A location-only read exists solely to recover an immutable object when its
+deterministic key was committed before the controller persisted the resulting
+digest and size. Location is not identity: these bytes remain untrusted until
+the caller derives their content identity, validates the schema and Run links,
+and confirms canonical encoding. An invalid existing object is never replaced.
 
 The implementation must support bounded streaming or a bounded temporary file;
 it must not force future evidence into CR status or an unbounded in-memory byte

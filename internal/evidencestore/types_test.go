@@ -32,6 +32,24 @@ func TestObjectIdentityValidate(t *testing.T) {
 	}
 }
 
+func TestObjectLocationValidate(t *testing.T) {
+	valid := ObjectLocation{Store: "profiling-evidence", Key: "runs/run-1/final.json"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid location rejected: %v", err)
+	}
+	for name, location := range map[string]ObjectLocation{
+		"missing store": {Key: valid.Key},
+		"missing key":   {Store: valid.Store},
+		"whitespace":    {Store: valid.Store, Key: valid.Key + " "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := location.Validate(); !errors.Is(err, ErrInvalidIdentity) {
+				t.Fatalf("Validate() error = %v, want ErrInvalidIdentity", err)
+			}
+		})
+	}
+}
+
 func TestReceiptValidate(t *testing.T) {
 	identity := ObjectIdentity{
 		Store:  "profiling-evidence",

@@ -146,6 +146,22 @@ func TestPutImmutableClassifiesExistingObject(t *testing.T) {
 func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 	expected := identityFor([]byte("immutable profiling evidence"))
 
+	t.Run("location only", func(t *testing.T) {
+		store := &Store{client: &fakeClient{get: func(_ context.Context, input *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+			if stringValue(input.Bucket) != expected.Store || stringValue(input.Key) != expected.Key {
+				t.Fatalf("GetObject location = %s/%s", stringValue(input.Bucket), stringValue(input.Key))
+			}
+			return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader([]byte("existing")))}, nil
+		}}}
+		body, err := store.OpenLocation(context.Background(), expected.Location())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := body.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		store := &Store{client: &fakeClient{get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
 			return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "missing", Fault: smithy.FaultClient}

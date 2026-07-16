@@ -16,6 +16,7 @@ import (
 var (
 	_ evidencestore.ImmutableWriter = (*Store)(nil)
 	_ evidencestore.Reader          = (*Store)(nil)
+	_ evidencestore.LocationReader  = (*Store)(nil)
 )
 
 type Store struct {
@@ -58,9 +59,19 @@ func (s *Store) Open(
 	if err := expected.Validate(); err != nil {
 		return nil, err
 	}
+	return s.OpenLocation(ctx, expected.Location())
+}
+
+func (s *Store) OpenLocation(
+	ctx context.Context,
+	location evidencestore.ObjectLocation,
+) (io.ReadCloser, error) {
+	if err := location.Validate(); err != nil {
+		return nil, err
+	}
 	output, err := s.client.GetObject(ctx, &awss3.GetObjectInput{
-		Bucket: aws.String(expected.Store),
-		Key:    aws.String(expected.Key),
+		Bucket: aws.String(location.Store),
+		Key:    aws.String(location.Key),
 	})
 	if err != nil {
 		return nil, translate("open evidence object", err)

@@ -20,3 +20,11 @@ type ImmutableWriter interface {
 type Reader interface {
 	Open(context.Context, ObjectIdentity) (io.ReadCloser, error)
 }
+
+// LocationReader opens bytes when only a deterministic object location is
+// known, such as recovery after an immutable write but before status was
+// persisted. The returned bytes are untrusted until the caller derives and
+// validates their content identity.
+type LocationReader interface {
+	OpenLocation(context.Context, ObjectLocation) (io.ReadCloser, error)
+}
