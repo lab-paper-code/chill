@@ -71,19 +71,14 @@ func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error
 }
 
 func validatePower(intent profilingrun.Intent, result powerobserver.Result) error {
+	if err := result.Validate(); err != nil {
+		return fmt.Errorf("validate power observation: %w", err)
+	}
 	if result.Source.Kind != intent.Power.SourceKind ||
 		result.Source.NodeName != intent.Power.NodeName ||
 		result.Source.Endpoint != intent.Power.Endpoint ||
 		result.Source.Metric != intent.Power.Metric {
 		return errors.New("power source identity mismatch")
-	}
-	if result.StartedAt.IsZero() || result.EndedAt.IsZero() || !result.EndedAt.After(result.StartedAt) {
-		return errors.New("power observation window is invalid")
-	}
-	if result.Summary.Attempts != len(result.Samples)+len(result.Failures) ||
-		result.Summary.SuccessfulSamples != len(result.Samples) ||
-		result.Summary.Failures != len(result.Failures) {
-		return errors.New("power observation summary does not match raw attempts")
 	}
 	return nil
 }

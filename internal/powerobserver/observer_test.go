@@ -158,6 +158,41 @@ func TestSummarizeUsesRawRecords(t *testing.T) {
 	}
 }
 
+func TestResultValidateRejectsDriftedRawFacts(t *testing.T) {
+	started := time.Unix(0, 0)
+	valid := Result{
+		Source:    SourceIdentity{Kind: "edge-metrics", Endpoint: "http://metrics", Metric: "power_watts"},
+		StartedAt: started, EndedAt: started.Add(2 * time.Second),
+		Samples: []Sample{{ObservedAt: started.Add(time.Second), Watts: 4.2, RequestLatencySeconds: 0.1}},
+	}
+	valid.Summary = summarize(valid)
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid result rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "summary", mutate: func(result *Result) { result.Summary.Attempts++ }},
+		{name: "sample timestamp", mutate: func(result *Result) {
+			result.Samples[0].ObservedAt = result.EndedAt.Add(time.Second)
+		}},
+		{name: "sample value", mutate: func(result *Result) { result.Samples[0].Watts = -1 }},
+		{name: "source identity", mutate: func(result *Result) { result.Source.Metric = "" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			candidate.Samples = append([]Sample(nil), valid.Samples...)
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("expected validation failure")
+			}
+		})
+	}
+}
+
 type fakeSource struct {
 	values []float64
 	errs   []error

@@ -241,5 +241,6 @@ and verified immutable evidence plus native Kubernetes observations.
 7. Compare one live Lattepanda Run byte-for-byte and fact-for-fact with the
    retained spike evidence before removing any spike path.
 
-The next implementation step is item 1 only. It changes no public CRD field and
-does not create a Job.
+Items 1 and 2 are implemented. The next implementation step is item 3 only:
+concrete CPU ORT runtime and file-handoff adapters behind the pure worker ports.
+It changes no public CRD field and does not create a Job.

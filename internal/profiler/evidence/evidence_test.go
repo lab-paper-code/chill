@@ -91,6 +91,7 @@ func TestRawMeasurementRequiresOverlappingRuntimeAndPowerWindows(t *testing.T) {
 			candidate.Power.Samples = nil
 			candidate.Power.Summary.Attempts = 0
 			candidate.Power.Summary.SuccessfulSamples = 0
+			candidate.Power.Summary.ObservationDurationSeconds = test.powerEnd.Sub(test.powerStart).Seconds()
 			err := candidate.Validate(intent)
 			if (err != nil) != test.wantError {
 				t.Fatalf("Validate() error = %v, wantError=%v", err, test.wantError)
@@ -244,9 +245,11 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			}},
 			Failures: []powerobserver.Failure{},
 			Summary: powerobserver.Summary{
-				Attempts:          1,
-				SuccessfulSamples: 1,
-				Failures:          0,
+				Attempts:                   1,
+				SuccessfulSamples:          1,
+				Failures:                   0,
+				ObservationDurationSeconds: 31,
+				SourceTimestampAbsent:      true,
 			},
 		},
 	}
