@@ -240,15 +240,23 @@ func testIntent(t *testing.T) profilingrun.Intent {
 
 func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.RuntimeResult {
 	t.Helper()
-	digest, err := intent.Digest()
+	result, err := runtimeResult(intent, "pod-uid")
 	if err != nil {
 		t.Fatal(err)
+	}
+	return result
+}
+
+func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.RuntimeResult, error) {
+	digest, err := intent.Digest()
+	if err != nil {
+		return profilingrun.RuntimeResult{}, err
 	}
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
 	targetDuration := float64(intent.Measurement.DurationSeconds)
 	return profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
-		ExperimentID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		ExperimentID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
 		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
 		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0", Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
@@ -273,7 +281,7 @@ func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.Ru
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			LatencyMilliseconds: []float64{1, 2},
 		}},
-	}
+	}, nil
 }
 
 func testPowerResult(intent profilingrun.Intent) powerobserver.Result {
