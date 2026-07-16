@@ -55,8 +55,19 @@ type ResolvedCandidate struct {
 	RuntimeDeclarationContentDigest string
 	Verdict                         string
 	State                           profilingrun.ExecutionState
+	DeviceArchitecture              string
+	DeviceNodeSelector              map[string]string
+	DevicePowerModes                []string
 	RuntimeImage                    string
 	ArtifactImage                   string
+}
+
+// NodeSelection binds the requested Node to facts from the exact DeviceClass
+// snapshot used by static compatibility evaluation.
+type NodeSelection struct {
+	Name                string
+	DeviceArchitecture  string
+	DeviceClassSelector map[string]string
 }
 
 type ResolvedPowerSource struct {
@@ -70,7 +81,7 @@ type CandidateResolver interface {
 }
 
 type NodeResolver interface {
-	ResolveNode(context.Context, string) (profilingrun.NodeSnapshot, error)
+	ResolveNode(context.Context, NodeSelection) (profilingrun.NodeSnapshot, error)
 }
 
 type PowerSourceResolver interface {
@@ -130,7 +141,14 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve static candidate: %w", err)
 	}
-	node, err := p.nodes.ResolveNode(ctx, request.TargetNode)
+	if err := validateResolvedCandidate(request.Candidate, candidate); err != nil {
+		return PreparedRun{}, err
+	}
+	node, err := p.nodes.ResolveNode(ctx, NodeSelection{
+		Name:                request.TargetNode,
+		DeviceArchitecture:  candidate.DeviceArchitecture,
+		DeviceClassSelector: candidate.DeviceNodeSelector,
+	})
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve target Node: %w", err)
 	}
@@ -163,17 +181,6 @@ func (p *Preparer) freeze(
 	node profilingrun.NodeSnapshot,
 	power ResolvedPowerSource,
 ) (profilingrun.Intent, error) {
-	if candidate.State.Model != request.Candidate.ModelSpec ||
-		candidate.State.DeviceClass != request.Candidate.DeviceClass {
-		return profilingrun.Intent{}, errors.New("resolved candidate does not match requested catalog objects")
-	}
-	if candidate.State.PowerMode != request.Candidate.PowerMode {
-		return profilingrun.Intent{}, errors.New("resolved candidate power mode does not match request")
-	}
-	if request.Candidate.ExecutionPath != firstExecutionPath ||
-		candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
-		return profilingrun.Intent{}, errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
-	}
 	if node.Name != request.TargetNode {
 		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
 	}
@@ -223,6 +230,28 @@ func (p *Preparer) freeze(
 		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
 	return intent, nil
+}
+
+func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCandidate) error {
+	if candidate.State.Model != request.ModelSpec || candidate.State.DeviceClass != request.DeviceClass {
+		return errors.New("resolved candidate does not match requested catalog objects")
+	}
+	if candidate.State.PowerMode != request.PowerMode {
+		return errors.New("resolved candidate power mode does not match request")
+	}
+	if request.ExecutionPath != firstExecutionPath ||
+		candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
+		return errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
+	}
+	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
+		return errors.New("resolved DeviceClass architecture and Node selector are required")
+	}
+	for _, mode := range candidate.DevicePowerModes {
+		if mode == request.PowerMode {
+			return nil
+		}
+	}
+	return errors.New("requested power mode is not declared by resolved DeviceClass")
 }
 
 func (r PreparationRequest) Validate() error {

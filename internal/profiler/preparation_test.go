@@ -34,6 +34,11 @@ func TestPreparerReproducesProvenFirstPathIntent(t *testing.T) {
 	if resolvers.power.nodeName != expected.TargetNode.Name {
 		t.Fatal("power source was not resolved from the selected Node")
 	}
+	if resolvers.node.selection.Name != expected.TargetNode.Name ||
+		resolvers.node.selection.DeviceArchitecture != expected.TargetNode.Architecture ||
+		resolvers.node.selection.DeviceClassSelector["edge.dacs.io/device-class"] != expected.State.DeviceClass {
+		t.Fatalf("Node selection lost resolved DeviceClass facts: %#v", resolvers.node.selection)
+	}
 }
 
 func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
@@ -79,6 +84,20 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 				resolvers.candidate.result.State.PowerMode = "other-mode"
 			},
 			match: "power mode does not match request",
+		},
+		{
+			name: "power mode absent from DeviceClass",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.DevicePowerModes = []string{"other-mode"}
+			},
+			match: "not declared by resolved DeviceClass",
+		},
+		{
+			name: "missing DeviceClass selector",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.DeviceNodeSelector = nil
+			},
+			match: "architecture and Node selector are required",
 		},
 		{
 			name: "candidate report mismatch",
@@ -268,8 +287,13 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			RuntimeDeclarationContentDigest: intent.Candidate.RuntimeDeclarationDigest,
 			Verdict:                         intent.Candidate.Verdict,
 			State:                           intent.State,
-			RuntimeImage:                    intent.Images.Runtime,
-			ArtifactImage:                   intent.Images.Artifact,
+			DeviceArchitecture:              intent.TargetNode.Architecture,
+			DeviceNodeSelector: map[string]string{
+				"edge.dacs.io/device-class": intent.State.DeviceClass,
+			},
+			DevicePowerModes: []string{intent.State.PowerMode},
+			RuntimeImage:     intent.Images.Runtime,
+			ArtifactImage:    intent.Images.Artifact,
 		}},
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		power: &fakePowerResolver{result: ResolvedPowerSource{
@@ -293,13 +317,18 @@ func (r *fakeCandidateResolver) ResolveCandidate(
 }
 
 type fakeNodeResolver struct {
-	result profilingrun.NodeSnapshot
-	err    error
-	calls  int
+	result    profilingrun.NodeSnapshot
+	err       error
+	calls     int
+	selection NodeSelection
 }
 
-func (r *fakeNodeResolver) ResolveNode(_ context.Context, _ string) (profilingrun.NodeSnapshot, error) {
+func (r *fakeNodeResolver) ResolveNode(
+	_ context.Context,
+	selection NodeSelection,
+) (profilingrun.NodeSnapshot, error) {
 	r.calls++
+	r.selection = selection
 	return r.result, r.err
 }
 
