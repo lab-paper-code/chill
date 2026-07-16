@@ -24,6 +24,13 @@ type Config struct {
 	Resources          corev1.ResourceRequirements `json:"resources,omitempty"`
 	PodSecurityContext *corev1.PodSecurityContext  `json:"podSecurityContext,omitempty"`
 	SecurityContext    *corev1.SecurityContext     `json:"securityContext,omitempty"`
+	FactSource         FactSourceConfig            `json:"factSource"`
+}
+
+type FactSourceConfig struct {
+	ConfigMapName     string `json:"configMapName"`
+	ExecutionFactsKey string `json:"executionFactsKey"`
+	PowerSourcesKey   string `json:"powerSourcesKey"`
 }
 
 func (c Config) Validate() error {
@@ -36,10 +43,16 @@ func (c Config) Validate() error {
 		{name: "imagePullPolicy", value: string(c.ImagePullPolicy)},
 		{name: "serviceAccountName", value: c.ServiceAccountName},
 		{name: "metricsBindAddress", value: c.MetricsBindAddress},
+		{name: "factSource.configMapName", value: c.FactSource.ConfigMapName},
+		{name: "factSource.executionFactsKey", value: c.FactSource.ExecutionFactsKey},
+		{name: "factSource.powerSourcesKey", value: c.FactSource.PowerSourcesKey},
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			problems = append(problems, field.name+" is required")
 		}
+	}
+	if c.FactSource.ExecutionFactsKey != "" && c.FactSource.ExecutionFactsKey == c.FactSource.PowerSourcesKey {
+		problems = append(problems, "factSource execution and power keys must be different")
 	}
 	if c.Replicas < 1 {
 		problems = append(problems, "replicas must be positive")

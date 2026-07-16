@@ -44,6 +44,12 @@ func TestConfigValidate(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("invalid imagePullPolicy accepted")
 	}
+
+	config = validConfig()
+	config.FactSource.PowerSourcesKey = config.FactSource.ExecutionFactsKey
+	if err := config.Validate(); err == nil {
+		t.Fatal("overlapping Profiler fact-source keys accepted")
+	}
 }
 
 func TestBuildDeployment(t *testing.T) {
@@ -222,6 +228,10 @@ func validConfig() Config {
 		HealthProbePort:    8081,
 		LeaderElection:     true,
 		LeaderElectionID:   "profiler.edge.dacs.io",
+		FactSource: FactSourceConfig{
+			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
+			PowerSourcesKey: "power-sources.yaml",
+		},
 	}
 }
 

@@ -1,0 +1,20 @@
+{{- if .Values.profiler.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.profilerFactSourceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: profiler
+    app.kubernetes.io/part-of: chill
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ .Values.profiler.factSource.executionFactsKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha1
+    declarations:
+{{- toYaml .Values.profiler.factSource.executionDeclarations | nindent 6 }}
+  {{ .Values.profiler.factSource.powerSourcesKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-power-sources.v1alpha1
+    sources:
+{{- toYaml .Values.profiler.factSource.powerSources | nindent 6 }}
+{{- end }}

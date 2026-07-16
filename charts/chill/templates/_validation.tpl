@@ -32,6 +32,21 @@
 {{- if empty .Values.profiler.configMapKey -}}
 {{- fail "profiler.configMapKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
+{{- if empty .Values.profiler.factSource.executionFactsKey -}}
+{{- fail "profiler.factSource.executionFactsKey must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.profiler.factSource.powerSourcesKey -}}
+{{- fail "profiler.factSource.powerSourcesKey must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.powerSourcesKey -}}
+{{- fail "profiler.factSource execution and power keys must be different" -}}
+{{- end -}}
+{{- if not (kindIs "slice" .Values.profiler.factSource.executionDeclarations) -}}
+{{- fail "profiler.factSource.executionDeclarations must be a list" -}}
+{{- end -}}
+{{- if not (kindIs "slice" .Values.profiler.factSource.powerSources) -}}
+{{- fail "profiler.factSource.powerSources must be a list" -}}
+{{- end -}}
 {{- if empty .Values.profiler.image.repository -}}
 {{- fail "profiler.image.repository must not be empty when profiler.enabled=true" -}}
 {{- end -}}

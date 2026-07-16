@@ -62,6 +62,10 @@ app.kubernetes.io/component: operator
 {{- printf "%s-profiler-config" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "chill.profilerFactSourceName" -}}
+{{- printf "%s-profiler-facts" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "chill.profilerServiceAccountName" -}}
 {{- if .Values.profiler.serviceAccount.create -}}
 {{- default (include "chill.profilerName" .) .Values.profiler.serviceAccount.name -}}

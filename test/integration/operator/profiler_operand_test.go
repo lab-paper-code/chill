@@ -116,5 +116,9 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 		HealthProbePort:    8081,
 		LeaderElection:     true,
 		LeaderElectionID:   "profiler.edge.dacs.io",
+		FactSource: operatorprofiler.FactSourceConfig{
+			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
+			PowerSourcesKey: "power-sources.yaml",
+		},
 	}
 }

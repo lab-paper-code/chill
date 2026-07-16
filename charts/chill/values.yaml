@@ -73,6 +73,11 @@ profiler:
   serviceAccount:
     create: true
     name: ""
+  factSource:
+    executionFactsKey: execution-facts.yaml
+    powerSourcesKey: power-sources.yaml
+    executionDeclarations: []
+    powerSources: []
 
 uninstallCleanup:
   enabled: true

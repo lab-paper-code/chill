@@ -17,6 +17,10 @@ data:
     healthProbePort: {{ .Values.profiler.healthProbePort }}
     leaderElection: {{ .Values.profiler.leaderElection }}
     leaderElectionID: {{ .Values.profiler.leaderElectionID | quote }}
+    factSource:
+      configMapName: {{ include "chill.profilerFactSourceName" . | quote }}
+      executionFactsKey: {{ .Values.profiler.factSource.executionFactsKey | quote }}
+      powerSourcesKey: {{ .Values.profiler.factSource.powerSourcesKey | quote }}
     nodeSelector:
 {{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
     {{- with .Values.profiler.affinity }}
