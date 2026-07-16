@@ -71,6 +71,9 @@ func profilerArgs(config Config) []string {
 		"--metrics-bind-address=" + config.MetricsBindAddress,
 		"--health-probe-bind-address=" + healthProbeAddress(config.HealthProbePort),
 		"--leader-election-id=" + config.LeaderElectionID,
+		"--fact-source-config-map=" + config.FactSource.ConfigMapName,
+		"--execution-facts-key=" + config.FactSource.ExecutionFactsKey,
+		"--power-sources-key=" + config.FactSource.PowerSourcesKey,
 	}
 	if config.LeaderElection {
 		args = append(args, "--leader-elect")

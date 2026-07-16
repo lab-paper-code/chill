@@ -67,6 +67,15 @@ func TestBuildDeployment(t *testing.T) {
 	if !containsArg(container.Args, "--leader-elect") {
 		t.Fatalf("args = %v", container.Args)
 	}
+	for _, wanted := range []string{
+		"--fact-source-config-map=chill-profiler-facts",
+		"--execution-facts-key=execution-facts.yaml",
+		"--power-sources-key=power-sources.yaml",
+	} {
+		if !containsArg(container.Args, wanted) {
+			t.Fatalf("args lost %q: %v", wanted, container.Args)
+		}
+	}
 	if container.ReadinessProbe.HTTPGet.Path != "/readyz" || container.ReadinessProbe.HTTPGet.Port.IntVal != 8081 {
 		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)
 	}

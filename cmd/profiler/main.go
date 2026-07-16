@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"os"
+	"strings"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -14,36 +16,62 @@ import (
 
 var setupLog = ctrl.Log.WithName("setup")
 
-func main() {
-	var metricsAddr string
-	var probeAddr string
-	var watchNamespace string
-	var enableLeaderElection bool
-	var leaderElectionID string
+type options struct {
+	metricsAddr          string
+	probeAddr            string
+	watchNamespace       string
+	enableLeaderElection bool
+	leaderElectionID     string
+	factSourceConfigMap  string
+	executionFactsKey    string
+	powerSourcesKey      string
+}
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
-	flag.StringVar(&watchNamespace, "watch-namespace", os.Getenv("POD_NAMESPACE"), "Namespace containing CHILL profiling resources.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
-	flag.StringVar(&leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
+func (o options) validate() error {
+	for name, value := range map[string]string{
+		"watch namespace":       o.watchNamespace,
+		"fact-source ConfigMap": o.factSourceConfigMap,
+		"execution-facts key":   o.executionFactsKey,
+		"power-sources key":     o.powerSourcesKey,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return errors.New(name + " is required without surrounding whitespace")
+		}
+	}
+	if o.executionFactsKey == o.powerSourcesKey {
+		return errors.New("execution-facts and power-sources keys must be different")
+	}
+	return nil
+}
+
+func main() {
+	opts := options{}
+	flag.StringVar(&opts.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
+	flag.StringVar(&opts.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
+	flag.StringVar(&opts.watchNamespace, "watch-namespace", os.Getenv("POD_NAMESPACE"), "Namespace containing CHILL profiling resources.")
+	flag.BoolVar(&opts.enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
+	flag.StringVar(&opts.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
+	flag.StringVar(&opts.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
+	flag.StringVar(&opts.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
+	flag.StringVar(&opts.powerSourcesKey, "power-sources-key", "", "ConfigMap key containing Node power sources.")
 
 	zapOptions := zap.Options{Development: true}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 
-	if watchNamespace == "" {
-		setupLog.Error(nil, "watch namespace is required; set --watch-namespace or POD_NAMESPACE")
+	if err := opts.validate(); err != nil {
+		setupLog.Error(err, "invalid Profiler options")
 		os.Exit(1)
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       leaderElectionID,
+		Metrics:                metricsserver.Options{BindAddress: opts.metricsAddr},
+		HealthProbeBindAddress: opts.probeAddr,
+		LeaderElection:         opts.enableLeaderElection,
+		LeaderElectionID:       opts.leaderElectionID,
 		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
-			watchNamespace: {},
+			opts.watchNamespace: {},
 		}},
 	})
 	if err != nil {
@@ -60,7 +88,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting Profiler", "watchNamespace", watchNamespace)
+	setupLog.Info(
+		"starting Profiler",
+		"watchNamespace", opts.watchNamespace,
+		"factSourceConfigMap", opts.factSourceConfigMap,
+	)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running Profiler")
 		os.Exit(1)
