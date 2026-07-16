@@ -115,6 +115,6 @@ func testOptions(directory, digest string) options {
 	return options{
 		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
-		powerResultPath: filepath.Join(directory, "power-result.json"), startWaitTimeout: time.Second,
+		powerResultPath: filepath.Join(directory, "power-result.json"), startWaitTimeout: time.Second, maxEvents: 100,
 	}
 }

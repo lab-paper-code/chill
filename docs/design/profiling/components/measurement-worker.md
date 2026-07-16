@@ -209,6 +209,16 @@ same bounded attempt timing contract. Runtime and PowerObserver entrypoints
 have no hidden default wait duration, and `ProfilingRun.spec` cannot override
 these delivery bindings.
 
+Job composition also supplies bounded producer capacities. The PowerObserver
+must admit the complete duration/interval polling schedule within one combined
+sample-and-failure event cap before polling begins, then enforce that cap while
+recording. The CPU ORT runtime must reject an input tensor before allocation if
+its calculated bytes exceed the supplied input budget, cap retained latency
+samples during measurement, and reject a serialized runtime result that
+exceeds its result-byte budget. These capacities are versioned worker delivery
+bindings derived from the bounded execution resources; they are not scientific
+Run knobs and do not add fields to `ProfilingRun.spec`.
+
 ## Responsibility and dependency boundary
 
 ```text

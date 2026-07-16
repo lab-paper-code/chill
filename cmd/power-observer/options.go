@@ -25,6 +25,7 @@ type options struct {
 	startPath        string
 	powerResultPath  string
 	startWaitTimeout time.Duration
+	maxEvents        int
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -34,6 +35,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.startPath, "start-signal-file", defaultStartSignalPath, "measurement-start signal path")
 	set.StringVar(&o.powerResultPath, "result-file", defaultPowerResultPath, "atomic PowerObserver result path")
 	set.DurationVar(&o.startWaitTimeout, "start-wait-timeout", 0, "Job-derived maximum wait for measurement-start")
+	set.IntVar(&o.maxEvents, "max-events", 0, "Job-derived maximum retained sample and failure events")
 }
 
 func (o options) validate() error {
@@ -42,6 +44,9 @@ func (o options) validate() error {
 	}
 	if o.startWaitTimeout <= 0 {
 		return errors.New("start wait timeout must be supplied by the Job execution contract")
+	}
+	if o.maxEvents < 1 {
+		return errors.New("maximum retained events must be supplied by the Job execution contract")
 	}
 	return nil
 }

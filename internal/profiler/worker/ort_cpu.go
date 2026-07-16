@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha2"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha3"
 
 type ORTCPURuntimeConfig struct {
 	Command              []string
@@ -24,6 +24,8 @@ type ORTCPURuntimeConfig struct {
 	MeasurementStartPath string
 	ResultPath           string
 	ObserverReadyTimeout time.Duration
+	MaxLatencySamples    int
+	MaxInputBytes        int64
 	MaxResultBytes       int64
 	Stdout               io.Writer
 	Stderr               io.Writer
@@ -46,6 +48,9 @@ type ortCPURequest struct {
 	ObserverReadyPath                string              `json:"observerReadyPath"`
 	MeasurementStartPath             string              `json:"measurementStartPath"`
 	ObserverReadyTimeoutMilliseconds int64               `json:"observerReadyTimeoutMilliseconds"`
+	MaxLatencySamples                int                 `json:"maxLatencySamples"`
+	MaxInputBytes                    int64               `json:"maxInputBytes"`
+	MaxResultBytes                   int64               `json:"maxResultBytes"`
 }
 
 func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
@@ -67,6 +72,9 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 	}
 	if config.MaxResultBytes < 1 {
 		return nil, errors.New("CPU ORT result maximum size must be positive")
+	}
+	if config.MaxLatencySamples < 1 || config.MaxInputBytes < 1 {
+		return nil, errors.New("CPU ORT resource budgets must be supplied by the Job execution contract")
 	}
 	if config.ObserverReadyTimeout < time.Millisecond {
 		return nil, errors.New("CPU ORT observer-ready timeout must be supplied by the Job execution contract")
@@ -101,6 +109,9 @@ func (r *ORTCPURuntime) Measure(
 		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
 		MeasurementStartPath:             r.config.MeasurementStartPath,
 		ObserverReadyTimeoutMilliseconds: r.config.ObserverReadyTimeout.Milliseconds(),
+		MaxLatencySamples:                r.config.MaxLatencySamples,
+		MaxInputBytes:                    r.config.MaxInputBytes,
+		MaxResultBytes:                   r.config.MaxResultBytes,
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {

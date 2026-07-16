@@ -58,6 +58,7 @@ func execute(
 		Interval:       time.Duration(intent.Power.IntervalMilliseconds) * time.Millisecond,
 		Duration:       time.Duration(intent.Power.DurationSeconds) * time.Second,
 		RequestTimeout: time.Duration(intent.Power.TimeoutMilliseconds) * time.Millisecond,
+		MaxEvents:      opts.maxEvents,
 	})
 	if err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,16 +26,20 @@ func TestNewUsesUTCReceiptTime(t *testing.T) {
 }
 
 func TestRequestValidate(t *testing.T) {
-	valid := Request{Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond}
+	valid := Request{
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+	}
 	tests := []struct {
 		name    string
 		request Request
 	}{
-		{name: "zero interval", request: Request{Duration: valid.Duration, RequestTimeout: valid.RequestTimeout}},
-		{name: "zero duration", request: Request{Interval: valid.Interval, RequestTimeout: valid.RequestTimeout}},
-		{name: "zero timeout", request: Request{Interval: valid.Interval, Duration: valid.Duration}},
-		{name: "timeout equals interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.Interval}},
-		{name: "timeout exceeds interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: 2 * valid.Interval}},
+		{name: "zero interval", request: Request{Duration: valid.Duration, RequestTimeout: valid.RequestTimeout, MaxEvents: valid.MaxEvents}},
+		{name: "zero duration", request: Request{Interval: valid.Interval, RequestTimeout: valid.RequestTimeout, MaxEvents: valid.MaxEvents}},
+		{name: "zero timeout", request: Request{Interval: valid.Interval, Duration: valid.Duration, MaxEvents: valid.MaxEvents}},
+		{name: "timeout equals interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.Interval, MaxEvents: valid.MaxEvents}},
+		{name: "timeout exceeds interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: 2 * valid.Interval, MaxEvents: valid.MaxEvents}},
+		{name: "zero event budget", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.RequestTimeout}},
+		{name: "event budget cannot cover window", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.RequestTimeout, MaxEvents: 61}},
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid request error = %v", err)
@@ -67,7 +72,10 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	ticks <- time.Unix(1, 0)
 	close(ticks)
 
-	result := observer.observe(context.Background(), time.Second, ticks)
+	result, err := observer.observe(context.Background(), time.Second, 2, ticks)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if source.reads != 2 {
 		t.Fatalf("source reads = %d, want immediate plus one tick", source.reads)
 	}
@@ -82,6 +90,23 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	}
 	if !result.Summary.SourceTimestampAbsent {
 		t.Fatal("source timestamp absence was not preserved")
+	}
+}
+
+func TestObserveRejectsInsufficientEventCapacityBeforeSourceRead(t *testing.T) {
+	source := &fakeSource{values: []float64{4.2}}
+	observer, err := New(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = observer.Observe(context.Background(), Request{
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 61,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot cover") {
+		t.Fatalf("Observe() error = %v, want preflight capacity rejection", err)
+	}
+	if source.reads != 0 {
+		t.Fatalf("preflight rejection performed %d source reads", source.reads)
 	}
 }
 
@@ -106,7 +131,10 @@ func TestObserveClassifiesSourceFailures(t *testing.T) {
 			observer.now = sequenceClock(t, []time.Time{time.Unix(0, 0), time.Unix(0, 0), time.Unix(0, int64(time.Millisecond)), time.Unix(0, int64(time.Second))})
 			ticks := make(chan time.Time)
 			close(ticks)
-			result := observer.observe(context.Background(), time.Second, ticks)
+			result, observeErr := observer.observe(context.Background(), time.Second, 1, ticks)
+			if observeErr != nil {
+				t.Fatal(observeErr)
+			}
 			if len(result.Failures) != 1 || result.Failures[0].Reason != test.reason {
 				t.Fatalf("failures = %#v, want reason %q", result.Failures, test.reason)
 			}
@@ -125,13 +153,35 @@ func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := observer.Observe(ctx, Request{
-		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond,
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Summary.Attempts != 0 || result.Summary.Failures != 0 {
 		t.Fatalf("cancellation became source evidence: %#v", result.Summary)
+	}
+}
+
+func TestObserveEnforcesProducerEventCap(t *testing.T) {
+	source := &fakeSource{values: []float64{1, 2}}
+	observer, err := New(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer.now = sequenceClock(t, []time.Time{
+		time.Unix(0, 0), time.Unix(0, 0), time.Unix(0, 1), time.Unix(0, 2),
+	})
+	ticks := make(chan time.Time, 1)
+	ticks <- time.Unix(1, 0)
+	close(ticks)
+
+	result, err := observer.observe(context.Background(), time.Second, 1, ticks)
+	if !errors.Is(err, errEventBudgetExceeded) {
+		t.Fatalf("observe error = %v, want event budget failure", err)
+	}
+	if source.reads != 1 || result.Summary.Attempts != 1 {
+		t.Fatalf("producer exceeded cap: reads=%d summary=%#v", source.reads, result.Summary)
 	}
 }
 

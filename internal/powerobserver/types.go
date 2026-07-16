@@ -27,6 +27,9 @@ type Request struct {
 	Interval       time.Duration
 	Duration       time.Duration
 	RequestTimeout time.Duration
+	// MaxEvents bounds the combined number of retained samples and failures.
+	// Job composition derives it from the frozen observation window.
+	MaxEvents int
 }
 
 // Sample is one successfully received power reading.

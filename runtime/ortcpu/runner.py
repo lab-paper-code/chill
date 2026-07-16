@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha2"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha3"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha2"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
@@ -114,7 +114,8 @@ def validate_request(request: dict[str, Any]) -> None:
         request,
         {
             "schemaVersion", "intent", "intentDigest", "podUID", "modelPath", "observerReadyPath",
-            "measurementStartPath", "observerReadyTimeoutMilliseconds",
+            "measurementStartPath", "observerReadyTimeoutMilliseconds", "maxLatencySamples",
+            "maxInputBytes", "maxResultBytes",
         },
         "runtime request",
     )
@@ -128,6 +129,9 @@ def validate_request(request: dict[str, Any]) -> None:
     require_absolute_file_path(request["observerReadyPath"], "observerReadyPath")
     require_absolute_file_path(request["measurementStartPath"], "measurementStartPath")
     require_integer(request["observerReadyTimeoutMilliseconds"], "observerReadyTimeoutMilliseconds", 1)
+    require_integer(request["maxLatencySamples"], "maxLatencySamples", 1)
+    require_integer(request["maxInputBytes"], "maxInputBytes", 1)
+    require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
     intent = require_object(request["intent"], "intent")
     require_fields(intent, {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "power"}, "intent")
@@ -256,6 +260,15 @@ def publish_immutable(path: Path, payload: bytes) -> None:
                 pass
 
 
+def encode_result(result: dict[str, Any], max_bytes: int) -> bytes:
+    payload = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    if len(payload) > max_bytes:
+        raise ContractError("runtime result exceeds the Job execution contract size budget")
+    return payload
+
+
 def cpu_stat() -> dict[str, int]:
     values: dict[str, int] = {}
     for line in read_required_text(Path("/sys/fs/cgroup/cpu.stat"), "cgroup CPU stat").splitlines():
@@ -316,6 +329,21 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     return shapes
 
 
+def admitted_input_bytes(shape: list[int], max_bytes: int) -> int:
+    input_bytes = math.prod(shape) * 4
+    if input_bytes > max_bytes:
+        raise ContractError("input tensor exceeds the Job execution contract size budget")
+    return input_bytes
+
+
+def measurement_complete(elapsed: float, duration: int, sample_count: int, max_samples: int) -> bool:
+    if elapsed >= duration:
+        return True
+    if sample_count >= max_samples:
+        raise ContractError("latency sample budget exhausted before measurement duration")
+    return False
+
+
 def derived_contract(intent: dict[str, Any], intent_digest: str) -> dict[str, Any]:
     cpu = intent["cpu"]
     return {
@@ -366,7 +394,10 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     if len(inputs) != 1 or inputs[0].type != "tensor(float)":
         raise ContractError("input generator supports exactly one float32 tensor input")
     shape = [measurement["batch"]] + [dimension if isinstance(dimension, int) and dimension > 0 else 1 for dimension in inputs[0].shape[1:]]
+    input_bytes = admitted_input_bytes(shape, request["maxInputBytes"])
     sample = numpy.random.default_rng(0).standard_normal(shape).astype(numpy.float32)
+    if getattr(sample, "nbytes", None) != input_bytes:
+        raise ContractError("generated input tensor does not match its admitted byte size")
 
     wait_for_signal(
         Path(request["observerReadyPath"]), request["observerReadyTimeoutMilliseconds"] / 1000.0
@@ -395,7 +426,12 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
             samples.append((time.perf_counter_ns() - inference_started) / 1_000_000.0)
             if output_shapes is None:
                 output_shapes = validate_outputs(outputs, measurement["batch"])
-            if time.monotonic() - monotonic_started >= measurement["durationSeconds"]:
+            if measurement_complete(
+                time.monotonic() - monotonic_started,
+                measurement["durationSeconds"],
+                len(samples),
+                request["maxLatencySamples"],
+            ):
                 break
     except Exception as error:
         raise ContractError(f"execute ONNX Runtime measurement: {error}") from error
@@ -483,7 +519,7 @@ def main() -> None:
         import onnxruntime as ort
 
         result = execute(request, ort, numpy)
-        payload = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        payload = encode_result(result, request["maxResultBytes"])
         publish_immutable(result_path, payload)
     except (ContractError, ImportError, ValueError, TypeError) as error:
         fail(str(error))

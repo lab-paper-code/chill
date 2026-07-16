@@ -119,6 +119,7 @@ func main() {
 	)
 	result, err := observer.Observe(context.Background(), powerobserver.Request{
 		Interval: *interval, Duration: *duration, RequestTimeout: *requestTimeout,
+		MaxEvents: int(*duration / *interval) + 2,
 	})
 	if err != nil {
 		fatal(err)

@@ -21,6 +21,8 @@ type Observer struct {
 	now    func() time.Time
 }
 
+var errEventBudgetExceeded = errors.New("power observation event budget exceeded")
+
 // New returns an Observer for source.
 func New(source Source) (*Observer, error) {
 	if source == nil {
@@ -45,6 +47,12 @@ func (r Request) Validate() error {
 		return errors.New("request timeout must be positive")
 	case r.RequestTimeout >= r.Interval:
 		return errors.New("request timeout must be shorter than interval")
+	case r.MaxEvents < 1:
+		return errors.New("maximum retained events must be positive")
+	case uint64(r.Duration/r.Interval)+2 > uint64(r.MaxEvents):
+		// One immediate read plus every possible ticker delivery, including a
+		// delivery racing the duration deadline, must fit before work starts.
+		return errors.New("maximum retained events cannot cover the observation window")
 	default:
 		return nil
 	}
@@ -52,7 +60,8 @@ func (r Request) Validate() error {
 
 // Observe samples immediately and then at a fixed interval until the bounded
 // duration expires or ctx is cancelled. Cancellation returns the evidence
-// collected so far; request validation is the only pre-run error.
+// collected so far. A defensive producer cap fails closed if scheduling ever
+// exceeds the capacity admitted by request validation.
 func (o *Observer) Observe(ctx context.Context, request Request) (Result, error) {
 	if err := request.Validate(); err != nil {
 		return Result{}, fmt.Errorf("validate observation request: %w", err)
@@ -63,21 +72,30 @@ func (o *Observer) Observe(ctx context.Context, request Request) (Result, error)
 	ticker := time.NewTicker(request.Interval)
 	defer ticker.Stop()
 
-	return o.observe(observationCtx, request.RequestTimeout, ticker.C), nil
+	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C)
 }
 
-func (o *Observer) observe(ctx context.Context, requestTimeout time.Duration, ticks <-chan time.Time) Result {
+func (o *Observer) observe(
+	ctx context.Context,
+	requestTimeout time.Duration,
+	maxEvents int,
+	ticks <-chan time.Time,
+) (Result, error) {
 	result := Result{Source: o.source.Identity(), StartedAt: o.now()}
-	o.sample(ctx, requestTimeout, &result)
+	if err := o.sample(ctx, requestTimeout, maxEvents, &result); err != nil {
+		return o.finish(result), err
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return o.finish(result)
+			return o.finish(result), nil
 		case _, ok := <-ticks:
 			if !ok {
-				return o.finish(result)
+				return o.finish(result), nil
 			}
-			o.sample(ctx, requestTimeout, &result)
+			if err := o.sample(ctx, requestTimeout, maxEvents, &result); err != nil {
+				return o.finish(result), err
+			}
 		}
 	}
 }
@@ -88,9 +106,12 @@ func (o *Observer) finish(result Result) Result {
 	return result
 }
 
-func (o *Observer) sample(ctx context.Context, timeout time.Duration, result *Result) {
+func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents int, result *Result) error {
 	if ctx.Err() != nil {
-		return
+		return nil
+	}
+	if len(result.Samples)+len(result.Failures) >= maxEvents {
+		return errEventBudgetExceeded
 	}
 	started := o.now()
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -102,10 +123,10 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, result *Re
 		// Expiration or caller cancellation ends the observation. It is not
 		// evidence that the source itself failed.
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		if deadline, ok := ctx.Deadline(); ok && !observedAt.Before(deadline) {
-			return
+			return nil
 		}
 		result.Failures = append(result.Failures, Failure{
 			ObservedAt:            observedAt,
@@ -113,13 +134,14 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, result *Re
 			Reason:                classify(err),
 			Message:               err.Error(),
 		})
-		return
+		return nil
 	}
 	result.Samples = append(result.Samples, Sample{
 		ObservedAt:            observedAt,
 		Watts:                 watts,
 		RequestLatencySeconds: latency.Seconds(),
 	})
+	return nil
 }
 
 func classify(err error) FailureReason {

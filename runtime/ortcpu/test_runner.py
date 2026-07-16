@@ -24,6 +24,8 @@ class FakeInput:
 
 
 class FakeSample:
+    nbytes = 1 * 3 * 224 * 224 * 4
+
     def astype(self, _type: object) -> "FakeSample":
         return self
 
@@ -100,6 +102,9 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "observerReadyPath": str(model_path.parent / "observer-ready"),
         "measurementStartPath": str(model_path.parent / "measurement-start"),
         "observerReadyTimeoutMilliseconds": 30_000,
+        "maxLatencySamples": 100_000,
+        "maxInputBytes": 1 << 20,
+        "maxResultBytes": 8 << 20,
         "intent": {
             "schemaVersion": runner.INTENT_SCHEMA,
             "candidate": {},
@@ -166,6 +171,26 @@ class RunnerTest(unittest.TestCase):
             del request["observerReadyTimeoutMilliseconds"]
             with self.assertRaisesRegex(runner.ContractError, "observerReadyTimeoutMilliseconds"):
                 runner.validate_request(request)
+
+    def test_validate_request_requires_job_resource_budgets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            for field in ("maxLatencySamples", "maxInputBytes", "maxResultBytes"):
+                with self.subTest(field=field):
+                    request = valid_request(model)
+                    del request[field]
+                    with self.assertRaisesRegex(runner.ContractError, field):
+                        runner.validate_request(request)
+
+    def test_producer_budgets_fail_before_growth(self) -> None:
+        with self.assertRaisesRegex(runner.ContractError, "input tensor"):
+            runner.admitted_input_bytes([8, 3, 224, 224], 1024)
+        with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
+            runner.measurement_complete(0.5, 1, 10, 10)
+        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10))
+        with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
+            runner.encode_result({"samples": [1, 2, 3]}, 1)
 
     def test_publish_immutable_refuses_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
