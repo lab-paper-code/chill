@@ -399,14 +399,15 @@ The controller trusts the handoff only after it:
 6. independently retrieves and verifies that finalized record; and
 7. publishes its compact reference and evidence/admission Conditions.
 
-Finalization uses a deterministic object key and canonical bytes derived only
-from the frozen intent, verified raw reference, and stable terminal facts. It
-projects the required UIDs, ownership, placement, requested and pulled image
-identities, termination states, and native completion timestamps rather than
+Finalization uses a deterministic object key and canonical bytes. Before
+constructing a record, the controller checks that key and reuses an existing
+valid record. When no record exists, it projects the required UIDs, ownership,
+placement, requested and pulled image identities, termination states, native
+completion timestamps, and bounded workload observation rather than
 serializing entire live Kubernetes objects. Volatile `resourceVersion`, managed
-fields, unrelated metadata, and the controller's reconciliation time are not
-part of the record. Repeating finalization after a crash therefore produces the
-same bytes and the same immutable-create outcome.
+fields, and unrelated metadata are not part of the record. A crash after the
+immutable write therefore recovers the existing bytes instead of reconstructing
+them from later cluster state.
 
 Job success without a committed and verified raw object and a verified finalized
 record is evidence failure. An upload failure or partial write terminates the

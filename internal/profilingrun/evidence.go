@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha1"
+
 type RuntimeResult struct {
 	SchemaVersion             string             `json:"schemaVersion"`
 	Status                    string             `json:"status"`
@@ -79,6 +81,9 @@ type Repetition struct {
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
+	if result.SchemaVersion != RuntimeResultSchemaVersion {
+		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
+	}
 	digest, err := intent.Digest()
 	if err != nil {
 		return err

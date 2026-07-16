@@ -6,6 +6,7 @@ func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 	intent := validIntent()
 	digest, _ := intent.Digest()
 	valid := RuntimeResult{
+		SchemaVersion:             RuntimeResultSchemaVersion,
 		Status:                    "Succeeded",
 		SweepID:                   digest,
 		ExperimentID:              "pod-uid",
