@@ -90,7 +90,14 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DevicePowerModes = []string{"other-mode"}
 			},
-			match: "not declared by resolved DeviceClass",
+			match: "not the first-path non-selectable fixed-power class",
+		},
+		{
+			name: "selectable mode mixed with fixed",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.candidate.result.DevicePowerModes = []string{"fixed", "15W"}
+			},
+			match: "not the first-path non-selectable fixed-power class",
 		},
 		{
 			name: "missing DeviceClass selector",
@@ -142,6 +149,87 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 	}
 }
 
+func TestPreparerRejectsInternalReportMaterialDriftBeforeNodeResolution(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	tests := []struct {
+		name   string
+		mutate func(*ResolvedCandidate)
+		match  string
+	}{
+		{
+			name: "DeviceClass selector drift",
+			mutate: func(candidate *ResolvedCandidate) {
+				candidate.DeviceNodeSelector = map[string]string{"edge.dacs.io/device-class": "other"}
+			},
+			match: "DeviceClass nodeSelector mismatch",
+		},
+		{
+			name: "artifact image drift",
+			mutate: func(candidate *ResolvedCandidate) {
+				candidate.ArtifactImage = "registry.example/artifact@sha256:" + strings.Repeat("f", 64)
+			},
+			match: "artifact image mismatch",
+		},
+		{
+			name: "artifact path drift",
+			mutate: func(candidate *ResolvedCandidate) {
+				candidate.ArtifactPath = "/artifact/other.onnx"
+			},
+			match: "artifact path mismatch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolvers := fixtureResolvers(expected, candidateBytes)
+			promoteFixtureCandidateReport(t, resolvers.candidate.result.ReportBytes, &resolvers.candidate.result)
+			test.mutate(&resolvers.candidate.result)
+			preparer := newFixturePreparer(t, resolvers)
+			_, err := preparer.Prepare(context.Background(), fixtureRequest(expected))
+			if err == nil || !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("expected error containing %q, got %v", test.match, err)
+			}
+			if resolvers.node.calls != 0 {
+				t.Fatal("material drift reached Node resolution")
+			}
+		})
+	}
+}
+
+func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *ResolvedCandidate) {
+	t.Helper()
+	report, err := profilingrun.DecodeCandidateReport(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
+	report.Inputs.ModelSpec.UID, report.Inputs.ModelSpec.ResourceVersion = "model-uid", "1"
+	report.Inputs.DeviceClass.UID, report.Inputs.DeviceClass.ResourceVersion = "device-uid", "1"
+	report.Inputs.RuntimeDeclaration.Namespace = "chill-system"
+	report.Inputs.RuntimeDeclaration.Name = "chill-profiler-facts"
+	report.Inputs.RuntimeDeclaration.UID = "facts-uid"
+	report.Inputs.RuntimeDeclaration.ResourceVersion = "1"
+	report.Inputs.RuntimeDeclaration.Key = "execution-facts.yaml"
+	report.Selection.PowerMode = candidate.State.PowerMode
+	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
+		Architecture: candidate.DeviceArchitecture,
+		NodeSelector: map[string]string{"edge.dacs.io/device-class": candidate.State.DeviceClass},
+		PowerModes:   []string{candidate.State.PowerMode},
+	}
+	candidate.ArtifactArchitecture = candidate.DeviceArchitecture
+	candidate.ArtifactPath = "/artifact/model.onnx"
+	candidate.ArtifactDigest = candidate.State.ArtifactDigest
+	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
+		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
+		Path: candidate.ArtifactPath, Digest: candidate.ArtifactDigest,
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.ReportBytes = encoded
+}
+
 func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	tests := []struct {
@@ -189,6 +277,23 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	}
 }
 
+func TestPreparerRejectsCPURequestAboveNodeCapacityBeforePowerResolution(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	resolvers := fixtureResolvers(expected, candidateBytes)
+	preparer := newFixturePreparer(t, resolvers)
+	request := fixtureRequest(expected)
+	request.CPURequest = "5"
+
+	_, err := preparer.Prepare(context.Background(), request)
+	if !errors.Is(err, ErrCPURequestExceedsAllocatable) {
+		t.Fatalf("expected CPU capacity rejection, got %v", err)
+	}
+	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.power.calls != 0 {
+		t.Fatalf("unexpected resolver calls: candidate=%d node=%d power=%d",
+			resolvers.candidate.calls, resolvers.node.calls, resolvers.power.calls)
+	}
+}
+
 func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	for _, test := range []struct {
@@ -201,6 +306,9 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		}},
 		{name: "unsupported power mode", mutate: func(request *PreparationRequest) {
 			request.Candidate.PowerMode = "15W"
+		}},
+		{name: "invalid CPU request", mutate: func(request *PreparationRequest) {
+			request.CPURequest = "not-a-quantity"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

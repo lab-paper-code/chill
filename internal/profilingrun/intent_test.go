@@ -43,6 +43,14 @@ func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
 	}
 }
 
+func TestIntentRejectsCPURequestAboveFrozenLimit(t *testing.T) {
+	intent := validIntent()
+	intent.CPU.Request = "5"
+	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
+		t.Fatalf("expected CPU request/limit rejection, got %v", err)
+	}
+}
+
 func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*Intent){
 		func(i *Intent) { i.Candidate.Verdict = "Unknown" },

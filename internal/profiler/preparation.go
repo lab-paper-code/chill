@@ -6,10 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const (
@@ -20,6 +23,8 @@ const (
 	firstRuntimeBackend   = "CPUExecutionProvider"
 	firstPowerMode        = "fixed"
 )
+
+var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected Node allocatable CPU")
 
 type CandidateSelection struct {
 	ModelSpec     string
@@ -60,6 +65,9 @@ type ResolvedCandidate struct {
 	DevicePowerModes                []string
 	RuntimeImage                    string
 	ArtifactImage                   string
+	ArtifactArchitecture            string
+	ArtifactPath                    string
+	ArtifactDigest                  string
 }
 
 // NodeSelection binds the requested Node to facts from the exact DeviceClass
@@ -144,6 +152,9 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := validateResolvedCandidate(request.Candidate, candidate); err != nil {
 		return PreparedRun{}, err
 	}
+	if err := validateCandidateMaterialBinding(candidate); err != nil {
+		return PreparedRun{}, fmt.Errorf("validate resolved candidate material: %w", err)
+	}
 	node, err := p.nodes.ResolveNode(ctx, NodeSelection{
 		Name:                request.TargetNode,
 		DeviceArchitecture:  candidate.DeviceArchitecture,
@@ -151,6 +162,9 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	})
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve target Node: %w", err)
+	}
+	if err := validateCPURequestFitsNode(request.CPURequest, node.AllocatableCPU); err != nil {
+		return PreparedRun{}, err
 	}
 	power, err := p.power.ResolvePowerSource(ctx, request.TargetNode)
 	if err != nil {
@@ -173,6 +187,21 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		IntentDigest:         digest,
 		CandidateReportBytes: append([]byte(nil), candidate.ReportBytes...),
 	}, nil
+}
+
+func validateCPURequestFitsNode(request, allocatable string) error {
+	requestQuantity, err := resource.ParseQuantity(request)
+	if err != nil || requestQuantity.Sign() <= 0 {
+		return errors.New("CPU request must be a positive Kubernetes quantity")
+	}
+	allocatableQuantity, err := resource.ParseQuantity(allocatable)
+	if err != nil || allocatableQuantity.Sign() <= 0 {
+		return errors.New("resolved Node allocatable CPU must be a positive Kubernetes quantity")
+	}
+	if requestQuantity.Cmp(allocatableQuantity) > 0 {
+		return fmt.Errorf("%w: request %s, allocatable %s", ErrCPURequestExceedsAllocatable, request, allocatable)
+	}
+	return nil
 }
 
 func (p *Preparer) freeze(
@@ -246,12 +275,43 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
 		return errors.New("resolved DeviceClass architecture and Node selector are required")
 	}
-	for _, mode := range candidate.DevicePowerModes {
-		if mode == request.PowerMode {
-			return nil
+	if len(candidate.DevicePowerModes) != 1 || candidate.DevicePowerModes[0] != firstPowerMode {
+		return errors.New("resolved DeviceClass is not the first-path non-selectable fixed-power class")
+	}
+	return nil
+}
+
+func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
+	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
+	if err != nil {
+		return err
+	}
+	// Spike reports predate the internal material contract. They remain
+	// readable for fixture migration, but newly resolved candidates must bind
+	// all side facts used by Node selection and artifact execution.
+	if report.SchemaVersion != profilingrun.CandidateReportSchemaVersion {
+		return nil
+	}
+	checks := []struct{ name, want, got string }{
+		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
+		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
+		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
+		{"artifact path", candidate.ArtifactPath, report.ArtifactSupply.Path},
+		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
+		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
+	}
+	for _, check := range checks {
+		if check.want != check.got {
+			return fmt.Errorf("candidate report %s mismatch", check.name)
 		}
 	}
-	return errors.New("requested power mode is not declared by resolved DeviceClass")
+	if !maps.Equal(candidate.DeviceNodeSelector, report.DeviceClassFacts.NodeSelector) {
+		return errors.New("candidate report DeviceClass nodeSelector mismatch")
+	}
+	if !slices.Equal(candidate.DevicePowerModes, report.DeviceClassFacts.PowerModes) {
+		return errors.New("candidate report DeviceClass powerModes mismatch")
+	}
+	return nil
 }
 
 func (r PreparationRequest) Validate() error {
@@ -272,6 +332,10 @@ func (r PreparationRequest) Validate() error {
 	}
 	if r.Candidate.PowerMode != firstPowerMode {
 		return fmt.Errorf("first path supports only powerMode %q", firstPowerMode)
+	}
+	cpuRequest, err := resource.ParseQuantity(r.CPURequest)
+	if err != nil || cpuRequest.Sign() <= 0 {
+		return errors.New("CPU request must be a positive Kubernetes quantity")
 	}
 	if r.Power.IntervalMilliseconds < 1 || r.Power.TimeoutMilliseconds < 1 ||
 		r.Power.TimeoutMilliseconds >= r.Power.IntervalMilliseconds ||

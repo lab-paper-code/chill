@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var (
@@ -76,8 +78,16 @@ func (i Intent) Validate() error {
 	if i.CPU.ExclusivityClaimed {
 		return errors.New("first CPU policy must not claim Node exclusivity")
 	}
-	if strings.TrimSpace(i.CPU.Request) == "" {
-		return errors.New("CPU request is required")
+	requestCPU, err := resource.ParseQuantity(i.CPU.Request)
+	if err != nil || requestCPU.Sign() <= 0 {
+		return errors.New("CPU request must be a positive Kubernetes quantity")
+	}
+	limitCPU, err := resource.ParseQuantity(i.CPU.Limit)
+	if err != nil || limitCPU.Sign() <= 0 {
+		return errors.New("CPU limit must be a positive Kubernetes quantity")
+	}
+	if requestCPU.Cmp(limitCPU) > 0 {
+		return errors.New("CPU request must not exceed CPU limit")
 	}
 	cpu, err := strconv.Atoi(i.TargetNode.AllocatableCPU)
 	if err != nil || cpu < 1 {
