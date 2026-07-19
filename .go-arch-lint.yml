@@ -73,6 +73,8 @@ deps:
     mayDependOn:
       - api
       - device-class
+      - evidence-core
+      - profiler-evidence
 
   operator:
     mayDependOn:
