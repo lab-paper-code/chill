@@ -53,7 +53,8 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	}
 	runtime := got.Measurement.Runtime
 	if runtime.CompletedCalls != 3 || runtime.CompletedItems != 12 || runtime.Latency.Count != 3 ||
-		runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 || runtime.Latency.P95 != 3 || runtime.Latency.P99 != 3 {
+		runtime.ThroughputItems != 2000 || runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 ||
+		runtime.Latency.P95 != 3 || runtime.Latency.P99 != 3 {
 		t.Fatalf("runtime facts = %#v", runtime)
 	}
 	power := got.Measurement.Power
@@ -74,6 +75,7 @@ func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 		Execution: execution,
 		Measurement: profilerevidence.RawMeasurement{
 			Runtime: profilingrun.RuntimeResult{
+				BatchSize:            1,
 				MeasurementStartedAt: started.Format(time.RFC3339Nano),
 				MeasurementEndedAt:   started.Add(time.Second).Format(time.RFC3339Nano),
 				InferenceCount:       1,

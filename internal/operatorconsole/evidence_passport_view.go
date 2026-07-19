@@ -126,6 +126,10 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	if err != nil {
 		return EvidencePassport{}, err
 	}
+	if runtime.BatchSize < 1 {
+		return EvidencePassport{}, errors.New("verified runtime evidence contains an invalid batch size")
+	}
+	throughputItems := float64(runtime.BatchSize) * 1000 / latency.Mean
 	watts := summarizeWatts(snapshot.Measurement.Power.Samples)
 	final := evidencestore.ObjectIdentity{
 		Store:  snapshot.Run.Status.Evidence.Store,
@@ -154,10 +158,13 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 				Architecture: runtime.Architecture, Batch: runtime.BatchSize,
 				WarmupIterations:   runtime.WarmupIterations,
 				MeasurementStarted: started.UTC(), MeasurementEnded: ended.UTC(),
-				ElapsedSeconds:  runtime.MeasurementElapsedSeconds,
-				CompletedCalls:  runtime.InferenceCount,
-				CompletedItems:  runtime.InferenceCount * runtime.BatchSize,
-				ThroughputItems: runtime.ThroughputItemsPerSecond,
+				ElapsedSeconds: runtime.MeasurementElapsedSeconds,
+				CompletedCalls: runtime.InferenceCount,
+				CompletedItems: runtime.InferenceCount * runtime.BatchSize,
+				// Keep the runtime contract's batch/mean-latency definition, but
+				// derive it again from the retained raw samples instead of trusting
+				// the producer's summary field.
+				ThroughputItems: throughputItems,
 				Latency:         latency,
 				OutputValidation: EvidencePassportOutputValidation{
 					Method: runtime.OutputValidation.Method, Passed: runtime.OutputValidation.Passed,
