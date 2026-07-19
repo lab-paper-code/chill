@@ -44,7 +44,7 @@ func buildDeployment(options Options, config Config) *appsv1.Deployment {
 							Image:           config.Image,
 							ImagePullPolicy: config.ImagePullPolicy,
 							Command:         []string{"/profiler"},
-							Args:            profilerArgs(config),
+							Args:            profilerArgs(options, config),
 							Env: []corev1.EnvVar{
 								{
 									Name: "POD_NAMESPACE",
@@ -66,8 +66,9 @@ func buildDeployment(options Options, config Config) *appsv1.Deployment {
 	}
 }
 
-func profilerArgs(config Config) []string {
+func profilerArgs(options Options, config Config) []string {
 	args := []string{
+		"--system-name=" + options.SystemName,
 		"--metrics-bind-address=" + config.MetricsBindAddress,
 		"--health-probe-bind-address=" + healthProbeAddress(config.HealthProbePort),
 		"--leader-election-id=" + config.LeaderElectionID,

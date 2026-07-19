@@ -10,6 +10,7 @@ import (
 type options struct {
 	metricsAddr          string
 	probeAddr            string
+	systemName           string
 	watchNamespace       string
 	enableLeaderElection bool
 	leaderElectionID     string
@@ -21,6 +22,7 @@ type options struct {
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health probes bind to.")
+	flags.StringVar(&o.systemName, "system-name", "", "ChillSystem name that owns this Profiler instance.")
 	flags.StringVar(
 		&o.watchNamespace,
 		"watch-namespace",
@@ -39,6 +41,7 @@ func (o options) validate() error {
 		name  string
 		value string
 	}{
+		{name: "system name", value: o.systemName},
 		{name: "watch namespace", value: o.watchNamespace},
 		{name: "fact-source ConfigMap", value: o.factSourceConfigMap},
 		{name: "execution-facts key", value: o.executionFactsKey},

@@ -75,6 +75,7 @@ func TestBuildDeployment(t *testing.T) {
 		t.Fatalf("args = %v", container.Args)
 	}
 	for _, wanted := range []string{
+		"--system-name=chill",
 		"--fact-source-config-map=chill-profiler-facts",
 		"--execution-facts-key=execution-facts.yaml",
 		"--power-sources-key=power-sources.yaml",

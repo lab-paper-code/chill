@@ -11,6 +11,7 @@ func TestOptionsBindFlags(t *testing.T) {
 	opts := options{}
 	opts.bindFlags(flags)
 	if err := flags.Parse([]string{
+		"--system-name=chill",
 		"--fact-source-config-map=chill-profiler-facts",
 		"--execution-facts-key=execution-facts.yaml",
 		"--power-sources-key=power-sources.yaml",
@@ -20,14 +21,15 @@ func TestOptionsBindFlags(t *testing.T) {
 	if err := opts.validate(); err != nil {
 		t.Fatal(err)
 	}
-	if opts.watchNamespace != "chill-system" || opts.metricsAddr != "0" || opts.probeAddr != ":8081" {
+	if opts.systemName != "chill" || opts.watchNamespace != "chill-system" ||
+		opts.metricsAddr != "0" || opts.probeAddr != ":8081" {
 		t.Fatalf("unexpected bound options: %#v", opts)
 	}
 }
 
 func TestOptionsValidateFactSourceContract(t *testing.T) {
 	valid := options{
-		watchNamespace: "chill-system", factSourceConfigMap: "chill-profiler-facts",
+		systemName: "chill", watchNamespace: "chill-system", factSourceConfigMap: "chill-profiler-facts",
 		executionFactsKey: "execution-facts.yaml", powerSourcesKey: "power-sources.yaml",
 	}
 	if err := valid.validate(); err != nil {
@@ -35,6 +37,7 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 	}
 
 	for _, mutate := range []func(*options){
+		func(options *options) { options.systemName = "" },
 		func(options *options) { options.factSourceConfigMap = "" },
 		func(options *options) { options.executionFactsKey = " " },
 		func(options *options) { options.powerSourcesKey = options.executionFactsKey },

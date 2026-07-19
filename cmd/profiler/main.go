@@ -71,6 +71,7 @@ func main() {
 
 	setupLog.Info(
 		"starting Profiler",
+		"systemName", opts.systemName,
 		"watchNamespace", opts.watchNamespace,
 		"factSourceConfigMap", opts.factSourceConfigMap,
 	)
