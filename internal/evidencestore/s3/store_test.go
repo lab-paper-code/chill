@@ -16,13 +16,15 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
+const testPhysicalBucket = "profiling-evidence-bucket"
+
 func TestPutImmutableCreatesVerifiedCandidate(t *testing.T) {
 	content := []byte("immutable profiling evidence")
 	expected := identityFor(content)
 	client := &fakeClient{
 		put: func(_ context.Context, input *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
-			if got := stringValue(input.Bucket); got != expected.Store {
-				t.Fatalf("bucket = %q, want %q", got, expected.Store)
+			if got := stringValue(input.Bucket); got != testPhysicalBucket {
+				t.Fatalf("bucket = %q, want %q", got, testPhysicalBucket)
 			}
 			if got := stringValue(input.Key); got != expected.Key {
 				t.Fatalf("key = %q, want %q", got, expected.Key)
@@ -43,7 +45,7 @@ func TestPutImmutableCreatesVerifiedCandidate(t *testing.T) {
 			return &awss3.PutObjectOutput{}, nil
 		},
 	}
-	store := &Store{client: client, tempDir: t.TempDir()}
+	store := testObjectStore(client, t.TempDir())
 
 	receipt, err := store.PutImmutable(context.Background(), expected, bytes.NewReader(content))
 	if err != nil {
@@ -70,22 +72,31 @@ func TestPutImmutableRejectsInvalidCandidateBeforeS3(t *testing.T) {
 	}{
 		{name: "nil", content: nil, wantErr: evidencestore.ErrContentMismatch},
 		{name: "short", content: bytes.NewReader(content[:len(content)-1]), wantErr: evidencestore.ErrContentMismatch},
-		{name: "long", content: bytes.NewReader(append(append([]byte(nil), content...), '!')), wantErr: evidencestore.ErrContentMismatch},
-		{name: "different digest", content: bytes.NewReader(append([]byte{'X'}, content[1:]...)), wantErr: evidencestore.ErrContentMismatch},
-		{name: "source failure", content: io.MultiReader(bytes.NewReader(content[:4]), errorReader{sourceFailure}), wantErr: sourceFailure},
+		{
+			name: "long", content: bytes.NewReader(append(append([]byte(nil), content...), '!')),
+			wantErr: evidencestore.ErrContentMismatch,
+		},
+		{
+			name: "different digest", content: bytes.NewReader(append([]byte{'X'}, content[1:]...)),
+			wantErr: evidencestore.ErrContentMismatch,
+		},
+		{
+			name: "source failure", content: io.MultiReader(bytes.NewReader(content[:4]), errorReader{sourceFailure}),
+			wantErr: sourceFailure,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			putCalls := 0
 			tempDir := t.TempDir()
-			store := &Store{
-				client: &fakeClient{put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
+			store := testObjectStore(
+				&fakeClient{put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
 					putCalls++
 					return &awss3.PutObjectOutput{}, nil
 				}},
-				tempDir: tempDir,
-			}
+				tempDir,
+			)
 
 			_, err := store.PutImmutable(context.Background(), expected, test.content)
 			if !errors.Is(err, test.wantErr) {
@@ -115,13 +126,16 @@ func TestPutImmutableClassifiesExistingObject(t *testing.T) {
 		wantErr     error
 	}{
 		{name: "exact duplicate", existing: content, wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
-		{name: "conflicting duplicate", existing: append([]byte{'X'}, content[1:]...), wantErr: evidencestore.ErrPrecondition},
+		{
+			name: "conflicting duplicate", existing: append([]byte{'X'}, content[1:]...),
+			wantErr: evidencestore.ErrPrecondition,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &Store{
-				client: &fakeClient{
+			store := testObjectStore(
+				&fakeClient{
 					put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
 						return nil, precondition
 					},
@@ -129,8 +143,8 @@ func TestPutImmutableClassifiesExistingObject(t *testing.T) {
 						return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(test.existing))}, nil
 					},
 				},
-				tempDir: t.TempDir(),
-			}
+				t.TempDir(),
+			)
 
 			receipt, err := store.PutImmutable(context.Background(), expected, bytes.NewReader(content))
 			if !errors.Is(err, test.wantErr) {
@@ -147,12 +161,16 @@ func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 	expected := identityFor([]byte("immutable profiling evidence"))
 
 	t.Run("location only", func(t *testing.T) {
-		store := &Store{client: &fakeClient{get: func(_ context.Context, input *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
-			if stringValue(input.Bucket) != expected.Store || stringValue(input.Key) != expected.Key {
+		backend := &fakeClient{get: func(
+			_ context.Context,
+			input *awss3.GetObjectInput,
+		) (*awss3.GetObjectOutput, error) {
+			if stringValue(input.Bucket) != testPhysicalBucket || stringValue(input.Key) != expected.Key {
 				t.Fatalf("GetObject location = %s/%s", stringValue(input.Bucket), stringValue(input.Key))
 			}
 			return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader([]byte("existing")))}, nil
-		}}}
+		}}
+		store := testObjectStore(backend, t.TempDir())
 		body, err := store.OpenLocation(context.Background(), expected.Location())
 		if err != nil {
 			t.Fatal(err)
@@ -163,9 +181,13 @@ func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		store := &Store{client: &fakeClient{get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+		backend := &fakeClient{get: func(
+			context.Context,
+			*awss3.GetObjectInput,
+		) (*awss3.GetObjectOutput, error) {
 			return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "missing", Fault: smithy.FaultClient}
-		}}}
+		}}
+		store := testObjectStore(backend, t.TempDir())
 		_, err := store.Open(context.Background(), expected)
 		if !errors.Is(err, evidencestore.ErrNotFound) {
 			t.Fatalf("Open() error = %v, want ErrNotFound", err)
@@ -173,9 +195,13 @@ func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 	})
 
 	t.Run("stream timeout", func(t *testing.T) {
-		store := &Store{client: &fakeClient{get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+		backend := &fakeClient{get: func(
+			context.Context,
+			*awss3.GetObjectInput,
+		) (*awss3.GetObjectOutput, error) {
 			return &awss3.GetObjectOutput{Body: &errorReadCloser{readErr: context.DeadlineExceeded}}, nil
-		}}}
+		}}
+		store := testObjectStore(backend, t.TempDir())
 		body, err := store.Open(context.Background(), expected)
 		if err != nil {
 			t.Fatalf("Open() error = %v", err)
@@ -188,9 +214,13 @@ func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 
 	t.Run("stream transport", func(t *testing.T) {
 		transportFailure := errors.New("connection reset")
-		store := &Store{client: &fakeClient{get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+		backend := &fakeClient{get: func(
+			context.Context,
+			*awss3.GetObjectInput,
+		) (*awss3.GetObjectOutput, error) {
 			return &awss3.GetObjectOutput{Body: &errorReadCloser{readErr: transportFailure}}, nil
-		}}}
+		}}
+		store := testObjectStore(backend, t.TempDir())
 		body, err := store.Open(context.Background(), expected)
 		if err != nil {
 			t.Fatalf("Open() error = %v", err)
@@ -202,13 +232,52 @@ func TestOpenMapsOperationAndStreamErrors(t *testing.T) {
 	})
 }
 
+func TestObjectOperationsRejectAnotherLogicalStoreBeforeS3(t *testing.T) {
+	calls := 0
+	client := &fakeClient{
+		put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
+			calls++
+			return &awss3.PutObjectOutput{}, nil
+		},
+		get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+			calls++
+			return &awss3.GetObjectOutput{}, nil
+		},
+	}
+	store := testObjectStore(client, t.TempDir())
+	payload := []byte("immutable profiling evidence")
+	identity := identityFor(payload)
+	identity.Store = "another-store"
+
+	_, err := store.PutImmutable(context.Background(), identity, bytes.NewReader(payload))
+	if !errors.Is(err, evidencestore.ErrInvalidIdentity) {
+		t.Fatalf("PutImmutable() error = %v, want ErrInvalidIdentity", err)
+	}
+	_, err = store.OpenLocation(context.Background(), identity.Location())
+	if !errors.Is(err, evidencestore.ErrInvalidIdentity) {
+		t.Fatalf("OpenLocation() error = %v, want ErrInvalidIdentity", err)
+	}
+	if calls != 0 {
+		t.Fatalf("S3 called %d times for a mismatched logical store", calls)
+	}
+}
+
 func identityFor(content []byte) evidencestore.ObjectIdentity {
 	sum := sha256.Sum256(content)
 	return evidencestore.ObjectIdentity{
-		Store:  "chill-profiling-evidence",
+		Store:  "chill-evidence-store",
 		Key:    "runs/run-1.json",
 		Digest: fmt.Sprintf("sha256:%x", sum),
 		Size:   int64(len(content)),
+	}
+}
+
+func testObjectStore(backend client, tempDir string) *Store {
+	return &Store{
+		client:       backend,
+		logicalStore: "chill-evidence-store",
+		bucket:       testPhysicalBucket,
+		tempDir:      tempDir,
 	}
 }
 

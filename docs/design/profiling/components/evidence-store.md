@@ -122,6 +122,10 @@ The first package needs only four concepts:
 - stable error categories for not-found, authentication, precondition,
   timeout, transport, and content mismatch.
 
+The S3 adapter binds that logical store to one configured physical bucket.
+Backend bucket naming is delivery configuration and never replaces the logical
+store carried by an object identity or receipt.
+
 The receipt adds schema version and create outcome. It contains no endpoint,
 credential, raw samples, Pod snapshot, or backend response. A receipt alone is
 never sufficient for admission.

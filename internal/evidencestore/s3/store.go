@@ -20,9 +20,11 @@ var (
 )
 
 type Store struct {
-	client  client
-	region  string
-	tempDir string
+	client       client
+	region       string
+	logicalStore string
+	bucket       string
+	tempDir      string
 }
 
 func (s *Store) PutImmutable(
@@ -30,6 +32,9 @@ func (s *Store) PutImmutable(
 	expected evidencestore.ObjectIdentity,
 	content io.Reader,
 ) (evidencestore.Receipt, error) {
+	if err := s.validateLocation(expected.Location()); err != nil {
+		return evidencestore.Receipt{}, err
+	}
 	candidate, err := s.prepareCandidate(expected, content)
 	if err != nil {
 		return evidencestore.Receipt{}, err
@@ -37,7 +42,7 @@ func (s *Store) PutImmutable(
 	defer removeCandidate(candidate)
 
 	_, err = s.client.PutObject(ctx, &awss3.PutObjectInput{
-		Bucket:        aws.String(expected.Store),
+		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(expected.Key),
 		Body:          candidate,
 		ContentLength: aws.Int64(expected.Size),
@@ -69,8 +74,11 @@ func (s *Store) OpenLocation(
 	if err := location.Validate(); err != nil {
 		return nil, err
 	}
+	if err := s.validateLocation(location); err != nil {
+		return nil, err
+	}
 	output, err := s.client.GetObject(ctx, &awss3.GetObjectInput{
-		Bucket: aws.String(location.Store),
+		Bucket: aws.String(s.bucket),
 		Key:    aws.String(location.Key),
 	})
 	if err != nil {
@@ -80,6 +88,18 @@ func (s *Store) OpenLocation(
 		return nil, fmt.Errorf("%w: S3 returned an empty response body", evidencestore.ErrTransport)
 	}
 	return &translatedReadCloser{body: output.Body}, nil
+}
+
+func (s *Store) validateLocation(location evidencestore.ObjectLocation) error {
+	if location.Store != s.logicalStore {
+		return fmt.Errorf(
+			"%w: logical store %q does not match configured store %q",
+			evidencestore.ErrInvalidIdentity,
+			location.Store,
+			s.logicalStore,
+		)
+	}
+	return nil
 }
 
 func (s *Store) inspectExisting(

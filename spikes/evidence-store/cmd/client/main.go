@@ -333,6 +333,8 @@ func loadStoreEnvironment(lookup environment) (evidences3.Config, string, error)
 		return evidences3.Config{}, "", err
 	}
 	config := evidences3.Config{
+		LogicalStore:    storeName,
+		Bucket:          storeName,
 		Endpoint:        endpoint,
 		Region:          region,
 		AccessKeyID:     accessKey,

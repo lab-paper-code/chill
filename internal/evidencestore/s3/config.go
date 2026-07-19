@@ -14,6 +14,8 @@ import (
 )
 
 type Config struct {
+	LogicalStore    string
+	Bucket          string
 	Endpoint        string
 	Region          string
 	AccessKeyID     string
@@ -44,11 +46,13 @@ func New(config Config) (*Store, error) {
 	client := awss3.NewFromConfig(awsConfig, func(options *awss3.Options) {
 		options.UsePathStyle = true
 	})
-	return &Store{client: client, region: config.Region}, nil
+	return &Store{client: client, region: config.Region, logicalStore: config.LogicalStore, bucket: config.Bucket}, nil
 }
 
 func (c Config) validate() error {
 	for name, value := range map[string]string{
+		"logical store":     c.LogicalStore,
+		"bucket":            c.Bucket,
 		"endpoint":          c.Endpoint,
 		"region":            c.Region,
 		"access key ID":     c.AccessKeyID,
@@ -60,6 +64,9 @@ func (c Config) validate() error {
 	}
 	if strings.TrimSpace(c.Endpoint) != c.Endpoint {
 		return errors.New("endpoint must not have surrounding whitespace")
+	}
+	if strings.TrimSpace(c.LogicalStore) != c.LogicalStore || strings.TrimSpace(c.Bucket) != c.Bucket {
+		return errors.New("logical store and bucket must not have surrounding whitespace")
 	}
 	endpoint, err := url.Parse(c.Endpoint)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
