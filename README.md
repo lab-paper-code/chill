@@ -58,12 +58,14 @@ state:
 export PATH="$PWD/bin:$PATH"
 kubectl chill inventory
 kubectl chill inventory -o json
+kubectl chill system
+kubectl chill system -o json
 ```
 
-The current command requires permission to list cluster-scoped `DeviceClass`
-and Kubernetes `Node` resources. The Helm chart installs the unbound
-`chill-inventory-viewer` ClusterRole; a cluster administrator decides which
-users or groups receive it. The CLI does not run inside the operator Pod.
+The current commands require read permission for cluster-scoped `ChillSystem`,
+`DeviceClass`, and Kubernetes `Node` resources. The Helm chart installs the
+unbound `chill-console-viewer` ClusterRole; a cluster administrator decides
+which users or groups receive it. The CLI does not run inside the operator Pod.
 
 ## Helm
 

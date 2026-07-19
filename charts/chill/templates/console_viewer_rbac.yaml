@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "chill.fullname" . }}-inventory-viewer
+  name: {{ include "chill.fullname" . }}-console-viewer
   labels:
     app.kubernetes.io/component: operator-console
     {{- include "chill.labels" . | nindent 4 }}
@@ -9,6 +9,7 @@ rules:
   - apiGroups:
       - edge.dacs.io
     resources:
+      - chillsystems
       - deviceclasses
     verbs:
       - get

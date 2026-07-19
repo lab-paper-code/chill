@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestExecuteInventoryWritesTable(t *testing.T) {
@@ -65,13 +66,64 @@ func TestExecuteInventoryWritesStructuredJSON(t *testing.T) {
 	}
 }
 
+func TestExecuteSystemWritesTable(t *testing.T) {
+	query := &fakeSystemQuery{snapshot: testSystemSnapshot()}
+	deps := dependencies{newSystemQuery: func(opts systemOptions) (systemQuery, error) {
+		if opts.kubeconfig != "/tmp/config" || opts.context != "edge" || opts.output != "table" {
+			t.Fatalf("options = %#v", opts)
+		}
+		return query, nil
+	}}
+	var stdout strings.Builder
+
+	err := execute(context.Background(), []string{
+		"system", "--kubeconfig", "/tmp/config", "--context", "edge",
+	}, &stdout, io.Discard, deps)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"CHILLSYSTEMS_RV", "systems-rv", "chill-system", "NODE_DISCOVERY",
+		"ProfilerAvailable", "True", "ProfilerReady", "profiler is available",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("table missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if query.calls != 1 {
+		t.Fatalf("query calls = %d", query.calls)
+	}
+}
+
+func TestExecuteSystemWritesStructuredJSON(t *testing.T) {
+	deps := dependencies{newSystemQuery: func(systemOptions) (systemQuery, error) {
+		return &fakeSystemQuery{snapshot: testSystemSnapshot()}, nil
+	}}
+	var stdout strings.Builder
+	if err := execute(context.Background(), []string{"system", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	var document systemsDocument
+	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, stdout.String())
+	}
+	if document.ResourceVersion != "systems-rv" || len(document.Systems) != 1 ||
+		document.Systems[0].UID != "system-uid" || !document.Systems[0].Spec.Profiler.Enabled ||
+		document.Systems[0].Status.ObservedGeneration != 3 || len(document.Systems[0].Status.Conditions) != 1 {
+		t.Fatalf("document = %#v", document)
+	}
+}
+
 func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"inventory", "extra"}, {"inventory", "-o", "yaml"}} {
+	for _, args := range [][]string{
+		nil, {"unknown"}, {"inventory", "extra"}, {"inventory", "-o", "yaml"},
+		{"system", "extra"}, {"system", "-o", "yaml"},
+	} {
 		calls := 0
-		deps := dependencies{newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) {
-			calls++
-			return nil, nil
-		}}
+		deps := dependencies{
+			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
+			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
+		}
 		err := execute(context.Background(), args, io.Discard, io.Discard, deps)
 		if !errors.Is(err, errUsage) || calls != 0 {
 			t.Fatalf("execute(%v) error = %v, calls = %d", args, err, calls)
@@ -80,12 +132,12 @@ func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 }
 
 func TestExecuteHelpDoesNotConstructQuery(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"inventory", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"inventory", "--help"}, {"system", "--help"}} {
 		calls := 0
-		deps := dependencies{newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) {
-			calls++
-			return nil, nil
-		}}
+		deps := dependencies{
+			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
+			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
+		}
 		var output strings.Builder
 		if err := execute(context.Background(), args, &output, &output, deps); err != nil {
 			t.Fatalf("execute(%v) error = %v", args, err)
@@ -107,10 +159,32 @@ func TestExecutePreservesQueryFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteSystemPreservesQueryFailure(t *testing.T) {
+	want := errors.New("query failed")
+	deps := dependencies{newSystemQuery: func(systemOptions) (systemQuery, error) {
+		return &fakeSystemQuery{err: want}, nil
+	}}
+	err := execute(context.Background(), []string{"system"}, io.Discard, io.Discard, deps)
+	if !errors.Is(err, want) {
+		t.Fatalf("execute() error = %v", err)
+	}
+}
+
 type fakeInventoryQuery struct {
 	snapshot operatorconsole.InventorySnapshot
 	err      error
 	calls    int
+}
+
+type fakeSystemQuery struct {
+	snapshot operatorconsole.SystemSnapshot
+	err      error
+	calls    int
+}
+
+func (q *fakeSystemQuery) Read(context.Context) (operatorconsole.SystemSnapshot, error) {
+	q.calls++
+	return q.snapshot, q.err
 }
 
 func (q *fakeInventoryQuery) Read(context.Context) (operatorconsole.InventorySnapshot, error) {
@@ -135,6 +209,34 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 				Name: "orin-1", UID: "node-uid", ResourceVersion: "node-rv",
 				Ready: corev1.ConditionTrue, SchedulingDisabled: true,
 			}},
+		}},
+	}
+}
+
+func testSystemSnapshot() operatorconsole.SystemSnapshot {
+	return operatorconsole.SystemSnapshot{
+		ReadAt:          time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+		ResourceVersion: "systems-rv",
+		Systems: []edgev1alpha1.ChillSystem{{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "chill", UID: "system-uid", ResourceVersion: "system-rv", Generation: 3,
+				CreationTimestamp: metav1.NewTime(time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)),
+			},
+			Spec: edgev1alpha1.ChillSystemSpec{
+				ManagementNamespace: "chill-system",
+				NodeDiscovery:       edgev1alpha1.ChillNodeDiscoverySpec{Enabled: true},
+				DeviceDiscovery:     edgev1alpha1.ChillDeviceDiscoverySpec{Enabled: true},
+				Profiler:            edgev1alpha1.ChillProfilerSpec{Enabled: true},
+				EvidenceStore:       edgev1alpha1.ChillEvidenceStoreSpec{Enabled: true},
+			},
+			Status: edgev1alpha1.ChillSystemStatus{
+				ObservedGeneration: 3,
+				Conditions: []metav1.Condition{{
+					Type: edgev1alpha1.ChillSystemConditionProfilerAvailable, Status: metav1.ConditionTrue,
+					ObservedGeneration: 3, Reason: "ProfilerReady", Message: "profiler is available",
+					LastTransitionTime: metav1.NewTime(time.Date(2026, 7, 20, 0, 1, 0, 0, time.UTC)),
+				}},
+			},
 		}},
 	}
 }

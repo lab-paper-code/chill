@@ -34,11 +34,14 @@ CHILL이 알고 있는 사실을 확인하고, 측정 의도 하나를 제출하
 `kubectl chill inventory` 플러그인은 표준 kubeconfig로 query adapter를 호출한다. 기본 table 출력과
 구조화된 JSON 출력은 같은 snapshot을 사용하며 class별 capability, 일치하는 Nodes,
 Ready tri-state, scheduling-disabled 사실과 원본 resourceVersion을 보여준다.
-Helm chart는 DeviceClass와 Node의 get·list만 허용하는 unbound inventory viewer
-ClusterRole을 제공하며, 실제 사용자·그룹 binding은 클러스터 관리자가 소유한다.
+`kubectl chill system`은 `ChillSystem.spec`의 구성요소 요청 상태와
+`ChillSystem.status.conditions`를 분리해 보여주며 별도의 종합 health를 계산하지 않는다.
+Helm chart는 현재 조회 경로가 사용하는 ChillSystem, DeviceClass와 Node의 get·list만
+허용하는 unbound console viewer ClusterRole을 제공하며, 실제 사용자·그룹 binding은
+클러스터 관리자가 소유한다.
 
-아직 Dashboard consumer는 없다. 현재 운영자가 호출할 수 있는 첫 read-only 수직 단면은
-CLI inventory이며, System·ModelSpec·ProfilingRun 조회는 포함하지 않는다.
+아직 Dashboard consumer는 없다. 현재 운영자가 호출할 수 있는 read-only 수직 단면은
+CLI System과 Inventory이며, ModelSpec·ProfilingRun 조회는 포함하지 않는다.
 
 ## 현재 구현의 사실 경계
 
