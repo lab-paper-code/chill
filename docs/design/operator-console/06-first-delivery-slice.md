@@ -20,6 +20,17 @@ CHILL이 알고 있는 사실을 확인하고, 측정 의도 하나를 제출하
 선행조건이 아니다. 해당 능력은 권위 있는 decision·profile·transition 계약이 생긴
 뒤 같은 Console에 추가한다.
 
+## 현재 구현 상태
+
+첫 번째 조회 계약인 `DeviceClass.spec + live Nodes` inventory projection은
+`internal/deviceclass`에 구현되어 있다. selector 매칭, Node Ready의 tri-state,
+`Node.spec.unschedulable`과 원본 identity를 보존하며 어떤 status에도 결과를 저장하지
+않는다.
+
+아직 이 projection을 소비하는 CLI, Dashboard 또는 query adapter는 없다. 따라서 현재
+완료된 것은 조회 의미와 순수 조합 로직이며, 운영자가 호출할 수 있는 read-only 수직
+단면은 다음 구현 단계다.
+
 ## 현재 구현의 사실 경계
 
 첫 구현은 다음 상태보다 강한 주장을 만들지 않는다.
