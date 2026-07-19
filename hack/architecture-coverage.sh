@@ -24,6 +24,7 @@ components=(
   profiling-run
   profiler-app
   profiler-controller
+  profiler-admission
   profiler-evidence
   profiler-evidence-kube
   profiler-worker
@@ -50,6 +51,7 @@ component_for() {
     internal/profilingrun) echo profiling-run ;;
     internal/profiler) echo profiler-app ;;
     internal/profiler/controller) echo profiler-controller ;;
+    internal/profiler/admission) echo profiler-admission ;;
     internal/profiler/evidence) echo profiler-evidence ;;
     internal/profiler/evidence/kube) echo profiler-evidence-kube ;;
     internal/profiler/worker) echo profiler-worker ;;

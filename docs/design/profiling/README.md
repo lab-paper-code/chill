@@ -3,9 +3,10 @@
 ## Status
 
 Roadmap with the first three leaf plans and the `ProfilingRun` path through
-durable execution-evidence verification implemented. Single-Run scientific
-admission and profile publication remain incomplete. This document itself does
-not authorize later API or internal changes.
+durable execution-evidence verification and single-Run admission implemented.
+Repeated-trial aggregation, curve derivation, and profile publication remain
+incomplete. This document itself does not authorize later API or internal
+changes.
 
 ## How to use this directory
 
@@ -103,7 +104,7 @@ Its first pure read-only plan is approved against the retained real Run
 evidence. Persistence remains deferred until the output contract survives
 adversarial and live-evidence review.
 
-### 4. Minimal Profiler control path — evidence path implemented
+### 4. Minimal Profiler control path — first bounded path implemented
 
 [plans/04-minimal-profiler-control-path.md](plans/04-minimal-profiler-control-path.md)
 
@@ -115,10 +116,10 @@ Answers only:
 The Operator manages a separately deployed Profiler operand and reports its
 component availability. The Profiler resolves trusted facts, freezes one Run,
 creates one owned Job, verifies the worker's durable raw object, finalizes
-terminal Kubernetes evidence, and publishes compact execution and evidence
-status. Single-Run scientific admission remains the next transition. The scope
-does not orchestrate a batch campaign, derive `b_sat`, publish a
-`DeviceProfile`, or connect to the scheduler.
+terminal Kubernetes evidence, independently reloads it, applies the named
+single-Run admission policy, and publishes compact execution, evidence, and
+admission status. The scope does not orchestrate a batch campaign, derive
+`b_sat`, publish a `DeviceProfile`, or connect to the scheduler.
 
 ## Component contracts
 

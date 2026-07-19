@@ -74,7 +74,11 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct execution evidence finalizer: %w", err)
 	}
-	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs, finalizer)
+	admitter, err := profilercontroller.NewKubernetesEvidenceAdmitter(reader, newEvidenceObjectStore)
+	if err != nil {
+		return fmt.Errorf("construct execution evidence admitter: %w", err)
+	}
+	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs, finalizer, admitter)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}

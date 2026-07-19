@@ -12,17 +12,19 @@ multi-architecture image, and live-cluster lifecycle verification.
 The immutable, namespaced `ProfilingRun` API, preparation, Job execution,
 worker-side raw evidence commit, controller-side terminal evidence
 finalization, and compact execution/evidence status are implemented and
-live-verified for the first CPU ONNX Runtime path. Single-Run scientific
-admission remains unimplemented. Request, evidence-ownership, status/retry,
-and measurement-worker checkpoints are fixed.
+live-verified for the first CPU ONNX Runtime path. The Profiler now independently
+reloads that retained evidence, applies the named `wall-power-v1` single-Run
+policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
+codes. Request, evidence-ownership, status/retry, and measurement-worker
+checkpoints are fixed.
 
 ## Purpose
 
 CHILL has reusable internal functions for static compatibility, bounded power
 observation, immutable Run validation, and profile-evidence admission. Its
 managed Profiler process now coordinates Run preparation, one native Job, and
-durable execution-evidence finalization. It does not yet invoke the existing
-single-Run admission boundary.
+durable execution-evidence finalization, then invokes the existing single-Run
+admission boundary without copying raw observations into Kubernetes status.
 
 The first Profiler answers one bounded question:
 

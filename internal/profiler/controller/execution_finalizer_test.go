@@ -85,7 +85,7 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := finalizer.loadCredentials(context.Background(), "chill-system", secret.Name)
+	credentials, err := loadEvidenceStoreCredentials(context.Background(), finalizer.reader, "chill-system", secret.Name)
 	if err != nil {
 		t.Fatal(err)
 	}

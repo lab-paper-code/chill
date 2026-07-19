@@ -125,13 +125,14 @@ Profiler controller
   -> verify raw measurement after Job/Pod termination
   -> combine terminal Kubernetes facts
   -> durable immutable execution-evidence record
+  -> independently reload and scientifically admit that exact evidence
   -> compact ProfilingRun reference and admission status
 ```
 
-The next unresolved Run transition is scientific admission of the verified
-execution evidence. Profile history, scheduler audit, and a general metadata
-index should not be designed into the first sink without evidence that the
-first Run path needs them.
+The next unresolved profiling transition begins above one Run: repeated-trial
+aggregation and curve construction. Profile history, scheduler audit, and a
+general metadata index should not be designed into the first sink without
+evidence that those later paths need them.
 
 The evidence store is a CHILL-managed operand. Its Deployment, Service,
 persistent storage attachment, credential reference, health, and lifecycle

@@ -58,6 +58,9 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("empty admission policy", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.AdmissionPolicy = ""
 		}),
+		Entry("unsupported admission policy", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.AdmissionPolicy = "unknown"
+		}),
 	)
 
 	It("rejects changing an existing Run spec", func() {

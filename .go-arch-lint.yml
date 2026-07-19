@@ -44,6 +44,7 @@ components:
   profiling-run: { in: internal/profilingrun }
   profiler-app: { in: internal/profiler }
   profiler-controller: { in: internal/profiler/controller }
+  profiler-admission: { in: internal/profiler/admission }
   profiler-evidence: { in: internal/profiler/evidence }
   profiler-evidence-kube: { in: internal/profiler/evidence/kube }
   profiler-worker: { in: internal/profiler/worker }
@@ -116,6 +117,13 @@ deps:
       - profiler-evidence
       - profiling-run
 
+  profiler-admission:
+    mayDependOn:
+      - evidence-core
+      - profile-derivation
+      - profiler-evidence
+      - profiling-run
+
   profiler-worker:
     mayDependOn:
       - evidence-core
@@ -131,6 +139,7 @@ deps:
       - model-compat
       - power-edgemetrics
       - profiler-app
+      - profiler-admission
       - profiler-evidence
       - profiler-evidence-kube
       - profiling-run

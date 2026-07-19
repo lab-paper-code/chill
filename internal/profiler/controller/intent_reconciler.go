@@ -8,6 +8,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,6 +35,7 @@ type RunReconciler struct {
 	freezer  RunIntentFreezer
 	jobs     RunExecutionJobs
 	finalize RunEvidenceFinalizer
+	admit    RunEvidenceAdmitter
 }
 
 func NewRunReconciler(
@@ -41,11 +43,12 @@ func NewRunReconciler(
 	freezer RunIntentFreezer,
 	jobs RunExecutionJobs,
 	finalize RunEvidenceFinalizer,
+	admit RunEvidenceAdmitter,
 ) (*RunReconciler, error) {
-	if kubeClient == nil || freezer == nil || jobs == nil || finalize == nil {
-		return nil, errors.New("Kubernetes client, Run intent freezer, execution Jobs, and evidence finalizer are required")
+	if kubeClient == nil || freezer == nil || jobs == nil || finalize == nil || admit == nil {
+		return nil, errors.New("Kubernetes client, Run intent freezer, execution Jobs, evidence finalizer, and evidence admitter are required")
 	}
-	return &RunReconciler{Client: kubeClient, freezer: freezer, jobs: jobs, finalize: finalize}, nil
+	return &RunReconciler{Client: kubeClient, freezer: freezer, jobs: jobs, finalize: finalize, admit: admit}, nil
 }
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -108,12 +111,76 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s evidence: %w", req.NamespacedName, err)
 		}
 		return ctrl.Result{}, nil
-	case profiler.ActionAdmitEvidence, profiler.ActionComplete:
-		// Single-Run scientific admission is the next separately implemented
-		// transition. Retained evidence is already durable and reconstructable.
+	case profiler.ActionAdmitEvidence:
+		if decision.EvidenceReference == nil {
+			return ctrl.Result{}, errors.New("admission decision omitted evidence reference")
+		}
+		admission, admitErr := r.admit.Admit(ctx, run, frozen.PreparedRun, job, *decision.EvidenceReference)
+		if admitErr != nil {
+			statusErr := r.publishAdmissionFailure(ctx, run)
+			if statusErr != nil {
+				return ctrl.Result{}, errors.Join(admitErr, statusErr)
+			}
+			return ctrl.Result{}, fmt.Errorf("admit ProfilingRun %s evidence: %w", req.NamespacedName, admitErr)
+		}
+		if err := r.publishAdmission(ctx, run, admission); err != nil {
+			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s admission: %w", req.NamespacedName, err)
+		}
+		return ctrl.Result{}, nil
+	case profiler.ActionComplete:
 		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unexpected ProfilingRun lifecycle action %q", decision.Action)
+	}
+}
+
+func (r *RunReconciler) publishAdmissionFailure(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
+			Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+			Status: metav1.ConditionUnknown, ObservedGeneration: run.Generation,
+			Reason: "AdmissionEvaluationFailed", Message: "verified evidence could not be evaluated",
+		})
+	})
+}
+
+func (r *RunReconciler) publishAdmission(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	result profileradmission.Result,
+) error {
+	conditionStatus, reason, message, err := admissionCondition(result.Verdict)
+	if err != nil {
+		return err
+	}
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
+			Verdict: string(result.Verdict), PolicyVersion: result.PolicyVersion,
+			ReasonCodes: append([]string(nil), result.ReasonCodes...),
+		}
+		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
+			Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+			Status: conditionStatus, ObservedGeneration: run.Generation,
+			Reason: reason, Message: message,
+		})
+	})
+}
+
+func admissionCondition(verdict profileradmission.Verdict) (
+	metav1.ConditionStatus,
+	string,
+	string,
+	error,
+) {
+	switch verdict {
+	case profileradmission.VerdictAccepted:
+		return metav1.ConditionTrue, "EvidenceAccepted", "verified evidence passed single-Run scientific admission", nil
+	case profileradmission.VerdictRejected:
+		return metav1.ConditionFalse, "EvidenceRejected", "verified evidence failed single-Run scientific admission", nil
+	case profileradmission.VerdictInsufficient:
+		return metav1.ConditionUnknown, "EvidenceInsufficient", "verified evidence is insufficient for scientific admission", nil
+	default:
+		return metav1.ConditionUnknown, "", "", fmt.Errorf("unsupported admission verdict %q", verdict)
 	}
 }
 

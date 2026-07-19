@@ -9,6 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +48,23 @@ type recordingRunEvidenceFinalizer struct {
 	calls  int
 	result FinalizedRunEvidence
 	err    error
+}
+
+type recordingRunEvidenceAdmitter struct {
+	calls  int
+	result profileradmission.Result
+	err    error
+}
+
+func (a *recordingRunEvidenceAdmitter) Admit(
+	context.Context,
+	*edgev1alpha1.ProfilingRun,
+	profiler.PreparedRun,
+	*batchv1.Job,
+	evidencestore.ObjectIdentity,
+) (profileradmission.Result, error) {
+	a.calls++
+	return a.result, a.err
 }
 
 func (f *recordingRunEvidenceFinalizer) Finalize(
@@ -92,7 +110,9 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(
+		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +142,9 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(
+		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +182,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		&recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}},
 		&recordingExecutionJobs{},
 		finalizer,
+		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -189,13 +212,81 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 }
 
+func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		verdict    profileradmission.Verdict
+		wantStatus metav1.ConditionStatus
+		wantReason string
+	}{
+		{name: "accepted", verdict: profileradmission.VerdictAccepted, wantStatus: metav1.ConditionTrue, wantReason: "EvidenceAccepted"},
+		{name: "rejected", verdict: profileradmission.VerdictRejected, wantStatus: metav1.ConditionFalse, wantReason: "EvidenceRejected"},
+		{name: "insufficient", verdict: profileradmission.VerdictInsufficient, wantStatus: metav1.ConditionUnknown, wantReason: "EvidenceInsufficient"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			scheme := runReconcilerTestScheme(t)
+			run := testRun()
+			prepared := currentPreparedRun(t)
+			recordIntentAndJob(run, prepared.IntentDigest)
+			run.Status.Evidence = testEvidenceReference()
+			run.Status.ActualExecution = &edgev1alpha1.ProfilingRunActualExecutionStatus{
+				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
+				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
+			}
+			job := ownedJob(run, &batchv1.JobStatus{
+				Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+			})
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+			admitter := &recordingRunEvidenceAdmitter{result: profileradmission.Result{
+				Verdict: test.verdict, PolicyVersion: "wall-power-v1",
+				ReasonCodes: []string{"CoResidentWindowUnknown", "ThermalStateUnavailable"},
+			}}
+			jobs := &recordingExecutionJobs{}
+			finalizer := &recordingRunEvidenceFinalizer{}
+			reconciler, err := NewRunReconciler(
+				kubeClient,
+				&recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}},
+				jobs,
+				finalizer,
+				admitter,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+			if admitter.calls != 1 || jobs.calls != 0 || finalizer.calls != 0 {
+				t.Fatalf("transition calls: admit=%d jobs=%d finalize=%d", admitter.calls, jobs.calls, finalizer.calls)
+			}
+			actual := &edgev1alpha1.ProfilingRun{}
+			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			if actual.Status.Admission == nil || actual.Status.Admission.Verdict != string(test.verdict) ||
+				actual.Status.Admission.PolicyVersion != "wall-power-v1" || len(actual.Status.Admission.ReasonCodes) != 2 {
+				t.Fatalf("admission status = %#v", actual.Status.Admission)
+			}
+			condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
+			if condition == nil || condition.Status != test.wantStatus || condition.Reason != test.wantReason {
+				t.Fatalf("admission condition = %#v", condition)
+			}
+		})
+	}
+}
+
 func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
+	reconciler, err := NewRunReconciler(
+		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +310,7 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 		&recordingIntentFreezer{err: want},
 		&recordingExecutionJobs{},
 		&recordingRunEvidenceFinalizer{},
+		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)

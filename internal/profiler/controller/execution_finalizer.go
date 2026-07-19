@@ -84,7 +84,7 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
-	credentials, err := f.loadCredentials(ctx, run.Namespace, binding.CredentialsSecretName)
+	credentials, err := loadEvidenceStoreCredentials(ctx, f.reader, run.Namespace, binding.CredentialsSecretName)
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
@@ -167,12 +167,13 @@ func (f *KubernetesExecutionFinalizer) observe(
 	}, nil
 }
 
-func (f *KubernetesExecutionFinalizer) loadCredentials(
+func loadEvidenceStoreCredentials(
 	ctx context.Context,
+	reader client.Reader,
 	namespace, name string,
 ) (evidenceStoreCredentials, error) {
 	secret := &corev1.Secret{}
-	if err := f.reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, secret); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, secret); err != nil {
 		return evidenceStoreCredentials{}, fmt.Errorf("get retained Evidence Store credentials Secret: %w", err)
 	}
 	credentials := evidenceStoreCredentials{
