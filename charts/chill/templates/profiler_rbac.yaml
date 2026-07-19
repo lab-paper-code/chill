@@ -38,6 +38,9 @@ rules:
       - jobs
     verbs:
       - get
+      - list
+      - watch
+      - create
   {{- if .Values.profiler.leaderElection }}
   - apiGroups:
       - coordination.k8s.io

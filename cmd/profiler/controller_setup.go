@@ -9,9 +9,9 @@ import (
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
 )
 
-// setupIntentController is the composition root for the first bounded
-// ProfilingRun transition. Runtime work remains outside the controller process.
-func setupIntentController(mgr ctrl.Manager, opts options) error {
+// setupRunController is the composition root for bounded ProfilingRun
+// transitions. Runtime work remains outside the controller process.
+func setupRunController(mgr ctrl.Manager, opts options) error {
 	reader := mgr.GetAPIReader()
 	candidates, err := profilercontroller.NewKubernetesCandidateResolver(
 		reader,
@@ -51,12 +51,25 @@ func setupIntentController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct intent freezer: %w", err)
 	}
-	reconciler, err := profilercontroller.NewIntentReconciler(mgr.GetClient(), freezer)
+	stores, err := profilercontroller.NewKubernetesEvidenceStoreResolver(
+		reader,
+		profilercontroller.EvidenceStoreResolverOptions{
+			SystemName: opts.systemName, Namespace: opts.watchNamespace,
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("construct intent reconciler: %w", err)
+		return fmt.Errorf("construct Evidence Store resolver: %w", err)
+	}
+	jobs, err := profilercontroller.NewExecutionJobs(mgr.GetClient(), mgr.GetScheme(), stores)
+	if err != nil {
+		return fmt.Errorf("construct execution Jobs: %w", err)
+	}
+	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs)
+	if err != nil {
+		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up intent reconciler: %w", err)
+		return fmt.Errorf("set up ProfilingRun reconciler: %w", err)
 	}
 	return nil
 }

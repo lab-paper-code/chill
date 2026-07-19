@@ -19,8 +19,8 @@ const (
 	s3PortName         = "s3"
 	s3Port             = component.EvidenceStoreS3Port
 	healthPath         = "/_/health"
-	accessKeySecretKey = "access-key"
-	secretKeySecretKey = "secret-key"
+	accessKeySecretKey = component.EvidenceStoreAccessKeyKey
+	secretKeySecretKey = component.EvidenceStoreSecretKeyKey
 )
 
 func buildDeployment(instance Instance, config Config) *appsv1.Deployment {
