@@ -98,13 +98,6 @@ func projectTrial(
 	for index, sample := range raw.Power.Samples {
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
-	unexpected := make([]string, 0)
-	for _, pod := range execution.Terminal.NodeWorkload.Pods {
-		if pod.Phase == "Running" && pod.UID != execution.Terminal.Pod.UID {
-			unexpected = append(unexpected, pod.Namespace+"/"+pod.Name)
-		}
-	}
-	sort.Strings(unexpected)
 	stateIdentity, err := materialStateIdentity(execution.Intent, execution.Terminal.Node.UID)
 	if err != nil {
 		return profilederivation.Trial{}, err
@@ -121,7 +114,6 @@ func projectTrial(
 		Samples:               samples,
 		Failures:              len(raw.Power.Failures),
 		SourceTimestampAbsent: raw.Power.Summary.SourceTimestampAbsent,
-		UnexpectedCoResidents: unexpected,
 		CoResidentWindowKnown: false,
 		ThermalStateKnown:     false,
 		SteadyWindowVerified:  true,

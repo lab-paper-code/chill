@@ -10,7 +10,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-func TestProjectTrialPreservesFactsAndLeavesUnknownFactsUnknown(t *testing.T) {
+func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapshot(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	intent := admissionIntent()
@@ -51,8 +51,8 @@ func TestProjectTrialPreservesFactsAndLeavesUnknownFactsUnknown(t *testing.T) {
 		!trial.SteadyWindowVerified || trial.ThermalStateKnown || trial.CoResidentWindowKnown {
 		t.Fatalf("projected trial = %#v", trial)
 	}
-	if len(trial.UnexpectedCoResidents) != 1 || trial.UnexpectedCoResidents[0] != "monitoring/edge-metric" {
-		t.Fatalf("unexpected co-residents = %#v", trial.UnexpectedCoResidents)
+	if len(trial.UnexpectedCoResidents) != 0 {
+		t.Fatalf("terminal snapshot was treated as measurement-window contamination: %#v", trial.UnexpectedCoResidents)
 	}
 }
 
