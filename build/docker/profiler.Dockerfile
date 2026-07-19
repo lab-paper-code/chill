@@ -8,6 +8,8 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY cmd/profiler/ cmd/profiler/
+COPY api/ api/
+COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/profiler ./cmd/profiler
 
 FROM gcr.io/distroless/static:nonroot
