@@ -219,6 +219,41 @@ exceeds its result-byte budget. These capacities are versioned worker delivery
 bindings derived from the bounded execution resources; they are not scientific
 Run knobs and do not add fields to `ProfilingRun.spec`.
 
+### Resource-capacity envelope
+
+Job materialization must derive container resources, handoff deadlines, and
+producer capacities through one versioned worker policy. It must not assemble
+independent positive numbers that can only be discovered to conflict after a
+large in-memory result has been built. The immutable Job retains the native
+resource requirements and policy identity needed to reconstruct that delivery
+decision; CR status does not copy these implementation details.
+
+The first policy must enforce these relationships:
+
+- the PowerObserver event capacity covers the complete frozen polling schedule,
+  and the worst-case retained events fit its handoff byte capacity;
+- the runtime input ceiling leaves a separately measured reserve for the model,
+  runtime session, outputs, bounded input-generation temporary, and worker;
+- the latency-sample capacity and runtime-result byte capacity fit both the
+  runtime container memory limit and the immutable handoff; and
+- the common attempt deadline covers artifact preparation, model and input
+  preparation, observer synchronization, warm-up, measurement, handoff, and
+  evidence commit.
+
+Capacity is derived from resources and the frozen duration, never from an
+expected model throughput: using a predicted inference rate would make faster
+measurements fail for reasons derived from the profile they are supposed to
+produce. When the artifact-derived input shape exceeds the admitted ceiling,
+or a duration cannot retain its complete latency distribution, the worker
+fails explicitly. It never truncates, samples, or silently aggregates the raw
+distribution to fit a budget.
+
+Numeric reserves and serialized-byte coefficients are not fixed by this
+document. They require measurements from the exact promoted worker/runtime
+image and become implementation constants of that versioned path. A later
+runtime may define its own policy; this first contract does not introduce a
+generic resource-planner framework.
+
 ## Responsibility and dependency boundary
 
 ```text
@@ -251,7 +286,8 @@ and verified immutable evidence plus native Kubernetes observations.
    from the spike without importing spike code.
 4. Add the CHILL-managed Evidence Store delivery binding to Profiler startup
    configuration and Job projection.
-5. Add deterministic Job materialization and status reference publication.
+5. Add deterministic Job materialization with its coherent resource-capacity
+   envelope and status reference publication.
 6. Connect terminal observation to the existing evidence finalizer.
 7. Compare one live Lattepanda Run byte-for-byte and fact-for-fact with the
    retained spike evidence before removing any spike path.
