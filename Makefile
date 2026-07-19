@@ -256,6 +256,7 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 .PHONY: build
 build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/operator cmd/main.go
+	go build -o bin/kubectl-chill ./cmd/chill
 	go build -o bin/node-discovery ./cmd/node-discovery
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/power-observer ./cmd/power-observer

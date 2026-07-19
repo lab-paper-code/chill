@@ -48,6 +48,21 @@ make test-e2e
 
 If direnv is enabled, the tracked `.envrc` sets `KUBECONFIG` to the repo-local kind kubeconfig.
 
+### Operator CLI
+
+`make build` creates the `kubectl-chill` plugin in `bin/`. Add that directory
+to `PATH` to query the current kubeconfig context without changing cluster
+state:
+
+```sh
+export PATH="$PWD/bin:$PATH"
+kubectl chill inventory
+kubectl chill inventory -o json
+```
+
+The current command requires permission to list cluster-scoped `DeviceClass`
+and Kubernetes `Node` resources. It does not run inside the operator Pod.
+
 ## Helm
 
 CHILL uses one Helm release:

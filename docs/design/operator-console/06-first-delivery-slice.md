@@ -31,8 +31,12 @@ CHILL이 알고 있는 사실을 확인하고, 측정 의도 하나를 제출하
 읽어 이 projection을 반환한다. 두 LIST의 resourceVersion과 조회 완료 시각을 별도로
 보존하며 원자적인 cross-resource snapshot이라고 주장하지 않는다.
 
-아직 이 query를 소비하는 CLI나 Dashboard는 없다. 따라서 현재 완료된 것은 공통 조회
-계약까지이며, 운영자가 호출할 수 있는 read-only 수직 단면은 다음 구현 단계다.
+`kubectl chill inventory` 플러그인은 표준 kubeconfig로 query adapter를 호출한다. 기본 table 출력과
+구조화된 JSON 출력은 같은 snapshot을 사용하며 class별 capability, 일치하는 Nodes,
+Ready tri-state, scheduling-disabled 사실과 원본 resourceVersion을 보여준다.
+
+아직 Dashboard consumer는 없다. 현재 운영자가 호출할 수 있는 첫 read-only 수직 단면은
+CLI inventory이며, System·ModelSpec·ProfilingRun 조회는 포함하지 않는다.
 
 ## 현재 구현의 사실 경계
 
