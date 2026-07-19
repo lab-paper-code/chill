@@ -75,6 +75,7 @@ deps:
       - api
       - device-class
       - evidence-core
+      - power-core
       - profiler-evidence
 
   operator:
