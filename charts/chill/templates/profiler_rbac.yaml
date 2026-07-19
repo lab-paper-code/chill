@@ -32,6 +32,12 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
   {{- if .Values.profiler.leaderElection }}
   - apiGroups:
       - coordination.k8s.io
@@ -82,6 +88,7 @@ rules:
   - apiGroups:
       - edge.dacs.io
     resources:
+      - chillsystems
       - deviceclasses
       - modelspecs
     verbs:

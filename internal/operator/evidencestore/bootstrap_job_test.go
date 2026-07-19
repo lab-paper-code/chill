@@ -6,6 +6,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/lab-paper-code/chill/internal/component"
+)
+
+var (
+	testConfigDigest        = component.EvidenceStoreConfigDigest("test Evidence Store config")
+	changedTestConfigDigest = component.EvidenceStoreConfigDigest("changed Evidence Store config")
 )
 
 func TestBuildBootstrapJob(t *testing.T) {
@@ -15,7 +22,7 @@ func TestBuildBootstrapJob(t *testing.T) {
 		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m")},
 	}
 
-	job, err := buildBootstrapJob(instance, config)
+	job, err := buildBootstrapJob(instance, config, testConfigDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,6 +31,9 @@ func TestBuildBootstrapJob(t *testing.T) {
 	}
 	if len(job.OwnerReferences) != 0 {
 		t.Fatalf("builder ownerReferences = %#v", job.OwnerReferences)
+	}
+	if job.Annotations[component.EvidenceStoreConfigDigestAnnotation] != testConfigDigest {
+		t.Fatalf("config digest annotation = %q", job.Annotations[component.EvidenceStoreConfigDigestAnnotation])
 	}
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != bootstrapDeadlineSeconds ||
 		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != bootstrapBackoffLimit {
@@ -72,11 +82,11 @@ func assertBootstrapPod(t *testing.T, pod corev1.PodSpec, instance Instance, con
 func TestBuildBootstrapJobHashTracksManagedInputs(t *testing.T) {
 	instance := validInstance()
 	config := validConfig()
-	first, err := buildBootstrapJob(instance, config)
+	first, err := buildBootstrapJob(instance, config, testConfigDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := buildBootstrapJob(instance, config)
+	second, err := buildBootstrapJob(instance, config, testConfigDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +95,7 @@ func TestBuildBootstrapJobHashTracksManagedInputs(t *testing.T) {
 	}
 
 	config.Bucket = "another-evidence-bucket"
-	changed, err := buildBootstrapJob(instance, config)
+	changed, err := buildBootstrapJob(instance, config, testConfigDigest)
 	if err != nil {
 		t.Fatal(err)
 	}

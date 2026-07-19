@@ -85,7 +85,9 @@ The following values are delivery bindings, not scientific Run inputs:
 The Profiler receives the owning `ChillSystem` name at startup. At Job creation
 it exact-reads that system's enabled Evidence Store reference and configuration,
 derives the internal Service FQDN and immutable credentials Secret reference,
-and never reads the credential bytes. It does not reconcile or assess the
+and never reads the credential bytes. It requires the current ChillSystem
+availability condition and a completed, operator-owned bootstrap Job attesting
+the exact configuration digest. It does not reconcile or directly probe the
 storage operand.
 
 The resolved binding is retained in the immutable Job PodSpec through literal

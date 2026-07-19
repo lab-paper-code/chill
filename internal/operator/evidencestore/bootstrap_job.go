@@ -9,6 +9,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const (
@@ -18,7 +20,7 @@ const (
 	bootstrapSpecHashAnnotation = "edge.dacs.io/evidence-store-bootstrap-spec-hash"
 )
 
-func buildBootstrapJob(instance Instance, config Config) (*batchv1.Job, error) {
+func buildBootstrapJob(instance Instance, config Config, configDigest string) (*batchv1.Job, error) {
 	labels := operandLabels(instance.SystemName)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -66,7 +68,10 @@ func buildBootstrapJob(instance Instance, config Config) (*batchv1.Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	job.Annotations = map[string]string{bootstrapSpecHashAnnotation: digest}
+	job.Annotations = map[string]string{
+		bootstrapSpecHashAnnotation:                   digest,
+		component.EvidenceStoreConfigDigestAnnotation: configDigest,
+	}
 	return job, nil
 }
 

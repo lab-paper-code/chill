@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -119,12 +121,15 @@ storageSize: 1Gi
 		ConfigMapKey:  DefaultConfigKey,
 	}
 
-	config, err := loadConfig(context.Background(), reader, instance)
+	config, configDigest, err := loadConfig(context.Background(), reader, instance)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.Bucket != "chill-profiling-evidence" {
 		t.Fatalf("Bucket = %q", config.Bucket)
+	}
+	if configDigest != component.EvidenceStoreConfigDigest(configMap.Data[DefaultConfigKey]) {
+		t.Fatalf("config digest = %q", configDigest)
 	}
 }
 
@@ -143,7 +148,7 @@ func TestLoadConfigRejectsMissingDataKey(t *testing.T) {
 		ConfigMapKey:  DefaultConfigKey,
 	}
 
-	if _, err := loadConfig(context.Background(), reader, instance); err == nil ||
+	if _, _, err := loadConfig(context.Background(), reader, instance); err == nil ||
 		!strings.Contains(err.Error(), `missing key "config.yaml"`) {
 		t.Fatalf("loadConfig() error = %v, want missing-key error", err)
 	}

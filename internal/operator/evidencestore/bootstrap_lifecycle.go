@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 type BootstrapState string
@@ -33,8 +34,9 @@ func reconcileBootstrapJob(
 	system *edgev1alpha1.ChillSystem,
 	instance Instance,
 	config Config,
+	configDigest string,
 ) (BootstrapState, bool, error) {
-	desired, err := buildBootstrapJob(instance, config)
+	desired, err := buildBootstrapJob(instance, config, configDigest)
 	if err != nil {
 		return "", false, err
 	}
@@ -45,7 +47,7 @@ func reconcileBootstrapJob(
 		if err := requireControlledBySystem(current, system); err != nil {
 			return "", false, err
 		}
-		if current.Annotations[bootstrapSpecHashAnnotation] == desired.Annotations[bootstrapSpecHashAnnotation] {
+		if sameBootstrapContract(current, desired) {
 			if !current.DeletionTimestamp.IsZero() {
 				return BootstrapStateRunning, true, nil
 			}
@@ -87,6 +89,12 @@ func reconcileBootstrapJob(
 		return "", false, fmt.Errorf("create Evidence Store bootstrap Job %s: %w", key.String(), err)
 	}
 	return BootstrapStateRunning, false, nil
+}
+
+func sameBootstrapContract(current, desired *batchv1.Job) bool {
+	return current.Annotations[bootstrapSpecHashAnnotation] == desired.Annotations[bootstrapSpecHashAnnotation] &&
+		current.Annotations[component.EvidenceStoreConfigDigestAnnotation] ==
+			desired.Annotations[component.EvidenceStoreConfigDigestAnnotation]
 }
 
 func deploymentAvailable(

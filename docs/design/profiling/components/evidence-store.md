@@ -168,6 +168,12 @@ The Job uses bounded Kubernetes retry and remains observable after completion
 or failure. A failed Job is not recreated indefinitely; a changed bootstrap
 contract or explicit Job removal permits a new attempt.
 
+A bootstrap Job records the SHA-256 digest of the exact operator configuration
+bytes it prepared. Profiler consumers accept a delivery binding only when the
+current `EvidenceStoreAvailable` condition and an owned, completed bootstrap Job
+attest that same digest. A mutable ConfigMap update therefore cannot send a Run
+to a bucket that has not completed bootstrap.
+
 Workers receive the internal Service FQDN and referenced Secret through their
 Job. Node IPs, NodePorts, and caller-selected URLs are not Run inputs.
 

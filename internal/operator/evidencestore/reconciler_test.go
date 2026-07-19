@@ -104,7 +104,7 @@ func TestReconcileDisableDeletesOnlyReplaceableResources(t *testing.T) {
 	claim := buildPersistentVolumeClaim(instance, config)
 	deployment := buildDeployment(instance, config)
 	service := buildService(instance)
-	job, err := buildBootstrapJob(instance, config)
+	job, err := buildBootstrapJob(instance, config, testConfigDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
