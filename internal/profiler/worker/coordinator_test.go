@@ -41,8 +41,11 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
 	}}
 	coordinator := mustCoordinator(t,
-		runtimeFunc(func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error) {
+		runtimeFunc(func(_ context.Context, request RuntimeRequest) (profilingrun.RuntimeResult, error) {
 			calls = append(calls, "runtime")
+			if request.PodUID != "pod-uid" || request.ScheduledNodeName != intent.TargetNode.Name {
+				t.Fatalf("unexpected runtime request: %#v", request)
+			}
 			return runtimeResult, nil
 		}),
 		powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
@@ -53,7 +56,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	)
 
 	got, err := coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid",
+		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid", ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/intent.json"},
 	})
 	if err != nil {
@@ -68,7 +71,7 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 	intent := testIntent(t)
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
-		runtimeFunc(func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error) {
+		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 			runtimeCalls++
 			return profilingrun.RuntimeResult{}, nil
 		}),
@@ -81,10 +84,39 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 
 	_, err := coordinator.Execute(context.Background(), Request{
 		Intent: intent, ExpectedIntentDigest: "sha256:" + strings.Repeat("0", 64), PodUID: "pod-uid",
-		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
+		ScheduledNodeName: intent.TargetNode.Name,
+		RawLocation:       evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || runtimeCalls != 0 {
 		t.Fatalf("expected pre-execution intent drift rejection, got err=%v calls=%d", err, runtimeCalls)
+	}
+}
+
+func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
+	intent := testIntent(t)
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeCalls := 0
+	coordinator := mustCoordinator(t,
+		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
+			runtimeCalls++
+			return profilingrun.RuntimeResult{}, nil
+		}),
+		powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
+			t.Fatal("power reader must not be called")
+			return powerobserver.Result{}, nil
+		}),
+		&fakeStore{},
+	)
+
+	_, err = coordinator.Execute(context.Background(), Request{
+		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid", ScheduledNodeName: "other-node",
+		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
+	})
+	if !errors.Is(err, ErrExecutionContract) || !strings.Contains(err.Error(), "scheduled Node") || runtimeCalls != 0 {
+		t.Fatalf("expected pre-execution Node drift rejection, got err=%v calls=%d", err, runtimeCalls)
 	}
 }
 
@@ -95,7 +127,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid",
+		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid", ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	}
 
@@ -104,7 +136,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 		runtimeResult.NodeName = "other"
 		powerCalls := 0
 		coordinator := mustCoordinator(t,
-			runtimeFunc(func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error) {
+			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 				return runtimeResult, nil
 			}),
 			powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
@@ -123,7 +155,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 		powerResult.Source.NodeName = "other"
 		store := &fakeStore{}
 		coordinator := mustCoordinator(t,
-			runtimeFunc(func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error) {
+			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 				return testRuntimeResult(t, intent), nil
 			}),
 			powerReaderFunc(func(context.Context) (powerobserver.Result, error) { return powerResult, nil }),
@@ -146,14 +178,14 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
 	}}
 	coordinator := mustCoordinator(t,
-		runtimeFunc(func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error) {
+		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 			return testRuntimeResult(t, intent), nil
 		}),
 		powerReaderFunc(func(context.Context) (powerobserver.Result, error) { return testPowerResult(intent), nil }),
 		store,
 	)
 	_, err = coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid",
+		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid", ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
@@ -161,14 +193,13 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 	}
 }
 
-type runtimeFunc func(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error)
+type runtimeFunc func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error)
 
 func (f runtimeFunc) Measure(
 	ctx context.Context,
-	intent profilingrun.Intent,
-	podUID string,
+	request RuntimeRequest,
 ) (profilingrun.RuntimeResult, error) {
-	return f(ctx, intent, podUID)
+	return f(ctx, request)
 }
 
 type powerReaderFunc func(context.Context) (powerobserver.Result, error)

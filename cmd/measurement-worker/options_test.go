@@ -8,6 +8,7 @@ import (
 
 func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 	t.Setenv("POD_UID", "pod-uid")
+	t.Setenv("NODE_NAME", "lattepanda")
 	t.Setenv("AWS_ACCESS_KEY_ID", "access-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
 	set := flag.NewFlagSet("measurement-worker", flag.ContinueOnError)
@@ -33,7 +34,8 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 	if err := options.validate(); err != nil {
 		t.Fatal(err)
 	}
-	if options.runtimeResultPath() != "/workspace/runtime-result.json" || options.podUID != "pod-uid" {
+	if options.runtimeResultPath() != "/workspace/runtime-result.json" || options.podUID != "pod-uid" ||
+		options.scheduledNodeName != "lattepanda" {
 		t.Fatalf("unexpected options: %#v", options)
 	}
 }
@@ -43,6 +45,7 @@ func TestOptionsRejectInvalidDeliveryContract(t *testing.T) {
 	tests := []func(*options){
 		func(options *options) { options.intentDigest = "sha256:invalid" },
 		func(options *options) { options.podUID = "" },
+		func(options *options) { options.scheduledNodeName = "" },
 		func(options *options) { options.storeName = " store " },
 		func(options *options) { options.workspacePath = "workspace" },
 		func(options *options) { options.attemptTimeout = 0 },

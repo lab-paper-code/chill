@@ -11,7 +11,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
+
+const testPodUID = "pod-uid"
 
 func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	t.Setenv("CHILL_ORT_CPU_HELPER", "success")
@@ -20,18 +24,18 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	runtime := newTestORTCPURuntime(t, resultPath)
 	intent := testIntent(t)
 
-	result, err := runtime.Measure(context.Background(), intent, "pod-uid")
+	result, err := runtime.Measure(context.Background(), runtimeRequest(intent))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Provider != intent.State.Backend || result.ExperimentID != "pod-uid" {
+	if result.Provider != intent.State.Backend || result.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
 	}
 }
 
 func TestORTCPURequestMatchesPythonContract(t *testing.T) {
 	runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
-	payload, err := runtime.encodeRequest(testIntent(t), "pod-uid")
+	payload, err := runtime.encodeRequest(runtimeRequest(testIntent(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +73,7 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 			t.Fatal(err)
 		}
 		runtime := newTestORTCPURuntime(t, resultPath)
-		if _, err := runtime.Measure(context.Background(), intent, "pod-uid"); err == nil ||
+		if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
 			!strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("expected stale result rejection, got %v", err)
 		}
@@ -78,7 +82,7 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 	t.Run("unknown result field", func(t *testing.T) {
 		t.Setenv("CHILL_ORT_CPU_HELPER", "unknown-field")
 		runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
-		if _, err := runtime.Measure(context.Background(), intent, "pod-uid"); err == nil ||
+		if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
 			!strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("expected strict result rejection, got %v", err)
 		}
@@ -90,7 +94,7 @@ func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 	runtime := newTestORTCPURuntime(t, resultPath)
 	intent := testIntent(t)
 	intent.State.Backend = "CUDAExecutionProvider"
-	if _, err := runtime.Measure(context.Background(), intent, "pod-uid"); err == nil ||
+	if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
 		!strings.Contains(err.Error(), "unsupported runtime path") {
 		t.Fatalf("expected unsupported path rejection, got %v", err)
 	}
@@ -337,6 +341,9 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if resultPath == "" {
 		os.Exit(12)
 	}
+	if request.ScheduledNodeName != request.Intent.TargetNode.Name {
+		os.Exit(11)
+	}
 	result, err := runtimeResult(request.Intent, request.PodUID)
 	if err != nil {
 		os.Exit(13)
@@ -373,6 +380,10 @@ func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
 		t.Fatal(err)
 	}
 	return runtime
+}
+
+func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
+	return RuntimeRequest{Intent: intent, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
 func newTestPowerResultFile(t *testing.T, path string, timeout time.Duration) *PowerResultFile {

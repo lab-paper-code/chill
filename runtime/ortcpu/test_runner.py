@@ -133,6 +133,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "schemaVersion": runner.REQUEST_SCHEMA,
         "intentDigest": "sha256:" + "1" * 64,
         "podUID": "pod-uid",
+        "scheduledNodeName": "lattepanda",
         "modelPath": str(model_path),
         "observerReadyPath": str(model_path.parent / "observer-ready"),
         "measurementStartPath": str(model_path.parent / "measurement-start"),
@@ -207,6 +208,15 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(runner.ContractError, "observerReadyTimeoutMilliseconds"):
                 runner.validate_request(request)
 
+    def test_validate_request_rejects_scheduled_node_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["scheduledNodeName"] = "other-node"
+            with self.assertRaisesRegex(runner.ContractError, "scheduled Node"):
+                runner.validate_request(request)
+
     def test_validate_request_requires_job_resource_budgets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
@@ -268,6 +278,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(result["status"], "Succeeded")
             self.assertEqual(result["sweepId"], request["intentDigest"])
             self.assertEqual(result["experimentId"], "pod-uid")
+            self.assertEqual(result["nodeName"], request["scheduledNodeName"])
             self.assertEqual(result["provider"], "CPUExecutionProvider")
             self.assertEqual(result["inferenceCount"], 1)
             self.assertEqual(result["latencyMs"]["mean"], 5.0)

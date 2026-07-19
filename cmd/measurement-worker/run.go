@@ -50,6 +50,7 @@ func execute(
 		Intent:               intent,
 		ExpectedIntentDigest: opts.intentDigest,
 		PodUID:               opts.podUID,
+		ScheduledNodeName:    opts.scheduledNodeName,
 		RawLocation: evidencestore.ObjectLocation{
 			Store: opts.storeName,
 			Key:   opts.rawObjectKey,

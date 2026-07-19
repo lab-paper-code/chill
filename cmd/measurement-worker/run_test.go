@@ -20,6 +20,7 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	wantReceipt := validReceipt()
 	coordinator := &fakeCoordinator{execute: func(request worker.Request) (evidencestore.Receipt, error) {
 		if request.ExpectedIntentDigest != opts.intentDigest || request.PodUID != opts.podUID ||
+			request.ScheduledNodeName != opts.scheduledNodeName ||
 			request.RawLocation.Store != opts.storeName || request.RawLocation.Key != opts.rawObjectKey {
 			t.Fatalf("request = %#v", request)
 		}
@@ -129,7 +130,8 @@ func TestDiagnosticDoesNotExposeEvidenceTransportDetails(t *testing.T) {
 func validOptions() options {
 	return options{
 		intentPath: defaultIntentPath, intentDigest: "sha256:" + strings.Repeat("a", 64), podUID: "pod-uid",
-		modelPath: defaultModelPath, workspacePath: defaultWorkspacePath,
+		scheduledNodeName: "lattepanda",
+		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPath: defaultObserverReadyPath, measurementStartPath: defaultMeasurementStartPath,
 		powerResultPath: defaultPowerResultPath, terminationMessagePath: defaultTerminationMessagePath,
 		runtimeCommand: []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},

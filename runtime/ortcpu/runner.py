@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha3"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha4"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha2"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
@@ -114,7 +114,7 @@ def validate_request(request: dict[str, Any]) -> None:
     require_fields(
         request,
         {
-            "schemaVersion", "intent", "intentDigest", "podUID", "modelPath", "observerReadyPath",
+            "schemaVersion", "intent", "intentDigest", "podUID", "scheduledNodeName", "modelPath", "observerReadyPath",
             "measurementStartPath", "observerReadyTimeoutMilliseconds", "maxLatencySamples",
             "maxInputBytes", "maxResultBytes",
         },
@@ -126,6 +126,7 @@ def validate_request(request: dict[str, Any]) -> None:
     if not DIGEST_PATTERN.fullmatch(digest):
         raise ContractError("intentDigest must be a canonical SHA-256 digest")
     require_string(request["podUID"], "podUID")
+    scheduled_node_name = require_string(request["scheduledNodeName"], "scheduledNodeName")
     require_absolute_file_path(request["modelPath"], "modelPath")
     require_absolute_file_path(request["observerReadyPath"], "observerReadyPath")
     require_absolute_file_path(request["measurementStartPath"], "measurementStartPath")
@@ -155,6 +156,8 @@ def validate_request(request: dict[str, Any]) -> None:
     require_fields(target, {"name", "uid", "resourceVersion", "architecture", "allocatableCPU"}, "intent.targetNode")
     for field in ("name", "uid", "resourceVersion", "architecture", "allocatableCPU"):
         require_string(target[field], f"intent.targetNode.{field}")
+    if scheduled_node_name != target["name"]:
+        raise ContractError("scheduled Node does not match the frozen target Node")
 
     cpu = require_object(intent["cpu"], "intent.cpu")
     require_fields(
@@ -464,7 +467,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "status": "Succeeded",
         "sweepId": request["intentDigest"],
         "experimentId": request["podUID"],
-        "nodeName": intent["targetNode"]["name"],
+        "nodeName": request["scheduledNodeName"],
         "model": state["model"],
         "artifactDigest": actual_digest,
         "architecture": architecture,

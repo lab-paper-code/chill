@@ -21,7 +21,13 @@ import (
 // Runtime performs the frozen warm-up and measurement protocol. Concrete
 // runtime verification and measurement signaling belong to its adapter.
 type Runtime interface {
-	Measure(context.Context, profilingrun.Intent, string) (profilingrun.RuntimeResult, error)
+	Measure(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error)
+}
+
+type RuntimeRequest struct {
+	Intent            profilingrun.Intent
+	PodUID            string
+	ScheduledNodeName string
 }
 
 // PowerResultReader returns the complete result produced by the separate
@@ -34,6 +40,7 @@ type Request struct {
 	Intent               profilingrun.Intent
 	ExpectedIntentDigest string
 	PodUID               string
+	ScheduledNodeName    string
 	RawLocation          evidencestore.ObjectLocation
 }
 
@@ -77,13 +84,28 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 			"%w: Pod UID is required without surrounding whitespace", ErrExecutionContract,
 		)
 	}
+	if strings.TrimSpace(request.ScheduledNodeName) == "" ||
+		strings.TrimSpace(request.ScheduledNodeName) != request.ScheduledNodeName {
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: scheduled Node name is required without surrounding whitespace", ErrExecutionContract,
+		)
+	}
+	if request.ScheduledNodeName != request.Intent.TargetNode.Name {
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: scheduled Node does not match the frozen target Node", ErrExecutionContract,
+		)
+	}
 	if err := request.RawLocation.Validate(); err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: validate raw evidence location: %w", ErrExecutionContract, err,
 		)
 	}
 
-	runtimeResult, err := c.runtime.Measure(ctx, request.Intent, request.PodUID)
+	runtimeResult, err := c.runtime.Measure(ctx, RuntimeRequest{
+		Intent:            request.Intent,
+		PodUID:            request.PodUID,
+		ScheduledNodeName: request.ScheduledNodeName,
+	})
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}

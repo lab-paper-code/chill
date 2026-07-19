@@ -31,6 +31,7 @@ type options struct {
 	intentPath             string
 	intentDigest           string
 	podUID                 string
+	scheduledNodeName      string
 	modelPath              string
 	workspacePath          string
 	observerReadyPath      string
@@ -65,6 +66,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.terminationMessagePath = defaultTerminationMessagePath
 	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
 	o.podUID = os.Getenv("POD_UID")
+	o.scheduledNodeName = os.Getenv("NODE_NAME")
 	o.accessKeyID = os.Getenv("AWS_ACCESS_KEY_ID")
 	o.secretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	o.sessionToken = os.Getenv("AWS_SESSION_TOKEN")
@@ -90,6 +92,7 @@ func (o options) validate() error {
 	}
 	for _, field := range []struct{ name, value string }{
 		{name: "Pod UID", value: o.podUID},
+		{name: "scheduled Node name", value: o.scheduledNodeName},
 		{name: "store name", value: o.storeName},
 		{name: "store endpoint", value: o.storeEndpoint},
 		{name: "store bucket", value: o.storeBucket},

@@ -198,6 +198,7 @@ The controller creates one deterministic Job owned by the `ProfilingRun`:
 - `parallelism=1`, `completions=1`, and `backoffLimit=0`;
 - `restartPolicy=Never` and no replacement Job for the same Run;
 - `automountServiceAccountToken=false`;
+- Pod UID and scheduled Node name injected from the Downward API;
 - exact target-Node placement and frozen CPU request/limit;
 - digest-pinned artifact, runtime, and PowerObserver images;
 - restricted container security contexts; and
