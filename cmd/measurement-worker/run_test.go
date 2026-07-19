@@ -121,8 +121,12 @@ func TestExitCodeMapsWorkerFailureClasses(t *testing.T) {
 }
 
 func TestDiagnosticDoesNotExposeEvidenceTransportDetails(t *testing.T) {
-	failure := errors.Join(worker.ErrEvidenceCommit, errors.New("request http://internal-store:9000 failed"))
-	if got := diagnostic(failure); got != worker.ErrEvidenceCommit.Error() {
+	failure := errors.Join(
+		worker.ErrEvidenceCommit,
+		evidencestore.ErrTransport,
+		errors.New("request http://internal-store:9000 failed"),
+	)
+	if got := diagnostic(failure); got != worker.ErrEvidenceCommit.Error()+": "+evidencestore.ErrTransport.Error() {
 		t.Fatalf("diagnostic = %q", got)
 	}
 }

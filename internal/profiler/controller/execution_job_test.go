@@ -128,7 +128,7 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 
 func testEvidenceStoreBinding() EvidenceStoreBinding {
 	return EvidenceStoreBinding{
-		Store: "chill-evidence-store", Endpoint: "http://chill-evidence-store.chill-system.svc:9000",
+		Store: "chill-evidence-store", Endpoint: "http://chill-evidence-store.chill-system.svc.cluster.local:9000",
 		Bucket: "chill-profiling-evidence", Region: "us-east-1", CredentialsSecretName: "chill-evidence-store-credentials",
 	}
 }

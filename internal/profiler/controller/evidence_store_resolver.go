@@ -126,7 +126,7 @@ func (r *KubernetesEvidenceStoreResolver) Resolve(ctx context.Context) (Evidence
 	serviceName := component.EvidenceStoreServiceName(system.Name)
 	return EvidenceStoreBinding{
 		Store:                 serviceName,
-		Endpoint:              fmt.Sprintf("http://%s.%s.svc:%d", serviceName, r.options.Namespace, component.EvidenceStoreS3Port),
+		Endpoint:              fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, r.options.Namespace, component.EvidenceStoreS3Port),
 		Bucket:                config.Bucket,
 		Region:                config.Region,
 		CredentialsSecretName: component.EvidenceStoreCredentialsSecretName(system.Name),

@@ -25,7 +25,7 @@ func TestKubernetesEvidenceStoreResolverResolvesNonSecretDeliveryBinding(t *test
 		t.Fatal(err)
 	}
 	if binding.Store != "chill-evidence-store" ||
-		binding.Endpoint != "http://chill-evidence-store.chill-system.svc:9000" ||
+		binding.Endpoint != "http://chill-evidence-store.chill-system.svc.cluster.local:9000" ||
 		binding.Bucket != "chill-profiling-evidence" || binding.Region != "us-east-1" ||
 		binding.CredentialsSecretName != "chill-evidence-store-credentials" {
 		t.Fatalf("binding = %#v", binding)

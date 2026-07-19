@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiler/worker"
 )
 
@@ -33,6 +34,18 @@ func main() {
 
 func diagnostic(err error) string {
 	if errors.Is(err, worker.ErrEvidenceCommit) {
+		for _, category := range []error{
+			evidencestore.ErrAuthentication,
+			evidencestore.ErrPrecondition,
+			evidencestore.ErrTimeout,
+			evidencestore.ErrTransport,
+			evidencestore.ErrContentMismatch,
+			evidencestore.ErrInvalidIdentity,
+		} {
+			if errors.Is(err, category) {
+				return worker.ErrEvidenceCommit.Error() + ": " + category.Error()
+			}
+		}
 		return worker.ErrEvidenceCommit.Error()
 	}
 	return err.Error()
