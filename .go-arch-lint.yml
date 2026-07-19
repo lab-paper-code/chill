@@ -36,6 +36,7 @@ components:
   operator-console: { in: internal/operatorconsole }
   operator: { in: internal/operator/** }
   evidence-core: { in: internal/evidencestore }
+  evidence-kube: { in: internal/evidencestore/kube }
   evidence-s3: { in: internal/evidencestore/s3 }
   power-core: { in: internal/powerobserver }
   power-edgemetrics: { in: internal/powerobserver/edgemetrics }
@@ -85,6 +86,9 @@ deps:
 
   evidence-core:
     anyVendorDeps: true
+  evidence-kube:
+    mayDependOn:
+      - platform-core
   evidence-s3:
     mayDependOn:
       - evidence-core
@@ -115,7 +119,9 @@ deps:
 
   profiler-evidence-kube:
     mayDependOn:
+      - api
       - evidence-core
+      - evidence-kube
       - profiler-evidence
       - profiling-run
 
@@ -138,6 +144,7 @@ deps:
       - api
       - platform-core
       - evidence-core
+      - evidence-kube
       - model-compat
       - power-edgemetrics
       - profiler-app

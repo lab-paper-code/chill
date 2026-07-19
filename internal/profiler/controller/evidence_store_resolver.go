@@ -16,6 +16,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 )
 
 type EvidenceStoreResolverOptions struct {
@@ -23,15 +24,9 @@ type EvidenceStoreResolverOptions struct {
 	Namespace  string
 }
 
-// EvidenceStoreBinding contains only the non-secret values required to project
-// one immutable Evidence Store delivery contract into a measurement Job.
-type EvidenceStoreBinding struct {
-	Store                 string
-	Endpoint              string
-	Bucket                string
-	Region                string
-	CredentialsSecretName string
-}
+// EvidenceStoreBinding is retained as the Profiler-facing name for the shared
+// Kubernetes Evidence Store delivery binding.
+type EvidenceStoreBinding = storekube.Binding
 
 // KubernetesEvidenceStoreResolver exact-reads the owning ChillSystem and its
 // configured operand data. It derives Secret identity without reading bytes.

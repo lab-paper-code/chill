@@ -16,6 +16,7 @@ components=(
   operator-console
   operator
   evidence-core
+  evidence-kube
   evidence-s3
   power-core
   power-edgemetrics
@@ -43,6 +44,7 @@ component_for() {
     internal/operatorconsole) echo operator-console ;;
     internal/operator/*) echo operator ;;
     internal/evidencestore) echo evidence-core ;;
+    internal/evidencestore/kube) echo evidence-kube ;;
     internal/evidencestore/s3) echo evidence-s3 ;;
     internal/powerobserver) echo power-core ;;
     internal/powerobserver/edgemetrics) echo power-edgemetrics ;;

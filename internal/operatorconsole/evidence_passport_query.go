@@ -19,6 +19,7 @@ import (
 type VerifiedEvidenceLoader interface {
 	Load(
 		context.Context,
+		*edgev1alpha1.ProfilingRun,
 		evidencestore.ObjectIdentity,
 	) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error)
 }
@@ -70,7 +71,7 @@ func (q *KubernetesEvidencePassportQuery) Read(
 	if err != nil {
 		return EvidencePassportSnapshot{}, fmt.Errorf("read ProfilingRun %s evidence reference: %w", key, err)
 	}
-	execution, measurement, err := q.loader.Load(ctx, reference)
+	execution, measurement, err := q.loader.Load(ctx, run, reference)
 	if err != nil {
 		return EvidencePassportSnapshot{}, fmt.Errorf("load ProfilingRun %s evidence: %w", key, err)
 	}

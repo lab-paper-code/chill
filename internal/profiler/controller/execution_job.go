@@ -11,6 +11,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/profiler"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
@@ -125,61 +126,7 @@ func (j *ExecutionJobs) Ensure(
 }
 
 func executionJobEvidenceStoreBinding(job *batchv1.Job) (EvidenceStoreBinding, error) {
-	if job == nil {
-		return EvidenceStoreBinding{}, errors.New("measurement Job is required")
-	}
-	runtimeContainer, ok := containerNamed(job.Spec.Template.Spec.Containers, "runtime")
-	if !ok {
-		return EvidenceStoreBinding{}, errors.New("existing measurement Job has no runtime container")
-	}
-	binding := EvidenceStoreBinding{
-		Store:    argumentValue(runtimeContainer.Args, "--store-name="),
-		Endpoint: argumentValue(runtimeContainer.Args, "--store-endpoint="),
-		Bucket:   argumentValue(runtimeContainer.Args, "--store-bucket="),
-		Region:   argumentValue(runtimeContainer.Args, "--store-region="),
-	}
-	accessSecret, accessKey := secretReference(runtimeContainer.Env, "AWS_ACCESS_KEY_ID")
-	secretSecret, secretKey := secretReference(runtimeContainer.Env, "AWS_SECRET_ACCESS_KEY")
-	if accessSecret == "" || accessSecret != secretSecret ||
-		accessKey != component.EvidenceStoreAccessKeyKey || secretKey != component.EvidenceStoreSecretKeyKey {
-		return EvidenceStoreBinding{}, errors.New("existing measurement Job has an invalid Evidence Store Secret binding")
-	}
-	binding.CredentialsSecretName = accessSecret
-	if err := validateEvidenceStoreBinding(binding); err != nil {
-		return EvidenceStoreBinding{}, fmt.Errorf("validate existing measurement Job delivery binding: %w", err)
-	}
-	return binding, nil
-}
-
-func containerNamed(containers []corev1.Container, name string) (corev1.Container, bool) {
-	for _, container := range containers {
-		if container.Name == name {
-			return container, true
-		}
-	}
-	return corev1.Container{}, false
-}
-
-func argumentValue(arguments []string, prefix string) string {
-	value := ""
-	for _, argument := range arguments {
-		if strings.HasPrefix(argument, prefix) {
-			if value != "" {
-				return ""
-			}
-			value = strings.TrimPrefix(argument, prefix)
-		}
-	}
-	return value
-}
-
-func secretReference(env []corev1.EnvVar, name string) (string, string) {
-	for _, variable := range env {
-		if variable.Name == name && variable.ValueFrom != nil && variable.ValueFrom.SecretKeyRef != nil {
-			return variable.ValueFrom.SecretKeyRef.Name, variable.ValueFrom.SecretKeyRef.Key
-		}
-	}
-	return "", ""
+	return storekube.BindingFromJob(job, runtimeContainerName)
 }
 
 func buildExecutionJob(
@@ -393,15 +340,7 @@ func secretEnv(name, secretName, key string) corev1.EnvVar {
 }
 
 func validateEvidenceStoreBinding(binding EvidenceStoreBinding) error {
-	for name, value := range map[string]string{
-		"store": binding.Store, "endpoint": binding.Endpoint, "bucket": binding.Bucket,
-		"region": binding.Region, "credentials Secret": binding.CredentialsSecretName,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("Evidence Store binding %s is required without surrounding whitespace", name)
-		}
-	}
-	return nil
+	return binding.Validate()
 }
 
 func executionJobName(run *edgev1alpha1.ProfilingRun) (string, error) {

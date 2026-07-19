@@ -7,9 +7,10 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
+	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,8 +29,7 @@ type RunEvidenceAdmitter interface {
 // KubernetesEvidenceAdmitter resolves only the retained store binding. Exact
 // evidence loading and scientific evaluation remain in Kubernetes-free packages.
 type KubernetesEvidenceAdmitter struct {
-	reader       client.Reader
-	storeFactory EvidenceObjectStoreFactory
+	loader *evidencekube.RetainedLoader
 }
 
 func NewKubernetesEvidenceAdmitter(
@@ -39,7 +39,16 @@ func NewKubernetesEvidenceAdmitter(
 	if reader == nil || storeFactory == nil {
 		return nil, errors.New("Kubernetes API reader and evidence object-store factory are required")
 	}
-	return &KubernetesEvidenceAdmitter{reader: reader, storeFactory: storeFactory}, nil
+	loader, err := evidencekube.NewRetainedLoader(
+		reader,
+		func(binding storekube.Binding, credentials storekube.Credentials) (evidencestore.LocationReader, error) {
+			return storeFactory(binding, credentials.AccessKeyID, credentials.SecretAccessKey)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
+	}
+	return &KubernetesEvidenceAdmitter{loader: loader}, nil
 }
 
 func (a *KubernetesEvidenceAdmitter) Admit(
@@ -59,33 +68,12 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
 	}
-	binding, err := executionJobEvidenceStoreBinding(job)
+	execution, raw, err := a.loader.Load(ctx, run, reference)
 	if err != nil {
 		return profileradmission.Result{}, err
 	}
-	credentials, err := loadEvidenceStoreCredentials(ctx, a.reader, run.Namespace, binding.CredentialsSecretName)
-	if err != nil {
-		return profileradmission.Result{}, err
-	}
-	store, err := a.storeFactory(binding, credentials.AccessKeyID, credentials.SecretAccessKey)
-	if err != nil {
-		return profileradmission.Result{}, fmt.Errorf("construct retained evidence reader: %w", err)
-	}
-	loader, err := profilerevidence.NewLoader(store, maxFinalizationObjectBytes)
-	if err != nil {
-		return profileradmission.Result{}, fmt.Errorf("construct verified evidence loader: %w", err)
-	}
-	execution, raw, err := loader.Load(ctx, reference)
-	if err != nil {
-		return profileradmission.Result{}, err
-	}
-	if execution.IntentDigest != prepared.IntentDigest || execution.Terminal.Job.UID != string(job.UID) {
+	if execution.IntentDigest != prepared.IntentDigest {
 		return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
-	}
-	if run.Status.ActualExecution == nil ||
-		run.Status.ActualExecution.Pod.UID != execution.Terminal.Pod.UID ||
-		run.Status.ActualExecution.Node.UID != execution.Terminal.Node.UID {
-		return profileradmission.Result{}, errors.New("retained evidence contradicts recorded execution identities")
 	}
 	return profileradmission.Evaluate(execution, raw, run.Spec.AdmissionPolicy)
 }

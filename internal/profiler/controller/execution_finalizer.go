@@ -8,8 +8,8 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
@@ -36,11 +36,6 @@ type RunEvidenceFinalizer interface {
 }
 
 type EvidenceObjectStoreFactory func(EvidenceStoreBinding, string, string) (profilerevidence.ObjectStore, error)
-
-type evidenceStoreCredentials struct {
-	AccessKeyID     string
-	SecretAccessKey string
-}
 
 // KubernetesExecutionFinalizer reads terminal native objects and delegates
 // immutable evidence construction to the Kubernetes-free evidence finalizer.
@@ -84,7 +79,7 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
-	credentials, err := loadEvidenceStoreCredentials(ctx, f.reader, run.Namespace, binding.CredentialsSecretName)
+	credentials, err := storekube.LoadCredentials(ctx, f.reader, run.Namespace, binding.CredentialsSecretName)
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
@@ -165,25 +160,6 @@ func (f *KubernetesExecutionFinalizer) observe(
 		Job: job.DeepCopy(), Pod: pod, Node: node,
 		NodePods: nodePods.Items, ObservedAt: f.now().UTC(),
 	}, nil
-}
-
-func loadEvidenceStoreCredentials(
-	ctx context.Context,
-	reader client.Reader,
-	namespace, name string,
-) (evidenceStoreCredentials, error) {
-	secret := &corev1.Secret{}
-	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, secret); err != nil {
-		return evidenceStoreCredentials{}, fmt.Errorf("get retained Evidence Store credentials Secret: %w", err)
-	}
-	credentials := evidenceStoreCredentials{
-		AccessKeyID:     string(secret.Data[component.EvidenceStoreAccessKeyKey]),
-		SecretAccessKey: string(secret.Data[component.EvidenceStoreSecretKeyKey]),
-	}
-	if strings.TrimSpace(credentials.AccessKeyID) == "" || strings.TrimSpace(credentials.SecretAccessKey) == "" {
-		return evidenceStoreCredentials{}, errors.New("retained Evidence Store credentials are incomplete")
-	}
-	return credentials, nil
 }
 
 func finalizedEvidenceObjectKey(uid types.UID, digest string) string {

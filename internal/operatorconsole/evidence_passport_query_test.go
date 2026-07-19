@@ -159,6 +159,7 @@ type recordingEvidenceLoader struct {
 
 func (l *recordingEvidenceLoader) Load(
 	_ context.Context,
+	_ *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
 ) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error) {
 	l.calls++

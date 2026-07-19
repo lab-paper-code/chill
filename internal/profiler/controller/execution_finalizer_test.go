@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/component"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -85,7 +86,7 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := loadEvidenceStoreCredentials(context.Background(), finalizer.reader, "chill-system", secret.Name)
+	credentials, err := storekube.LoadCredentials(context.Background(), finalizer.reader, "chill-system", secret.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
