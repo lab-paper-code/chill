@@ -13,8 +13,10 @@
 | [03-dashboard-and-cli.md](03-dashboard-and-cli.md) | Dashboard와 CLI가 제공할 공통 운영 능력 |
 | [04-use-cases.md](04-use-cases.md) | 운영자의 핵심 판단·승인·개입 흐름 |
 | [05-requirements.md](05-requirements.md) | 기능 및 안전 요구사항의 규범적 목록 |
+| [06-first-delivery-slice.md](06-first-delivery-slice.md) | 현재 구현에서 시작하는 첫 조회·요청·관찰 수직 단면과 의존성 순서 |
 
-처음 읽을 때는 `01 → 02 → 03 → 04 → 05` 순서를 사용한다.
+완성형 제품 계약은 `01 → 02 → 03 → 04 → 05` 순서로 읽는다. 현재 코드에서 시작하는
+첫 구현 경계는 그 다음 `06`에서 확인한다.
 
 ## 문서 원칙
 
