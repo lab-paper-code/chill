@@ -12,26 +12,36 @@ import (
 )
 
 func newKubernetesReader(kubeconfig, contextName string) (client.Reader, error) {
+	reader, _, err := newKubernetesAccess(kubeconfig, contextName)
+	return reader, err
+}
+
+func newKubernetesAccess(kubeconfig, contextName string) (client.Reader, string, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		rules.ExplicitPath = kubeconfig
 	}
 	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
-	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
+	loadingConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
+	restConfig, err := loadingConfig.ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+	}
+	namespace, _, err := loadingConfig.Namespace()
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve kubeconfig namespace: %w", err)
 	}
 
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("register Kubernetes APIs: %w", err)
+		return nil, "", fmt.Errorf("register Kubernetes APIs: %w", err)
 	}
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("register CHILL API: %w", err)
+		return nil, "", fmt.Errorf("register CHILL API: %w", err)
 	}
 	kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
-		return nil, fmt.Errorf("construct Kubernetes client: %w", err)
+		return nil, "", fmt.Errorf("construct Kubernetes client: %w", err)
 	}
-	return kubeClient, nil
+	return kubeClient, namespace, nil
 }

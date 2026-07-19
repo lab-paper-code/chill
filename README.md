@@ -60,12 +60,15 @@ kubectl chill inventory
 kubectl chill inventory -o json
 kubectl chill system
 kubectl chill system -o json
+kubectl chill runs -n chill-system
+kubectl chill runs -A -o json
 ```
 
 The current commands require read permission for cluster-scoped `ChillSystem`,
-`DeviceClass`, and Kubernetes `Node` resources. The Helm chart installs the
-unbound `chill-console-viewer` ClusterRole; a cluster administrator decides
-which users or groups receive it. The CLI does not run inside the operator Pod.
+`DeviceClass`, namespaced `ProfilingRun`, and Kubernetes `Node` resources. The
+Helm chart installs the unbound `chill-console-viewer` ClusterRole; a cluster
+administrator decides which users or groups receive it. The CLI does not run
+inside the operator Pod.
 
 ## Helm
 

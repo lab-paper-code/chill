@@ -11,6 +11,7 @@ rules:
     resources:
       - chillsystems
       - deviceclasses
+      - profilingruns
     verbs:
       - get
       - list

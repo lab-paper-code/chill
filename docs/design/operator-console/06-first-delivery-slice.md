@@ -36,12 +36,15 @@ CHILL이 알고 있는 사실을 확인하고, 측정 의도 하나를 제출하
 Ready tri-state, scheduling-disabled 사실과 원본 resourceVersion을 보여준다.
 `kubectl chill system`은 `ChillSystem.spec`의 구성요소 요청 상태와
 `ChillSystem.status.conditions`를 분리해 보여주며 별도의 종합 health를 계산하지 않는다.
-Helm chart는 현재 조회 경로가 사용하는 ChillSystem, DeviceClass와 Node의 get·list만
+`kubectl chill runs`는 kubeconfig의 현재 namespace를 기본 조회 범위로 사용하고 `-n`과
+`-A`로 범위를 명시한다. namespace만으로 특정 ChillSystem의 소유라고 추론하지 않으며,
+Run의 immutable spec, status와 원본 resourceVersion을 그대로 보존한다. Helm chart는
+현재 조회 경로가 사용하는 ChillSystem, DeviceClass, ProfilingRun과 Node의 get·list만
 허용하는 unbound console viewer ClusterRole을 제공하며, 실제 사용자·그룹 binding은
 클러스터 관리자가 소유한다.
 
 아직 Dashboard consumer는 없다. 현재 운영자가 호출할 수 있는 read-only 수직 단면은
-CLI System과 Inventory이며, ModelSpec·ProfilingRun 조회는 포함하지 않는다.
+CLI System, Inventory와 ProfilingRun 목록이며, ModelSpec 조회와 Run 생성은 포함하지 않는다.
 
 ## 현재 구현의 사실 경계
 

@@ -114,15 +114,68 @@ func TestExecuteSystemWritesStructuredJSON(t *testing.T) {
 	}
 }
 
+func TestExecuteProfilingRunsWritesTable(t *testing.T) {
+	query := &fakeProfilingRunsQuery{snapshot: testProfilingRunsSnapshot()}
+	deps := dependencies{newRunsQuery: func(opts profilingRunsOptions) (profilingRunsQuery, error) {
+		if opts.namespace != "chill-system" || opts.allNamespaces || opts.output != "table" {
+			t.Fatalf("options = %#v", opts)
+		}
+		return query, nil
+	}}
+	var stdout strings.Builder
+
+	err := execute(context.Background(), []string{"runs", "-n", "chill-system"}, &stdout, io.Discard, deps)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"PROFILINGRUNS_RV", "runs-rv", "cpu-run", "yolov8n", "ort-cpu",
+		"lattepanda", "ExecutionComplete", "False", "ExecutionPending",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("table missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if query.calls != 1 {
+		t.Fatalf("query calls = %d", query.calls)
+	}
+}
+
+func TestExecuteProfilingRunsWritesStructuredJSON(t *testing.T) {
+	deps := dependencies{newRunsQuery: func(opts profilingRunsOptions) (profilingRunsQuery, error) {
+		if !opts.allNamespaces {
+			t.Fatalf("options = %#v", opts)
+		}
+		snapshot := testProfilingRunsSnapshot()
+		snapshot.Namespace = ""
+		return &fakeProfilingRunsQuery{snapshot: snapshot}, nil
+	}}
+	var stdout strings.Builder
+	if err := execute(context.Background(), []string{"runs", "-A", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	var document profilingRunsDocument
+	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, stdout.String())
+	}
+	if !document.AllNamespaces || document.ResourceVersion != "runs-rv" || len(document.Runs) != 1 ||
+		document.Runs[0].UID != "run-uid" || document.Runs[0].Spec.Candidate.ModelSpec != "yolov8n" ||
+		document.Runs[0].Status.ObservedGeneration != 1 || len(document.Runs[0].Status.Conditions) != 1 {
+		t.Fatalf("document = %#v", document)
+	}
+}
+
 func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"unknown"}, {"inventory", "extra"}, {"inventory", "-o", "yaml"},
 		{"system", "extra"}, {"system", "-o", "yaml"},
+		{"runs", "extra"}, {"runs", "-o", "yaml"}, {"runs", "-n", "chill-system", "-A"},
 	} {
 		calls := 0
 		deps := dependencies{
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
+			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
 		}
 		err := execute(context.Background(), args, io.Discard, io.Discard, deps)
 		if !errors.Is(err, errUsage) || calls != 0 {
@@ -132,11 +185,12 @@ func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 }
 
 func TestExecuteHelpDoesNotConstructQuery(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"inventory", "--help"}, {"system", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"inventory", "--help"}, {"system", "--help"}, {"runs", "--help"}} {
 		calls := 0
 		deps := dependencies{
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
+			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
 		}
 		var output strings.Builder
 		if err := execute(context.Background(), args, &output, &output, deps); err != nil {
@@ -170,6 +224,17 @@ func TestExecuteSystemPreservesQueryFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteProfilingRunsPreservesQueryFailure(t *testing.T) {
+	want := errors.New("query failed")
+	deps := dependencies{newRunsQuery: func(profilingRunsOptions) (profilingRunsQuery, error) {
+		return &fakeProfilingRunsQuery{err: want}, nil
+	}}
+	err := execute(context.Background(), []string{"runs", "-n", "chill-system"}, io.Discard, io.Discard, deps)
+	if !errors.Is(err, want) {
+		t.Fatalf("execute() error = %v", err)
+	}
+}
+
 type fakeInventoryQuery struct {
 	snapshot operatorconsole.InventorySnapshot
 	err      error
@@ -180,6 +245,17 @@ type fakeSystemQuery struct {
 	snapshot operatorconsole.SystemSnapshot
 	err      error
 	calls    int
+}
+
+type fakeProfilingRunsQuery struct {
+	snapshot operatorconsole.ProfilingRunsSnapshot
+	err      error
+	calls    int
+}
+
+func (q *fakeProfilingRunsQuery) Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error) {
+	q.calls++
+	return q.snapshot, q.err
 }
 
 func (q *fakeSystemQuery) Read(context.Context) (operatorconsole.SystemSnapshot, error) {
@@ -234,6 +310,38 @@ func testSystemSnapshot() operatorconsole.SystemSnapshot {
 				Conditions: []metav1.Condition{{
 					Type: edgev1alpha1.ChillSystemConditionProfilerAvailable, Status: metav1.ConditionTrue,
 					ObservedGeneration: 3, Reason: "ProfilerReady", Message: "profiler is available",
+					LastTransitionTime: metav1.NewTime(time.Date(2026, 7, 20, 0, 1, 0, 0, time.UTC)),
+				}},
+			},
+		}},
+	}
+}
+
+func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
+	return operatorconsole.ProfilingRunsSnapshot{
+		ReadAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC), ResourceVersion: "runs-rv",
+		Namespace: "chill-system",
+		Runs: []edgev1alpha1.ProfilingRun{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "chill-system", Name: "cpu-run", UID: "run-uid", ResourceVersion: "run-rv", Generation: 1,
+				CreationTimestamp: metav1.NewTime(time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)),
+			},
+			Spec: edgev1alpha1.ProfilingRunSpec{
+				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+					ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+				},
+				TargetNode: "lattepanda", CPURequest: resource.MustParse("4"),
+				Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4, Repetitions: 1},
+				PowerObservation: edgev1alpha1.ProfilingRunPowerObservationSpec{
+					IntervalMilliseconds: 1000, TimeoutMilliseconds: 200, DurationSeconds: 60,
+				},
+				AdmissionPolicy: "single-run-v1",
+			},
+			Status: edgev1alpha1.ProfilingRunStatus{
+				ObservedGeneration: 1, IntentDigest: "sha256:" + strings.Repeat("a", 64),
+				Conditions: []metav1.Condition{{
+					Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
+					ObservedGeneration: 1, Reason: "ExecutionPending", Message: "execution is not implemented",
 					LastTransitionTime: metav1.NewTime(time.Date(2026, 7, 20, 0, 1, 0, 0, time.UTC)),
 				}},
 			},

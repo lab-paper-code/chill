@@ -18,18 +18,27 @@ type systemQuery interface {
 	Read(context.Context) (operatorconsole.SystemSnapshot, error)
 }
 
+type profilingRunsQuery interface {
+	Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error)
+}
+
 type dependencies struct {
 	newInventoryQuery func(inventoryOptions) (inventoryQuery, error)
 	newSystemQuery    func(systemOptions) (systemQuery, error)
+	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
 }
 
 func productionDependencies() dependencies {
-	return dependencies{newInventoryQuery: newInventoryQuery, newSystemQuery: newSystemQuery}
+	return dependencies{
+		newInventoryQuery: newInventoryQuery,
+		newSystemQuery:    newSystemQuery,
+		newRunsQuery:      newProfilingRunsQuery,
+	}
 }
 
 func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
 	if len(args) == 0 {
-		return fmt.Errorf("%w: expected command: inventory or system", errUsage)
+		return fmt.Errorf("%w: expected command: inventory, system, or runs", errUsage)
 	}
 	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		return writeUsage(stdout)
@@ -39,6 +48,8 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps 
 		return executeInventory(ctx, args[1:], stdout, stderr, deps)
 	case "system":
 		return executeSystem(ctx, args[1:], stdout, stderr, deps)
+	case "runs":
+		return executeProfilingRuns(ctx, args[1:], stdout, stderr, deps)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
@@ -88,6 +99,28 @@ func executeSystem(ctx context.Context, args []string, stdout, stderr io.Writer,
 	return nil
 }
 
+func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
+	opts, err := parseProfilingRunsOptions(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	query, err := deps.newRunsQuery(opts)
+	if err != nil {
+		return fmt.Errorf("construct ProfilingRun query: %w", err)
+	}
+	snapshot, err := query.Read(ctx)
+	if err != nil {
+		return fmt.Errorf("read ProfilingRuns: %w", err)
+	}
+	if err := writeProfilingRuns(stdout, opts.output, snapshot); err != nil {
+		return fmt.Errorf("write ProfilingRuns: %w", err)
+	}
+	return nil
+}
+
 func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "Usage:"); err != nil {
 		return err
@@ -95,7 +128,10 @@ func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "  kubectl chill inventory [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(writer, "  kubectl chill system    [--kubeconfig PATH] [--context NAME] [-o table|json]")
+	if _, err := fmt.Fprintln(writer, "  kubectl chill system    [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(writer, "  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]")
 	return err
 }
 
@@ -117,6 +153,24 @@ func newSystemQuery(opts systemOptions) (systemQuery, error) {
 		return nil, err
 	}
 	query, err := operatorconsole.NewKubernetesSystemQuery(kubeClient)
+	if err != nil {
+		return nil, fmt.Errorf("construct read-through query: %w", err)
+	}
+	return query, nil
+}
+
+func newProfilingRunsQuery(opts profilingRunsOptions) (profilingRunsQuery, error) {
+	kubeClient, defaultNamespace, err := newKubernetesAccess(opts.kubeconfig, opts.context)
+	if err != nil {
+		return nil, err
+	}
+	namespace := opts.namespace
+	if opts.allNamespaces {
+		namespace = ""
+	} else if namespace == "" {
+		namespace = defaultNamespace
+	}
+	query, err := operatorconsole.NewKubernetesProfilingRunsQuery(kubeClient, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}
