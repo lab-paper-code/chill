@@ -34,7 +34,9 @@ func TestExecuteInventoryWritesTable(t *testing.T) {
 		t.Fatalf("execute() error = %v", err)
 	}
 	for _, want := range []string{
-		"READ_AT", "classes-rv", "CLASS", "orin", "arm64", "8Gi", "15W", "orin-1", "True", "true",
+		"READ_AT", "classes-rv", "models-rv", "CLASS", "orin", "arm64", "8Gi", "15W",
+		"orin-1", "True", "true", "MODEL", "mobilenet", "canonical-onnx", "ort-cpu",
+		"onnxruntime", "CPUExecutionProvider",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("table missing %q:\n%s", want, stdout.String())
@@ -57,12 +59,19 @@ func TestExecuteInventoryWritesStructuredJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
-	if document.DeviceClassesResourceVersion != "classes-rv" || len(document.Classes) != 1 ||
+	if document.DeviceClassesResourceVersion != "classes-rv" || document.ModelSpecsResourceVersion != "models-rv" ||
+		len(document.Classes) != 1 ||
 		document.Classes[0].UID != "class-uid" || document.Classes[0].NodeSelector["edge.dacs.io/device-class"] != "orin" ||
 		len(document.Classes[0].PowerModes) != 1 || document.Classes[0].PowerModes[0].NvpID == nil ||
 		*document.Classes[0].PowerModes[0].NvpID != 0 || len(document.Classes[0].Nodes) != 1 ||
 		document.Classes[0].Nodes[0].Ready != "True" || !document.Classes[0].Nodes[0].SchedulingDisabled {
 		t.Fatalf("document = %#v", document)
+	}
+	if len(document.Models) != 1 || document.Models[0].UID != "model-uid" ||
+		len(document.Models[0].Spec.Artifacts) != 1 || document.Models[0].Spec.Artifacts[0].Format != "onnx" ||
+		len(document.Models[0].Spec.ExecutionPaths) != 1 ||
+		document.Models[0].Spec.ExecutionPaths[0].Runtime.Backend != "CPUExecutionProvider" {
+		t.Fatalf("models = %#v", document.Models)
 	}
 }
 
@@ -274,6 +283,7 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 		ReadAt:                       time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
 		DeviceClassesResourceVersion: "classes-rv",
 		NodesResourceVersion:         "nodes-rv",
+		ModelSpecsResourceVersion:    "models-rv",
 		Classes: []deviceclass.InventoryClass{{
 			Name: "orin", UID: "class-uid", ResourceVersion: "class-rv",
 			Spec: edgev1alpha1.DeviceClassSpec{
@@ -285,6 +295,18 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 				Name: "orin-1", UID: "node-uid", ResourceVersion: "node-rv",
 				Ready: corev1.ConditionTrue, SchedulingDisabled: true,
 			}},
+		}},
+		Models: []edgev1alpha1.ModelSpec{{
+			ObjectMeta: metav1.ObjectMeta{Name: "mobilenet", UID: "model-uid", ResourceVersion: "model-rv"},
+			Spec: edgev1alpha1.ModelSpecSpec{
+				Artifacts: []edgev1alpha1.ModelArtifact{{
+					Name: "canonical-onnx", Format: "onnx", Digest: "sha256:" + strings.Repeat("b", 64),
+				}},
+				ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
+					Name: "ort-cpu", Artifact: "canonical-onnx",
+					Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "onnxruntime", Backend: "CPUExecutionProvider"},
+				}},
+			},
 		}},
 	}
 }

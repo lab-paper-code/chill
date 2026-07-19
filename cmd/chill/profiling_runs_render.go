@@ -87,17 +87,6 @@ func writeProfilingRunsTable(writer io.Writer, document profilingRunsDocument) e
 	return table.Flush()
 }
 
-func compactDigest(value string) string {
-	if value == "" {
-		return "-"
-	}
-	const visibleLength = len("sha256:") + 12
-	if len(value) <= visibleLength {
-		return value
-	}
-	return value[:visibleLength] + "..."
-}
-
 func profilingRunsOutput(snapshot operatorconsole.ProfilingRunsSnapshot) profilingRunsDocument {
 	document := profilingRunsDocument{
 		ReadAt: snapshot.ReadAt.Format(time.RFC3339Nano), ResourceVersion: snapshot.ResourceVersion,

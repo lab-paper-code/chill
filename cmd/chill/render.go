@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 )
@@ -16,7 +18,9 @@ type inventoryDocument struct {
 	ReadAt                       string                   `json:"readAt"`
 	DeviceClassesResourceVersion string                   `json:"deviceClassesResourceVersion"`
 	NodesResourceVersion         string                   `json:"nodesResourceVersion"`
+	ModelSpecsResourceVersion    string                   `json:"modelSpecsResourceVersion"`
 	Classes                      []inventoryClassDocument `json:"classes"`
+	Models                       []inventoryModelDocument `json:"models"`
 }
 
 type inventoryClassDocument struct {
@@ -44,6 +48,13 @@ type inventoryNodeDocument struct {
 	SchedulingDisabled bool   `json:"schedulingDisabled"`
 }
 
+type inventoryModelDocument struct {
+	Name            string                     `json:"name"`
+	UID             string                     `json:"uid"`
+	ResourceVersion string                     `json:"resourceVersion"`
+	Spec            edgev1alpha1.ModelSpecSpec `json:"spec"`
+}
+
 func writeInventory(writer io.Writer, output string, snapshot operatorconsole.InventorySnapshot) error {
 	document := inventoryOutput(snapshot)
 	if output == "json" {
@@ -56,8 +67,9 @@ func writeInventory(writer io.Writer, output string, snapshot operatorconsole.In
 
 func writeInventoryTable(writer io.Writer, document inventoryDocument) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintf(table, "READ_AT\t%s\nDEVICECLASSES_RV\t%s\nNODES_RV\t%s\n\n",
-		document.ReadAt, display(document.DeviceClassesResourceVersion), display(document.NodesResourceVersion)); err != nil {
+	if _, err := fmt.Fprintf(table, "READ_AT\t%s\nDEVICECLASSES_RV\t%s\nNODES_RV\t%s\nMODELSPECS_RV\t%s\n\n",
+		document.ReadAt, display(document.DeviceClassesResourceVersion), display(document.NodesResourceVersion),
+		display(document.ModelSpecsResourceVersion)); err != nil {
 		return err
 	}
 	const header = "CLASS\tARCH\tMEMORY\tACCELERATOR\tPOWER_MODES" +
@@ -86,6 +98,32 @@ func writeInventoryTable(writer io.Writer, document inventoryDocument) error {
 			}
 		}
 	}
+	if _, err := fmt.Fprintln(table, "\nMODEL\tARTIFACT\tFORMAT\tDIGEST"); err != nil {
+		return err
+	}
+	for _, model := range document.Models {
+		artifacts := append([]edgev1alpha1.ModelArtifact(nil), model.Spec.Artifacts...)
+		sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Name < artifacts[j].Name })
+		for _, artifact := range artifacts {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
+				model.Name, artifact.Name, artifact.Format, compactDigest(artifact.Digest)); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(table, "\nMODEL\tEXECUTION_PATH\tARTIFACT\tRUNTIME_FAMILY\tBACKEND"); err != nil {
+		return err
+	}
+	for _, model := range document.Models {
+		paths := append([]edgev1alpha1.ModelExecutionPath(nil), model.Spec.ExecutionPaths...)
+		sort.Slice(paths, func(i, j int) bool { return paths[i].Name < paths[j].Name })
+		for _, path := range paths {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n",
+				model.Name, path.Name, path.Artifact, path.Runtime.Family, path.Runtime.Backend); err != nil {
+				return err
+			}
+		}
+	}
 	return table.Flush()
 }
 
@@ -94,10 +132,17 @@ func inventoryOutput(snapshot operatorconsole.InventorySnapshot) inventoryDocume
 		ReadAt:                       snapshot.ReadAt.Format(time.RFC3339Nano),
 		DeviceClassesResourceVersion: snapshot.DeviceClassesResourceVersion,
 		NodesResourceVersion:         snapshot.NodesResourceVersion,
+		ModelSpecsResourceVersion:    snapshot.ModelSpecsResourceVersion,
 		Classes:                      make([]inventoryClassDocument, 0, len(snapshot.Classes)),
+		Models:                       make([]inventoryModelDocument, 0, len(snapshot.Models)),
 	}
 	for _, class := range snapshot.Classes {
 		document.Classes = append(document.Classes, inventoryClassOutput(class))
+	}
+	for _, model := range snapshot.Models {
+		document.Models = append(document.Models, inventoryModelDocument{
+			Name: model.Name, UID: string(model.UID), ResourceVersion: model.ResourceVersion, Spec: model.Spec,
+		})
 	}
 	return document
 }
@@ -120,11 +165,4 @@ func inventoryClassOutput(class deviceclass.InventoryClass) inventoryClassDocume
 		})
 	}
 	return document
-}
-
-func display(value string) string {
-	if value == "" {
-		return "-"
-	}
-	return value
 }

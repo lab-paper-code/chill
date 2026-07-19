@@ -40,10 +40,23 @@ func TestKubernetesInventoryQueryReadsAndProjectsAuthorities(t *testing.T) {
 			Type: corev1.NodeReady, Status: corev1.ConditionTrue,
 		}}},
 	}
+	model := &edgev1alpha1.ModelSpec{
+		ObjectMeta: metav1.ObjectMeta{Name: "mobilenet", UID: "model-uid"},
+		Spec: edgev1alpha1.ModelSpecSpec{
+			Artifacts: []edgev1alpha1.ModelArtifact{{
+				Name: "canonical-onnx", Format: "onnx", Digest: "sha256:" + strings.Repeat("a", 64),
+			}},
+			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
+				Name: "ort-cpu", Artifact: "canonical-onnx",
+				Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "onnxruntime", Backend: "CPUExecutionProvider"},
+			}},
+		},
+	}
 	reader := &resourceVersionReader{
-		Reader:                       fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, node).Build(),
+		Reader:                       fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, node, model).Build(),
 		deviceClassesResourceVersion: "classes-rv",
 		nodesResourceVersion:         "nodes-rv",
+		modelSpecsResourceVersion:    "models-rv",
 	}
 	query, err := NewKubernetesInventoryQuery(reader)
 	if err != nil {
@@ -59,13 +72,19 @@ func TestKubernetesInventoryQueryReadsAndProjectsAuthorities(t *testing.T) {
 	if !got.ReadAt.Equal(readAt.UTC()) || got.ReadAt.Location() != time.UTC {
 		t.Fatalf("ReadAt = %v", got.ReadAt)
 	}
-	if got.DeviceClassesResourceVersion != "classes-rv" || got.NodesResourceVersion != "nodes-rv" {
-		t.Fatalf("list resourceVersions = %q, %q", got.DeviceClassesResourceVersion, got.NodesResourceVersion)
+	if got.DeviceClassesResourceVersion != "classes-rv" || got.NodesResourceVersion != "nodes-rv" ||
+		got.ModelSpecsResourceVersion != "models-rv" {
+		t.Fatalf("list resourceVersions = %q, %q, %q", got.DeviceClassesResourceVersion,
+			got.NodesResourceVersion, got.ModelSpecsResourceVersion)
 	}
 	if len(got.Classes) != 1 || got.Classes[0].Name != "orin" ||
 		got.Classes[0].Spec.Architecture != "arm64" || len(got.Classes[0].Nodes) != 1 ||
 		got.Classes[0].Nodes[0].Name != "orin-1" || got.Classes[0].Nodes[0].Ready != corev1.ConditionTrue {
 		t.Fatalf("Classes = %#v", got.Classes)
+	}
+	if len(got.Models) != 1 || got.Models[0].Name != "mobilenet" ||
+		got.Models[0].Spec.ExecutionPaths[0].Runtime.Family != "onnxruntime" {
+		t.Fatalf("Models = %#v", got.Models)
 	}
 }
 
@@ -78,6 +97,7 @@ func TestKubernetesInventoryQueryReportsAuthorityReadFailures(t *testing.T) {
 	}{
 		{name: "DeviceClasses", failFor: "classes", message: "list DeviceClasses for inventory"},
 		{name: "Nodes", failFor: "nodes", message: "list Nodes for inventory"},
+		{name: "ModelSpecs", failFor: "models", message: "list ModelSpecs for inventory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,6 +166,10 @@ func (r *failingInventoryReader) List(_ context.Context, list client.ObjectList,
 		if r.failFor == "nodes" {
 			return r.err
 		}
+	case *edgev1alpha1.ModelSpecList:
+		if r.failFor == "models" {
+			return r.err
+		}
 	}
 	return nil
 }
@@ -154,6 +178,7 @@ type resourceVersionReader struct {
 	client.Reader
 	deviceClassesResourceVersion string
 	nodesResourceVersion         string
+	modelSpecsResourceVersion    string
 }
 
 func (r *resourceVersionReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
@@ -165,6 +190,8 @@ func (r *resourceVersionReader) List(ctx context.Context, list client.ObjectList
 		typed.ResourceVersion = r.deviceClassesResourceVersion
 	case *corev1.NodeList:
 		typed.ResourceVersion = r.nodesResourceVersion
+	case *edgev1alpha1.ModelSpecList:
+		typed.ResourceVersion = r.modelSpecsResourceVersion
 	}
 	return nil
 }
