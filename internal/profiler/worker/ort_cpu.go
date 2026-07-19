@@ -99,23 +99,9 @@ func (r *ORTCPURuntime) Measure(
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return profilingrun.RuntimeResult{}, fmt.Errorf("inspect CPU ORT result path: %w", err)
 	}
-	intentDigest, err := intent.Digest()
+	payload, err := r.encodeRequest(intent, podUID)
 	if err != nil {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("validate CPU ORT intent: %w", err)
-	}
-
-	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest, PodUID: podUID,
-		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
-		MeasurementStartPath:             r.config.MeasurementStartPath,
-		ObserverReadyTimeoutMilliseconds: r.config.ObserverReadyTimeout.Milliseconds(),
-		MaxLatencySamples:                r.config.MaxLatencySamples,
-		MaxInputBytes:                    r.config.MaxInputBytes,
-		MaxResultBytes:                   r.config.MaxResultBytes,
-	}
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("encode CPU ORT request: %w", err)
+		return profilingrun.RuntimeResult{}, err
 	}
 
 	arguments := append([]string(nil), r.config.Command[1:]...)
@@ -136,4 +122,26 @@ func (r *ORTCPURuntime) Measure(
 		return profilingrun.RuntimeResult{}, fmt.Errorf("validate CPU ORT result: %w", err)
 	}
 	return result, nil
+}
+
+func (r *ORTCPURuntime) encodeRequest(intent profilingrun.Intent, podUID string) ([]byte, error) {
+	intentDigest, err := intent.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("validate CPU ORT intent: %w", err)
+	}
+
+	request := ortCPURequest{
+		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest, PodUID: podUID,
+		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
+		MeasurementStartPath:             r.config.MeasurementStartPath,
+		ObserverReadyTimeoutMilliseconds: r.config.ObserverReadyTimeout.Milliseconds(),
+		MaxLatencySamples:                r.config.MaxLatencySamples,
+		MaxInputBytes:                    r.config.MaxInputBytes,
+		MaxResultBytes:                   r.config.MaxResultBytes,
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("encode CPU ORT request: %w", err)
+	}
+	return payload, nil
 }

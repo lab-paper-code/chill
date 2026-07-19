@@ -1,10 +1,12 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +26,37 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	}
 	if result.Provider != intent.State.Backend || result.ExperimentID != "pod-uid" {
 		t.Fatalf("unexpected runtime result: %#v", result)
+	}
+}
+
+func TestORTCPURequestMatchesPythonContract(t *testing.T) {
+	runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
+	payload, err := runtime.encodeRequest(testIntent(t), "pod-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal("python3 is required for the Go-to-Python runtime contract test")
+	}
+	runtimeDirectory, err := filepath.Abs("../../../runtime/ortcpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const validator = `
+import sys
+sys.path.insert(0, sys.argv[1])
+import runner
+request = runner.decode_request(sys.stdin.buffer)
+runner.validate_request(request)
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, python, "-c", validator, runtimeDirectory)
+	command.Stdin = bytes.NewReader(payload)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Python rejected the Go runtime request: %v\n%s", err, output)
 	}
 }
 

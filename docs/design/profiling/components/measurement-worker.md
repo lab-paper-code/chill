@@ -258,6 +258,8 @@ and verified immutable evidence plus native Kubernetes observations.
 
 Items 1 through 3 are implemented through the fail-closed worker adapters, the
 production CPU ORT subprocess, and the PowerObserver container entrypoint. The
-worker composition image, Evidence Store delivery binding, and Job
+Go adapter's exact runtime request is checked against the production Python
+strict decoder as a cross-language contract test. The worker composition
+image, Evidence Store delivery binding, and Job
 materialization remain later steps. This changes no public CRD field and does
 not create a Job.
