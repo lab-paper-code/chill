@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,6 +22,7 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+	TempDir         string
 	HTTPClient      aws.HTTPClient
 }
 
@@ -46,7 +48,10 @@ func New(config Config) (*Store, error) {
 	client := awss3.NewFromConfig(awsConfig, func(options *awss3.Options) {
 		options.UsePathStyle = true
 	})
-	return &Store{client: client, region: config.Region, logicalStore: config.LogicalStore, bucket: config.Bucket}, nil
+	return &Store{
+		client: client, region: config.Region, logicalStore: config.LogicalStore,
+		bucket: config.Bucket, tempDir: config.TempDir,
+	}, nil
 }
 
 func (c Config) validate() error {
@@ -67,6 +72,9 @@ func (c Config) validate() error {
 	}
 	if strings.TrimSpace(c.LogicalStore) != c.LogicalStore || strings.TrimSpace(c.Bucket) != c.Bucket {
 		return errors.New("logical store and bucket must not have surrounding whitespace")
+	}
+	if c.TempDir != "" && (!filepath.IsAbs(c.TempDir) || filepath.Clean(c.TempDir) != c.TempDir) {
+		return errors.New("temporary directory must be a clean absolute path")
 	}
 	endpoint, err := url.Parse(c.Endpoint)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {

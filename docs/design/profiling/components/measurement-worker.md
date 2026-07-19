@@ -110,11 +110,16 @@ scientific intent is otherwise identical.
 
 ## Job-local handoff
 
-The Job uses three volumes:
+The Job uses four volumes:
 
 - a read-only intent ConfigMap volume;
 - an `emptyDir` model volume populated by the artifact init container; and
-- an `emptyDir` coordination volume shared by the two regular containers.
+- an `emptyDir` coordination volume shared by the two regular containers; and
+- a bounded runtime-workspace `emptyDir` mounted only by the runtime worker.
+
+The runtime workspace holds the private CPU ORT result and bounded temporary
+file used to verify evidence before upload. It is not a cross-container
+protocol or retained evidence location.
 
 The coordination volume contains only this versioned, bounded protocol:
 
@@ -236,6 +241,8 @@ The first policy must enforce these relationships:
   runtime session, outputs, bounded input-generation temporary, and worker;
 - the latency-sample capacity and runtime-result byte capacity fit both the
   runtime container memory limit and the immutable handoff; and
+- the runtime workspace size covers the private runtime result and one bounded
+  evidence candidate without relying on a writable image layer; and
 - the common attempt deadline covers artifact preparation, model and input
   preparation, observer synchronization, warm-up, measurement, handoff, and
   evidence commit.
@@ -299,5 +306,8 @@ strict decoder as a cross-language contract test. The Operator now supplies
 the owning `ChillSystem` name to each Profiler instance. A fail-closed
 Kubernetes resolver can exact-read that system and its configured Evidence
 Store into a non-secret delivery binding. Its Job projection, the worker
-composition image, and Job materialization remain later steps. This changes no
-public CRD field and does not create a Job.
+composition image, and Job materialization remain later steps. The production
+measurement-worker entrypoint now composes the frozen-intent loader, CPU ORT
+adapter, file-based power handoff, immutable S3 writer, coordinator, stable
+failure exits, and bounded termination receipt. This changes no public CRD
+field and does not create a Job.

@@ -83,7 +83,7 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 		Intent: intent, ExpectedIntentDigest: "sha256:" + strings.Repeat("0", 64), PodUID: "pod-uid",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
-	if err == nil || runtimeCalls != 0 {
+	if !errors.Is(err, ErrExecutionContract) || runtimeCalls != 0 {
 		t.Fatalf("expected pre-execution intent drift rejection, got err=%v calls=%d", err, runtimeCalls)
 	}
 }
@@ -113,7 +113,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 			}),
 			&fakeStore{},
 		)
-		if _, err := coordinator.Execute(context.Background(), request); err == nil || powerCalls != 0 {
+		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrRuntimeMeasurement) || powerCalls != 0 {
 			t.Fatalf("expected runtime rejection before power read, got err=%v calls=%d", err, powerCalls)
 		}
 	})
@@ -129,7 +129,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 			powerReaderFunc(func(context.Context) (powerobserver.Result, error) { return powerResult, nil }),
 			store,
 		)
-		if _, err := coordinator.Execute(context.Background(), request); err == nil || store.calls != 0 {
+		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrPowerObservation) || store.calls != 0 {
 			t.Fatalf("expected power rejection before store, got err=%v calls=%d", err, store.calls)
 		}
 	})
@@ -156,7 +156,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		Intent: intent, ExpectedIntentDigest: digest, PodUID: "pod-uid",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "invalid receipt") {
+	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
 		t.Fatalf("expected invalid receipt rejection, got %v", err)
 	}
 }

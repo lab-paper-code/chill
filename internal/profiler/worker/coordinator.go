@@ -65,29 +65,35 @@ func NewCoordinator(
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
 	digest, err := request.Intent.Digest()
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("validate frozen intent: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: validate frozen intent: %w", ErrExecutionContract, err)
 	}
 	if request.ExpectedIntentDigest != digest {
-		return evidencestore.Receipt{}, errors.New("mounted intent digest does not match the expected digest")
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: mounted intent digest does not match the expected digest", ErrExecutionContract,
+		)
 	}
 	if strings.TrimSpace(request.PodUID) == "" || strings.TrimSpace(request.PodUID) != request.PodUID {
-		return evidencestore.Receipt{}, errors.New("Pod UID is required without surrounding whitespace")
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: Pod UID is required without surrounding whitespace", ErrExecutionContract,
+		)
 	}
 	if err := request.RawLocation.Validate(); err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("validate raw evidence location: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: validate raw evidence location: %w", ErrExecutionContract, err,
+		)
 	}
 
 	runtimeResult, err := c.runtime.Measure(ctx, request.Intent, request.PodUID)
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("execute runtime measurement: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
 	if err := profilingrun.ValidateRuntime(request.Intent, request.PodUID, runtimeResult); err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("validate runtime measurement: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: validate runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
 
 	powerResult, err := c.power.Read(ctx)
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("read power observation result: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: read power observation result: %w", ErrPowerObservation, err)
 	}
 	raw := evidence.RawMeasurement{
 		SchemaVersion: evidence.RawMeasurementSchemaVersion,
@@ -98,16 +104,18 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	}
 	payload, err := raw.CanonicalJSON(request.Intent)
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("construct raw measurement: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: construct raw measurement: %w", ErrPowerObservation, err)
 	}
 
 	identity := identityFor(request.RawLocation, payload)
 	receipt, err := c.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("commit raw measurement: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: commit raw measurement: %w", ErrEvidenceCommit, err)
 	}
 	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return evidencestore.Receipt{}, errors.New("raw evidence writer returned an invalid receipt")
+		return evidencestore.Receipt{}, fmt.Errorf(
+			"%w: raw evidence writer returned an invalid receipt", ErrEvidenceCommit,
+		)
 	}
 	return receipt, nil
 }

@@ -10,6 +10,7 @@ func TestConfigValidate(t *testing.T) {
 		Region:          "us-east-1",
 		AccessKeyID:     "access-key",
 		SecretAccessKey: "secret-key",
+		TempDir:         "/workspace",
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
@@ -26,6 +27,7 @@ func TestConfigValidate(t *testing.T) {
 		"missing region":     func(config *Config) { config.Region = "" },
 		"missing access key": func(config *Config) { config.AccessKeyID = "" },
 		"missing secret":     func(config *Config) { config.SecretAccessKey = "" },
+		"relative temp dir":  func(config *Config) { config.TempDir = "workspace" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -46,12 +48,13 @@ func TestNew(t *testing.T) {
 		Region:          "us-east-1",
 		AccessKeyID:     "access-key",
 		SecretAccessKey: "secret-key",
+		TempDir:         "/workspace",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	if store == nil || store.client == nil || store.logicalStore != "chill-evidence-store" ||
-		store.bucket != "chill-profiling-evidence" {
+		store.bucket != "chill-profiling-evidence" || store.tempDir != "/workspace" {
 		t.Fatal("New() returned an unusable Store")
 	}
 }

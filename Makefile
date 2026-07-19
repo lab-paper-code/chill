@@ -258,6 +258,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/node-discovery ./cmd/node-discovery
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/power-observer ./cmd/power-observer
+	go build -o bin/measurement-worker ./cmd/measurement-worker
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
