@@ -28,6 +28,6 @@ rules:
     resources:
       - services/proxy
     resourceNames:
-      - {{ include "chill.consoleName" . }}
+      - {{ printf "%s:http" (include "chill.consoleName" .) }}
     verbs:
       - get
