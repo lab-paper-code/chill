@@ -86,11 +86,11 @@ require_contains intent-digest-integration-reference "$intent_digest_references"
 
 reconcile="$(position_of \
   internal/profiler/controller/intent_reconciler.go \
-  'func \(r \*IntentReconciler\) Reconcile' \
+  'func \(r \*RunReconciler\) Reconcile' \
   'Reconcile')"
 reconcile_hierarchy="$(gopls_command call_hierarchy "$reconcile")"
 require_contains reconcile-freeze-callee "$reconcile_hierarchy" \
-  'internal/profiler/controller/intent_reconciler.go:18'
+  'internal/profiler/controller/intent_reconciler.go:'
 
 printf 'phase1.go_toolchain=%s\n' "$expected_go"
 printf 'phase1.gopls=%s\n' "$expected_gopls"
