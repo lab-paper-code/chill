@@ -4,8 +4,8 @@
 
 ## Status
 
-Approved high-level design. Plans 1 and 2 are implemented and live-verified.
-Plan 3 remains review-gated.
+Approved high-level design. Plans 1 through 3 are implemented and
+live-verified for the first CPU ONNX Runtime `ProfilingRun` path.
 
 ## Purpose
 
@@ -231,13 +231,13 @@ Kubernetes resources.
 
 Stop for review. The Operator still does not write or verify evidence.
 
-### Plan 3: Profiler consumption
+### Plan 3: Profiler consumption — implemented
 
-Begin only after the minimum `ProfilingRun` API and controller contract is
-approved. Inject resolved store configuration into the worker, consume its
-bounded receipt, independently verify the raw-measurement object, write and
-verify a separate execution-evidence record from terminal Kubernetes facts,
-and publish the compact finalized reference and Conditions.
+The approved `ProfilingRun` controller injects the retained store binding into
+the worker, consumes its bounded receipt, independently verifies the raw
+measurement, writes and verifies a separate execution-evidence record from
+terminal Kubernetes facts, and publishes the compact finalized reference and
+Conditions.
 
 ## Acceptance boundary
 

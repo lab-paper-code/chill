@@ -2,10 +2,10 @@
 
 ## Status
 
-Roadmap with the first three leaf plans and the operator-managed Profiler
-operand foundation implemented. The `ProfilingRun` control path is not yet
-implemented. This document itself does not authorize later API or internal
-changes.
+Roadmap with the first three leaf plans and the `ProfilingRun` path through
+durable execution-evidence verification implemented. Single-Run scientific
+admission and profile publication remain incomplete. This document itself does
+not authorize later API or internal changes.
 
 ## How to use this directory
 
@@ -86,8 +86,9 @@ Answers only:
 > Did Kubernetes and the selected runtime realize one immutable profiling
 > decision, and what execution evidence was observed?
 
-Its first CPU ONNX Runtime plan is approved and is implemented as isolated
-plain-domain and one-shot Kubernetes boundaries before any public Run API.
+Its first CPU ONNX Runtime path is implemented through an immutable public Run,
+one native Job attempt, raw evidence persistence, and finalized execution
+evidence.
 
 ### 3. Profile admission and derivation — implemented first read-only path
 
@@ -102,7 +103,7 @@ Its first pure read-only plan is approved against the retained real Run
 evidence. Persistence remains deferred until the output contract survives
 adversarial and live-evidence review.
 
-### 4. Minimal Profiler control path — operand foundation implemented
+### 4. Minimal Profiler control path — evidence path implemented
 
 [plans/04-minimal-profiler-control-path.md](plans/04-minimal-profiler-control-path.md)
 
@@ -111,11 +112,11 @@ Answers only:
 > Can an operator-managed CHILL Profiler own one exact ProfilingRun from a
 > compatible request through durable evidence and single-Run admission?
 
-The Operator now manages a separately deployed Profiler operand and reports its
-component availability. The Profiler operand reconciles the first bounded
-`ProfilingRun` transition: it resolves current trusted facts, creates an
-immutable intent record, and publishes its digest. It does not yet create a Job
-or execute measurement work. The completed and remaining scope intentionally
+The Operator manages a separately deployed Profiler operand and reports its
+component availability. The Profiler resolves trusted facts, freezes one Run,
+creates one owned Job, verifies the worker's durable raw object, finalizes
+terminal Kubernetes evidence, and publishes compact execution and evidence
+status. Single-Run scientific admission remains the next transition. The scope
 does not orchestrate a batch campaign, derive `b_sat`, publish a
 `DeviceProfile`, or connect to the scheduler.
 

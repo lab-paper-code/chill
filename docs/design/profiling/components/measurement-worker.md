@@ -4,9 +4,9 @@
 
 ## Status
 
-Approved implementation boundary for the first CPU ONNX Runtime profiling
-path. This document specifies the Job-local handoff required by Plan 4. It does
-not authorize batch campaigns, `b_sat` derivation, another runtime, or serving.
+Implemented and live-verified for the first CPU ONNX Runtime profiling path.
+This document specifies the Job-local handoff required by Plan 4. It does not
+authorize batch campaigns, `b_sat` derivation, another runtime, or serving.
 
 ## Purpose
 

@@ -99,18 +99,14 @@ The system specification eventually requires more than single-Run evidence:
 The specification does not imply that all these families belong in one CRD,
 database, bucket, or retention policy.
 
-## Confirmed gaps
+## Remaining gaps
 
-The current system has no production Profiler contract for:
+The production Profiler now writes and independently verifies raw and finalized
+single-Run evidence and publishes its compact reference. It still has no
+contract for:
 
-- writing raw measurements to the managed evidence sink;
-- finalizing terminal Kubernetes facts as a separate immutable evidence
-  record;
-- publishing an immutable evidence reference containing location, digest,
-  schema, and size;
-- confirmation that evidence is durable before a Job or Run object is removed;
 - retention, pinning, garbage collection, or explicit deletion;
-- reconstruction after Profiler restart or cluster-object deletion;
+- finalization after required Job or Pod objects have already been deleted;
 - a searchable long-term metadata index; or
 - versioned publication and invalidation of admitted profiles.
 
@@ -119,8 +115,7 @@ needs a universal storage subsystem.
 
 ## Audit conclusion
 
-The first unresolved Profiler boundary is the immutable single-Run evidence
-handoff and finalization:
+The immutable single-Run handoff and finalization boundary is now implemented:
 
 ```text
 measurement worker
@@ -133,10 +128,10 @@ Profiler controller
   -> compact ProfilingRun reference and admission status
 ```
 
-That boundary is a prerequisite for a trustworthy Profiler Run reconciler.
-Profile history, scheduler audit, and a general metadata index should not be
-designed into the first sink without evidence that the first Run path needs
-them.
+The next unresolved Run transition is scientific admission of the verified
+execution evidence. Profile history, scheduler audit, and a general metadata
+index should not be designed into the first sink without evidence that the
+first Run path needs them.
 
 The evidence store is a CHILL-managed operand. Its Deployment, Service,
 persistent storage attachment, credential reference, health, and lifecycle

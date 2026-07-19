@@ -9,19 +9,20 @@ is implemented: `ChillSystem` configuration and conditions, the standalone
 Profiler process, Operator-owned Deployment lifecycle, and Helm-owned runtime
 identity and configuration. The foundation has passed API, envtest, Helm,
 multi-architecture image, and live-cluster lifecycle verification.
-The immutable, namespaced `ProfilingRun` API schema and the Kubernetes-free
-preparation, lifecycle-decision, and evidence-finalization boundaries are now
-implemented. The Profiler now resolves Kubernetes/configuration facts, retains
-one immutable intent record, and publishes its digest. Job materialization and
-measurement execution remain unimplemented. Request, evidence-ownership,
-status/retry, and measurement-worker checkpoints are fixed.
+The immutable, namespaced `ProfilingRun` API, preparation, Job execution,
+worker-side raw evidence commit, controller-side terminal evidence
+finalization, and compact execution/evidence status are implemented and
+live-verified for the first CPU ONNX Runtime path. Single-Run scientific
+admission remains unimplemented. Request, evidence-ownership, status/retry,
+and measurement-worker checkpoints are fixed.
 
 ## Purpose
 
 CHILL has reusable internal functions for static compatibility, bounded power
 observation, immutable Run validation, and profile-evidence admission. Its
-managed Profiler process now coordinates Run preparation through immutable
-intent publication, but does not yet create or execute a measurement Job.
+managed Profiler process now coordinates Run preparation, one native Job, and
+durable execution-evidence finalization. It does not yet invoke the existing
+single-Run admission boundary.
 
 The first Profiler answers one bounded question:
 
@@ -551,19 +552,23 @@ handoff paths.
    for the proven fixed-power CPU ORT path. Implemented.
 8. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
-   Implemented through immutable intent recording; Job lifecycle remains.
+   Implemented through Job outcome and evidence status publication.
 9. Add the one-shot measurement Job boundary, then promote only the proven CPU
    ORT runtime-worker and PowerObserver-helper behavior from the spike into it.
-10. Add the selected durable evidence sink.
+   Implemented and live-verified.
+10. Add the selected durable evidence sink. Implemented and live-verified for
+    raw and finalized execution evidence.
 11. Sync CRDs and RBAC into Helm and verify independent Operator/Profiler
-    permissions, configuration rollout, and upgrade behavior.
+    permissions, configuration rollout, and upgrade behavior. Implemented for
+    the execution/evidence path.
 12. Verify failure, cancellation, identity drift, duplicate events, and both
     controller restarts with envtest and unit tests.
 13. Run one live Lattepanda measurement and compare the new evidence and
-    admission output with the spike path.
+    admission output with the spike path. Measurement and evidence are
+    live-verified; admission comparison remains.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
     through `kubectl get/describe profilingrun`, its owned Job, and the evidence
-    digest.
+    digest. Implemented through the evidence digest.
 15. Remove no spike path until equivalent evidence and fail-closed behavior are
     confirmed.
 
