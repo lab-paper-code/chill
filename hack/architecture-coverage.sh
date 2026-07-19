@@ -13,6 +13,7 @@ components=(
   entrypoints
   platform-core
   device-class
+  operator-console
   operator
   evidence-core
   evidence-s3
@@ -38,6 +39,7 @@ component_for() {
       echo platform-core
       ;;
     internal/deviceclass) echo device-class ;;
+    internal/operatorconsole) echo operator-console ;;
     internal/operator/*) echo operator ;;
     internal/evidencestore) echo evidence-core ;;
     internal/evidencestore/s3) echo evidence-s3 ;;

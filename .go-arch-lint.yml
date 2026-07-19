@@ -33,6 +33,7 @@ components:
       - internal/metadata
       - internal/nodeprobe
   device-class: { in: internal/deviceclass }
+  operator-console: { in: internal/operatorconsole }
   operator: { in: internal/operator/** }
   evidence-core: { in: internal/evidencestore }
   evidence-s3: { in: internal/evidencestore/s3 }
@@ -66,6 +67,11 @@ deps:
     mayDependOn:
       - api
       - platform-core
+
+  operator-console:
+    mayDependOn:
+      - api
+      - device-class
 
   operator:
     mayDependOn:

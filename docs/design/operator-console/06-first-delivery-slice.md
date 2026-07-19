@@ -27,9 +27,12 @@ CHILL이 알고 있는 사실을 확인하고, 측정 의도 하나를 제출하
 `Node.spec.unschedulable`과 원본 identity를 보존하며 어떤 status에도 결과를 저장하지
 않는다.
 
-아직 이 projection을 소비하는 CLI, Dashboard 또는 query adapter는 없다. 따라서 현재
-완료된 것은 조회 의미와 순수 조합 로직이며, 운영자가 호출할 수 있는 read-only 수직
-단면은 다음 구현 단계다.
+`internal/operatorconsole`의 Kubernetes query adapter는 `DeviceClassList`와 `NodeList`를
+읽어 이 projection을 반환한다. 두 LIST의 resourceVersion과 조회 완료 시각을 별도로
+보존하며 원자적인 cross-resource snapshot이라고 주장하지 않는다.
+
+아직 이 query를 소비하는 CLI나 Dashboard는 없다. 따라서 현재 완료된 것은 공통 조회
+계약까지이며, 운영자가 호출할 수 있는 read-only 수직 단면은 다음 구현 단계다.
 
 ## 현재 구현의 사실 경계
 
