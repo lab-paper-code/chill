@@ -308,9 +308,9 @@ Go adapter's exact runtime request is checked against the production Python
 strict decoder as a cross-language contract test. The Operator now supplies
 the owning `ChillSystem` name to each Profiler instance. A fail-closed
 Kubernetes resolver can exact-read that system and its configured Evidence
-Store into a non-secret delivery binding. Its Job projection, the worker
-composition image, and Job materialization remain later steps. The production
-measurement-worker entrypoint now composes the frozen-intent loader, CPU ORT
-adapter, file-based power handoff, immutable S3 writer, coordinator, stable
-failure exits, and bounded termination receipt. This changes no public CRD
-field and does not create a Job.
+Store into a non-secret delivery binding. Its Job projection and Job
+materialization remain later steps. The production CPU ORT measurement-worker
+image composes the frozen-intent loader, runtime adapter, file-based power
+handoff, immutable S3 writer, coordinator, stable failure exits, bounded
+termination receipt, and pinned Python runtime dependencies. This changes no
+public CRD field and does not create a Job.

@@ -8,6 +8,7 @@ OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 POWER_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-power-observer:$(IMAGE_TAG)
+MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -286,8 +287,12 @@ docker-build-profiler: ## Build the Profiler image.
 docker-build-power-observer: ## Build the PowerObserver image.
 	$(CONTAINER_TOOL) build -f build/docker/power-observer.Dockerfile -t $(POWER_OBSERVER_IMG) .
 
+.PHONY: docker-build-measurement-worker
+docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
+	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
+
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-power-observer ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-power-observer docker-build-measurement-worker ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -308,8 +313,12 @@ docker-push-profiler: ## Push the Profiler image.
 docker-push-power-observer: ## Push the PowerObserver image.
 	$(CONTAINER_TOOL) push $(POWER_OBSERVER_IMG)
 
+.PHONY: docker-push-measurement-worker
+docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
+	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
+
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-power-observer ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-power-observer docker-push-measurement-worker ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -318,6 +327,7 @@ docker-push-all: docker-push-operator docker-push-node-discovery docker-push-pro
 # - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
+MEASUREMENT_WORKER_PLATFORMS ?= linux/amd64
 .PHONY: docker-buildx
 docker-buildx: docker-buildx-operator ## Build and push the operator image for cross-platform support.
 
@@ -345,8 +355,14 @@ docker-buildx-power-observer: ## Build and push the PowerObserver image for cros
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/power-observer.Dockerfile --tag $(POWER_OBSERVER_IMG) .
 
+.PHONY: docker-buildx-measurement-worker
+docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measurement worker platform.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(MEASUREMENT_WORKER_PLATFORMS) -f build/docker/measurement-worker.Dockerfile --tag $(MEASUREMENT_WORKER_IMG) .
+
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-power-observer ## Build and push all component images for cross-platform support.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-power-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.
