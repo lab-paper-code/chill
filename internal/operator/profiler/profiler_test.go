@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const (
@@ -86,6 +87,15 @@ func TestBuildDeployment(t *testing.T) {
 	}
 	if container.ReadinessProbe.HTTPGet.Path != "/readyz" || container.ReadinessProbe.HTTPGet.Port.IntVal != 8081 {
 		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)
+	}
+	if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].Name != evidenceStagingVolumeName ||
+		container.VolumeMounts[0].MountPath != component.ProfilerEvidenceStagingPath {
+		t.Fatalf("evidence staging mount = %#v", container.VolumeMounts)
+	}
+	volumes := deployment.Spec.Template.Spec.Volumes
+	if len(volumes) != 1 || volumes[0].Name != evidenceStagingVolumeName || volumes[0].EmptyDir == nil ||
+		volumes[0].EmptyDir.SizeLimit == nil || volumes[0].EmptyDir.SizeLimit.Value() != 128<<20 {
+		t.Fatalf("evidence staging volume = %#v", volumes)
 	}
 }
 

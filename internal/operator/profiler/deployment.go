@@ -5,6 +5,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -12,6 +13,8 @@ import (
 )
 
 const containerName = component.Profiler
+
+const evidenceStagingVolumeName = "evidence-staging"
 
 func buildDeployment(options Options, config Config) *appsv1.Deployment {
 	labels := workloadLabels(options.SystemName)
@@ -55,10 +58,19 @@ func buildDeployment(options Options, config Config) *appsv1.Deployment {
 							},
 							SecurityContext: config.SecurityContext,
 							Resources:       config.Resources,
-							LivenessProbe:   httpProbe("/healthz", config.HealthProbePort, 15, 20),
-							ReadinessProbe:  httpProbe("/readyz", config.HealthProbePort, 5, 10),
+							VolumeMounts: []corev1.VolumeMount{{
+								Name: evidenceStagingVolumeName, MountPath: component.ProfilerEvidenceStagingPath,
+							}},
+							LivenessProbe:  httpProbe("/healthz", config.HealthProbePort, 15, 20),
+							ReadinessProbe: httpProbe("/readyz", config.HealthProbePort, 5, 10),
 						},
 					},
+					Volumes: []corev1.Volume{{
+						Name: evidenceStagingVolumeName,
+						VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+							SizeLimit: resource.NewQuantity(128<<20, resource.BinarySI),
+						}},
+					}},
 					TerminationGracePeriodSeconds: int64Ptr(10),
 				},
 			},

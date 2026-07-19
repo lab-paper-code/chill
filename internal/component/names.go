@@ -9,10 +9,11 @@ const (
 	Profiler      = "profiler"
 	EvidenceStore = "evidence-store"
 
-	EvidenceStoreConfigKey          = "config.yaml"
-	EvidenceStoreS3Port       int32 = 9000
-	EvidenceStoreAccessKeyKey       = "access-key"
-	EvidenceStoreSecretKeyKey       = "secret-key"
+	EvidenceStoreConfigKey            = "config.yaml"
+	EvidenceStoreS3Port         int32 = 9000
+	EvidenceStoreAccessKeyKey         = "access-key"
+	EvidenceStoreSecretKeyKey         = "secret-key"
+	ProfilerEvidenceStagingPath       = "/var/run/chill/evidence"
 )
 
 func NodeDiscoveryDaemonSetName(systemName string) string {

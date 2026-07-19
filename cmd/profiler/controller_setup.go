@@ -5,8 +5,11 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/lab-paper-code/chill/internal/component"
+	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 )
 
 // setupRunController is the composition root for bounded ProfilingRun
@@ -64,7 +67,14 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct execution Jobs: %w", err)
 	}
-	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs)
+	finalizer, err := profilercontroller.NewKubernetesExecutionFinalizer(
+		reader,
+		newEvidenceObjectStore,
+	)
+	if err != nil {
+		return fmt.Errorf("construct execution evidence finalizer: %w", err)
+	}
+	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs, finalizer)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}
@@ -72,4 +82,19 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 		return fmt.Errorf("set up ProfilingRun reconciler: %w", err)
 	}
 	return nil
+}
+
+func newEvidenceObjectStore(
+	binding profilercontroller.EvidenceStoreBinding,
+	accessKeyID, secretAccessKey string,
+) (profilerevidence.ObjectStore, error) {
+	return evidences3.New(evidences3.Config{
+		LogicalStore:    binding.Store,
+		Bucket:          binding.Bucket,
+		Endpoint:        binding.Endpoint,
+		Region:          binding.Region,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+		TempDir:         component.ProfilerEvidenceStagingPath,
+	})
 }

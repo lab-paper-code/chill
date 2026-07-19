@@ -7,8 +7,11 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,6 +41,22 @@ type recordingExecutionJobs struct {
 	prepared profiler.PreparedRun
 	job      *batchv1.Job
 	err      error
+}
+
+type recordingRunEvidenceFinalizer struct {
+	calls  int
+	result FinalizedRunEvidence
+	err    error
+}
+
+func (f *recordingRunEvidenceFinalizer) Finalize(
+	context.Context,
+	*edgev1alpha1.ProfilingRun,
+	profiler.PreparedRun,
+	*batchv1.Job,
+) (FinalizedRunEvidence, error) {
+	f.calls++
+	return f.result, f.err
 }
 
 func (j *recordingExecutionJobs) Ensure(
@@ -73,7 +92,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs)
+	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +122,7 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs)
+	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,13 +135,67 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	}
 }
 
+func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run := testRun()
+	prepared := currentPreparedRun(t)
+	recordIntentAndJob(run, prepared.IntentDigest)
+	job := ownedJob(run, &batchv1.JobStatus{
+		Succeeded:  1,
+		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+	})
+	finalized := FinalizedRunEvidence{
+		Reference: evidencestore.ObjectIdentity{
+			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
+			Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,
+		},
+		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
+		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}},
+		&recordingExecutionJobs{},
+		finalizer,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", finalizer.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.Evidence == nil || actual.Status.Evidence.Digest != finalized.Reference.Digest ||
+		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion ||
+		actual.Status.ActualExecution == nil || actual.Status.ActualExecution.Pod != finalized.Pod ||
+		actual.Status.ActualExecution.Node != finalized.Node {
+		t.Fatalf("finalized status = %#v", actual.Status)
+	}
+	execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	evidence := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
+	if execution == nil || execution.Status != metav1.ConditionTrue || execution.Reason != "JobSucceeded" ||
+		evidence == nil || evidence.Status != metav1.ConditionTrue || evidence.Reason != "EvidenceVerified" {
+		t.Fatalf("finalized conditions = %#v", actual.Status.Conditions)
+	}
+}
+
 func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
-	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs)
+	reconciler, err := NewRunReconciler(kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +218,7 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 		kubeClient,
 		&recordingIntentFreezer{err: want},
 		&recordingExecutionJobs{},
+		&recordingRunEvidenceFinalizer{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -158,10 +232,19 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 func runReconcilerTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{batchv1.AddToScheme, edgev1alpha1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{batchv1.AddToScheme, corev1.AddToScheme, edgev1alpha1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return scheme
+}
+
+func findRunCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }

@@ -132,4 +132,5 @@ deps:
       - power-edgemetrics
       - profiler-app
       - profiler-evidence
+      - profiler-evidence-kube
       - profiling-run
