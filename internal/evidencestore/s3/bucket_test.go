@@ -14,7 +14,7 @@ import (
 const testBucket = "chill-profiling-evidence"
 
 func TestEnsureBucketReturnsExistingWithoutCreate(t *testing.T) {
-	store := &Store{client: &fakeClient{
+	store := &Store{bucket: testBucket, client: &fakeClient{
 		headBucket: func(_ context.Context, input *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error) {
 			if stringValue(input.Bucket) != testBucket {
 				t.Fatalf("bucket = %q", stringValue(input.Bucket))
@@ -22,14 +22,14 @@ func TestEnsureBucketReturnsExistingWithoutCreate(t *testing.T) {
 			return &awss3.HeadBucketOutput{}, nil
 		},
 	}}
-	outcome, err := store.EnsureBucket(context.Background(), testBucket)
+	outcome, err := store.EnsureBucket(context.Background())
 	if err != nil || outcome != BucketOutcomeExisting {
 		t.Fatalf("EnsureBucket() = %q, %v", outcome, err)
 	}
 }
 
 func TestEnsureBucketCreatesMissingBucket(t *testing.T) {
-	store := &Store{region: "us-east-1", client: &fakeClient{
+	store := &Store{region: "us-east-1", bucket: testBucket, client: &fakeClient{
 		headBucket: func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error) {
 			return nil, bucketAPIError("NoSuchBucket")
 		},
@@ -40,7 +40,7 @@ func TestEnsureBucketCreatesMissingBucket(t *testing.T) {
 			return &awss3.CreateBucketOutput{}, nil
 		},
 	}}
-	outcome, err := store.EnsureBucket(context.Background(), testBucket)
+	outcome, err := store.EnsureBucket(context.Background())
 	if err != nil || outcome != BucketOutcomeCreated {
 		t.Fatalf("EnsureBucket() = %q, %v", outcome, err)
 	}
@@ -48,7 +48,7 @@ func TestEnsureBucketCreatesMissingBucket(t *testing.T) {
 
 func TestEnsureBucketAcceptsConcurrentCreateAfterRecheck(t *testing.T) {
 	headCalls := 0
-	store := &Store{client: &fakeClient{
+	store := &Store{bucket: testBucket, client: &fakeClient{
 		headBucket: func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error) {
 			headCalls++
 			if headCalls == 1 {
@@ -60,7 +60,7 @@ func TestEnsureBucketAcceptsConcurrentCreateAfterRecheck(t *testing.T) {
 			return nil, bucketAPIError("BucketAlreadyOwnedByYou")
 		},
 	}}
-	outcome, err := store.EnsureBucket(context.Background(), testBucket)
+	outcome, err := store.EnsureBucket(context.Background())
 	if err != nil || outcome != BucketOutcomeExisting || headCalls != 2 {
 		t.Fatalf("EnsureBucket() = %q, %v, head calls %d", outcome, err, headCalls)
 	}
@@ -84,7 +84,7 @@ func TestEnsureBucketPreservesFailureCategory(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &Store{client: &fakeClient{
+			store := &Store{bucket: testBucket, client: &fakeClient{
 				headBucket: func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error) {
 					return nil, test.headError
 				},
@@ -92,7 +92,7 @@ func TestEnsureBucketPreservesFailureCategory(t *testing.T) {
 					return nil, test.createError
 				},
 			}}
-			_, err := store.EnsureBucket(context.Background(), testBucket)
+			_, err := store.EnsureBucket(context.Background())
 			if !errors.Is(err, test.wantCategory) {
 				t.Fatalf("EnsureBucket() error = %v, want %v", err, test.wantCategory)
 			}
@@ -101,7 +101,7 @@ func TestEnsureBucketPreservesFailureCategory(t *testing.T) {
 }
 
 func TestEnsureBucketUsesConfiguredNonDefaultRegion(t *testing.T) {
-	store := &Store{region: "ap-northeast-2", client: &fakeClient{
+	store := &Store{region: "ap-northeast-2", bucket: testBucket, client: &fakeClient{
 		headBucket: func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error) {
 			return nil, bucketAPIError("NoSuchBucket")
 		},
@@ -113,16 +113,16 @@ func TestEnsureBucketUsesConfiguredNonDefaultRegion(t *testing.T) {
 			return &awss3.CreateBucketOutput{}, nil
 		},
 	}}
-	if _, err := store.EnsureBucket(context.Background(), testBucket); err != nil {
+	if _, err := store.EnsureBucket(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestEnsureBucketRejectsInvalidInput(t *testing.T) {
-	store := &Store{}
 	for _, bucket := range []string{"", " bucket"} {
-		if _, err := store.EnsureBucket(context.Background(), bucket); err == nil {
-			t.Fatalf("EnsureBucket(%q) accepted", bucket)
+		store := &Store{bucket: bucket}
+		if _, err := store.EnsureBucket(context.Background()); err == nil {
+			t.Fatalf("configured bucket %q accepted", bucket)
 		}
 	}
 }

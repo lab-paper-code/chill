@@ -25,7 +25,7 @@ const (
 type evidenceStore interface {
 	evidencestore.ImmutableWriter
 	evidencestore.Reader
-	EnsureBucket(context.Context, string) (evidences3.BucketOutcome, error)
+	EnsureBucket(context.Context) (evidences3.BucketOutcome, error)
 }
 
 type environment func(string) (string, bool)
@@ -116,7 +116,7 @@ func runEnsureBucket(
 		return 2
 	}
 
-	outcome, err := store.EnsureBucket(ctx, bucket)
+	outcome, err := store.EnsureBucket(ctx)
 	if err != nil {
 		writeDiagnostic(stderr, "evidence-store-client ensure-bucket: %v\n", err)
 		return 1

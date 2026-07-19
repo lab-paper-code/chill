@@ -20,23 +20,23 @@ const (
 	BucketOutcomeExisting BucketOutcome = "Existing"
 )
 
-// EnsureBucket creates a bucket only when it is not already accessible with
-// the configured credentials.
-func (s *Store) EnsureBucket(ctx context.Context, bucket string) (BucketOutcome, error) {
-	if strings.TrimSpace(bucket) == "" {
+// EnsureBucket creates the configured bucket only when it is not already
+// accessible with the configured credentials.
+func (s *Store) EnsureBucket(ctx context.Context) (BucketOutcome, error) {
+	if strings.TrimSpace(s.bucket) == "" {
 		return "", errors.New("bucket is required")
 	}
-	if strings.TrimSpace(bucket) != bucket {
+	if strings.TrimSpace(s.bucket) != s.bucket {
 		return "", errors.New("bucket must not have surrounding whitespace")
 	}
 
-	if err := s.headBucket(ctx, bucket); err == nil {
+	if err := s.headBucket(ctx); err == nil {
 		return BucketOutcomeExisting, nil
 	} else if !errors.Is(err, evidencestore.ErrNotFound) {
 		return "", err
 	}
 
-	input := &awss3.CreateBucketInput{Bucket: aws.String(bucket)}
+	input := &awss3.CreateBucketInput{Bucket: aws.String(s.bucket)}
 	if s.region != "" && s.region != "us-east-1" {
 		input.CreateBucketConfiguration = &awss3types.CreateBucketConfiguration{
 			LocationConstraint: awss3types.BucketLocationConstraint(s.region),
@@ -46,7 +46,7 @@ func (s *Store) EnsureBucket(ctx context.Context, bucket string) (BucketOutcome,
 		return BucketOutcomeCreated, nil
 	} else if !isBucketCreateRace(err) {
 		return "", translate("create evidence bucket", err)
-	} else if headErr := s.headBucket(ctx, bucket); headErr == nil {
+	} else if headErr := s.headBucket(ctx); headErr == nil {
 		return BucketOutcomeExisting, nil
 	} else if !errors.Is(headErr, evidencestore.ErrNotFound) {
 		return "", fmt.Errorf("verify concurrently created evidence bucket: %w", headErr)
@@ -55,8 +55,8 @@ func (s *Store) EnsureBucket(ctx context.Context, bucket string) (BucketOutcome,
 	}
 }
 
-func (s *Store) headBucket(ctx context.Context, bucket string) error {
-	if _, err := s.client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String(bucket)}); err != nil {
+func (s *Store) headBucket(ctx context.Context) error {
+	if _, err := s.client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String(s.bucket)}); err != nil {
 		return translate("inspect evidence bucket", err)
 	}
 	return nil

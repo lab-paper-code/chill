@@ -57,10 +57,7 @@ func TestRunPut(t *testing.T) {
 func TestRunEnsureBucketNeedsNoObjectIdentity(t *testing.T) {
 	identity := testIdentity([]byte("unused"))
 	lookup := testEnvironment(identity)
-	store := &fakeStore{ensureBucket: func(bucket string) (evidences3.BucketOutcome, error) {
-		if bucket != identity.Store {
-			t.Fatalf("EnsureBucket bucket = %q", bucket)
-		}
+	store := &fakeStore{ensureBucket: func() (evidences3.BucketOutcome, error) {
 		return evidences3.BucketOutcomeCreated, nil
 	}}
 	var stdout, stderr bytes.Buffer
@@ -225,14 +222,14 @@ func fixedStore(store evidenceStore) storeFactory {
 type fakeStore struct {
 	put          func(evidencestore.ObjectIdentity, io.Reader) (evidencestore.Receipt, error)
 	open         func(evidencestore.ObjectIdentity) (io.ReadCloser, error)
-	ensureBucket func(string) (evidences3.BucketOutcome, error)
+	ensureBucket func() (evidences3.BucketOutcome, error)
 }
 
-func (s *fakeStore) EnsureBucket(_ context.Context, bucket string) (evidences3.BucketOutcome, error) {
+func (s *fakeStore) EnsureBucket(context.Context) (evidences3.BucketOutcome, error) {
 	if s.ensureBucket == nil {
 		return "", errors.New("unexpected EnsureBucket call")
 	}
-	return s.ensureBucket(bucket)
+	return s.ensureBucket()
 }
 
 func (s *fakeStore) PutImmutable(
