@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -17,19 +18,9 @@ func newKubernetesReader(kubeconfig, contextName string) (client.Reader, error) 
 }
 
 func newKubernetesAccess(kubeconfig, contextName string) (client.Reader, string, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig != "" {
-		rules.ExplicitPath = kubeconfig
-	}
-	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
-	loadingConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
-	restConfig, err := loadingConfig.ClientConfig()
+	restConfig, namespace, err := loadKubernetesConfig(kubeconfig, contextName)
 	if err != nil {
-		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
-	}
-	namespace, _, err := loadingConfig.Namespace()
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve kubeconfig namespace: %w", err)
+		return nil, "", err
 	}
 
 	scheme := runtime.NewScheme()
@@ -44,4 +35,22 @@ func newKubernetesAccess(kubeconfig, contextName string) (client.Reader, string,
 		return nil, "", fmt.Errorf("construct Kubernetes client: %w", err)
 	}
 	return kubeClient, namespace, nil
+}
+
+func loadKubernetesConfig(kubeconfig, contextName string) (*rest.Config, string, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		rules.ExplicitPath = kubeconfig
+	}
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
+	loadingConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
+	restConfig, err := loadingConfig.ClientConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+	}
+	namespace, _, err := loadingConfig.Namespace()
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve kubeconfig namespace: %w", err)
+	}
+	return restConfig, namespace, nil
 }

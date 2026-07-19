@@ -62,6 +62,8 @@ kubectl chill system
 kubectl chill system -o json
 kubectl chill runs -n chill-system
 kubectl chill runs -A -o json
+kubectl chill runs show <run-name> -n chill-system
+kubectl chill runs show <run-name> -n chill-system -o json
 ```
 
 The current commands require read permission for cluster-scoped `ChillSystem`,
@@ -69,6 +71,11 @@ The current commands require read permission for cluster-scoped `ChillSystem`,
 resources. The Helm chart installs the unbound `chill-console-viewer`
 ClusterRole; a cluster administrator decides which users or groups receive it.
 The CLI does not run inside the operator Pod.
+
+`runs show` follows the Run's immutable evidence reference through the
+ClusterIP-only Console API. Enable that API with `--set console.enabled=true`.
+The CLI reaches it through the Kubernetes Service proxy; Evidence Store
+credentials and internal storage endpoints stay inside the Console Pod.
 
 ## Helm
 

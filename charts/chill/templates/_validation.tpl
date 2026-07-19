@@ -4,8 +4,26 @@
 {{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
+{{- $consoleImageTag := include "chill.consoleImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
+{{- end -}}
+{{- if .Values.console.enabled -}}
+{{- if lt (int .Values.console.replicaCount) 1 -}}
+{{- fail "console.replicaCount must be positive when console.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.console.image.repository -}}
+{{- fail "console.image.repository must not be empty when console.enabled=true" -}}
+{{- end -}}
+{{- if empty $consoleImageTag -}}
+{{- fail "console.image.tag or Chart.appVersion must not be empty when console.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.console.port) 1) (gt (int .Values.console.port) 65535) -}}
+{{- fail "console.port must be between 1 and 65535 when console.enabled=true" -}}
+{{- end -}}
+{{- if and (not .Values.console.serviceAccount.create) (empty .Values.console.serviceAccount.name) -}}
+{{- fail "console.serviceAccount.name must be set when console.serviceAccount.create=false" -}}
+{{- end -}}
 {{- end -}}
 {{- if empty .Values.operator.image.repository -}}
 {{- fail "operator.image.repository must not be empty" -}}

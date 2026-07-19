@@ -11,6 +11,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -174,11 +175,55 @@ func TestExecuteProfilingRunsWritesStructuredJSON(t *testing.T) {
 	}
 }
 
+func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
+	passport := testEvidencePassport()
+	query := &fakeEvidencePassportQuery{passport: passport}
+	deps := dependencies{newRunShowQuery: func(opts profilingRunShowOptions) (evidencePassportQuery, error) {
+		if opts.namespace != "chill-system" || opts.name != "cpu-run" || opts.consoleService != "chill-console" {
+			t.Fatalf("options = %#v", opts)
+		}
+		return query, nil
+	}}
+	var stdout strings.Builder
+	if err := execute(context.Background(), []string{"runs", "show", "cpu-run", "-n", "chill-system"}, &stdout, io.Discard, deps); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"RUNTIME MEASUREMENT", "LATENCY", "POWER OBSERVATION", "SCIENTIFIC ADMISSION", "EVIDENCE LINEAGE",
+		"188.009 items/s", "5.978 ms", "18.184 W", "Insufficient", "CoResidentWindowUnknown",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("table missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if query.calls != 1 {
+		t.Fatalf("query calls = %d", query.calls)
+	}
+}
+
+func TestExecuteProfilingRunShowWritesJSON(t *testing.T) {
+	deps := dependencies{newRunShowQuery: func(profilingRunShowOptions) (evidencePassportQuery, error) {
+		return &fakeEvidencePassportQuery{passport: testEvidencePassport()}, nil
+	}}
+	var stdout strings.Builder
+	if err := execute(context.Background(), []string{"runs", "show", "cpu-run", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
+		t.Fatal(err)
+	}
+	var got operatorconsole.EvidencePassport
+	if err := json.Unmarshal([]byte(stdout.String()), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != "EvidencePassport" || got.Run.Name != "cpu-run" || got.Measurement.Power.Watts == nil {
+		t.Fatalf("passport = %#v", got)
+	}
+}
+
 func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"unknown"}, {"inventory", "extra"}, {"inventory", "-o", "yaml"},
 		{"system", "extra"}, {"system", "-o", "yaml"},
 		{"runs", "extra"}, {"runs", "-o", "yaml"}, {"runs", "-n", "chill-system", "-A"},
+		{"runs", "show"}, {"runs", "show", "one", "two"}, {"runs", "show", "run", "-o", "yaml"},
 	} {
 		calls := 0
 		deps := dependencies{
@@ -260,6 +305,17 @@ type fakeProfilingRunsQuery struct {
 	snapshot operatorconsole.ProfilingRunsSnapshot
 	err      error
 	calls    int
+}
+
+type fakeEvidencePassportQuery struct {
+	passport operatorconsole.EvidencePassport
+	err      error
+	calls    int
+}
+
+func (q *fakeEvidencePassportQuery) Read(context.Context) (operatorconsole.EvidencePassport, error) {
+	q.calls++
+	return q.passport, q.err
 }
 
 func (q *fakeProfilingRunsQuery) Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error) {
@@ -368,5 +424,45 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 				}},
 			},
 		}},
+	}
+}
+
+func testEvidencePassport() operatorconsole.EvidencePassport {
+	return operatorconsole.EvidencePassport{
+		APIVersion: operatorconsole.EvidencePassportAPIVersion,
+		Kind:       "EvidencePassport",
+		ReadAt:     time.Date(2026, 7, 20, 2, 0, 0, 0, time.UTC),
+		Run: operatorconsole.EvidencePassportRun{
+			Namespace: "chill-system", Name: "cpu-run", UID: "run-uid", Generation: 1,
+			Spec: edgev1alpha1.ProfilingRunSpec{
+				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+					ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+				},
+				TargetNode: "lattepanda",
+			},
+			Conditions: []metav1.Condition{{Type: edgev1alpha1.ProfilingRunConditionEvidenceAdmitted, Status: metav1.ConditionUnknown, Reason: "EvidenceInsufficient"}},
+		},
+		Evidence: operatorconsole.EvidencePassportLineage{
+			FinalizedAt: time.Date(2026, 7, 20, 1, 1, 0, 0, time.UTC),
+			Final:       evidencestore.ObjectIdentity{Store: "chill-evidence", Key: "execution.json", Digest: "sha256:" + strings.Repeat("a", 64), Size: 9000},
+			Raw:         evidencestore.ObjectIdentity{Store: "chill-evidence", Key: "raw.json", Digest: "sha256:" + strings.Repeat("b", 64), Size: 8000},
+		},
+		Measurement: operatorconsole.EvidencePassportMeasurement{
+			Runtime: operatorconsole.EvidencePassportRuntime{
+				Family: "onnxruntime", Version: "1.16.0", Provider: "CPUExecutionProvider", Architecture: "x86_64",
+				Batch: 1, WarmupIterations: 20, ElapsedSeconds: 30.001,
+				CompletedCalls: 5630, CompletedItems: 5630, ThroughputItems: 188.009,
+				Latency: operatorconsole.EvidencePassportLatency{Count: 5630, Mean: 5.319, P50: 5.179, P95: 5.978, P99: 7.889},
+			},
+			Power: operatorconsole.EvidencePassportPower{
+				Source:             operatorconsole.EvidencePassportPowerSource{Kind: "edge-metrics", NodeName: "lattepanda", Metric: "watts"},
+				ObservationSeconds: 31, Samples: 31,
+				Watts:                 &operatorconsole.EvidencePassportWatts{Minimum: 8.1, Mean: 18.184, Maximum: 19.7},
+				SourceTimestampAbsent: true,
+			},
+		},
+		Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
+			Verdict: "Insufficient", PolicyVersion: "wall-power-v1", ReasonCodes: []string{"CoResidentWindowUnknown"},
+		},
 	}
 }

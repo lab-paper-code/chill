@@ -7,6 +7,7 @@ IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
+CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 POWER_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-power-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
@@ -35,7 +36,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" PROFILER_IMG="$(PROFILER_IMG)"
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" PROFILER_IMG="$(PROFILER_IMG)" CONSOLE_IMG="$(CONSOLE_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -259,6 +260,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/kubectl-chill ./cmd/chill
 	go build -o bin/node-discovery ./cmd/node-discovery
 	go build -o bin/profiler ./cmd/profiler
+	go build -o bin/console ./cmd/console
 	go build -o bin/power-observer ./cmd/power-observer
 	go build -o bin/measurement-worker ./cmd/measurement-worker
 
@@ -284,6 +286,10 @@ docker-build-node-discovery: ## Build the node-discovery image.
 docker-build-profiler: ## Build the Profiler image.
 	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
 
+.PHONY: docker-build-console
+docker-build-console: ## Build the Console API image.
+	$(CONTAINER_TOOL) build -f build/docker/console.Dockerfile -t $(CONSOLE_IMG) .
+
 .PHONY: docker-build-power-observer
 docker-build-power-observer: ## Build the PowerObserver image.
 	$(CONTAINER_TOOL) build -f build/docker/power-observer.Dockerfile -t $(POWER_OBSERVER_IMG) .
@@ -293,7 +299,7 @@ docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-power-observer docker-build-measurement-worker ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-console docker-build-power-observer docker-build-measurement-worker ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -310,6 +316,10 @@ docker-push-node-discovery: ## Push the node-discovery image.
 docker-push-profiler: ## Push the Profiler image.
 	$(CONTAINER_TOOL) push $(PROFILER_IMG)
 
+.PHONY: docker-push-console
+docker-push-console: ## Push the Console API image.
+	$(CONTAINER_TOOL) push $(CONSOLE_IMG)
+
 .PHONY: docker-push-power-observer
 docker-push-power-observer: ## Push the PowerObserver image.
 	$(CONTAINER_TOOL) push $(POWER_OBSERVER_IMG)
@@ -319,7 +329,7 @@ docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-power-observer docker-push-measurement-worker ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-console docker-push-power-observer docker-push-measurement-worker ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -350,6 +360,12 @@ docker-buildx-profiler: ## Build and push the Profiler image for cross-platform 
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
 
+.PHONY: docker-buildx-console
+docker-buildx-console: ## Build and push the Console API image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/console.Dockerfile --tag $(CONSOLE_IMG) .
+
 .PHONY: docker-buildx-power-observer
 docker-buildx-power-observer: ## Build and push the PowerObserver image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
@@ -363,7 +379,7 @@ docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measure
 	$(CONTAINER_TOOL) buildx build --push --platform=$(MEASUREMENT_WORKER_PLATFORMS) -f build/docker/measurement-worker.Dockerfile --tag $(MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-power-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-console docker-buildx-power-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

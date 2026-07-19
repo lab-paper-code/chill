@@ -1,0 +1,135 @@
+{{- if .Values.console.enabled }}
+{{- $name := include "chill.consoleName" . -}}
+{{- $labels := include "chill.labels" . -}}
+{{- if .Values.console.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.consoleServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["profilingruns"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ printf "%s-evidence-store-credentials" (include "chill.systemName" .) | quote }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.consoleServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.console.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "chill.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: operator-console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "chill.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: operator-console
+    spec:
+      serviceAccountName: {{ include "chill.consoleServiceAccountName" . }}
+      securityContext:
+{{- toYaml .Values.console.podSecurityContext | nindent 8 }}
+      containers:
+        - name: console
+          image: {{ include "chill.consoleImage" . | quote }}
+          imagePullPolicy: {{ .Values.console.image.pullPolicy }}
+          args:
+            - {{ printf "--bind-address=:%v" .Values.console.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.console.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+{{- toYaml .Values.console.resources | nindent 12 }}
+          securityContext:
+{{- toYaml .Values.console.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: evidence-staging
+              mountPath: /var/run/chill/evidence
+      volumes:
+        - name: evidence-staging
+          emptyDir:
+            sizeLimit: 128Mi
+      nodeSelector:
+{{- toYaml .Values.console.nodeSelector | nindent 8 }}
+      {{- with .Values.console.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+{{- toYaml .Values.console.tolerations | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "chill.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: operator-console
+  ports:
+    - name: http
+      port: {{ .Values.console.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

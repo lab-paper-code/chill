@@ -80,6 +80,36 @@ profiler:
     executionDeclarations: []
     powerSources: []
 
+console:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: daclab/chill-console
+    tag: ""
+    pullPolicy: IfNotPresent
+  port: 8080
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+
 uninstallCleanup:
   enabled: true
   timeout: 120s

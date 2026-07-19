@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
+
+	"github.com/spf13/pflag"
 )
 
 var errUsage = errors.New("invalid command usage")
@@ -22,6 +25,13 @@ type profilingRunsOptions struct {
 	readOptions
 	namespace     string
 	allNamespaces bool
+}
+
+type profilingRunShowOptions struct {
+	readOptions
+	namespace      string
+	name           string
+	consoleService string
 }
 
 func parseInventoryOptions(args []string, stderr io.Writer) (inventoryOptions, error) {
@@ -57,6 +67,36 @@ func parseProfilingRunsOptions(args []string, stderr io.Writer) (profilingRunsOp
 	}
 	if opts.allNamespaces && opts.namespace != "" {
 		return profilingRunsOptions{}, fmt.Errorf("%w: namespace and all-namespaces cannot be used together", errUsage)
+	}
+	return opts, nil
+}
+
+func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRunShowOptions, error) {
+	opts := profilingRunShowOptions{}
+	flags := pflag.NewFlagSet("kubectl chill runs show", pflag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
+	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
+	flags.StringVarP(&opts.output, "output", "o", "table", "output format: table or json")
+	flags.StringVarP(&opts.namespace, "namespace", "n", "", "ProfilingRun and Console Service namespace")
+	flags.StringVar(&opts.consoleService, "console-service", "chill-console", "CHILL Console ClusterIP Service name")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return profilingRunShowOptions{}, flag.ErrHelp
+		}
+		return profilingRunShowOptions{}, fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if flags.NArg() != 1 {
+		return profilingRunShowOptions{}, fmt.Errorf("%w: runs show requires exactly one ProfilingRun name", errUsage)
+	}
+	opts.name = flags.Arg(0)
+	if opts.output != "table" && opts.output != "json" {
+		return profilingRunShowOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
+	}
+	for label, value := range map[string]string{"ProfilingRun name": opts.name, "Console Service name": opts.consoleService} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return profilingRunShowOptions{}, fmt.Errorf("%w: %s is required without surrounding whitespace", errUsage, label)
+		}
 	}
 	return opts, nil
 }

@@ -82,6 +82,26 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.profiler.image.tag -}}
 {{- end -}}
 
+{{- define "chill.consoleName" -}}
+{{- printf "%s-console" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.consoleServiceAccountName" -}}
+{{- if .Values.console.serviceAccount.create -}}
+{{- default (include "chill.consoleName" .) .Values.console.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.console.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.consoleImage" -}}
+{{- printf "%s:%s" .Values.console.image.repository (include "chill.consoleImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.consoleImageTag" -}}
+{{- default .Chart.AppVersion .Values.console.image.tag -}}
+{{- end -}}
+
 {{- define "chill.uninstallCleanupName" -}}
 {{- printf "%s-uninstall-cleanup" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

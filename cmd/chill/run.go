@@ -26,6 +26,7 @@ type dependencies struct {
 	newInventoryQuery func(inventoryOptions) (inventoryQuery, error)
 	newSystemQuery    func(systemOptions) (systemQuery, error)
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
+	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
 }
 
 func productionDependencies() dependencies {
@@ -33,6 +34,7 @@ func productionDependencies() dependencies {
 		newInventoryQuery: newInventoryQuery,
 		newSystemQuery:    newSystemQuery,
 		newRunsQuery:      newProfilingRunsQuery,
+		newRunShowQuery:   newEvidencePassportQuery,
 	}
 }
 
@@ -100,6 +102,9 @@ func executeSystem(ctx context.Context, args []string, stdout, stderr io.Writer,
 }
 
 func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
+	if len(args) > 0 && args[0] == "show" {
+		return executeProfilingRunShow(ctx, args[1:], stdout, stderr, deps)
+	}
 	opts, err := parseProfilingRunsOptions(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -121,6 +126,28 @@ func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.
 	return nil
 }
 
+func executeProfilingRunShow(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
+	opts, err := parseProfilingRunShowOptions(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	query, err := deps.newRunShowQuery(opts)
+	if err != nil {
+		return fmt.Errorf("construct Evidence Passport query: %w", err)
+	}
+	passport, err := query.Read(ctx)
+	if err != nil {
+		return fmt.Errorf("read Evidence Passport: %w", err)
+	}
+	if err := writeEvidencePassport(stdout, opts.output, passport); err != nil {
+		return fmt.Errorf("write Evidence Passport: %w", err)
+	}
+	return nil
+}
+
 func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "Usage:"); err != nil {
 		return err
@@ -131,7 +158,10 @@ func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "  kubectl chill system    [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(writer, "  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]")
+	if _, err := fmt.Fprintln(writer, "  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(writer, "  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]")
 	return err
 }
 
