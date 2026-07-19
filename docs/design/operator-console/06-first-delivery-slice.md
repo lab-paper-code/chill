@@ -41,12 +41,18 @@ Ready tri-state, scheduling-disabled 사실, ModelSpec의 immutable artifact와 
 `kubectl chill runs`는 kubeconfig의 현재 namespace를 기본 조회 범위로 사용하고 `-n`과
 `-A`로 범위를 명시한다. namespace만으로 특정 ChillSystem의 소유라고 추론하지 않으며,
 Run의 immutable spec, status와 원본 resourceVersion을 그대로 보존한다. Helm chart는
-현재 조회 경로가 사용하는 ChillSystem, DeviceClass, ModelSpec, ProfilingRun과 Node의 get·list만
-허용하는 unbound console viewer ClusterRole을 제공하며, 실제 사용자·그룹 binding은
-클러스터 관리자가 소유한다.
+현재 조회 경로가 사용하는 ChillSystem, DeviceClass, ModelSpec, ProfilingRun과 Node의
+get·list 및 Console Service proxy만 허용하는 unbound console viewer ClusterRole을 제공하며,
+실제 사용자·그룹 binding은 클러스터 관리자가 소유한다.
 
-아직 Dashboard consumer는 없다. 현재 운영자가 호출할 수 있는 read-only 수직 단면은
-CLI System, Inventory와 ProfilingRun 목록이며, Run 생성은 포함하지 않는다.
+`kubectl chill runs show`는 Kubernetes Service proxy를 통해 in-cluster Console read API를
+호출한다. Console은 지정한 ProfilingRun을 exact-read하고, 그 Run의 Job에 동결된 Evidence
+Store binding을 따라 final·raw 객체를 읽어 digest와 Run·Job·Pod·Node identity를 검증한 뒤
+bounded Evidence Passport를 조회 시점에 만든다. 원시 latency·power 배열, 저장소 endpoint와
+credential은 CLI에 전달하지 않는다.
+
+아직 Dashboard consumer와 Run 생성 표면은 없다. 현재 운영자가 호출할 수 있는 read-only
+수직 단면은 CLI System, Inventory, ProfilingRun 목록과 Evidence Passport 상세 조회다.
 
 ## 현재 구현의 사실 경계
 
@@ -57,8 +63,8 @@ CLI System, Inventory와 ProfilingRun 목록이며, Run 생성은 포함하지 �
 | CHILL 설치 | `ChillSystem`의 구성요소 availability Conditions | 서비스 SLO, 에너지 제어와 Scheduler 정상성 |
 | 디바이스 인벤토리 | `DeviceClass.spec`과 selector에 일치하는 현재 Kubernetes Nodes | `DeviceClass.status`의 멤버 목록·Ready 집계, CHILL 실행 eligibility |
 | 모델 카탈로그 | `ModelSpec`의 artifact digest와 execution path 요구사항 | 운영 승격 profile, 물질화된 compatible-class index |
-| 프로파일 요청 | immutable `ProfilingRun.spec`, frozen intent digest와 intent record | 현재 연결된 controller가 생성·관찰하는 측정 Job |
-| 실행 결과 | `ProfilingRun.status`가 예약한 Job, actual execution, evidence, admission 경계 | Job 생성부터 evidence admission까지 연결된 end-to-end reconcile 경로 |
+| 프로파일 요청 | immutable `ProfilingRun.spec`, frozen intent digest와 intent record | Dashboard·CLI의 공통 생성 요청 표면 |
+| 실행 결과 | owned Job, 실제 Pod·Node identity, 검증된 evidence reference와 single-Run admission | campaign 조정, `b_sat` 파생과 운영 profile 승격 |
 | 상위 제어 | 빈 `DeviceProfile`·`ClusterEnergyModel` API scaffold | 전력 곡선, `b_sat`, current/optimal/target 구성, decision과 transition 상태 |
 
 `ChillSystem.Ready`는 필요한 CHILL 운영 구성요소의 availability다. Console은 이를
@@ -110,9 +116,9 @@ Requested
   -> Single-Run Admission
 ```
 
-현재 controller가 의도 동결까지만 연결된 배포에서는 이후 단계를 장시간 `Pending`으로
-꾸미지 않는다. 해당 capability가 아직 제공되지 않음을 명시한다. 실행 경로가 연결된
-후에는 상위 단계마다 권위 있는 status와 원본 Job·Pod·evidence reference를 사용한다.
+각 단계는 권위 있는 status와 원본 Job·Pod·evidence reference를 사용한다. 해당 단계의
+생산자가 아직 없다면 장시간 `Pending`으로 꾸미지 않고 capability가 제공되지 않음을
+명시한다.
 
 실행 성공, evidence verification과 scientific admission을 하나의 성공 배지로 합치지
 않는다. 단일 Run admission 또한 운영 가능한 `DeviceProfile` 승격과 동일하지 않다.
@@ -147,14 +153,11 @@ CLI 또는 Dashboard
   -> ProfilingRun status와 evidence reference
 ```
 
-여기서 `조회 시점 projection`은 논리적 책임이다. CLI 내부 조합, Dashboard backend의
-read-through 조합 또는 이후 별도 query service 중 무엇으로 배치할지는 아직 결정하지
-않는다. 어느 형태든 원본을 대체하거나 Scheduler 판단을 클라이언트에서 계산해서는
-안 된다.
-
-Dashboard가 Browser의 Kubernetes 접근을 중계해야 하는지, 별도 CHILL API가 필요한지는
-인증, RBAC, watch, evidence 접근과 다중 원본 조회 요구를 확인한 뒤 결정한다. 이 transport
-선택은 `ProfilingRun`의 의미와 controller 책임을 바꾸지 않는다.
+기본 Kubernetes 상태 조회는 CLI가 kubeconfig와 사용자의 RBAC로 원본을 직접 읽는다.
+Evidence Passport처럼 저장소 credential과 다중 원본 검증이 필요한 조회는 in-cluster
+Console read API가 담당하며 CLI는 Kubernetes Service proxy로 접근한다. Dashboard도 같은
+API와 의미를 소비한다. Console은 조회 결과를 영속화하지 않으며 원본을 대체하거나
+Scheduler 판단을 새로 계산하지 않는다.
 
 ## 첫 단면의 화면·명령 단위
 
@@ -175,21 +178,18 @@ Dashboard가 Browser의 Kubernetes 접근을 중계해야 하는지, 별도 CHIL
 
 읽기 경로와 실행 경로는 서로 다른 준비도를 갖는다.
 
-1. **조회 의미 고정**: 권위 있는 원본과 projection 규칙을 fixture 기반으로 검증한다.
-2. **read-only 수직 확인**: CLI 또는 작은 진단 도구로 System, Inventory와 기존 Run
-   조회가 중복 status 없이 성립하는지 확인한다.
-3. **ProfilingRun 실행 경로 완성**: Profiler가 frozen intent에서 owned Job을 생성하고,
-   실제 Job·Pod·Node와 evidence 결과를 상위 status에 투영하는 책임을 연결한다.
-4. **공통 요청·관찰 계약 확인**: create, inspect, watch의 validation·권한·종료 의미를
-   CLI와 Dashboard가 공유할 수 있는지 검증한다.
-5. **Dashboard transport 결정**: Browser 인증과 RBAC, watch, evidence 접근 요구를
-   근거로 Kubernetes proxy와 별도 CHILL API 중 필요한 경계를 선택한다.
-6. **Dashboard 수직 단면**: 같은 원본과 요청 계약으로 Inventory, Run request와
-   Evidence Passport를 제공한다.
+1. **조회 의미와 read-only 경로**: System, Inventory, Run 목록과 Evidence Passport의
+   권위 있는 원본, projection 및 RBAC 경계를 유지한다.
+2. **ProfilingRun 실행 경로**: frozen intent에서 owned Job, 실제 실행 identity, immutable
+   evidence verification과 single-Run admission까지 연결한다.
+3. **공통 요청 계약**: Dashboard와 CLI가 동일한 `ProfilingRun.spec`, Kubernetes validation,
+   권한과 비동기 종료 의미로 Run을 생성하게 한다.
+4. **Dashboard 수직 단면**: Kubernetes 인증과 Console read API를 사용해 Inventory,
+   Run request와 Evidence Passport를 제공한다.
 
-2단계는 3단계를 기다리지 않아도 되지만, 실행 완료를 약속하는 `profile request` UX는
-3단계 없이 완료로 간주하지 않는다. 5단계의 transport 선택은 화면 개발 편의가 아니라
-권한과 데이터 경계에서 결정한다.
+Dashboard는 별도의 상태 의미나 Evidence Store 접근 경로를 만들지 않는다. Run request는
+API 접수와 실행 완료를 구분하고, Console read API는 조회 편의를 위해 권위 있는 상태를
+복제하지 않는다.
 
 ## 명시적 비목표
 
