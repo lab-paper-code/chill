@@ -17,7 +17,7 @@ const (
 	dataVolumeName     = "data"
 	dataMountPath      = "/data"
 	s3PortName         = "s3"
-	s3Port             = int32(9000)
+	s3Port             = component.EvidenceStoreS3Port
 	healthPath         = "/_/health"
 	accessKeySecretKey = "access-key"
 	secretKeySecretKey = "secret-key"

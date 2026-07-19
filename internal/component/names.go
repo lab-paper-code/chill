@@ -8,6 +8,9 @@ const (
 	NodeDiscovery = "node-discovery"
 	Profiler      = "profiler"
 	EvidenceStore = "evidence-store"
+
+	EvidenceStoreConfigKey       = "config.yaml"
+	EvidenceStoreS3Port    int32 = 9000
 )
 
 func NodeDiscoveryDaemonSetName(systemName string) string {

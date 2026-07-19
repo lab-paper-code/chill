@@ -1,0 +1,116 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
+
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/component"
+)
+
+type EvidenceStoreResolverOptions struct {
+	SystemName string
+	Namespace  string
+}
+
+// EvidenceStoreBinding contains only the non-secret values required to project
+// one immutable Evidence Store delivery contract into a measurement Job.
+type EvidenceStoreBinding struct {
+	Store                 string
+	Endpoint              string
+	Bucket                string
+	Region                string
+	CredentialsSecretName string
+}
+
+// KubernetesEvidenceStoreResolver exact-reads the owning ChillSystem and its
+// configured operand data. It derives Secret identity without reading bytes.
+type KubernetesEvidenceStoreResolver struct {
+	reader  client.Reader
+	options EvidenceStoreResolverOptions
+}
+
+func NewKubernetesEvidenceStoreResolver(
+	reader client.Reader,
+	options EvidenceStoreResolverOptions,
+) (*KubernetesEvidenceStoreResolver, error) {
+	if reader == nil {
+		return nil, errors.New("Kubernetes Evidence Store reader is required")
+	}
+	for name, value := range map[string]string{
+		"system name": options.SystemName,
+		"namespace":   options.Namespace,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return nil, fmt.Errorf("Evidence Store %s is required without surrounding whitespace", name)
+		}
+	}
+	return &KubernetesEvidenceStoreResolver{reader: reader, options: options}, nil
+}
+
+// evidenceStoreDeliveryConfig is deliberately a projection of the
+// operator-owned operand configuration, not a second copy of that schema.
+type evidenceStoreDeliveryConfig struct {
+	Bucket string `json:"bucket"`
+	Region string `json:"region"`
+}
+
+func (r *KubernetesEvidenceStoreResolver) Resolve(ctx context.Context) (EvidenceStoreBinding, error) {
+	system := &edgev1alpha1.ChillSystem{}
+	if err := r.reader.Get(ctx, types.NamespacedName{Name: r.options.SystemName}, system); err != nil {
+		return EvidenceStoreBinding{}, fmt.Errorf("get ChillSystem %q: %w", r.options.SystemName, err)
+	}
+	if !system.Spec.EvidenceStore.Enabled {
+		return EvidenceStoreBinding{}, errors.New("owning ChillSystem does not enable Evidence Store")
+	}
+	namespace := system.Spec.ManagementNamespace
+	if strings.TrimSpace(namespace) != namespace {
+		return EvidenceStoreBinding{}, errors.New("owning ChillSystem management namespace is invalid")
+	}
+	if namespace != "" && namespace != r.options.Namespace {
+		return EvidenceStoreBinding{}, errors.New("Profiler namespace does not match the owning ChillSystem management namespace")
+	}
+
+	configMapName := system.Spec.EvidenceStore.ConfigRef.Name
+	if strings.TrimSpace(configMapName) == "" || strings.TrimSpace(configMapName) != configMapName {
+		return EvidenceStoreBinding{}, errors.New("owning ChillSystem Evidence Store config reference is invalid")
+	}
+	configMap := &corev1.ConfigMap{}
+	key := types.NamespacedName{Namespace: r.options.Namespace, Name: configMapName}
+	if err := r.reader.Get(ctx, key, configMap); err != nil {
+		return EvidenceStoreBinding{}, fmt.Errorf("get Evidence Store config ConfigMap %s: %w", key, err)
+	}
+	raw, exists := configMap.Data[component.EvidenceStoreConfigKey]
+	if !exists || strings.TrimSpace(raw) == "" {
+		return EvidenceStoreBinding{}, fmt.Errorf(
+			"Evidence Store config ConfigMap %s missing key %q", key, component.EvidenceStoreConfigKey,
+		)
+	}
+	var config evidenceStoreDeliveryConfig
+	if err := yaml.Unmarshal([]byte(raw), &config); err != nil {
+		return EvidenceStoreBinding{}, fmt.Errorf("decode Evidence Store delivery configuration: %w", err)
+	}
+	for name, value := range map[string]string{"bucket": config.Bucket, "region": config.Region} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return EvidenceStoreBinding{}, fmt.Errorf(
+				"Evidence Store delivery %s is required without surrounding whitespace", name,
+			)
+		}
+	}
+
+	serviceName := component.EvidenceStoreServiceName(system.Name)
+	return EvidenceStoreBinding{
+		Store:                 serviceName,
+		Endpoint:              fmt.Sprintf("http://%s.%s.svc:%d", serviceName, r.options.Namespace, component.EvidenceStoreS3Port),
+		Bucket:                config.Bucket,
+		Region:                config.Region,
+		CredentialsSecretName: component.EvidenceStoreCredentialsSecretName(system.Name),
+	}, nil
+}

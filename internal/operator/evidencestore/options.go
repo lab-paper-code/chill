@@ -8,7 +8,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
-const DefaultConfigKey = "config.yaml"
+const DefaultConfigKey = component.EvidenceStoreConfigKey
 
 // Options supplies operator-level defaults for Evidence Store instances.
 type Options struct {

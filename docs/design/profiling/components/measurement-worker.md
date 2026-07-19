@@ -296,7 +296,8 @@ Items 1 through 3 are implemented through the fail-closed worker adapters, the
 production CPU ORT subprocess, and the PowerObserver container entrypoint. The
 Go adapter's exact runtime request is checked against the production Python
 strict decoder as a cross-language contract test. The Operator now supplies
-the owning `ChillSystem` name to each Profiler instance. Exact Evidence Store
-resolution, Job projection, the worker composition image, and Job
-materialization remain later steps. This changes no public CRD field and does
-not create a Job.
+the owning `ChillSystem` name to each Profiler instance. A fail-closed
+Kubernetes resolver can exact-read that system and its configured Evidence
+Store into a non-secret delivery binding. Its Job projection, the worker
+composition image, and Job materialization remain later steps. This changes no
+public CRD field and does not create a Job.
