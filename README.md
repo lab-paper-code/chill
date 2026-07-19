@@ -61,7 +61,9 @@ kubectl chill inventory -o json
 ```
 
 The current command requires permission to list cluster-scoped `DeviceClass`
-and Kubernetes `Node` resources. It does not run inside the operator Pod.
+and Kubernetes `Node` resources. The Helm chart installs the unbound
+`chill-inventory-viewer` ClusterRole; a cluster administrator decides which
+users or groups receive it. The CLI does not run inside the operator Pod.
 
 ## Helm
 
