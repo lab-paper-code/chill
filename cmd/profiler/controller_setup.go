@@ -42,7 +42,18 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct metric-source resolver: %w", err)
 	}
-	preparer, err := profilerapp.NewPreparer(candidates, nodes, power)
+	workloads, err := profilercontroller.NewKubernetesWorkloadObservationResolver(
+		reader,
+		profilercontroller.WorkloadObservationResolverOptions{
+			Namespace:     opts.watchNamespace,
+			ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey:  opts.workloadObservationKey,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("construct workload-observation resolver: %w", err)
+	}
+	preparer, err := profilerapp.NewPreparer(candidates, nodes, power, workloads)
 	if err != nil {
 		return fmt.Errorf("construct Run preparer: %w", err)
 	}

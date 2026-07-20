@@ -5,8 +5,9 @@
 ## Status
 
 Approved for staged implementation. The Kubernetes-free observation contract,
-isolated Kubernetes list-watch adapter, and bounded executable are implemented.
-API, RBAC, Job, evidence-schema, and admission changes remain separately gated.
+isolated Kubernetes list-watch adapter, bounded executable, and immutable
+installation-fact resolution are implemented. RBAC, Job, evidence-schema, and
+admission changes remain separately gated.
 
 ## Purpose
 
@@ -185,11 +186,13 @@ Every active Pod other than the profiling Run Pod must match an
 installation-time allowed-background selector. Stable presence alone does not
 make an unrelated workload admissible.
 
-The Profiler resolves the configured selectors before Job creation and freezes
-their canonical form and content digest in the internal Run intent. The
-observer records the exact Pod facts needed to reproduce selector matching,
-while admission applies the frozen policy. Operators may label or select
-required platform workloads; CHILL does not mutate those external workloads.
+The Profiler resolves exact-label selectors from its installation-owned fact
+source before Job creation and freezes their canonical form in the internal Run
+intent. The intent deterministically provides the policy digest and retained
+label keys used by the observer. The observer records the exact Pod facts needed
+to reproduce matching, while admission applies the frozen policy. Operators may
+label required platform workloads; CHILL does not mutate those external
+workloads. Additional selector operators require a later policy schema.
 
 The stable allowed-background set also contributes to the material environment
 identity used to compare active trials and idle baselines. Policy is never a

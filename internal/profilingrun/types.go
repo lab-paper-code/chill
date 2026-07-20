@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	legacyIntentSchemaVersion   = "chill.dacs.io/profiling-run-intent.v1alpha1"
-	previousIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha2"
-	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha3"
+	legacyIntentSchemaVersion       = "chill.dacs.io/profiling-run-intent.v1alpha1"
+	previousIntentSchemaVersion     = "chill.dacs.io/profiling-run-intent.v1alpha2"
+	workloadFreeIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha3"
+	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha4"
 )
 
 type Intent struct {
@@ -23,6 +24,7 @@ type Intent struct {
 	CPU           CPUContract         `json:"cpu"`
 	Measurement   MeasurementContract `json:"measurement"`
 	Metrics       MetricContract      `json:"metrics"`
+	Workload      WorkloadContract    `json:"workload"`
 }
 
 // UnmarshalJSON accepts retained immutable intent schemas while keeping the
@@ -38,6 +40,7 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 		Measurement   MeasurementContract   `json:"measurement"`
 		Metrics       *MetricContract       `json:"metrics"`
 		LegacyMetrics *legacyMetricContract `json:"power"`
+		Workload      WorkloadContract      `json:"workload"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -64,6 +67,7 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 	i.TargetNode = wire.TargetNode
 	i.CPU = wire.CPU
 	i.Measurement = wire.Measurement
+	i.Workload = wire.Workload
 	if wire.Metrics != nil {
 		i.Metrics = *wire.Metrics
 	} else {
@@ -93,19 +97,21 @@ type ExecutionState struct {
 }
 
 type Images struct {
-	Runtime        string `json:"runtime"`
-	Artifact       string `json:"artifact"`
-	MetricObserver string `json:"metricObserver"`
+	Runtime          string `json:"runtime"`
+	Artifact         string `json:"artifact"`
+	MetricObserver   string `json:"metricObserver"`
+	WorkloadObserver string `json:"workloadObserver,omitempty"`
 }
 
 // UnmarshalJSON accepts retained intent schemas while exposing only the
 // current component name to callers.
 func (i *Images) UnmarshalJSON(payload []byte) error {
 	var wire struct {
-		Runtime        string `json:"runtime"`
-		Artifact       string `json:"artifact"`
-		MetricObserver string `json:"metricObserver"`
-		LegacyObserver string `json:"powerObserver"`
+		Runtime          string `json:"runtime"`
+		Artifact         string `json:"artifact"`
+		MetricObserver   string `json:"metricObserver"`
+		LegacyObserver   string `json:"powerObserver"`
+		WorkloadObserver string `json:"workloadObserver"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -125,6 +131,7 @@ func (i *Images) UnmarshalJSON(payload []byte) error {
 	i.Runtime = wire.Runtime
 	i.Artifact = wire.Artifact
 	i.MetricObserver = wire.MetricObserver
+	i.WorkloadObserver = wire.WorkloadObserver
 	if i.MetricObserver == "" {
 		i.MetricObserver = wire.LegacyObserver
 	}

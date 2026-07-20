@@ -120,6 +120,10 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	prepared := testPreparedRun(t)
 	prepared.Intent.SchemaVersion = profilingrun.SchemaVersion
 	prepared.Intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	prepared.Intent.Images.WorkloadObserver = testWorkloadObserverImage
+	prepared.Intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+	}}
 	digest, err := prepared.Intent.Digest()
 	if err != nil {
 		t.Fatal(err)

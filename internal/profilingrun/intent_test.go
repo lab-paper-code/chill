@@ -36,6 +36,40 @@ func TestIntentRejectsMutableImage(t *testing.T) {
 	}
 }
 
+func TestCurrentIntentFreezesWorkloadObservationPolicy(t *testing.T) {
+	intent := validIntent()
+	digest, err := intent.Workload.AllowedBackground.Digest()
+	if err != nil || !strings.HasPrefix(digest, "sha256:") {
+		t.Fatalf("policy digest = %q, error = %v", digest, err)
+	}
+	keys, err := intent.Workload.AllowedBackground.LabelKeys()
+	if err != nil || strings.Join(keys, ",") != "app.kubernetes.io/component,app.kubernetes.io/name" {
+		t.Fatalf("policy label keys = %#v, error = %v", keys, err)
+	}
+
+	intent.Workload.AllowedBackground.Selectors = append(
+		intent.Workload.AllowedBackground.Selectors,
+		BackgroundPodSelector{MatchLabels: map[string]string{"a": "b"}},
+	)
+	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "canonically ordered") {
+		t.Fatalf("unordered policy validation error = %v", err)
+	}
+}
+
+func TestRetainedWorkloadFreeIntentKeepsCanonicalShape(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = workloadFreeIntentSchemaVersion
+	intent.Images.WorkloadObserver = ""
+	intent.Workload = WorkloadContract{}
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "workloadObserver") || strings.Contains(string(payload), `"workload"`) {
+		t.Fatalf("retained intent gained workload fields: %s", payload)
+	}
+}
+
 func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
 	intent := validIntent()
 	intent.Measurement.Repetitions = 2
@@ -58,6 +92,8 @@ func TestLegacyIntentRemainsValidWithoutArtifactPath(t *testing.T) {
 	intent := validIntent()
 	intent.SchemaVersion = legacyIntentSchemaVersion
 	intent.State.ArtifactPath = ""
+	intent.Images.WorkloadObserver = ""
+	intent.Workload = WorkloadContract{}
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +186,9 @@ func validIntent() Intent {
 			Backend:        "CPUExecutionProvider",
 			PowerMode:      "fixed",
 		},
-		Images: Images{Runtime: image, Artifact: image, MetricObserver: image},
+		Images: Images{
+			Runtime: image, Artifact: image, MetricObserver: image, WorkloadObserver: image,
+		},
 		TargetNode: NodeSnapshot{
 			Name:            "lattepanda",
 			UID:             "uid",
@@ -185,5 +223,12 @@ func validIntent() Intent {
 			TimeoutMilliseconds:        500,
 			DurationSeconds:            31,
 		},
+		Workload: WorkloadContract{AllowedBackground: AllowedBackgroundPolicy{
+			SchemaVersion: AllowedBackgroundPolicySchemaVersion,
+			Selectors: []BackgroundPodSelector{
+				{MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"}},
+				{MatchLabels: map[string]string{"app.kubernetes.io/name": "kube-proxy"}},
+			},
+		}},
 	}
 }

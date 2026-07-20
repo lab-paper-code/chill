@@ -59,8 +59,11 @@
 {{- if empty .Values.profiler.factSource.metricSourcesKey -}}
 {{- fail "profiler.factSource.metricSourcesKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey -}}
-{{- fail "profiler.factSource execution and metric keys must be different" -}}
+{{- if empty .Values.profiler.factSource.workloadObservationKey -}}
+{{- fail "profiler.factSource.workloadObservationKey must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if or (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey) -}}
+{{- fail "profiler.factSource keys must be different" -}}
 {{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.executionDeclarations) -}}
 {{- fail "profiler.factSource.executionDeclarations must be a list" -}}
@@ -70,6 +73,15 @@
 {{- end -}}
 {{- if and .Values.profiler.factSource.metricObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.metricObserverImage)) -}}
 {{- fail "profiler.factSource.metricObserverImage must be digest-pinned" -}}
+{{- end -}}
+{{- if and .Values.profiler.factSource.executionDeclarations (empty .Values.profiler.factSource.workloadObserverImage) -}}
+{{- fail "profiler.factSource.workloadObserverImage is required when execution declarations are configured" -}}
+{{- end -}}
+{{- if and .Values.profiler.factSource.workloadObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.workloadObserverImage)) -}}
+{{- fail "profiler.factSource.workloadObserverImage must be digest-pinned" -}}
+{{- end -}}
+{{- if not (kindIs "slice" .Values.profiler.factSource.allowedBackgroundSelectors) -}}
+{{- fail "profiler.factSource.allowedBackgroundSelectors must be a list" -}}
 {{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.metricSources) -}}
 {{- fail "profiler.factSource.metricSources must be a list" -}}

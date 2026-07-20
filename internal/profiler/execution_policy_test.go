@@ -13,6 +13,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	intent := testIntent(t)
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&intent)
 
 	plan, err := DeriveExecutionPlan(intent)
 	if err != nil {
@@ -42,6 +43,7 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	intent := testIntent(t)
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&intent)
 	intent.Candidate.ExecutionPath = "tensorrt"
 	if _, err := DeriveExecutionPlan(intent); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want unsupported path rejection")
@@ -52,9 +54,18 @@ func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testi
 	intent := testIntent(t)
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&intent)
 	intent.Metrics.DurationSeconds = 60_000
 	intent.Metrics.IntervalMilliseconds = 1000
 	if _, err := DeriveExecutionPlan(intent); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want bounded event-capacity rejection")
 	}
+}
+
+func addWorkloadObservation(intent *profilingrun.Intent) {
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+	}}
 }

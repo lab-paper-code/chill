@@ -62,6 +62,10 @@ func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 	if first.CandidateReportBytes[0] == 'x' {
 		t.Fatal("prepared Run retained resolver-owned candidate bytes")
 	}
+	resolvers.workloads.result.Policy.Selectors[0].MatchLabels["app.kubernetes.io/component"] = "changed"
+	if first.Intent.Workload.AllowedBackground.Selectors[0].MatchLabels["app.kubernetes.io/component"] == "changed" {
+		t.Fatal("prepared Run retained resolver-owned workload policy")
+	}
 }
 
 func TestPreparerRejectsResolverDrift(t *testing.T) {
@@ -140,6 +144,20 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 				resolvers.candidate.result.State.Backend = "CUDAExecutionProvider"
 			},
 			match: "not the supported CPU ONNX Runtime path",
+		},
+		{
+			name: "mutable workload observer image",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.workloads.result.Image = "registry.example/workload-observer:latest"
+			},
+			match: "images.workloadObserver",
+		},
+		{
+			name: "invalid workload policy",
+			mutate: func(resolvers *fakePreparationResolvers) {
+				resolvers.workloads.result.Policy.SchemaVersion = "foreign"
+			},
+			match: "allowed-background policy schemaVersion",
 		},
 	}
 
@@ -252,28 +270,35 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	tests := []struct {
 		name      string
 		fail      func(*fakePreparationResolvers, error)
-		wantCalls [3]int
+		wantCalls [4]int
 	}{
 		{
 			name: "candidate",
 			fail: func(resolvers *fakePreparationResolvers, err error) {
 				resolvers.candidate.err = err
 			},
-			wantCalls: [3]int{1, 0, 0},
+			wantCalls: [4]int{1, 0, 0, 0},
 		},
 		{
 			name: "Node",
 			fail: func(resolvers *fakePreparationResolvers, err error) {
 				resolvers.node.err = err
 			},
-			wantCalls: [3]int{1, 1, 0},
+			wantCalls: [4]int{1, 1, 0, 0},
 		},
 		{
 			name: "metric source",
 			fail: func(resolvers *fakePreparationResolvers, err error) {
 				resolvers.metrics.err = err
 			},
-			wantCalls: [3]int{1, 1, 1},
+			wantCalls: [4]int{1, 1, 1, 0},
+		},
+		{
+			name: "workload observation",
+			fail: func(resolvers *fakePreparationResolvers, err error) {
+				resolvers.workloads.err = err
+			},
+			wantCalls: [4]int{1, 1, 1, 1},
 		},
 	}
 	for _, test := range tests {
@@ -286,7 +311,12 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 			if !errors.Is(err, want) {
 				t.Fatalf("expected resolver cause, got %v", err)
 			}
-			gotCalls := [3]int{resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls}
+			gotCalls := [4]int{
+				resolvers.candidate.calls,
+				resolvers.node.calls,
+				resolvers.metrics.calls,
+				resolvers.workloads.calls,
+			}
 			if gotCalls != test.wantCalls {
 				t.Fatalf("resolver calls after failure: want %v, got %v", test.wantCalls, gotCalls)
 			}
@@ -305,9 +335,10 @@ func TestPreparerRejectsCPURequestAboveNodeCapacityBeforeMetricResolution(t *tes
 	if !errors.Is(err, ErrCPURequestExceedsAllocatable) {
 		t.Fatalf("expected CPU capacity rejection, got %v", err)
 	}
-	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.metrics.calls != 0 {
-		t.Fatalf("unexpected resolver calls: candidate=%d node=%d power=%d",
-			resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls)
+	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.metrics.calls != 0 ||
+		resolvers.workloads.calls != 0 {
+		t.Fatalf("unexpected resolver calls: candidate=%d node=%d metrics=%d workloads=%d",
+			resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls, resolvers.workloads.calls)
 	}
 }
 
@@ -336,7 +367,8 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 			if _, err := preparer.Prepare(context.Background(), request); err == nil {
 				t.Fatal("expected invalid measurement rejection")
 			}
-			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.metrics.calls != 0 {
+			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.metrics.calls != 0 ||
+				resolvers.workloads.calls != 0 {
 				t.Fatal("invalid caller input reached resolver ports")
 			}
 		})
@@ -349,6 +381,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.candidate,
 		resolvers.node,
 		resolvers.metrics,
+		resolvers.workloads,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -387,6 +420,13 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	}
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+		Selectors: []profilingrun.BackgroundPodSelector{{
+			MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"},
+		}},
+	}}
 	candidateBytes, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -398,6 +438,7 @@ type fakePreparationResolvers struct {
 	candidate *fakeCandidateResolver
 	node      *fakeNodeResolver
 	metrics   *fakeMetricResolver
+	workloads *fakeWorkloadObservationResolver
 }
 
 func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparationResolvers {
@@ -424,6 +465,9 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
 			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
 			ConfigurationContentDigest: intent.Metrics.ConfigurationContentDigest,
+		}},
+		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
+			Image: intent.Images.WorkloadObserver, Policy: intent.Workload.AllowedBackground,
 		}},
 	}
 }
@@ -463,6 +507,19 @@ type fakeMetricResolver struct {
 	err      error
 	calls    int
 	nodeName string
+}
+
+type fakeWorkloadObservationResolver struct {
+	result ResolvedWorkloadObservation
+	err    error
+	calls  int
+}
+
+func (r *fakeWorkloadObservationResolver) ResolveWorkloadObservation(
+	context.Context,
+) (ResolvedWorkloadObservation, error) {
+	r.calls++
+	return r.result, r.err
 }
 
 func (r *fakeMetricResolver) ResolveMetricSource(_ context.Context, nodeName string) (ResolvedMetricSource, error) {

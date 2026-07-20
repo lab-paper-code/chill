@@ -80,6 +80,7 @@ func TestBuildDeployment(t *testing.T) {
 		"--fact-source-config-map=chill-profiler-facts",
 		"--execution-facts-key=execution-facts.yaml",
 		"--metric-sources-key=metric-sources.yaml",
+		"--workload-observation-key=workload-observation.yaml",
 	} {
 		if !containsArg(container.Args, wanted) {
 			t.Fatalf("args lost %q: %v", wanted, container.Args)
@@ -257,7 +258,7 @@ func validConfig() Config {
 		LeaderElectionID:   "profiler.edge.dacs.io",
 		FactSource: FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
-			MetricSourcesKey: "metric-sources.yaml",
+			MetricSourcesKey: "metric-sources.yaml", WorkloadObservationKey: "workload-observation.yaml",
 		},
 	}
 }

@@ -21,6 +21,7 @@ data:
       configMapName: {{ include "chill.profilerFactSourceName" . | quote }}
       executionFactsKey: {{ .Values.profiler.factSource.executionFactsKey | quote }}
       metricSourcesKey: {{ .Values.profiler.factSource.metricSourcesKey | quote }}
+      workloadObservationKey: {{ .Values.profiler.factSource.workloadObservationKey | quote }}
     nodeSelector:
 {{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
     {{- with .Values.profiler.affinity }}

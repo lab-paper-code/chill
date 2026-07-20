@@ -18,4 +18,11 @@ data:
     schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha1
     sources:
 {{- toYaml .Values.profiler.factSource.metricSources | nindent 6 }}
+  {{ .Values.profiler.factSource.workloadObservationKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-workload-observation.v1alpha1
+    image: {{ .Values.profiler.factSource.workloadObserverImage | quote }}
+    allowedBackground:
+      schemaVersion: chill.dacs.io/allowed-background-policy.v1alpha1
+      selectors:
+{{- toYaml .Values.profiler.factSource.allowedBackgroundSelectors | nindent 8 }}
 {{- end }}

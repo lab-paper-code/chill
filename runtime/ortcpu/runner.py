@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha4"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha3"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha5"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha4"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -136,7 +136,11 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
     intent = require_object(request["intent"], "intent")
-    require_fields(intent, {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "metrics"}, "intent")
+    require_fields(
+        intent,
+        {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "metrics", "workload"},
+        "intent",
+    )
     if intent["schemaVersion"] != INTENT_SCHEMA:
         raise ContractError("CPU ORT runtime requires the current intent schema")
 

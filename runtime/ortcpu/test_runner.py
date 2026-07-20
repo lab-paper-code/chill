@@ -181,6 +181,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "outputValidation": runner.SUPPORTED_OUTPUT_VALIDATION,
             },
             "metrics": {},
+            "workload": {},
         },
     }
 

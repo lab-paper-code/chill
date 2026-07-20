@@ -86,6 +86,11 @@ type ResolvedMetricSource struct {
 	ConfigurationContentDigest string
 }
 
+type ResolvedWorkloadObservation struct {
+	Image  string
+	Policy profilingrun.AllowedBackgroundPolicy
+}
+
 type CandidateResolver interface {
 	ResolveCandidate(context.Context, CandidateSelection) (ResolvedCandidate, error)
 }
@@ -96,6 +101,10 @@ type NodeResolver interface {
 
 type MetricSourceResolver interface {
 	ResolveMetricSource(context.Context, string) (ResolvedMetricSource, error)
+}
+
+type WorkloadObservationResolver interface {
+	ResolveWorkloadObservation(context.Context) (ResolvedWorkloadObservation, error)
 }
 
 type PreparedRun struct {
@@ -110,17 +119,19 @@ type Preparer struct {
 	candidates CandidateResolver
 	nodes      NodeResolver
 	metrics    MetricSourceResolver
+	workloads  WorkloadObservationResolver
 }
 
 func NewPreparer(
 	candidates CandidateResolver,
 	nodes NodeResolver,
 	metrics MetricSourceResolver,
+	workloads WorkloadObservationResolver,
 ) (*Preparer, error) {
-	if candidates == nil || nodes == nil || metrics == nil {
-		return nil, errors.New("candidate, Node, and metric-source resolvers are required")
+	if candidates == nil || nodes == nil || metrics == nil || workloads == nil {
+		return nil, errors.New("candidate, Node, metric-source, and workload-observation resolvers are required")
 	}
-	return &Preparer{candidates: candidates, nodes: nodes, metrics: metrics}, nil
+	return &Preparer{candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
@@ -156,8 +167,12 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		len(metrics.ConfigurationContentDigest) != len("sha256:")+64 {
 		return PreparedRun{}, errors.New("resolved metric source configuration digest must be a canonical SHA-256 digest")
 	}
+	workload, err := p.workloads.ResolveWorkloadObservation(ctx)
+	if err != nil {
+		return PreparedRun{}, fmt.Errorf("resolve workload observation: %w", err)
+	}
 
-	intent, err := p.freeze(request, candidate, node, metrics)
+	intent, err := p.freeze(request, candidate, node, metrics, workload)
 	if err != nil {
 		return PreparedRun{}, err
 	}
@@ -195,6 +210,7 @@ func (p *Preparer) freeze(
 	candidate ResolvedCandidate,
 	node profilingrun.NodeSnapshot,
 	metrics ResolvedMetricSource,
+	workload ResolvedWorkloadObservation,
 ) (profilingrun.Intent, error) {
 	if node.Name != request.TargetNode {
 		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
@@ -216,9 +232,10 @@ func (p *Preparer) freeze(
 		},
 		State: candidate.State,
 		Images: profilingrun.Images{
-			Runtime:        candidate.RuntimeImage,
-			Artifact:       candidate.ArtifactImage,
-			MetricObserver: candidate.MetricObserverImage,
+			Runtime:          candidate.RuntimeImage,
+			Artifact:         candidate.ArtifactImage,
+			MetricObserver:   candidate.MetricObserverImage,
+			WorkloadObserver: workload.Image,
 		},
 		TargetNode: node,
 		CPU: profilingrun.CPUContract{
@@ -241,11 +258,23 @@ func (p *Preparer) freeze(
 			TimeoutMilliseconds:        request.Metrics.TimeoutMilliseconds,
 			DurationSeconds:            request.Metrics.DurationSeconds,
 		},
+		Workload: profilingrun.WorkloadContract{AllowedBackground: copyWorkloadPolicy(workload.Policy)},
 	}
 	if err := intent.Validate(); err != nil {
 		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
 	return intent, nil
+}
+
+func copyWorkloadPolicy(source profilingrun.AllowedBackgroundPolicy) profilingrun.AllowedBackgroundPolicy {
+	copy := profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: source.SchemaVersion,
+		Selectors:     make([]profilingrun.BackgroundPodSelector, len(source.Selectors)),
+	}
+	for index, selector := range source.Selectors {
+		copy.Selectors[index].MatchLabels = maps.Clone(selector.MatchLabels)
+	}
+	return copy
 }
 
 func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCandidate) error {

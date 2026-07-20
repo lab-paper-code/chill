@@ -81,9 +81,12 @@ profiler:
   factSource:
     executionFactsKey: execution-facts.yaml
     metricSourcesKey: metric-sources.yaml
+    workloadObservationKey: workload-observation.yaml
     metricObserverImage: ""
+    workloadObserverImage: ""
     executionDeclarations: []
     metricSources: []
+    allowedBackgroundSelectors: []
 
 console:
   enabled: false

@@ -140,6 +140,10 @@ func writeWorkloadTestIntent(t *testing.T, directory string) string {
 	}
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/model.onnx"
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+	}}
 	canonical, err := intent.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

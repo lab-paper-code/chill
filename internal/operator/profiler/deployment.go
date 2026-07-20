@@ -87,6 +87,7 @@ func profilerArgs(options Options, config Config) []string {
 		"--fact-source-config-map=" + config.FactSource.ConfigMapName,
 		"--execution-facts-key=" + config.FactSource.ExecutionFactsKey,
 		"--metric-sources-key=" + config.FactSource.MetricSourcesKey,
+		"--workload-observation-key=" + config.FactSource.WorkloadObservationKey,
 	}
 	if config.LeaderElection {
 		args = append(args, "--leader-elect")
