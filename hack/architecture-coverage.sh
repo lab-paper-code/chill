@@ -20,6 +20,8 @@ components=(
   evidence-s3
   metric-core
   metric-edgemetrics
+  workload-core
+  workload-kube
   model-compat
   profile-derivation
   profiling-run
@@ -48,6 +50,8 @@ component_for() {
     internal/evidencestore/s3) echo evidence-s3 ;;
     internal/metricobserver) echo metric-core ;;
     internal/metricobserver/edgemetrics) echo metric-edgemetrics ;;
+    internal/workloadobserver) echo workload-core ;;
+    internal/workloadobserver/kube) echo workload-kube ;;
     internal/modelcompat) echo model-compat ;;
     internal/profilederivation) echo profile-derivation ;;
     internal/profilingrun) echo profiling-run ;;

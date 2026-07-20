@@ -40,6 +40,8 @@ components:
   evidence-s3: { in: internal/evidencestore/s3 }
   metric-core: { in: internal/metricobserver }
   metric-edgemetrics: { in: internal/metricobserver/edgemetrics }
+  workload-core: { in: internal/workloadobserver }
+  workload-kube: { in: internal/workloadobserver/kube }
   model-compat: { in: internal/modelcompat }
   profile-derivation: { in: internal/profilederivation }
   profiling-run: { in: internal/profilingrun }
@@ -99,6 +101,11 @@ deps:
   metric-edgemetrics:
     mayDependOn:
       - metric-core
+  workload-core:
+    anyVendorDeps: true
+  workload-kube:
+    mayDependOn:
+      - workload-core
 
   model-compat:
     anyVendorDeps: true
