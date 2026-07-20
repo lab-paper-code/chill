@@ -18,8 +18,8 @@ components=(
   evidence-core
   evidence-kube
   evidence-s3
-  power-core
-  power-edgemetrics
+  metric-core
+  metric-edgemetrics
   model-compat
   profile-derivation
   profiling-run
@@ -46,8 +46,8 @@ component_for() {
     internal/evidencestore) echo evidence-core ;;
     internal/evidencestore/kube) echo evidence-kube ;;
     internal/evidencestore/s3) echo evidence-s3 ;;
-    internal/powerobserver) echo power-core ;;
-    internal/powerobserver/edgemetrics) echo power-edgemetrics ;;
+    internal/metricobserver) echo metric-core ;;
+    internal/metricobserver/edgemetrics) echo metric-edgemetrics ;;
     internal/modelcompat) echo model-compat ;;
     internal/profilederivation) echo profile-derivation ;;
     internal/profilingrun) echo profiling-run ;;

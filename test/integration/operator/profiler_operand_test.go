@@ -118,7 +118,7 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 		LeaderElectionID:   "profiler.edge.dacs.io",
 		FactSource: operatorprofiler.FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
-			PowerSourcesKey: "power-sources.yaml",
+			MetricSourcesKey: "metric-sources.yaml",
 		},
 	}
 }

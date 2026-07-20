@@ -152,16 +152,20 @@ func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "Usage:"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "  kubectl chill inventory [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
+	if _, err := fmt.Fprintln(writer,
+		"  kubectl chill inventory [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "  kubectl chill system    [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
+	if _, err := fmt.Fprintln(writer,
+		"  kubectl chill system    [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
+	if _, err := fmt.Fprintln(writer,
+		"  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(writer, "  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]")
+	_, err := fmt.Fprintln(writer,
+		"  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]")
 	return err
 }
 

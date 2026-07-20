@@ -1,4 +1,4 @@
-package powerobserver
+package metricobserver
 
 // This fixture intentionally reverses the approved dependency direction. It is
 // copied into a temporary project by architecture-negative-test.sh and is never

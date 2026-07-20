@@ -45,7 +45,7 @@ def main():
         env(runtime, "SUPPORTED_BATCHES", batch)
         env(runtime, "WARMUP_ITERATIONS", 20)
         env(runtime, "MEASUREMENT_DURATION_SECONDS", 30)
-        observer = next(container for container in pod["containers"] if container["name"] == "power-observer")
+        observer = next(container for container in pod["containers"] if container["name"] == "metric-observer")
         observer["args"] = [arg.replace("-duration=10s", "-duration=30s") for arg in observer["args"]]
 
         subprocess.run(["kubectl", "delete", "job", name, "-n", NAMESPACE,
@@ -60,9 +60,9 @@ def main():
         runtime_log = subprocess.check_output(
             ["kubectl", "logs", "-n", NAMESPACE, pod_name, "-c", "runtime"], text=True)
         power_log = subprocess.check_output(
-            ["kubectl", "logs", "-n", NAMESPACE, pod_name, "-c", "power-observer"], text=True)
+            ["kubectl", "logs", "-n", NAMESPACE, pod_name, "-c", "metric-observer"], text=True)
         runtime_prefix = "EXPERIMENT_RESULT_JSON "
-        power_prefix = "POWER_OBSERVATION_JSON "
+        power_prefix = "METRIC_OBSERVATION_JSON "
         runtime_result = json.loads([line[len(runtime_prefix):]
                                      for line in runtime_log.splitlines()
                                      if line.startswith(runtime_prefix)][-1])

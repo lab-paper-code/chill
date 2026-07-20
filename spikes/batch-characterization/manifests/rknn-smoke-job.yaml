@@ -58,8 +58,8 @@ spec:
             - {name: coordination, mountPath: /coordination}
             - {name: dri, mountPath: /dev/dri}
             - {name: rknn-runtime-library, mountPath: /usr/lib/librknnrt.so, readOnly: true}
-        - name: power-observer
-          image: 155.230.35.213:5000/chill/spike-power-observer:arm64-v1
+        - name: metric-observer
+          image: 155.230.35.213:5000/chill/spike-metric-observer:arm64-v1
           args: ["-node-name=orangepi", "-resolved-endpoint=http://155.230.34.143:9102/metrics", "-interval=1s", "-duration=10s", "-request-timeout=500ms", "-ready-file=/coordination/observer-ready", "-start-signal-file=/coordination/measurement-start"]
           volumeMounts:
             - {name: coordination, mountPath: /coordination}

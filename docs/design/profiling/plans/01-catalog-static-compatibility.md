@@ -215,7 +215,7 @@ generic adapter framework is introduced.
 - RKNN host library or driver readiness
 - Kubernetes Job or Pod generation
 - runtime execution validation
-- PowerObserver synchronization
+- MetricObserver synchronization
 - profile admission, energy, `b_sat`, or SLO
 - generic planner/evaluator interfaces, registries, factories, or plugin maps
 

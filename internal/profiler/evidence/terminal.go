@@ -48,9 +48,9 @@ func (f TerminalFacts) validate(intent profilingrun.Intent, rawPodUID string) er
 
 func validateContainers(intent profilingrun.Intent, containers []ContainerTerminal) error {
 	expected := map[string]string{
-		"artifact":       intent.Images.Artifact,
-		"runtime":        intent.Images.Runtime,
-		"power-observer": intent.Images.PowerObserver,
+		"artifact":        intent.Images.Artifact,
+		"runtime":         intent.Images.Runtime,
+		"metric-observer": intent.Images.MetricObserver,
 	}
 	if len(containers) != len(expected) {
 		return fmt.Errorf("expected %d terminal containers, found %d", len(expected), len(containers))

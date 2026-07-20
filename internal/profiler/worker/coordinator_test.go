@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
@@ -23,7 +23,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeResult := testRuntimeResult(t, intent)
-	powerResult := testPowerResult(intent)
+	metricResult := testMetricResult(intent)
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		calls = append(calls, "store")
@@ -35,7 +35,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		if raw.IntentDigest != digest || raw.PodUID != "pod-uid" || raw.Runtime.Status != "Succeeded" ||
-			raw.Power.Source.NodeName != intent.TargetNode.Name {
+			raw.Metrics.Source.NodeName != intent.TargetNode.Name {
 			t.Fatalf("unexpected raw measurement: %#v", raw)
 		}
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
@@ -48,9 +48,9 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			}
 			return runtimeResult, nil
 		}),
-		powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
-			calls = append(calls, "power")
-			return powerResult, nil
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
+			calls = append(calls, "metrics")
+			return metricResult, nil
 		}),
 		store,
 	)
@@ -62,7 +62,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(calls, ",") != "runtime,power,store" || got != store.receipt {
+	if strings.Join(calls, ",") != "runtime,metrics,store" || got != store.receipt {
 		t.Fatalf("unexpected execution: calls=%v receipt=%#v", calls, got)
 	}
 }
@@ -75,9 +75,9 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 			runtimeCalls++
 			return profilingrun.RuntimeResult{}, nil
 		}),
-		powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
-			t.Fatal("power reader must not be called")
-			return powerobserver.Result{}, nil
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
+			t.Fatal("metric reader must not be called")
+			return metricobserver.Result{}, nil
 		}),
 		&fakeStore{},
 	)
@@ -104,9 +104,9 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 			runtimeCalls++
 			return profilingrun.RuntimeResult{}, nil
 		}),
-		powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
-			t.Fatal("power reader must not be called")
-			return powerobserver.Result{}, nil
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
+			t.Fatal("metric reader must not be called")
+			return metricobserver.Result{}, nil
 		}),
 		&fakeStore{},
 	)
@@ -120,7 +120,7 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 	}
 }
 
-func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
+func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 	intent := testIntent(t)
 	digest, err := intent.Digest()
 	if err != nil {
@@ -134,35 +134,35 @@ func TestCoordinatorStopsAtInvalidRuntimeOrPowerEvidence(t *testing.T) {
 	t.Run("runtime", func(t *testing.T) {
 		runtimeResult := testRuntimeResult(t, intent)
 		runtimeResult.NodeName = "other"
-		powerCalls := 0
+		metricCalls := 0
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 				return runtimeResult, nil
 			}),
-			powerReaderFunc(func(context.Context) (powerobserver.Result, error) {
-				powerCalls++
-				return powerobserver.Result{}, nil
+			metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
+				metricCalls++
+				return metricobserver.Result{}, nil
 			}),
 			&fakeStore{},
 		)
-		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrRuntimeMeasurement) || powerCalls != 0 {
-			t.Fatalf("expected runtime rejection before power read, got err=%v calls=%d", err, powerCalls)
+		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrRuntimeMeasurement) || metricCalls != 0 {
+			t.Fatalf("expected runtime rejection before metric read, got err=%v calls=%d", err, metricCalls)
 		}
 	})
 
-	t.Run("power", func(t *testing.T) {
-		powerResult := testPowerResult(intent)
-		powerResult.Source.NodeName = "other"
+	t.Run("metrics", func(t *testing.T) {
+		metricResult := testMetricResult(intent)
+		metricResult.Source.NodeName = "other"
 		store := &fakeStore{}
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 				return testRuntimeResult(t, intent), nil
 			}),
-			powerReaderFunc(func(context.Context) (powerobserver.Result, error) { return powerResult, nil }),
+			metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return metricResult, nil }),
 			store,
 		)
-		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrPowerObservation) || store.calls != 0 {
-			t.Fatalf("expected power rejection before store, got err=%v calls=%d", err, store.calls)
+		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrMetricObservation) || store.calls != 0 {
+			t.Fatalf("expected metric rejection before store, got err=%v calls=%d", err, store.calls)
 		}
 	})
 }
@@ -181,7 +181,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
 			return testRuntimeResult(t, intent), nil
 		}),
-		powerReaderFunc(func(context.Context) (powerobserver.Result, error) { return testPowerResult(intent), nil }),
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
 		store,
 	)
 	_, err = coordinator.Execute(context.Background(), Request{
@@ -202,9 +202,9 @@ func (f runtimeFunc) Measure(
 	return f(ctx, request)
 }
 
-type powerReaderFunc func(context.Context) (powerobserver.Result, error)
+type metricReaderFunc func(context.Context) (metricobserver.Result, error)
 
-func (f powerReaderFunc) Read(ctx context.Context) (powerobserver.Result, error) { return f(ctx) }
+func (f metricReaderFunc) Read(ctx context.Context) (metricobserver.Result, error) { return f(ctx) }
 
 type fakeStore struct {
 	calls   int
@@ -232,7 +232,7 @@ func (s *fakeStore) PutImmutable(
 func mustCoordinator(
 	t *testing.T,
 	runtime Runtime,
-	power PowerResultReader,
+	power MetricResultReader,
 	store evidencestore.ImmutableWriter,
 ) *Coordinator {
 	t.Helper()
@@ -315,16 +315,24 @@ func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.Runt
 	}, nil
 }
 
-func testPowerResult(intent profilingrun.Intent) powerobserver.Result {
+func testMetricResult(intent profilingrun.Intent) metricobserver.Result {
 	started := time.Date(2026, time.July, 16, 2, 59, 59, 0, time.UTC)
-	return powerobserver.Result{
-		Source: powerobserver.SourceIdentity{
-			Kind: intent.Power.SourceKind, NodeName: intent.Power.NodeName,
-			Endpoint: intent.Power.Endpoint, Metric: intent.Power.Metric,
+	return metricobserver.Result{
+		Source: metricobserver.SourceIdentity{
+			Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
+			Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
+			ThermalMetrics: &metricobserver.ThermalMetricIdentity{
+				ObservationAvailable:      "device_thermal_throttle_observation_available",
+				Active:                    "device_thermal_throttle_active",
+				CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
+				CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
+				Latched:                   "device_thermal_throttle_latched",
+				MaximumTemperatureCelsius: "device_thermal_max_celsius",
+			},
 		},
 		StartedAt: started, EndedAt: started.Add(31 * time.Second),
-		Samples: []powerobserver.Sample{{ObservedAt: started.Add(time.Second), Watts: 5.2}},
-		Summary: powerobserver.Summary{
+		Samples: []metricobserver.Sample{{ObservedAt: started.Add(time.Second), Watts: 5.2}},
+		Summary: metricobserver.Summary{
 			Attempts: 1, SuccessfulSamples: 1, ObservationDurationSeconds: 31,
 			SourceTimestampAbsent: true,
 		},

@@ -50,10 +50,10 @@ var _ = Describe("ProfilingRun API", func() {
 			run.Spec.CPURequest = resource.MustParse("-1")
 		}),
 		Entry("power timeout not below interval", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.PowerObservation.TimeoutMilliseconds = run.Spec.PowerObservation.IntervalMilliseconds
+			run.Spec.MetricObservation.TimeoutMilliseconds = run.Spec.MetricObservation.IntervalMilliseconds
 		}),
 		Entry("power window shorter than measurement", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.PowerObservation.DurationSeconds = run.Spec.Measurement.DurationSeconds - 1
+			run.Spec.MetricObservation.DurationSeconds = run.Spec.Measurement.DurationSeconds - 1
 		}),
 		Entry("empty admission policy", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.AdmissionPolicy = ""
@@ -129,7 +129,7 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 			},
-			PowerObservation: edgev1alpha1.ProfilingRunPowerObservationSpec{
+			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 			},
 			AdmissionPolicy: "wall-power-v1",

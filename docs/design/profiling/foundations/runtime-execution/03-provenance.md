@@ -127,7 +127,7 @@ Timestamp semantics must be explicit:
 - observer receipt timestamp
 - no source timestamp available
 
-PowerObserver receipt time must never be represented as a Shelly device
+MetricObserver receipt time must never be represented as a Shelly device
 measurement time.
 
 Immutable content normally needs a digest rather than repeated timestamps on

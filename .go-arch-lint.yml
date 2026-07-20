@@ -38,8 +38,8 @@ components:
   evidence-core: { in: internal/evidencestore }
   evidence-kube: { in: internal/evidencestore/kube }
   evidence-s3: { in: internal/evidencestore/s3 }
-  power-core: { in: internal/powerobserver }
-  power-edgemetrics: { in: internal/powerobserver/edgemetrics }
+  metric-core: { in: internal/metricobserver }
+  metric-edgemetrics: { in: internal/metricobserver/edgemetrics }
   model-compat: { in: internal/modelcompat }
   profile-derivation: { in: internal/profilederivation }
   profiling-run: { in: internal/profilingrun }
@@ -75,7 +75,7 @@ deps:
       - api
       - device-class
       - evidence-core
-      - power-core
+      - metric-core
       - profiler-evidence
 
   operator:
@@ -94,11 +94,11 @@ deps:
     mayDependOn:
       - evidence-core
 
-  power-core:
+  metric-core:
     anyVendorDeps: true
-  power-edgemetrics:
+  metric-edgemetrics:
     mayDependOn:
-      - power-core
+      - metric-core
 
   model-compat:
     anyVendorDeps: true
@@ -115,7 +115,7 @@ deps:
   profiler-evidence:
     mayDependOn:
       - evidence-core
-      - power-core
+      - metric-core
       - profiling-run
 
   profiler-evidence-kube:
@@ -129,6 +129,7 @@ deps:
   profiler-admission:
     mayDependOn:
       - evidence-core
+      - metric-core
       - profile-derivation
       - profiler-evidence
       - profiling-run
@@ -136,7 +137,7 @@ deps:
   profiler-worker:
     mayDependOn:
       - evidence-core
-      - power-core
+      - metric-core
       - profiler-evidence
       - profiling-run
 
@@ -144,10 +145,11 @@ deps:
     mayDependOn:
       - api
       - platform-core
+      - device-class
       - evidence-core
       - evidence-kube
       - model-compat
-      - power-edgemetrics
+      - metric-edgemetrics
       - profiler-app
       - profiler-admission
       - profiler-evidence

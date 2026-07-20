@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -132,17 +133,17 @@ func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
 	}
 }
 
-func TestPowerResultFileWaitsForAtomicResult(t *testing.T) {
+func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	intent := testIntent(t)
-	result := testPowerResult(intent)
+	result := testMetricResult(intent)
 	directory := t.TempDir()
-	path := filepath.Join(directory, "power-result.json")
-	reader := newTestPowerResultFile(t, path, time.Second)
+	path := filepath.Join(directory, "metric-result.json")
+	reader := newTestMetricResultFile(t, path, time.Second)
 
 	done := make(chan error, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		done <- PublishPowerResult(path, 1<<20, result)
+		done <- PublishMetricResult(path, 1<<20, result)
 	}()
 	got, err := reader.Read(context.Background())
 	if err != nil {
@@ -151,8 +152,8 @@ func TestPowerResultFileWaitsForAtomicResult(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != result.Source || got.Summary != result.Summary {
-		t.Fatalf("unexpected power result: %#v", got)
+	if !reflect.DeepEqual(got.Source, result.Source) || got.Summary != result.Summary {
+		t.Fatalf("unexpected metric result: %#v", got)
 	}
 }
 
@@ -219,13 +220,13 @@ func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	}
 }
 
-func TestPublishPowerResultDoesNotReplaceExistingHandoff(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "power-result.json")
-	result := testPowerResult(testIntent(t))
-	if err := PublishPowerResult(path, 1<<20, result); err != nil {
+func TestPublishMetricResultDoesNotReplaceExistingHandoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metric-result.json")
+	result := testMetricResult(testIntent(t))
+	if err := PublishMetricResult(path, 1<<20, result); err != nil {
 		t.Fatal(err)
 	}
-	if err := PublishPowerResult(path, 1<<20, result); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if err := PublishMetricResult(path, 1<<20, result); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected immutable handoff rejection, got %v", err)
 	}
 }
@@ -248,7 +249,7 @@ func TestSignalHandoffIsAtomicAndBounded(t *testing.T) {
 	}
 }
 
-func TestPowerResultFileRejectsInvalidHandoff(t *testing.T) {
+func TestMetricResultFileRejectsInvalidHandoff(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		payload string
@@ -258,11 +259,11 @@ func TestPowerResultFileRejectsInvalidHandoff(t *testing.T) {
 		{name: "trailing value", payload: `{}` + "\n{}", match: "trailing JSON"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "power-result.json")
+			path := filepath.Join(t.TempDir(), "metric-result.json")
 			if err := os.WriteFile(path, []byte(test.payload), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			reader := newTestPowerResultFile(t, path, time.Second)
+			reader := newTestMetricResultFile(t, path, time.Second)
 			if _, err := reader.Read(context.Background()); err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("expected %q rejection, got %v", test.match, err)
 			}
@@ -270,13 +271,13 @@ func TestPowerResultFileRejectsInvalidHandoff(t *testing.T) {
 	}
 }
 
-func TestPowerResultFileRejectsOversizedOrNonRegularHandoff(t *testing.T) {
+func TestMetricResultFileRejectsOversizedOrNonRegularHandoff(t *testing.T) {
 	t.Run("oversized", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "power-result.json")
+		path := filepath.Join(t.TempDir(), "metric-result.json")
 		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		reader, err := NewPowerResultFile(PowerResultFileConfig{
+		reader, err := NewMetricResultFile(MetricResultFileConfig{
 			Path: path, WaitTimeout: time.Second, PollInterval: time.Millisecond, MaxBytes: 1,
 		})
 		if err != nil {
@@ -290,29 +291,29 @@ func TestPowerResultFileRejectsOversizedOrNonRegularHandoff(t *testing.T) {
 	t.Run("symbolic link", func(t *testing.T) {
 		directory := t.TempDir()
 		target := filepath.Join(directory, "target.json")
-		path := filepath.Join(directory, "power-result.json")
+		path := filepath.Join(directory, "metric-result.json")
 		if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(target, path); err != nil {
 			t.Fatal(err)
 		}
-		reader := newTestPowerResultFile(t, path, time.Second)
+		reader := newTestMetricResultFile(t, path, time.Second)
 		if _, err := reader.Read(context.Background()); err == nil || !strings.Contains(err.Error(), "regular file") {
 			t.Fatalf("expected non-regular handoff rejection, got %v", err)
 		}
 	})
 }
 
-func TestPowerResultFileHasBoundedWait(t *testing.T) {
-	reader := newTestPowerResultFile(t, filepath.Join(t.TempDir(), "missing.json"), 20*time.Millisecond)
+func TestMetricResultFileHasBoundedWait(t *testing.T) {
+	reader := newTestMetricResultFile(t, filepath.Join(t.TempDir(), "missing.json"), 20*time.Millisecond)
 	started := time.Now()
 	_, err := reader.Read(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
 		t.Fatalf("expected bounded wait failure, got %v", err)
 	}
 	if time.Since(started) > time.Second {
-		t.Fatal("power result wait exceeded its bounded margin")
+		t.Fatal("metric result wait exceeded its bounded margin")
 	}
 }
 
@@ -386,9 +387,9 @@ func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
 	return RuntimeRequest{Intent: intent, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
-func newTestPowerResultFile(t *testing.T, path string, timeout time.Duration) *PowerResultFile {
+func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {
 	t.Helper()
-	reader, err := NewPowerResultFile(PowerResultFileConfig{
+	reader, err := NewMetricResultFile(MetricResultFileConfig{
 		Path: path, WaitTimeout: timeout, PollInterval: time.Millisecond, MaxBytes: 1 << 20,
 	})
 	if err != nil {

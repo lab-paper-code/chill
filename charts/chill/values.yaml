@@ -5,6 +5,11 @@ system:
   enabled: true
   name: ""
 
+evidenceStore:
+  enabled: false
+  configRef:
+    name: ""
+
 crds:
   enabled: true
 
@@ -75,10 +80,10 @@ profiler:
     name: ""
   factSource:
     executionFactsKey: execution-facts.yaml
-    powerSourcesKey: power-sources.yaml
-    powerObserverImage: ""
+    metricSourcesKey: metric-sources.yaml
+    metricObserverImage: ""
     executionDeclarations: []
-    powerSources: []
+    metricSources: []
 
 console:
   enabled: false

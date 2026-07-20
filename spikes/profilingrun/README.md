@@ -17,7 +17,7 @@ go run ./spikes/profilingrun/cmd/collect \
   -output-dir spikes/profilingrun/observations/raw
 ```
 
-The collector validates the exact runtime and PowerObserver image identities,
+The collector validates the exact runtime and MetricObserver image identities,
 actual Node and Pod identities, artifact bytes, runtime/backend, CPU contract,
 selected batch, output shape, and raw latency distribution. A KubeEdge/containerd
 init-container `imageID` may expose cached tag identity; the bundle preserves it,

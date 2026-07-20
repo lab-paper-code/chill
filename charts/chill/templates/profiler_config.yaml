@@ -20,7 +20,7 @@ data:
     factSource:
       configMapName: {{ include "chill.profilerFactSourceName" . | quote }}
       executionFactsKey: {{ .Values.profiler.factSource.executionFactsKey | quote }}
-      powerSourcesKey: {{ .Values.profiler.factSource.powerSourcesKey | quote }}
+      metricSourcesKey: {{ .Values.profiler.factSource.metricSourcesKey | quote }}
     nodeSelector:
 {{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
     {{- with .Values.profiler.affinity }}

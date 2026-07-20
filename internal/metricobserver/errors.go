@@ -1,4 +1,4 @@
-package powerobserver
+package metricobserver
 
 import "errors"
 

@@ -48,7 +48,7 @@ quality:
 - exact state and trial identity;
 - steady runtime window and completed-item denominator;
 - raw latency distribution and output validation;
-- power source identity, boundary coverage, gaps, failures, and timestamp
+- metric source identity, power-sample boundary coverage, gaps, failures, and timestamp
   semantics;
 - throttling and declared contamination evidence; and
 - absence of warm-up, load, or engine preparation inside the steady window.
@@ -88,7 +88,7 @@ spikes/profilederivation/cmd/     read-only Plan 2 bundle adapter
 ```
 
 The pure package imports no Kubernetes, CHILL API, controller-runtime,
-PowerObserver transport, or scheduler package.
+MetricObserver transport, or scheduler package.
 
 ## Explicitly out of scope
 

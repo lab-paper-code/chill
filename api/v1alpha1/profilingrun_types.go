@@ -17,7 +17,7 @@ const (
 // ProfilingRunSpec requests exactly one immutable profiling execution.
 // Materially different inputs require a new ProfilingRun.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
-// +kubebuilder:validation:XValidation:rule="self.powerObservation.durationSeconds >= self.measurement.durationSeconds",message="powerObservation.durationSeconds must cover measurement.durationSeconds"
+// +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
 type ProfilingRunSpec struct {
 	// Candidate selects one static catalog execution path.
@@ -34,8 +34,8 @@ type ProfilingRunSpec struct {
 	// Measurement fixes the single-Run workload and measurement window.
 	Measurement ProfilingRunMeasurementSpec `json:"measurement"`
 
-	// PowerObservation fixes polling behavior. The source is resolved from TargetNode.
-	PowerObservation ProfilingRunPowerObservationSpec `json:"powerObservation"`
+	// MetricObservation fixes polling behavior. The source is resolved from TargetNode.
+	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
 
 	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
 	// +kubebuilder:validation:MinLength=1
@@ -95,9 +95,9 @@ type ProfilingRunMeasurementSpec struct {
 	OutputValidation string `json:"outputValidation"`
 }
 
-// ProfilingRunPowerObservationSpec contains policy only, never an endpoint.
+// ProfilingRunMetricObservationSpec contains policy only, never an endpoint.
 // +kubebuilder:validation:XValidation:rule="self.timeoutMilliseconds < self.intervalMilliseconds",message="timeoutMilliseconds must be less than intervalMilliseconds"
-type ProfilingRunPowerObservationSpec struct {
+type ProfilingRunMetricObservationSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	IntervalMilliseconds int32 `json:"intervalMilliseconds"`
 

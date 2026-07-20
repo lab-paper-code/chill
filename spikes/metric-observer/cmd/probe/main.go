@@ -16,9 +16,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
-	"github.com/lab-paper-code/chill/internal/powerobserver/edgemetrics"
-	powerobserverprobe "github.com/lab-paper-code/chill/spikes/power-observer"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
+	metricobserverprobe "github.com/lab-paper-code/chill/spikes/metric-observer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -51,15 +51,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	var target powerobserverprobe.ResolvedTarget
+	var target metricobserverprobe.ResolvedTarget
 	if *resolvedEndpoint != "" {
-		// TODO(internal): Accept a controller-resolved PowerSource reference and
+		// TODO(internal): Accept a controller-resolved metric source reference and
 		// credentials/TLS policy, not a raw endpoint in the public profiling API.
 		logLine(
 			"INFO", "target", "using endpoint resolved by profiling control",
 			"node", *nodeName, "endpoint", *resolvedEndpoint,
 		)
-		target = powerobserverprobe.ResolvedTarget{NodeName: *nodeName, Endpoint: *resolvedEndpoint}
+		target = metricobserverprobe.ResolvedTarget{NodeName: *nodeName, Endpoint: *resolvedEndpoint}
 	} else {
 		// TODO(internal): Decide one owner for resolution. The production sidecar
 		// should not silently fall back to Kubernetes discovery if the controller
@@ -73,7 +73,7 @@ func main() {
 		if err != nil {
 			fatal(fmt.Errorf("create Kubernetes client: %w", err))
 		}
-		resolver, err := powerobserverprobe.NewKubernetesPodResolver(client, *namespace, *selector, *port)
+		resolver, err := metricobserverprobe.NewKubernetesPodResolver(client, *namespace, *selector, *port)
 		if err != nil {
 			fatal(err)
 		}
@@ -86,8 +86,8 @@ func main() {
 	if target.PodName != "" {
 		targetFields = append(targetFields, "pod", target.PodName)
 	}
-	logLine("INFO", "target", "power source ready", targetFields...)
-	source, err := edgemetrics.New(powerobserver.SourceIdentity{
+	logLine("INFO", "target", "metric source ready", targetFields...)
+	source, err := edgemetrics.New(metricobserver.SourceIdentity{
 		NodeName:  target.NodeName,
 		Namespace: target.Namespace,
 		PodName:   target.PodName,
@@ -96,7 +96,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	observer, err := powerobserver.New(source)
+	observer, err := metricobserver.New(source)
 	if err != nil {
 		fatal(err)
 	}
@@ -114,10 +114,10 @@ func main() {
 		logLine("INFO", "sync", "workload measurement signal received")
 	}
 	logLine(
-		"INFO", "observe", "starting bounded power observation",
+		"INFO", "observe", "starting bounded metric observation",
 		"interval", interval.String(), "duration", duration.String(), "requestTimeout", requestTimeout.String(),
 	)
-	result, err := observer.Observe(context.Background(), powerobserver.Request{
+	result, err := observer.Observe(context.Background(), metricobserver.Request{
 		Interval: *interval, Duration: *duration, RequestTimeout: *requestTimeout,
 		MaxEvents: int(*duration / *interval) + 2,
 	})
@@ -129,7 +129,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("POWER_OBSERVATION_JSON %s\n", payload)
+	fmt.Printf("METRIC_OBSERVATION_JSON %s\n", payload)
 }
 
 func waitForFile(ctx context.Context, path string, timeout time.Duration) error {
@@ -190,7 +190,7 @@ func logLine(level, stage, message string, fields ...string) {
 	)
 }
 
-func logObservationSummary(result powerobserver.Result) {
+func logObservationSummary(result metricobserver.Result) {
 	watts := make([]float64, 0, len(result.Samples))
 	for _, sample := range result.Samples {
 		watts = append(watts, sample.Watts)
@@ -204,9 +204,9 @@ func logObservationSummary(result powerobserver.Result) {
 		}
 		mean /= float64(len(watts))
 	}
-	logLine("INFO", "observe", "power observation completed")
+	logLine("INFO", "observe", "metric observation completed")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "--- CHILL POWER OBSERVATION RESULT ---------------------------")
+	fmt.Fprintln(os.Stderr, "--- CHILL METRIC OBSERVATION RESULT --------------------------")
 	fmt.Fprintf(os.Stderr, "node                    : %s\n", result.Source.NodeName)
 	fmt.Fprintf(os.Stderr, "endpoint                : %s\n", result.Source.Endpoint)
 	fmt.Fprintf(os.Stderr, "metric                  : %s\n", result.Source.Metric)

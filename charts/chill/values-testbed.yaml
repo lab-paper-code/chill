@@ -1,2 +1,6 @@
-# Testbed discovery is the default chart profile.
-{}
+# Testbed discovery is the default chart profile. The retained Evidence Store
+# configuration is supplied separately and referenced by the ChillSystem root.
+evidenceStore:
+  enabled: true
+  configRef:
+    name: chill-evidence-store-config

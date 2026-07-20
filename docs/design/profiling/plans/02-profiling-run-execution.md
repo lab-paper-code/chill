@@ -22,11 +22,11 @@ The first Run intent freezes:
 
 - the static candidate report input identities and selected model path;
 - logical model, artifact digest, runtime family, and backend;
-- digest-pinned runtime, artifact-carrier, and PowerObserver images;
+- digest-pinned runtime, artifact-carrier, and MetricObserver images;
 - selected batch, warm-up, bounded measurement duration, and repetitions;
 - target Node name, UID, resourceVersion, architecture, and allocatable CPU;
 - the CPU derivation policy and its material inputs and outputs; and
-- the resolved power source and bounded observation request.
+- the resolved metric source and bounded observation request.
 
 The intent identity is the SHA-256 of canonical JSON. It is not a Job, Pod, or
 Kubernetes UID. A changed snapshot or decision creates a different intent.
@@ -48,7 +48,7 @@ A one-shot CPU ORT adapter translates the intent into native objects. The Job:
 - expresses placement as a hostname selector and records actual binding later;
 - requests and limits the frozen CPU amount for the runtime container;
 - copies the digest-pinned artifact into an `emptyDir` and verifies its bytes;
-- runs the runtime and PowerObserver in separate containers; and
+- runs the runtime and MetricObserver in separate containers; and
 - carries the Run intent digest as a label/annotation and environment input.
 
 Plan 2 does not claim that selection intent guarantees scheduling. It records
@@ -69,7 +69,7 @@ preserves:
 - the strict runtime result for the selected batch;
 - artifact digest, runtime/provider, CPU/cgroup, warm-up, inference, timestamp,
   and output-validation facts; and
-- the unmodified PowerObserver result and its source identity.
+- the unmodified MetricObserver result and its source identity.
 
 The bundle is written atomically and named by its content digest. Job completion
 alone is not a valid Run. Missing, duplicate, malformed, mismatched, or failed
@@ -116,7 +116,7 @@ digest-pinned image, Node UID, artifact bytes, ORT CPU backend, four-CPU quota,
 four/one ORT threads, effective cpuset and affinity, selected batch, and output
 shape. Warm-up completion precedes the measurement window, and the 5,541
 reported calls exactly match 5,541 retained raw latency samples over 30 seconds.
-PowerObserver retained 31 receipt-timestamp samples with no read failure and a
+The observer retained 31 receipt-timestamp samples with no read failure and a
 1.059-second maximum gap.
 
 Ten co-resident Pods were visible in the post-run Node snapshot, six still

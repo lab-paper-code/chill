@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	testArtifactDigest     = "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
-	testArtifactPath       = "/artifact/mobilenet-v2-050.onnx"
-	testArchitecture       = "amd64"
-	testRuntimeImage       = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
-	testArtifactImage      = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
-	testPowerObserverImage = "registry.example/chill/power-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
+	testArtifactDigest      = "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
+	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
+	testArchitecture        = "amd64"
+	testRuntimeImage        = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
+	testArtifactImage       = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
+	testMetricObserverImage = "registry.example/chill/metric-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
 )
 
 func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T) {
@@ -47,7 +47,7 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
 		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||
 		resolved.ArtifactDigest != testArtifactDigest ||
-		resolved.PowerObserverImage != testPowerObserverImage ||
+		resolved.MetricObserverImage != testMetricObserverImage ||
 		resolved.DeviceArchitecture != testArchitecture ||
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
 		t.Fatalf("unexpected resolved candidate: %#v", resolved)
@@ -72,7 +72,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 		State: resolved.State,
 		Images: profilingrun.Images{
 			Runtime: resolved.RuntimeImage, Artifact: resolved.ArtifactImage,
-			PowerObserver: resolved.PowerObserverImage,
+			MetricObserver: resolved.MetricObserverImage,
 		},
 		TargetNode: profilingrun.NodeSnapshot{Architecture: resolved.DeviceArchitecture},
 	}
@@ -182,14 +182,14 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "runtime image must be digest-pinned",
 		},
 		{
-			name: "mutable power-observer image",
+			name: "mutable metric-observer image",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
 				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], testPowerObserverImage, "registry.example/chill/power-observer:latest", 1,
+					config.Data["execution-facts.yaml"], testMetricObserverImage, "registry.example/chill/metric-observer:latest", 1,
 				)
 			},
-			match: "power-observer image must be digest-pinned",
+			match: "metric-observer image must be digest-pinned",
 		},
 		{
 			name: "runtime producer digest mismatch",
@@ -376,8 +376,8 @@ func validCandidateObjects() []client.Object {
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
 	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha1
-powerObserverImage: ` + testPowerObserverImage + `
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha2
+metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
     deviceClass: lattepanda-3-delta-8g

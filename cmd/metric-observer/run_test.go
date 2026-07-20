@@ -11,13 +11,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiler/worker"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-func TestExecutePublishesFrozenPowerObservation(t *testing.T) {
+func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = response.Write([]byte("shelly_power_total_watts 5.2\n"))
+		_, _ = response.Write([]byte(strings.Join([]string{
+			"shelly_power_total_watts 5.2",
+			"device_thermal_throttle_observation_available 1",
+			"device_thermal_throttle_active 0",
+			"device_thermal_max_celsius 41",
+		}, "\n") + "\n"))
 	}))
 	defer server.Close()
 
@@ -33,8 +39,8 @@ func TestExecutePublishesFrozenPowerObservation(t *testing.T) {
 	if info, err := os.Stat(options.readyPath); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("observer-ready was not published: info=%v err=%v", info, err)
 	}
-	reader, err := worker.NewPowerResultFile(worker.PowerResultFileConfig{
-		Path: options.powerResultPath, WaitTimeout: time.Second,
+	reader, err := worker.NewMetricResultFile(worker.MetricResultFileConfig{
+		Path: options.metricResultPath, WaitTimeout: time.Second,
 		PollInterval: time.Millisecond, MaxBytes: maximumResultBytes,
 	})
 	if err != nil {
@@ -47,6 +53,31 @@ func TestExecutePublishesFrozenPowerObservation(t *testing.T) {
 	if result.Source.NodeName != intent.TargetNode.Name || result.Summary.SuccessfulSamples < 1 ||
 		result.Summary.Failures != 0 {
 		t.Fatalf("unexpected observation result: %#v", result)
+	}
+	if result.Samples[0].Thermal == nil || result.Samples[0].Thermal.ObservationAvailable == nil ||
+		!*result.Samples[0].Thermal.ObservationAvailable || result.Samples[0].Thermal.Active == nil ||
+		*result.Samples[0].Thermal.Active {
+		t.Fatalf("typed thermal evidence was not retained: %#v", result.Samples[0].Thermal)
+	}
+}
+
+func TestSummarizeThermalReportsOnlyRetainedFacts(t *testing.T) {
+	available, inactive, active := true, false, true
+	low, high := 41.0, 47.5
+	result := metricobserver.Result{Samples: []metricobserver.Sample{
+		{Thermal: &metricobserver.ThermalReading{
+			ObservationAvailable: &available, Active: &inactive, MaximumTemperatureCelsius: &low,
+		}},
+		{Thermal: &metricobserver.ThermalReading{
+			ObservationAvailable: &available, Active: &active, MaximumTemperatureCelsius: &high,
+			Issues: []metricobserver.MetricIssue{{Metric: "temperature", Reason: metricobserver.FailureReasonInvalidReading}},
+		}},
+		{},
+	}}
+	got := summarizeThermal(result)
+	if got.typed != 2 || got.available != 2 || got.active != 1 || got.issues != 1 ||
+		got.maximumTemperature != "47.500 C" {
+		t.Fatalf("thermal log summary = %#v", got)
 	}
 }
 
@@ -75,7 +106,7 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	if info, statErr := os.Stat(options.readyPath); statErr != nil || !info.Mode().IsRegular() {
 		t.Fatalf("observer-ready was not published before waiting: info=%v err=%v", info, statErr)
 	}
-	if _, statErr := os.Stat(options.powerResultPath); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(options.metricResultPath); !os.IsNotExist(statErr) {
 		t.Fatalf("missing measurement signal produced a result: %v", statErr)
 	}
 }
@@ -92,11 +123,11 @@ func writeTestIntent(t *testing.T, directory, endpoint string) (profilingrun.Int
 	}
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Power.Endpoint = endpoint
+	intent.Metrics.Endpoint = endpoint
 	intent.Measurement.DurationSeconds = 1
-	intent.Power.DurationSeconds = 1
-	intent.Power.IntervalMilliseconds = 20
-	intent.Power.TimeoutMilliseconds = 10
+	intent.Metrics.DurationSeconds = 1
+	intent.Metrics.IntervalMilliseconds = 20
+	intent.Metrics.TimeoutMilliseconds = 10
 	canonical, err := intent.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +146,6 @@ func testOptions(directory, digest string) options {
 	return options{
 		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
-		powerResultPath: filepath.Join(directory, "power-result.json"), startWaitTimeout: time.Second, maxEvents: 100,
+		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second, maxEvents: 100,
 	}
 }

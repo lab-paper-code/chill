@@ -121,11 +121,9 @@ spec:
             - name: execution-contract
               mountPath: /evidence
               readOnly: true
-        - name: power-observer
-          image: 155.230.35.213:5000/chill/spike-power-observer:v0
-          # TODO(internal): The controller resolves Node -> PowerSource and
-          # passes a versioned observation request; endpoint details stay out
-          # of the user-facing profiling API.
+        - name: metric-observer
+          image: 155.230.35.213:5000/chill/spike-metric-observer:v0
+          # The orchestrator supplies the metric endpoint resolved for this Node.
           imagePullPolicy: Always
           args:
             - -node-name=$(NODE_NAME)
@@ -143,7 +141,7 @@ spec:
             - name: POWER_ENDPOINT
               valueFrom:
                 configMapKeyRef:
-                  name: power-observer-target
+                  name: metric-observer-target
                   key: endpoint
           securityContext:
             allowPrivilegeEscalation: false

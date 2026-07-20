@@ -27,7 +27,7 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	if request.Preparation.Candidate.ModelSpec != run.Spec.Candidate.ModelSpec ||
 		request.Preparation.Candidate.PowerMode != run.Spec.Candidate.PowerMode ||
 		request.Preparation.TargetNode != run.Spec.TargetNode || request.Preparation.CPURequest != "100m" ||
-		request.Preparation.Measurement.Batch != 1 || request.Preparation.Power.IntervalMilliseconds != 1000 ||
+		request.Preparation.Measurement.Batch != 1 || request.Preparation.Metrics.IntervalMilliseconds != 1000 ||
 		request.AdmissionPolicy != run.Spec.AdmissionPolicy {
 		t.Fatalf("ProfilingRun request projection drifted: %#v", request)
 	}
@@ -232,7 +232,7 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-fp32-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 			},
-			PowerObservation: edgev1alpha1.ProfilingRunPowerObservationSpec{
+			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 			},
 			AdmissionPolicy: "wall-power-v1",

@@ -31,8 +31,8 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	if prepared.IntentDigest != wantDigest || string(prepared.CandidateReportBytes) != string(candidateBytes) {
 		t.Fatal("prepared Run lost intent or candidate-report identity")
 	}
-	if resolvers.power.nodeName != expected.TargetNode.Name {
-		t.Fatal("power source was not resolved from the selected Node")
+	if resolvers.metrics.nodeName != expected.TargetNode.Name {
+		t.Fatal("metric source was not resolved from the selected Node")
 	}
 	if resolvers.node.selection.Name != expected.TargetNode.Name ||
 		resolvers.node.selection.DeviceArchitecture != expected.TargetNode.Architecture ||
@@ -121,16 +121,16 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			match: "does not match requested target",
 		},
 		{
-			name: "invalid power source",
+			name: "invalid metric source",
 			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.power.result.Endpoint = ""
+				resolvers.metrics.result.Endpoint = ""
 			},
-			match: "power.endpoint is required",
+			match: "metrics.endpoint is required",
 		},
 		{
-			name: "missing power source configuration identity",
+			name: "missing metric source configuration identity",
 			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.power.result.ConfigurationContentDigest = ""
+				resolvers.metrics.result.ConfigurationContentDigest = ""
 			},
 			match: "configuration digest must be a canonical SHA-256 digest",
 		},
@@ -239,7 +239,7 @@ func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *Reso
 		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
 		Path: candidate.ArtifactPath, Digest: candidate.ArtifactDigest,
 	}
-	report.PowerObserverImage = candidate.PowerObserverImage
+	report.MetricObserverImage = candidate.MetricObserverImage
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
@@ -269,9 +269,9 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 			wantCalls: [3]int{1, 1, 0},
 		},
 		{
-			name: "power source",
+			name: "metric source",
 			fail: func(resolvers *fakePreparationResolvers, err error) {
-				resolvers.power.err = err
+				resolvers.metrics.err = err
 			},
 			wantCalls: [3]int{1, 1, 1},
 		},
@@ -286,7 +286,7 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 			if !errors.Is(err, want) {
 				t.Fatalf("expected resolver cause, got %v", err)
 			}
-			gotCalls := [3]int{resolvers.candidate.calls, resolvers.node.calls, resolvers.power.calls}
+			gotCalls := [3]int{resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls}
 			if gotCalls != test.wantCalls {
 				t.Fatalf("resolver calls after failure: want %v, got %v", test.wantCalls, gotCalls)
 			}
@@ -294,7 +294,7 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	}
 }
 
-func TestPreparerRejectsCPURequestAboveNodeCapacityBeforePowerResolution(t *testing.T) {
+func TestPreparerRejectsCPURequestAboveNodeCapacityBeforeMetricResolution(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
 	preparer := newFixturePreparer(t, resolvers)
@@ -305,9 +305,9 @@ func TestPreparerRejectsCPURequestAboveNodeCapacityBeforePowerResolution(t *test
 	if !errors.Is(err, ErrCPURequestExceedsAllocatable) {
 		t.Fatalf("expected CPU capacity rejection, got %v", err)
 	}
-	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.power.calls != 0 {
+	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.metrics.calls != 0 {
 		t.Fatalf("unexpected resolver calls: candidate=%d node=%d power=%d",
-			resolvers.candidate.calls, resolvers.node.calls, resolvers.power.calls)
+			resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls)
 	}
 }
 
@@ -336,7 +336,7 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 			if _, err := preparer.Prepare(context.Background(), request); err == nil {
 				t.Fatal("expected invalid measurement rejection")
 			}
-			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.power.calls != 0 {
+			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.metrics.calls != 0 {
 				t.Fatal("invalid caller input reached resolver ports")
 			}
 		})
@@ -348,7 +348,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 	preparer, err := NewPreparer(
 		resolvers.candidate,
 		resolvers.node,
-		resolvers.power,
+		resolvers.metrics,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -367,10 +367,10 @@ func fixtureRequest(intent profilingrun.Intent) PreparationRequest {
 		TargetNode:  intent.TargetNode.Name,
 		CPURequest:  intent.CPU.Request,
 		Measurement: intent.Measurement,
-		Power: PowerObservationPolicy{
-			IntervalMilliseconds: intent.Power.IntervalMilliseconds,
-			TimeoutMilliseconds:  intent.Power.TimeoutMilliseconds,
-			DurationSeconds:      intent.Power.DurationSeconds,
+		Metrics: MetricObservationPolicy{
+			IntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
+			DurationSeconds:      intent.Metrics.DurationSeconds,
 		},
 	}
 }
@@ -397,7 +397,7 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 type fakePreparationResolvers struct {
 	candidate *fakeCandidateResolver
 	node      *fakeNodeResolver
-	power     *fakePowerResolver
+	metrics   *fakeMetricResolver
 }
 
 func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparationResolvers {
@@ -413,17 +413,17 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			DeviceNodeSelector: map[string]string{
 				"edge.dacs.io/device-class": intent.State.DeviceClass,
 			},
-			DevicePowerModes:   []string{intent.State.PowerMode},
-			RuntimeImage:       intent.Images.Runtime,
-			ArtifactImage:      intent.Images.Artifact,
-			ArtifactPath:       intent.State.ArtifactPath,
-			ArtifactDigest:     intent.State.ArtifactDigest,
-			PowerObserverImage: intent.Images.PowerObserver,
+			DevicePowerModes:    []string{intent.State.PowerMode},
+			RuntimeImage:        intent.Images.Runtime,
+			ArtifactImage:       intent.Images.Artifact,
+			ArtifactPath:        intent.State.ArtifactPath,
+			ArtifactDigest:      intent.State.ArtifactDigest,
+			MetricObserverImage: intent.Images.MetricObserver,
 		}},
 		node: &fakeNodeResolver{result: intent.TargetNode},
-		power: &fakePowerResolver{result: ResolvedPowerSource{
-			Kind: intent.Power.SourceKind, Endpoint: intent.Power.Endpoint, Metric: intent.Power.Metric,
-			ConfigurationContentDigest: intent.Power.ConfigurationContentDigest,
+		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
+			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
+			ConfigurationContentDigest: intent.Metrics.ConfigurationContentDigest,
 		}},
 	}
 }
@@ -458,14 +458,14 @@ func (r *fakeNodeResolver) ResolveNode(
 	return r.result, r.err
 }
 
-type fakePowerResolver struct {
-	result   ResolvedPowerSource
+type fakeMetricResolver struct {
+	result   ResolvedMetricSource
 	err      error
 	calls    int
 	nodeName string
 }
 
-func (r *fakePowerResolver) ResolvePowerSource(_ context.Context, nodeName string) (ResolvedPowerSource, error) {
+func (r *fakeMetricResolver) ResolveMetricSource(_ context.Context, nodeName string) (ResolvedMetricSource, error) {
 	r.calls++
 	r.nodeName = nodeName
 	return r.result, r.err

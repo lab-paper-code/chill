@@ -21,7 +21,7 @@ import (
 func TestExecuteInventoryWritesTable(t *testing.T) {
 	query := &fakeInventoryQuery{snapshot: testInventorySnapshot()}
 	deps := dependencies{newInventoryQuery: func(opts inventoryOptions) (inventoryQuery, error) {
-		if opts.kubeconfig != "/tmp/config" || opts.context != "edge" || opts.output != "table" {
+		if opts.kubeconfig != "/tmp/config" || opts.context != "edge" || opts.output != outputFormatTable {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
@@ -79,7 +79,7 @@ func TestExecuteInventoryWritesStructuredJSON(t *testing.T) {
 func TestExecuteSystemWritesTable(t *testing.T) {
 	query := &fakeSystemQuery{snapshot: testSystemSnapshot()}
 	deps := dependencies{newSystemQuery: func(opts systemOptions) (systemQuery, error) {
-		if opts.kubeconfig != "/tmp/config" || opts.context != "edge" || opts.output != "table" {
+		if opts.kubeconfig != "/tmp/config" || opts.context != "edge" || opts.output != outputFormatTable {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
@@ -127,7 +127,7 @@ func TestExecuteSystemWritesStructuredJSON(t *testing.T) {
 func TestExecuteProfilingRunsWritesTable(t *testing.T) {
 	query := &fakeProfilingRunsQuery{snapshot: testProfilingRunsSnapshot()}
 	deps := dependencies{newRunsQuery: func(opts profilingRunsOptions) (profilingRunsQuery, error) {
-		if opts.namespace != "chill-system" || opts.allNamespaces || opts.output != "table" {
+		if opts.namespace != "chill-system" || opts.allNamespaces || opts.output != outputFormatTable {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
@@ -185,11 +185,13 @@ func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 		return query, nil
 	}}
 	var stdout strings.Builder
-	if err := execute(context.Background(), []string{"runs", "show", "cpu-run", "-n", "chill-system"}, &stdout, io.Discard, deps); err != nil {
+	args := []string{"runs", "show", "cpu-run", "-n", "chill-system"}
+	if err := execute(context.Background(), args, &stdout, io.Discard, deps); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"RUNTIME MEASUREMENT", "LATENCY", "POWER OBSERVATION", "SCIENTIFIC ADMISSION", "EVIDENCE LINEAGE",
+		"RUNTIME MEASUREMENT", "LATENCY", "POWER OBSERVATION", "THERMAL OBSERVATION",
+		"SCIENTIFIC ADMISSION", "EVIDENCE LINEAGE",
 		"188.009 items/s", "5.978 ms", "18.184 W", "Insufficient", "CoResidentWindowUnknown",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -206,7 +208,8 @@ func TestExecuteProfilingRunShowWritesJSON(t *testing.T) {
 		return &fakeEvidencePassportQuery{passport: testEvidencePassport()}, nil
 	}}
 	var stdout strings.Builder
-	if err := execute(context.Background(), []string{"runs", "show", "cpu-run", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
+	args := []string{"runs", "show", "cpu-run", "-o", "json"}
+	if err := execute(context.Background(), args, &stdout, io.Discard, deps); err != nil {
 		t.Fatal(err)
 	}
 	var got operatorconsole.EvidencePassport
@@ -414,7 +417,7 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 				},
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("4"),
 				Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4, Repetitions: 1},
-				PowerObservation: edgev1alpha1.ProfilingRunPowerObservationSpec{
+				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 200, DurationSeconds: 60,
 				},
 				AdmissionPolicy: "single-run-v1",
@@ -444,12 +447,22 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 				},
 				TargetNode: "lattepanda",
 			},
-			Conditions: []metav1.Condition{{Type: edgev1alpha1.ProfilingRunConditionEvidenceAdmitted, Status: metav1.ConditionUnknown, Reason: "EvidenceInsufficient"}},
+			Conditions: []metav1.Condition{{
+				Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+				Status: metav1.ConditionUnknown,
+				Reason: "EvidenceInsufficient",
+			}},
 		},
 		Evidence: operatorconsole.EvidencePassportLineage{
 			FinalizedAt: time.Date(2026, 7, 20, 1, 1, 0, 0, time.UTC),
-			Final:       evidencestore.ObjectIdentity{Store: "chill-evidence", Key: "execution.json", Digest: "sha256:" + strings.Repeat("a", 64), Size: 9000},
-			Raw:         evidencestore.ObjectIdentity{Store: "chill-evidence", Key: "raw.json", Digest: "sha256:" + strings.Repeat("b", 64), Size: 8000},
+			Final: evidencestore.ObjectIdentity{
+				Store: "chill-evidence", Key: "execution.json",
+				Digest: "sha256:" + strings.Repeat("a", 64), Size: 9000,
+			},
+			Raw: evidencestore.ObjectIdentity{
+				Store: "chill-evidence", Key: "raw.json",
+				Digest: "sha256:" + strings.Repeat("b", 64), Size: 8000,
+			},
 		},
 		Measurement: operatorconsole.EvidencePassportMeasurement{
 			Runtime: operatorconsole.EvidencePassportRuntime{
@@ -459,10 +472,17 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 				Latency: operatorconsole.EvidencePassportLatency{Count: 5630, Mean: 5.319, P50: 5.179, P95: 5.978, P99: 7.889},
 			},
 			Power: operatorconsole.EvidencePassportPower{
-				Source:             operatorconsole.EvidencePassportPowerSource{Kind: "edge-metrics", NodeName: "lattepanda", Metric: "watts"},
+				Source: operatorconsole.EvidencePassportPowerSource{
+					Kind: "edge-metrics", NodeName: "lattepanda", Metric: "watts",
+				},
 				ObservationSeconds: 31, Samples: 31,
 				Watts:                 &operatorconsole.EvidencePassportWatts{Minimum: 8.1, Mean: 18.184, Maximum: 19.7},
 				SourceTimestampAbsent: true,
+			},
+			Thermal: operatorconsole.EvidencePassportThermal{
+				Samples: 31, ObservationAvailableSamples: 31,
+				CPUCoreThrottleEvents:     &operatorconsole.EvidencePassportCounter{Samples: 31, First: 7, Last: 7},
+				MaximumTemperatureCelsius: &operatorconsole.EvidencePassportRange{Samples: 31, Minimum: 41, Maximum: 45},
 			},
 		},
 		Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{

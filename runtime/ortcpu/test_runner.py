@@ -180,7 +180,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "inputGenerator": runner.SUPPORTED_INPUT_GENERATOR,
                 "outputValidation": runner.SUPPORTED_OUTPUT_VALIDATION,
             },
-            "power": {},
+            "metrics": {},
         },
     }
 

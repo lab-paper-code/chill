@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilederivation"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,7 +32,7 @@ type evidence struct {
 	ActualNode      corev1.Node                `json:"actualNode"`
 	CoResidentPods  corev1.PodList             `json:"coResidentPods"`
 	Runtime         profilingrun.RuntimeResult `json:"runtime"`
-	Power           powerobserver.Result       `json:"power"`
+	Power           metricobserver.Result      `json:"power"`
 }
 
 type report struct {
@@ -165,8 +165,8 @@ func materialStateIdentity(intent profilingrun.Intent, nodeUID string) string {
 		NodeUID     string                           `json:"nodeUID"`
 		CPU         profilingrun.CPUContract         `json:"cpu"`
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
-		Power       profilingrun.PowerContract       `json:"power"`
-	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Power})
+		Metrics     profilingrun.MetricContract      `json:"metrics"`
+	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Metrics})
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

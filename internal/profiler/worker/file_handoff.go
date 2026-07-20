@@ -11,60 +11,60 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-type PowerResultFileConfig struct {
+type MetricResultFileConfig struct {
 	Path         string
 	WaitTimeout  time.Duration
 	PollInterval time.Duration
 	MaxBytes     int64
 }
 
-// PowerResultFile reads one atomically published PowerObserver result from the
+// MetricResultFile reads one atomically published MetricObserver result from the
 // Job coordination volume. It never parses container logs.
-type PowerResultFile struct {
-	config PowerResultFileConfig
+type MetricResultFile struct {
+	config MetricResultFileConfig
 }
 
-var _ PowerResultReader = (*PowerResultFile)(nil)
+var _ MetricResultReader = (*MetricResultFile)(nil)
 
-func NewPowerResultFile(config PowerResultFileConfig) (*PowerResultFile, error) {
+func NewMetricResultFile(config MetricResultFileConfig) (*MetricResultFile, error) {
 	if !validAbsoluteFilePath(config.Path) {
-		return nil, errors.New("power result path must be a clean absolute file path")
+		return nil, errors.New("metric result path must be a clean absolute file path")
 	}
 	if config.WaitTimeout <= 0 || config.PollInterval <= 0 || config.PollInterval >= config.WaitTimeout {
-		return nil, errors.New("power result wait timings are invalid")
+		return nil, errors.New("metric result wait timings are invalid")
 	}
 	if config.MaxBytes < 1 {
-		return nil, errors.New("power result maximum size must be positive")
+		return nil, errors.New("metric result maximum size must be positive")
 	}
-	return &PowerResultFile{config: config}, nil
+	return &MetricResultFile{config: config}, nil
 }
 
-func (f *PowerResultFile) Read(ctx context.Context) (powerobserver.Result, error) {
+func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.Result, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, f.config.WaitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(f.config.PollInterval)
 	defer ticker.Stop()
 
 	for {
-		var result powerobserver.Result
+		var result metricobserver.Result
 		err := decodeJSONFile(f.config.Path, f.config.MaxBytes, &result)
 		if err == nil {
 			if err := result.Validate(); err != nil {
-				return powerobserver.Result{}, fmt.Errorf("validate power result file: %w", err)
+				return metricobserver.Result{}, fmt.Errorf("validate metric result file: %w", err)
 			}
 			return result, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return powerobserver.Result{}, fmt.Errorf("read power result file: %w", err)
+			return metricobserver.Result{}, fmt.Errorf("read metric result file: %w", err)
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return powerobserver.Result{}, fmt.Errorf("wait for power result file: %w", waitCtx.Err())
+			return metricobserver.Result{}, fmt.Errorf("wait for metric result file: %w", waitCtx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -93,27 +93,27 @@ func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (profilingrun
 	return intent, nil
 }
 
-// PublishPowerResult validates and atomically publishes one observer result
+// PublishMetricResult validates and atomically publishes one observer result
 // without replacing an existing handoff.
-func PublishPowerResult(path string, maxBytes int64, result powerobserver.Result) error {
+func PublishMetricResult(path string, maxBytes int64, result metricobserver.Result) error {
 	if !validAbsoluteFilePath(path) {
-		return errors.New("power result path must be a clean absolute file path")
+		return errors.New("metric result path must be a clean absolute file path")
 	}
 	if maxBytes < 1 {
-		return errors.New("power result maximum size must be positive")
+		return errors.New("metric result maximum size must be positive")
 	}
 	if err := result.Validate(); err != nil {
-		return fmt.Errorf("validate power result: %w", err)
+		return fmt.Errorf("validate metric result: %w", err)
 	}
 	payload, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("encode power result: %w", err)
+		return fmt.Errorf("encode metric result: %w", err)
 	}
 	if int64(len(payload)) > maxBytes {
-		return fmt.Errorf("power result exceeds %d-byte limit", maxBytes)
+		return fmt.Errorf("metric result exceeds %d-byte limit", maxBytes)
 	}
 	if err := publishFile(path, payload); err != nil {
-		return fmt.Errorf("publish power result: %w", err)
+		return fmt.Errorf("publish metric result: %w", err)
 	}
 	return nil
 }

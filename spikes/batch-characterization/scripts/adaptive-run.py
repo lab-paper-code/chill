@@ -3,7 +3,7 @@
 
 # TODO(internal): Replace local subprocess orchestration and filesystem
 # campaigns with a reconciler-owned profiling Campaign/Run lifecycle. Resolve
-# Node, artifact, runtime, and PowerObserver targets from Kubernetes objects.
+# Node, artifact, runtime, and MetricObserver targets from Kubernetes objects.
 
 from __future__ import annotations
 

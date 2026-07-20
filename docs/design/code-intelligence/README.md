@@ -77,7 +77,7 @@ remain separate from code-intelligence checks.
 
 Detailed direction is encoded in `.go-arch-lint.yml` and grounded in the
 [profiling dependency rule](../profiling/README.md#dependency-rule),
-[PowerObserver ADR](../../adr/0013-power-observation-boundary.md), and
+[MetricObserver ADR](../../adr/0013-metric-observation-boundary.md), and
 [Evidence Store boundary](../profiling/components/evidence-store.md#dependency-direction).
 
 ## Optional CodeGraph contract

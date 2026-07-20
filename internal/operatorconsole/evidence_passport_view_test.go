@@ -1,21 +1,23 @@
 package operatorconsole
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
 func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	t.Parallel()
+	const rawObjectKey = "raw.json"
 	run, _, execution := passportFixture()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	execution.FinalizedAt = started.Add(time.Minute)
 	execution.RawMeasurement.Store = "chill-evidence"
-	execution.RawMeasurement.Key = "raw.json"
+	execution.RawMeasurement.Key = rawObjectKey
 	execution.RawMeasurement.Digest = run.Status.Evidence.Digest
 	execution.RawMeasurement.Size = 512
 	measurement := profilerevidence.RawMeasurement{
@@ -29,11 +31,18 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 			RepetitionResults:        []profilingrun.Repetition{{LatencyMilliseconds: []float64{3, 1, 2}}},
 			OutputValidation:         profilingrun.OutputValidation{Method: "shape", Passed: true},
 		},
-		Power: powerobserver.Result{
-			Source:    powerobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "lattepanda", Metric: "shelly_watts", Endpoint: "http://internal"},
+		Metrics: metricobserver.Result{
+			Source: metricobserver.SourceIdentity{
+				Kind: "edge-metrics", NodeName: "lattepanda", Metric: "shelly_watts", Endpoint: "http://internal",
+				ThermalMetrics: &metricobserver.ThermalMetricIdentity{Active: "device_thermal_throttle_active"},
+			},
 			StartedAt: started, EndedAt: started.Add(31 * time.Second),
-			Samples: []powerobserver.Sample{{Watts: 8}, {Watts: 10}, {Watts: 18}},
-			Summary: powerobserver.Summary{
+			Samples: []metricobserver.Sample{
+				{Watts: 8, Thermal: testThermalReading(true, false, false, 7, 42)},
+				{Watts: 10, Thermal: testThermalReading(true, true, true, 8, 44)},
+				{Watts: 18, Thermal: testThermalReading(false, false, false, 8, 43)},
+			},
+			Summary: metricobserver.Summary{
 				Attempts: 3, SuccessfulSamples: 3, ObservationDurationSeconds: 31,
 				MeanRequestLatencySeconds: 0.03, P95RequestLatencySeconds: 0.04,
 				MaximumSampleGapSeconds: 1.1, SourceTimestampAbsent: true,
@@ -48,7 +57,7 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.APIVersion != EvidencePassportAPIVersion || got.Kind != "EvidencePassport" ||
-		got.Run.Name != run.Name || got.Evidence.Raw.Key != "raw.json" {
+		got.Run.Name != run.Name || got.Evidence.Raw.Key != rawObjectKey {
 		t.Fatalf("passport identity = %#v", got)
 	}
 	runtime := got.Measurement.Runtime
@@ -62,6 +71,25 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 		power.Source.Kind != "edge-metrics" || power.Source.Metric != "shelly_watts" || power.Samples != 3 ||
 		!power.SourceTimestampAbsent {
 		t.Fatalf("power facts = %#v", power)
+	}
+	wantThermal := EvidencePassportThermal{
+		Metrics:                     &EvidencePassportThermalMetrics{Active: "device_thermal_throttle_active"},
+		Samples:                     3,
+		ObservationAvailableSamples: 2,
+		ActiveSamples:               1,
+		LatchedSamples:              1,
+		CPUCoreThrottleEvents:       &EvidencePassportCounter{Samples: 3, First: 7, Last: 8},
+		MaximumTemperatureCelsius:   &EvidencePassportRange{Samples: 3, Minimum: 42, Maximum: 44},
+	}
+	if !reflect.DeepEqual(got.Measurement.Thermal, wantThermal) {
+		t.Fatalf("thermal facts = %#v, want %#v", got.Measurement.Thermal, wantThermal)
+	}
+}
+
+func testThermalReading(available, active, latched bool, events uint64, temperature float64) *metricobserver.ThermalReading {
+	return &metricobserver.ThermalReading{
+		ObservationAvailable: &available, Active: &active, Latched: &latched,
+		CPUCoreThrottleEvents: &events, MaximumTemperatureCelsius: &temperature,
 	}
 }
 
@@ -81,7 +109,7 @@ func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 				InferenceCount:       1,
 				RepetitionResults:    []profilingrun.Repetition{{LatencyMilliseconds: []float64{1}}},
 			},
-			Power: powerobserver.Result{Summary: powerobserver.Summary{Failures: 1}},
+			Metrics: metricobserver.Result{Summary: metricobserver.Summary{Failures: 1}},
 		},
 	})
 	if err != nil {

@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilederivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
@@ -94,14 +96,15 @@ func projectTrial(
 	for _, repetition := range raw.Runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 	}
-	samples := make([]profilederivation.Sample, len(raw.Power.Samples))
-	for index, sample := range raw.Power.Samples {
+	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))
+	for index, sample := range raw.Metrics.Samples {
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	stateIdentity, err := materialStateIdentity(execution.Intent, execution.Terminal.Node.UID)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
+	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
 	return profilederivation.Trial{
 		StateIdentity:         stateIdentity,
 		TrialID:               execution.Terminal.Pod.UID,
@@ -112,12 +115,76 @@ func projectTrial(
 		CompletedItems:        raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
 		LatencyMilliseconds:   latencies,
 		Samples:               samples,
-		Failures:              len(raw.Power.Failures),
-		SourceTimestampAbsent: raw.Power.Summary.SourceTimestampAbsent,
+		Failures:              len(raw.Metrics.Failures),
+		SourceTimestampAbsent: raw.Metrics.Summary.SourceTimestampAbsent,
 		CoResidentWindowKnown: false,
-		ThermalStateKnown:     false,
+		ThermalStateKnown:     thermalKnown,
+		ThermallyThrottled:    thermallyThrottled,
 		SteadyWindowVerified:  true,
 	}, nil
+}
+
+func thermalState(samples []metricobserver.Sample, windowStart, windowEnd time.Time) (known, throttled bool) {
+	inside := make([]metricobserver.Sample, 0, len(samples))
+	for _, sample := range samples {
+		if !sample.ObservedAt.Before(windowStart) && !sample.ObservedAt.After(windowEnd) {
+			inside = append(inside, sample)
+		}
+	}
+	if len(inside) == 0 {
+		return false, false
+	}
+
+	available := true
+	directComplete := true
+	coreComplete := true
+	packageComplete := true
+	counterReset := false
+	var previousCore, previousPackage *uint64
+	for _, sample := range inside {
+		thermal := sample.Thermal
+		if thermal == nil || thermal.ObservationAvailable == nil || !*thermal.ObservationAvailable {
+			available = false
+		}
+		if thermal == nil {
+			directComplete, coreComplete, packageComplete = false, false, false
+			continue
+		}
+		if thermal.Active == nil {
+			directComplete = false
+		} else if *thermal.Active {
+			return true, true
+		}
+		if thermal.CPUCoreThrottleEvents == nil {
+			coreComplete = false
+		} else {
+			if previousCore != nil {
+				if *thermal.CPUCoreThrottleEvents > *previousCore {
+					return true, true
+				}
+				if *thermal.CPUCoreThrottleEvents < *previousCore {
+					counterReset = true
+				}
+			}
+			value := *thermal.CPUCoreThrottleEvents
+			previousCore = &value
+		}
+		if thermal.CPUPackageThrottleEvents == nil {
+			packageComplete = false
+		} else {
+			if previousPackage != nil {
+				if *thermal.CPUPackageThrottleEvents > *previousPackage {
+					return true, true
+				}
+				if *thermal.CPUPackageThrottleEvents < *previousPackage {
+					counterReset = true
+				}
+			}
+			value := *thermal.CPUPackageThrottleEvents
+			previousPackage = &value
+		}
+	}
+	return available && !counterReset && (directComplete || coreComplete || packageComplete), false
 }
 
 func materialStateIdentity(intent profilingrun.Intent, nodeUID string) (string, error) {
@@ -129,8 +196,8 @@ func materialStateIdentity(intent profilingrun.Intent, nodeUID string) (string, 
 		NodeUID     string                           `json:"nodeUID"`
 		CPU         profilingrun.CPUContract         `json:"cpu"`
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
-		Power       profilingrun.PowerContract       `json:"power"`
-	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Power})
+		Metrics     profilingrun.MetricContract      `json:"metrics"`
+	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Metrics})
 	if err != nil {
 		return "", fmt.Errorf("encode material execution state: %w", err)
 	}

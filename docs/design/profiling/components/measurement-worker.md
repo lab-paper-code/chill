@@ -14,7 +14,7 @@ The Profiler controller has frozen one exact `ProfilingRun` intent. The
 measurement Job must now answer one bounded question:
 
 > Did the selected runtime execute the frozen measurement on the selected Pod
-> while the selected power source was observed, and were those raw facts
+> while the selected metric source was observed, and were those raw facts
 > committed immutably?
 
 The Job produces raw facts only. The controller independently verifies and
@@ -33,24 +33,24 @@ runtime container (the measurement worker and sole raw writer)
   -> verify intent and artifact
   -> run the explicit CPU ONNX Runtime adapter
   -> coordinate the measurement window
-  -> validate the PowerObserver result
+  -> validate the MetricObserver result
   -> assemble and immutably store RawMeasurement
   -> write the bounded success receipt
 
-power-observer container
+metric-observer container
   -> wait for the runtime measurement signal
-  -> invoke internal/powerobserver for one bounded window
-  -> atomically write only the power result
+  -> invoke internal/metricobserver for one bounded window
+  -> atomically write only the metric result
 ```
 
 There is no separate uploader container. It would introduce another image,
 handoff, terminal state, and failure owner without removing responsibility from
-the runtime worker. The PowerObserver does not receive storage credentials and
+the runtime worker. The MetricObserver does not receive storage credentials and
 cannot publish Run evidence.
 
 The `runtime` image is the complete trusted worker/runtime environment for the
 selected path. It contains the CHILL worker entrypoint and the explicit CPU ORT
-adapter. The separately pinned `powerObserver` image contains the bounded
+adapter. The separately pinned `metricObserver` image contains the bounded
 observer helper. The trusted execution declaration must therefore reference a
 promoted worker/runtime image; the spike runtime image is not itself a
 production contract. The artifact image remains an init-container supply image.
@@ -126,13 +126,13 @@ protocol or retained evidence location.
 The coordination volume contains only this versioned, bounded protocol:
 
 ```text
-observer-ready       power-observer is ready to receive a start signal
+observer-ready       metric-observer is ready to receive a start signal
 measurement-start    runtime completed warm-up and opens the measurement window
-power-result.json    complete PowerObserver Result, written by temp-file + rename
+metric-result.json    complete MetricObserver Result, written by temp-file + rename
 ```
 
 Logs are diagnostic only. They are never parsed as evidence or used as a
-controller handoff. A partial power-result file is never visible under the
+controller handoff. A partial metric-result file is never visible under the
 final filename.
 
 The runtime sequence is fixed:
@@ -144,7 +144,7 @@ The runtime sequence is fixed:
 4. execute the declared warm-up iterations;
 5. atomically create `measurement-start`;
 6. execute the one duration-based measurement;
-7. wait with a bounded timeout for `power-result.json`;
+7. wait with a bounded timeout for `metric-result.json`;
 8. validate source identity, polling summary, timestamps, and overlap with the
    runtime measurement window;
 9. canonicalize `RawMeasurement`, calculate its digest and size, and perform
@@ -159,16 +159,16 @@ The observer sequence is fixed:
 3. atomically create `observer-ready`;
 4. wait with a bounded timeout for `measurement-start`;
 5. observe for the frozen power duration; and
-6. atomically publish `power-result.json` and exit.
+6. atomically publish `metric-result.json` and exit.
 
 ## Raw evidence and receipt
 
-The existing `profiling-raw-measurement.v1alpha1` object is the worker output.
+The `profiling-raw-measurement.v1alpha2` object is the worker output.
 It contains only facts available before the worker exits:
 
 - intent digest and actual Pod UID;
 - the existing validated runtime result; and
-- the complete PowerObserver result.
+- the complete MetricObserver result.
 
 It contains no Job completion, terminal Pod state, co-resident Pod snapshot,
 credentials, or backend response. Those Kubernetes facts are added only by the
@@ -186,7 +186,7 @@ The first worker uses stable failure classes:
 |---:|---|
 | 2 | invalid or drifted frozen/delivery contract |
 | 3 | artifact, runtime, provider, inference, or output validation failure |
-| 4 | PowerObserver readiness, execution, handoff, or result validation failure |
+| 4 | MetricObserver readiness, execution, handoff, or result validation failure |
 | 5 | raw evidence encoding, immutable write, or post-write verification failure |
 
 Failures write diagnostics to stderr but never place credentials, raw samples,
@@ -202,7 +202,7 @@ The controller creates one deterministic Job owned by the `ProfilingRun`:
 - `automountServiceAccountToken=false`;
 - Pod UID and scheduled Node name injected from the Downward API;
 - exact target-Node placement and frozen CPU request/limit;
-- digest-pinned artifact, runtime, and PowerObserver images;
+- digest-pinned artifact, runtime, and MetricObserver images;
 - restricted container security contexts; and
 - one bounded active deadline covering startup, warm-up, measurement, handoff,
   and evidence commit.
@@ -213,11 +213,11 @@ deleting or losing a recorded Job cannot be mistaken for permission to repeat
 the measurement.
 
 Job composition supplies each process with its handoff wait budget from the
-same bounded attempt timing contract. Runtime and PowerObserver entrypoints
+same bounded attempt timing contract. Runtime and MetricObserver entrypoints
 have no hidden default wait duration, and `ProfilingRun.spec` cannot override
 these delivery bindings.
 
-Job composition also supplies bounded producer capacities. The PowerObserver
+Job composition also supplies bounded producer capacities. The MetricObserver
 must admit the complete duration/interval polling schedule within one combined
 sample-and-failure event cap before polling begins, then enforce that cap while
 recording. The CPU ORT runtime must reject an input tensor before allocation if
@@ -238,8 +238,9 @@ decision; CR status does not copy these implementation details.
 
 The first policy must enforce these relationships:
 
-- the PowerObserver event capacity covers the complete frozen polling schedule,
-  and the worst-case retained events fit its handoff byte capacity;
+- the MetricObserver event capacity covers the complete frozen polling schedule;
+- the independent handoff byte limit rejects an oversized result before raw
+  evidence is committed;
 - the runtime input ceiling leaves a separately measured reserve for the model,
   runtime session, outputs, bounded input-generation temporary, and worker;
 - the latency-sample capacity and runtime-result byte capacity fit both the
@@ -276,8 +277,8 @@ runtime worker
   -> internal/profiler/evidence raw codec
   -> internal/evidencestore + S3 adapter
 
-power-observer helper
-  -> internal/powerobserver
+metric-observer helper
+  -> internal/metricobserver
   -> edge-metrics adapter
 ```
 
@@ -292,7 +293,7 @@ and verified immutable evidence plus native Kubernetes observations.
    projection.
 2. Add a pure worker coordinator with fake runtime, observer-result, and store
    ports; keep Kubernetes out.
-3. Promote the CPU ORT runtime entrypoint and file-based PowerObserver handoff
+3. Promote the CPU ORT runtime entrypoint and file-based MetricObserver handoff
    from the spike without importing spike code.
 4. Add the CHILL-managed Evidence Store delivery binding to Profiler startup
    configuration and Job projection.
@@ -303,7 +304,7 @@ and verified immutable evidence plus native Kubernetes observations.
    retained spike evidence before removing any spike path.
 
 Items 1 through 3 are implemented through the fail-closed worker adapters, the
-production CPU ORT subprocess, and the PowerObserver container entrypoint. The
+production CPU ORT subprocess, and the MetricObserver container entrypoint. The
 Go adapter's exact runtime request is checked against the production Python
 strict decoder as a cross-language contract test. The Operator now supplies
 the owning `ChillSystem` name to each Profiler instance. A fail-closed

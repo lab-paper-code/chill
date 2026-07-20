@@ -91,6 +91,17 @@ func TestRetainedLegacyEvidenceIntentDigestRemainsStable(t *testing.T) {
 	}
 }
 
+func TestIntentRejectsUnknownImageField(t *testing.T) {
+	payload, err := validIntent().CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = []byte(strings.Replace(string(payload), `"metricObserver":`, `"unknown":true,"metricObserver":`, 1))
+	if _, err := decodeTestIntent(payload); err == nil {
+		t.Fatal("expected unknown image field rejection")
+	}
+}
+
 func TestIntentRejectsCPURequestAboveFrozenLimit(t *testing.T) {
 	intent := validIntent()
 	intent.CPU.Request = "5"
@@ -105,7 +116,7 @@ func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 		func(i *Intent) { i.TargetNode.ResourceVersion = "" },
 		func(i *Intent) { i.CPU.ORTIntraOpThreads = 2 },
 		func(i *Intent) { i.CPU.ExclusivityClaimed = true },
-		func(i *Intent) { i.Power.NodeName = "other" },
+		func(i *Intent) { i.Metrics.NodeName = "other" },
 	}
 	for _, mutate := range tests {
 		intent := validIntent()
@@ -139,7 +150,7 @@ func validIntent() Intent {
 			Backend:        "CPUExecutionProvider",
 			PowerMode:      "fixed",
 		},
-		Images: Images{Runtime: image, Artifact: image, PowerObserver: image},
+		Images: Images{Runtime: image, Artifact: image, MetricObserver: image},
 		TargetNode: NodeSnapshot{
 			Name:            "lattepanda",
 			UID:             "uid",
@@ -164,11 +175,11 @@ func validIntent() Intent {
 			InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
 			OutputValidation: "nonempty-shape-batch-v1",
 		},
-		Power: PowerContract{
+		Metrics: MetricContract{
 			SourceKind:                 "edge-metrics",
 			NodeName:                   "lattepanda",
 			Endpoint:                   "http://edge-metric.monitoring.svc:9102/metrics",
-			Metric:                     "shelly_power_total_watts",
+			PowerMetric:                "shelly_power_total_watts",
 			ConfigurationContentDigest: d,
 			IntervalMilliseconds:       1000,
 			TimeoutMilliseconds:        500,

@@ -193,7 +193,7 @@ func buildExecutionJob(
 					InitContainers:  []corev1.Container{artifactContainer(prepared.Intent)},
 					Containers: []corev1.Container{
 						runtimeContainer(prepared, binding, rawKey, plan),
-						powerObserverContainer(prepared, plan),
+						metricObserverContainer(prepared, plan),
 					},
 					Volumes: executionVolumes(intentName, plan),
 				},
@@ -233,11 +233,11 @@ func runtimeContainer(
 			"--intent-digest=" + prepared.IntentDigest,
 			"--attempt-timeout=" + plan.AttemptTimeout.String(),
 			"--observer-ready-timeout=" + plan.ObserverReadyTimeout.String(),
-			"--power-result-timeout=" + plan.PowerResultTimeout.String(),
+			"--metric-result-timeout=" + plan.MetricResultTimeout.String(),
 			"--max-latency-samples=" + strconv.Itoa(plan.MaxLatencySamples),
 			"--max-input-bytes=" + strconv.FormatInt(plan.MaxInputBytes, 10),
 			"--max-runtime-result-bytes=" + strconv.FormatInt(plan.MaxRuntimeResultBytes, 10),
-			"--max-power-result-bytes=" + strconv.FormatInt(plan.MaxPowerResultBytes, 10),
+			"--max-metric-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
 			"--store-name=" + binding.Store,
 			"--store-endpoint=" + binding.Endpoint,
 			"--store-bucket=" + binding.Bucket,
@@ -270,13 +270,13 @@ func runtimeContainer(
 	}
 }
 
-func powerObserverContainer(prepared profiler.PreparedRun, plan profiler.ExecutionPlan) corev1.Container {
+func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.ExecutionPlan) corev1.Container {
 	return corev1.Container{
-		Name: "power-observer", Image: prepared.Intent.Images.PowerObserver, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "metric-observer", Image: prepared.Intent.Images.MetricObserver, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
 			"--intent-digest=" + prepared.IntentDigest,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
-			"--max-events=" + strconv.Itoa(plan.MaxPowerEvents),
+			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{

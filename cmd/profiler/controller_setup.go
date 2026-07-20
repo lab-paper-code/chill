@@ -31,16 +31,16 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct Node resolver: %w", err)
 	}
-	power, err := profilercontroller.NewKubernetesPowerSourceResolver(
+	power, err := profilercontroller.NewKubernetesMetricSourceResolver(
 		reader,
-		profilercontroller.PowerSourceResolverOptions{
+		profilercontroller.MetricSourceResolverOptions{
 			Namespace:     opts.watchNamespace,
 			ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey:  opts.powerSourcesKey,
+			ConfigMapKey:  opts.metricSourcesKey,
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("construct power-source resolver: %w", err)
+		return fmt.Errorf("construct metric-source resolver: %w", err)
 	}
 	preparer, err := profilerapp.NewPreparer(candidates, nodes, power)
 	if err != nil {

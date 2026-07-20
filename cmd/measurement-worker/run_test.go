@@ -111,7 +111,7 @@ func TestExitCodeMapsWorkerFailureClasses(t *testing.T) {
 	for want, failure := range map[int]error{
 		2: worker.ErrExecutionContract,
 		3: worker.ErrRuntimeMeasurement,
-		4: worker.ErrPowerObservation,
+		4: worker.ErrMetricObservation,
 		5: worker.ErrEvidenceCommit,
 	} {
 		if got := exitCode(failure); got != want {
@@ -137,11 +137,11 @@ func validOptions() options {
 		scheduledNodeName: "lattepanda",
 		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPath: defaultObserverReadyPath, measurementStartPath: defaultMeasurementStartPath,
-		powerResultPath: defaultPowerResultPath, terminationMessagePath: defaultTerminationMessagePath,
+		metricResultPath: defaultMetricResultPath, terminationMessagePath: defaultTerminationMessagePath,
 		runtimeCommand: []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},
-		attemptTimeout: 10 * time.Minute, observerReadyTimeout: time.Minute, powerResultTimeout: time.Minute,
+		attemptTimeout: 10 * time.Minute, observerReadyTimeout: time.Minute, metricResultTimeout: time.Minute,
 		maxLatencySamples: 1000, maxInputBytes: 1 << 20,
-		maxRuntimeResultBytes: 1 << 20, maxPowerResultBytes: 1 << 20,
+		maxRuntimeResultBytes: 1 << 20, maxMetricResultBytes: 1 << 20,
 		storeName: "chill-evidence-store", storeEndpoint: "http://chill-evidence-store.chill-system.svc:9000",
 		storeBucket: "chill-profiling-evidence", storeRegion: "us-east-1",
 		rawObjectKey: "profiling-runs/run/raw/intent.json",

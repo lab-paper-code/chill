@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha4"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha2"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha3"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -136,7 +136,7 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
     intent = require_object(request["intent"], "intent")
-    require_fields(intent, {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "power"}, "intent")
+    require_fields(intent, {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "metrics"}, "intent")
     if intent["schemaVersion"] != INTENT_SCHEMA:
         raise ContractError("CPU ORT runtime requires the current intent schema")
 
@@ -226,13 +226,13 @@ def wait_for_signal(path: Path, timeout_seconds: float) -> None:
             info = path.lstat()
         except FileNotFoundError:
             if time.monotonic() >= deadline:
-                raise ContractError("timed out waiting for PowerObserver readiness")
+                raise ContractError("timed out waiting for MetricObserver readiness")
             time.sleep(SIGNAL_POLL_SECONDS)
             continue
         except OSError as error:
-            raise ContractError(f"inspect PowerObserver readiness signal: {error}") from error
+            raise ContractError(f"inspect MetricObserver readiness signal: {error}") from error
         if not stat.S_ISREG(info.st_mode):
-            raise ContractError("PowerObserver readiness signal is not a regular file")
+            raise ContractError("MetricObserver readiness signal is not a regular file")
         return
 
 

@@ -28,11 +28,11 @@ for pod in "${pods[@]}"; do
     exit 1
   fi
   printf '%s\n' "${result}" >> "${output_dir}/results.jsonl"
-  observer_log="${output_dir}/${pod}-power-observer.log"
-  kubectl logs --namespace chill-batch-characterization "${pod}" --container power-observer > "${observer_log}"
-  power_result="$(sed -n 's/^POWER_OBSERVATION_JSON //p' "${observer_log}" | tail -n 1)"
+  observer_log="${output_dir}/${pod}-metric-observer.log"
+  kubectl logs --namespace chill-batch-characterization "${pod}" --container metric-observer > "${observer_log}"
+  power_result="$(sed -n 's/^METRIC_OBSERVATION_JSON //p' "${observer_log}" | tail -n 1)"
   if [[ -z "${power_result}" ]]; then
-    echo "${pod} has no POWER_OBSERVATION_JSON record" >&2
+    echo "${pod} has no METRIC_OBSERVATION_JSON record" >&2
     exit 1
   fi
   printf '%s\n' "${power_result}" >> "${output_dir}/power-observations.jsonl"

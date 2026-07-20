@@ -44,10 +44,10 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				InputGenerator:   spec.Measurement.InputGenerator,
 				OutputValidation: spec.Measurement.OutputValidation,
 			},
-			Power: profiler.PowerObservationPolicy{
-				IntervalMilliseconds: int(spec.PowerObservation.IntervalMilliseconds),
-				TimeoutMilliseconds:  int(spec.PowerObservation.TimeoutMilliseconds),
-				DurationSeconds:      int(spec.PowerObservation.DurationSeconds),
+			Metrics: profiler.MetricObservationPolicy{
+				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),
+				TimeoutMilliseconds:  int(spec.MetricObservation.TimeoutMilliseconds),
+				DurationSeconds:      int(spec.MetricObservation.DurationSeconds),
 			},
 		},
 		AdmissionPolicy: spec.AdmissionPolicy,

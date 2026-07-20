@@ -10,12 +10,12 @@ metadata:
     {{- include "chill.labels" . | nindent 4 }}
 data:
   {{ .Values.profiler.factSource.executionFactsKey | quote }}: |
-    schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha1
-    powerObserverImage: {{ .Values.profiler.factSource.powerObserverImage | quote }}
+    schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha2
+    metricObserverImage: {{ .Values.profiler.factSource.metricObserverImage | quote }}
     declarations:
 {{- toYaml .Values.profiler.factSource.executionDeclarations | nindent 6 }}
-  {{ .Values.profiler.factSource.powerSourcesKey | quote }}: |
-    schemaVersion: chill.dacs.io/profiler-power-sources.v1alpha1
+  {{ .Values.profiler.factSource.metricSourcesKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha1
     sources:
-{{- toYaml .Values.profiler.factSource.powerSources | nindent 6 }}
+{{- toYaml .Values.profiler.factSource.metricSources | nindent 6 }}
 {{- end }}

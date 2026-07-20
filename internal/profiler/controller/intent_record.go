@@ -185,10 +185,10 @@ func preparationFromIntent(intent profilingrun.Intent) profiler.PreparationReque
 		TargetNode:  intent.TargetNode.Name,
 		CPURequest:  intent.CPU.Request,
 		Measurement: intent.Measurement,
-		Power: profiler.PowerObservationPolicy{
-			IntervalMilliseconds: intent.Power.IntervalMilliseconds,
-			TimeoutMilliseconds:  intent.Power.TimeoutMilliseconds,
-			DurationSeconds:      intent.Power.DurationSeconds,
+		Metrics: profiler.MetricObservationPolicy{
+			IntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
+			DurationSeconds:      intent.Metrics.DurationSeconds,
 		},
 	}
 }

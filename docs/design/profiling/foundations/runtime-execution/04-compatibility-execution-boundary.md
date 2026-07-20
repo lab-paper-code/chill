@@ -220,7 +220,7 @@ the exact execution-state identity?
 This stage owns:
 
 - measurement identity matching
-- PowerObserver coverage and sample-quality policy
+- MetricObserver coverage and sample-quality policy
 - transient/baseline handling
 - repetitions and uncertainty
 - latency, throughput, power, and energy derivation

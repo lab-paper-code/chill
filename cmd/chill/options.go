@@ -12,6 +12,11 @@ import (
 
 var errUsage = errors.New("invalid command usage")
 
+const (
+	outputFormatTable = "table"
+	outputFormatJSON  = "json"
+)
+
 type readOptions struct {
 	kubeconfig string
 	context    string
@@ -48,7 +53,7 @@ func parseProfilingRunsOptions(args []string, stderr io.Writer) (profilingRunsOp
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
-	flags.StringVar(&opts.output, "o", "table", "output format: table or json")
+	flags.StringVar(&opts.output, "o", outputFormatTable, "output format: table or json")
 	flags.StringVar(&opts.namespace, "namespace", "", "namespace to query")
 	flags.StringVar(&opts.namespace, "n", "", "namespace to query")
 	flags.BoolVar(&opts.allNamespaces, "all-namespaces", false, "query all namespaces")
@@ -62,7 +67,7 @@ func parseProfilingRunsOptions(args []string, stderr io.Writer) (profilingRunsOp
 	if flags.NArg() != 0 {
 		return profilingRunsOptions{}, fmt.Errorf("%w: runs accepts no positional arguments", errUsage)
 	}
-	if opts.output != "table" && opts.output != "json" {
+	if opts.output != outputFormatTable && opts.output != outputFormatJSON {
 		return profilingRunsOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
 	}
 	if opts.allNamespaces && opts.namespace != "" {
@@ -77,7 +82,7 @@ func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRun
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
-	flags.StringVarP(&opts.output, "output", "o", "table", "output format: table or json")
+	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
 	flags.StringVarP(&opts.namespace, "namespace", "n", "", "ProfilingRun and Console Service namespace")
 	flags.StringVar(&opts.consoleService, "console-service", "chill-console", "CHILL Console ClusterIP Service name")
 	if err := flags.Parse(args); err != nil {
@@ -90,10 +95,14 @@ func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRun
 		return profilingRunShowOptions{}, fmt.Errorf("%w: runs show requires exactly one ProfilingRun name", errUsage)
 	}
 	opts.name = flags.Arg(0)
-	if opts.output != "table" && opts.output != "json" {
+	if opts.output != outputFormatTable && opts.output != outputFormatJSON {
 		return profilingRunShowOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
 	}
-	for label, value := range map[string]string{"ProfilingRun name": opts.name, "Console Service name": opts.consoleService} {
+	values := map[string]string{
+		"ProfilingRun name":    opts.name,
+		"Console Service name": opts.consoleService,
+	}
+	for label, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return profilingRunShowOptions{}, fmt.Errorf("%w: %s is required without surrounding whitespace", errUsage, label)
 		}
@@ -107,7 +116,7 @@ func parseReadOptions(command string, args []string, stderr io.Writer) (readOpti
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
-	flags.StringVar(&opts.output, "o", "table", "output format: table or json")
+	flags.StringVar(&opts.output, "o", outputFormatTable, "output format: table or json")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return readOptions{}, flag.ErrHelp
@@ -117,7 +126,7 @@ func parseReadOptions(command string, args []string, stderr io.Writer) (readOpti
 	if flags.NArg() != 0 {
 		return readOptions{}, fmt.Errorf("%w: %s accepts no positional arguments", errUsage, command)
 	}
-	if opts.output != "table" && opts.output != "json" {
+	if opts.output != outputFormatTable && opts.output != outputFormatJSON {
 		return readOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
 	}
 	return opts, nil

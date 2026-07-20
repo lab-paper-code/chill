@@ -11,24 +11,70 @@ import (
 )
 
 const (
-	CandidateReportSchemaVersion       = "chill.dacs.io/modelcompat-report.v1alpha1"
-	LegacyCandidateReportSchemaVersion = "spikes.chill.dacs.io/modelcompat-report.v1alpha1"
-	candidateReportScope               = "StaticCompatibility"
+	previousCandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha1"
+	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha2"
+	LegacyCandidateReportSchemaVersion   = "spikes.chill.dacs.io/modelcompat-report.v1alpha1"
+	candidateReportScope                 = "StaticCompatibility"
 )
+
+// UnmarshalJSON keeps retained internal reports readable while new reports
+// expose only the current observer component name.
+func (r *CandidateReport) UnmarshalJSON(payload []byte) error {
+	var wire struct {
+		SchemaVersion       string                          `json:"schemaVersion"`
+		Scope               string                          `json:"scope"`
+		Inputs              CandidateReportInputs           `json:"inputs"`
+		Selection           CandidateReportSelection        `json:"selection"`
+		DeviceClassFacts    CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
+		ArtifactSupply      CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
+		MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
+		LegacyObserverImage string                          `json:"powerObserverImage,omitempty"`
+		Verdict             string                          `json:"verdict"`
+		Reasons             []CandidateReportReason         `json:"reasons"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("candidate report contains multiple JSON values")
+		}
+		return err
+	}
+	if wire.MetricObserverImage != "" && wire.LegacyObserverImage != "" {
+		return errors.New("candidate report contains multiple observer images")
+	}
+	r.SchemaVersion = wire.SchemaVersion
+	r.Scope = wire.Scope
+	r.Inputs = wire.Inputs
+	r.Selection = wire.Selection
+	r.DeviceClassFacts = wire.DeviceClassFacts
+	r.ArtifactSupply = wire.ArtifactSupply
+	r.MetricObserverImage = wire.MetricObserverImage
+	if r.MetricObserverImage == "" {
+		r.MetricObserverImage = wire.LegacyObserverImage
+	}
+	r.Verdict = wire.Verdict
+	r.Reasons = wire.Reasons
+	return nil
+}
 
 // CandidateReport is the shared wire contract between candidate resolution
 // and Run preparation. It binds both catalog identities and the concrete
 // execution material selected from them.
 type CandidateReport struct {
-	SchemaVersion      string                          `json:"schemaVersion"`
-	Scope              string                          `json:"scope"`
-	Inputs             CandidateReportInputs           `json:"inputs"`
-	Selection          CandidateReportSelection        `json:"selection"`
-	DeviceClassFacts   CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
-	ArtifactSupply     CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
-	PowerObserverImage string                          `json:"powerObserverImage,omitempty"`
-	Verdict            string                          `json:"verdict"`
-	Reasons            []CandidateReportReason         `json:"reasons"`
+	SchemaVersion       string                          `json:"schemaVersion"`
+	Scope               string                          `json:"scope"`
+	Inputs              CandidateReportInputs           `json:"inputs"`
+	Selection           CandidateReportSelection        `json:"selection"`
+	DeviceClassFacts    CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
+	ArtifactSupply      CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
+	MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
+	Verdict             string                          `json:"verdict"`
+	Reasons             []CandidateReportReason         `json:"reasons"`
 }
 
 type CandidateReportInputs struct {
@@ -97,13 +143,14 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		return CandidateReport{}, fmt.Errorf("decode candidate report trailing content: %w", err)
 	}
 	if report.SchemaVersion != CandidateReportSchemaVersion &&
+		report.SchemaVersion != previousCandidateReportSchemaVersion &&
 		report.SchemaVersion != LegacyCandidateReportSchemaVersion {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
 	}
 	if report.Scope != candidateReportScope {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report scope %q", report.Scope)
 	}
-	if report.SchemaVersion == CandidateReportSchemaVersion {
+	if report.SchemaVersion == CandidateReportSchemaVersion || report.SchemaVersion == previousCandidateReportSchemaVersion {
 		if err := validateInternalCandidateReport(report); err != nil {
 			return CandidateReport{}, err
 		}
@@ -137,7 +184,7 @@ func validateInternalCandidateReport(report CandidateReport) error {
 		"artifact supply architecture":        report.ArtifactSupply.Architecture,
 		"artifact supply path":                report.ArtifactSupply.Path,
 		"artifact supply digest":              report.ArtifactSupply.Digest,
-		"power-observer image":                report.PowerObserverImage,
+		"metric-observer image":               report.MetricObserverImage,
 		"verdict":                             report.Verdict,
 	}
 	for name, value := range required {
@@ -176,7 +223,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 		{"artifact", intent.State.Artifact, report.Selection.Artifact},
 		{"artifact digest", intent.State.ArtifactDigest, report.Selection.ArtifactDigest},
 	}
-	if report.SchemaVersion == CandidateReportSchemaVersion {
+	if report.SchemaVersion == CandidateReportSchemaVersion || report.SchemaVersion == previousCandidateReportSchemaVersion {
 		checks = append(checks,
 			struct{ name, want, got string }{"power mode", intent.State.PowerMode, report.Selection.PowerMode},
 			struct{ name, want, got string }{"artifact image", intent.Images.Artifact, report.ArtifactSupply.Image},
@@ -184,7 +231,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 			struct{ name, want, got string }{"artifact supply digest", intent.State.ArtifactDigest, report.ArtifactSupply.Digest},
 			struct{ name, want, got string }{"DeviceClass architecture", intent.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
 			struct{ name, want, got string }{"artifact architecture", intent.TargetNode.Architecture, report.ArtifactSupply.Architecture},
-			struct{ name, want, got string }{"power-observer image", intent.Images.PowerObserver, report.PowerObserverImage},
+			struct{ name, want, got string }{"metric-observer image", intent.Images.MetricObserver, report.MetricObserverImage},
 		)
 	}
 	for _, check := range checks {

@@ -54,7 +54,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 
 	config = validConfig()
-	config.FactSource.PowerSourcesKey = config.FactSource.ExecutionFactsKey
+	config.FactSource.MetricSourcesKey = config.FactSource.ExecutionFactsKey
 	if err := config.Validate(); err == nil {
 		t.Fatal("overlapping Profiler fact-source keys accepted")
 	}
@@ -79,7 +79,7 @@ func TestBuildDeployment(t *testing.T) {
 		"--system-name=chill",
 		"--fact-source-config-map=chill-profiler-facts",
 		"--execution-facts-key=execution-facts.yaml",
-		"--power-sources-key=power-sources.yaml",
+		"--metric-sources-key=metric-sources.yaml",
 	} {
 		if !containsArg(container.Args, wanted) {
 			t.Fatalf("args lost %q: %v", wanted, container.Args)
@@ -257,7 +257,7 @@ func validConfig() Config {
 		LeaderElectionID:   "profiler.edge.dacs.io",
 		FactSource: FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
-			PowerSourcesKey: "power-sources.yaml",
+			MetricSourcesKey: "metric-sources.yaml",
 		},
 	}
 }

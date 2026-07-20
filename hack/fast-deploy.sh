@@ -12,7 +12,10 @@ operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
+metric_observer_image="${METRIC_OBSERVER_IMG:-}"
+measurement_worker_image="${MEASUREMENT_WORKER_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+measurement_worker_platforms="${MEASUREMENT_WORKER_PLATFORMS:-linux/amd64}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
 pull_policy="${CHILL_FAST_PULL_POLICY:-Always}"
 components="${CHILL_FAST_COMPONENTS:-all}"
@@ -50,7 +53,8 @@ Options:
   --image-namespace NAME       Registry repository prefix. Default: ${image_namespace}
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
-  --components NAME            all, operator, node-discovery, profiler, or console. Default: ${components}
+  --components NAME            all, operator, node-discovery, profiler, console,
+                               metric-observer, or measurement-worker. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -68,6 +72,9 @@ Environment:
   NODE_DISCOVERY_IMG           Full node-discovery image ref. Overrides registry/tag defaults.
   PROFILER_IMG                 Full Profiler image ref. Overrides registry/tag defaults.
   CONSOLE_IMG                  Full Console API image ref. Overrides registry/tag defaults.
+  METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
+  MEASUREMENT_WORKER_IMG       Full measurement worker image ref. Overrides registry/tag defaults.
+  MEASUREMENT_WORKER_PLATFORMS Measurement worker platforms. Default: ${measurement_worker_platforms}
   IMAGE_TAG                    Image tag when --tag is not provided.
   CONTAINER_TOOL               docker-compatible build tool. Default: docker
   BUILDX_BUILDER               Optional buildx builder for multi-platform builds.
@@ -217,7 +224,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|profiler|console) ;;
+all|operator|node-discovery|profiler|console|metric-observer|measurement-worker) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -258,7 +265,13 @@ console_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/compon
 
 component_selected() {
 	local component="$1"
-	[[ "${components}" == "all" || "${components}" == "${component}" ]]
+	if [[ "${components}" == "all" ]]; then
+		case "${component}" in
+		operator|node-discovery|profiler|console) return 0 ;;
+		*) return 1 ;;
+		esac
+	fi
+	[[ "${components}" == "${component}" ]]
 }
 
 deployed_image() {
@@ -318,6 +331,12 @@ fi
 if [[ -z "${console_image}" ]] && component_selected console; then
 	console_image="${registry}/${image_namespace}/chill-console:${image_tag}"
 fi
+if [[ -z "${metric_observer_image}" ]] && component_selected metric-observer; then
+	metric_observer_image="${registry}/${image_namespace}/chill-metric-observer:${image_tag}"
+fi
+if [[ -z "${measurement_worker_image}" ]] && component_selected measurement-worker; then
+	measurement_worker_image="${registry}/${image_namespace}/chill-measurement-worker:${image_tag}"
+fi
 push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
@@ -327,6 +346,12 @@ if [[ -n "${profiler_image}" ]]; then
 fi
 if [[ -n "${console_image}" ]]; then
 	split_image_ref "${console_image}" "console"
+fi
+if [[ -n "${metric_observer_image}" ]]; then
+	split_image_ref "${metric_observer_image}" "metric-observer"
+fi
+if [[ -n "${measurement_worker_image}" ]]; then
+	split_image_ref "${measurement_worker_image}" "measurement-worker"
 fi
 
 if [[ -n "${extra_helm_set}" ]]; then
@@ -365,7 +390,10 @@ echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
+echo "metric-observer image: ${metric_observer_image:-not selected}"
+echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "platforms: ${platforms}"
+echo "measurement-worker platforms: ${measurement_worker_platforms}"
 echo "components: ${components}"
 if [[ -n "${buildx_builder}" ]]; then
 	echo "buildx builder: ${buildx_builder}"
@@ -424,6 +452,7 @@ docker_push_one() {
 buildx_push_one() {
 	local dockerfile="$1"
 	local image="$2"
+	local target_platforms="${3:-${platforms}}"
 	local args=()
 	while IFS= read -r arg; do
 		[[ -n "${arg}" ]] && args+=("${arg}")
@@ -432,7 +461,7 @@ buildx_push_one() {
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
 		--push \
-		--platform="${platforms}" \
+		--platform="${target_platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		.
@@ -441,6 +470,7 @@ buildx_push_one() {
 registry_direct_build_push_one() {
 	local dockerfile="$1"
 	local image="$2"
+	local target_platforms="${3:-${platforms}}"
 	local args=()
 	while IFS= read -r arg; do
 		[[ -n "${arg}" ]] && args+=("${arg}")
@@ -448,7 +478,7 @@ registry_direct_build_push_one() {
 
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
-		--platform="${platforms}" \
+		--platform="${target_platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		--output "type=registry,registry.insecure=true" \
@@ -460,6 +490,7 @@ ctr_plain_http_build_push_one() (
 	local name="$1"
 	local dockerfile="$2"
 	local image="$3"
+	local target_platforms="${4:-${platforms}}"
 	local tmpdir archive
 	local args=()
 	while IFS= read -r arg; do
@@ -471,7 +502,7 @@ ctr_plain_http_build_push_one() (
 
 	run "${container_tool}" buildx build \
 		"${args[@]}" \
-		--platform="${platforms}" \
+		--platform="${target_platforms}" \
 		--file "${dockerfile}" \
 		--tag "${image}" \
 		--output "type=oci,dest=${archive}" \
@@ -515,6 +546,17 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("console")
 	fi
+	if component_selected metric-observer; then
+		"${function_name}" "build/docker/metric-observer.Dockerfile" "${metric_observer_image}" &
+		pids+=("$!")
+		names+=("metric-observer")
+	fi
+	if component_selected measurement-worker; then
+		"${function_name}" "build/docker/measurement-worker.Dockerfile" \
+			"${measurement_worker_image}" "${measurement_worker_platforms}" &
+		pids+=("$!")
+		names+=("measurement-worker")
+	fi
 
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}"; then
@@ -553,6 +595,19 @@ run_ctr_plain_http_components() {
 			"build/docker/console.Dockerfile" "${console_image}" &
 		pids+=("$!")
 		names+=("console")
+	fi
+	if component_selected metric-observer; then
+		ctr_plain_http_build_push_one metric-observer \
+			"build/docker/metric-observer.Dockerfile" "${metric_observer_image}" &
+		pids+=("$!")
+		names+=("metric-observer")
+	fi
+	if component_selected measurement-worker; then
+		ctr_plain_http_build_push_one measurement-worker \
+			"build/docker/measurement-worker.Dockerfile" "${measurement_worker_image}" \
+			"${measurement_worker_platforms}" &
+		pids+=("$!")
+		names+=("measurement-worker")
 	fi
 
 	for i in "${!pids[@]}"; do
@@ -667,6 +722,8 @@ echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
+echo "metric-observer image: ${metric_observer_image:-not selected}"
+echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"
 try "${kubectl_bin}" get chillsystems.edge.dacs.io -A -o wide
 try "${kubectl_bin}" -n "${release_namespace}" get deployments,daemonsets,pods -o wide

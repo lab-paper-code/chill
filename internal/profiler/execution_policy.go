@@ -12,8 +12,8 @@ const (
 	CPUORTWorkerPolicy        = "cpu-ort-worker"
 	CPUORTWorkerPolicyVersion = "v1"
 
-	mebibyte         = int64(1024 * 1024)
-	maxPowerEventsV1 = int64(50_000)
+	mebibyte          = int64(1024 * 1024)
+	maxMetricEventsV1 = int64(50_000)
 )
 
 // ExecutionPlan is the bounded delivery policy for one already-frozen Run.
@@ -27,13 +27,13 @@ type ExecutionPlan struct {
 	AttemptTimeout       time.Duration
 	ObserverReadyTimeout time.Duration
 	ObserverStartTimeout time.Duration
-	PowerResultTimeout   time.Duration
+	MetricResultTimeout  time.Duration
 
 	MaxLatencySamples     int
 	MaxInputBytes         int64
 	MaxRuntimeResultBytes int64
-	MaxPowerResultBytes   int64
-	MaxPowerEvents        int
+	MaxMetricResultBytes  int64
+	MaxMetricEvents       int
 
 	RuntimeMemoryRequestBytes  int64
 	RuntimeMemoryLimitBytes    int64
@@ -59,28 +59,28 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 		return ExecutionPlan{}, errors.New("cpu-ort-worker v1 requires the current CPU ONNX Runtime intent")
 	}
 
-	powerDuration := time.Duration(intent.Power.DurationSeconds) * time.Second
-	interval := time.Duration(intent.Power.IntervalMilliseconds) * time.Millisecond
-	maxEvents64 := int64(powerDuration/interval) + 2
-	if maxEvents64 < 1 || maxEvents64 > maxPowerEventsV1 || maxEvents64 > int64(^uint(0)>>1) {
-		return ExecutionPlan{}, errors.New("power observation schedule exceeds worker event capacity")
+	metricDuration := time.Duration(intent.Metrics.DurationSeconds) * time.Second
+	interval := time.Duration(intent.Metrics.IntervalMilliseconds) * time.Millisecond
+	maxEvents64 := int64(metricDuration/interval) + 2
+	if maxEvents64 < 1 || maxEvents64 > maxMetricEventsV1 || maxEvents64 > int64(^uint(0)>>1) {
+		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
 
 	return ExecutionPlan{
 		Policy:        CPUORTWorkerPolicy,
 		PolicyVersion: CPUORTWorkerPolicyVersion,
 
-		ActiveDeadline:       powerDuration + 3*time.Minute,
-		AttemptTimeout:       powerDuration + 150*time.Second,
+		ActiveDeadline:       metricDuration + 3*time.Minute,
+		AttemptTimeout:       metricDuration + 150*time.Second,
 		ObserverReadyTimeout: 30 * time.Second,
 		ObserverStartTimeout: 2 * time.Minute,
-		PowerResultTimeout:   powerDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second + 30*time.Second,
+		MetricResultTimeout:  metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second + 30*time.Second,
 
 		MaxLatencySamples:     1_000_000,
 		MaxInputBytes:         64 * mebibyte,
 		MaxRuntimeResultBytes: 32 * mebibyte,
-		MaxPowerResultBytes:   8 * mebibyte,
-		MaxPowerEvents:        int(maxEvents64),
+		MaxMetricResultBytes:  8 * mebibyte,
+		MaxMetricEvents:       int(maxEvents64),
 
 		RuntimeMemoryRequestBytes:  128 * mebibyte,
 		RuntimeMemoryLimitBytes:    1024 * mebibyte,

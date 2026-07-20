@@ -41,10 +41,10 @@ func TestRetainedPlan2BundleFailsClosed(t *testing.T) {
 	}
 }
 
-func TestMaterialStateIdentityBindsMeasurementAndPowerButNotBatch(t *testing.T) {
+func TestMaterialStateIdentityBindsMeasurementAndMetricsButNotBatch(t *testing.T) {
 	intent := profilingrun.Intent{
 		Measurement: profilingrun.MeasurementContract{Batch: 1, InputGenerator: "a"},
-		Power:       profilingrun.PowerContract{Metric: "watts"},
+		Metrics:     profilingrun.MetricContract{PowerMetric: "watts"},
 	}
 	base := materialStateIdentity(intent, "node")
 	intent.Measurement.Batch = 2
@@ -56,7 +56,7 @@ func TestMaterialStateIdentityBindsMeasurementAndPowerButNotBatch(t *testing.T) 
 		t.Fatal("input generator must change state identity")
 	}
 	intent.Measurement.InputGenerator = "a"
-	intent.Power.Metric = "other"
+	intent.Metrics.PowerMetric = "other"
 	if materialStateIdentity(intent, "node") == base {
 		t.Fatal("power metric must change state identity")
 	}

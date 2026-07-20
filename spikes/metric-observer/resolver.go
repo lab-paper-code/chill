@@ -1,8 +1,7 @@
-package powerobserverprobe
+package metricobserverprobe
 
-// TODO(internal): Replace Pod-IP coupling with a stable PowerSource resolver
-// contract that can select Service, Pod, or external endpoint forms and report
-// ambiguity/unavailability as Kubernetes conditions.
+// KubernetesPodResolver is the spike-only Node-to-Pod-IP resolver. The
+// production Profiler supplies an already-frozen metric endpoint.
 
 import (
 	"context"
@@ -19,9 +18,9 @@ import (
 )
 
 var (
-	ErrSourceUnavailable = errors.New("power source unavailable")
-	ErrSourceNotReady    = errors.New("power source not ready")
-	ErrSourceAmbiguous   = errors.New("power source ambiguous")
+	ErrSourceUnavailable = errors.New("metric source unavailable")
+	ErrSourceNotReady    = errors.New("metric source not ready")
+	ErrSourceAmbiguous   = errors.New("metric source ambiguous")
 )
 
 type ResolvedTarget struct {
@@ -72,7 +71,7 @@ func (r *KubernetesPodResolver) Resolve(ctx context.Context, nodeName string) (R
 		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
 	})
 	if err != nil {
-		return ResolvedTarget{}, fmt.Errorf("list power-source Pods on node %q: %w", nodeName, err)
+		return ResolvedTarget{}, fmt.Errorf("list metric-source Pods on node %q: %w", nodeName, err)
 	}
 	if len(pods.Items) == 0 {
 		return ResolvedTarget{}, fmt.Errorf("%w: no matching Pod on node %q", ErrSourceUnavailable, nodeName)

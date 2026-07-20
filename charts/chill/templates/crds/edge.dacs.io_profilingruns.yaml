@@ -149,9 +149,9 @@ spec:
                 - warmupIterations
                 - workloadMode
                 type: object
-              powerObservation:
-                description: PowerObservation fixes polling behavior. The source is
-                  resolved from TargetNode.
+              metricObservation:
+                description: MetricObservation fixes polling behavior. The source
+                  is resolved from TargetNode.
                 properties:
                   durationSeconds:
                     format: int32
@@ -184,14 +184,14 @@ spec:
             - candidate
             - cpuRequest
             - measurement
-            - powerObservation
+            - metricObservation
             - targetNode
             type: object
             x-kubernetes-validations:
             - message: ProfilingRun spec is immutable
               rule: self == oldSelf
-            - message: powerObservation.durationSeconds must cover measurement.durationSeconds
-              rule: self.powerObservation.durationSeconds >= self.measurement.durationSeconds
+            - message: metricObservation.durationSeconds must cover measurement.durationSeconds
+              rule: self.metricObservation.durationSeconds >= self.measurement.durationSeconds
             - message: cpuRequest must be positive
               rule: quantity(self.cpuRequest).compareTo(quantity('0')) > 0
           status:

@@ -76,7 +76,7 @@ func TestValidateKubernetesBindsOwnershipSuccessAndImages(t *testing.T) {
 			InitContainers: []corev1.Container{{Name: "artifact", Image: intent.Images.Artifact}},
 			Containers: []corev1.Container{
 				{Name: "runtime", Image: intent.Images.Runtime},
-				{Name: "power-observer", Image: intent.Images.PowerObserver},
+				{Name: "metric-observer", Image: intent.Images.MetricObserver},
 			},
 		},
 	}
@@ -99,7 +99,7 @@ func testCollectorIntent() profilingrun.Intent {
 func TestValidateStatusesPreservesArtifactRuntimeIdentityBoundary(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	image := "registry/image@" + digest
-	intent := profilingrun.Intent{Images: profilingrun.Images{Artifact: image, Runtime: image, PowerObserver: image}}
+	intent := profilingrun.Intent{Images: profilingrun.Images{Artifact: image, Runtime: image, MetricObserver: image}}
 	done := func(name, imageID string) corev1.ContainerStatus {
 		return corev1.ContainerStatus{
 			Name:    name,
@@ -110,7 +110,7 @@ func TestValidateStatusesPreservesArtifactRuntimeIdentityBoundary(t *testing.T) 
 	init := []corev1.ContainerStatus{done("artifact", "registry/image@sha256:"+strings.Repeat("b", 64))}
 	containers := []corev1.ContainerStatus{
 		done("runtime", "registry/image@"+digest),
-		done("power-observer", "registry/image@"+digest),
+		done("metric-observer", "registry/image@"+digest),
 	}
 	if err := validateStatuses(intent, init, containers); err != nil {
 		t.Fatal(err)

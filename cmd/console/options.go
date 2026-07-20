@@ -13,7 +13,10 @@ type options struct {
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.bindAddress, "bind-address", ":8080", "Address for the CHILL Console read API.")
-	flags.StringVar(&o.tempDir, "evidence-temp-dir", "/var/run/chill/evidence", "Directory for bounded Evidence Store reads.")
+	flags.StringVar(
+		&o.tempDir, "evidence-temp-dir", "/var/run/chill/evidence",
+		"Directory for bounded Evidence Store reads.",
+	)
 }
 
 func (o options) validate() error {

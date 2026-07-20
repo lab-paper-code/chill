@@ -25,7 +25,7 @@ func TestProjectTerminalFacts(t *testing.T) {
 		t.Fatal("actual Node binding was not projected")
 	}
 	if len(facts.Containers) != 3 || facts.Containers[0].Name != "artifact" ||
-		facts.Containers[1].Name != "power-observer" || facts.Containers[2].Name != "runtime" {
+		facts.Containers[1].Name != "metric-observer" || facts.Containers[2].Name != "runtime" {
 		t.Fatalf("unexpected projected containers: %#v", facts.Containers)
 	}
 	if len(facts.NodeWorkload.Pods) != 2 || facts.NodeWorkload.Pods[0].Name != "profiling-pod" {
@@ -171,7 +171,7 @@ func validObservation() Observation {
 			InitContainers: []corev1.Container{{Name: "artifact", Image: "artifact@sha256:1"}},
 			Containers: []corev1.Container{
 				{Name: "runtime", Image: "runtime@sha256:2"},
-				{Name: "power-observer", Image: "power@sha256:3"},
+				{Name: "metric-observer", Image: "power@sha256:3"},
 			},
 		},
 		Status: corev1.PodStatus{
@@ -179,7 +179,7 @@ func validObservation() Observation {
 			InitContainerStatuses: []corev1.ContainerStatus{done("artifact", "artifact@sha256:1")},
 			ContainerStatuses: []corev1.ContainerStatus{
 				done("runtime", "runtime@sha256:2"),
-				done("power-observer", "power@sha256:3"),
+				done("metric-observer", "power@sha256:3"),
 			},
 		},
 	}

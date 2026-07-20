@@ -13,8 +13,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	unknownValue     = "unknown"
+	unavailableValue = "unavailable"
+)
+
 func writeEvidencePassport(writer io.Writer, output string, passport operatorconsole.EvidencePassport) error {
-	if output == "json" {
+	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(passport)
@@ -46,12 +51,15 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		{"Architecture", runtime.Architecture},
 		{"Batch", fmt.Sprint(runtime.Batch)},
 		{"Warm-up iterations", fmt.Sprint(runtime.WarmupIterations)},
-		{"Window", runtime.MeasurementStarted.Format(time.RFC3339Nano) + " -> " + runtime.MeasurementEnded.Format(time.RFC3339Nano)},
+		{"Window", runtime.MeasurementStarted.Format(time.RFC3339Nano) + " -> " +
+			runtime.MeasurementEnded.Format(time.RFC3339Nano)},
 		{"Elapsed", formatSeconds(runtime.ElapsedSeconds)},
 		{"Completed calls", fmt.Sprint(runtime.CompletedCalls)},
 		{"Completed items", fmt.Sprint(runtime.CompletedItems)},
 		{"Throughput", fmt.Sprintf("%.3f items/s", runtime.ThroughputItems)},
-		{"Output validation", fmt.Sprintf("%s (passed=%t)", runtime.OutputValidation.Method, runtime.OutputValidation.Passed)},
+		{"Output validation", fmt.Sprintf(
+			"%s (passed=%t)", runtime.OutputValidation.Method, runtime.OutputValidation.Passed,
+		)},
 	}); err != nil {
 		return err
 	}
@@ -68,7 +76,7 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 	}
 
 	power := passport.Measurement.Power
-	wattMinimum, wattMean, wattMaximum := "unknown", "unknown", "unknown"
+	wattMinimum, wattMean, wattMaximum := unknownValue, unknownValue, unknownValue
 	if power.Watts != nil {
 		wattMinimum = formatWatts(power.Watts.Minimum)
 		wattMean = formatWatts(power.Watts.Mean)
@@ -86,7 +94,37 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		{"Observer request mean", formatSeconds(power.MeanRequestLatencySeconds)},
 		{"Observer request P95", formatSeconds(power.P95RequestLatencySeconds)},
 		{"Maximum sample gap", formatSeconds(power.MaximumSampleGapSeconds)},
-		{"Device timestamps", map[bool]string{true: "unavailable; observer receipt time used", false: "available"}[power.SourceTimestampAbsent]},
+		{"Device timestamps", map[bool]string{
+			true: "unavailable; observer receipt time used", false: "available",
+		}[power.SourceTimestampAbsent]},
+	}); err != nil {
+		return err
+	}
+
+	thermal := passport.Measurement.Thermal
+	coreEvents, packageEvents, temperature := unavailableValue, unavailableValue, unavailableValue
+	if thermal.CPUCoreThrottleEvents != nil {
+		coreEvents = formatCounter(thermal.CPUCoreThrottleEvents)
+	}
+	if thermal.CPUPackageThrottleEvents != nil {
+		packageEvents = formatCounter(thermal.CPUPackageThrottleEvents)
+	}
+	if thermal.MaximumTemperatureCelsius != nil {
+		temperature = fmt.Sprintf("%.3f-%.3f C (%d samples)",
+			thermal.MaximumTemperatureCelsius.Minimum,
+			thermal.MaximumTemperatureCelsius.Maximum,
+			thermal.MaximumTemperatureCelsius.Samples,
+		)
+	}
+	if err := writePassportSection(table, "THERMAL OBSERVATION", [][2]string{
+		{"Typed samples", fmt.Sprint(thermal.Samples)},
+		{"Observation available", fmt.Sprint(thermal.ObservationAvailableSamples)},
+		{"Active samples", fmt.Sprint(thermal.ActiveSamples)},
+		{"Latched samples", fmt.Sprint(thermal.LatchedSamples)},
+		{"CPU core events", coreEvents},
+		{"CPU package events", packageEvents},
+		{"Maximum temperature", temperature},
+		{"Metric issues", fmt.Sprint(thermal.Issues)},
 	}); err != nil {
 		return err
 	}
@@ -155,4 +193,8 @@ func formatMilliseconds(value float64) string {
 
 func formatWatts(value float64) string {
 	return fmt.Sprintf("%.3f W", value)
+}
+
+func formatCounter(counter *operatorconsole.EvidencePassportCounter) string {
+	return fmt.Sprintf("%d -> %d (%d samples)", counter.First, counter.Last, counter.Samples)
 }

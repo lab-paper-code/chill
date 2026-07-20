@@ -1,4 +1,4 @@
-package powerobserver
+package metricobserver
 
 import (
 	"context"
@@ -54,7 +54,11 @@ func TestRequestValidate(t *testing.T) {
 }
 
 func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
-	source := &fakeSource{values: []float64{4.2, 4.2}}
+	active := false
+	source := &fakeSource{values: []Reading{
+		{Watts: 4.2, Thermal: ThermalReading{ObservationAvailable: boolPointer(true), Active: &active}},
+		{Watts: 4.2, Thermal: ThermalReading{ObservationAvailable: boolPointer(true), Active: &active}},
+	}}
 	observer, err := New(source)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +86,10 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	if len(result.Samples) != 2 || result.Samples[0].Watts != 4.2 || result.Samples[1].Watts != 4.2 {
 		t.Fatalf("samples = %#v, want two retained repeated readings", result.Samples)
 	}
+	if result.Samples[0].Thermal == nil || result.Samples[0].Thermal.Active == nil ||
+		*result.Samples[0].Thermal.Active {
+		t.Fatalf("thermal sample = %#v", result.Samples[0].Thermal)
+	}
 	if result.Summary.Attempts != 2 || result.Summary.SuccessfulSamples != 2 || result.Summary.Failures != 0 {
 		t.Fatalf("summary = %#v", result.Summary)
 	}
@@ -94,7 +102,7 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 }
 
 func TestObserveRejectsInsufficientEventCapacityBeforeSourceRead(t *testing.T) {
-	source := &fakeSource{values: []float64{4.2}}
+	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
 	observer, err := New(source)
 	if err != nil {
 		t.Fatal(err)
@@ -144,9 +152,9 @@ func TestObserveClassifiesSourceFailures(t *testing.T) {
 
 func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	source := &fakeSource{read: func(context.Context) (float64, error) {
+	source := &fakeSource{read: func(context.Context) (Reading, error) {
 		cancel()
-		return 0, context.Canceled
+		return Reading{}, context.Canceled
 	}}
 	observer, err := New(source)
 	if err != nil {
@@ -164,7 +172,7 @@ func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 }
 
 func TestObserveEnforcesProducerEventCap(t *testing.T) {
-	source := &fakeSource{values: []float64{1, 2}}
+	source := &fakeSource{values: []Reading{{Watts: 1}, {Watts: 2}}}
 	observer, err := New(source)
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +221,10 @@ func TestResultValidateRejectsDriftedRawFacts(t *testing.T) {
 	valid := Result{
 		Source:    SourceIdentity{Kind: "edge-metrics", Endpoint: "http://metrics", Metric: "power_watts"},
 		StartedAt: started, EndedAt: started.Add(2 * time.Second),
-		Samples: []Sample{{ObservedAt: started.Add(time.Second), Watts: 4.2, RequestLatencySeconds: 0.1}},
+		Samples: []Sample{{
+			ObservedAt: started.Add(time.Second), Watts: 4.2, RequestLatencySeconds: 0.1,
+			Thermal: &ThermalReading{ObservationAvailable: boolPointer(true), Active: boolPointer(false)},
+		}},
 	}
 	valid.Summary = summarize(valid)
 	if err := valid.Validate(); err != nil {
@@ -229,7 +240,17 @@ func TestResultValidateRejectsDriftedRawFacts(t *testing.T) {
 			result.Samples[0].ObservedAt = result.EndedAt.Add(time.Second)
 		}},
 		{name: "sample value", mutate: func(result *Result) { result.Samples[0].Watts = -1 }},
+		{name: "thermal temperature", mutate: func(result *Result) {
+			value := math.NaN()
+			result.Samples[0].Thermal.MaximumTemperatureCelsius = &value
+		}},
+		{name: "thermal issue", mutate: func(result *Result) {
+			result.Samples[0].Thermal.Issues = []MetricIssue{{Metric: "thermal", Reason: FailureReasonTimeout, Message: "bad"}}
+		}},
 		{name: "source identity", mutate: func(result *Result) { result.Source.Metric = "" }},
+		{name: "thermal source identity", mutate: func(result *Result) {
+			result.Source.ThermalMetrics = &ThermalMetricIdentity{Active: "active"}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -244,13 +265,13 @@ func TestResultValidateRejectsDriftedRawFacts(t *testing.T) {
 }
 
 type fakeSource struct {
-	values []float64
+	values []Reading
 	errs   []error
-	read   func(context.Context) (float64, error)
+	read   func(context.Context) (Reading, error)
 	reads  int
 }
 
-func (s *fakeSource) ReadPower(ctx context.Context) (float64, error) {
+func (s *fakeSource) ReadMetrics(ctx context.Context) (Reading, error) {
 	if s.read != nil {
 		s.reads++
 		return s.read(ctx)
@@ -258,10 +279,12 @@ func (s *fakeSource) ReadPower(ctx context.Context) (float64, error) {
 	index := s.reads
 	s.reads++
 	if index < len(s.errs) && s.errs[index] != nil {
-		return 0, s.errs[index]
+		return Reading{}, s.errs[index]
 	}
 	return s.values[index], nil
 }
+
+func boolPointer(value bool) *bool { return &value }
 
 func (s *fakeSource) Identity() SourceIdentity {
 	return SourceIdentity{Kind: "fake", Endpoint: "fake://source", Metric: "power_watts"}

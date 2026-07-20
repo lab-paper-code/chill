@@ -57,7 +57,7 @@ type inventoryModelDocument struct {
 
 func writeInventory(writer io.Writer, output string, snapshot operatorconsole.InventorySnapshot) error {
 	document := inventoryOutput(snapshot)
-	if output == "json" {
+	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(document)

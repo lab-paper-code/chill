@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -143,14 +143,14 @@ func httpPassportSnapshot() EvidencePassportSnapshot {
 				ThroughputItemsPerSecond: 100,
 				RepetitionResults:        []profilingrun.Repetition{{LatencyMilliseconds: []float64{1, 2}}},
 			},
-			Power: powerobserver.Result{
-				Source: powerobserver.SourceIdentity{
+			Metrics: metricobserver.Result{
+				Source: metricobserver.SourceIdentity{
 					Kind: "edge-metrics", NodeName: "lattepanda", Metric: "watts",
 					Endpoint: "http://source.internal/metrics",
 				},
 				StartedAt: started, EndedAt: started.Add(31 * time.Second),
-				Samples: []powerobserver.Sample{{Watts: 8}, {Watts: 10}},
-				Summary: powerobserver.Summary{SuccessfulSamples: 2, ObservationDurationSeconds: 31},
+				Samples: []metricobserver.Sample{{Watts: 8}, {Watts: 10}},
+				Summary: metricobserver.Summary{SuccessfulSamples: 2, ObservationDurationSeconds: 31},
 			},
 		},
 	}

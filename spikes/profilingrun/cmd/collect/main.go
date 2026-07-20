@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,7 +34,7 @@ type bundle struct {
 	ActualNode      json.RawMessage            `json:"actualNode"`
 	CoResidentPods  json.RawMessage            `json:"coResidentPods"`
 	Runtime         profilingrun.RuntimeResult `json:"runtime"`
-	Power           powerobserver.Result       `json:"power"`
+	Power           metricobserver.Result      `json:"power"`
 }
 
 //nolint:gocyclo // One-shot collection keeps I/O failure gates linear and local; it has no reusable workflow engine.
@@ -111,12 +111,12 @@ func main() {
 		fatal(err)
 	}
 	runtimeOptions := corev1.PodLogOptions{Container: "runtime"}
-	powerOptions := corev1.PodLogOptions{Container: "power-observer"}
+	metricOptions := corev1.PodLogOptions{Container: "metric-observer"}
 	runtimeLog, err := client.CoreV1().Pods(*namespace).GetLogs(pod.Name, &runtimeOptions).DoRaw(ctx)
 	if err != nil {
 		fatal(err)
 	}
-	powerLog, err := client.CoreV1().Pods(*namespace).GetLogs(pod.Name, &powerOptions).DoRaw(ctx)
+	metricLog, err := client.CoreV1().Pods(*namespace).GetLogs(pod.Name, &metricOptions).DoRaw(ctx)
 	if err != nil {
 		fatal(err)
 	}
@@ -127,13 +127,14 @@ func main() {
 	if err := profilingrun.ValidateRuntime(intent, string(pod.UID), runtimeResult); err != nil {
 		fatal(fmt.Errorf("validate runtime evidence: %w", err))
 	}
-	var powerResult powerobserver.Result
-	if err := decodePrefixed(powerLog, "POWER_OBSERVATION_JSON ", &powerResult); err != nil {
+	var metricResult metricobserver.Result
+	if err := decodePrefixed(metricLog, "METRIC_OBSERVATION_JSON ", &metricResult); err != nil {
 		fatal(err)
 	}
-	if powerResult.Source.NodeName != intent.Power.NodeName || powerResult.Source.Endpoint != intent.Power.Endpoint ||
-		powerResult.Source.Metric != intent.Power.Metric {
-		fatal(errors.New("power source identity mismatch"))
+	if metricResult.Source.NodeName != intent.Metrics.NodeName ||
+		metricResult.Source.Endpoint != intent.Metrics.Endpoint ||
+		metricResult.Source.Metric != intent.Metrics.PowerMetric {
+		fatal(errors.New("metric source identity mismatch"))
 	}
 	coResidents, err := client.CoreV1().
 		Pods("").
@@ -152,7 +153,7 @@ func main() {
 		ActualNode:      mustJSON(node),
 		CoResidentPods:  mustJSON(coResidents),
 		Runtime:         runtimeResult,
-		Power:           powerResult,
+		Power:           metricResult,
 	}
 	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
 		fatal(err)
@@ -249,9 +250,9 @@ func validateKubernetes(job *batchv1.Job, pod *corev1.Pod, intent profilingrun.I
 		images[container.Name] = container.Image
 	}
 	expected := map[string]string{
-		"artifact":       intent.Images.Artifact,
-		"runtime":        intent.Images.Runtime,
-		"power-observer": intent.Images.PowerObserver,
+		"artifact":        intent.Images.Artifact,
+		"runtime":         intent.Images.Runtime,
+		"metric-observer": intent.Images.MetricObserver,
 	}
 	for name, want := range expected {
 		if images[name] != want {
@@ -263,9 +264,9 @@ func validateKubernetes(job *batchv1.Job, pod *corev1.Pod, intent profilingrun.I
 
 func validateStatuses(intent profilingrun.Intent, initStatuses, containerStatuses []corev1.ContainerStatus) error {
 	expected := map[string]string{
-		"artifact":       intent.Images.Artifact,
-		"runtime":        intent.Images.Runtime,
-		"power-observer": intent.Images.PowerObserver,
+		"artifact":        intent.Images.Artifact,
+		"runtime":         intent.Images.Runtime,
+		"metric-observer": intent.Images.MetricObserver,
 	}
 	all := append(append([]corev1.ContainerStatus{}, initStatuses...), containerStatuses...)
 	if len(all) != 3 {

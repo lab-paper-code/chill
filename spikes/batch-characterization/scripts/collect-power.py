@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # TODO(internal): Replace Prometheus port-forward collection and local files
-# with PowerObserver results attached to an immutable profiling Run. Integrate
+# with MetricObserver results attached to an immutable profiling Run. Integrate
 # timestamped samples rather than finalizing the current provisional mean-power method.
 """Join batch measurement windows with raw Shelly samples from Prometheus."""
 

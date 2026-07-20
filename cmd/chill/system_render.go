@@ -31,7 +31,7 @@ type systemDocument struct {
 
 func writeSystems(writer io.Writer, output string, snapshot operatorconsole.SystemSnapshot) error {
 	document := systemsOutput(snapshot)
-	if output == "json" {
+	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(document)
@@ -45,7 +45,9 @@ func writeSystemsTable(writer io.Writer, document systemsDocument) error {
 		document.ReadAt, display(document.ResourceVersion)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(table, "SYSTEM\tMANAGEMENT_NAMESPACE\tGENERATION\tOBSERVED\tNODE_DISCOVERY\tDEVICE_DISCOVERY\tPROFILER\tEVIDENCE_STORE"); err != nil {
+	const systemHeader = "SYSTEM\tMANAGEMENT_NAMESPACE\tGENERATION\tOBSERVED\t" +
+		"NODE_DISCOVERY\tDEVICE_DISCOVERY\tPROFILER\tEVIDENCE_STORE"
+	if _, err := fmt.Fprintln(table, systemHeader); err != nil {
 		return err
 	}
 	for _, system := range document.Systems {
@@ -57,7 +59,9 @@ func writeSystemsTable(writer io.Writer, document systemsDocument) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(table, "\nSYSTEM\tCONDITION\tSTATUS\tOBSERVED\tREASON\tLAST_TRANSITION\tMESSAGE"); err != nil {
+	const conditionHeader = "\nSYSTEM\tCONDITION\tSTATUS\tOBSERVED\tREASON\t" +
+		"LAST_TRANSITION\tMESSAGE"
+	if _, err := fmt.Fprintln(table, conditionHeader); err != nil {
 		return err
 	}
 	for _, system := range document.Systems {

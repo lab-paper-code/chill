@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
@@ -35,10 +35,10 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 				LatencyMilliseconds: []float64{1, 2},
 			}},
 		},
-		Power: powerobserver.Result{
-			Samples:  []powerobserver.Sample{{ObservedAt: started, Watts: 4}},
-			Failures: []powerobserver.Failure{{Reason: powerobserver.FailureReasonTimeout}},
-			Summary:  powerobserver.Summary{SourceTimestampAbsent: true},
+		Metrics: metricobserver.Result{
+			Samples:  []metricobserver.Sample{{ObservedAt: started, Watts: 4}},
+			Failures: []metricobserver.Failure{{Reason: metricobserver.FailureReasonTimeout}},
+			Summary:  metricobserver.Summary{SourceTimestampAbsent: true},
 		},
 	}
 
@@ -55,6 +55,59 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		t.Fatalf("terminal snapshot was treated as measurement-window contamination: %#v", trial.UnexpectedCoResidents)
 	}
 }
+
+func TestThermalStateProjectsOnlyObservedWindowFacts(t *testing.T) {
+	start := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	sample := func(offset time.Duration, thermal *metricobserver.ThermalReading) metricobserver.Sample {
+		return metricobserver.Sample{ObservedAt: start.Add(offset), Watts: 4, Thermal: thermal}
+	}
+	direct := func(active bool) *metricobserver.ThermalReading {
+		return &metricobserver.ThermalReading{
+			ObservationAvailable: admissionBool(true), Active: admissionBool(active),
+		}
+	}
+	counters := func(value uint64) *metricobserver.ThermalReading {
+		return &metricobserver.ThermalReading{
+			ObservationAvailable: admissionBool(true), CPUCoreThrottleEvents: admissionUint(value),
+		}
+	}
+	tests := []struct {
+		name       string
+		samples    []metricobserver.Sample
+		wantKnown  bool
+		wantActive bool
+	}{
+		{name: "direct stable", samples: []metricobserver.Sample{sample(time.Second, direct(false)), sample(2*time.Second, direct(false))}, wantKnown: true},
+		{name: "direct active", samples: []metricobserver.Sample{sample(time.Second, direct(false)), sample(2*time.Second, direct(true))}, wantKnown: true, wantActive: true},
+		{name: "counter stable", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(7))}, wantKnown: true},
+		{name: "counter increase", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(8))}, wantKnown: true, wantActive: true},
+		{name: "counter reset", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(1))}},
+		{
+			name: "diagnostic issue does not override direct evidence",
+			samples: []metricobserver.Sample{
+				sample(time.Second, &metricobserver.ThermalReading{
+					ObservationAvailable: admissionBool(true), Active: admissionBool(false),
+					Issues: []metricobserver.MetricIssue{{Metric: "device_thermal_max_celsius", Reason: metricobserver.FailureReasonInvalidReading}},
+				}),
+				sample(2*time.Second, direct(false)),
+			},
+			wantKnown: true,
+		},
+		{name: "missing thermal", samples: []metricobserver.Sample{sample(time.Second, nil), sample(2*time.Second, nil)}},
+		{name: "outside window ignored", samples: []metricobserver.Sample{sample(-time.Second, direct(true)), sample(time.Second, direct(false))}, wantKnown: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			known, active := thermalState(test.samples, start, start.Add(3*time.Second))
+			if known != test.wantKnown || active != test.wantActive {
+				t.Fatalf("thermalState() = %t, %t; want %t, %t", known, active, test.wantKnown, test.wantActive)
+			}
+		})
+	}
+}
+
+func admissionBool(value bool) *bool     { return &value }
+func admissionUint(value uint64) *uint64 { return &value }
 
 func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
 	t.Parallel()
@@ -100,15 +153,15 @@ func admissionIntent() profilingrun.Intent {
 			DeviceClass: "lattepanda", Model: "mobilenet", ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
 			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
 		},
-		Images:     profilingrun.Images{Runtime: "runtime", Artifact: "artifact", PowerObserver: "observer"},
+		Images:     profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
 		TargetNode: profilingrun.NodeSnapshot{UID: "node-uid"},
 		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, Repetitions: 1,
 			WorkloadMode: "saturated", InputGenerator: "seeded", OutputValidation: "shape",
 		},
-		Power: profilingrun.PowerContract{
-			SourceKind: "edge-metrics", NodeName: "lattepanda", Endpoint: "http://metrics", Metric: "watts",
+		Metrics: profilingrun.MetricContract{
+			SourceKind: "edge-metrics", NodeName: "lattepanda", Endpoint: "http://metrics", PowerMetric: "watts",
 			IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 		},
 	}

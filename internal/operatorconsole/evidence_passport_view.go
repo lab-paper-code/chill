@@ -8,7 +8,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -47,6 +47,7 @@ type EvidencePassportLineage struct {
 type EvidencePassportMeasurement struct {
 	Runtime EvidencePassportRuntime `json:"runtime"`
 	Power   EvidencePassportPower   `json:"power"`
+	Thermal EvidencePassportThermal `json:"thermal"`
 }
 
 type EvidencePassportRuntime struct {
@@ -109,6 +110,41 @@ type EvidencePassportWatts struct {
 	Maximum float64 `json:"maximum"`
 }
 
+// EvidencePassportThermal is a factual summary of retained typed samples.
+// Scientific interpretation remains in the admission result.
+type EvidencePassportThermal struct {
+	Metrics                     *EvidencePassportThermalMetrics `json:"metrics,omitempty"`
+	Samples                     int                             `json:"samples"`
+	ObservationAvailableSamples int                             `json:"observationAvailableSamples"`
+	ActiveSamples               int                             `json:"activeSamples"`
+	LatchedSamples              int                             `json:"latchedSamples"`
+	CPUCoreThrottleEvents       *EvidencePassportCounter        `json:"cpuCoreThrottleEvents,omitempty"`
+	CPUPackageThrottleEvents    *EvidencePassportCounter        `json:"cpuPackageThrottleEvents,omitempty"`
+	MaximumTemperatureCelsius   *EvidencePassportRange          `json:"maximumTemperatureCelsius,omitempty"`
+	Issues                      int                             `json:"issues"`
+}
+
+type EvidencePassportThermalMetrics struct {
+	ObservationAvailable      string `json:"observationAvailable"`
+	Active                    string `json:"active"`
+	CPUCoreThrottleEvents     string `json:"cpuCoreThrottleEvents"`
+	CPUPackageThrottleEvents  string `json:"cpuPackageThrottleEvents"`
+	Latched                   string `json:"latched"`
+	MaximumTemperatureCelsius string `json:"maximumTemperatureCelsius"`
+}
+
+type EvidencePassportCounter struct {
+	Samples int    `json:"samples"`
+	First   uint64 `json:"first"`
+	Last    uint64 `json:"last"`
+}
+
+type EvidencePassportRange struct {
+	Samples int     `json:"samples"`
+	Minimum float64 `json:"minimum"`
+	Maximum float64 `json:"maximum"`
+}
+
 func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport, error) {
 	if snapshot.Run.Status.Evidence == nil {
 		return EvidencePassport{}, errors.New("Evidence Passport snapshot has no finalized evidence reference")
@@ -130,7 +166,8 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 		return EvidencePassport{}, errors.New("verified runtime evidence contains an invalid batch size")
 	}
 	throughputItems := float64(runtime.BatchSize) * 1000 / latency.Mean
-	watts := summarizeWatts(snapshot.Measurement.Power.Samples)
+	watts := summarizeWatts(snapshot.Measurement.Metrics.Samples)
+	thermal := summarizeThermal(snapshot.Measurement.Metrics)
 	final := evidencestore.ObjectIdentity{
 		Store:  snapshot.Run.Status.Evidence.Store,
 		Key:    snapshot.Run.Status.Evidence.Key,
@@ -172,24 +209,94 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 			},
 			Power: EvidencePassportPower{
 				Source: EvidencePassportPowerSource{
-					Kind:     snapshot.Measurement.Power.Source.Kind,
-					NodeName: snapshot.Measurement.Power.Source.NodeName,
-					Metric:   snapshot.Measurement.Power.Source.Metric,
+					Kind:     snapshot.Measurement.Metrics.Source.Kind,
+					NodeName: snapshot.Measurement.Metrics.Source.NodeName,
+					Metric:   snapshot.Measurement.Metrics.Source.Metric,
 				},
-				StartedAt:                 snapshot.Measurement.Power.StartedAt.UTC(),
-				EndedAt:                   snapshot.Measurement.Power.EndedAt.UTC(),
-				ObservationSeconds:        snapshot.Measurement.Power.Summary.ObservationDurationSeconds,
-				Samples:                   snapshot.Measurement.Power.Summary.SuccessfulSamples,
-				Failures:                  snapshot.Measurement.Power.Summary.Failures,
+				StartedAt:                 snapshot.Measurement.Metrics.StartedAt.UTC(),
+				EndedAt:                   snapshot.Measurement.Metrics.EndedAt.UTC(),
+				ObservationSeconds:        snapshot.Measurement.Metrics.Summary.ObservationDurationSeconds,
+				Samples:                   snapshot.Measurement.Metrics.Summary.SuccessfulSamples,
+				Failures:                  snapshot.Measurement.Metrics.Summary.Failures,
 				Watts:                     watts,
-				MeanRequestLatencySeconds: snapshot.Measurement.Power.Summary.MeanRequestLatencySeconds,
-				P95RequestLatencySeconds:  snapshot.Measurement.Power.Summary.P95RequestLatencySeconds,
-				MaximumSampleGapSeconds:   snapshot.Measurement.Power.Summary.MaximumSampleGapSeconds,
-				SourceTimestampAbsent:     snapshot.Measurement.Power.Summary.SourceTimestampAbsent,
+				MeanRequestLatencySeconds: snapshot.Measurement.Metrics.Summary.MeanRequestLatencySeconds,
+				P95RequestLatencySeconds:  snapshot.Measurement.Metrics.Summary.P95RequestLatencySeconds,
+				MaximumSampleGapSeconds:   snapshot.Measurement.Metrics.Summary.MaximumSampleGapSeconds,
+				SourceTimestampAbsent:     snapshot.Measurement.Metrics.Summary.SourceTimestampAbsent,
 			},
+			Thermal: thermal,
 		},
 		Admission: run.Status.Admission,
 	}, nil
+}
+
+func summarizeThermal(result metricobserver.Result) EvidencePassportThermal {
+	summary := EvidencePassportThermal{Metrics: cloneThermalMetrics(result.Source.ThermalMetrics)}
+	var core, pack []uint64
+	var temperatures []float64
+	for _, sample := range result.Samples {
+		reading := sample.Thermal
+		if reading == nil {
+			continue
+		}
+		summary.Samples++
+		if reading.ObservationAvailable != nil && *reading.ObservationAvailable {
+			summary.ObservationAvailableSamples++
+		}
+		if reading.Active != nil && *reading.Active {
+			summary.ActiveSamples++
+		}
+		if reading.Latched != nil && *reading.Latched {
+			summary.LatchedSamples++
+		}
+		if reading.CPUCoreThrottleEvents != nil {
+			core = append(core, *reading.CPUCoreThrottleEvents)
+		}
+		if reading.CPUPackageThrottleEvents != nil {
+			pack = append(pack, *reading.CPUPackageThrottleEvents)
+		}
+		if reading.MaximumTemperatureCelsius != nil {
+			temperatures = append(temperatures, *reading.MaximumTemperatureCelsius)
+		}
+		summary.Issues += len(reading.Issues)
+	}
+	summary.CPUCoreThrottleEvents = summarizeCounter(core)
+	summary.CPUPackageThrottleEvents = summarizeCounter(pack)
+	summary.MaximumTemperatureCelsius = summarizeRange(temperatures)
+	return summary
+}
+
+func cloneThermalMetrics(metrics *metricobserver.ThermalMetricIdentity) *EvidencePassportThermalMetrics {
+	if metrics == nil {
+		return nil
+	}
+	return &EvidencePassportThermalMetrics{
+		ObservationAvailable:      metrics.ObservationAvailable,
+		Active:                    metrics.Active,
+		CPUCoreThrottleEvents:     metrics.CPUCoreThrottleEvents,
+		CPUPackageThrottleEvents:  metrics.CPUPackageThrottleEvents,
+		Latched:                   metrics.Latched,
+		MaximumTemperatureCelsius: metrics.MaximumTemperatureCelsius,
+	}
+}
+
+func summarizeCounter(values []uint64) *EvidencePassportCounter {
+	if len(values) == 0 {
+		return nil
+	}
+	return &EvidencePassportCounter{Samples: len(values), First: values[0], Last: values[len(values)-1]}
+}
+
+func summarizeRange(values []float64) *EvidencePassportRange {
+	if len(values) == 0 {
+		return nil
+	}
+	minimum, maximum := values[0], values[0]
+	for _, value := range values[1:] {
+		minimum = math.Min(minimum, value)
+		maximum = math.Max(maximum, value)
+	}
+	return &EvidencePassportRange{Samples: len(values), Minimum: minimum, Maximum: maximum}
 }
 
 func summarizeLatency(values []float64) (EvidencePassportLatency, error) {
@@ -208,7 +315,7 @@ func summarizeLatency(values []float64) (EvidencePassportLatency, error) {
 	}, nil
 }
 
-func summarizeWatts(samples []powerobserver.Sample) *EvidencePassportWatts {
+func summarizeWatts(samples []metricobserver.Sample) *EvidencePassportWatts {
 	if len(samples) == 0 {
 		return nil
 	}

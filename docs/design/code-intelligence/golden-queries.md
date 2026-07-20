@@ -39,15 +39,15 @@ consume the S3 client adapter.
 
 Required evidence: `go list` for actual imports and source for responsibilities.
 
-## Q4. Where is the PowerObserver adapter boundary?
+## Q4. Where is the MetricObserver adapter boundary?
 
-`internal/powerobserver` owns the plain observation contract.
-`internal/powerobserver/edgemetrics` imports and implements that contract.
-Profiler controller code consumes the adapter for power-source fact resolution;
+`internal/metricobserver` owns the plain observation contract.
+`internal/metricobserver/edgemetrics` imports and implements that contract.
+Profiler controller code consumes the adapter for metric-source fact resolution;
 Profiler evidence and worker packages consume only the plain contract and
 result types.
 
-Required evidence: `go list` for actual imports and the PowerObserver ADR for
+Required evidence: `go list` for actual imports and the MetricObserver ADR for
 allowed direction. Package edges do not prove runtime sampling behavior.
 
 ## Q5. What changes if ProfilingRunStatus.IntentDigest changes?

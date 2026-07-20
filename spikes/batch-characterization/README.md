@@ -1,8 +1,7 @@
 # Batch Characterization Spike
 
-> TODO(internal): This directory is disposable design evidence. Production
-> ownership moves to ModelArtifact/DeviceProfile APIs, profiler reconciliation,
-> runtime-specific contract builders, owned Run Jobs, and status derivation.
+This directory is isolated design evidence. It does not define production API,
+reconciliation, or profile-publication contracts.
 
 This isolated spike measures the fixed-batch execution curve for one immutable
 runtime state. It is the smallest Layer-0 experiment needed before CHILL can
@@ -19,14 +18,13 @@ The adaptive cloud-side runner measures batches `1, 2, 4, ...` sequentially
 and stops the coarse search at the first strict increase in energy per request.
 It then applies discrete binary refinement only inside the preceding/current
 batch interval. Each measured batch runs as a one-Pod Indexed Job containing
-separate runtime and
-PowerObserver containers. After warm-up, the containers coordinate one bounded
-measurement window through an `emptyDir`; runtime and power evidence remain in
-separate structured log records.
+separate runtime and MetricObserver containers. After warm-up, the containers
+coordinate one bounded measurement window through an `emptyDir`; runtime and
+power evidence remain in separate structured log records.
 
 The profiling orchestrator resolves the target Node's edge-metrics exporter
 before creating the workload and passes the resolved endpoint through a
-ConfigMap. The edge-side PowerObserver has no Kubernetes API credentials; it
+ConfigMap. The edge-side MetricObserver has no Kubernetes API credentials; it
 polls the resolved `shelly_power_total_watts` endpoint once per second. The
 runtime container does not own power measurement. Scientific acceptance and
 `bSat` derivation remain outside this integration checkpoint.

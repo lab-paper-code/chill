@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -57,8 +58,8 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx", Digest: "sha256:artifact",
 		},
-		PowerObserverImage: "observer@sha256:digest",
-		Verdict:            "Compatible", Reasons: []CandidateReportReason{},
+		MetricObserverImage: "observer@sha256:digest",
+		Verdict:             "Compatible", Reasons: []CandidateReportReason{},
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -88,6 +89,32 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 	}
 	if _, err := DecodeCandidateReport(append(valid, valid...)); err == nil {
 		t.Fatal("expected multiple JSON values rejection")
+	}
+}
+
+func TestCandidateReportReadsRetainedObserverImageName(t *testing.T) {
+	payload := []byte(`{
+  "schemaVersion":"chill.dacs.io/modelcompat-report.v1alpha1",
+  "scope":"StaticCompatibility",
+  "inputs":{},
+  "selection":{},
+  "powerObserverImage":"registry.example/observer@sha256:retained",
+  "verdict":"Incompatible",
+  "reasons":[]
+}`)
+	var report CandidateReport
+	if err := json.Unmarshal(payload, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.MetricObserverImage != "registry.example/observer@sha256:retained" {
+		t.Fatalf("observer image = %q", report.MetricObserverImage)
+	}
+	current, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), `"metricObserverImage"`) || strings.Contains(string(current), `"powerObserverImage"`) {
+		t.Fatalf("current candidate report wire shape = %s", current)
 	}
 }
 

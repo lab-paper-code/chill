@@ -18,6 +18,12 @@ spec:
     configRef:
       name: {{ include "chill.profilerConfigName" . | quote }}
     {{- end }}
+  evidenceStore:
+    enabled: {{ .Values.evidenceStore.enabled }}
+    {{- if .Values.evidenceStore.enabled }}
+    configRef:
+      name: {{ .Values.evidenceStore.configRef.name | quote }}
+    {{- end }}
   deviceDiscovery:
     enabled: {{ .Values.discovery.enabled }}
     labelKey: {{ .Values.discovery.labelKey | quote }}

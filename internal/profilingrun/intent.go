@@ -36,8 +36,8 @@ func (i Intent) Validate() error {
 			return fmt.Errorf("%s must be a canonical SHA-256 digest", name)
 		}
 	}
-	if i.Power.ConfigurationContentDigest != "" && !digestPattern.MatchString(i.Power.ConfigurationContentDigest) {
-		return errors.New("power.configurationContentDigest must be a canonical SHA-256 digest")
+	if i.Metrics.ConfigurationContentDigest != "" && !digestPattern.MatchString(i.Metrics.ConfigurationContentDigest) {
+		return errors.New("metrics.configurationContentDigest must be a canonical SHA-256 digest")
 	}
 	if i.Candidate.Verdict != "Compatible" {
 		return fmt.Errorf("candidate verdict must be Compatible, got %q", i.Candidate.Verdict)
@@ -60,26 +60,26 @@ func (i Intent) Validate() error {
 		"measurement.workloadMode":     i.Measurement.WorkloadMode,
 		"measurement.inputGenerator":   i.Measurement.InputGenerator,
 		"measurement.outputValidation": i.Measurement.OutputValidation,
-		"power.sourceKind":             i.Power.SourceKind,
-		"power.nodeName":               i.Power.NodeName,
-		"power.endpoint":               i.Power.Endpoint,
-		"power.metric":                 i.Power.Metric,
+		"metrics.sourceKind":           i.Metrics.SourceKind,
+		"metrics.nodeName":             i.Metrics.NodeName,
+		"metrics.endpoint":             i.Metrics.Endpoint,
+		"metrics.powerMetric":          i.Metrics.PowerMetric,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
 		}
 	}
 	for name, value := range map[string]string{
-		"images.runtime":       i.Images.Runtime,
-		"images.artifact":      i.Images.Artifact,
-		"images.powerObserver": i.Images.PowerObserver,
+		"images.runtime":        i.Images.Runtime,
+		"images.artifact":       i.Images.Artifact,
+		"images.metricObserver": i.Images.MetricObserver,
 	} {
 		if !imagePattern.MatchString(value) {
 			return fmt.Errorf("%s must be repository@sha256", name)
 		}
 	}
-	if i.Power.NodeName != i.TargetNode.Name {
-		return errors.New("power nodeName must match target Node")
+	if i.Metrics.NodeName != i.TargetNode.Name {
+		return errors.New("metrics nodeName must match target Node")
 	}
 	if err := i.validateCPUContract(); err != nil {
 		return err
@@ -90,10 +90,10 @@ func (i Intent) Validate() error {
 	if i.Measurement.Repetitions != 1 {
 		return errors.New("first profiling path requires exactly one measurement repetition")
 	}
-	if i.Power.IntervalMilliseconds < 1 || i.Power.TimeoutMilliseconds < 1 ||
-		i.Power.TimeoutMilliseconds >= i.Power.IntervalMilliseconds ||
-		i.Power.DurationSeconds < i.Measurement.DurationSeconds {
-		return errors.New("invalid or under-covering power observation request")
+	if i.Metrics.IntervalMilliseconds < 1 || i.Metrics.TimeoutMilliseconds < 1 ||
+		i.Metrics.TimeoutMilliseconds >= i.Metrics.IntervalMilliseconds ||
+		i.Metrics.DurationSeconds < i.Measurement.DurationSeconds {
+		return errors.New("invalid or under-covering metric observation request")
 	}
 	return nil
 }
@@ -101,6 +101,10 @@ func (i Intent) Validate() error {
 func (i Intent) validateSchema() error {
 	switch i.SchemaVersion {
 	case SchemaVersion:
+		if !validArtifactPath(i.State.ArtifactPath) {
+			return errors.New("state.artifactPath must be a clean absolute container path")
+		}
+	case previousIntentSchemaVersion:
 		if !validArtifactPath(i.State.ArtifactPath) {
 			return errors.New("state.artifactPath must be a clean absolute container path")
 		}
@@ -148,6 +152,35 @@ func (i Intent) CanonicalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(i)
+}
+
+// MarshalJSON preserves the exact retained wire shape of older immutable
+// intents while emitting only the current component name for new intents.
+func (i Intent) MarshalJSON() ([]byte, error) {
+	if i.SchemaVersion == legacyIntentSchemaVersion || i.SchemaVersion == previousIntentSchemaVersion {
+		return json.Marshal(struct {
+			SchemaVersion string               `json:"schemaVersion"`
+			Candidate     CandidateIdentity    `json:"candidate"`
+			State         ExecutionState       `json:"state"`
+			Images        legacyImages         `json:"images"`
+			TargetNode    NodeSnapshot         `json:"targetNode"`
+			CPU           CPUContract          `json:"cpu"`
+			Measurement   MeasurementContract  `json:"measurement"`
+			Metrics       legacyMetricContract `json:"power"`
+		}{
+			i.SchemaVersion, i.Candidate, i.State,
+			legacyImages{i.Images.Runtime, i.Images.Artifact, i.Images.MetricObserver},
+			i.TargetNode, i.CPU, i.Measurement, legacyMetricContractFromCurrent(i.Metrics),
+		})
+	}
+	type wire Intent
+	return json.Marshal(wire(i))
+}
+
+type legacyImages struct {
+	Runtime  string `json:"runtime"`
+	Artifact string `json:"artifact"`
+	Observer string `json:"powerObserver"`
 }
 
 func (i Intent) Digest() (string, error) {

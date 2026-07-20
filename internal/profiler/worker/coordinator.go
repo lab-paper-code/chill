@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
@@ -30,10 +30,10 @@ type RuntimeRequest struct {
 	ScheduledNodeName string
 }
 
-// PowerResultReader returns the complete result produced by the separate
-// PowerObserver process after the runtime measurement.
-type PowerResultReader interface {
-	Read(context.Context) (powerobserver.Result, error)
+// MetricResultReader returns the complete result produced by the separate
+// MetricObserver process after the runtime measurement.
+type MetricResultReader interface {
+	Read(context.Context) (metricobserver.Result, error)
 }
 
 type Request struct {
@@ -45,28 +45,28 @@ type Request struct {
 }
 
 // Coordinator assembles and immutably commits one raw measurement. It holds no
-// state between calls and does not choose a runtime, power source, or store.
+// state between calls and does not choose a runtime, metric source, or store.
 type Coordinator struct {
 	runtime Runtime
-	power   PowerResultReader
+	metrics MetricResultReader
 	store   evidencestore.ImmutableWriter
 }
 
 func NewCoordinator(
 	runtime Runtime,
-	power PowerResultReader,
+	metrics MetricResultReader,
 	store evidencestore.ImmutableWriter,
 ) (*Coordinator, error) {
 	if runtime == nil {
 		return nil, errors.New("measurement runtime is required")
 	}
-	if power == nil {
-		return nil, errors.New("power result reader is required")
+	if metrics == nil {
+		return nil, errors.New("metric result reader is required")
 	}
 	if store == nil {
 		return nil, errors.New("immutable evidence writer is required")
 	}
-	return &Coordinator{runtime: runtime, power: power, store: store}, nil
+	return &Coordinator{runtime: runtime, metrics: metrics, store: store}, nil
 }
 
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
@@ -113,20 +113,20 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		return evidencestore.Receipt{}, fmt.Errorf("%w: validate runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
 
-	powerResult, err := c.power.Read(ctx)
+	metricResult, err := c.metrics.Read(ctx)
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("%w: read power observation result: %w", ErrPowerObservation, err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: read metric observation result: %w", ErrMetricObservation, err)
 	}
 	raw := evidence.RawMeasurement{
 		SchemaVersion: evidence.RawMeasurementSchemaVersion,
 		IntentDigest:  digest,
 		PodUID:        request.PodUID,
 		Runtime:       runtimeResult,
-		Power:         powerResult,
+		Metrics:       metricResult,
 	}
 	payload, err := raw.CanonicalJSON(request.Intent)
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("%w: construct raw measurement: %w", ErrPowerObservation, err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: construct raw measurement: %w", ErrMetricObservation, err)
 	}
 
 	identity := identityFor(request.RawLocation, payload)

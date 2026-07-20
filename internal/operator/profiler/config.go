@@ -30,7 +30,7 @@ type Config struct {
 type FactSourceConfig struct {
 	ConfigMapName     string `json:"configMapName"`
 	ExecutionFactsKey string `json:"executionFactsKey"`
-	PowerSourcesKey   string `json:"powerSourcesKey"`
+	MetricSourcesKey  string `json:"metricSourcesKey"`
 }
 
 func (c Config) Validate() error {
@@ -45,14 +45,14 @@ func (c Config) Validate() error {
 		{name: "metricsBindAddress", value: c.MetricsBindAddress},
 		{name: "factSource.configMapName", value: c.FactSource.ConfigMapName},
 		{name: "factSource.executionFactsKey", value: c.FactSource.ExecutionFactsKey},
-		{name: "factSource.powerSourcesKey", value: c.FactSource.PowerSourcesKey},
+		{name: "factSource.metricSourcesKey", value: c.FactSource.MetricSourcesKey},
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			problems = append(problems, field.name+" is required")
 		}
 	}
-	if c.FactSource.ExecutionFactsKey != "" && c.FactSource.ExecutionFactsKey == c.FactSource.PowerSourcesKey {
-		problems = append(problems, "factSource execution and power keys must be different")
+	if c.FactSource.ExecutionFactsKey != "" && c.FactSource.ExecutionFactsKey == c.FactSource.MetricSourcesKey {
+		problems = append(problems, "factSource execution and metric keys must be different")
 	}
 	if c.Replicas < 1 {
 		problems = append(problems, "replicas must be positive")

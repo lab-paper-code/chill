@@ -34,7 +34,7 @@ type profilingRunDocument struct {
 
 func writeProfilingRuns(writer io.Writer, output string, snapshot operatorconsole.ProfilingRunsSnapshot) error {
 	document := profilingRunsOutput(snapshot)
-	if output == "json" {
+	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(document)
@@ -52,7 +52,9 @@ func writeProfilingRunsTable(writer io.Writer, document profilingRunsDocument) e
 		document.ReadAt, display(document.ResourceVersion), display(scope)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(table, "NAMESPACE\tRUN\tMODEL\tEXECUTION_PATH\tDEVICE_CLASS\tTARGET_NODE\tBATCH\tGENERATION\tOBSERVED\tINTENT_DIGEST"); err != nil {
+	const runHeader = "NAMESPACE\tRUN\tMODEL\tEXECUTION_PATH\tDEVICE_CLASS\tTARGET_NODE\t" +
+		"BATCH\tGENERATION\tOBSERVED\tINTENT_DIGEST"
+	if _, err := fmt.Fprintln(table, runHeader); err != nil {
 		return err
 	}
 	for _, run := range document.Runs {
@@ -63,7 +65,9 @@ func writeProfilingRunsTable(writer io.Writer, document profilingRunsDocument) e
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(table, "\nNAMESPACE\tRUN\tCONDITION\tSTATUS\tOBSERVED\tREASON\tLAST_TRANSITION\tMESSAGE"); err != nil {
+	const conditionHeader = "\nNAMESPACE\tRUN\tCONDITION\tSTATUS\tOBSERVED\tREASON\t" +
+		"LAST_TRANSITION\tMESSAGE"
+	if _, err := fmt.Fprintln(table, conditionHeader); err != nil {
 		return err
 	}
 	for _, run := range document.Runs {

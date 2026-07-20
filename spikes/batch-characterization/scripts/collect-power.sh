@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# TODO(internal): Remove local port-forwarding. The profiler controller should
-# bind each immutable Run to a resolved PowerSource and retained observation.
+# Query retained Prometheus power samples for each immutable spike Run through
+# a bounded local port-forward.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

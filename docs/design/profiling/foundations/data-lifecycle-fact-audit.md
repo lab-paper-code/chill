@@ -55,7 +55,7 @@ not own Kubernetes objects, files, databases, retention, or deletion:
 | Package | Values produced | Current persistence owner |
 |---|---|---|
 | `internal/modelcompat` | compatibility verdict and typed reasons | none |
-| `internal/powerobserver` | source identity, raw samples, read failures, timing, and factual summary | none |
+| `internal/metricobserver` | source identity, raw samples, read failures, timing, and factual summary | none |
 | `internal/profilingrun` | immutable intent identity and runtime-evidence validation | none |
 | `internal/profilederivation` | admission verdict, energy estimates, points, uncertainty, and `b_sat` result | none |
 
@@ -69,7 +69,7 @@ The profiling spike retains one content-addressed JSON bundle containing:
 - the candidate report and immutable Run intent;
 - raw Job, Pod, actual Node, and co-resident Pod snapshots;
 - runtime result, identities, latency samples, and execution facts; and
-- the unmodified PowerObserver result.
+- the unmodified MetricObserver result.
 
 The collector hashes the exact encoded bytes, writes a temporary file, and
 renames it to a digest-derived filename. The retained example is 389,364 bytes.

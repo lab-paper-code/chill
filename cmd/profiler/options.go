@@ -16,7 +16,7 @@ type options struct {
 	leaderElectionID     string
 	factSourceConfigMap  string
 	executionFactsKey    string
-	powerSourcesKey      string
+	metricSourcesKey     string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -33,7 +33,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
 	flags.StringVar(&o.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
 	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
-	flags.StringVar(&o.powerSourcesKey, "power-sources-key", "", "ConfigMap key containing Node power sources.")
+	flags.StringVar(&o.metricSourcesKey, "metric-sources-key", "", "ConfigMap key containing Node metric sources.")
 }
 
 func (o options) validate() error {
@@ -45,15 +45,15 @@ func (o options) validate() error {
 		{name: "watch namespace", value: o.watchNamespace},
 		{name: "fact-source ConfigMap", value: o.factSourceConfigMap},
 		{name: "execution-facts key", value: o.executionFactsKey},
-		{name: "power-sources key", value: o.powerSourcesKey},
+		{name: "metric-sources key", value: o.metricSourcesKey},
 	}
 	for _, field := range required {
 		if strings.TrimSpace(field.value) == "" || strings.TrimSpace(field.value) != field.value {
 			return errors.New(field.name + " is required without surrounding whitespace")
 		}
 	}
-	if o.executionFactsKey == o.powerSourcesKey {
-		return errors.New("execution-facts and power-sources keys must be different")
+	if o.executionFactsKey == o.metricSourcesKey {
+		return errors.New("execution-facts and metric-sources keys must be different")
 	}
 	return nil
 }

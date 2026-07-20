@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 registry="${SPIKE_REGISTRY:-155.230.35.213:5000/chill}"
 runtime_image="${registry}/spike-batch-characterization:cpu-v1"
-observer_image="${registry}/spike-power-observer:v0"
+observer_image="${registry}/spike-metric-observer:v0"
 probe_runner="${RUNTIME_PROBE_RUNNER:-ctr-plain-http}"
 declaration_dir="${repo_root}/spikes/batch-characterization/results/runtime-declarations"
 declaration_helper="${repo_root}/spikes/batch-characterization/scripts/runtime_declaration.py"
@@ -85,7 +85,7 @@ declaration_path="$(python3 "${declaration_helper}" emit \
   --output-dir "${declaration_dir}")"
 
 docker buildx build --platform linux/amd64 \
-  --file "${repo_root}/spikes/power-observer/images/observer.Dockerfile" \
+  --file "${repo_root}/spikes/metric-observer/images/observer.Dockerfile" \
   --tag "${observer_image}" \
   --output type=registry,registry.insecure=true \
   "${repo_root}"

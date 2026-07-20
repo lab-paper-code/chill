@@ -67,7 +67,7 @@ def human_result(payload: dict[str, object]) -> None:
     print(f"ORT intra / inter       : {cpu['ortIntraOpThreads']} / {cpu['ortInterOpThreads']}", flush=True)
     print(f"CPU used                : {stat.get('usage_usec', 0) / 1_000_000:.3f} CPU-s", flush=True)
     print(f"CPU throttled           : {stat.get('throttled_usec', 0) / 1_000_000:.3f} CPU-s", flush=True)
-    print("power result            : see power-observer container", flush=True)
+    print("metric result            : see metric-observer container", flush=True)
     print("---------------------------------------------------------------", flush=True)
 
 
@@ -217,7 +217,7 @@ def main() -> None:
         deadline = time.monotonic() + 30
         while not Path(observer_ready_file).exists():
             if time.monotonic() >= deadline:
-                fail("coordination", "PowerObserverNotReady", path=observer_ready_file)
+                fail("coordination", "MetricObserverNotReady", path=observer_ready_file)
             time.sleep(0.01)
         log("INFO", "coordination", "power observer ready")
     if measurement_signal_file:

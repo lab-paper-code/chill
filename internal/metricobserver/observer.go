@@ -1,4 +1,4 @@
-package powerobserver
+package metricobserver
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// Source returns one instantaneous power reading. Implementations own
+// Source returns one instantaneous typed metric reading. Implementations own
 // transport and parsing, not scheduling or evidence-acceptance policy.
 type Source interface {
-	ReadPower(context.Context) (watts float64, err error)
+	ReadMetrics(context.Context) (Reading, error)
 	Identity() SourceIdentity
 }
 
@@ -21,7 +21,7 @@ type Observer struct {
 	now    func() time.Time
 }
 
-var errEventBudgetExceeded = errors.New("power observation event budget exceeded")
+var errEventBudgetExceeded = errors.New("metric observation event budget exceeded")
 
 // New returns an Observer for source.
 func New(source Source) (*Observer, error) {
@@ -116,7 +116,7 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 	started := o.now()
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	watts, err := o.source.ReadPower(requestCtx)
+	reading, err := o.source.ReadMetrics(requestCtx)
 	observedAt := o.now()
 	latency := observedAt.Sub(started)
 	if err != nil {
@@ -138,10 +138,31 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 	}
 	result.Samples = append(result.Samples, Sample{
 		ObservedAt:            observedAt,
-		Watts:                 watts,
+		Watts:                 reading.Watts,
+		Thermal:               cloneThermalReading(reading.Thermal),
 		RequestLatencySeconds: latency.Seconds(),
 	})
 	return nil
+}
+
+func cloneThermalReading(reading ThermalReading) *ThermalReading {
+	copy := reading
+	copy.ObservationAvailable = clonePointer(reading.ObservationAvailable)
+	copy.Active = clonePointer(reading.Active)
+	copy.CPUCoreThrottleEvents = clonePointer(reading.CPUCoreThrottleEvents)
+	copy.CPUPackageThrottleEvents = clonePointer(reading.CPUPackageThrottleEvents)
+	copy.Latched = clonePointer(reading.Latched)
+	copy.MaximumTemperatureCelsius = clonePointer(reading.MaximumTemperatureCelsius)
+	copy.Issues = append([]MetricIssue(nil), reading.Issues...)
+	return &copy
+}
+
+func clonePointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func classify(err error) FailureReason {

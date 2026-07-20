@@ -14,7 +14,7 @@ func TestOptionsBindFlags(t *testing.T) {
 		"--system-name=chill",
 		"--fact-source-config-map=chill-profiler-facts",
 		"--execution-facts-key=execution-facts.yaml",
-		"--power-sources-key=power-sources.yaml",
+		"--metric-sources-key=metric-sources.yaml",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestOptionsBindFlags(t *testing.T) {
 func TestOptionsValidateFactSourceContract(t *testing.T) {
 	valid := options{
 		systemName: "chill", watchNamespace: "chill-system", factSourceConfigMap: "chill-profiler-facts",
-		executionFactsKey: "execution-facts.yaml", powerSourcesKey: "power-sources.yaml",
+		executionFactsKey: "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 		func(options *options) { options.systemName = "" },
 		func(options *options) { options.factSourceConfigMap = "" },
 		func(options *options) { options.executionFactsKey = " " },
-		func(options *options) { options.powerSourcesKey = options.executionFactsKey },
+		func(options *options) { options.metricSourcesKey = options.executionFactsKey },
 	} {
 		candidate := valid
 		mutate(&candidate)

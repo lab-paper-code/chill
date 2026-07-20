@@ -41,7 +41,7 @@ if len(ready) != 1:
     raise SystemExit(f"expected one Ready edge-metrics exporter, found {len(ready)}")
 print("http://{}:9102/metrics".format(ready[0]["status"]["podIP"]))
 ')"
-kubectl create configmap power-observer-target \
+kubectl create configmap metric-observer-target \
   --namespace chill-batch-characterization \
   --from-literal="endpoint=${source_endpoint}" \
   --dry-run=client -o yaml | kubectl apply -f -

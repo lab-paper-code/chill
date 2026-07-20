@@ -16,7 +16,8 @@ func TestServiceProxyEvidencePassportQueryUsesKubernetesServiceProxy(t *testing.
 	t.Parallel()
 	passport := testEvidencePassport()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		want := "/api/v1/namespaces/chill-system/services/chill-console:http/proxy/api/v1/namespaces/chill-system/profiling-runs/cpu-run/evidence-passport"
+		want := "/api/v1/namespaces/chill-system/services/chill-console:http/proxy" +
+			"/api/v1/namespaces/chill-system/profiling-runs/cpu-run/evidence-passport"
 		if request.Method != http.MethodGet || request.URL.Path != want {
 			t.Fatalf("request = %s %s, want GET %s", request.Method, request.URL.Path, want)
 		}

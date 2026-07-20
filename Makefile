@@ -8,7 +8,7 @@ OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
-POWER_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-power-observer:$(IMAGE_TAG)
+METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
@@ -261,7 +261,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/node-discovery ./cmd/node-discovery
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/console ./cmd/console
-	go build -o bin/power-observer ./cmd/power-observer
+	go build -o bin/metric-observer ./cmd/metric-observer
 	go build -o bin/measurement-worker ./cmd/measurement-worker
 
 .PHONY: run
@@ -290,16 +290,16 @@ docker-build-profiler: ## Build the Profiler image.
 docker-build-console: ## Build the Console API image.
 	$(CONTAINER_TOOL) build -f build/docker/console.Dockerfile -t $(CONSOLE_IMG) .
 
-.PHONY: docker-build-power-observer
-docker-build-power-observer: ## Build the PowerObserver image.
-	$(CONTAINER_TOOL) build -f build/docker/power-observer.Dockerfile -t $(POWER_OBSERVER_IMG) .
+.PHONY: docker-build-metric-observer
+docker-build-metric-observer: ## Build the MetricObserver image.
+	$(CONTAINER_TOOL) build -f build/docker/metric-observer.Dockerfile -t $(METRIC_OBSERVER_IMG) .
 
 .PHONY: docker-build-measurement-worker
 docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-console docker-build-power-observer docker-build-measurement-worker ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -320,16 +320,16 @@ docker-push-profiler: ## Push the Profiler image.
 docker-push-console: ## Push the Console API image.
 	$(CONTAINER_TOOL) push $(CONSOLE_IMG)
 
-.PHONY: docker-push-power-observer
-docker-push-power-observer: ## Push the PowerObserver image.
-	$(CONTAINER_TOOL) push $(POWER_OBSERVER_IMG)
+.PHONY: docker-push-metric-observer
+docker-push-metric-observer: ## Push the MetricObserver image.
+	$(CONTAINER_TOOL) push $(METRIC_OBSERVER_IMG)
 
 .PHONY: docker-push-measurement-worker
 docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-console docker-push-power-observer docker-push-measurement-worker ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-console docker-push-metric-observer docker-push-measurement-worker ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -366,11 +366,11 @@ docker-buildx-console: ## Build and push the Console API image for cross-platfor
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/console.Dockerfile --tag $(CONSOLE_IMG) .
 
-.PHONY: docker-buildx-power-observer
-docker-buildx-power-observer: ## Build and push the PowerObserver image for cross-platform support.
+.PHONY: docker-buildx-metric-observer
+docker-buildx-metric-observer: ## Build and push the MetricObserver image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/power-observer.Dockerfile --tag $(POWER_OBSERVER_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/metric-observer.Dockerfile --tag $(METRIC_OBSERVER_IMG) .
 
 .PHONY: docker-buildx-measurement-worker
 docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measurement worker platform.
@@ -379,7 +379,7 @@ docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measure
 	$(CONTAINER_TOOL) buildx build --push --platform=$(MEASUREMENT_WORKER_PLATFORMS) -f build/docker/measurement-worker.Dockerfile --tag $(MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-console docker-buildx-power-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

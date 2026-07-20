@@ -58,7 +58,7 @@ ProfilingRun desired state
   -> CHILL Profiler controller
   -> exact intent frozen
   -> owned Kubernetes Job
-  -> measurement Job executes runtime worker + PowerObserver helper
+  -> measurement Job executes runtime worker + MetricObserver helper
   -> immutable raw measurement object
   -> Profiler finalizes execution evidence from terminal Kubernetes facts
   -> single-Run admission result
@@ -136,7 +136,7 @@ manager's uncached API reader so they do not implicitly require informer
 - coordinating one Run from accepted request through terminal admission;
 - using static compatibility before execution;
 - freezing the selected candidate, Node snapshot, runtime images, measurement
-  contract, and resolved power-source identity into one immutable intent;
+  contract, and resolved metric-source identity into one immutable intent;
 - driving the Run state machine idempotently;
 - preserving typed failure reasons without converting them into profile facts;
 - invoking existing Run validation and admission packages; and
@@ -167,9 +167,9 @@ state in process memory.
 
 - running inside the one-shot `ProfilingRun` Job;
 - executing the frozen runtime and artifact contract;
-- coordinating the measurement window with the PowerObserver helper;
-- validating and assembling only runtime and power facts observable during
-  execution without changing the frozen intent;
+- coordinating the measurement window with the MetricObserver helper;
+- validating and assembling only runtime and typed metric facts observable
+  during execution without changing the frozen intent;
 - writing one immutable raw-measurement object to the configured durable
   evidence sink;
 - emitting a bounded receipt that identifies the committed object; and
@@ -179,17 +179,17 @@ The Job is the execution plane. A Profiler controller restart or leader change
 does not restart measurement in controller memory or create a second
 measurement path.
 
-### PowerObserver helper owns
+### MetricObserver helper owns
 
 - running beside the runtime worker in the same one-shot Job;
-- invoking `internal/powerobserver` for the bounded frozen window;
-- atomically handing one complete power result to the runtime worker; and
+- invoking `internal/metricobserver` for the bounded frozen window;
+- atomically handing one complete metric result to the runtime worker; and
 - exiting without storage credentials or evidence-write authority.
 
 ### Existing leaf packages retain ownership
 
 - `internal/modelcompat`: static artifact/runtime/DeviceClass compatibility;
-- `internal/powerobserver`: bounded raw power observation;
+- `internal/metricobserver`: bounded typed metric observation;
 - `internal/profilingrun`: immutable intent and execution-evidence validation;
 - `internal/profilederivation`: scientific admission and later derivation.
 
@@ -246,7 +246,7 @@ derive one immutable intent:
 - selected DeviceClass and target Node;
 - selected power mode;
 - fixed batch, warm-up, duration, repetitions, and CPU policy;
-- power-source selection by Node, not a caller-supplied endpoint; and
+- metric-source selection by Node, not a caller-supplied endpoint; and
 - admission-policy identity.
 
 The Profiler resolves the selected Node to an edge-metrics source before it
@@ -290,9 +290,9 @@ The concrete adapters remain narrow:
   declaration -> pure static-compatibility evaluation and exact candidate
   report;
 - Node resolver: exact API read and class-membership validation;
-- power-source resolver: selected Node -> configured edge-metrics source.
+- metric-source resolver: selected Node -> configured edge-metrics source.
 
-Caller-supplied image references, runtime declarations, and power endpoints are
+Caller-supplied image references, runtime declarations, and metric endpoints are
 not accepted in `ProfilingRun`.
 
 Status remains compact and reconstructable:
@@ -356,8 +356,8 @@ runtime worker entrypoint
        +--> explicit CPU ORT execution adapter
        +--> durable evidence sink
 
-power-observer entrypoint
-  -> internal/powerobserver
+metric-observer entrypoint
+  -> internal/metricobserver
        +--> edge-metrics adapter
 
 api/v1alpha1/
@@ -408,7 +408,7 @@ Recommended decision: one enabled Profiler operand per `ChillSystem` and one
 Run in the CHILL release namespace with immutable execution inputs; no campaign
 fields, namespace override, or mutable desired/current phase model.
 
-### Checkpoint 2: Node-to-power-source resolution
+### Checkpoint 2: Node-to-metric-source resolution
 
 Define the narrow resolver contract and the exact Kubernetes facts that bind a
 Node to the existing edge-metrics deployment. Resolution failure must be a
@@ -528,7 +528,7 @@ mutable cancel field is required by this checkpoint.
 The concrete serialization, Job-local synchronization, raw-measurement write,
 bounded termination receipt, and worker exit classes are fixed by the
 [Measurement Worker contract](../components/measurement-worker.md). It
-retains the spike-proven runtime plus PowerObserver topology without adding an
+retains the spike-proven runtime plus observer topology without adding an
 uploader sidecar. Both durable writes use the same evidence-store contract and
 distinct immutable object identities. Logs and controller memory are not
 handoff paths.
@@ -556,7 +556,7 @@ handoff paths.
    Helm-installed runtime identity and direct owner-based event mapping.
    Implemented through Job outcome and evidence status publication.
 9. Add the one-shot measurement Job boundary, then promote only the proven CPU
-   ORT runtime-worker and PowerObserver-helper behavior from the spike into it.
+   ORT runtime-worker and MetricObserver-helper behavior from the spike into it.
    Implemented and live-verified.
 10. Add the selected durable evidence sink. Implemented and live-verified for
     raw and finalized execution evidence.

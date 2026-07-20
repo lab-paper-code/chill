@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/powerobserver"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
@@ -40,24 +40,54 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	if string(first) != string(roundTrip) {
 		t.Fatal("raw measurement does not survive an encode/decode round trip")
 	}
-	if raw.Power.StartedAt.Location() == time.UTC {
+	if raw.Metrics.StartedAt.Location() == time.UTC {
 		t.Fatal("canonical encoding mutated the caller's power timestamps")
 	}
 
 	drifted := raw
-	drifted.Power.Source.NodeName = "other"
+	drifted.Metrics.Source.NodeName = "other"
 	if err := drifted.Validate(intent); err == nil {
-		t.Fatal("expected power source identity drift rejection")
+		t.Fatal("expected metric source identity drift rejection")
 	}
 
 	drifted = raw
-	drifted.Power.Summary.Attempts++
+	drifted.Metrics.Summary.Attempts++
 	if err := drifted.Validate(intent); err == nil {
-		t.Fatal("expected inconsistent power summary rejection")
+		t.Fatal("expected inconsistent metric summary rejection")
+	}
+
+	drifted = raw
+	drifted.Metrics.Source.ThermalMetrics = nil
+	if err := drifted.Validate(intent); err == nil {
+		t.Fatal("expected missing thermal metric identity rejection")
 	}
 }
 
-func TestRawMeasurementRequiresOverlappingRuntimeAndPowerWindows(t *testing.T) {
+func TestRetainedRawMeasurementWireShapeRemainsReadable(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	raw.SchemaVersion = legacyRawMeasurementSchemaVersion
+	raw.Metrics.Source.ThermalMetrics = nil
+	for index := range raw.Metrics.Samples {
+		raw.Metrics.Samples[index].Thermal = nil
+	}
+	payload, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"power":`) || strings.Contains(string(payload), `"metrics":`) {
+		t.Fatalf("retained raw measurement wire shape = %s", payload)
+	}
+	var decoded RawMeasurement
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.Validate(intent); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	runtimeStarted, runtimeEnded, err := raw.Runtime.MeasurementWindow()
@@ -86,12 +116,12 @@ func TestRawMeasurementRequiresOverlappingRuntimeAndPowerWindows(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := raw
-			candidate.Power.StartedAt = test.powerStart
-			candidate.Power.EndedAt = test.powerEnd
-			candidate.Power.Samples = nil
-			candidate.Power.Summary.Attempts = 0
-			candidate.Power.Summary.SuccessfulSamples = 0
-			candidate.Power.Summary.ObservationDurationSeconds = test.powerEnd.Sub(test.powerStart).Seconds()
+			candidate.Metrics.StartedAt = test.powerStart
+			candidate.Metrics.EndedAt = test.powerEnd
+			candidate.Metrics.Samples = nil
+			candidate.Metrics.Summary.Attempts = 0
+			candidate.Metrics.Summary.SuccessfulSamples = 0
+			candidate.Metrics.Summary.ObservationDurationSeconds = test.powerEnd.Sub(test.powerStart).Seconds()
 			err := candidate.Validate(intent)
 			if (err != nil) != test.wantError {
 				t.Fatalf("Validate() error = %v, wantError=%v", err, test.wantError)
@@ -230,21 +260,29 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			}},
 			Latency: map[string]float64{"p95": 2, "mean": 1.5},
 		},
-		Power: powerobserver.Result{
-			Source: powerobserver.SourceIdentity{
-				Kind:     intent.Power.SourceKind,
-				NodeName: intent.Power.NodeName,
-				Endpoint: intent.Power.Endpoint,
-				Metric:   intent.Power.Metric,
+		Metrics: metricobserver.Result{
+			Source: metricobserver.SourceIdentity{
+				Kind:     intent.Metrics.SourceKind,
+				NodeName: intent.Metrics.NodeName,
+				Endpoint: intent.Metrics.Endpoint,
+				Metric:   intent.Metrics.PowerMetric,
+				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
+					ObservationAvailable:      "device_thermal_throttle_observation_available",
+					Active:                    "device_thermal_throttle_active",
+					CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
+					CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
+					Latched:                   "device_thermal_throttle_latched",
+					MaximumTemperatureCelsius: "device_thermal_max_celsius",
+				},
 			},
 			StartedAt: started,
 			EndedAt:   started.Add(31 * time.Second),
-			Samples: []powerobserver.Sample{{
+			Samples: []metricobserver.Sample{{
 				ObservedAt: started.Add(time.Second),
 				Watts:      5.2,
 			}},
-			Failures: []powerobserver.Failure{},
-			Summary: powerobserver.Summary{
+			Failures: []metricobserver.Failure{},
+			Summary: metricobserver.Summary{
 				Attempts:                   1,
 				SuccessfulSamples:          1,
 				Failures:                   0,
@@ -315,7 +353,7 @@ func validExecutionEvidence(
 			},
 			Node: NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
 			Containers: []ContainerTerminal{
-				container("power-observer", intent.Images.PowerObserver),
+				container("metric-observer", intent.Images.MetricObserver),
 				container("runtime", intent.Images.Runtime),
 				container("artifact", intent.Images.Artifact),
 			},

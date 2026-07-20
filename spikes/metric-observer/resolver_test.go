@@ -1,4 +1,4 @@
-package powerobserverprobe
+package metricobserverprobe
 
 import (
 	"context"

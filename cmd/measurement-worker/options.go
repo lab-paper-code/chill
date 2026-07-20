@@ -18,7 +18,7 @@ const (
 	defaultWorkspacePath                = "/workspace"
 	defaultObserverReadyPath            = "/coordination/observer-ready"
 	defaultMeasurementStartPath         = "/coordination/measurement-start"
-	defaultPowerResultPath              = "/coordination/power-result.json"
+	defaultMetricResultPath             = "/coordination/metric-result.json"
 	defaultTerminationMessagePath       = "/dev/termination-log"
 	maximumIntentBytes            int64 = 1 << 20
 	maximumReceiptBytes                 = 4 << 10
@@ -36,16 +36,16 @@ type options struct {
 	workspacePath          string
 	observerReadyPath      string
 	measurementStartPath   string
-	powerResultPath        string
+	metricResultPath       string
 	terminationMessagePath string
 	runtimeCommand         []string
 	attemptTimeout         time.Duration
 	observerReadyTimeout   time.Duration
-	powerResultTimeout     time.Duration
+	metricResultTimeout    time.Duration
 	maxLatencySamples      int
 	maxInputBytes          int64
 	maxRuntimeResultBytes  int64
-	maxPowerResultBytes    int64
+	maxMetricResultBytes   int64
 	storeName              string
 	storeEndpoint          string
 	storeBucket            string
@@ -62,7 +62,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.workspacePath = defaultWorkspacePath
 	o.observerReadyPath = defaultObserverReadyPath
 	o.measurementStartPath = defaultMeasurementStartPath
-	o.powerResultPath = defaultPowerResultPath
+	o.metricResultPath = defaultMetricResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
 	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
 	o.podUID = os.Getenv("POD_UID")
@@ -74,11 +74,11 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.intentDigest, "intent-digest", "", "expected frozen Run intent SHA-256")
 	set.DurationVar(&o.attemptTimeout, "attempt-timeout", 0, "Job-derived total worker attempt timeout")
 	set.DurationVar(&o.observerReadyTimeout, "observer-ready-timeout", 0, "Job-derived observer readiness timeout")
-	set.DurationVar(&o.powerResultTimeout, "power-result-timeout", 0, "Job-derived power-result handoff timeout")
+	set.DurationVar(&o.metricResultTimeout, "metric-result-timeout", 0, "Job-derived metric-result handoff timeout")
 	set.IntVar(&o.maxLatencySamples, "max-latency-samples", 0, "Job-derived retained latency sample capacity")
 	set.Int64Var(&o.maxInputBytes, "max-input-bytes", 0, "Job-derived runtime input byte capacity")
 	set.Int64Var(&o.maxRuntimeResultBytes, "max-runtime-result-bytes", 0, "Job-derived runtime result byte capacity")
-	set.Int64Var(&o.maxPowerResultBytes, "max-power-result-bytes", 0, "Job-derived power result byte capacity")
+	set.Int64Var(&o.maxMetricResultBytes, "max-metric-result-bytes", 0, "Job-derived metric result byte capacity")
 	set.StringVar(&o.storeName, "store-name", "", "logical CHILL Evidence Store identity")
 	set.StringVar(&o.storeEndpoint, "store-endpoint", "", "resolved internal Evidence Store endpoint")
 	set.StringVar(&o.storeBucket, "store-bucket", "", "resolved physical evidence bucket")
@@ -111,20 +111,20 @@ func (o options) validate() error {
 	for name, value := range map[string]string{
 		"intent": o.intentPath, "model": o.modelPath, "workspace": o.workspacePath,
 		"observer-ready": o.observerReadyPath, "measurement-start": o.measurementStartPath,
-		"power result": o.powerResultPath, "termination message": o.terminationMessagePath,
+		"metric result": o.metricResultPath, "termination message": o.terminationMessagePath,
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
 			return errors.New(name + " path must be a clean absolute path")
 		}
 	}
-	if o.attemptTimeout <= 0 || o.observerReadyTimeout <= 0 || o.powerResultTimeout <= handoffPollInterval {
+	if o.attemptTimeout <= 0 || o.observerReadyTimeout <= 0 || o.metricResultTimeout <= handoffPollInterval {
 		return errors.New("Job-derived worker timeouts are invalid")
 	}
-	if o.observerReadyTimeout >= o.attemptTimeout || o.powerResultTimeout >= o.attemptTimeout {
+	if o.observerReadyTimeout >= o.attemptTimeout || o.metricResultTimeout >= o.attemptTimeout {
 		return errors.New("handoff timeouts must be shorter than the total worker attempt timeout")
 	}
 	if o.maxLatencySamples < 1 || o.maxInputBytes < 1 ||
-		o.maxRuntimeResultBytes < 1 || o.maxPowerResultBytes < 1 {
+		o.maxRuntimeResultBytes < 1 || o.maxMetricResultBytes < 1 {
 		return errors.New("Job-derived worker capacities must be positive")
 	}
 	if err := (evidencestore.ObjectLocation{Store: o.storeName, Key: o.rawObjectKey}).Validate(); err != nil {

@@ -8,6 +8,9 @@
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
 {{- end -}}
+{{- if and .Values.evidenceStore.enabled (empty .Values.evidenceStore.configRef.name) -}}
+{{- fail "evidenceStore.configRef.name must not be empty when evidenceStore.enabled=true" -}}
+{{- end -}}
 {{- if .Values.console.enabled -}}
 {{- if lt (int .Values.console.replicaCount) 1 -}}
 {{- fail "console.replicaCount must be positive when console.enabled=true" -}}
@@ -53,23 +56,23 @@
 {{- if empty .Values.profiler.factSource.executionFactsKey -}}
 {{- fail "profiler.factSource.executionFactsKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.profiler.factSource.powerSourcesKey -}}
-{{- fail "profiler.factSource.powerSourcesKey must not be empty when profiler.enabled=true" -}}
+{{- if empty .Values.profiler.factSource.metricSourcesKey -}}
+{{- fail "profiler.factSource.metricSourcesKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.powerSourcesKey -}}
-{{- fail "profiler.factSource execution and power keys must be different" -}}
+{{- if eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey -}}
+{{- fail "profiler.factSource execution and metric keys must be different" -}}
 {{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.executionDeclarations) -}}
 {{- fail "profiler.factSource.executionDeclarations must be a list" -}}
 {{- end -}}
-{{- if and .Values.profiler.factSource.executionDeclarations (empty .Values.profiler.factSource.powerObserverImage) -}}
-{{- fail "profiler.factSource.powerObserverImage is required when execution declarations are configured" -}}
+{{- if and .Values.profiler.factSource.executionDeclarations (empty .Values.profiler.factSource.metricObserverImage) -}}
+{{- fail "profiler.factSource.metricObserverImage is required when execution declarations are configured" -}}
 {{- end -}}
-{{- if and .Values.profiler.factSource.powerObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.powerObserverImage)) -}}
-{{- fail "profiler.factSource.powerObserverImage must be digest-pinned" -}}
+{{- if and .Values.profiler.factSource.metricObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.metricObserverImage)) -}}
+{{- fail "profiler.factSource.metricObserverImage must be digest-pinned" -}}
 {{- end -}}
-{{- if not (kindIs "slice" .Values.profiler.factSource.powerSources) -}}
-{{- fail "profiler.factSource.powerSources must be a list" -}}
+{{- if not (kindIs "slice" .Values.profiler.factSource.metricSources) -}}
+{{- fail "profiler.factSource.metricSources must be a list" -}}
 {{- end -}}
 {{- if empty .Values.profiler.image.repository -}}
 {{- fail "profiler.image.repository must not be empty when profiler.enabled=true" -}}

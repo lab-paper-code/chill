@@ -50,7 +50,7 @@ static model-path compatibility
 one immutable profiling Run on Kubernetes
     |
     v
-runtime evidence + power evidence
+runtime evidence + metric evidence
     |
     v
 profile admission and b_sat derivation
@@ -97,7 +97,7 @@ evidence.
 
 Answers only:
 
-> Are the execution and power observations sufficient to admit a profile, and
+> Are the execution and metric observations sufficient to admit a profile, and
 > what energy curve and `b_sat` follow from that evidence?
 
 Its first pure read-only plan is approved against the retained real Run
@@ -126,8 +126,8 @@ admission status. The scope does not orchestrate a batch campaign, derive
 These documents define reusable internal subsystem boundaries. They support the
 plans but do not expand a plan's authorization:
 
-- [PowerObserver](components/power-observer.md) owns bounded factual power
-  observation, not evidence-admission policy or profile derivation.
+- [MetricObserver](components/metric-observer.md) owns bounded typed power and
+  thermal observation, not evidence-admission policy or profile derivation.
 - [Evidence Store](components/evidence-store.md) owns immutable evidence object
   storage and verification boundaries. Its Profiler-consumption plan remains
   separately review-gated.
@@ -159,8 +159,8 @@ plans or competing architecture authorities:
   admission, and derived scheduler facts.
 - The Profiler controller is a time-bounded, reconstructable control plane.
   The one-shot profiling Job is the execution plane that runs inference,
-  observes power, and persists raw evidence.
-- `internal/powerobserver` remains a bounded raw-observation library. It does
+  receives typed metric observations, and persists raw evidence.
+- `internal/metricobserver` remains a bounded raw-observation library. It does
   not own profiling policy or `b_sat`.
 - SLO classification consumes an admitted profile; it does not decide whether
   Layer-0 measurement evidence is scientifically valid.
@@ -177,8 +177,8 @@ one-shot runtime worker
         +-> runtime-specific execution adapter
         +-> durable evidence sink
 
-bounded PowerObserver helper
-        -> internal/powerobserver
+bounded MetricObserver helper
+        -> internal/metricobserver
         -> edge-metrics adapter
 ```
 

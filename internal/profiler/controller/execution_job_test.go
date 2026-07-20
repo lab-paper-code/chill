@@ -18,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const testJobUID = "job-uid"
+
 type staticEvidenceStoreResolver struct {
 	binding EvidenceStoreBinding
 	err     error
@@ -71,7 +73,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 		!hasSecretEnv(runtimeContainer.Env, "AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey) {
 		t.Fatalf("Evidence Store credentials were not projected by Secret reference: %#v", runtimeContainer.Env)
 	}
-	observer := findContainer(t, pod.Containers, "power-observer")
+	observer := findContainer(t, pod.Containers, "metric-observer")
 	assertArgument(t, observer.Args, "--max-events=33")
 }
 
@@ -85,7 +87,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired.UID = "job-uid"
+	desired.UID = testJobUID
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(desired).Build()
 	jobs, err := NewExecutionJobs(
 		kubeClient,
@@ -96,7 +98,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovered, created, err := jobs.Ensure(ctx, run, prepared)
-	if err != nil || created || recovered.UID != "job-uid" {
+	if err != nil || created || recovered.UID != testJobUID {
 		t.Fatalf("expected exact Job recovery, got created=%v job=%#v err=%v", created, recovered, err)
 	}
 

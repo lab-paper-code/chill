@@ -41,10 +41,10 @@ type PreparationRequest struct {
 	TargetNode  string
 	CPURequest  string
 	Measurement profilingrun.MeasurementContract
-	Power       PowerObservationPolicy
+	Metrics     MetricObservationPolicy
 }
 
-type PowerObservationPolicy struct {
+type MetricObservationPolicy struct {
 	IntervalMilliseconds int
 	TimeoutMilliseconds  int
 	DurationSeconds      int
@@ -68,7 +68,7 @@ type ResolvedCandidate struct {
 	ArtifactArchitecture            string
 	ArtifactPath                    string
 	ArtifactDigest                  string
-	PowerObserverImage              string
+	MetricObserverImage             string
 }
 
 // NodeSelection binds the requested Node to facts from the exact DeviceClass
@@ -79,10 +79,10 @@ type NodeSelection struct {
 	DeviceClassSelector map[string]string
 }
 
-type ResolvedPowerSource struct {
+type ResolvedMetricSource struct {
 	Kind                       string
 	Endpoint                   string
-	Metric                     string
+	PowerMetric                string
 	ConfigurationContentDigest string
 }
 
@@ -94,8 +94,8 @@ type NodeResolver interface {
 	ResolveNode(context.Context, NodeSelection) (profilingrun.NodeSnapshot, error)
 }
 
-type PowerSourceResolver interface {
-	ResolvePowerSource(context.Context, string) (ResolvedPowerSource, error)
+type MetricSourceResolver interface {
+	ResolveMetricSource(context.Context, string) (ResolvedMetricSource, error)
 }
 
 type PreparedRun struct {
@@ -109,18 +109,18 @@ type PreparedRun struct {
 type Preparer struct {
 	candidates CandidateResolver
 	nodes      NodeResolver
-	power      PowerSourceResolver
+	metrics    MetricSourceResolver
 }
 
 func NewPreparer(
 	candidates CandidateResolver,
 	nodes NodeResolver,
-	power PowerSourceResolver,
+	metrics MetricSourceResolver,
 ) (*Preparer, error) {
-	if candidates == nil || nodes == nil || power == nil {
-		return nil, errors.New("candidate, Node, and power-source resolvers are required")
+	if candidates == nil || nodes == nil || metrics == nil {
+		return nil, errors.New("candidate, Node, and metric-source resolvers are required")
 	}
-	return &Preparer{candidates: candidates, nodes: nodes, power: power}, nil
+	return &Preparer{candidates: candidates, nodes: nodes, metrics: metrics}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
@@ -148,16 +148,16 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := validateCPURequestFitsNode(request.CPURequest, node.AllocatableCPU); err != nil {
 		return PreparedRun{}, err
 	}
-	power, err := p.power.ResolvePowerSource(ctx, request.TargetNode)
+	metrics, err := p.metrics.ResolveMetricSource(ctx, request.TargetNode)
 	if err != nil {
-		return PreparedRun{}, fmt.Errorf("resolve power source: %w", err)
+		return PreparedRun{}, fmt.Errorf("resolve metric source: %w", err)
 	}
-	if !strings.HasPrefix(power.ConfigurationContentDigest, "sha256:") ||
-		len(power.ConfigurationContentDigest) != len("sha256:")+64 {
-		return PreparedRun{}, errors.New("resolved power source configuration digest must be a canonical SHA-256 digest")
+	if !strings.HasPrefix(metrics.ConfigurationContentDigest, "sha256:") ||
+		len(metrics.ConfigurationContentDigest) != len("sha256:")+64 {
+		return PreparedRun{}, errors.New("resolved metric source configuration digest must be a canonical SHA-256 digest")
 	}
 
-	intent, err := p.freeze(request, candidate, node, power)
+	intent, err := p.freeze(request, candidate, node, metrics)
 	if err != nil {
 		return PreparedRun{}, err
 	}
@@ -194,7 +194,7 @@ func (p *Preparer) freeze(
 	request PreparationRequest,
 	candidate ResolvedCandidate,
 	node profilingrun.NodeSnapshot,
-	power ResolvedPowerSource,
+	metrics ResolvedMetricSource,
 ) (profilingrun.Intent, error) {
 	if node.Name != request.TargetNode {
 		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
@@ -216,9 +216,9 @@ func (p *Preparer) freeze(
 		},
 		State: candidate.State,
 		Images: profilingrun.Images{
-			Runtime:       candidate.RuntimeImage,
-			Artifact:      candidate.ArtifactImage,
-			PowerObserver: candidate.PowerObserverImage,
+			Runtime:        candidate.RuntimeImage,
+			Artifact:       candidate.ArtifactImage,
+			MetricObserver: candidate.MetricObserverImage,
 		},
 		TargetNode: node,
 		CPU: profilingrun.CPUContract{
@@ -231,15 +231,15 @@ func (p *Preparer) freeze(
 			ExclusivityClaimed: false,
 		},
 		Measurement: request.Measurement,
-		Power: profilingrun.PowerContract{
-			SourceKind:                 power.Kind,
+		Metrics: profilingrun.MetricContract{
+			SourceKind:                 metrics.Kind,
 			NodeName:                   node.Name,
-			Endpoint:                   power.Endpoint,
-			Metric:                     power.Metric,
-			ConfigurationContentDigest: power.ConfigurationContentDigest,
-			IntervalMilliseconds:       request.Power.IntervalMilliseconds,
-			TimeoutMilliseconds:        request.Power.TimeoutMilliseconds,
-			DurationSeconds:            request.Power.DurationSeconds,
+			Endpoint:                   metrics.Endpoint,
+			PowerMetric:                metrics.PowerMetric,
+			ConfigurationContentDigest: metrics.ConfigurationContentDigest,
+			IntervalMilliseconds:       request.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:        request.Metrics.TimeoutMilliseconds,
+			DurationSeconds:            request.Metrics.DurationSeconds,
 		},
 	}
 	if err := intent.Validate(); err != nil {
@@ -288,7 +288,7 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
 		{"artifact path", candidate.State.ArtifactPath, report.ArtifactSupply.Path},
 		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
-		{"power-observer image", candidate.PowerObserverImage, report.PowerObserverImage},
+		{"metric-observer image", candidate.MetricObserverImage, report.MetricObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
 	}
 	for _, check := range checks {
@@ -328,10 +328,10 @@ func (r PreparationRequest) Validate() error {
 	if err != nil || cpuRequest.Sign() <= 0 {
 		return errors.New("CPU request must be a positive Kubernetes quantity")
 	}
-	if r.Power.IntervalMilliseconds < 1 || r.Power.TimeoutMilliseconds < 1 ||
-		r.Power.TimeoutMilliseconds >= r.Power.IntervalMilliseconds ||
-		r.Power.DurationSeconds < r.Measurement.DurationSeconds {
-		return errors.New("power observation policy is invalid or does not cover the measurement")
+	if r.Metrics.IntervalMilliseconds < 1 || r.Metrics.TimeoutMilliseconds < 1 ||
+		r.Metrics.TimeoutMilliseconds >= r.Metrics.IntervalMilliseconds ||
+		r.Metrics.DurationSeconds < r.Measurement.DurationSeconds {
+		return errors.New("metric observation policy is invalid or does not cover the measurement")
 	}
 	if r.Measurement.Batch < 1 || r.Measurement.WarmupIterations < 0 ||
 		r.Measurement.DurationSeconds < 1 {
