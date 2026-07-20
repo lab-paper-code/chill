@@ -33,12 +33,13 @@ func TestObserveProjectsContinuousPodHistory(t *testing.T) {
 	}}
 
 	watcher := watch.NewRaceFreeFake()
+	fence := watch.NewRaceFreeFake()
 	source := &fakePodSource{
 		list: &corev1.PodList{
 			ListMeta: metav1.ListMeta{ResourceVersion: "10"},
 			Items:    []corev1.Pod{background, run},
 		},
-		watchers:   []watch.Interface{watcher},
+		watchers:   []watch.Interface{watcher, fence},
 		watchCalls: make(chan metav1.ListOptions, 2),
 	}
 	observer := mustObserver(t, source)
@@ -72,6 +73,12 @@ func TestObserveProjectsContinuousPodHistory(t *testing.T) {
 	watcher.Delete(exited)
 	waitTick(t, ticks)
 	cancel()
+	fenceOptions := waitWatchCall(t, source.watchCalls)
+	assertOptions(t, fenceOptions, "14")
+	if fenceOptions.TimeoutSeconds == nil || *fenceOptions.TimeoutSeconds != 3 {
+		t.Fatalf("end-fence timeoutSeconds = %v, want 3", fenceOptions.TimeoutSeconds)
+	}
+	sendBookmark(fence, "15")
 
 	result := waitResult(t, resultCh)
 	if err := result.err; err != nil {
@@ -83,8 +90,8 @@ func TestObserveProjectsContinuousPodHistory(t *testing.T) {
 	if !result.value.Continuous || result.value.Failure != nil {
 		t.Fatalf("continuity = %v, failure = %#v", result.value.Continuous, result.value.Failure)
 	}
-	if result.value.LastResourceVersion != "14" {
-		t.Fatalf("last resourceVersion = %q, want 14", result.value.LastResourceVersion)
+	if result.value.LastResourceVersion != "15" {
+		t.Fatalf("last resourceVersion = %q, want end-fence bookmark 15", result.value.LastResourceVersion)
 	}
 	wantKinds := []workloadobserver.EventKind{
 		workloadobserver.EventEntered,
@@ -167,7 +174,8 @@ func TestObserveFailsClosedAtMaterialEventLimit(t *testing.T) {
 func TestObserveReestablishesClosedWatchFromLastResourceVersion(t *testing.T) {
 	first := watch.NewRaceFreeFake()
 	second := watch.NewRaceFreeFake()
-	source := sourceWithRunPod(first, second)
+	fence := watch.NewRaceFreeFake()
+	source := sourceWithRunPod(first, second, fence)
 	observer := mustObserver(t, source)
 	ticks := installTestClock(observer)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,6 +194,8 @@ func TestObserveReestablishesClosedWatchFromLastResourceVersion(t *testing.T) {
 	second.Add(reconnected.DeepCopy())
 	waitTick(t, ticks)
 	cancel()
+	assertOptions(t, waitWatchCall(t, source.watchCalls), "11")
+	sendBookmark(fence, "12")
 
 	result := waitResult(t, resultCh)
 	if result.err != nil {
@@ -193,6 +203,63 @@ func TestObserveReestablishesClosedWatchFromLastResourceVersion(t *testing.T) {
 	}
 	if !result.value.Continuous || len(result.value.Events) != 1 {
 		t.Fatalf("continuous/events = %v/%d", result.value.Continuous, len(result.value.Events))
+	}
+}
+
+func TestObserveReplaysPendingEventsBeforeEndFence(t *testing.T) {
+	initial := watch.NewRaceFreeFake()
+	fence := watch.NewRaceFreeFake()
+	source := sourceWithRunPod(initial, fence)
+	observer := mustObserver(t, source)
+	installTestClock(observer)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	resultCh := observeAsync(observer, ctx, testRequest(4), started)
+
+	waitClosed(t, started)
+	assertOptions(t, <-source.watchCalls, "10")
+	cancel()
+	assertOptions(t, waitWatchCall(t, source.watchCalls), "10")
+
+	transient := testPod("default", "pending-at-end", "pending-uid", "11", corev1.PodRunning)
+	fence.Add(transient.DeepCopy())
+	sendBookmark(fence, "12")
+
+	result := waitResult(t, resultCh)
+	if result.err != nil {
+		t.Fatalf("Observe() error = %v", result.err)
+	}
+	if !result.value.Continuous || result.value.LastResourceVersion != "12" {
+		t.Fatalf("continuous/last resourceVersion = %v/%q", result.value.Continuous, result.value.LastResourceVersion)
+	}
+	if len(result.value.Events) != 1 || result.value.Events[0].Pod.UID != "pending-uid" {
+		t.Fatalf("events = %#v, want replayed pending Pod", result.value.Events)
+	}
+}
+
+func TestObserveFailsClosedWhenEndFenceStopsWithoutBookmark(t *testing.T) {
+	initial := watch.NewRaceFreeFake()
+	fence := watch.NewRaceFreeFake()
+	source := sourceWithRunPod(initial, fence)
+	observer := mustObserver(t, source)
+	installTestClock(observer)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	resultCh := observeAsync(observer, ctx, testRequest(4), started)
+
+	waitClosed(t, started)
+	<-source.watchCalls
+	cancel()
+	assertOptions(t, waitWatchCall(t, source.watchCalls), "10")
+	fence.Stop()
+
+	result := waitResult(t, resultCh)
+	if result.err != nil {
+		t.Fatalf("Observe() error = %v", result.err)
+	}
+	if result.value.Continuous || result.value.Failure == nil ||
+		result.value.Failure.Reason != workloadobserver.FailureReasonEndFenceFailed {
+		t.Fatalf("continuity/failure = %v/%#v", result.value.Continuous, result.value.Failure)
 	}
 }
 
@@ -337,7 +404,12 @@ func testRequest(eventLimit int) Request {
 		PolicyDigest:      testPolicyDigest,
 		SelectorLabelKeys: []string{"app"},
 		EventLimit:        eventLimit,
+		EndFenceTimeout:   3 * time.Second,
 	}
+}
+
+func sendBookmark(watcher *watch.RaceFreeFakeWatcher, resourceVersion string) {
+	watcher.Action(watch.Bookmark, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{ResourceVersion: resourceVersion}})
 }
 
 func testPod(namespace, name, uid, resourceVersion string, phase corev1.PodPhase) corev1.Pod {

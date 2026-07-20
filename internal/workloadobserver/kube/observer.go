@@ -15,6 +15,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,6 +28,8 @@ import (
 
 var policyDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+const minimumEndFenceTimeout = 3 * time.Second
+
 // PodSource is satisfied by the cluster-wide core/v1 PodInterface returned by
 // a Kubernetes client. Keeping this surface small makes LIST/WATCH behavior
 // testable without a clientset.
@@ -37,13 +40,15 @@ type PodSource interface {
 
 // Request contains identities and bounds already frozen for one profiling Run.
 // SelectorLabelKeys limits captured labels to facts needed by the separately
-// frozen allowed-background policy.
+// frozen allowed-background policy. EndFenceTimeout bounds the final catch-up
+// watch used to prove that events preceding the stop signal were consumed.
 type Request struct {
 	Target            workloadobserver.TargetIdentity
 	Run               workloadobserver.RunIdentity
 	PolicyDigest      string
 	SelectorLabelKeys []string
 	EventLimit        int
+	EndFenceTimeout   time.Duration
 }
 
 // Observer owns one bounded LIST/WATCH session.
@@ -60,8 +65,9 @@ func New(source PodSource) (*Observer, error) {
 }
 
 // Observe lists active Pods, establishes a watch from the list resourceVersion,
-// then calls onStarted exactly once. Cancellation ends a continuous observation;
-// post-start watch failures are retained as typed, incomplete evidence.
+// then calls onStarted exactly once. Cancellation starts a bounded catch-up watch
+// from the last processed resourceVersion; only a Kubernetes bookmark closes a
+// continuous observation. Post-start failures are retained as incomplete evidence.
 func (o *Observer) Observe(
 	ctx context.Context,
 	request Request,
@@ -154,56 +160,116 @@ func (o *Observer) receive(
 		return finish(&workloadobserver.Failure{Reason: reason, Message: message})
 	}
 
+	process := func(event watch.Event) *workloadobserver.Failure {
+		if event.Type == watch.Error {
+			reason, message := classifyWatchError(event.Object)
+			return &workloadobserver.Failure{Reason: reason, Message: message}
+		}
+
+		pod, ok := event.Object.(*corev1.Pod)
+		if !ok {
+			return &workloadobserver.Failure{
+				Reason:  workloadobserver.FailureReasonWatchFailed,
+				Message: fmt.Sprintf("Pod watch returned %T", event.Object),
+			}
+		}
+		if strings.TrimSpace(pod.ResourceVersion) == "" {
+			return &workloadobserver.Failure{
+				Reason:  workloadobserver.FailureReasonWatchFailed,
+				Message: "Pod watch event has an empty resourceVersion",
+			}
+		}
+		result.LastResourceVersion = pod.ResourceVersion
+
+		projected, err := projectPod(*pod, request.Target.NodeName, request.SelectorLabelKeys)
+		if err != nil {
+			return &workloadobserver.Failure{Reason: workloadobserver.FailureReasonWatchFailed, Message: err.Error()}
+		}
+		kind, material := transition(event.Type, projected, active)
+		if !material {
+			return nil
+		}
+		if len(result.Events) == request.EventLimit {
+			return &workloadobserver.Failure{
+				Reason: workloadobserver.FailureReasonEventLimitExceeded,
+				Message: fmt.Sprintf(
+					"workload observation exceeded its %d material-event limit",
+					request.EventLimit,
+				),
+			}
+		}
+
+		observedAt := o.nextTime(lastObservedAt)
+		lastObservedAt = observedAt
+		result.Events = append(result.Events, workloadobserver.Event{
+			Kind:            kind,
+			ObservedAt:      observedAt,
+			ResourceVersion: pod.ResourceVersion,
+			Pod:             projected,
+		})
+		applyTransition(kind, projected, active)
+		return nil
+	}
+	endFence := func() (workloadobserver.Result, error) {
+		retry.Stop()
+		fenceContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), request.EndFenceTimeout)
+		defer cancel()
+		timeoutSeconds := int64(request.EndFenceTimeout / time.Second)
+		fence, err := o.source.Watch(fenceContext, metav1.ListOptions{
+			FieldSelector:       fields.OneTermEqualSelector("spec.nodeName", request.Target.NodeName).String(),
+			ResourceVersion:     result.LastResourceVersion,
+			AllowWatchBookmarks: true,
+			TimeoutSeconds:      &timeoutSeconds,
+		})
+		if err != nil {
+			return fail(workloadobserver.FailureReasonEndFenceFailed, fmt.Sprintf("establish end fence: %v", err))
+		}
+		if fence == nil {
+			return fail(workloadobserver.FailureReasonEndFenceFailed, "establish end fence: Kubernetes returned a nil watcher")
+		}
+		defer fence.Stop()
+
+		for {
+			select {
+			case <-fenceContext.Done():
+				return fail(
+					workloadobserver.FailureReasonEndFenceFailed,
+					fmt.Sprintf("end fence did not receive a Kubernetes bookmark within %s", request.EndFenceTimeout),
+				)
+			case event, ok := <-fence.ResultChan():
+				if !ok {
+					return fail(workloadobserver.FailureReasonEndFenceFailed, "end-fence Kubernetes Pod watch stopped before a bookmark")
+				}
+				if event.Type == watch.Bookmark {
+					accessor, err := meta.Accessor(event.Object)
+					if err != nil || strings.TrimSpace(accessor.GetResourceVersion()) == "" {
+						return fail(workloadobserver.FailureReasonEndFenceFailed, "end-fence bookmark has an empty resourceVersion")
+					}
+					result.LastResourceVersion = accessor.GetResourceVersion()
+					return finish(nil)
+				}
+				if failure := process(event); failure != nil {
+					return finish(failure)
+				}
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return finish(nil)
+			return endFence()
 		case event, ok := <-retry.ResultChan():
 			if !ok {
 				if ctx.Err() != nil {
-					return finish(nil)
+					return endFence()
 				}
 				return fail(workloadobserver.FailureReasonWatchFailed, "retrying Kubernetes Pod watch stopped")
 			}
 
-			if event.Type == watch.Error {
-				reason, message := classifyWatchError(event.Object)
-				return fail(reason, message)
+			if failure := process(event); failure != nil {
+				return finish(failure)
 			}
-
-			pod, ok := event.Object.(*corev1.Pod)
-			if !ok {
-				return fail(workloadobserver.FailureReasonWatchFailed, fmt.Sprintf("Pod watch returned %T", event.Object))
-			}
-			if strings.TrimSpace(pod.ResourceVersion) == "" {
-				return fail(workloadobserver.FailureReasonWatchFailed, "Pod watch event has an empty resourceVersion")
-			}
-			result.LastResourceVersion = pod.ResourceVersion
-
-			projected, err := projectPod(*pod, request.Target.NodeName, request.SelectorLabelKeys)
-			if err != nil {
-				return fail(workloadobserver.FailureReasonWatchFailed, err.Error())
-			}
-			kind, material := transition(event.Type, projected, active)
-			if !material {
-				continue
-			}
-			if len(result.Events) == request.EventLimit {
-				return fail(
-					workloadobserver.FailureReasonEventLimitExceeded,
-					fmt.Sprintf("workload observation exceeded its %d material-event limit", request.EventLimit),
-				)
-			}
-
-			observedAt := o.nextTime(lastObservedAt)
-			lastObservedAt = observedAt
-			result.Events = append(result.Events, workloadobserver.Event{
-				Kind:            kind,
-				ObservedAt:      observedAt,
-				ResourceVersion: pod.ResourceVersion,
-				Pod:             projected,
-			})
-			applyTransition(kind, projected, active)
 		}
 	}
 }
@@ -379,6 +445,9 @@ func validateRequest(request Request, onStarted func()) error {
 	}
 	if request.EventLimit < 1 {
 		return errors.New("workload observer event limit must be positive")
+	}
+	if request.EndFenceTimeout < minimumEndFenceTimeout {
+		return fmt.Errorf("workload observer end-fence timeout must be at least %s", minimumEndFenceTimeout)
 	}
 	previous := ""
 	for _, key := range request.SelectorLabelKeys {

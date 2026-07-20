@@ -20,6 +20,7 @@ const (
 	FailureReasonWatchFailed        FailureReason = "WatchFailed"
 	FailureReasonHistoryExpired     FailureReason = "HistoryExpired"
 	FailureReasonEventLimitExceeded FailureReason = "EventLimitExceeded"
+	FailureReasonEndFenceFailed     FailureReason = "EndFenceFailed"
 )
 
 // TargetIdentity binds observation to the Node frozen in the Run intent.

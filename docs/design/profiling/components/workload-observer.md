@@ -82,11 +82,14 @@ WorkloadObserver starts before warm-up, performs a field-selected Pod list for
 `resourceVersion`. It signals ready only after the list-watch boundary is
 continuous. Runtime measurement may then begin.
 
-The observer continues until the runtime end signal. Its coverage timestamps
-must surround the runtime result's exact measurement timestamps. A disconnected
-watch may resume from its last observed `resourceVersion`; expired history,
-an unresumable watch, or a bounded-result overflow makes coverage incomplete.
-It never fills a gap by treating a later list as proof of the missing interval.
+The observer continues until the runtime end signal. It then opens one bounded
+catch-up watch from the last processed `resourceVersion` and closes coverage
+only after receiving a Kubernetes bookmark. Events replayed before that bookmark
+remain part of the observation. A missing bookmark, expired history, an
+unresumable watch, or a bounded-result overflow makes coverage incomplete. Its
+coverage timestamps must surround the runtime result's exact measurement
+timestamps. It never fills a gap by treating a later list as proof of the
+missing interval.
 
 ## Evidence contract
 

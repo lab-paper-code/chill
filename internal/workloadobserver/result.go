@@ -82,7 +82,8 @@ func validateFailure(failure *Failure, started, ended time.Time) error {
 		return errors.New("workload observation failure is invalid")
 	}
 	switch failure.Reason {
-	case FailureReasonWatchFailed, FailureReasonHistoryExpired, FailureReasonEventLimitExceeded:
+	case FailureReasonWatchFailed, FailureReasonHistoryExpired, FailureReasonEventLimitExceeded,
+		FailureReasonEndFenceFailed:
 		return nil
 	default:
 		return fmt.Errorf("unsupported workload observation failure reason %q", failure.Reason)
