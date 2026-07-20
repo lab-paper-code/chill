@@ -263,7 +263,7 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 		return errors.New("resolved DeviceClass architecture and Node selector are required")
 	}
 	if len(candidate.DevicePowerModes) != 1 || candidate.DevicePowerModes[0] != firstPowerMode {
-		return errors.New("resolved DeviceClass is not the first-path non-selectable fixed-power class")
+		return errors.New("resolved DeviceClass is not the first-path Fixed actuator class")
 	}
 	return nil
 }

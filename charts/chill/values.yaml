@@ -143,6 +143,7 @@ discovery:
   requireCatalogMatch: true
   fallbackPowerModes:
     - name: fixed
+      actuator: {kind: Fixed}
   catalog:
     enabled: true
     name: ""
@@ -158,13 +159,13 @@ discovery:
         accelerator: nvidia-jetson-agx-orin
         powerModes:
           - name: MAXN
-            nvpId: 0
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
           - name: MODE_15W
-            nvpId: 1
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
           - name: MODE_30W
-            nvpId: 2
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
           - name: MODE_50W
-            nvpId: 3
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
       - name: jetson-orin-nano-8g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -175,13 +176,13 @@ discovery:
         accelerator: nvidia-jetson-orin-nano
         powerModes:
           - name: 15W
-            nvpId: 0
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
           - name: 25W
-            nvpId: 1
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
           - name: MAXN_SUPER
-            nvpId: 2
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
           - name: 7W
-            nvpId: 3
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
       - name: jetson-xavier-nx-8g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -192,23 +193,23 @@ discovery:
         accelerator: nvidia-jetson-xavier-nx
         powerModes:
           - name: MODE_15W_2CORE
-            nvpId: 0
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
           - name: MODE_15W_4CORE
-            nvpId: 1
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
           - name: MODE_15W_6CORE
-            nvpId: 2
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 2}}
           - name: MODE_10W_2CORE
-            nvpId: 3
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
           - name: MODE_10W_4CORE
-            nvpId: 4
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 4}}
           - name: MODE_10W_DESKTOP
-            nvpId: 5
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 5}}
           - name: MODE_20W_2CORE
-            nvpId: 6
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 6}}
           - name: MODE_20W_4CORE
-            nvpId: 7
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 7}}
           - name: MODE_20W_6CORE
-            nvpId: 8
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 8}}
       - name: jetson-nano-4g
         matchLabels:
           edge.dacs.io/device-vendor: nvidia
@@ -219,9 +220,9 @@ discovery:
         accelerator: nvidia-jetson-nano
         powerModes:
           - name: 10W
-            nvpId: 0
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
           - name: 5W
-            nvpId: 1
+            actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}
       - name: orangepi-5-plus-16g
         matchLabels:
           edge.dacs.io/device-vendor: xunlong
@@ -232,6 +233,7 @@ discovery:
         accelerator: rk3588-npu
         powerModes:
           - name: fixed
+            actuator: {kind: Fixed}
       - name: raspberry-pi-5-8g
         matchLabels:
           edge.dacs.io/device-vendor: raspberrypi
@@ -242,6 +244,7 @@ discovery:
         accelerator: none
         powerModes:
           - name: fixed
+            actuator: {kind: Fixed}
       - name: lattepanda-3-delta-8g
         matchLabels:
           edge.dacs.io/device-vendor: lattepanda
@@ -252,6 +255,7 @@ discovery:
         accelerator: none
         powerModes:
           - name: fixed
+            actuator: {kind: Fixed}
       - name: edge-server-rtx-2080-ti-64g
         matchLabels:
           edge.dacs.io/device-family: edge-server
@@ -261,6 +265,7 @@ discovery:
         accelerator: nvidia-geforce-rtx-2080-ti
         powerModes:
           - name: fixed
+            actuator: {kind: Fixed}
 
 nodeDiscovery:
   enabled: true

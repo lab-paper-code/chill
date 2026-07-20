@@ -349,6 +349,7 @@ spec:
   accelerator: none
   powerModes:
     - name: fixed
+      actuator: {kind: Fixed}
 `)
 	backends := []string{"CPUExecutionProvider"}
 	declaration := runtimeDeclaration{

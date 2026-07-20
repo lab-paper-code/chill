@@ -28,7 +28,10 @@ func TestKubernetesInventoryQueryReadsAndProjectsAuthorities(t *testing.T) {
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{"edge.dacs.io/device-class": "orin"},
 			Architecture: "arm64",
-			PowerModes:   []edgev1alpha1.PowerMode{{Name: "15W"}},
+			PowerModes: []edgev1alpha1.PowerMode{{Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
+				Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+				JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+			}}},
 		},
 	}
 	node := &corev1.Node{

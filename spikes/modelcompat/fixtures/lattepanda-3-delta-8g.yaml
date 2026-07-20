@@ -10,3 +10,4 @@ spec:
   accelerator: none
   powerModes:
     - name: fixed
+      actuator: {kind: Fixed}

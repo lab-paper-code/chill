@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -23,10 +24,14 @@ func validateDeviceClass(deviceClass *edgev1alpha1.DeviceClass, powerMode string
 	if strings.TrimSpace(deviceClass.Spec.Architecture) == "" || len(deviceClass.Spec.NodeSelector) == 0 {
 		return selectedDeviceFacts{}, errors.New("DeviceClass architecture and nodeSelector are required")
 	}
-	if len(deviceClass.Spec.PowerModes) != 1 || deviceClass.Spec.PowerModes[0].Name != fixedPowerMode ||
-		deviceClass.Spec.PowerModes[0].NvpID != nil || powerMode != fixedPowerMode {
+	selectedMode, err := deviceclass.FindPowerMode(deviceClass.Spec.PowerModes, powerMode)
+	if err != nil {
+		return selectedDeviceFacts{}, fmt.Errorf("DeviceClass %q power modes: %w", deviceClass.Name, err)
+	}
+	if len(deviceClass.Spec.PowerModes) != 1 || powerMode != fixedPowerMode ||
+		selectedMode.Actuator.Kind != edgev1alpha1.PowerModeActuatorFixed {
 		return selectedDeviceFacts{}, fmt.Errorf(
-			"DeviceClass %q is not the first-path non-selectable fixed-power class", deviceClass.Name,
+			"DeviceClass %q is not the first-path Fixed actuator class", deviceClass.Name,
 		)
 	}
 	selector := make(map[string]string, len(deviceClass.Spec.NodeSelector))

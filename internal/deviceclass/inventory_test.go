@@ -85,8 +85,10 @@ func TestProjectInventoryRejectsMissingOrInvalidSelector(t *testing.T) {
 
 func TestProjectInventoryCopiesSelectorAndSourceIdentity(t *testing.T) {
 	class := deviceClass("class", map[string]string{"class": "edge"})
-	powerModeID := 1
-	class.Spec.PowerModes = []edgev1alpha1.PowerMode{{Name: "7W", NvpID: &powerModeID}}
+	class.Spec.PowerModes = []edgev1alpha1.PowerMode{{Name: "7W", Actuator: edgev1alpha1.PowerModeActuator{
+		Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+		JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 1},
+	}}}
 	class.UID = types.UID("class-uid")
 	class.ResourceVersion = "12"
 	n := node("node", map[string]string{"class": "edge"}, corev1.ConditionTrue, false)
@@ -98,8 +100,8 @@ func TestProjectInventoryCopiesSelectorAndSourceIdentity(t *testing.T) {
 		t.Fatalf("ProjectInventory() error = %v", err)
 	}
 	got[0].Spec.NodeSelector["class"] = "changed"
-	*got[0].Spec.PowerModes[0].NvpID = 2
-	if class.Spec.NodeSelector["class"] != "edge" || *class.Spec.PowerModes[0].NvpID != 1 {
+	got[0].Spec.PowerModes[0].Actuator.JetsonNVPModel.ID = 2
+	if class.Spec.NodeSelector["class"] != "edge" || class.Spec.PowerModes[0].Actuator.JetsonNVPModel.ID != 1 {
 		t.Fatalf("source spec mutated: %#v", class.Spec)
 	}
 	if got[0].UID != "class-uid" || got[0].ResourceVersion != "12" ||

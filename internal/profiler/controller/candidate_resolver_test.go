@@ -140,24 +140,30 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			mutate: func(objects []client.Object) {
 				objects[1].(*edgev1alpha1.DeviceClass).Spec.PowerModes[0].Name = "15W"
 			},
-			match: "not the first-path non-selectable fixed-power class",
+			match: `power mode "fixed" is not declared`,
 		},
 		{
 			name: "selectable mode mixed with fixed",
 			mutate: func(objects []client.Object) {
 				class := objects[1].(*edgev1alpha1.DeviceClass)
-				id := 0
-				class.Spec.PowerModes = append(class.Spec.PowerModes, edgev1alpha1.PowerMode{Name: "15W", NvpID: &id})
+				class.Spec.PowerModes = append(class.Spec.PowerModes, edgev1alpha1.PowerMode{
+					Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
+						Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+						JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+					},
+				})
 			},
-			match: "not the first-path non-selectable fixed-power class",
+			match: "not the first-path Fixed actuator class",
 		},
 		{
 			name: "fixed mode has actuator identity",
 			mutate: func(objects []client.Object) {
-				id := 0
-				objects[1].(*edgev1alpha1.DeviceClass).Spec.PowerModes[0].NvpID = &id
+				objects[1].(*edgev1alpha1.DeviceClass).Spec.PowerModes[0].Actuator = edgev1alpha1.PowerModeActuator{
+					Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+					JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+				}
 			},
-			match: "not the first-path non-selectable fixed-power class",
+			match: "not the first-path Fixed actuator class",
 		},
 		{
 			name: "runtime architecture incompatible",
@@ -352,7 +358,9 @@ func validCandidateObjects() []client.Object {
 		},
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{"edge.dacs.io/device-class": "lattepanda-3-delta-8g"},
-			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{Name: fixedPowerMode}},
+			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{
+				Name: fixedPowerMode, Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+			}},
 		},
 	}
 	configMap := &corev1.ConfigMap{

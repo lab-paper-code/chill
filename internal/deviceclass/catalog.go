@@ -50,6 +50,8 @@ func ValidateCatalog(catalog Catalog) error {
 		}
 		if len(entry.PowerModes) == 0 {
 			allErrs = append(allErrs, field.Required(path.Child("powerModes"), ""))
+		} else {
+			allErrs = append(allErrs, ValidatePowerModes(entry.PowerModes, path.Child("powerModes"))...)
 		}
 	}
 	return allErrs.ToAggregate()

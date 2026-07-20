@@ -131,7 +131,9 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 			Architecture: "arm64",
 			MemoryBytes:  resource.MustParse("1Gi"),
 			Accelerator:  "none",
-			PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+			PowerModes: []edgev1alpha1.PowerMode{{
+				Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+			}},
 		},
 	}
 	otherDeviceClass := deviceClass.DeepCopy()

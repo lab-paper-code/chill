@@ -173,7 +173,9 @@ var _ = Describe("DeviceClass discovery", func() {
 				Architecture: "arm64",
 				MemoryBytes:  resource.MustParse("1Gi"),
 				Accelerator:  "none",
-				PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+				PowerModes: []edgev1alpha1.PowerMode{{
+					Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+				}},
 			},
 		}
 		Expect(k8sClient.Create(ctx, stale)).To(Succeed())
@@ -220,7 +222,9 @@ var _ = Describe("DeviceClass discovery", func() {
 				Architecture: "arm64",
 				MemoryBytes:  resource.MustParse("1Gi"),
 				Accelerator:  "none",
-				PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+				PowerModes: []edgev1alpha1.PowerMode{{
+					Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+				}},
 			},
 		}
 		Expect(k8sClient.Create(ctx, stale)).To(Succeed())
@@ -356,9 +360,9 @@ func orinNanoCatalogYAML() string {
   accelerator: nvidia-jetson-orin-nano
   powerModes:
   - name: 15W
-    nvpId: 0
+    actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
   - name: 7W
-    nvpId: 3
+    actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 3}}
 `
 }
 

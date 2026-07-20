@@ -63,8 +63,8 @@ func TestExecuteInventoryWritesStructuredJSON(t *testing.T) {
 	if document.DeviceClassesResourceVersion != "classes-rv" || document.ModelSpecsResourceVersion != "models-rv" ||
 		len(document.Classes) != 1 ||
 		document.Classes[0].UID != "class-uid" || document.Classes[0].NodeSelector["edge.dacs.io/device-class"] != "orin" ||
-		len(document.Classes[0].PowerModes) != 1 || document.Classes[0].PowerModes[0].NvpID == nil ||
-		*document.Classes[0].PowerModes[0].NvpID != 0 || len(document.Classes[0].Nodes) != 1 ||
+		len(document.Classes[0].PowerModes) != 1 || document.Classes[0].PowerModes[0].Actuator.JetsonNVPModel == nil ||
+		document.Classes[0].PowerModes[0].Actuator.JetsonNVPModel.ID != 0 || len(document.Classes[0].Nodes) != 1 ||
 		document.Classes[0].Nodes[0].Ready != "True" || !document.Classes[0].Nodes[0].SchedulingDisabled {
 		t.Fatalf("document = %#v", document)
 	}
@@ -334,7 +334,6 @@ func (q *fakeInventoryQuery) Read(context.Context) (operatorconsole.InventorySna
 }
 
 func testInventorySnapshot() operatorconsole.InventorySnapshot {
-	nvpID := 0
 	return operatorconsole.InventorySnapshot{
 		ReadAt:                       time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
 		DeviceClassesResourceVersion: "classes-rv",
@@ -345,7 +344,12 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 			Spec: edgev1alpha1.DeviceClassSpec{
 				NodeSelector: map[string]string{"edge.dacs.io/device-class": "orin"},
 				Architecture: "arm64", MemoryBytes: resource.MustParse("8Gi"),
-				Accelerator: "jetson-orin", PowerModes: []edgev1alpha1.PowerMode{{Name: "15W", NvpID: &nvpID}},
+				Accelerator: "jetson-orin", PowerModes: []edgev1alpha1.PowerMode{{
+					Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
+						Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+						JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+					},
+				}},
 			},
 			Nodes: []deviceclass.InventoryNode{{
 				Name: "orin-1", UID: "node-uid", ResourceVersion: "node-rv",

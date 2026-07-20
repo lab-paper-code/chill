@@ -78,23 +78,90 @@ spec:
                       FallbackPowerModes are used for inferred DeviceClasses when catalog matching is not required
                       and a Node does not match a catalog entry.
                     items:
-                      description: PowerMode describes one runtime-selectable power
-                        mode for a DeviceClass.
+                      description: PowerMode binds a stable scheduler-facing name
+                        to one typed actuator target.
                       properties:
+                        actuator:
+                          description: Actuator declares how a node agent applies
+                            and verifies this mode.
+                          properties:
+                            jetsonNVPModel:
+                              description: JetsonNVPModel is the target for the Jetson
+                                nvpmodel actuator.
+                              properties:
+                                id:
+                                  description: ID is passed to the platform nvpmodel
+                                    interface.
+                                  format: int32
+                                  minimum: 0
+                                  type: integer
+                              required:
+                              - id
+                              type: object
+                            kind:
+                              description: Kind selects the typed actuator contract.
+                              enum:
+                              - Fixed
+                              - JetsonNVPModel
+                              - NvidiaLockedGPUClock
+                              type: string
+                            nvidiaLockedGPUClock:
+                              description: NvidiaLockedGPUClock is the target for
+                                the NVIDIA locked GPU clock actuator.
+                              properties:
+                                maxMHz:
+                                  description: MaxMHz is the maximum requested locked
+                                    GPU clock.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                minMHz:
+                                  description: MinMHz is the minimum requested locked
+                                    GPU clock.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                mode:
+                                  description: Mode selects the NVIDIA clock-locking
+                                    algorithm when declared.
+                                  enum:
+                                  - 0
+                                  - 1
+                                  format: int32
+                                  type: integer
+                              required:
+                              - maxMHz
+                              - minMHz
+                              type: object
+                              x-kubernetes-validations:
+                              - message: minMHz must not exceed maxMHz
+                                rule: self.minMHz <= self.maxMHz
+                          required:
+                          - kind
+                          type: object
+                          x-kubernetes-validations:
+                          - message: Fixed actuator must not declare a target
+                            rule: 'self.kind == ''Fixed'' ? !has(self.jetsonNVPModel)
+                              && !has(self.nvidiaLockedGPUClock) : true'
+                          - message: JetsonNVPModel actuator requires only jetsonNVPModel
+                            rule: 'self.kind == ''JetsonNVPModel'' ? has(self.jetsonNVPModel)
+                              && !has(self.nvidiaLockedGPUClock) : !has(self.jetsonNVPModel)'
+                          - message: NvidiaLockedGPUClock actuator requires only nvidiaLockedGPUClock
+                            rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
+                              && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
                         name:
-                          description: Name is the human-readable platform power mode
-                            name.
+                          description: Name is the stable mode identity consumed by
+                            CHILL scheduling and profiling.
                           minLength: 1
                           type: string
-                        nvpId:
-                          description: NvpID is the nvpmodel -m identifier for Jetson
-                            devices.
-                          minimum: 0
-                          type: integer
                       required:
+                      - actuator
                       - name
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   labelKey:
                     description: LabelKey is the Node label key used to bind Nodes
                       to DeviceClasses.

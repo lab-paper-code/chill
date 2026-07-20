@@ -90,14 +90,14 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DevicePowerModes = []string{"other-mode"}
 			},
-			match: "not the first-path non-selectable fixed-power class",
+			match: "not the first-path Fixed actuator class",
 		},
 		{
 			name: "selectable mode mixed with fixed",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DevicePowerModes = []string{"fixed", "15W"}
 			},
-			match: "not the first-path non-selectable fixed-power class",
+			match: "not the first-path Fixed actuator class",
 		},
 		{
 			name: "missing DeviceClass selector",

@@ -36,8 +36,8 @@ type inventoryClassDocument struct {
 }
 
 type powerModeDocument struct {
-	Name  string `json:"name"`
-	NvpID *int   `json:"nvpId,omitempty"`
+	Name     string                         `json:"name"`
+	Actuator edgev1alpha1.PowerModeActuator `json:"actuator"`
 }
 
 type inventoryNodeDocument struct {
@@ -156,7 +156,7 @@ func inventoryClassOutput(class deviceclass.InventoryClass) inventoryClassDocume
 		Nodes:      make([]inventoryNodeDocument, 0, len(class.Nodes)),
 	}
 	for _, mode := range class.Spec.PowerModes {
-		document.PowerModes = append(document.PowerModes, powerModeDocument{Name: mode.Name, NvpID: mode.NvpID})
+		document.PowerModes = append(document.PowerModes, powerModeDocument{Name: mode.Name, Actuator: mode.Actuator})
 	}
 	for _, node := range class.Nodes {
 		document.Nodes = append(document.Nodes, inventoryNodeDocument{

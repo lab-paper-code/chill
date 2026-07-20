@@ -30,7 +30,10 @@ func TestDiscoverCatalogMatch(t *testing.T) {
 				Memory:       resource.MustParse("8Gi"),
 				Accelerator:  "nvidia-jetson-orin-nano",
 				PowerModes: []edgev1alpha1.PowerMode{
-					{Name: "15W"},
+					{Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
+						Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+						JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+					}},
 				},
 			},
 		},
@@ -67,7 +70,10 @@ func TestDiscoverSkipsUnmatchedNodeWhenCatalogRequired(t *testing.T) {
 				MatchLabels: map[string]string{
 					metadata.DeviceModel: "orin-nano",
 				},
-				PowerModes: []edgev1alpha1.PowerMode{{Name: "15W"}},
+				PowerModes: []edgev1alpha1.PowerMode{{Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
+					Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+					JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+				}}},
 			},
 		},
 	}
@@ -96,7 +102,9 @@ func TestDiscoverInfersUnmatchedNodeWithFallbackPowerModes(t *testing.T) {
 
 	discovered, ok, err := Discover(node, Catalog{}, Options{
 		RequireCatalogMatch: false,
-		FallbackPowerModes:  []edgev1alpha1.PowerMode{{Name: "fixed"}},
+		FallbackPowerModes: []edgev1alpha1.PowerMode{{
+			Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
@@ -133,13 +141,17 @@ func TestSpecEqualUsesQuantitySemanticEquality(t *testing.T) {
 		NodeSelector: map[string]string{metadata.DeviceClass: "class-a"},
 		Architecture: "arm64",
 		MemoryBytes:  resource.MustParse("1024Mi"),
-		PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+		PowerModes: []edgev1alpha1.PowerMode{{
+			Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+		}},
 	}
 	b := edgev1alpha1.DeviceClassSpec{
 		NodeSelector: map[string]string{metadata.DeviceClass: "class-a"},
 		Architecture: "arm64",
 		MemoryBytes:  resource.MustParse("1Gi"),
-		PowerModes:   []edgev1alpha1.PowerMode{{Name: "fixed"}},
+		PowerModes: []edgev1alpha1.PowerMode{{
+			Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+		}},
 	}
 
 	if !SpecEqual(a, b) {

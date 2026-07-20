@@ -116,6 +116,8 @@ type ChillDeviceDiscoverySpec struct {
 	// FallbackPowerModes are used for inferred DeviceClasses when catalog matching is not required
 	// and a Node does not match a catalog entry.
 	// +optional
+	// +listType=map
+	// +listMapKey=name
 	FallbackPowerModes []PowerMode `json:"fallbackPowerModes,omitempty"`
 
 	// Catalog references the ConfigMap containing the DeviceClass catalog.

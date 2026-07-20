@@ -55,6 +55,36 @@ var _ = Describe("DeviceClass API", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
+
+	It("rejects a power-mode actuator whose target does not match its kind", func() {
+		ctx := context.Background()
+		deviceClass := validDeviceClass(uniqueDeviceClassName("invalid-actuator"))
+		deviceClass.Spec.PowerModes[0].Actuator.Kind = edgev1alpha1.PowerModeActuatorFixed
+
+		err := k8sClient.Create(ctx, deviceClass)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInvalid(err)).To(BeTrue())
+	})
+
+	It("accepts an NVIDIA locked GPU clock actuator", func() {
+		ctx := context.Background()
+		deviceClass := validDeviceClass(uniqueDeviceClassName("gpu-clock"))
+		mode := int32(1)
+		deviceClass.Spec.PowerModes[0] = edgev1alpha1.PowerMode{
+			Name: "gpu-1200mhz",
+			Actuator: edgev1alpha1.PowerModeActuator{
+				Kind: edgev1alpha1.PowerModeActuatorNvidiaLockedGPUClock,
+				NvidiaLockedGPUClock: &edgev1alpha1.NvidiaLockedGPUClockTarget{
+					MinMHz: 1200, MaxMHz: 1200, Mode: &mode,
+				},
+			},
+		}
+
+		Expect(k8sClient.Create(ctx, deviceClass)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, deviceClass)
+		})
+	})
 })
 
 func uniqueDeviceClassName(prefix string) string {
@@ -62,8 +92,6 @@ func uniqueDeviceClassName(prefix string) string {
 }
 
 func validDeviceClass(name string) *edgev1alpha1.DeviceClass {
-	modeID := 0
-
 	return &edgev1alpha1.DeviceClass{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: edgev1alpha1.DeviceClassSpec{
@@ -74,7 +102,10 @@ func validDeviceClass(name string) *edgev1alpha1.DeviceClass {
 			MemoryBytes:  resource.MustParse("8Gi"),
 			Accelerator:  "test-accelerator",
 			PowerModes: []edgev1alpha1.PowerMode{
-				{Name: "default", NvpID: &modeID},
+				{Name: "default", Actuator: edgev1alpha1.PowerModeActuator{
+					Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+					JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+				}},
 			},
 		},
 	}
