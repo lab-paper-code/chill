@@ -4,10 +4,9 @@
 
 ## Status
 
-Approved for staged implementation. The Kubernetes-free observation contract
-and isolated Kubernetes list-watch adapter are implemented. The bounded
-executable, API, RBAC, Job, evidence-schema, and admission changes remain
-separately gated.
+Approved for staged implementation. The Kubernetes-free observation contract,
+isolated Kubernetes list-watch adapter, and bounded executable are implemented.
+API, RBAC, Job, evidence-schema, and admission changes remain separately gated.
 
 ## Purpose
 
@@ -82,6 +81,14 @@ WorkloadObserver starts before warm-up, performs a field-selected Pod list for
 `resourceVersion`. It signals ready only after the list-watch boundary is
 continuous. Runtime measurement may then begin.
 
+The executable uses three atomic Job-local coordination paths:
+
+```text
+workload-observer-ready  list-watch continuity has been established
+measurement-end         runtime has closed its measurement window
+workload-result.json    validated bounded result after the closing bookmark
+```
+
 The observer continues until the runtime end signal. It then opens one bounded
 catch-up watch from the last processed `resourceVersion` and closes coverage
 only after receiving a Kubernetes bookmark. Events replayed before that bookmark
@@ -143,14 +150,21 @@ WorkloadObserver container. Runtime, artifact, and MetricObserver containers do
 not receive the token.
 
 Helm, not the Profiler controller, owns the dedicated ServiceAccount and its
-read-only Pod `list` and `watch` permission. The observer requests only Pods
-selected by the frozen target Node, but built-in Kubernetes RBAC authorizes Pod
-list/watch at namespace or cluster scope rather than by Node field. Because
-co-residents can live in any namespace, this is necessarily a cluster-wide
-Pod-read capability. Kubernetes returns complete Pod objects; the observer
-projects only the bounded identity fields above into evidence. The credential
-and digest-pinned observer image must remain isolated from all other Job
-containers.
+read-only Pod `get`, `list`, and `watch` permission. `get` validates the helper's
+own Pod and Job identity. The observer requests only Pods selected by the frozen
+target Node, but built-in Kubernetes RBAC authorizes Pod list/watch at namespace
+or cluster scope rather than by Node field. Because co-residents can live in any
+namespace, this is necessarily a cluster-wide Pod-read capability. Kubernetes
+returns complete Pod objects; the observer projects only the bounded identity
+fields above into evidence. The credential and digest-pinned observer image must
+remain isolated from all other Job containers.
+
+Regular Kubernetes Pods may use standard in-cluster configuration. KubeEdge
+edge Pods cannot assume that Kubernetes service environment variables are
+present, so the Job supplies the installation-owned API endpoint when needed.
+The executable reuses the projected token and CA paths through the shared CHILL
+Kubernetes client configuration adapter; it does not discover or persist
+credentials.
 
 No Secret, ConfigMap, Node mutation, Pod log, exec, status write, or workload
 write permission is granted.

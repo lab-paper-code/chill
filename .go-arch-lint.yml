@@ -147,6 +147,7 @@ deps:
       - metric-core
       - profiler-evidence
       - profiling-run
+      - workload-core
 
   profiler-controller:
     mayDependOn:
