@@ -32,7 +32,7 @@ type options struct {
 	windowReadyPath  string
 	endPath          string
 	resultPath       string
-	policyDigest     string
+	contractDigest   string
 	selectorLabelCSV string
 	endWaitTimeout   time.Duration
 	endFenceTimeout  time.Duration
@@ -60,8 +60,8 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	)
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
 	set.StringVar(&o.resultPath, "result-file", defaultWorkloadResultPath, "atomic WorkloadObserver result path")
-	set.StringVar(&o.policyDigest, "policy-digest", "", "frozen allowed-background policy SHA-256")
-	set.StringVar(&o.selectorLabelCSV, "selector-label-keys", "", "sorted comma-separated policy label keys to retain")
+	set.StringVar(&o.contractDigest, "contract-digest", "", "frozen workload observation contract SHA-256")
+	set.StringVar(&o.selectorLabelCSV, "selector-label-keys", "", "sorted CHILL workload label keys to retain")
 	set.DurationVar(&o.endWaitTimeout, "end-wait-timeout", 0, "Job-derived maximum wait for measurement-end")
 	set.DurationVar(
 		&o.endFenceTimeout,
@@ -94,8 +94,8 @@ func (o options) validate() error {
 	if !canonicalDigest.MatchString(o.intentDigest) {
 		return errors.New("intent digest must be a canonical SHA-256")
 	}
-	if !canonicalDigest.MatchString(o.policyDigest) {
-		return errors.New("policy digest must be a canonical SHA-256")
+	if !canonicalDigest.MatchString(o.contractDigest) {
+		return errors.New("workload contract digest must be a canonical SHA-256")
 	}
 	if o.endWaitTimeout <= 0 || o.endFenceTimeout <= 0 {
 		return errors.New("end wait and fence timeouts must be supplied by the Job execution contract")

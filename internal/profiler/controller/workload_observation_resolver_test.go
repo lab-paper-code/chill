@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/profilingrun"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,14 +20,8 @@ func TestKubernetesWorkloadObservationResolverReturnsValidatedInstallationFacts(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resolved.Image, "@sha256:") ||
-		resolved.Policy.SchemaVersion != profilingrun.AllowedBackgroundPolicySchemaVersion ||
-		len(resolved.Policy.Selectors) != 1 {
+	if !strings.Contains(resolved.Image, "@sha256:") {
 		t.Fatalf("resolved workload observation = %#v", resolved)
-	}
-	digest, err := resolved.Policy.Digest()
-	if err != nil || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("policy digest = %q, error = %v", digest, err)
 	}
 }
 
@@ -42,18 +35,6 @@ func TestKubernetesWorkloadObservationResolverRejectsUntrustedFacts(t *testing.T
 			validWorkloadObservationFacts(), testWorkloadObserverImage, "registry.example/workload-observer:latest", 1,
 		), match: "digest-pinned"},
 		{name: "unknown field", facts: validWorkloadObservationFacts() + "unknown: true\n", match: "unknown"},
-		{name: "duplicate selectors", facts: strings.Replace(
-			validWorkloadObservationFacts(),
-			"    - namespace: monitoring",
-			"    - namespace: monitoring\n      controllerOwner:\n        kind: DaemonSet\n        name: edge-metrics-exporter\n      matchLabels:\n        app.kubernetes.io/component: edge-metrics\n    - namespace: monitoring",
-			1,
-		), match: "unique"},
-		{name: "missing owner", facts: strings.Replace(
-			validWorkloadObservationFacts(),
-			"      controllerOwner:\n        kind: DaemonSet\n        name: edge-metrics-exporter\n",
-			"",
-			1,
-		), match: "controller owner"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -99,16 +80,7 @@ const testWorkloadObserverImage = "registry.example/workload-observer@sha256:" +
 	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func validWorkloadObservationFacts() string {
-	return `schemaVersion: chill.dacs.io/profiler-workload-observation.v1alpha1
+	return `schemaVersion: chill.dacs.io/profiler-workload-observation.v1alpha2
 image: ` + testWorkloadObserverImage + `
-allowedBackground:
-  schemaVersion: chill.dacs.io/allowed-background-policy.v1alpha1
-  selectors:
-    - namespace: monitoring
-      controllerOwner:
-        kind: DaemonSet
-        name: edge-metrics-exporter
-      matchLabels:
-        app.kubernetes.io/component: edge-metrics
 `
 }

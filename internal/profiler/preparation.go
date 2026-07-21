@@ -87,8 +87,7 @@ type ResolvedMetricSource struct {
 }
 
 type ResolvedWorkloadObservation struct {
-	Image  string
-	Policy profilingrun.AllowedBackgroundPolicy
+	Image string
 }
 
 type CandidateResolver interface {
@@ -258,25 +257,12 @@ func (p *Preparer) freeze(
 			TimeoutMilliseconds:        request.Metrics.TimeoutMilliseconds,
 			DurationSeconds:            request.Metrics.DurationSeconds,
 		},
-		Workload: profilingrun.WorkloadContract{AllowedBackground: copyWorkloadPolicy(workload.Policy)},
+		Workload: profilingrun.CurrentWorkloadContract(),
 	}
 	if err := intent.Validate(); err != nil {
 		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
 	return intent, nil
-}
-
-func copyWorkloadPolicy(source profilingrun.AllowedBackgroundPolicy) profilingrun.AllowedBackgroundPolicy {
-	copy := profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: source.SchemaVersion,
-		Selectors:     make([]profilingrun.BackgroundPodSelector, len(source.Selectors)),
-	}
-	for index, selector := range source.Selectors {
-		copy.Selectors[index].Namespace = selector.Namespace
-		copy.Selectors[index].ControllerOwner = selector.ControllerOwner
-		copy.Selectors[index].MatchLabels = maps.Clone(selector.MatchLabels)
-	}
-	return copy
 }
 
 func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCandidate) error {

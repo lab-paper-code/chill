@@ -40,7 +40,7 @@ type ProfilingRunSpec struct {
 	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Enum=wall-power-v1
+	// +kubebuilder:validation:Enum=wall-power-v2
 	AdmissionPolicy string `json:"admissionPolicy"`
 }
 

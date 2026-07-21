@@ -240,8 +240,8 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			})
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 			admitter := &recordingRunEvidenceAdmitter{result: profileradmission.Result{
-				Verdict: test.verdict, PolicyVersion: "wall-power-v1",
-				ReasonCodes: []string{"CoResidentWindowUnknown", "ThermalStateUnavailable"},
+				Verdict: test.verdict, PolicyVersion: "wall-power-v2",
+				ReasonCodes: []string{"ThermalStateUnavailable", "WorkloadWindowUnknown"},
 			}}
 			jobs := &recordingExecutionJobs{}
 			finalizer := &recordingRunEvidenceFinalizer{}
@@ -267,7 +267,7 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 				t.Fatal(err)
 			}
 			if actual.Status.Admission == nil || actual.Status.Admission.Verdict != string(test.verdict) ||
-				actual.Status.Admission.PolicyVersion != "wall-power-v1" || len(actual.Status.Admission.ReasonCodes) != 2 {
+				actual.Status.Admission.PolicyVersion != "wall-power-v2" || len(actual.Status.Admission.ReasonCodes) != 2 {
 				t.Fatalf("admission status = %#v", actual.Status.Admission)
 			}
 			condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)

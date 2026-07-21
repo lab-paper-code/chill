@@ -80,9 +80,6 @@
 {{- if and .Values.profiler.factSource.workloadObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiler.factSource.workloadObserverImage)) -}}
 {{- fail "profiler.factSource.workloadObserverImage must be digest-pinned" -}}
 {{- end -}}
-{{- if not (kindIs "slice" .Values.profiler.factSource.allowedBackgroundSelectors) -}}
-{{- fail "profiler.factSource.allowedBackgroundSelectors must be a list" -}}
-{{- end -}}
 {{- if and (not .Values.profiler.workloadObserver.serviceAccount.create) (empty .Values.profiler.workloadObserver.serviceAccount.name) -}}
 {{- fail "profiler.workloadObserver.serviceAccount.name is required when create=false" -}}
 {{- end -}}

@@ -125,9 +125,9 @@ assumed healthy when no producer exists.
 For retained evidence
 `sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42`,
 the timestamp-aware diagnostic total is 543.686 J over 30.010 seconds and 5,541
-items. Admission is rejected because thermal state was not captured,
-unexpected co-resident workloads were present, and a post-run Pod snapshot
-cannot prove cleanliness across the earlier measurement window. Incremental
+items. Admission is insufficient because thermal state was not captured and a
+post-run Pod snapshot cannot prove continuous workload membership across the
+earlier measurement window. Incremental
 energy is
 `Unavailable: MissingIdleBaseline`; `b_sat` is
 `Unavailable: MissingIdleBaselineAndRepeatedCurve`. No `DeviceProfile` is

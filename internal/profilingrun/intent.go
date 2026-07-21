@@ -78,11 +78,11 @@ func (i Intent) Validate() error {
 			return fmt.Errorf("%s must be repository@sha256", name)
 		}
 	}
-	if i.SchemaVersion == SchemaVersion {
+	if i.SchemaVersion == SchemaVersion || i.SchemaVersion == allowedBackgroundIntentVersion {
 		if !imagePattern.MatchString(i.Images.WorkloadObserver) {
 			return errors.New("images.workloadObserver must be repository@sha256")
 		}
-		if err := i.Workload.AllowedBackground.Validate(); err != nil {
+		if err := i.Workload.Validate(); err != nil {
 			return fmt.Errorf("validate workload contract: %w", err)
 		}
 	}
@@ -112,12 +112,24 @@ func (i Intent) validateSchema() error {
 		if !validArtifactPath(i.State.ArtifactPath) {
 			return errors.New("state.artifactPath must be a clean absolute container path")
 		}
+		if i.Workload.SchemaVersion != WorkloadContractSchemaVersion || i.Workload.AllowedBackground != nil {
+			return errors.New("current intent requires the current workload observation contract")
+		}
+	case allowedBackgroundIntentVersion:
+		if !validArtifactPath(i.State.ArtifactPath) {
+			return errors.New("state.artifactPath must be a clean absolute container path")
+		}
+		if i.Images.WorkloadObserver == "" || i.Workload.SchemaVersion != "" || i.Workload.AllowedBackground == nil {
+			return errors.New("retained v1alpha4 intent requires its workload observation fields")
+		}
+		if err := i.Workload.Validate(); err != nil {
+			return fmt.Errorf("validate retained workload contract: %w", err)
+		}
 	case workloadFreeIntentSchemaVersion:
 		if !validArtifactPath(i.State.ArtifactPath) {
 			return errors.New("state.artifactPath must be a clean absolute container path")
 		}
-		if i.Images.WorkloadObserver != "" || i.Workload.AllowedBackground.SchemaVersion != "" ||
-			len(i.Workload.AllowedBackground.Selectors) != 0 {
+		if i.Images.WorkloadObserver != "" || i.Workload.SchemaVersion != "" || i.Workload.AllowedBackground != nil {
 			return errors.New("retained workload-free intent must not contain workload observation fields")
 		}
 	case previousIntentSchemaVersion:
@@ -141,8 +153,8 @@ func (i Intent) validateSchema() error {
 }
 
 func hasWorkloadObservationFields(intent Intent) bool {
-	return intent.Images.WorkloadObserver != "" || intent.Workload.AllowedBackground.SchemaVersion != "" ||
-		len(intent.Workload.AllowedBackground.Selectors) != 0
+	return intent.Images.WorkloadObserver != "" || intent.Workload.SchemaVersion != "" ||
+		intent.Workload.AllowedBackground != nil
 }
 
 func (i Intent) validateCPUContract() error {

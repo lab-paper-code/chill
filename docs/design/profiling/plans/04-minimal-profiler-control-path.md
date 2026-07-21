@@ -13,7 +13,7 @@ The immutable, namespaced `ProfilingRun` API, preparation, Job execution,
 worker-side raw evidence commit, controller-side terminal evidence
 finalization, and compact execution/evidence status are implemented and
 live-verified for the first CPU ONNX Runtime path. The Profiler now independently
-reloads that retained evidence, applies the named `wall-power-v1` single-Run
+reloads that retained evidence, applies the named `wall-power-v2` single-Run
 policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.

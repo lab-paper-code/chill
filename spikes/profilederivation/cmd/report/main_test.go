@@ -29,13 +29,14 @@ func TestRetainedPlan2BundleFailsClosed(t *testing.T) {
 		MaximumBoundaryDistanceSeconds: 1,
 		MinimumCoverage:                .95,
 		AllowReceiptTimestamps:         true,
-		RejectUnexpectedCoResidents:    true,
+		RejectConcurrentCHILLWorkloads: true,
+		RejectExternalWorkloadChanges:  true,
 	}
 	result, err := deriveReport(payload, digest, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Admission.Verdict != profilederivation.VerdictRejected ||
+	if result.Admission.Verdict != profilederivation.VerdictInsufficient ||
 		result.BSat.Status != profilederivation.BSatUnavailable {
 		t.Fatalf("unexpected result: %+v", result)
 	}

@@ -99,7 +99,7 @@ var _ = Describe("ProfilingRun API", func() {
 				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha1", Size: 1024,
 			},
 			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
-				Verdict: "Insufficient", PolicyVersion: "wall-power-v1",
+				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
 				ReasonCodes: []string{"ThermalStateUnavailable"},
 			},
 		}
@@ -132,7 +132,7 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 			},
-			AdmissionPolicy: "wall-power-v1",
+			AdmissionPolicy: "wall-power-v2",
 		},
 	}
 }

@@ -162,9 +162,9 @@ func validateWorkloadObservation(
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("validate workload observation: %w", err)
 	}
-	policyDigest, err := intent.Workload.AllowedBackground.Digest()
+	policyDigest, err := intent.Workload.Digest()
 	if err != nil {
-		return fmt.Errorf("digest allowed-background policy: %w", err)
+		return fmt.Errorf("digest workload observation contract: %w", err)
 	}
 	if result.PolicyDigest != policyDigest {
 		return errors.New("workload observation policy digest mismatch")

@@ -60,7 +60,7 @@ spec:
                 description: AdmissionPolicy identifies the configured single-Run
                   scientific admission policy.
                 enum:
-                - wall-power-v1
+                - wall-power-v2
                 maxLength: 128
                 minLength: 1
                 type: string

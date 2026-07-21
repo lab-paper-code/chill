@@ -192,7 +192,7 @@ func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 	for _, want := range []string{
 		"RUNTIME MEASUREMENT", "LATENCY", "POWER OBSERVATION", "THERMAL OBSERVATION",
 		"WORKLOAD OBSERVATION", "SCIENTIFIC ADMISSION", "EVIDENCE LINEAGE",
-		"188.009 items/s", "5.978 ms", "18.184 W", "Insufficient", "CoResidentWindowUnknown",
+		"188.009 items/s", "5.978 ms", "18.184 W", "Insufficient", "WorkloadWindowUnknown",
 		"fastdds-test/fastdds@fastdds-uid",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -488,13 +488,13 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 			Workload: &operatorconsole.EvidencePassportWorkload{
 				NodeName: "lattepanda", Continuous: true, InitialActivePods: 3, FinalActivePods: 3,
 				CoResidents: []operatorconsole.EvidencePassportWorkloadCoResident{
-					{Namespace: "monitoring", Name: "edge-metrics", UID: "metrics-uid", AllowedBackground: true},
-					{Namespace: "fastdds-test", Name: "fastdds", UID: "fastdds-uid", Unexpected: true},
+					{Namespace: "monitoring", Name: "edge-metrics", UID: "metrics-uid"},
+					{Namespace: "fastdds-test", Name: "fastdds", UID: "fastdds-uid", Changed: true},
 				},
 			},
 		},
 		Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
-			Verdict: "Insufficient", PolicyVersion: "wall-power-v1", ReasonCodes: []string{"CoResidentWindowUnknown"},
+			Verdict: "Insufficient", PolicyVersion: "wall-power-v2", ReasonCodes: []string{"WorkloadWindowUnknown"},
 		},
 	}
 }

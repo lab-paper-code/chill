@@ -15,17 +15,17 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 		latencies[index] = 1
 	}
 	trial := Trial{
-		StateIdentity:         "state",
-		TrialID:               "active-1",
-		Batch:                 1,
-		WindowStart:           start,
-		WindowEnd:             start.Add(10 * time.Second),
-		CompletedCalls:        100,
-		CompletedItems:        100,
-		LatencyMilliseconds:   latencies,
-		SteadyWindowVerified:  true,
-		ThermalStateKnown:     true,
-		CoResidentWindowKnown: true,
+		StateIdentity:        "state",
+		TrialID:              "active-1",
+		Batch:                1,
+		WindowStart:          start,
+		WindowEnd:            start.Add(10 * time.Second),
+		CompletedCalls:       100,
+		CompletedItems:       100,
+		LatencyMilliseconds:  latencies,
+		SteadyWindowVerified: true,
+		ThermalStateKnown:    true,
+		WorkloadWindowKnown:  true,
 		Samples: []Sample{
 			{start.Add(time.Second), 10},
 			{start.Add(5 * time.Second), 10},
@@ -39,7 +39,8 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 		MaximumBoundaryDistanceSeconds: 1,
 		MinimumCoverage:                .8,
 		AllowReceiptTimestamps:         true,
-		RejectUnexpectedCoResidents:    true,
+		RejectConcurrentCHILLWorkloads: true,
+		RejectExternalWorkloadChanges:  true,
 	}
 	result := Admit(trial, policy)
 	if result.Verdict != VerdictAccepted || result.TotalWallJoules == nil ||
@@ -74,12 +75,18 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if _, err := IncrementalTrial(trial, result, invalidBaseline); err == nil {
 		t.Fatal("expected invalid baseline uncertainty rejection")
 	}
-	trial.UnexpectedCoResidents = []string{"foreign"}
+	trial.ConcurrentCHILLWorkloads = []string{"other-run"}
 	result = Admit(trial, policy)
 	if result.Verdict != VerdictRejected {
 		t.Fatalf("expected rejection: %+v", result)
 	}
-	trial.UnexpectedCoResidents = nil
+	trial.ConcurrentCHILLWorkloads = nil
+	trial.ExternalWorkloadChanges = []string{"Entered:external"}
+	result = Admit(trial, policy)
+	if result.Verdict != VerdictRejected {
+		t.Fatalf("expected external-change rejection: %+v", result)
+	}
+	trial.ExternalWorkloadChanges = nil
 	trial.Samples = trial.Samples[:1]
 	result = Admit(trial, policy)
 	if result.Verdict != VerdictInsufficient {
@@ -90,10 +97,10 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 		{start.Add(5 * time.Second), 10},
 		{start.Add(9 * time.Second), 10},
 	}
-	trial.CoResidentWindowKnown = false
+	trial.WorkloadWindowKnown = false
 	result = Admit(trial, policy)
 	if result.Verdict != VerdictInsufficient {
-		t.Fatal("unknown co-resident window must not be accepted")
+		t.Fatal("unknown workload window must not be accepted")
 	}
 }
 

@@ -58,11 +58,14 @@ func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 	if trial.ThermallyThrottled {
 		add(VerdictRejected, "ThermalOrRuntimeThrottling", "trial is marked throttled")
 	}
-	if policy.RejectUnexpectedCoResidents && len(trial.UnexpectedCoResidents) > 0 {
-		add(VerdictRejected, "UnexpectedCoResidents", "whole-node wall power is contaminated by unexpected workloads")
+	if policy.RejectConcurrentCHILLWorkloads && len(trial.ConcurrentCHILLWorkloads) > 0 {
+		add(VerdictRejected, "ConcurrentCHILLWorkload", "another CHILL measurement workload overlaps the Run")
 	}
-	if !trial.CoResidentWindowKnown {
-		add(VerdictInsufficient, "CoResidentWindowUnknown", "continuous measurement-window workload observation is unavailable")
+	if policy.RejectExternalWorkloadChanges && len(trial.ExternalWorkloadChanges) > 0 {
+		add(VerdictRejected, "ExternalWorkloadChanged", "external Pod membership changed during the measurement window")
+	}
+	if !trial.WorkloadWindowKnown {
+		add(VerdictInsufficient, "WorkloadWindowUnknown", "continuous measurement-window workload observation is unavailable")
 	}
 	joules, qualityErr := integrate(trial, policy)
 	if qualityErr != nil {

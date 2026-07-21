@@ -48,11 +48,11 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 	}
 	if trial.CompletedCalls != 2 || trial.CompletedItems != 4 || len(trial.LatencyMilliseconds) != 2 ||
 		len(trial.Samples) != 1 || trial.Failures != 1 || !trial.SourceTimestampAbsent ||
-		!trial.SteadyWindowVerified || trial.ThermalStateKnown || trial.CoResidentWindowKnown {
+		!trial.SteadyWindowVerified || trial.ThermalStateKnown || trial.WorkloadWindowKnown {
 		t.Fatalf("projected trial = %#v", trial)
 	}
-	if len(trial.UnexpectedCoResidents) != 0 {
-		t.Fatalf("terminal snapshot was treated as measurement-window contamination: %#v", trial.UnexpectedCoResidents)
+	if len(trial.ConcurrentCHILLWorkloads) != 0 || len(trial.ExternalWorkloadChanges) != 0 {
+		t.Fatalf("terminal snapshot was treated as measurement-window evidence: %#v", trial)
 	}
 }
 
@@ -111,22 +111,21 @@ func admissionUint(value uint64) *uint64 { return &value }
 
 func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
 	t.Parallel()
-	intent := admissionIntentWithWorkloadPolicy()
-	first, err := materialStateIdentity(intent, "node-a")
+	intent := admissionIntentWithWorkloadContract()
+	first, err := materialStateIdentity(intent, "node-a", "environment-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	intent.Measurement.Batch = 8
-	second, err := materialStateIdentity(intent, "node-a")
+	second, err := materialStateIdentity(intent, "node-a", "environment-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := materialStateIdentity(intent, "node-b")
+	third, err := materialStateIdentity(intent, "node-b", "environment-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.Workload.AllowedBackground.Selectors[0].MatchLabels["app.kubernetes.io/component"] = "changed"
-	fourth, err := materialStateIdentity(intent, "node-a")
+	fourth, err := materialStateIdentity(intent, "node-a", "environment-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,14 +136,14 @@ func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
 
 func TestBuiltInPolicyIsExplicitAndClosed(t *testing.T) {
 	t.Parallel()
-	policy, err := builtInPolicy(WallPowerPolicyV1)
+	policy, err := builtInPolicy(WallPowerPolicyV2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.Version != WallPowerPolicyV1 || policy.MinimumSamples != 20 ||
+	if policy.Version != WallPowerPolicyV2 || policy.MinimumSamples != 20 ||
 		policy.MaximumGapSeconds != 1.5 || policy.MaximumBoundaryDistanceSeconds != 1 ||
 		policy.MinimumCoverage != 0.95 || !policy.AllowReceiptTimestamps ||
-		!policy.RejectUnexpectedCoResidents {
+		!policy.RejectConcurrentCHILLWorkloads || !policy.RejectExternalWorkloadChanges {
 		t.Fatalf("policy = %#v", policy)
 	}
 	if _, err := builtInPolicy("unknown"); err == nil {

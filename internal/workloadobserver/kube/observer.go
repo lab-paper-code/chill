@@ -39,8 +39,8 @@ type PodSource interface {
 }
 
 // Request contains identities and bounds already frozen for one profiling Run.
-// SelectorLabelKeys limits captured labels to facts needed by the separately
-// frozen allowed-background policy. EndFenceTimeout bounds the final catch-up
+// SelectorLabelKeys limits captured labels to facts needed to identify another
+// CHILL measurement workload. EndFenceTimeout bounds the final catch-up
 // watch used to prove that events preceding the stop signal were consumed.
 type Request struct {
 	Target            workloadobserver.TargetIdentity

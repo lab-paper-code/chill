@@ -17,7 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const WallPowerPolicyV1 = "wall-power-v1"
+const WallPowerPolicyV2 = "wall-power-v2"
 
 type Verdict string
 
@@ -70,17 +70,18 @@ func Evaluate(
 }
 
 func builtInPolicy(name string) (profilederivation.AdmissionPolicy, error) {
-	if name != WallPowerPolicyV1 {
+	if name != WallPowerPolicyV2 {
 		return profilederivation.AdmissionPolicy{}, fmt.Errorf("unsupported admission policy %q", name)
 	}
 	return profilederivation.AdmissionPolicy{
-		Version:                        WallPowerPolicyV1,
+		Version:                        WallPowerPolicyV2,
 		MinimumSamples:                 20,
 		MaximumGapSeconds:              1.5,
 		MaximumBoundaryDistanceSeconds: 1.0,
 		MinimumCoverage:                0.95,
 		AllowReceiptTimestamps:         true,
-		RejectUnexpectedCoResidents:    true,
+		RejectConcurrentCHILLWorkloads: true,
+		RejectExternalWorkloadChanges:  true,
 	}, nil
 }
 
@@ -100,32 +101,35 @@ func projectTrial(
 	for index, sample := range raw.Metrics.Samples {
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
-	stateIdentity, err := materialStateIdentity(execution.Intent, execution.Terminal.Node.UID)
+	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
+	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
-	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
-	coResidentWindowKnown, unexpectedCoResidents, err := projectWorkloadWindow(execution.Intent, raw.Workload)
+	stateIdentity, err := materialStateIdentity(
+		execution.Intent, execution.Terminal.Node.UID, workload.ExternalEnvironmentIdentity,
+	)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
 	return profilederivation.Trial{
-		StateIdentity:         stateIdentity,
-		TrialID:               execution.Terminal.Pod.UID,
-		Batch:                 execution.Intent.Measurement.Batch,
-		WindowStart:           windowStart,
-		WindowEnd:             windowEnd,
-		CompletedCalls:        raw.Runtime.InferenceCount,
-		CompletedItems:        raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
-		LatencyMilliseconds:   latencies,
-		Samples:               samples,
-		Failures:              len(raw.Metrics.Failures),
-		SourceTimestampAbsent: raw.Metrics.Summary.SourceTimestampAbsent,
-		UnexpectedCoResidents: unexpectedCoResidents,
-		CoResidentWindowKnown: coResidentWindowKnown,
-		ThermalStateKnown:     thermalKnown,
-		ThermallyThrottled:    thermallyThrottled,
-		SteadyWindowVerified:  true,
+		StateIdentity:            stateIdentity,
+		TrialID:                  execution.Terminal.Pod.UID,
+		Batch:                    execution.Intent.Measurement.Batch,
+		WindowStart:              windowStart,
+		WindowEnd:                windowEnd,
+		CompletedCalls:           raw.Runtime.InferenceCount,
+		CompletedItems:           raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
+		LatencyMilliseconds:      latencies,
+		Samples:                  samples,
+		Failures:                 len(raw.Metrics.Failures),
+		SourceTimestampAbsent:    raw.Metrics.Summary.SourceTimestampAbsent,
+		ConcurrentCHILLWorkloads: workload.ConcurrentCHILLWorkloads,
+		ExternalWorkloadChanges:  workload.ExternalWorkloadChanges,
+		WorkloadWindowKnown:      workload.Known,
+		ThermalStateKnown:        thermalKnown,
+		ThermallyThrottled:       thermallyThrottled,
+		SteadyWindowVerified:     true,
 	}, nil
 }
 
@@ -192,24 +196,26 @@ func thermalState(samples []metricobserver.Sample, windowStart, windowEnd time.T
 	return available && !counterReset && (directComplete || coreComplete || packageComplete), false
 }
 
-func materialStateIdentity(intent profilingrun.Intent, nodeUID string) (string, error) {
+func materialStateIdentity(intent profilingrun.Intent, nodeUID, externalEnvironmentIdentity string) (string, error) {
 	measurement := intent.Measurement
 	measurement.Batch = 0
 	type materialState struct {
-		State       profilingrun.ExecutionState      `json:"state"`
-		Images      profilingrun.Images              `json:"images"`
-		NodeUID     string                           `json:"nodeUID"`
-		CPU         profilingrun.CPUContract         `json:"cpu"`
-		Measurement profilingrun.MeasurementContract `json:"measurement"`
-		Metrics     profilingrun.MetricContract      `json:"metrics"`
+		State                       profilingrun.ExecutionState      `json:"state"`
+		Images                      profilingrun.Images              `json:"images"`
+		NodeUID                     string                           `json:"nodeUID"`
+		CPU                         profilingrun.CPUContract         `json:"cpu"`
+		Measurement                 profilingrun.MeasurementContract `json:"measurement"`
+		Metrics                     profilingrun.MetricContract      `json:"metrics"`
+		ExternalEnvironmentIdentity string                           `json:"externalEnvironmentIdentity,omitempty"`
 	}
 	base := materialState{
 		State: intent.State, Images: intent.Images, NodeUID: nodeUID, CPU: intent.CPU,
 		Measurement: measurement, Metrics: intent.Metrics,
+		ExternalEnvironmentIdentity: externalEnvironmentIdentity,
 	}
 	var payload []byte
 	var err error
-	if intent.Workload.AllowedBackground.SchemaVersion == "" {
+	if intent.Workload.SchemaVersion == "" && intent.Workload.AllowedBackground == nil {
 		payload, err = json.Marshal(base)
 	} else {
 		payload, err = json.Marshal(struct {

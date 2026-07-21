@@ -51,7 +51,8 @@ Store binding을 따라 final·raw 객체를 읽어 digest와 Run·Job·Pod·Nod
 bounded Evidence Passport를 조회 시점에 만든다. 원시 latency·power 배열, 저장소 endpoint와
 credential은 CLI에 전달하지 않는다. WorkloadObserver evidence가 있으면 연속성, 관찰 경계,
 초기·최종 active Pod 수, material event 수와 co-resident identity를 함께 투영한다. frozen
-allowed-background policy와 정확히 일치하는지 표시하되 admission verdict를 다시 계산하지 않는다.
+workload contract에 따라 동시 CHILL 측정 작업과 측정 중 변경된 외부 Pod를 구분해 표시하되
+admission verdict를 다시 계산하지 않는다. 안정적으로 존재한 외부 Pod도 숨기지 않고 관찰 사실로 남긴다.
 
 아직 Dashboard consumer와 Run 생성 표면은 없다. 현재 운영자가 호출할 수 있는 read-only
 수직 단면은 CLI System, Inventory, ProfilingRun 목록과 Evidence Passport 상세 조회다.

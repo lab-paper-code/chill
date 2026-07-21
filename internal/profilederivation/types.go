@@ -21,22 +21,23 @@ type Sample struct {
 	Watts      float64   `json:"watts"`
 }
 type Trial struct {
-	StateIdentity         string    `json:"stateIdentity"`
-	TrialID               string    `json:"trialID"`
-	Batch                 int       `json:"batch"`
-	WindowStart           time.Time `json:"windowStart"`
-	WindowEnd             time.Time `json:"windowEnd"`
-	CompletedItems        int       `json:"completedItems"`
-	CompletedCalls        int       `json:"completedCalls"`
-	LatencyMilliseconds   []float64 `json:"latencyMilliseconds"`
-	Samples               []Sample  `json:"samples"`
-	Failures              int       `json:"failures"`
-	SourceTimestampAbsent bool      `json:"sourceTimestampAbsent"`
-	UnexpectedCoResidents []string  `json:"unexpectedCoResidents"`
-	CoResidentWindowKnown bool      `json:"coResidentWindowKnown"`
-	ThermalStateKnown     bool      `json:"thermalStateKnown"`
-	ThermallyThrottled    bool      `json:"thermallyThrottled"`
-	SteadyWindowVerified  bool      `json:"steadyWindowVerified"`
+	StateIdentity            string    `json:"stateIdentity"`
+	TrialID                  string    `json:"trialID"`
+	Batch                    int       `json:"batch"`
+	WindowStart              time.Time `json:"windowStart"`
+	WindowEnd                time.Time `json:"windowEnd"`
+	CompletedItems           int       `json:"completedItems"`
+	CompletedCalls           int       `json:"completedCalls"`
+	LatencyMilliseconds      []float64 `json:"latencyMilliseconds"`
+	Samples                  []Sample  `json:"samples"`
+	Failures                 int       `json:"failures"`
+	SourceTimestampAbsent    bool      `json:"sourceTimestampAbsent"`
+	ConcurrentCHILLWorkloads []string  `json:"concurrentCHILLWorkloads"`
+	ExternalWorkloadChanges  []string  `json:"externalWorkloadChanges"`
+	WorkloadWindowKnown      bool      `json:"workloadWindowKnown"`
+	ThermalStateKnown        bool      `json:"thermalStateKnown"`
+	ThermallyThrottled       bool      `json:"thermallyThrottled"`
+	SteadyWindowVerified     bool      `json:"steadyWindowVerified"`
 }
 type AdmissionPolicy struct {
 	Version                        string        `json:"version"`
@@ -47,7 +48,8 @@ type AdmissionPolicy struct {
 	MaximumBoundaryDistanceSeconds float64       `json:"maximumBoundaryDistanceSeconds"`
 	MinimumCoverage                float64       `json:"minimumCoverage"`
 	AllowReceiptTimestamps         bool          `json:"allowReceiptTimestamps"`
-	RejectUnexpectedCoResidents    bool          `json:"rejectUnexpectedCoResidents"`
+	RejectConcurrentCHILLWorkloads bool          `json:"rejectConcurrentCHILLWorkloads"`
+	RejectExternalWorkloadChanges  bool          `json:"rejectExternalWorkloadChanges"`
 }
 type AdmissionResult struct {
 	Verdict         Verdict  `json:"verdict"`

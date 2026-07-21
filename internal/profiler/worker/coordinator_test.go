@@ -299,9 +299,7 @@ func testIntent(t *testing.T) profilingrun.Intent {
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-	}}
+	intent.Workload = profilingrun.CurrentWorkloadContract()
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +390,7 @@ func testWorkloadResult(
 	runtime profilingrun.RuntimeResult,
 ) workloadobserver.Result {
 	t.Helper()
-	policyDigest, err := intent.Workload.AllowedBackground.Digest()
+	policyDigest, err := intent.Workload.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}

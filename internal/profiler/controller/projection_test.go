@@ -112,7 +112,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 				recordIntentAndJob(run, digest)
 				run.Status.Evidence = testEvidenceReference()
 				run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
-					Verdict: "Insufficient", PolicyVersion: "wall-power-v1",
+					Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
 				}
 				return nil
 			},
@@ -235,7 +235,7 @@ func testRun() *edgev1alpha1.ProfilingRun {
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 			},
-			AdmissionPolicy: "wall-power-v1",
+			AdmissionPolicy: "wall-power-v2",
 		},
 	}
 }

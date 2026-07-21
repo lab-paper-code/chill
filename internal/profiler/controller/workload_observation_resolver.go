@@ -2,21 +2,18 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profiler"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-const workloadObservationFactsSchema = "chill.dacs.io/profiler-workload-observation.v1alpha1"
+const workloadObservationFactsSchema = "chill.dacs.io/profiler-workload-observation.v1alpha2"
 
 type WorkloadObservationResolverOptions struct {
 	Namespace     string
@@ -25,13 +22,12 @@ type WorkloadObservationResolverOptions struct {
 }
 
 type workloadObservationFacts struct {
-	SchemaVersion     string                               `json:"schemaVersion"`
-	Image             string                               `json:"image"`
-	AllowedBackground profilingrun.AllowedBackgroundPolicy `json:"allowedBackground"`
+	SchemaVersion string `json:"schemaVersion"`
+	Image         string `json:"image"`
 }
 
 // KubernetesWorkloadObservationResolver reads the installation-owned helper
-// image and policy that the Preparer freezes into each new Run intent.
+// image that the Preparer freezes into each new Run intent.
 type KubernetesWorkloadObservationResolver struct {
 	reader  client.Reader
 	options WorkloadObservationResolverOptions
@@ -95,15 +91,5 @@ func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 	if !pinnedWorkloadImage.MatchString(facts.Image) {
 		return profiler.ResolvedWorkloadObservation{}, errors.New("workload-observer image must be digest-pinned")
 	}
-	sort.Slice(facts.AllowedBackground.Selectors, func(left, right int) bool {
-		leftJSON, _ := json.Marshal(facts.AllowedBackground.Selectors[left])
-		rightJSON, _ := json.Marshal(facts.AllowedBackground.Selectors[right])
-		return string(leftJSON) < string(rightJSON)
-	})
-	if err := facts.AllowedBackground.Validate(); err != nil {
-		return profiler.ResolvedWorkloadObservation{}, fmt.Errorf("validate allowed-background policy: %w", err)
-	}
-	return profiler.ResolvedWorkloadObservation{
-		Image: facts.Image, Policy: facts.AllowedBackground,
-	}, nil
+	return profiler.ResolvedWorkloadObservation{Image: facts.Image}, nil
 }

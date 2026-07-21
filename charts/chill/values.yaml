@@ -93,7 +93,6 @@ profiler:
     workloadObserverImage: ""
     executionDeclarations: []
     metricSources: []
-    allowedBackgroundSelectors: []
 
 console:
   enabled: false

@@ -62,9 +62,9 @@ func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 	if first.CandidateReportBytes[0] == 'x' {
 		t.Fatal("prepared Run retained resolver-owned candidate bytes")
 	}
-	resolvers.workloads.result.Policy.Selectors[0].MatchLabels["app.kubernetes.io/component"] = "changed"
-	if first.Intent.Workload.AllowedBackground.Selectors[0].MatchLabels["app.kubernetes.io/component"] == "changed" {
-		t.Fatal("prepared Run retained resolver-owned workload policy")
+	resolvers.workloads.result.Image = "changed"
+	if first.Intent.Images.WorkloadObserver == "changed" {
+		t.Fatal("prepared Run retained resolver-owned workload facts")
 	}
 }
 
@@ -151,13 +151,6 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 				resolvers.workloads.result.Image = "registry.example/workload-observer:latest"
 			},
 			match: "images.workloadObserver",
-		},
-		{
-			name: "invalid workload policy",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.workloads.result.Policy.SchemaVersion = "foreign"
-			},
-			match: "allowed-background policy schemaVersion",
 		},
 	}
 
@@ -421,16 +414,7 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-		Selectors: []profilingrun.BackgroundPodSelector{{
-			Namespace: "monitoring",
-			ControllerOwner: profilingrun.ControllerOwnerSelector{
-				Kind: "DaemonSet", Name: "edge-metrics-exporter",
-			},
-			MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"},
-		}},
-	}}
+	intent.Workload = profilingrun.CurrentWorkloadContract()
 	candidateBytes, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -471,7 +455,7 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			ConfigurationContentDigest: intent.Metrics.ConfigurationContentDigest,
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
-			Image: intent.Images.WorkloadObserver, Policy: intent.Workload.AllowedBackground,
+			Image: intent.Images.WorkloadObserver,
 		}},
 	}
 }

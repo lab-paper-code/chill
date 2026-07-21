@@ -124,9 +124,7 @@ func writeTestIntent(t *testing.T, directory, endpoint string) (profilingrun.Int
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-	}}
+	intent.Workload = profilingrun.CurrentWorkloadContract()
 	intent.Metrics.Endpoint = endpoint
 	intent.Measurement.DurationSeconds = 1
 	intent.Metrics.DurationSeconds = 1

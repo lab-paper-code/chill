@@ -24,17 +24,17 @@ type EvidencePassportWorkload struct {
 }
 
 type EvidencePassportWorkloadCoResident struct {
-	Namespace         string                         `json:"namespace"`
-	Name              string                         `json:"name"`
-	UID               string                         `json:"uid"`
-	Phase             string                         `json:"phase"`
-	Owner             *EvidencePassportWorkloadOwner `json:"owner,omitempty"`
-	Images            []string                       `json:"images"`
-	PresentAtStart    bool                           `json:"presentAtStart"`
-	PresentAtEnd      bool                           `json:"presentAtEnd"`
-	EventKinds        []string                       `json:"eventKinds,omitempty"`
-	AllowedBackground bool                           `json:"allowedBackground"`
-	Unexpected        bool                           `json:"unexpected"`
+	Namespace        string                         `json:"namespace"`
+	Name             string                         `json:"name"`
+	UID              string                         `json:"uid"`
+	Phase            string                         `json:"phase"`
+	Owner            *EvidencePassportWorkloadOwner `json:"owner,omitempty"`
+	Images           []string                       `json:"images"`
+	PresentAtStart   bool                           `json:"presentAtStart"`
+	PresentAtEnd     bool                           `json:"presentAtEnd"`
+	EventKinds       []string                       `json:"eventKinds,omitempty"`
+	CHILLMeasurement bool                           `json:"chillMeasurement"`
+	Changed          bool                           `json:"changed"`
 }
 
 type EvidencePassportWorkloadOwner struct {
@@ -58,9 +58,12 @@ func summarizeWorkload(
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("validate workload evidence for passport: %w", err)
 	}
-	policy := intent.Workload.AllowedBackground
-	if err := policy.Validate(); err != nil {
-		return nil, fmt.Errorf("validate workload policy for passport: %w", err)
+	digest, err := intent.Workload.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("validate workload contract for passport: %w", err)
+	}
+	if digest != result.PolicyDigest {
+		return nil, fmt.Errorf("workload contract digest does not match evidence")
 	}
 
 	observed := make(map[string]*workloadAccumulator)
@@ -72,7 +75,6 @@ func summarizeWorkload(
 		if !exists {
 			entry = &workloadAccumulator{view: EvidencePassportWorkloadCoResident{
 				Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID,
-				AllowedBackground: true,
 			}, eventKinds: map[string]struct{}{}}
 			observed[pod.UID] = entry
 		}
@@ -83,9 +85,14 @@ func summarizeWorkload(
 		entry.view.PresentAtEnd = entry.view.PresentAtEnd || atEnd
 		if eventKind != "" {
 			entry.eventKinds[eventKind] = struct{}{}
+			entry.view.Changed = true
 		}
-		entry.view.AllowedBackground = entry.view.AllowedBackground && workloadAllowed(policy, pod)
-		entry.view.Unexpected = !entry.view.AllowedBackground
+		ownerKind := ""
+		if pod.Owner != nil {
+			ownerKind = pod.Owner.Kind
+		}
+		entry.view.CHILLMeasurement = entry.view.CHILLMeasurement ||
+			profilingrun.IsMeasurementWorkload(ownerKind, pod.Labels)
 	}
 	for _, pod := range result.InitialActivePods {
 		add(pod, true, false, "")
@@ -122,13 +129,6 @@ func summarizeWorkload(
 		view.FailureReason = string(result.Failure.Reason)
 	}
 	return view, nil
-}
-
-func workloadAllowed(policy profilingrun.AllowedBackgroundPolicy, pod workloadobserver.Pod) bool {
-	if pod.Owner == nil {
-		return false
-	}
-	return policy.Matches(pod.Namespace, pod.Owner.Kind, pod.Owner.Name, pod.Labels)
 }
 
 func workloadOwner(owner *workloadobserver.OwnerIdentity) *EvidencePassportWorkloadOwner {

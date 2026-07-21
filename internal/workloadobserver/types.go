@@ -30,7 +30,7 @@ type TargetIdentity struct {
 }
 
 // RunIdentity identifies the profiling Pod that admission excludes from the
-// co-resident set.
+// observed workload set.
 type RunIdentity struct {
 	Namespace string `json:"namespace"`
 	JobUID    string `json:"jobUID"`
@@ -45,7 +45,7 @@ type OwnerIdentity struct {
 }
 
 // Pod records only the material facts needed for workload membership and
-// installation-time allowed-background selector evaluation.
+// CHILL measurement-workload identification.
 type Pod struct {
 	Namespace string            `json:"namespace"`
 	Name      string            `json:"name"`
@@ -71,8 +71,7 @@ type Failure struct {
 	Message    string        `json:"message"`
 }
 
-// Result is one bounded, factual workload-membership observation. Admission
-// applies the separately frozen allowed-background policy.
+// Result is one bounded, factual workload-membership observation.
 type Result struct {
 	SchemaVersion          string         `json:"schemaVersion"`
 	Target                 TargetIdentity `json:"target"`

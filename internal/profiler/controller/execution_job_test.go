@@ -81,7 +81,8 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	workloads := findContainer(t, pod.Containers, "workload-observer")
 	assertArgument(t, workloads.Args, "--kube-api-server=https://kubernetes.example:6443")
 	assertArgument(t, workloads.Args, "--max-events=10000")
-	assertArgument(t, workloads.Args, "--selector-label-keys=app.kubernetes.io/component")
+	assertArgument(t, workloads.Args,
+		"--selector-label-keys=app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role")
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
 }
 
@@ -161,16 +162,7 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	prepared.Intent.SchemaVersion = profilingrun.SchemaVersion
 	prepared.Intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	prepared.Intent.Images.WorkloadObserver = testWorkloadObserverImage
-	prepared.Intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-		Selectors: []profilingrun.BackgroundPodSelector{{
-			Namespace: "monitoring",
-			ControllerOwner: profilingrun.ControllerOwnerSelector{
-				Kind: "DaemonSet", Name: "edge-metrics-exporter",
-			},
-			MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"},
-		}},
-	}}
+	prepared.Intent.Workload = profilingrun.CurrentWorkloadContract()
 	digest, err := prepared.Intent.Digest()
 	if err != nil {
 		t.Fatal(err)

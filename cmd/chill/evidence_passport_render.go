@@ -131,13 +131,14 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 
 	workloadRows := [][2]string{{"Coverage", unavailableValue}}
 	if workload := passport.Measurement.Workload; workload != nil {
-		allowed := 0
-		unexpected := make([]string, 0)
+		concurrentCHILL := make([]string, 0)
+		changedExternal := make([]string, 0)
 		for _, pod := range workload.CoResidents {
-			if pod.Unexpected {
-				unexpected = append(unexpected, pod.Namespace+"/"+pod.Name+"@"+pod.UID)
-			} else if pod.AllowedBackground {
-				allowed++
+			identity := pod.Namespace + "/" + pod.Name + "@" + pod.UID
+			if pod.CHILLMeasurement {
+				concurrentCHILL = append(concurrentCHILL, identity)
+			} else if pod.Changed {
+				changedExternal = append(changedExternal, identity)
 			}
 		}
 		coverage := "incomplete"
@@ -151,8 +152,9 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 				workload.CoverageEndedAt.Format(time.RFC3339Nano)},
 			{"Initial/final active Pods", fmt.Sprintf("%d/%d", workload.InitialActivePods, workload.FinalActivePods)},
 			{"Material events", fmt.Sprint(workload.MaterialEvents)},
-			{"Allowed co-residents", fmt.Sprint(allowed)},
-			{"Unexpected co-residents", display(strings.Join(unexpected, ", "))},
+			{"Observed co-residents", fmt.Sprint(len(workload.CoResidents))},
+			{"Concurrent CHILL measurements", display(strings.Join(concurrentCHILL, ", "))},
+			{"Changed external Pods", display(strings.Join(changedExternal, ", "))},
 			{"Failure", display(workload.FailureReason)},
 		}
 	}

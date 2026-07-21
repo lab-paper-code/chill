@@ -103,12 +103,6 @@ func deriveReport(payload []byte, digest string, policy profilederivation.Admiss
 	for _, repetition := range e.Runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 	}
-	unexpected := []string{}
-	for _, pod := range e.CoResidentPods.Items {
-		if pod.Status.Phase == corev1.PodRunning && pod.UID != e.Pod.UID {
-			unexpected = append(unexpected, pod.Namespace+"/"+pod.Name)
-		}
-	}
 	stateIdentity := materialStateIdentity(e.Intent, string(e.ActualNode.UID))
 	start, err := time.Parse(time.RFC3339Nano, e.Runtime.MeasurementStartedAt)
 	if err != nil {
@@ -134,7 +128,7 @@ func deriveReport(payload []byte, digest string, policy profilederivation.Admiss
 		Samples:               samples,
 		Failures:              len(e.Power.Failures),
 		SourceTimestampAbsent: e.Power.Summary.SourceTimestampAbsent,
-		UnexpectedCoResidents: unexpected,
+		WorkloadWindowKnown:   false,
 		SteadyWindowVerified:  true,
 		ThermalStateKnown:     false,
 	}

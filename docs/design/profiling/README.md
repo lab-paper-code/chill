@@ -129,8 +129,8 @@ plans but do not expand a plan's authorization:
 - [MetricObserver](components/metric-observer.md) owns bounded typed power and
   thermal observation, not evidence-admission policy or profile derivation.
 - [WorkloadObserver](components/workload-observer.md) defines bounded
-  measurement-window Pod-membership evidence with an installation-time
-  allowed-background policy.
+  measurement-window Pod-membership evidence, external-environment stability,
+  and concurrent CHILL measurement detection.
 - [Evidence Store](components/evidence-store.md) owns immutable evidence object
   storage and verification boundaries. Its Profiler-consumption plan remains
   separately review-gated.

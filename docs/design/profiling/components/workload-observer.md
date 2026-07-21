@@ -37,8 +37,9 @@ WorkloadObserver owns:
 
 The Measurement Worker validates the result against the frozen intent and
 includes it in raw evidence. Profiler admission decides whether coverage is
-sufficient and whether observed co-residents violate the selected policy.
-Kubernetes remains authoritative for Pod identity and lifecycle.
+sufficient, another CHILL measurement overlapped the Run, or external Pod
+membership changed during the window. Kubernetes remains authoritative for
+Pod identity and lifecycle.
 
 WorkloadObserver does not:
 
@@ -127,10 +128,13 @@ Admission can set the window-known fact only when:
 - no watch gap, expired history, overflow, or observer failure exists; and
 - the workload result passes strict evidence validation.
 
-Any Pod membership change that violates the selected co-resident policy is a
-typed rejection. Missing or discontinuous observation is `Insufficient`.
+Another CHILL measurement workload overlapping the Run is a typed rejection.
+External Pods are not allowlisted or rejected merely for being present. A
+material external Pod membership change during the measurement window is a
+separate typed rejection. Missing or discontinuous observation is
+`Insufficient`.
 
-The stable background set must contribute to the material environment identity
+The stable external Pod set contributes to the material environment identity
 used to compare active trials and idle baselines. Workload membership evidence
 does not prove that a stable Pod had constant internal load; repeated trials,
 idle-baseline uncertainty, and later measurement-isolation policy remain
@@ -173,24 +177,25 @@ from later Kubernetes state and remains insufficient.
 Duplicate reconciles may verify the same retained result but never recreate
 measurement-window facts. Retrying measurement requires a new Run identity.
 
-## Allowed-background policy
+## External workload boundary
 
-Every active Pod other than the profiling Run Pod must match an
-installation-time allowed-background selector. Stable presence alone does not
-make an unrelated workload admissible.
+CHILL does not maintain identities or selectors for external software. Every
+external Pod observed on the target Node is retained as measurement context.
+Stable external presence is valid; admission does not interpret what the
+software is or whether it should be running.
 
-The Profiler resolves namespace, direct controller owner kind and name, and
-exact-label selectors from its installation-owned fact source before Job
-creation and freezes their canonical form in the internal Run intent. Labels
-alone do not establish workload identity because another Pod can copy them. The intent
-deterministically provides the policy digest and retained label keys used by the
-observer. The observer records the exact Pod facts needed to reproduce matching,
-while admission applies the frozen policy. CHILL does not mutate external
-workloads. Additional selector operators require a later policy schema.
+Current CHILL profiling Jobs carry one fixed workload-role label. The observer
+retains only that label and the standard CHILL workload labels needed to detect
+another CHILL measurement on the same Node. It does not classify ordinary
+external Pods by product, namespace, owner, or label. A concurrent CHILL
+measurement is CHILL-owned interference and is rejected. An external Pod
+entering, leaving, restarting, or materially changing during the window is
+reported as external-environment change and is rejected for that Run.
 
-The stable allowed-background set also contributes to the material environment
-identity used to compare active trials and idle baselines. Policy is never a
-mutable finalization-time choice or a caller-supplied per-Run knob.
+When no such change occurs, the complete stable external Pod set is hashed into
+the material environment identity. Trials measured under different observed
+external Pod sets therefore remain individually usable but cannot be aggregated
+as the same state. CHILL never mutates or pauses those external workloads.
 
 ## Explicit non-goals
 

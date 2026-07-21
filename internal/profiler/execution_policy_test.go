@@ -65,7 +65,5 @@ func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testi
 func addWorkloadObservation(intent *profilingrun.Intent) {
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-	}}
+	intent.Workload = profilingrun.CurrentWorkloadContract()
 }

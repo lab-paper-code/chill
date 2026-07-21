@@ -53,7 +53,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		&o.workloadObservationKey,
 		"workload-observation-key",
 		"",
-		"ConfigMap key containing WorkloadObserver image and allowed-background policy.",
+		"ConfigMap key containing the digest-pinned WorkloadObserver image.",
 	)
 }
 

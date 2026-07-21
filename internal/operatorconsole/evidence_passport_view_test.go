@@ -22,18 +22,7 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	execution.RawMeasurement.Key = rawObjectKey
 	execution.RawMeasurement.Digest = run.Status.Evidence.Digest
 	execution.RawMeasurement.Size = 512
-	execution.Intent = profilingrun.Intent{Workload: profilingrun.WorkloadContract{
-		AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-			SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-			Selectors: []profilingrun.BackgroundPodSelector{{
-				Namespace: "monitoring",
-				ControllerOwner: profilingrun.ControllerOwnerSelector{
-					Kind: "DaemonSet", Name: "edge-metrics",
-				},
-				MatchLabels: map[string]string{"app": "edge-metrics"},
-			}},
-		},
-	}}
+	execution.Intent = profilingrun.Intent{Workload: profilingrun.CurrentWorkloadContract()}
 	workload := passportWorkloadResult(t, execution.Intent, started)
 	measurement := profilerevidence.RawMeasurement{
 		Runtime: profilingrun.RuntimeResult{
@@ -107,8 +96,8 @@ func assertPassportWorkload(t *testing.T, workload *EvidencePassportWorkload) {
 	t.Helper()
 	if workload == nil || !workload.Continuous || workload.InitialActivePods != 3 ||
 		len(workload.CoResidents) != 2 || workload.CoResidents[0].Name != "fastdds" ||
-		!workload.CoResidents[0].Unexpected || workload.CoResidents[1].Unexpected ||
-		!workload.CoResidents[1].AllowedBackground {
+		workload.CoResidents[0].CHILLMeasurement || workload.CoResidents[0].Changed ||
+		workload.CoResidents[1].CHILLMeasurement || workload.CoResidents[1].Changed {
 		t.Fatalf("workload facts = %#v", workload)
 	}
 }
@@ -119,7 +108,7 @@ func passportWorkloadResult(
 	started time.Time,
 ) workloadobserver.Result {
 	t.Helper()
-	digest, err := intent.Workload.AllowedBackground.Digest()
+	digest, err := intent.Workload.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}

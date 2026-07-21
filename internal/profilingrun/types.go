@@ -12,7 +12,8 @@ const (
 	legacyIntentSchemaVersion       = "chill.dacs.io/profiling-run-intent.v1alpha1"
 	previousIntentSchemaVersion     = "chill.dacs.io/profiling-run-intent.v1alpha2"
 	workloadFreeIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha3"
-	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha4"
+	allowedBackgroundIntentVersion  = "chill.dacs.io/profiling-run-intent.v1alpha4"
+	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha5"
 )
 
 type Intent struct {

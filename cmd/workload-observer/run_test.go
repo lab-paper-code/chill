@@ -169,9 +169,7 @@ func writeWorkloadTestIntent(t *testing.T, directory string) string {
 	intent.SchemaVersion = profilingrun.SchemaVersion
 	intent.State.ArtifactPath = "/artifact/model.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
-		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
-	}}
+	intent.Workload = profilingrun.CurrentWorkloadContract()
 	canonical, err := intent.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +192,7 @@ func workloadTestOptions(directory, digest string) options {
 		windowReadyPath: filepath.Join(directory, "workload-window-ready"),
 		endPath:         filepath.Join(directory, "measurement-end"),
 		resultPath:      filepath.Join(directory, "workload-result.json"),
-		policyDigest:    "sha256:" + strings.Repeat("b", 64), selectorLabelCSV: "app,component",
+		contractDigest:  "sha256:" + strings.Repeat("b", 64), selectorLabelCSV: "app,component",
 		endWaitTimeout: time.Second, endFenceTimeout: 3 * time.Second,
 		maxEvents: 100, maxResultBytes: 1 << 20,
 		podNamespace: "chill-system", podName: "run", podUID: "pod-uid",

@@ -36,79 +36,28 @@ func TestIntentRejectsMutableImage(t *testing.T) {
 	}
 }
 
-func TestCurrentIntentFreezesWorkloadObservationPolicy(t *testing.T) {
+func TestCurrentIntentFreezesGenericWorkloadObservationContract(t *testing.T) {
 	intent := validIntent()
-	digest, err := intent.Workload.AllowedBackground.Digest()
+	digest, err := intent.Workload.Digest()
 	if err != nil || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("policy digest = %q, error = %v", digest, err)
+		t.Fatalf("contract digest = %q, error = %v", digest, err)
 	}
-	keys, err := intent.Workload.AllowedBackground.LabelKeys()
-	if err != nil || strings.Join(keys, ",") != "app.kubernetes.io/component,app.kubernetes.io/name" {
-		t.Fatalf("policy label keys = %#v, error = %v", keys, err)
+	keys, err := intent.Workload.LabelKeys()
+	if err != nil || strings.Join(keys, ",") !=
+		"app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role" {
+		t.Fatalf("contract label keys = %#v, error = %v", keys, err)
 	}
-
-	intent.Workload.AllowedBackground.Selectors = append(
-		intent.Workload.AllowedBackground.Selectors,
-		BackgroundPodSelector{
-			Namespace:       "default",
-			ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "background"},
-			MatchLabels:     map[string]string{"a": "b"},
-		},
-	)
-	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "canonically ordered") {
-		t.Fatalf("unordered policy validation error = %v", err)
+	intent.Workload.SchemaVersion = "unknown"
+	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "current workload") {
+		t.Fatalf("invalid workload contract error = %v", err)
 	}
 }
 
-func TestAllowedBackgroundPolicyRequiresControllerOwnedWorkloadIdentity(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*BackgroundPodSelector)
-		match  string
-	}{
-		{name: "namespace", mutate: func(selector *BackgroundPodSelector) {
-			selector.Namespace = ""
-		}, match: "namespace"},
-		{name: "owner kind", mutate: func(selector *BackgroundPodSelector) {
-			selector.ControllerOwner.Kind = ""
-		}, match: "controller owner kind"},
-		{name: "owner name", mutate: func(selector *BackgroundPodSelector) {
-			selector.ControllerOwner.Name = ""
-		}, match: "controller owner name"},
-		{name: "labels", mutate: func(selector *BackgroundPodSelector) {
-			selector.MatchLabels = nil
-		}, match: "matchLabels"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			policy := validIntent().Workload.AllowedBackground
-			test.mutate(&policy.Selectors[0])
-			if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), test.match) {
-				t.Fatalf("Validate() error = %v, want %q", err, test.match)
-			}
-		})
-	}
-}
-
-func TestAllowedBackgroundPolicyMatchesWholeExactSelector(t *testing.T) {
-	policy := validIntent().Workload.AllowedBackground
-	labels := map[string]string{"app.kubernetes.io/name": "kube-proxy"}
-	if !policy.Matches("kube-system", "DaemonSet", "kube-proxy", labels) {
-		t.Fatal("exact selector did not match")
-	}
-	for _, input := range []struct {
-		namespace, kind, name string
-		labels                map[string]string
-	}{
-		{namespace: "default", kind: "DaemonSet", name: "kube-proxy", labels: labels},
-		{namespace: "kube-system", kind: "ReplicaSet", name: "kube-proxy", labels: labels},
-		{namespace: "kube-system", kind: "DaemonSet", name: "copied", labels: labels},
-		{namespace: "kube-system", kind: "DaemonSet", name: "kube-proxy", labels: map[string]string{}},
-	} {
-		if policy.Matches(input.namespace, input.kind, input.name, input.labels) {
-			t.Fatalf("partial selector unexpectedly matched: %#v", input)
-		}
+func TestMeasurementWorkloadRequiresCHILLRoleAndJobOwner(t *testing.T) {
+	labels := map[string]string{MeasurementWorkloadLabelKey: MeasurementWorkloadLabelValue}
+	if !IsMeasurementWorkload("Job", labels) || IsMeasurementWorkload("DaemonSet", labels) ||
+		IsMeasurementWorkload("Job", map[string]string{}) {
+		t.Fatal("measurement workload identity was not exact")
 	}
 }
 
@@ -123,6 +72,35 @@ func TestRetainedWorkloadFreeIntentKeepsCanonicalShape(t *testing.T) {
 	}
 	if strings.Contains(string(payload), "workloadObserver") || strings.Contains(string(payload), `"workload"`) {
 		t.Fatalf("retained intent gained workload fields: %s", payload)
+	}
+}
+
+func TestRetainedAllowedBackgroundIntentRemainsReadable(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = allowedBackgroundIntentVersion
+	intent.Workload = WorkloadContract{AllowedBackground: &legacyAllowedPolicy{
+		SchemaVersion: legacyAllowedPolicyVersion,
+		Selectors: []legacyBackgroundSelector{{
+			Namespace: "monitoring",
+			ControllerOwner: legacyControllerSelector{
+				Kind: "DaemonSet", Name: "edge-metrics-exporter",
+			},
+			MatchLabels: map[string]string{"app": "edge-metrics"},
+		}},
+	}}
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeTestIntent(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != allowedBackgroundIntentVersion || decoded.Workload.AllowedBackground == nil {
+		t.Fatalf("retained workload intent = %#v", decoded.Workload)
 	}
 }
 
@@ -279,20 +257,6 @@ func validIntent() Intent {
 			TimeoutMilliseconds:        500,
 			DurationSeconds:            31,
 		},
-		Workload: WorkloadContract{AllowedBackground: AllowedBackgroundPolicy{
-			SchemaVersion: AllowedBackgroundPolicySchemaVersion,
-			Selectors: []BackgroundPodSelector{
-				{
-					Namespace:       "kube-system",
-					ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "kube-proxy"},
-					MatchLabels:     map[string]string{"app.kubernetes.io/name": "kube-proxy"},
-				},
-				{
-					Namespace:       "monitoring",
-					ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "edge-metrics-exporter"},
-					MatchLabels:     map[string]string{"app.kubernetes.io/component": "edge-metrics"},
-				},
-			},
-		}},
+		Workload: CurrentWorkloadContract(),
 	}
 }

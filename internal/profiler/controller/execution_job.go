@@ -184,21 +184,22 @@ func buildExecutionJob(
 	rawKey := rawEvidenceObjectKey(run.UID, prepared.IntentDigest)
 	policyIdentity := plan.Policy + "/" + plan.PolicyVersion
 	labels := map[string]string{
-		"app.kubernetes.io/name":      component.DefaultSystemName,
-		"app.kubernetes.io/component": component.Profiler,
+		"app.kubernetes.io/name":                 component.DefaultSystemName,
+		"app.kubernetes.io/component":            component.Profiler,
+		profilingrun.MeasurementWorkloadLabelKey: profilingrun.MeasurementWorkloadLabelValue,
 	}
 	annotations := map[string]string{
 		intentDigestAnnotation:    prepared.IntentDigest,
 		executionPolicyAnnotation: policyIdentity,
 	}
 	deadlineSeconds := int64(plan.ActiveDeadline.Seconds())
-	policyDigest, err := prepared.Intent.Workload.AllowedBackground.Digest()
+	policyDigest, err := prepared.Intent.Workload.Digest()
 	if err != nil {
-		return nil, fmt.Errorf("digest allowed-background policy: %w", err)
+		return nil, fmt.Errorf("digest workload observation contract: %w", err)
 	}
-	selectorLabelKeys, err := prepared.Intent.Workload.AllowedBackground.LabelKeys()
+	selectorLabelKeys, err := prepared.Intent.Workload.LabelKeys()
 	if err != nil {
-		return nil, fmt.Errorf("resolve allowed-background label keys: %w", err)
+		return nil, fmt.Errorf("resolve workload observation label keys: %w", err)
 	}
 
 	job := &batchv1.Job{
@@ -332,14 +333,14 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 
 func workloadObserverContainer(
 	prepared profiler.PreparedRun,
-	policyDigest string,
+	contractDigest string,
 	selectorLabelKeys []string,
 	options ExecutionJobOptions,
 	plan profiler.ExecutionPlan,
 ) corev1.Container {
 	arguments := []string{
 		"--intent-digest=" + prepared.IntentDigest,
-		"--policy-digest=" + policyDigest,
+		"--contract-digest=" + contractDigest,
 		"--selector-label-keys=" + strings.Join(selectorLabelKeys, ","),
 		"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 		"--end-fence-timeout=" + plan.WorkloadEndFenceTimeout.String(),
