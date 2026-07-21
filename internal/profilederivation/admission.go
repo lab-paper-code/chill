@@ -62,7 +62,7 @@ func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 		add(VerdictRejected, "UnexpectedCoResidents", "whole-node wall power is contaminated by unexpected workloads")
 	}
 	if !trial.CoResidentWindowKnown {
-		add(VerdictInsufficient, "CoResidentWindowUnknown", "post-run snapshot cannot prove window cleanliness")
+		add(VerdictInsufficient, "CoResidentWindowUnknown", "continuous measurement-window workload observation is unavailable")
 	}
 	joules, qualityErr := integrate(trial, policy)
 	if qualityErr != nil {

@@ -111,7 +111,7 @@ func admissionUint(value uint64) *uint64 { return &value }
 
 func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
 	t.Parallel()
-	intent := admissionIntent()
+	intent := admissionIntentWithWorkloadPolicy()
 	first, err := materialStateIdentity(intent, "node-a")
 	if err != nil {
 		t.Fatal(err)
@@ -125,8 +125,13 @@ func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first == third || !strings.HasPrefix(first, "sha256:") {
-		t.Fatalf("state identities = %q, %q, %q", first, second, third)
+	intent.Workload.AllowedBackground.Selectors[0].MatchLabels["app.kubernetes.io/component"] = "changed"
+	fourth, err := materialStateIdentity(intent, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || first == third || first == fourth || !strings.HasPrefix(first, "sha256:") {
+		t.Fatalf("state identities = %q, %q, %q, %q", first, second, third, fourth)
 	}
 }
 
@@ -154,7 +159,7 @@ func admissionIntent() profilingrun.Intent {
 			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
 		},
 		Images:     profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
-		TargetNode: profilingrun.NodeSnapshot{UID: "node-uid"},
+		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, Repetitions: 1,

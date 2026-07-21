@@ -141,6 +141,7 @@ deps:
       - profile-derivation
       - profiler-evidence
       - profiling-run
+      - workload-core
 
   profiler-worker:
     mayDependOn:

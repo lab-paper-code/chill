@@ -6,9 +6,9 @@
 
 Approved for staged implementation. The Kubernetes-free observation contract,
 isolated Kubernetes list-watch adapter, bounded executable, immutable
-installation-fact resolution, read-only identity, Job-local execution, and raw
-evidence retention are implemented. Admission projection remains separately
-gated.
+installation-fact resolution, read-only identity, Job-local execution, raw
+evidence retention, and admission projection are implemented. Live verification
+remains.
 
 ## Purpose
 
@@ -23,19 +23,6 @@ WorkloadObserver answers one bounded question:
 
 It reports Kubernetes workload-membership facts. It does not infer CPU, GPU,
 network, or application activity from Pod presence.
-
-## Current gap
-
-The Profiler currently lists Pods on the measured Node only after the Job has
-completed. Admission therefore sets `CoResidentWindowKnown=false` even when
-runtime, power, and thermal evidence are otherwise valid. This is intentional:
-a Pod may start and finish during measurement without appearing in the
-terminal list.
-
-The measurement Pod currently has automatic ServiceAccount token mounting
-disabled. The Profiler can list Pods cluster-wide for terminal finalization,
-but cannot watch them, and a controller reconcile does not retain a continuous
-measurement-window history.
 
 ## Responsibility boundary
 
@@ -78,17 +65,23 @@ runtime  <---- shared measurement signals ---->  MetricObserver
 Measurement Worker commits one raw evidence object
 ```
 
-WorkloadObserver starts before warm-up, performs a field-selected Pod list for
-`spec.nodeName=<target>`, and establishes a watch from the returned collection
-`resourceVersion`. It signals ready only after the list-watch boundary is
-continuous. Runtime measurement may then begin.
+WorkloadObserver starts before warm-up and probes a field-selected Pod
+`LIST/WATCH` for `spec.nodeName=<target>`. This readiness probe retains no
+measurement evidence. After warm-up, runtime requests the workload window;
+WorkloadObserver opens a new list-watch session and acknowledges only after its
+initial active set and watch continuation are established. Runtime then emits
+the separate measurement-start signal used by MetricObserver and begins
+inference. Pods that disappeared before this second list cannot contaminate the
+measurement window.
 
-The executable uses three atomic Job-local coordination paths:
+The executable uses five atomic Job-local coordination paths:
 
 ```text
-workload-observer-ready  list-watch continuity has been established
-measurement-end         runtime has closed its measurement window
-workload-result.json    validated bounded result after the closing bookmark
+workload-observer-ready  preflight list-watch capability is established
+workload-window-start    warm-up is complete; open the retained observation
+workload-window-ready    retained list-watch continuity is established
+measurement-end          runtime has closed its measurement window
+workload-result.json     validated bounded result after the closing bookmark
 ```
 
 The observer continues until the runtime end signal. It then opens one bounded
@@ -187,10 +180,10 @@ Every active Pod other than the profiling Run Pod must match an
 installation-time allowed-background selector. Stable presence alone does not
 make an unrelated workload admissible.
 
-The Profiler resolves namespace, controller owner kind and name, and exact-label
-selectors from its installation-owned fact source before Job creation and
-freezes their canonical form in the internal Run intent. Labels alone do not
-establish workload identity because another Pod can copy them. The intent
+The Profiler resolves namespace, direct controller owner kind and name, and
+exact-label selectors from its installation-owned fact source before Job
+creation and freezes their canonical form in the internal Run intent. Labels
+alone do not establish workload identity because another Pod can copy them. The intent
 deterministically provides the policy digest and retained label keys used by the
 observer. The observer records the exact Pod facts needed to reproduce matching,
 while admission applies the frozen policy. CHILL does not mutate external

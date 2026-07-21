@@ -105,6 +105,10 @@ func projectTrial(
 		return profilederivation.Trial{}, err
 	}
 	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
+	coResidentWindowKnown, unexpectedCoResidents, err := projectWorkloadWindow(execution.Intent, raw.Workload)
+	if err != nil {
+		return profilederivation.Trial{}, err
+	}
 	return profilederivation.Trial{
 		StateIdentity:         stateIdentity,
 		TrialID:               execution.Terminal.Pod.UID,
@@ -117,7 +121,8 @@ func projectTrial(
 		Samples:               samples,
 		Failures:              len(raw.Metrics.Failures),
 		SourceTimestampAbsent: raw.Metrics.Summary.SourceTimestampAbsent,
-		CoResidentWindowKnown: false,
+		UnexpectedCoResidents: unexpectedCoResidents,
+		CoResidentWindowKnown: coResidentWindowKnown,
 		ThermalStateKnown:     thermalKnown,
 		ThermallyThrottled:    thermallyThrottled,
 		SteadyWindowVerified:  true,
@@ -190,14 +195,28 @@ func thermalState(samples []metricobserver.Sample, windowStart, windowEnd time.T
 func materialStateIdentity(intent profilingrun.Intent, nodeUID string) (string, error) {
 	measurement := intent.Measurement
 	measurement.Batch = 0
-	payload, err := json.Marshal(struct {
+	type materialState struct {
 		State       profilingrun.ExecutionState      `json:"state"`
 		Images      profilingrun.Images              `json:"images"`
 		NodeUID     string                           `json:"nodeUID"`
 		CPU         profilingrun.CPUContract         `json:"cpu"`
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
 		Metrics     profilingrun.MetricContract      `json:"metrics"`
-	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Metrics})
+	}
+	base := materialState{
+		State: intent.State, Images: intent.Images, NodeUID: nodeUID, CPU: intent.CPU,
+		Measurement: measurement, Metrics: intent.Metrics,
+	}
+	var payload []byte
+	var err error
+	if intent.Workload.AllowedBackground.SchemaVersion == "" {
+		payload, err = json.Marshal(base)
+	} else {
+		payload, err = json.Marshal(struct {
+			materialState
+			Workload profilingrun.WorkloadContract `json:"workload"`
+		}{base, intent.Workload})
+	}
 	if err != nil {
 		return "", fmt.Errorf("encode material execution state: %w", err)
 	}
