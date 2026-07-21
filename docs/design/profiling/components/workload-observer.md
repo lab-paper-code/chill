@@ -186,12 +186,13 @@ Every active Pod other than the profiling Run Pod must match an
 installation-time allowed-background selector. Stable presence alone does not
 make an unrelated workload admissible.
 
-The Profiler resolves exact-label selectors from its installation-owned fact
-source before Job creation and freezes their canonical form in the internal Run
-intent. The intent deterministically provides the policy digest and retained
-label keys used by the observer. The observer records the exact Pod facts needed
-to reproduce matching, while admission applies the frozen policy. Operators may
-label required platform workloads; CHILL does not mutate those external
+The Profiler resolves namespace, controller owner kind and name, and exact-label
+selectors from its installation-owned fact source before Job creation and
+freezes their canonical form in the internal Run intent. Labels alone do not
+establish workload identity because another Pod can copy them. The intent
+deterministically provides the policy digest and retained label keys used by the
+observer. The observer records the exact Pod facts needed to reproduce matching,
+while admission applies the frozen policy. CHILL does not mutate external
 workloads. Additional selector operators require a later policy schema.
 
 The stable allowed-background set also contributes to the material environment

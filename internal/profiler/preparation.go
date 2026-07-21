@@ -272,6 +272,8 @@ func copyWorkloadPolicy(source profilingrun.AllowedBackgroundPolicy) profilingru
 		Selectors:     make([]profilingrun.BackgroundPodSelector, len(source.Selectors)),
 	}
 	for index, selector := range source.Selectors {
+		copy.Selectors[index].Namespace = selector.Namespace
+		copy.Selectors[index].ControllerOwner = selector.ControllerOwner
 		copy.Selectors[index].MatchLabels = maps.Clone(selector.MatchLabels)
 	}
 	return copy

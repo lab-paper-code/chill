@@ -25,10 +25,17 @@ type AllowedBackgroundPolicy struct {
 	Selectors     []BackgroundPodSelector `json:"selectors"`
 }
 
-// BackgroundPodSelector deliberately starts with exact label matching. More
-// selector operators require a new policy schema rather than implicit drift.
+// BackgroundPodSelector binds exact labels to one controller-owned workload.
+// More selector operators require a new policy schema rather than implicit drift.
 type BackgroundPodSelector struct {
-	MatchLabels map[string]string `json:"matchLabels"`
+	Namespace       string                  `json:"namespace"`
+	ControllerOwner ControllerOwnerSelector `json:"controllerOwner"`
+	MatchLabels     map[string]string       `json:"matchLabels"`
+}
+
+type ControllerOwnerSelector struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 func (p AllowedBackgroundPolicy) Validate() error {
@@ -37,6 +44,15 @@ func (p AllowedBackgroundPolicy) Validate() error {
 	}
 	previous := ""
 	for index, selector := range p.Selectors {
+		if len(k8svalidation.IsDNS1123Label(selector.Namespace)) != 0 {
+			return fmt.Errorf("allowed-background selector %d contains an invalid namespace", index)
+		}
+		if len(k8svalidation.IsCIdentifier(selector.ControllerOwner.Kind)) != 0 {
+			return fmt.Errorf("allowed-background selector %d contains an invalid controller owner kind", index)
+		}
+		if len(k8svalidation.IsDNS1123Subdomain(selector.ControllerOwner.Name)) != 0 {
+			return fmt.Errorf("allowed-background selector %d contains an invalid controller owner name", index)
+		}
 		if len(selector.MatchLabels) == 0 {
 			return fmt.Errorf("allowed-background selector %d requires matchLabels", index)
 		}

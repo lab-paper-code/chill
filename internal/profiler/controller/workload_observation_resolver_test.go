@@ -44,10 +44,16 @@ func TestKubernetesWorkloadObservationResolverRejectsUntrustedFacts(t *testing.T
 		{name: "unknown field", facts: validWorkloadObservationFacts() + "unknown: true\n", match: "unknown"},
 		{name: "duplicate selectors", facts: strings.Replace(
 			validWorkloadObservationFacts(),
-			"    - matchLabels:\n        app.kubernetes.io/component: edge-metrics",
-			"    - matchLabels:\n        a: a\n    - matchLabels:\n        a: a",
+			"    - namespace: monitoring",
+			"    - namespace: monitoring\n      controllerOwner:\n        kind: DaemonSet\n        name: edge-metrics-exporter\n      matchLabels:\n        app.kubernetes.io/component: edge-metrics\n    - namespace: monitoring",
 			1,
 		), match: "unique"},
+		{name: "missing owner", facts: strings.Replace(
+			validWorkloadObservationFacts(),
+			"      controllerOwner:\n        kind: DaemonSet\n        name: edge-metrics-exporter\n",
+			"",
+			1,
+		), match: "controller owner"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -98,7 +104,11 @@ image: ` + testWorkloadObserverImage + `
 allowedBackground:
   schemaVersion: chill.dacs.io/allowed-background-policy.v1alpha1
   selectors:
-    - matchLabels:
+    - namespace: monitoring
+      controllerOwner:
+        kind: DaemonSet
+        name: edge-metrics-exporter
+      matchLabels:
         app.kubernetes.io/component: edge-metrics
 `
 }

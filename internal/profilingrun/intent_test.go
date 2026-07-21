@@ -49,10 +49,45 @@ func TestCurrentIntentFreezesWorkloadObservationPolicy(t *testing.T) {
 
 	intent.Workload.AllowedBackground.Selectors = append(
 		intent.Workload.AllowedBackground.Selectors,
-		BackgroundPodSelector{MatchLabels: map[string]string{"a": "b"}},
+		BackgroundPodSelector{
+			Namespace:       "default",
+			ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "background"},
+			MatchLabels:     map[string]string{"a": "b"},
+		},
 	)
 	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "canonically ordered") {
 		t.Fatalf("unordered policy validation error = %v", err)
+	}
+}
+
+func TestAllowedBackgroundPolicyRequiresControllerOwnedWorkloadIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*BackgroundPodSelector)
+		match  string
+	}{
+		{name: "namespace", mutate: func(selector *BackgroundPodSelector) {
+			selector.Namespace = ""
+		}, match: "namespace"},
+		{name: "owner kind", mutate: func(selector *BackgroundPodSelector) {
+			selector.ControllerOwner.Kind = ""
+		}, match: "controller owner kind"},
+		{name: "owner name", mutate: func(selector *BackgroundPodSelector) {
+			selector.ControllerOwner.Name = ""
+		}, match: "controller owner name"},
+		{name: "labels", mutate: func(selector *BackgroundPodSelector) {
+			selector.MatchLabels = nil
+		}, match: "matchLabels"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := validIntent().Workload.AllowedBackground
+			test.mutate(&policy.Selectors[0])
+			if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("Validate() error = %v, want %q", err, test.match)
+			}
+		})
 	}
 }
 
@@ -226,8 +261,16 @@ func validIntent() Intent {
 		Workload: WorkloadContract{AllowedBackground: AllowedBackgroundPolicy{
 			SchemaVersion: AllowedBackgroundPolicySchemaVersion,
 			Selectors: []BackgroundPodSelector{
-				{MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"}},
-				{MatchLabels: map[string]string{"app.kubernetes.io/name": "kube-proxy"}},
+				{
+					Namespace:       "kube-system",
+					ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "kube-proxy"},
+					MatchLabels:     map[string]string{"app.kubernetes.io/name": "kube-proxy"},
+				},
+				{
+					Namespace:       "monitoring",
+					ControllerOwner: ControllerOwnerSelector{Kind: "DaemonSet", Name: "edge-metrics-exporter"},
+					MatchLabels:     map[string]string{"app.kubernetes.io/component": "edge-metrics"},
+				},
 			},
 		}},
 	}

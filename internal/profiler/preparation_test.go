@@ -424,6 +424,10 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
 		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
 		Selectors: []profilingrun.BackgroundPodSelector{{
+			Namespace: "monitoring",
+			ControllerOwner: profilingrun.ControllerOwnerSelector{
+				Kind: "DaemonSet", Name: "edge-metrics-exporter",
+			},
 			MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"},
 		}},
 	}}
