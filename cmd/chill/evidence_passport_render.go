@@ -129,6 +129,37 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		return err
 	}
 
+	workloadRows := [][2]string{{"Coverage", unavailableValue}}
+	if workload := passport.Measurement.Workload; workload != nil {
+		allowed := 0
+		unexpected := make([]string, 0)
+		for _, pod := range workload.CoResidents {
+			if pod.Unexpected {
+				unexpected = append(unexpected, pod.Namespace+"/"+pod.Name+"@"+pod.UID)
+			} else if pod.AllowedBackground {
+				allowed++
+			}
+		}
+		coverage := "incomplete"
+		if workload.Continuous {
+			coverage = "continuous"
+		}
+		workloadRows = [][2]string{
+			{"Node", workload.NodeName},
+			{"Coverage", coverage},
+			{"Window", workload.CoverageStartedAt.Format(time.RFC3339Nano) + " -> " +
+				workload.CoverageEndedAt.Format(time.RFC3339Nano)},
+			{"Initial/final active Pods", fmt.Sprintf("%d/%d", workload.InitialActivePods, workload.FinalActivePods)},
+			{"Material events", fmt.Sprint(workload.MaterialEvents)},
+			{"Allowed co-residents", fmt.Sprint(allowed)},
+			{"Unexpected co-residents", display(strings.Join(unexpected, ", "))},
+			{"Failure", display(workload.FailureReason)},
+		}
+	}
+	if err := writePassportSection(table, "WORKLOAD OBSERVATION", workloadRows); err != nil {
+		return err
+	}
+
 	admission := [][2]string{{"Verdict", "not evaluated"}, {"Policy", "-"}, {"Reason codes", "-"}}
 	if passport.Admission != nil {
 		admission = [][2]string{

@@ -2,12 +2,14 @@ package operatorconsole
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
@@ -20,6 +22,19 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	execution.RawMeasurement.Key = rawObjectKey
 	execution.RawMeasurement.Digest = run.Status.Evidence.Digest
 	execution.RawMeasurement.Size = 512
+	execution.Intent = profilingrun.Intent{Workload: profilingrun.WorkloadContract{
+		AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+			SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+			Selectors: []profilingrun.BackgroundPodSelector{{
+				Namespace: "monitoring",
+				ControllerOwner: profilingrun.ControllerOwnerSelector{
+					Kind: "DaemonSet", Name: "edge-metrics",
+				},
+				MatchLabels: map[string]string{"app": "edge-metrics"},
+			}},
+		},
+	}}
+	workload := passportWorkloadResult(t, execution.Intent, started)
 	measurement := profilerevidence.RawMeasurement{
 		Runtime: profilingrun.RuntimeResult{
 			Runtime: "onnxruntime", RuntimeVersion: "1.16.0", Provider: "CPUExecutionProvider",
@@ -48,6 +63,7 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 				MaximumSampleGapSeconds: 1.1, SourceTimestampAbsent: true,
 			},
 		},
+		Workload: &workload,
 	}
 
 	got, err := BuildEvidencePassport(EvidencePassportSnapshot{
@@ -83,6 +99,53 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Measurement.Thermal, wantThermal) {
 		t.Fatalf("thermal facts = %#v, want %#v", got.Measurement.Thermal, wantThermal)
+	}
+	assertPassportWorkload(t, got.Measurement.Workload)
+}
+
+func assertPassportWorkload(t *testing.T, workload *EvidencePassportWorkload) {
+	t.Helper()
+	if workload == nil || !workload.Continuous || workload.InitialActivePods != 3 ||
+		len(workload.CoResidents) != 2 || workload.CoResidents[0].Name != "fastdds" ||
+		!workload.CoResidents[0].Unexpected || workload.CoResidents[1].Unexpected ||
+		!workload.CoResidents[1].AllowedBackground {
+		t.Fatalf("workload facts = %#v", workload)
+	}
+}
+
+func passportWorkloadResult(
+	t *testing.T,
+	intent profilingrun.Intent,
+	started time.Time,
+) workloadobserver.Result {
+	t.Helper()
+	digest, err := intent.Workload.AllowedBackground.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := workloadobserver.Pod{
+		Namespace: "chill-system", Name: "run", UID: "run-uid", Phase: "Running",
+		Images: []string{"runtime@sha256:" + strings.Repeat("a", 64)},
+	}
+	unexpected := workloadobserver.Pod{
+		Namespace: "fastdds-test", Name: "fastdds", UID: "fastdds-uid", Phase: "Running",
+		Images: []string{"fastdds@sha256:" + strings.Repeat("b", 64)},
+	}
+	allowed := workloadobserver.Pod{
+		Namespace: "monitoring", Name: "edge-metrics", UID: "metrics-uid", Phase: "Running",
+		Owner:  &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "edge-metrics", UID: "owner-uid"},
+		Images: []string{"metrics@sha256:" + strings.Repeat("c", 64)}, Labels: map[string]string{"app": "edge-metrics"},
+	}
+	pods := []workloadobserver.Pod{run, unexpected, allowed}
+	return workloadobserver.Result{
+		SchemaVersion: workloadobserver.ResultSchemaVersion,
+		Target:        workloadobserver.TargetIdentity{NodeName: "lattepanda", NodeUID: "node-uid"},
+		Run: workloadobserver.RunIdentity{
+			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: "run-uid",
+		},
+		PolicyDigest: digest, CoverageStartedAt: started, CoverageEndedAt: started.Add(31 * time.Second),
+		InitialResourceVersion: "10", LastResourceVersion: "10", EventLimit: 10,
+		InitialActivePods: pods, FinalActivePods: append([]workloadobserver.Pod(nil), pods...), Continuous: true,
 	}
 }
 

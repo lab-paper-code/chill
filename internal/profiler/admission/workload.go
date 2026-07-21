@@ -61,21 +61,5 @@ func allowedBackgroundPod(policy profilingrun.AllowedBackgroundPolicy, pod workl
 	if pod.Owner == nil {
 		return false
 	}
-	for _, selector := range policy.Selectors {
-		if selector.Namespace != pod.Namespace || selector.ControllerOwner.Kind != pod.Owner.Kind ||
-			selector.ControllerOwner.Name != pod.Owner.Name {
-			continue
-		}
-		matched := true
-		for key, value := range selector.MatchLabels {
-			if pod.Labels[key] != value {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
+	return policy.Matches(pod.Namespace, pod.Owner.Kind, pod.Owner.Name, pod.Labels)
 }

@@ -79,6 +79,8 @@ deps:
       - evidence-core
       - metric-core
       - profiler-evidence
+      - profiling-run
+      - workload-core
 
   operator:
     mayDependOn:

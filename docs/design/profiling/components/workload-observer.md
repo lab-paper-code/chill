@@ -4,11 +4,10 @@
 
 ## Status
 
-Approved for staged implementation. The Kubernetes-free observation contract,
-isolated Kubernetes list-watch adapter, bounded executable, immutable
-installation-fact resolution, read-only identity, Job-local execution, raw
-evidence retention, and admission projection are implemented. Live verification
-remains.
+Implemented. The Kubernetes-free observation contract, isolated Kubernetes
+list-watch adapter, bounded executable, immutable installation-fact resolution,
+read-only identity, Job-local execution, raw evidence retention, admission
+projection, and read-only operator projection are live-verified.
 
 ## Purpose
 
@@ -202,16 +201,3 @@ mutable finalization-time choice or a caller-supplied per-Run knob.
 - idle-baseline or repeated-trial orchestration;
 - `b_sat`, SLO, `DeviceProfile`, or scheduler publication; and
 - long-term workload monitoring.
-
-## Implementation checkpoints
-
-1. Add Kubernetes-free workload observation and validation types with
-   deterministic list-watch fixtures.
-2. Add the Kubernetes adapter and bounded executable without changing the Run
-   API.
-3. Add projected-token Job wiring and Helm-owned read-only RBAC.
-4. Version raw evidence, connect the worker handoff, and preserve old evidence
-   as workload-window unknown.
-5. Project complete, contaminated, interrupted, and expired-history results
-   into admission.
-6. Verify one live Run with an intentionally introduced transient Pod.

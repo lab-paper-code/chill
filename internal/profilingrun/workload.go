@@ -105,3 +105,28 @@ func (p AllowedBackgroundPolicy) LabelKeys() ([]string, error) {
 	sort.Strings(result)
 	return result, nil
 }
+
+// Matches reports whether one observed Pod identity satisfies a frozen exact
+// selector. Callers validate the policy before using it.
+func (p AllowedBackgroundPolicy) Matches(
+	namespace, ownerKind, ownerName string,
+	labels map[string]string,
+) bool {
+	for _, selector := range p.Selectors {
+		if selector.Namespace != namespace || selector.ControllerOwner.Kind != ownerKind ||
+			selector.ControllerOwner.Name != ownerName {
+			continue
+		}
+		matched := true
+		for key, value := range selector.MatchLabels {
+			if labels[key] != value {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}

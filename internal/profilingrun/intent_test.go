@@ -91,6 +91,27 @@ func TestAllowedBackgroundPolicyRequiresControllerOwnedWorkloadIdentity(t *testi
 	}
 }
 
+func TestAllowedBackgroundPolicyMatchesWholeExactSelector(t *testing.T) {
+	policy := validIntent().Workload.AllowedBackground
+	labels := map[string]string{"app.kubernetes.io/name": "kube-proxy"}
+	if !policy.Matches("kube-system", "DaemonSet", "kube-proxy", labels) {
+		t.Fatal("exact selector did not match")
+	}
+	for _, input := range []struct {
+		namespace, kind, name string
+		labels                map[string]string
+	}{
+		{namespace: "default", kind: "DaemonSet", name: "kube-proxy", labels: labels},
+		{namespace: "kube-system", kind: "ReplicaSet", name: "kube-proxy", labels: labels},
+		{namespace: "kube-system", kind: "DaemonSet", name: "copied", labels: labels},
+		{namespace: "kube-system", kind: "DaemonSet", name: "kube-proxy", labels: map[string]string{}},
+	} {
+		if policy.Matches(input.namespace, input.kind, input.name, input.labels) {
+			t.Fatalf("partial selector unexpectedly matched: %#v", input)
+		}
+	}
+}
+
 func TestRetainedWorkloadFreeIntentKeepsCanonicalShape(t *testing.T) {
 	intent := validIntent()
 	intent.SchemaVersion = workloadFreeIntentSchemaVersion
