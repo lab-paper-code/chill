@@ -20,6 +20,18 @@ import (
 
 const testPolicyDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestProbeEstablishesAndClosesUnretainedWatch(t *testing.T) {
+	preflight := watch.NewRaceFreeFake()
+	source := sourceWithRunPod(preflight)
+	observer := mustObserver(t, source)
+
+	if err := observer.Probe(context.Background(), testRequest(4)); err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	assertOptions(t, source.listOptions, "")
+	assertOptions(t, <-source.watchCalls, "10")
+}
+
 func TestObserveProjectsContinuousPodHistory(t *testing.T) {
 	run := testPod("chill-system", "run", "run-uid", "10", corev1.PodRunning)
 	background := testPod("monitoring", "agent", "agent-uid", "10", corev1.PodRunning)

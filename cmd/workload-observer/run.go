@@ -54,28 +54,38 @@ func execute(
 	if err != nil {
 		return err
 	}
+	request := workloadkube.Request{
+		Target: workloadobserver.TargetIdentity{
+			NodeName: intent.TargetNode.Name,
+			NodeUID:  intent.TargetNode.UID,
+		},
+		Run: workloadobserver.RunIdentity{
+			Namespace: opts.podNamespace,
+			JobUID:    string(owner.UID),
+			PodName:   opts.podName,
+			PodUID:    opts.podUID,
+		},
+		PolicyDigest:      opts.policyDigest,
+		SelectorLabelKeys: keys,
+		EventLimit:        opts.maxEvents,
+		EndFenceTimeout:   opts.endFenceTimeout,
+	}
+	if err := observer.Probe(ctx, request); err != nil {
+		return fmt.Errorf("probe workload observation: %w", err)
+	}
+	if err := worker.PublishSignal(opts.readyPath); err != nil {
+		return fmt.Errorf("publish workload-observer-ready: %w", err)
+	}
+	if err := worker.WaitForSignal(ctx, opts.windowStartPath, opts.endWaitTimeout, pollInterval); err != nil {
+		return fmt.Errorf("wait for workload-window-start: %w", err)
+	}
 
 	observeContext, stopObservation := context.WithCancel(ctx)
 	defer stopObservation()
 	started := make(chan struct{})
 	observed := make(chan observation, 1)
 	go func() {
-		result, observeErr := observer.Observe(observeContext, workloadkube.Request{
-			Target: workloadobserver.TargetIdentity{
-				NodeName: intent.TargetNode.Name,
-				NodeUID:  intent.TargetNode.UID,
-			},
-			Run: workloadobserver.RunIdentity{
-				Namespace: opts.podNamespace,
-				JobUID:    string(owner.UID),
-				PodName:   opts.podName,
-				PodUID:    opts.podUID,
-			},
-			PolicyDigest:      opts.policyDigest,
-			SelectorLabelKeys: keys,
-			EventLimit:        opts.maxEvents,
-			EndFenceTimeout:   opts.endFenceTimeout,
-		}, func() { close(started) })
+		result, observeErr := observer.Observe(observeContext, request, func() { close(started) })
 		observed <- observation{result: result, err: observeErr}
 	}()
 
@@ -88,10 +98,10 @@ func execute(
 		<-observed
 		return fmt.Errorf("workload observation interrupted before ready: %w", ctx.Err())
 	}
-	if err := worker.PublishSignal(opts.readyPath); err != nil {
+	if err := worker.PublishSignal(opts.windowReadyPath); err != nil {
 		stopObservation()
 		<-observed
-		return fmt.Errorf("publish workload-observer-ready: %w", err)
+		return fmt.Errorf("publish workload-window-ready: %w", err)
 	}
 
 	waitContext, stopWaiting := context.WithCancel(ctx)
@@ -114,6 +124,7 @@ func execute(
 	case outcome = <-observed:
 		stopWaiting()
 	}
+	stopObservation()
 	if outcome.err != nil {
 		return outcome.err
 	}

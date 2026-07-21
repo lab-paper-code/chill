@@ -68,9 +68,11 @@ func execute(
 func buildCoordinator(opts options, stdout, stderr io.Writer) (measurementCoordinator, error) {
 	runtimeAdapter, err := worker.NewORTCPURuntime(worker.ORTCPURuntimeConfig{
 		Command: opts.runtimeCommand, ModelPath: opts.modelPath,
-		ObserverReadyPaths: opts.observerReadyPaths, MeasurementStartPath: opts.measurementStartPath,
-		MeasurementEndPath: opts.measurementEndPath,
-		ResultPath:         opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
+		ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
+		MeasurementStartPath:    opts.measurementStartPath,
+		WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
+		MeasurementEndPath:      opts.measurementEndPath,
+		ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
 		MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
 		MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
 	})

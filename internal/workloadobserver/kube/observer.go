@@ -57,11 +57,32 @@ type Observer struct {
 	now    func() time.Time
 }
 
+type preparedObservation struct {
+	active          map[string]workloadobserver.Pod
+	resourceVersion string
+	retry           *watchtools.RetryWatcher
+}
+
 func New(source PodSource) (*Observer, error) {
 	if source == nil {
 		return nil, errors.New("workload observer Pod source is required")
 	}
 	return &Observer{source: source, now: time.Now}, nil
+}
+
+// Probe verifies that the frozen Run Pod can be listed and that a Pod watch can
+// be established. It intentionally retains no evidence: the measurement-bound
+// Observe session must begin only after runtime warm-up has completed.
+func (o *Observer) Probe(ctx context.Context, request Request) error {
+	if err := validateRequest(request, func() {}); err != nil {
+		return err
+	}
+	prepared, err := o.prepare(ctx, request)
+	if err != nil {
+		return err
+	}
+	prepared.retry.Stop()
+	return nil
 }
 
 // Observe lists active Pods, establishes a watch from the list resourceVersion,
@@ -76,46 +97,11 @@ func (o *Observer) Observe(
 	if err := validateRequest(request, onStarted); err != nil {
 		return workloadobserver.Result{}, err
 	}
-
-	selector := fields.OneTermEqualSelector("spec.nodeName", request.Target.NodeName).String()
-	list, err := o.source.List(ctx, metav1.ListOptions{FieldSelector: selector})
-	if err != nil {
-		return workloadobserver.Result{}, fmt.Errorf("list Pods on Node %q: %w", request.Target.NodeName, err)
-	}
-	if strings.TrimSpace(list.ResourceVersion) == "" {
-		return workloadobserver.Result{}, errors.New("list Pods: Kubernetes returned an empty resourceVersion")
-	}
-
-	active, err := initialActivePods(list.Items, request)
+	prepared, err := o.prepare(ctx, request)
 	if err != nil {
 		return workloadobserver.Result{}, err
 	}
-
-	options := metav1.ListOptions{
-		FieldSelector:       selector,
-		ResourceVersion:     list.ResourceVersion,
-		AllowWatchBookmarks: true,
-	}
-	first, err := o.source.Watch(ctx, options)
-	if err != nil {
-		return workloadobserver.Result{}, fmt.Errorf("watch Pods on Node %q: %w", request.Target.NodeName, err)
-	}
-	if first == nil {
-		return workloadobserver.Result{}, errors.New("watch Pods: Kubernetes returned a nil watcher")
-	}
-
-	continuation := &continuingWatcher{
-		ctx:           ctx,
-		source:        o.source,
-		fieldSelector: selector,
-		first:         first,
-	}
-	retry, err := watchtools.NewRetryWatcher(list.ResourceVersion, continuation)
-	if err != nil {
-		first.Stop()
-		return workloadobserver.Result{}, fmt.Errorf("create retrying Pod watch: %w", err)
-	}
-	defer retry.Stop()
+	defer prepared.retry.Stop()
 
 	startedAt := o.now()
 	result := workloadobserver.Result{
@@ -124,14 +110,52 @@ func (o *Observer) Observe(
 		Run:                    request.Run,
 		PolicyDigest:           request.PolicyDigest,
 		CoverageStartedAt:      startedAt,
-		InitialResourceVersion: list.ResourceVersion,
-		LastResourceVersion:    list.ResourceVersion,
+		InitialResourceVersion: prepared.resourceVersion,
+		LastResourceVersion:    prepared.resourceVersion,
 		EventLimit:             request.EventLimit,
-		InitialActivePods:      orderedPods(active),
+		InitialActivePods:      orderedPods(prepared.active),
 	}
 
 	onStarted()
-	return o.receive(ctx, retry, request, active, result)
+	return o.receive(ctx, prepared.retry, request, prepared.active, result)
+}
+
+func (o *Observer) prepare(ctx context.Context, request Request) (preparedObservation, error) {
+	selector := fields.OneTermEqualSelector("spec.nodeName", request.Target.NodeName).String()
+	list, err := o.source.List(ctx, metav1.ListOptions{FieldSelector: selector})
+	if err != nil {
+		return preparedObservation{}, fmt.Errorf("list Pods on Node %q: %w", request.Target.NodeName, err)
+	}
+	if list == nil {
+		return preparedObservation{}, errors.New("list Pods: Kubernetes returned a nil list")
+	}
+	if strings.TrimSpace(list.ResourceVersion) == "" {
+		return preparedObservation{}, errors.New("list Pods: Kubernetes returned an empty resourceVersion")
+	}
+
+	active, err := initialActivePods(list.Items, request)
+	if err != nil {
+		return preparedObservation{}, err
+	}
+	first, err := o.source.Watch(ctx, metav1.ListOptions{
+		FieldSelector:       selector,
+		ResourceVersion:     list.ResourceVersion,
+		AllowWatchBookmarks: true,
+	})
+	if err != nil {
+		return preparedObservation{}, fmt.Errorf("watch Pods on Node %q: %w", request.Target.NodeName, err)
+	}
+	if first == nil {
+		return preparedObservation{}, errors.New("watch Pods: Kubernetes returned a nil watcher")
+	}
+
+	continuation := &continuingWatcher{ctx: ctx, source: o.source, fieldSelector: selector, first: first}
+	retry, err := watchtools.NewRetryWatcher(list.ResourceVersion, continuation)
+	if err != nil {
+		first.Stop()
+		return preparedObservation{}, fmt.Errorf("create retrying Pod watch: %w", err)
+	}
+	return preparedObservation{active: active, resourceVersion: list.ResourceVersion, retry: retry}, nil
 }
 
 func (o *Observer) receive(

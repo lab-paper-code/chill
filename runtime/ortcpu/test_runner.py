@@ -139,7 +139,9 @@ def valid_request(model_path: Path) -> dict[str, object]:
             str(model_path.parent / "observer-ready"),
             str(model_path.parent / "workload-observer-ready"),
         ],
+        "workloadWindowStartPath": str(model_path.parent / "workload-window-start"),
         "measurementStartPath": str(model_path.parent / "measurement-start"),
+        "workloadWindowReadyPath": str(model_path.parent / "workload-window-ready"),
         "measurementEndPath": str(model_path.parent / "measurement-end"),
         "observerReadyTimeoutMilliseconds": 30_000,
         "maxLatencySamples": 100_000,
@@ -261,7 +263,7 @@ class RunnerTest(unittest.TestCase):
                 stack.enter_context(mock.patch.object(
                     runner, "validate_cpu_contract", return_value=("400000 100000", [0, 1, 2, 3], "0-3")
                 ))
-                stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+                wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
                 publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
                 stack.enter_context(mock.patch.object(
                     runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 30}]
@@ -279,9 +281,13 @@ class RunnerTest(unittest.TestCase):
                 result = runner.execute(request, FakeORT, FakeNumpy)
 
             self.assertEqual(publish.call_args_list, [
+                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
                 mock.call(Path(request["measurementStartPath"]), b"signal\n"),
                 mock.call(Path(request["measurementEndPath"]), b"signal\n"),
             ])
+            self.assertEqual(wait.call_args_list, [
+                mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]
+            ] + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)])
             self.assertEqual(FakeORT.last_session.calls, 3)
             self.assertEqual(result["status"], "Succeeded")
             self.assertEqual(result["sweepId"], request["intentDigest"])

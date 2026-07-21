@@ -18,7 +18,9 @@ const (
 	defaultWorkspacePath                   = "/workspace"
 	defaultObserverReadyPath               = "/coordination/observer-ready"
 	defaultWorkloadObserverReadyPath       = "/coordination/workload-observer-ready"
+	defaultWorkloadWindowStartPath         = "/coordination/workload-window-start"
 	defaultMeasurementStartPath            = "/coordination/measurement-start"
+	defaultWorkloadWindowReadyPath         = "/coordination/workload-window-ready"
 	defaultMeasurementEndPath              = "/coordination/measurement-end"
 	defaultMetricResultPath                = "/coordination/metric-result.json"
 	defaultWorkloadResultPath              = "/coordination/workload-result.json"
@@ -31,36 +33,38 @@ const (
 var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type options struct {
-	intentPath             string
-	intentDigest           string
-	podUID                 string
-	scheduledNodeName      string
-	modelPath              string
-	workspacePath          string
-	observerReadyPaths     []string
-	measurementStartPath   string
-	measurementEndPath     string
-	metricResultPath       string
-	workloadResultPath     string
-	terminationMessagePath string
-	runtimeCommand         []string
-	attemptTimeout         time.Duration
-	observerReadyTimeout   time.Duration
-	metricResultTimeout    time.Duration
-	workloadResultTimeout  time.Duration
-	maxLatencySamples      int
-	maxInputBytes          int64
-	maxRuntimeResultBytes  int64
-	maxMetricResultBytes   int64
-	maxWorkloadResultBytes int64
-	storeName              string
-	storeEndpoint          string
-	storeBucket            string
-	storeRegion            string
-	rawObjectKey           string
-	accessKeyID            string
-	secretAccessKey        string
-	sessionToken           string
+	intentPath              string
+	intentDigest            string
+	podUID                  string
+	scheduledNodeName       string
+	modelPath               string
+	workspacePath           string
+	observerReadyPaths      []string
+	workloadWindowStartPath string
+	measurementStartPath    string
+	workloadWindowReadyPath string
+	measurementEndPath      string
+	metricResultPath        string
+	workloadResultPath      string
+	terminationMessagePath  string
+	runtimeCommand          []string
+	attemptTimeout          time.Duration
+	observerReadyTimeout    time.Duration
+	metricResultTimeout     time.Duration
+	workloadResultTimeout   time.Duration
+	maxLatencySamples       int
+	maxInputBytes           int64
+	maxRuntimeResultBytes   int64
+	maxMetricResultBytes    int64
+	maxWorkloadResultBytes  int64
+	storeName               string
+	storeEndpoint           string
+	storeBucket             string
+	storeRegion             string
+	rawObjectKey            string
+	accessKeyID             string
+	secretAccessKey         string
+	sessionToken            string
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -68,7 +72,9 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.modelPath = defaultModelPath
 	o.workspacePath = defaultWorkspacePath
 	o.observerReadyPaths = []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath}
+	o.workloadWindowStartPath = defaultWorkloadWindowStartPath
 	o.measurementStartPath = defaultMeasurementStartPath
+	o.workloadWindowReadyPath = defaultWorkloadWindowReadyPath
 	o.measurementEndPath = defaultMeasurementEndPath
 	o.metricResultPath = defaultMetricResultPath
 	o.workloadResultPath = defaultWorkloadResultPath
@@ -121,8 +127,10 @@ func (o options) validate() error {
 	}
 	for name, value := range map[string]string{
 		"intent": o.intentPath, "model": o.modelPath, "workspace": o.workspacePath,
-		"measurement-start": o.measurementStartPath, "measurement-end": o.measurementEndPath,
-		"metric result": o.metricResultPath, "workload result": o.workloadResultPath,
+		"workload-window-start": o.workloadWindowStartPath,
+		"measurement-start":     o.measurementStartPath, "measurement-end": o.measurementEndPath,
+		"workload-window-ready": o.workloadWindowReadyPath,
+		"metric result":         o.metricResultPath, "workload result": o.workloadResultPath,
 		"termination message": o.terminationMessagePath,
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {

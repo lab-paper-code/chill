@@ -108,10 +108,12 @@ func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
 	directory := t.TempDir()
 	_, err := NewORTCPURuntime(ORTCPURuntimeConfig{
 		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
-		ObserverReadyPaths:   []string{filepath.Join(directory, "observer-ready")},
-		MeasurementStartPath: filepath.Join(directory, "measurement-start"),
-		MeasurementEndPath:   filepath.Join(directory, "measurement-end"),
-		ResultPath:           filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
+		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
+		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
+		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
+		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
+		ResultPath:              filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
 		MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
 		Stdout: io.Discard, Stderr: io.Discard,
 	})
@@ -124,10 +126,12 @@ func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
 	directory := t.TempDir()
 	_, err := NewORTCPURuntime(ORTCPURuntimeConfig{
 		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
-		ObserverReadyPaths:   []string{filepath.Join(directory, "observer-ready")},
-		MeasurementStartPath: filepath.Join(directory, "measurement-start"),
-		MeasurementEndPath:   filepath.Join(directory, "measurement-end"),
-		ResultPath:           filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
+		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
+		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
+		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
+		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
+		ResultPath:              filepath.Join(directory, "result.json"), MaxResultBytes: 1 << 20,
 		ObserverReadyTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard,
 	})
 	if err == nil || !strings.Contains(err.Error(), "resource budgets") {
@@ -373,11 +377,13 @@ func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
 	t.Helper()
 	directory := filepath.Dir(resultPath)
 	runtime, err := NewORTCPURuntime(ORTCPURuntimeConfig{
-		Command:              []string{os.Args[0], "-test.run=TestORTCPUHelperProcess", "--"},
-		ModelPath:            filepath.Join(directory, "model.onnx"),
-		ObserverReadyPaths:   []string{filepath.Join(directory, "observer-ready")},
-		MeasurementStartPath: filepath.Join(directory, "measurement-start"),
-		MeasurementEndPath:   filepath.Join(directory, "measurement-end"), ResultPath: resultPath,
+		Command:                 []string{os.Args[0], "-test.run=TestORTCPUHelperProcess", "--"},
+		ModelPath:               filepath.Join(directory, "model.onnx"),
+		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
+		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
+		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
+		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		MeasurementEndPath:      filepath.Join(directory, "measurement-end"), ResultPath: resultPath,
 		ObserverReadyTimeout: time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
 		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
 	})

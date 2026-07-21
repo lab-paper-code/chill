@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha6"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha7"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha4"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
@@ -115,7 +115,8 @@ def validate_request(request: dict[str, Any]) -> None:
         request,
         {
             "schemaVersion", "intent", "intentDigest", "podUID", "scheduledNodeName", "modelPath", "observerReadyPaths",
-            "measurementStartPath", "measurementEndPath", "observerReadyTimeoutMilliseconds", "maxLatencySamples",
+            "workloadWindowStartPath", "measurementStartPath", "workloadWindowReadyPath", "measurementEndPath",
+            "observerReadyTimeoutMilliseconds", "maxLatencySamples",
             "maxInputBytes", "maxResultBytes",
         },
         "runtime request",
@@ -134,7 +135,9 @@ def validate_request(request: dict[str, Any]) -> None:
     normalized_ready_paths = [require_absolute_file_path(value, "observerReadyPaths item") for value in ready_paths]
     if len(set(normalized_ready_paths)) != len(normalized_ready_paths):
         raise ContractError("observerReadyPaths must be unique")
+    require_absolute_file_path(request["workloadWindowStartPath"], "workloadWindowStartPath")
     require_absolute_file_path(request["measurementStartPath"], "measurementStartPath")
+    require_absolute_file_path(request["workloadWindowReadyPath"], "workloadWindowReadyPath")
     require_absolute_file_path(request["measurementEndPath"], "measurementEndPath")
     require_integer(request["observerReadyTimeoutMilliseconds"], "observerReadyTimeoutMilliseconds", 1)
     require_integer(request["maxLatencySamples"], "maxLatencySamples", 1)
@@ -439,6 +442,11 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         raise ContractError(f"execute ONNX Runtime warm-up: {error}") from error
     warmup_completed_at = now()
 
+    publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
+    wait_for_signal(
+        Path(request["workloadWindowReadyPath"]),
+        request["observerReadyTimeoutMilliseconds"] / 1000.0,
+    )
     publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
     stat_before = cpu_stat()
     process_before = time.process_time()

@@ -29,10 +29,16 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	opts := workloadTestOptions(directory, digest)
 	pod := workloadTestPod()
 	client := fake.NewSimpleClientset(pod.DeepCopy())
+	preflight := watch.NewRaceFreeFake()
 	initial := watch.NewRaceFreeFake()
 	fence := watch.NewRaceFreeFake()
-	watchCalls := make(chan string, 2)
-	installPodObservationReactors(t, client, *pod, watchCalls, initial, fence)
+	watchCalls := make(chan string, 3)
+	transient := *workloadTestPod()
+	transient.Namespace = "default"
+	transient.Name = "warmup-only"
+	transient.UID = "warmup-only-uid"
+	transient.OwnerReferences = nil
+	installPodObservationReactors(t, client, *pod, transient, watchCalls, preflight, initial, fence)
 
 	done := make(chan error, 1)
 	go func() {
@@ -40,15 +46,22 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	}()
 	waitForFile(t, opts.readyPath)
 	if got := <-watchCalls; got != "10" {
-		t.Fatalf("initial watch resourceVersion = %q, want 10", got)
+		t.Fatalf("preflight watch resourceVersion = %q, want 10", got)
+	}
+	if err := worker.PublishSignal(opts.windowStartPath); err != nil {
+		t.Fatal(err)
+	}
+	waitForFile(t, opts.windowReadyPath)
+	if got := <-watchCalls; got != "20" {
+		t.Fatalf("measurement watch resourceVersion = %q, want 20", got)
 	}
 	if err := worker.PublishSignal(opts.endPath); err != nil {
 		t.Fatal(err)
 	}
-	if got := <-watchCalls; got != "10" {
-		t.Fatalf("end-fence watch resourceVersion = %q, want 10", got)
+	if got := <-watchCalls; got != "20" {
+		t.Fatalf("end-fence watch resourceVersion = %q, want 20", got)
 	}
-	fence.Action(watch.Bookmark, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{ResourceVersion: "11"}})
+	fence.Action(watch.Bookmark, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{ResourceVersion: "21"}})
 
 	select {
 	case err := <-done:
@@ -68,8 +81,14 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Continuous || result.LastResourceVersion != "11" || result.Run.JobUID != "job-uid" {
+	if !result.Continuous || result.InitialResourceVersion != "20" || result.LastResourceVersion != "21" ||
+		result.Run.JobUID != "job-uid" {
 		t.Fatalf("workload result = %#v", result)
+	}
+	for _, active := range result.InitialActivePods {
+		if active.UID == "warmup-only-uid" {
+			t.Fatalf("pre-warm-up Pod leaked into measurement window: %#v", active)
+		}
 	}
 }
 
@@ -102,13 +121,22 @@ func installPodObservationReactors(
 	t *testing.T,
 	client *fake.Clientset,
 	pod corev1.Pod,
+	preflightOnly corev1.Pod,
 	calls chan<- string,
 	watchers ...watch.Interface,
 ) {
 	t.Helper()
+	listCalls := 0
 	client.PrependReactor("list", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		listCalls++
+		if listCalls == 1 {
+			return true, &corev1.PodList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "10"},
+				Items:    []corev1.Pod{pod, preflightOnly},
+			}, nil
+		}
 		return true, &corev1.PodList{
-			ListMeta: metav1.ListMeta{ResourceVersion: "10"},
+			ListMeta: metav1.ListMeta{ResourceVersion: "20"},
 			Items:    []corev1.Pod{pod},
 		}, nil
 	})
@@ -161,9 +189,12 @@ func writeWorkloadTestIntent(t *testing.T, directory string) string {
 func workloadTestOptions(directory, digest string) options {
 	return options{
 		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
-		readyPath: filepath.Join(directory, "workload-ready"), endPath: filepath.Join(directory, "measurement-end"),
-		resultPath:   filepath.Join(directory, "workload-result.json"),
-		policyDigest: "sha256:" + strings.Repeat("b", 64), selectorLabelCSV: "app,component",
+		readyPath:       filepath.Join(directory, "workload-ready"),
+		windowStartPath: filepath.Join(directory, "workload-window-start"),
+		windowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		endPath:         filepath.Join(directory, "measurement-end"),
+		resultPath:      filepath.Join(directory, "workload-result.json"),
+		policyDigest:    "sha256:" + strings.Repeat("b", 64), selectorLabelCSV: "app,component",
 		endWaitTimeout: time.Second, endFenceTimeout: 3 * time.Second,
 		maxEvents: 100, maxResultBytes: 1 << 20,
 		podNamespace: "chill-system", podName: "run", podUID: "pod-uid",

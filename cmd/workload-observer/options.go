@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,11 +13,13 @@ import (
 )
 
 const (
-	defaultIntentPath               = "/etc/chill/run/intent.json"
-	defaultReadyPath                = "/coordination/workload-observer-ready"
-	defaultEndSignalPath            = "/coordination/measurement-end"
-	defaultWorkloadResultPath       = "/coordination/workload-result.json"
-	maximumIntentBytes        int64 = 1 << 20
+	defaultIntentPath                  = "/etc/chill/run/intent.json"
+	defaultReadyPath                   = "/coordination/workload-observer-ready"
+	defaultWindowStartSignalPath       = "/coordination/workload-window-start"
+	defaultWindowReadyPath             = "/coordination/workload-window-ready"
+	defaultEndSignalPath               = "/coordination/measurement-end"
+	defaultWorkloadResultPath          = "/coordination/workload-result.json"
+	maximumIntentBytes           int64 = 1 << 20
 )
 
 var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -25,6 +28,8 @@ type options struct {
 	intentPath       string
 	intentDigest     string
 	readyPath        string
+	windowStartPath  string
+	windowReadyPath  string
 	endPath          string
 	resultPath       string
 	policyDigest     string
@@ -45,6 +50,14 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.intentPath, "intent-file", defaultIntentPath, "read-only frozen Run intent JSON")
 	set.StringVar(&o.intentDigest, "intent-digest", "", "expected frozen Run intent SHA-256")
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "workload-observer-ready signal path")
+	set.StringVar(
+		&o.windowStartPath, "window-start-signal-file", defaultWindowStartSignalPath,
+		"workload-window-start request signal path",
+	)
+	set.StringVar(
+		&o.windowReadyPath, "window-ready-file", defaultWindowReadyPath,
+		"measurement-bound workload-window-ready signal path",
+	)
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
 	set.StringVar(&o.resultPath, "result-file", defaultWorkloadResultPath, "atomic WorkloadObserver result path")
 	set.StringVar(&o.policyDigest, "policy-digest", "", "frozen allowed-background policy SHA-256")
@@ -89,6 +102,21 @@ func (o options) validate() error {
 	}
 	if o.maxEvents < 1 || o.maxResultBytes < 1 {
 		return errors.New("event and result-size bounds must be supplied by the Job execution contract")
+	}
+	paths := map[string]string{
+		"ready": o.readyPath, "workload-window-start": o.windowStartPath,
+		"workload-window-ready": o.windowReadyPath, "measurement-end": o.endPath,
+		"result": o.resultPath,
+	}
+	seenPaths := make(map[string]struct{}, len(paths))
+	for name, value := range paths {
+		if !filepath.IsAbs(value) || filepath.Clean(value) != value || value == "/" {
+			return errors.New(name + " path must be a clean absolute file path")
+		}
+		if _, exists := seenPaths[value]; exists {
+			return errors.New("workload observer coordination paths must be unique")
+		}
+		seenPaths[value] = struct{}{}
 	}
 	_, err := o.selectorLabelKeys()
 	return err
