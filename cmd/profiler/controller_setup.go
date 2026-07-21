@@ -74,7 +74,15 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct Evidence Store resolver: %w", err)
 	}
-	jobs, err := profilercontroller.NewExecutionJobs(mgr.GetClient(), mgr.GetScheme(), stores)
+	jobs, err := profilercontroller.NewExecutionJobs(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		stores,
+		profilercontroller.ExecutionJobOptions{
+			WorkloadObserverServiceAccountName: opts.workloadObserverServiceAccount,
+			WorkloadObserverKubeAPIServer:      opts.workloadObserverKubeAPIServer,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("construct execution Jobs: %w", err)
 	}

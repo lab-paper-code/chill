@@ -33,7 +33,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 		t.Fatalf("incoherent handoff timing: %#v", plan)
 	}
 	if plan.MaxInputBytes+plan.MaxRuntimeResultBytes >= plan.RuntimeMemoryLimitBytes ||
-		plan.MaxMetricResultBytes > plan.CoordinationBytes ||
+		plan.MaxMetricResultBytes+plan.MaxWorkloadResultBytes >= plan.CoordinationBytes ||
 		plan.MaxRuntimeResultBytes+plan.MaxMetricResultBytes > plan.WorkspaceBytes {
 		t.Fatalf("capacities do not fit the resource envelope: %#v", plan)
 	}

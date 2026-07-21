@@ -13,16 +13,18 @@ import (
 )
 
 const (
-	defaultIntentPath                   = "/etc/chill/run/intent.json"
-	defaultModelPath                    = "/model/model.onnx"
-	defaultWorkspacePath                = "/workspace"
-	defaultObserverReadyPath            = "/coordination/observer-ready"
-	defaultMeasurementStartPath         = "/coordination/measurement-start"
-	defaultMetricResultPath             = "/coordination/metric-result.json"
-	defaultTerminationMessagePath       = "/dev/termination-log"
-	maximumIntentBytes            int64 = 1 << 20
-	maximumReceiptBytes                 = 4 << 10
-	handoffPollInterval                 = 100 * time.Millisecond
+	defaultIntentPath                      = "/etc/chill/run/intent.json"
+	defaultModelPath                       = "/model/model.onnx"
+	defaultWorkspacePath                   = "/workspace"
+	defaultObserverReadyPath               = "/coordination/observer-ready"
+	defaultWorkloadObserverReadyPath       = "/coordination/workload-observer-ready"
+	defaultMeasurementStartPath            = "/coordination/measurement-start"
+	defaultMeasurementEndPath              = "/coordination/measurement-end"
+	defaultMetricResultPath                = "/coordination/metric-result.json"
+	defaultTerminationMessagePath          = "/dev/termination-log"
+	maximumIntentBytes               int64 = 1 << 20
+	maximumReceiptBytes                    = 4 << 10
+	handoffPollInterval                    = 100 * time.Millisecond
 )
 
 var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -34,8 +36,9 @@ type options struct {
 	scheduledNodeName      string
 	modelPath              string
 	workspacePath          string
-	observerReadyPath      string
+	observerReadyPaths     []string
 	measurementStartPath   string
+	measurementEndPath     string
 	metricResultPath       string
 	terminationMessagePath string
 	runtimeCommand         []string
@@ -60,8 +63,9 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.intentPath = defaultIntentPath
 	o.modelPath = defaultModelPath
 	o.workspacePath = defaultWorkspacePath
-	o.observerReadyPath = defaultObserverReadyPath
+	o.observerReadyPaths = []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath}
 	o.measurementStartPath = defaultMeasurementStartPath
+	o.measurementEndPath = defaultMeasurementEndPath
 	o.metricResultPath = defaultMetricResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
 	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
@@ -110,12 +114,25 @@ func (o options) validate() error {
 	}
 	for name, value := range map[string]string{
 		"intent": o.intentPath, "model": o.modelPath, "workspace": o.workspacePath,
-		"observer-ready": o.observerReadyPath, "measurement-start": o.measurementStartPath,
+		"measurement-start": o.measurementStartPath, "measurement-end": o.measurementEndPath,
 		"metric result": o.metricResultPath, "termination message": o.terminationMessagePath,
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
 			return errors.New(name + " path must be a clean absolute path")
 		}
+	}
+	if len(o.observerReadyPaths) == 0 {
+		return errors.New("at least one observer-ready path is required")
+	}
+	seenReadyPaths := map[string]struct{}{}
+	for _, readyPath := range o.observerReadyPaths {
+		if !filepath.IsAbs(readyPath) || filepath.Clean(readyPath) != readyPath {
+			return errors.New("observer-ready path must be a clean absolute path")
+		}
+		if _, exists := seenReadyPaths[readyPath]; exists {
+			return errors.New("observer-ready paths must be unique")
+		}
+		seenReadyPaths[readyPath] = struct{}{}
 	}
 	if o.attemptTimeout <= 0 || o.observerReadyTimeout <= 0 || o.metricResultTimeout <= handoffPollInterval {
 		return errors.New("Job-derived worker timeouts are invalid")

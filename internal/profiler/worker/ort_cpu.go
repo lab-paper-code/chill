@@ -15,13 +15,14 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha5"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha6"
 
 type ORTCPURuntimeConfig struct {
 	Command              []string
 	ModelPath            string
-	ObserverReadyPath    string
+	ObserverReadyPaths   []string
 	MeasurementStartPath string
+	MeasurementEndPath   string
 	ResultPath           string
 	ObserverReadyTimeout time.Duration
 	MaxLatencySamples    int
@@ -46,8 +47,9 @@ type ortCPURequest struct {
 	PodUID                           string              `json:"podUID"`
 	ScheduledNodeName                string              `json:"scheduledNodeName"`
 	ModelPath                        string              `json:"modelPath"`
-	ObserverReadyPath                string              `json:"observerReadyPath"`
+	ObserverReadyPaths               []string            `json:"observerReadyPaths"`
 	MeasurementStartPath             string              `json:"measurementStartPath"`
+	MeasurementEndPath               string              `json:"measurementEndPath"`
 	ObserverReadyTimeoutMilliseconds int64               `json:"observerReadyTimeoutMilliseconds"`
 	MaxLatencySamples                int                 `json:"maxLatencySamples"`
 	MaxInputBytes                    int64               `json:"maxInputBytes"`
@@ -64,12 +66,26 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 		}
 	}
 	for name, value := range map[string]string{
-		"model": config.ModelPath, "observer-ready": config.ObserverReadyPath,
+		"model":             config.ModelPath,
 		"measurement-start": config.MeasurementStartPath, "result": config.ResultPath,
+		"measurement-end": config.MeasurementEndPath,
 	} {
 		if !validAbsoluteFilePath(value) {
 			return nil, fmt.Errorf("CPU ORT %s path must be a clean absolute file path", name)
 		}
+	}
+	if len(config.ObserverReadyPaths) == 0 {
+		return nil, errors.New("CPU ORT observer-ready paths are required")
+	}
+	seenReadyPaths := map[string]struct{}{}
+	for _, value := range config.ObserverReadyPaths {
+		if !validAbsoluteFilePath(value) {
+			return nil, errors.New("CPU ORT observer-ready path must be a clean absolute file path")
+		}
+		if _, exists := seenReadyPaths[value]; exists {
+			return nil, errors.New("CPU ORT observer-ready paths must be unique")
+		}
+		seenReadyPaths[value] = struct{}{}
 	}
 	if config.MaxResultBytes < 1 {
 		return nil, errors.New("CPU ORT result maximum size must be positive")
@@ -84,6 +100,7 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 		return nil, errors.New("CPU ORT diagnostic writers are required")
 	}
 	config.Command = append([]string(nil), config.Command...)
+	config.ObserverReadyPaths = append([]string(nil), config.ObserverReadyPaths...)
 	return &ORTCPURuntime{config: config}, nil
 }
 
@@ -135,8 +152,9 @@ func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, er
 	request := ortCPURequest{
 		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
-		ModelPath: r.config.ModelPath, ObserverReadyPath: r.config.ObserverReadyPath,
+		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
 		MeasurementStartPath:             r.config.MeasurementStartPath,
+		MeasurementEndPath:               r.config.MeasurementEndPath,
 		ObserverReadyTimeoutMilliseconds: r.config.ObserverReadyTimeout.Milliseconds(),
 		MaxLatencySamples:                r.config.MaxLatencySamples,
 		MaxInputBytes:                    r.config.MaxInputBytes,

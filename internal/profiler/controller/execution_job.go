@@ -31,16 +31,25 @@ const (
 	executionPolicyAnnotation  = "edge.dacs.io/profiling-worker-policy"
 	executionJobHashCharacters = 32
 
-	intentVolumeName       = "intent"
-	modelVolumeName        = "model"
-	coordinationVolumeName = "coordination"
-	workspaceVolumeName    = "workspace"
+	intentVolumeName                = "intent"
+	modelVolumeName                 = "model"
+	coordinationVolumeName          = "coordination"
+	workspaceVolumeName             = "workspace"
+	workloadObserverTokenVolumeName = "workload-observer-kube-api"
 
-	intentMountPath       = "/etc/chill/run"
-	modelMountPath        = "/model"
-	coordinationMountPath = "/coordination"
-	workspaceMountPath    = "/workspace"
+	intentMountPath                = "/etc/chill/run"
+	modelMountPath                 = "/model"
+	coordinationMountPath          = "/coordination"
+	workspaceMountPath             = "/workspace"
+	workloadObserverTokenMountPath = "/var/run/secrets/chill-workload-observer"
+	workloadObserverTokenPath      = workloadObserverTokenMountPath + "/token"
+	workloadObserverCAPath         = workloadObserverTokenMountPath + "/ca.crt"
 )
+
+type ExecutionJobOptions struct {
+	WorkloadObserverServiceAccountName string
+	WorkloadObserverKubeAPIServer      string
+}
 
 // EvidenceStoreBindingResolver resolves the current CHILL-owned delivery
 // binding. It returns no credential bytes.
@@ -51,20 +60,29 @@ type EvidenceStoreBindingResolver interface {
 // ExecutionJobs owns only deterministic Job materialization and recovery.
 // Status publication remains the reconciler's responsibility.
 type ExecutionJobs struct {
-	client client.Client
-	scheme *runtime.Scheme
-	stores EvidenceStoreBindingResolver
+	client  client.Client
+	scheme  *runtime.Scheme
+	stores  EvidenceStoreBindingResolver
+	options ExecutionJobOptions
 }
 
 func NewExecutionJobs(
 	kubeClient client.Client,
 	scheme *runtime.Scheme,
 	stores EvidenceStoreBindingResolver,
+	options ExecutionJobOptions,
 ) (*ExecutionJobs, error) {
 	if kubeClient == nil || scheme == nil || stores == nil {
 		return nil, errors.New("Kubernetes client, scheme, and Evidence Store resolver are required")
 	}
-	return &ExecutionJobs{client: kubeClient, scheme: scheme, stores: stores}, nil
+	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" ||
+		strings.TrimSpace(options.WorkloadObserverServiceAccountName) != options.WorkloadObserverServiceAccountName {
+		return nil, errors.New("WorkloadObserver ServiceAccount name is required without surrounding whitespace")
+	}
+	if strings.TrimSpace(options.WorkloadObserverKubeAPIServer) != options.WorkloadObserverKubeAPIServer {
+		return nil, errors.New("WorkloadObserver Kubernetes API server must not have surrounding whitespace")
+	}
+	return &ExecutionJobs{client: kubeClient, scheme: scheme, stores: stores, options: options}, nil
 }
 
 func (j *ExecutionJobs) Ensure(
@@ -83,7 +101,7 @@ func (j *ExecutionJobs) Ensure(
 		if err != nil {
 			return nil, false, err
 		}
-		desired, err := buildExecutionJob(run, prepared, binding, j.scheme)
+		desired, err := buildExecutionJob(run, prepared, binding, j.options, j.scheme)
 		if err != nil {
 			return nil, false, err
 		}
@@ -99,7 +117,7 @@ func (j *ExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve Evidence Store delivery binding: %w", err)
 	}
-	desired, err := buildExecutionJob(run, prepared, binding, j.scheme)
+	desired, err := buildExecutionJob(run, prepared, binding, j.options, j.scheme)
 	if err != nil {
 		return nil, false, err
 	}
@@ -115,7 +133,7 @@ func (j *ExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, err
 	}
-	desired, err = buildExecutionJob(run, prepared, retainedBinding, j.scheme)
+	desired, err = buildExecutionJob(run, prepared, retainedBinding, j.options, j.scheme)
 	if err != nil {
 		return nil, false, err
 	}
@@ -133,6 +151,7 @@ func buildExecutionJob(
 	run *edgev1alpha1.ProfilingRun,
 	prepared profiler.PreparedRun,
 	binding EvidenceStoreBinding,
+	options ExecutionJobOptions,
 	scheme *runtime.Scheme,
 ) (*batchv1.Job, error) {
 	if run == nil || scheme == nil {
@@ -143,6 +162,9 @@ func buildExecutionJob(
 	}
 	if err := validateEvidenceStoreBinding(binding); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" {
+		return nil, errors.New("WorkloadObserver ServiceAccount name is required")
 	}
 	if _, err := validatePreparedForRun(run, prepared); err != nil {
 		return nil, err
@@ -170,6 +192,14 @@ func buildExecutionJob(
 		executionPolicyAnnotation: policyIdentity,
 	}
 	deadlineSeconds := int64(plan.ActiveDeadline.Seconds())
+	policyDigest, err := prepared.Intent.Workload.AllowedBackground.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("digest allowed-background policy: %w", err)
+	}
+	selectorLabelKeys, err := prepared.Intent.Workload.AllowedBackground.LabelKeys()
+	if err != nil {
+		return nil, fmt.Errorf("resolve allowed-background label keys: %w", err)
+	}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -182,6 +212,7 @@ func buildExecutionJob(
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken: ptr.To(false),
+					ServiceAccountName:           options.WorkloadObserverServiceAccountName,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					NodeSelector: map[string]string{
 						corev1.LabelHostname: prepared.Intent.TargetNode.Name,
@@ -194,6 +225,7 @@ func buildExecutionJob(
 					Containers: []corev1.Container{
 						runtimeContainer(prepared, binding, rawKey, plan),
 						metricObserverContainer(prepared, plan),
+						workloadObserverContainer(prepared, policyDigest, selectorLabelKeys, options, plan),
 					},
 					Volumes: executionVolumes(intentName, plan),
 				},
@@ -296,6 +328,54 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 	}
 }
 
+func workloadObserverContainer(
+	prepared profiler.PreparedRun,
+	policyDigest string,
+	selectorLabelKeys []string,
+	options ExecutionJobOptions,
+	plan profiler.ExecutionPlan,
+) corev1.Container {
+	arguments := []string{
+		"--intent-digest=" + prepared.IntentDigest,
+		"--policy-digest=" + policyDigest,
+		"--selector-label-keys=" + strings.Join(selectorLabelKeys, ","),
+		"--end-wait-timeout=" + plan.AttemptTimeout.String(),
+		"--end-fence-timeout=" + plan.WorkloadEndFenceTimeout.String(),
+		"--max-events=" + strconv.Itoa(plan.MaxWorkloadEvents),
+		"--max-result-bytes=" + strconv.FormatInt(plan.MaxWorkloadResultBytes, 10),
+		"--kube-api-token-file=" + workloadObserverTokenPath,
+		"--kube-api-ca-file=" + workloadObserverCAPath,
+	}
+	if options.WorkloadObserverKubeAPIServer != "" {
+		arguments = append(arguments, "--kube-api-server="+options.WorkloadObserverKubeAPIServer)
+	}
+	return corev1.Container{
+		Name: "workload-observer", Image: prepared.Intent.Images.WorkloadObserver, ImagePullPolicy: corev1.PullIfNotPresent,
+		Args: arguments,
+		Env: []corev1.EnvVar{
+			fieldEnv("POD_NAMESPACE", "metadata.namespace"),
+			fieldEnv("POD_NAME", "metadata.name"),
+			fieldEnv("POD_UID", "metadata.uid"),
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(plan.WorkloadObserverCPURequest),
+				corev1.ResourceMemory: *resource.NewQuantity(plan.WorkloadObserverMemoryRequestBytes, resource.BinarySI),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(plan.WorkloadObserverCPULimit),
+				corev1.ResourceMemory: *resource.NewQuantity(plan.WorkloadObserverMemoryLimitBytes, resource.BinarySI),
+			},
+		},
+		SecurityContext: restrictedContainerSecurityContext(),
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
+			{Name: coordinationVolumeName, MountPath: coordinationMountPath},
+			{Name: workloadObserverTokenVolumeName, MountPath: workloadObserverTokenMountPath, ReadOnly: true},
+		},
+	}
+}
+
 func executionVolumes(intentName string, plan profiler.ExecutionPlan) []corev1.Volume {
 	return []corev1.Volume{
 		{
@@ -311,6 +391,17 @@ func executionVolumes(intentName string, plan profiler.ExecutionPlan) []corev1.V
 		}}},
 		{Name: workspaceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			SizeLimit: resource.NewQuantity(plan.WorkspaceBytes, resource.BinarySI),
+		}}},
+		{Name: workloadObserverTokenVolumeName, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+			Sources: []corev1.VolumeProjection{
+				{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+					Path: "token", ExpirationSeconds: ptr.To[int64](3600),
+				}},
+				{ConfigMap: &corev1.ConfigMapProjection{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"},
+					Items:                []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}},
+				}},
+			},
 		}}},
 	}
 }

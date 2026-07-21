@@ -121,5 +121,8 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 			MetricSourcesKey:       "metric-sources.yaml",
 			WorkloadObservationKey: "workload-observation.yaml",
 		},
+		WorkloadObserver: operatorprofiler.WorkloadObserverConfig{
+			ServiceAccountName: "chill-profiler-workload-observer",
+		},
 	}
 }

@@ -35,7 +35,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
 
-	job, err := buildExecutionJob(run, prepared, binding, scheme)
+	job, err := buildExecutionJob(run, prepared, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,8 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 		job.Spec.Completions == nil || *job.Spec.Completions != 1 ||
 		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 ||
 		job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever ||
-		job.Spec.Template.Spec.AutomountServiceAccountToken == nil || *job.Spec.Template.Spec.AutomountServiceAccountToken {
+		job.Spec.Template.Spec.AutomountServiceAccountToken == nil || *job.Spec.Template.Spec.AutomountServiceAccountToken ||
+		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
 		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
 	}
 	if !metav1.IsControlledBy(job, run) || job.Annotations[intentDigestAnnotation] != prepared.IntentDigest ||
@@ -52,7 +53,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	}
 	pod := job.Spec.Template.Spec
 	if pod.NodeSelector[corev1.LabelHostname] != prepared.Intent.TargetNode.Name ||
-		len(pod.InitContainers) != 1 || len(pod.Containers) != 2 || len(pod.Volumes) != 4 {
+		len(pod.InitContainers) != 1 || len(pod.Containers) != 3 || len(pod.Volumes) != 5 {
 		t.Fatalf("unexpected measurement topology: %#v", pod)
 	}
 	artifact := pod.InitContainers[0]
@@ -75,6 +76,35 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	}
 	observer := findContainer(t, pod.Containers, "metric-observer")
 	assertArgument(t, observer.Args, "--max-events=33")
+	workloads := findContainer(t, pod.Containers, "workload-observer")
+	assertArgument(t, workloads.Args, "--kube-api-server=https://kubernetes.example:6443")
+	assertArgument(t, workloads.Args, "--max-events=10000")
+	assertArgument(t, workloads.Args, "--selector-label-keys=app.kubernetes.io/component")
+	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
+}
+
+func assertWorkloadObserverCredentialIsolation(
+	t *testing.T,
+	pod corev1.PodSpec,
+	runtimeContainer corev1.Container,
+	metricObserver corev1.Container,
+	workloadObserver corev1.Container,
+) {
+	t.Helper()
+	if !hasVolumeMount(workloadObserver.VolumeMounts, workloadObserverTokenVolumeName, workloadObserverTokenMountPath) ||
+		hasVolumeMount(runtimeContainer.VolumeMounts, workloadObserverTokenVolumeName, workloadObserverTokenMountPath) ||
+		hasVolumeMount(metricObserver.VolumeMounts, workloadObserverTokenVolumeName, workloadObserverTokenMountPath) {
+		t.Fatalf("projected API credential isolation drifted: runtime=%#v metric=%#v workload=%#v",
+			runtimeContainer.VolumeMounts, metricObserver.VolumeMounts, workloadObserver.VolumeMounts)
+	}
+	credentialVolume := findVolume(t, pod.Volumes, workloadObserverTokenVolumeName)
+	if credentialVolume.Projected == nil || len(credentialVolume.Projected.Sources) != 2 ||
+		credentialVolume.Projected.Sources[0].ServiceAccountToken == nil ||
+		credentialVolume.Projected.Sources[0].ServiceAccountToken.Path != "token" ||
+		credentialVolume.Projected.Sources[1].ConfigMap == nil ||
+		credentialVolume.Projected.Sources[1].ConfigMap.Name != "kube-root-ca.crt" {
+		t.Fatalf("unexpected WorkloadObserver projected credential: %#v", credentialVolume)
+	}
 }
 
 func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
@@ -83,7 +113,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
-	desired, err := buildExecutionJob(run, prepared, binding, scheme)
+	desired, err := buildExecutionJob(run, prepared, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +123,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 		kubeClient,
 		scheme,
 		staticEvidenceStoreResolver{err: errors.New("current delivery binding must not be read during recovery")},
+		testExecutionJobOptions(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +146,13 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	}
 }
 
+func testExecutionJobOptions() ExecutionJobOptions {
+	return ExecutionJobOptions{
+		WorkloadObserverServiceAccountName: "chill-workload-observer",
+		WorkloadObserverKubeAPIServer:      "https://kubernetes.example:6443",
+	}
+}
+
 func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	t.Helper()
 	prepared := testPreparedRun(t)
@@ -123,6 +161,13 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	prepared.Intent.Images.WorkloadObserver = testWorkloadObserverImage
 	prepared.Intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
 		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+		Selectors: []profilingrun.BackgroundPodSelector{{
+			Namespace: "monitoring",
+			ControllerOwner: profilingrun.ControllerOwnerSelector{
+				Kind: "DaemonSet", Name: "edge-metrics-exporter",
+			},
+			MatchLabels: map[string]string{"app.kubernetes.io/component": "edge-metrics"},
+		}},
 	}}
 	digest, err := prepared.Intent.Digest()
 	if err != nil {
@@ -161,6 +206,17 @@ func findContainer(t *testing.T, containers []corev1.Container, name string) cor
 	return corev1.Container{}
 }
 
+func findVolume(t *testing.T, volumes []corev1.Volume, name string) corev1.Volume {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name == name {
+			return volume
+		}
+	}
+	t.Fatalf("volume %q not found", name)
+	return corev1.Volume{}
+}
+
 func assertArgument(t *testing.T, arguments []string, want string) {
 	t.Helper()
 	for _, argument := range arguments {
@@ -175,6 +231,15 @@ func hasSecretEnv(env []corev1.EnvVar, name, secretName, key string) bool {
 	for _, variable := range env {
 		if variable.Name == name && variable.ValueFrom != nil && variable.ValueFrom.SecretKeyRef != nil &&
 			variable.ValueFrom.SecretKeyRef.Name == secretName && variable.ValueFrom.SecretKeyRef.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVolumeMount(mounts []corev1.VolumeMount, name, path string) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == path && mount.ReadOnly {
 			return true
 		}
 	}

@@ -1,0 +1,46 @@
+{{- if .Values.profiler.enabled }}
+{{- if .Values.profiler.workloadObserver.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.profilerWorkloadObserverServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: workload-observer
+    {{- include "chill.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.profilerWorkloadObserverServiceAccountName" . }}
+  labels:
+    app.kubernetes.io/component: workload-observer
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.profilerWorkloadObserverServiceAccountName" . }}
+  labels:
+    app.kubernetes.io/component: workload-observer
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.profilerWorkloadObserverServiceAccountName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.profilerWorkloadObserverServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -8,16 +8,18 @@ import (
 )
 
 type options struct {
-	metricsAddr            string
-	probeAddr              string
-	systemName             string
-	watchNamespace         string
-	enableLeaderElection   bool
-	leaderElectionID       string
-	factSourceConfigMap    string
-	executionFactsKey      string
-	metricSourcesKey       string
-	workloadObservationKey string
+	metricsAddr                    string
+	probeAddr                      string
+	systemName                     string
+	watchNamespace                 string
+	enableLeaderElection           bool
+	leaderElectionID               string
+	factSourceConfigMap            string
+	executionFactsKey              string
+	metricSourcesKey               string
+	workloadObservationKey         string
+	workloadObserverServiceAccount string
+	workloadObserverKubeAPIServer  string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -29,6 +31,18 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"watch-namespace",
 		os.Getenv("POD_NAMESPACE"),
 		"Namespace containing CHILL profiling resources.",
+	)
+	flags.StringVar(
+		&o.workloadObserverServiceAccount,
+		"workload-observer-service-account",
+		"",
+		"ServiceAccount identity used by measurement Jobs for WorkloadObserver API reads.",
+	)
+	flags.StringVar(
+		&o.workloadObserverKubeAPIServer,
+		"workload-observer-kube-api-server",
+		"",
+		"Kubernetes API URL supplied to edge-hosted WorkloadObserver containers.",
 	)
 	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
 	flags.StringVar(&o.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
@@ -54,6 +68,10 @@ func (o options) validate() error {
 		{name: "execution-facts key", value: o.executionFactsKey},
 		{name: "metric-sources key", value: o.metricSourcesKey},
 		{name: "workload-observation key", value: o.workloadObservationKey},
+		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
+	}
+	if strings.TrimSpace(o.workloadObserverKubeAPIServer) != o.workloadObserverKubeAPIServer {
+		return errors.New("workload-observer Kubernetes API server must not have surrounding whitespace")
 	}
 	for _, field := range required {
 		if strings.TrimSpace(field.value) == "" || strings.TrimSpace(field.value) != field.value {

@@ -1,4 +1,5 @@
 {{- if .Values.profiler.enabled }}
+{{- $workloadObserverKubeAPIServer := include "chill.profilerWorkloadObserverKubernetesAPIServer" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,6 +23,9 @@ data:
       executionFactsKey: {{ .Values.profiler.factSource.executionFactsKey | quote }}
       metricSourcesKey: {{ .Values.profiler.factSource.metricSourcesKey | quote }}
       workloadObservationKey: {{ .Values.profiler.factSource.workloadObservationKey | quote }}
+    workloadObserver:
+      serviceAccountName: {{ include "chill.profilerWorkloadObserverServiceAccountName" . | quote }}
+      kubeAPIServer: {{ $workloadObserverKubeAPIServer | quote }}
     nodeSelector:
 {{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
     {{- with .Values.profiler.affinity }}

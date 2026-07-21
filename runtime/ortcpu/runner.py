@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha5"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha6"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha4"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
@@ -114,8 +114,8 @@ def validate_request(request: dict[str, Any]) -> None:
     require_fields(
         request,
         {
-            "schemaVersion", "intent", "intentDigest", "podUID", "scheduledNodeName", "modelPath", "observerReadyPath",
-            "measurementStartPath", "observerReadyTimeoutMilliseconds", "maxLatencySamples",
+            "schemaVersion", "intent", "intentDigest", "podUID", "scheduledNodeName", "modelPath", "observerReadyPaths",
+            "measurementStartPath", "measurementEndPath", "observerReadyTimeoutMilliseconds", "maxLatencySamples",
             "maxInputBytes", "maxResultBytes",
         },
         "runtime request",
@@ -128,8 +128,14 @@ def validate_request(request: dict[str, Any]) -> None:
     require_string(request["podUID"], "podUID")
     scheduled_node_name = require_string(request["scheduledNodeName"], "scheduledNodeName")
     require_absolute_file_path(request["modelPath"], "modelPath")
-    require_absolute_file_path(request["observerReadyPath"], "observerReadyPath")
+    ready_paths = request["observerReadyPaths"]
+    if not isinstance(ready_paths, list) or not ready_paths:
+        raise ContractError("observerReadyPaths must be a non-empty array")
+    normalized_ready_paths = [require_absolute_file_path(value, "observerReadyPaths item") for value in ready_paths]
+    if len(set(normalized_ready_paths)) != len(normalized_ready_paths):
+        raise ContractError("observerReadyPaths must be unique")
     require_absolute_file_path(request["measurementStartPath"], "measurementStartPath")
+    require_absolute_file_path(request["measurementEndPath"], "measurementEndPath")
     require_integer(request["observerReadyTimeoutMilliseconds"], "observerReadyTimeoutMilliseconds", 1)
     require_integer(request["maxLatencySamples"], "maxLatencySamples", 1)
     require_integer(request["maxInputBytes"], "maxInputBytes", 1)
@@ -230,13 +236,13 @@ def wait_for_signal(path: Path, timeout_seconds: float) -> None:
             info = path.lstat()
         except FileNotFoundError:
             if time.monotonic() >= deadline:
-                raise ContractError("timed out waiting for MetricObserver readiness")
+                raise ContractError(f"timed out waiting for observer readiness at {path}")
             time.sleep(SIGNAL_POLL_SECONDS)
             continue
         except OSError as error:
-            raise ContractError(f"inspect MetricObserver readiness signal: {error}") from error
+            raise ContractError(f"inspect observer readiness signal at {path}: {error}") from error
         if not stat.S_ISREG(info.st_mode):
-            raise ContractError("MetricObserver readiness signal is not a regular file")
+            raise ContractError(f"observer readiness signal at {path} is not a regular file")
         return
 
 
@@ -421,9 +427,8 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     shape = [measurement["batch"]] + [dimension if isinstance(dimension, int) and dimension > 0 else 1 for dimension in inputs[0].shape[1:]]
     sample = generate_input(numpy, shape, request["maxInputBytes"])
 
-    wait_for_signal(
-        Path(request["observerReadyPath"]), request["observerReadyTimeoutMilliseconds"] / 1000.0
-    )
+    for ready_path in request["observerReadyPaths"]:
+        wait_for_signal(Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0)
     log("warmup", "starting frozen warm-up", iterations=measurement["warmupIterations"], inputShape=shape)
     output_shapes: list[list[int]] | None = None
     try:
@@ -460,6 +465,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     measurement_elapsed = time.monotonic() - monotonic_started
     repetition_ended_at = now()
     measurement_ended_at = repetition_ended_at
+    publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
     process_cpu_seconds = time.process_time() - process_before
     stat_after = cpu_stat()
     if output_shapes is None:

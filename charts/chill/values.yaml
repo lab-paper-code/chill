@@ -78,6 +78,13 @@ profiler:
   serviceAccount:
     create: true
     name: ""
+  workloadObserver:
+    serviceAccount:
+      create: true
+      name: ""
+    kubernetesClient:
+      apiServer: ""
+      discoverFromDefaultEndpoint: true
   factSource:
     executionFactsKey: execution-facts.yaml
     metricSourcesKey: metric-sources.yaml

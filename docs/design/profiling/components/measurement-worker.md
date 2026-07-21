@@ -202,7 +202,7 @@ The controller creates one deterministic Job owned by the `ProfilingRun`:
 - `automountServiceAccountToken=false`;
 - Pod UID and scheduled Node name injected from the Downward API;
 - exact target-Node placement and frozen CPU request/limit;
-- digest-pinned artifact, runtime, and MetricObserver images;
+- digest-pinned artifact, runtime, MetricObserver, and WorkloadObserver images;
 - restricted container security contexts; and
 - one bounded active deadline covering startup, warm-up, measurement, handoff,
   and evidence commit.

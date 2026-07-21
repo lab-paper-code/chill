@@ -25,6 +25,7 @@ type Config struct {
 	PodSecurityContext *corev1.PodSecurityContext  `json:"podSecurityContext,omitempty"`
 	SecurityContext    *corev1.SecurityContext     `json:"securityContext,omitempty"`
 	FactSource         FactSourceConfig            `json:"factSource"`
+	WorkloadObserver   WorkloadObserverConfig      `json:"workloadObserver"`
 }
 
 type FactSourceConfig struct {
@@ -32,6 +33,11 @@ type FactSourceConfig struct {
 	ExecutionFactsKey      string `json:"executionFactsKey"`
 	MetricSourcesKey       string `json:"metricSourcesKey"`
 	WorkloadObservationKey string `json:"workloadObservationKey"`
+}
+
+type WorkloadObserverConfig struct {
+	ServiceAccountName string `json:"serviceAccountName"`
+	KubeAPIServer      string `json:"kubeAPIServer,omitempty"`
 }
 
 func (c Config) Validate() error {
@@ -48,10 +54,14 @@ func (c Config) Validate() error {
 		{name: "factSource.executionFactsKey", value: c.FactSource.ExecutionFactsKey},
 		{name: "factSource.metricSourcesKey", value: c.FactSource.MetricSourcesKey},
 		{name: "factSource.workloadObservationKey", value: c.FactSource.WorkloadObservationKey},
+		{name: "workloadObserver.serviceAccountName", value: c.WorkloadObserver.ServiceAccountName},
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			problems = append(problems, field.name+" is required")
 		}
+	}
+	if strings.TrimSpace(c.WorkloadObserver.KubeAPIServer) != c.WorkloadObserver.KubeAPIServer {
+		problems = append(problems, "workloadObserver.kubeAPIServer must not have surrounding whitespace")
 	}
 	keys := map[string]struct{}{}
 	for _, key := range []string{

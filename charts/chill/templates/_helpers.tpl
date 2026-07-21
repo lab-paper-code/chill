@@ -74,6 +74,32 @@ app.kubernetes.io/component: operator
 {{- end -}}
 {{- end -}}
 
+{{- define "chill.profilerWorkloadObserverServiceAccountName" -}}
+{{- if .Values.profiler.workloadObserver.serviceAccount.create -}}
+{{- default (printf "%s-workload-observer" (include "chill.profilerName" .)) .Values.profiler.workloadObserver.serviceAccount.name -}}
+{{- else -}}
+{{- .Values.profiler.workloadObserver.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.profilerWorkloadObserverKubernetesAPIServer" -}}
+{{- if .Values.profiler.workloadObserver.kubernetesClient.apiServer -}}
+{{- .Values.profiler.workloadObserver.kubernetesClient.apiServer -}}
+{{- else if .Values.profiler.workloadObserver.kubernetesClient.discoverFromDefaultEndpoint -}}
+{{- $endpoint := lookup "v1" "Endpoints" "default" "kubernetes" -}}
+{{- if and $endpoint $endpoint.subsets -}}
+{{- $subset := index $endpoint.subsets 0 -}}
+{{- if and $subset.addresses $subset.ports -}}
+{{- $address := index $subset.addresses 0 -}}
+{{- $port := index $subset.ports 0 -}}
+{{- if and $address.ip $port.port -}}
+{{- printf "https://%s:%v" $address.ip $port.port -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "chill.profilerImage" -}}
 {{- printf "%s:%s" .Values.profiler.image.repository (include "chill.profilerImageTag" .) -}}
 {{- end -}}

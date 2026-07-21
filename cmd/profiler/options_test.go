@@ -16,6 +16,7 @@ func TestOptionsBindFlags(t *testing.T) {
 		"--execution-facts-key=execution-facts.yaml",
 		"--metric-sources-key=metric-sources.yaml",
 		"--workload-observation-key=workload-observation.yaml",
+		"--workload-observer-service-account=chill-profiler-workload-observer",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,8 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 	valid := options{
 		systemName: "chill", watchNamespace: "chill-system", factSourceConfigMap: "chill-profiler-facts",
 		executionFactsKey: "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
-		workloadObservationKey: "workload-observation.yaml",
+		workloadObservationKey:         "workload-observation.yaml",
+		workloadObserverServiceAccount: "chill-profiler-workload-observer",
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)

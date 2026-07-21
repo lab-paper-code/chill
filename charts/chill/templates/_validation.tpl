@@ -83,6 +83,9 @@
 {{- if not (kindIs "slice" .Values.profiler.factSource.allowedBackgroundSelectors) -}}
 {{- fail "profiler.factSource.allowedBackgroundSelectors must be a list" -}}
 {{- end -}}
+{{- if and (not .Values.profiler.workloadObserver.serviceAccount.create) (empty .Values.profiler.workloadObserver.serviceAccount.name) -}}
+{{- fail "profiler.workloadObserver.serviceAccount.name is required when create=false" -}}
+{{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.metricSources) -}}
 {{- fail "profiler.factSource.metricSources must be a list" -}}
 {{- end -}}
