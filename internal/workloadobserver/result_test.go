@@ -40,6 +40,27 @@ func TestResultValidateAcceptsTypedIncompleteObservation(t *testing.T) {
 	}
 }
 
+func TestResultCanonicalNormalizesTimeAndOwnsMutableFacts(t *testing.T) {
+	const changed = "changed"
+	result := validResult()
+	location := time.FixedZone("KST", 9*60*60)
+	result.CoverageStartedAt = result.CoverageStartedAt.In(location)
+	result.CoverageEndedAt = result.CoverageEndedAt.In(location)
+	canonical, err := result.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.CoverageStartedAt.Location() != time.UTC || canonical.CoverageEndedAt.Location() != time.UTC {
+		t.Fatalf("canonical coverage is not UTC: %#v", canonical)
+	}
+	result.InitialActivePods[0].Labels["edge.dacs.io/profiling-background"] = changed
+	result.InitialActivePods[0].Owner.Name = changed
+	if canonical.InitialActivePods[0].Labels["edge.dacs.io/profiling-background"] != "allowed" ||
+		canonical.InitialActivePods[0].Owner.Name == changed {
+		t.Fatalf("canonical result aliases source facts: %#v", canonical.InitialActivePods[0])
+	}
+}
+
 func TestResultValidateRejectsContradictoryEvidence(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

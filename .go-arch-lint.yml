@@ -124,6 +124,7 @@ deps:
       - evidence-core
       - metric-core
       - profiling-run
+      - workload-core
 
   profiler-evidence-kube:
     mayDependOn:

@@ -64,6 +64,8 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
 	assertArgument(t, runtimeContainer.Args, "--intent-digest="+prepared.IntentDigest)
 	assertArgument(t, runtimeContainer.Args, "--store-endpoint="+binding.Endpoint)
+	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout=30s")
+	assertArgument(t, runtimeContainer.Args, "--max-workload-result-bytes=8388608")
 	assertArgument(t, runtimeContainer.Args, "--raw-object-key=profiling-runs/"+string(run.UID)+"/raw/"+
 		strings.TrimPrefix(prepared.IntentDigest, "sha256:")+".json")
 	if runtimeContainer.Resources.Limits.Cpu().String() != prepared.Intent.CPU.Limit ||

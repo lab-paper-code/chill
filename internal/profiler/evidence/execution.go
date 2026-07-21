@@ -45,6 +45,11 @@ func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
 	if err := e.Terminal.validate(e.Intent, raw.PodUID); err != nil {
 		return err
 	}
+	if raw.Workload != nil && (raw.Workload.Run.Namespace != e.Terminal.Pod.Namespace ||
+		raw.Workload.Run.JobUID != e.Terminal.Job.UID || raw.Workload.Run.PodName != e.Terminal.Pod.Name ||
+		raw.Workload.Run.PodUID != e.Terminal.Pod.UID) {
+		return errors.New("workload observation Run identity does not match terminal Kubernetes facts")
+	}
 	if e.FinalizedAt.IsZero() || e.FinalizedAt.Before(e.Terminal.Job.CompletionTime) {
 		return errors.New("execution evidence finalization time is invalid")
 	}

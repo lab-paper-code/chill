@@ -29,7 +29,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 		t.Fatalf("unexpected timing envelope: %#v", plan)
 	}
 	if plan.MetricResultTimeout != 31*time.Second || plan.ObserverReadyTimeout >= plan.AttemptTimeout ||
-		plan.ObserverStartTimeout >= plan.AttemptTimeout {
+		plan.ObserverStartTimeout >= plan.AttemptTimeout || plan.WorkloadResultTimeout >= plan.AttemptTimeout {
 		t.Fatalf("incoherent handoff timing: %#v", plan)
 	}
 	if plan.MaxInputBytes+plan.MaxRuntimeResultBytes >= plan.RuntimeMemoryLimitBytes ||

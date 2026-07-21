@@ -3,6 +3,7 @@ package workloadobserver
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"sort"
@@ -56,6 +57,48 @@ func (r Result) Validate() error {
 		return errors.New("workload observation final active set does not match retained events")
 	}
 	return nil
+}
+
+// Canonical returns a validated deep copy with all retained timestamps in UTC.
+func (r Result) Canonical() (Result, error) {
+	if err := r.Validate(); err != nil {
+		return Result{}, err
+	}
+	canonical := r
+	canonical.CoverageStartedAt = r.CoverageStartedAt.UTC()
+	canonical.CoverageEndedAt = r.CoverageEndedAt.UTC()
+	canonical.InitialActivePods = canonicalPods(r.InitialActivePods)
+	canonical.FinalActivePods = canonicalPods(r.FinalActivePods)
+	canonical.Events = append([]Event(nil), r.Events...)
+	for index := range canonical.Events {
+		canonical.Events[index].ObservedAt = canonical.Events[index].ObservedAt.UTC()
+		canonical.Events[index].Pod = canonicalPod(r.Events[index].Pod)
+	}
+	if r.Failure != nil {
+		failure := *r.Failure
+		failure.ObservedAt = failure.ObservedAt.UTC()
+		canonical.Failure = &failure
+	}
+	return canonical, nil
+}
+
+func canonicalPods(source []Pod) []Pod {
+	result := make([]Pod, len(source))
+	for index := range source {
+		result[index] = canonicalPod(source[index])
+	}
+	return result
+}
+
+func canonicalPod(source Pod) Pod {
+	result := source
+	result.Images = append([]string(nil), source.Images...)
+	result.Labels = maps.Clone(source.Labels)
+	if source.Owner != nil {
+		owner := *source.Owner
+		result.Owner = &owner
+	}
+	return result
 }
 
 func validateIdentities(target TargetIdentity, run RunIdentity) error {

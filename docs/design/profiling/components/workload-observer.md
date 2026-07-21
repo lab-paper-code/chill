@@ -6,8 +6,9 @@
 
 Approved for staged implementation. The Kubernetes-free observation contract,
 isolated Kubernetes list-watch adapter, bounded executable, immutable
-installation-fact resolution, read-only identity, and Job-local execution are
-implemented. Evidence-schema and admission changes remain separately gated.
+installation-fact resolution, read-only identity, Job-local execution, and raw
+evidence retention are implemented. Admission projection remains separately
+gated.
 
 ## Purpose
 

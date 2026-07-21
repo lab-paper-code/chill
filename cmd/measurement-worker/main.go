@@ -59,6 +59,8 @@ func exitCode(err error) int {
 		return 3
 	case errors.Is(err, worker.ErrMetricObservation):
 		return 4
+	case errors.Is(err, worker.ErrWorkloadObservation):
+		return 4
 	case errors.Is(err, worker.ErrEvidenceCommit):
 		return 5
 	default:

@@ -108,14 +108,19 @@ func TestWriteReceiptWritesOnlyBoundedJSON(t *testing.T) {
 }
 
 func TestExitCodeMapsWorkerFailureClasses(t *testing.T) {
-	for want, failure := range map[int]error{
-		2: worker.ErrExecutionContract,
-		3: worker.ErrRuntimeMeasurement,
-		4: worker.ErrMetricObservation,
-		5: worker.ErrEvidenceCommit,
-	} {
-		if got := exitCode(failure); got != want {
-			t.Fatalf("exitCode(%v) = %d, want %d", failure, got, want)
+	tests := []struct {
+		want    int
+		failure error
+	}{
+		{2, worker.ErrExecutionContract},
+		{3, worker.ErrRuntimeMeasurement},
+		{4, worker.ErrMetricObservation},
+		{4, worker.ErrWorkloadObservation},
+		{5, worker.ErrEvidenceCommit},
+	}
+	for _, test := range tests {
+		if got := exitCode(test.failure); got != test.want {
+			t.Fatalf("exitCode(%v) = %d, want %d", test.failure, got, test.want)
 		}
 	}
 }
@@ -138,11 +143,13 @@ func validOptions() options {
 		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPaths:   []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
 		measurementStartPath: defaultMeasurementStartPath, measurementEndPath: defaultMeasurementEndPath,
-		metricResultPath: defaultMetricResultPath, terminationMessagePath: defaultTerminationMessagePath,
-		runtimeCommand: []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},
-		attemptTimeout: 10 * time.Minute, observerReadyTimeout: time.Minute, metricResultTimeout: time.Minute,
+		metricResultPath: defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
+		terminationMessagePath: defaultTerminationMessagePath,
+		runtimeCommand:         []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},
+		attemptTimeout:         10 * time.Minute, observerReadyTimeout: time.Minute,
+		metricResultTimeout: time.Minute, workloadResultTimeout: time.Minute,
 		maxLatencySamples: 1000, maxInputBytes: 1 << 20,
-		maxRuntimeResultBytes: 1 << 20, maxMetricResultBytes: 1 << 20,
+		maxRuntimeResultBytes: 1 << 20, maxMetricResultBytes: 1 << 20, maxWorkloadResultBytes: 1 << 20,
 		storeName: "chill-evidence-store", storeEndpoint: "http://chill-evidence-store.chill-system.svc:9000",
 		storeBucket: "chill-profiling-evidence", storeRegion: "us-east-1",
 		rawObjectKey: "profiling-runs/run/raw/intent.json",

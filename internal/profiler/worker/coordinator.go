@@ -16,6 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 // Runtime performs the frozen warm-up and measurement protocol. Concrete
@@ -36,6 +37,10 @@ type MetricResultReader interface {
 	Read(context.Context) (metricobserver.Result, error)
 }
 
+type WorkloadResultReader interface {
+	Read(context.Context) (workloadobserver.Result, error)
+}
+
 type Request struct {
 	Intent               profilingrun.Intent
 	ExpectedIntentDigest string
@@ -47,14 +52,16 @@ type Request struct {
 // Coordinator assembles and immutably commits one raw measurement. It holds no
 // state between calls and does not choose a runtime, metric source, or store.
 type Coordinator struct {
-	runtime Runtime
-	metrics MetricResultReader
-	store   evidencestore.ImmutableWriter
+	runtime  Runtime
+	metrics  MetricResultReader
+	workload WorkloadResultReader
+	store    evidencestore.ImmutableWriter
 }
 
 func NewCoordinator(
 	runtime Runtime,
 	metrics MetricResultReader,
+	workload WorkloadResultReader,
 	store evidencestore.ImmutableWriter,
 ) (*Coordinator, error) {
 	if runtime == nil {
@@ -63,10 +70,13 @@ func NewCoordinator(
 	if metrics == nil {
 		return nil, errors.New("metric result reader is required")
 	}
+	if workload == nil {
+		return nil, errors.New("workload result reader is required")
+	}
 	if store == nil {
 		return nil, errors.New("immutable evidence writer is required")
 	}
-	return &Coordinator{runtime: runtime, metrics: metrics, store: store}, nil
+	return &Coordinator{runtime: runtime, metrics: metrics, workload: workload, store: store}, nil
 }
 
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
@@ -117,12 +127,17 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read metric observation result: %w", ErrMetricObservation, err)
 	}
+	workloadResult, err := c.workload.Read(ctx)
+	if err != nil {
+		return evidencestore.Receipt{}, fmt.Errorf("%w: read workload observation result: %w", ErrWorkloadObservation, err)
+	}
 	raw := evidence.RawMeasurement{
 		SchemaVersion: evidence.RawMeasurementSchemaVersion,
 		IntentDigest:  digest,
 		PodUID:        request.PodUID,
 		Runtime:       runtimeResult,
 		Metrics:       metricResult,
+		Workload:      &workloadResult,
 	}
 	payload, err := raw.CanonicalJSON(request.Intent)
 	if err != nil {

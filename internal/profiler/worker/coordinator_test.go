@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
@@ -35,7 +36,8 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		if raw.IntentDigest != digest || raw.PodUID != "pod-uid" || raw.Runtime.Status != "Succeeded" ||
-			raw.Metrics.Source.NodeName != intent.TargetNode.Name {
+			raw.Metrics.Source.NodeName != intent.TargetNode.Name || raw.Workload == nil ||
+			raw.Workload.Target.NodeUID != intent.TargetNode.UID {
 			t.Fatalf("unexpected raw measurement: %#v", raw)
 		}
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
@@ -52,6 +54,10 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			calls = append(calls, "metrics")
 			return metricResult, nil
 		}),
+		workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
+			calls = append(calls, "workload")
+			return testWorkloadResult(t, intent, runtimeResult), nil
+		}),
 		store,
 	)
 
@@ -62,7 +68,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(calls, ",") != "runtime,metrics,store" || got != store.receipt {
+	if strings.Join(calls, ",") != "runtime,metrics,workload,store" || got != store.receipt {
 		t.Fatalf("unexpected execution: calls=%v receipt=%#v", calls, got)
 	}
 }
@@ -79,6 +85,7 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 			t.Fatal("metric reader must not be called")
 			return metricobserver.Result{}, nil
 		}),
+		testWorkloadReader(t, intent),
 		&fakeStore{},
 	)
 
@@ -108,6 +115,7 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 			t.Fatal("metric reader must not be called")
 			return metricobserver.Result{}, nil
 		}),
+		testWorkloadReader(t, intent),
 		&fakeStore{},
 	)
 
@@ -143,6 +151,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 				metricCalls++
 				return metricobserver.Result{}, nil
 			}),
+			testWorkloadReader(t, intent),
 			&fakeStore{},
 		)
 		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrRuntimeMeasurement) || metricCalls != 0 {
@@ -159,10 +168,30 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 				return testRuntimeResult(t, intent), nil
 			}),
 			metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return metricResult, nil }),
+			testWorkloadReader(t, intent),
 			store,
 		)
 		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrMetricObservation) || store.calls != 0 {
 			t.Fatalf("expected metric rejection before store, got err=%v calls=%d", err, store.calls)
+		}
+	})
+
+	t.Run("workload", func(t *testing.T) {
+		store := &fakeStore{}
+		coordinator := mustCoordinator(t,
+			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
+				return testRuntimeResult(t, intent), nil
+			}),
+			metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
+				return testMetricResult(intent), nil
+			}),
+			workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
+				return workloadobserver.Result{}, errors.New("handoff failed")
+			}),
+			store,
+		)
+		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrWorkloadObservation) || store.calls != 0 {
+			t.Fatalf("expected workload rejection before store, got err=%v calls=%d", err, store.calls)
 		}
 	})
 }
@@ -182,6 +211,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 			return testRuntimeResult(t, intent), nil
 		}),
 		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
+		testWorkloadReader(t, intent),
 		store,
 	)
 	_, err = coordinator.Execute(context.Background(), Request{
@@ -205,6 +235,10 @@ func (f runtimeFunc) Measure(
 type metricReaderFunc func(context.Context) (metricobserver.Result, error)
 
 func (f metricReaderFunc) Read(ctx context.Context) (metricobserver.Result, error) { return f(ctx) }
+
+type workloadReaderFunc func(context.Context) (workloadobserver.Result, error)
+
+func (f workloadReaderFunc) Read(ctx context.Context) (workloadobserver.Result, error) { return f(ctx) }
 
 type fakeStore struct {
 	calls   int
@@ -233,10 +267,11 @@ func mustCoordinator(
 	t *testing.T,
 	runtime Runtime,
 	power MetricResultReader,
+	workload WorkloadResultReader,
 	store evidencestore.ImmutableWriter,
 ) *Coordinator {
 	t.Helper()
-	coordinator, err := NewCoordinator(runtime, power, store)
+	coordinator, err := NewCoordinator(runtime, power, workload, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,5 +375,47 @@ func testMetricResult(intent profilingrun.Intent) metricobserver.Result {
 			Attempts: 1, SuccessfulSamples: 1, ObservationDurationSeconds: 31,
 			SourceTimestampAbsent: true,
 		},
+	}
+}
+
+func testWorkloadReader(t *testing.T, intent profilingrun.Intent) WorkloadResultReader {
+	t.Helper()
+	runtime := testRuntimeResult(t, intent)
+	return workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
+		return testWorkloadResult(t, intent, runtime), nil
+	})
+}
+
+func testWorkloadResult(
+	t *testing.T,
+	intent profilingrun.Intent,
+	runtime profilingrun.RuntimeResult,
+) workloadobserver.Result {
+	t.Helper()
+	policyDigest, err := intent.Workload.AllowedBackground.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, ended, err := runtime.MeasurementWindow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := workloadobserver.Pod{
+		Namespace: "chill-system", Name: "run", UID: runtime.ExperimentID, Phase: "Running",
+		Images: []string{intent.Images.Runtime},
+	}
+	return workloadobserver.Result{
+		SchemaVersion: workloadobserver.ResultSchemaVersion,
+		Target: workloadobserver.TargetIdentity{
+			NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID,
+		},
+		Run: workloadobserver.RunIdentity{
+			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: runtime.ExperimentID,
+		},
+		PolicyDigest:      policyDigest,
+		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: ended.Add(time.Second),
+		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
+		InitialActivePods: []workloadobserver.Pod{pod}, FinalActivePods: []workloadobserver.Pod{pod},
+		Continuous: true,
 	}
 }

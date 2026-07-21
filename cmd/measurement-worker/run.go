@@ -84,6 +84,13 @@ func buildCoordinator(opts options, stdout, stderr io.Writer) (measurementCoordi
 	if err != nil {
 		return nil, fmt.Errorf("construct metric-result reader: %w", err)
 	}
+	workloadResult, err := worker.NewWorkloadResultFile(worker.WorkloadResultFileConfig{
+		Path: opts.workloadResultPath, WaitTimeout: opts.workloadResultTimeout,
+		PollInterval: handoffPollInterval, MaxBytes: opts.maxWorkloadResultBytes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct workload-result reader: %w", err)
+	}
 	store, err := evidences3.New(evidences3.Config{
 		LogicalStore: opts.storeName, Bucket: opts.storeBucket,
 		Endpoint: opts.storeEndpoint, Region: opts.storeRegion,
@@ -93,7 +100,7 @@ func buildCoordinator(opts options, stdout, stderr io.Writer) (measurementCoordi
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Store writer: %w", err)
 	}
-	coordinator, err := worker.NewCoordinator(runtimeAdapter, metricResult, store)
+	coordinator, err := worker.NewCoordinator(runtimeAdapter, metricResult, workloadResult, store)
 	if err != nil {
 		return nil, fmt.Errorf("construct measurement coordinator: %w", err)
 	}

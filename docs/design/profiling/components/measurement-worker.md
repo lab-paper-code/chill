@@ -4,9 +4,10 @@
 
 ## Status
 
-Implemented and live-verified for the first CPU ONNX Runtime profiling path.
-This document specifies the Job-local handoff required by Plan 4. It does not
-authorize batch campaigns, `b_sat` derivation, another runtime, or serving.
+Implemented for the first CPU ONNX Runtime profiling path. The earlier
+runtime-and-metric path was live-verified; the workload-window extension is
+code-verified and awaits a live Run. This document does not authorize batch
+campaigns, `b_sat` derivation, another runtime, or serving.
 
 ## Purpose
 
@@ -22,7 +23,7 @@ finalizes them after Kubernetes reports the Job and Pod terminal state.
 
 ## First Job topology
 
-The first Job contains three execution roles, not a generic plugin graph:
+The first Job contains four execution roles, not a generic plugin graph:
 
 ```text
 artifact init container
@@ -33,7 +34,7 @@ runtime container (the measurement worker and sole raw writer)
   -> verify intent and artifact
   -> run the explicit CPU ONNX Runtime adapter
   -> coordinate the measurement window
-  -> validate the MetricObserver result
+  -> validate MetricObserver and WorkloadObserver results
   -> assemble and immutably store RawMeasurement
   -> write the bounded success receipt
 
@@ -41,6 +42,11 @@ metric-observer container
   -> wait for the runtime measurement signal
   -> invoke internal/metricobserver for one bounded window
   -> atomically write only the metric result
+
+workload-observer container
+  -> establish a continuous target-Node Pod list-watch
+  -> close observation after the runtime end signal
+  -> atomically write only the workload result
 ```
 
 There is no separate uploader container. It would introduce another image,
@@ -51,13 +57,15 @@ cannot publish Run evidence.
 The `runtime` image is the complete trusted worker/runtime environment for the
 selected path. It contains the CHILL worker entrypoint and the explicit CPU ORT
 adapter. The separately pinned `metricObserver` image contains the bounded
-observer helper. The trusted execution declaration must therefore reference a
-promoted worker/runtime image; the spike runtime image is not itself a
-production contract. The artifact image remains an init-container supply image.
+observer helper. A separately pinned WorkloadObserver image receives the only
+Kubernetes API credential in the Job. The trusted execution declaration must
+therefore reference a promoted worker/runtime image; the spike runtime image
+is not itself a production contract. The artifact image remains an
+init-container supply image.
 
 ## Frozen and delivery inputs
 
-The immutable intent record remains the scientific execution authority. Both
+The immutable intent record remains the scientific execution authority. All
 regular containers mount its canonical `intent.json` read-only and verify the
 expected digest before doing work. The candidate report remains controller-side
 provenance and is not a worker input.
@@ -71,9 +79,8 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-The current internal intent schema is `v1alpha2` and requires this path.
-Retained `v1alpha1` intents remain readable without it so their canonical bytes
-and digests do not change; new Runs are never emitted as `v1alpha1`.
+The current internal intent schema is `v1alpha4`; retained earlier intents
+remain readable without changing their canonical bytes or digests.
 
 The following values are delivery bindings, not scientific Run inputs:
 
@@ -112,12 +119,13 @@ scientific intent is otherwise identical.
 
 ## Job-local handoff
 
-The Job uses four volumes:
+The Job uses five volumes:
 
 - a read-only intent ConfigMap volume;
-- an `emptyDir` model volume populated by the artifact init container; and
-- an `emptyDir` coordination volume shared by the two regular containers; and
-- a bounded runtime-workspace `emptyDir` mounted only by the runtime worker.
+- an `emptyDir` model volume populated by the artifact init container;
+- an `emptyDir` coordination volume shared by the three regular containers;
+- a bounded runtime-workspace `emptyDir` mounted only by the runtime worker; and
+- a projected Kubernetes token and CA volume mounted only by WorkloadObserver.
 
 The runtime workspace holds the private CPU ORT result and bounded temporary
 file used to verify evidence before upload. It is not a cross-container
@@ -127,8 +135,11 @@ The coordination volume contains only this versioned, bounded protocol:
 
 ```text
 observer-ready       metric-observer is ready to receive a start signal
+workload-observer-ready  target-Node list-watch continuity is established
 measurement-start    runtime completed warm-up and opens the measurement window
+measurement-end      runtime completed its final measured inference
 metric-result.json    complete MetricObserver Result, written by temp-file + rename
+workload-result.json  complete WorkloadObserver Result, written atomically
 ```
 
 Logs are diagnostic only. They are never parsed as evidence or used as a
@@ -140,19 +151,20 @@ The runtime sequence is fixed:
 1. strict-decode and validate the mounted intent and expected digest;
 2. verify Pod UID, scheduled Node name, artifact bytes, CPU contract, runtime,
    provider, and output-validation capability;
-3. wait with a bounded timeout for `observer-ready`;
+3. wait with a bounded timeout for both observer readiness signals;
 4. execute the declared warm-up iterations;
 5. atomically create `measurement-start`;
 6. execute the one duration-based measurement;
-7. wait with a bounded timeout for `metric-result.json`;
-8. validate source identity, polling summary, timestamps, and overlap with the
-   runtime measurement window;
-9. canonicalize `RawMeasurement`, calculate its digest and size, and perform
+7. atomically create `measurement-end` after the final measured inference;
+8. wait with bounded timeouts for both result files;
+9. validate metric source and workload identities, summaries, timestamps, and
+   coverage of the runtime measurement window;
+10. canonicalize `RawMeasurement`, calculate its digest and size, and perform
    one immutable create; and
-10. write the validated Evidence Store receipt to `/dev/termination-log` and
+11. write the validated Evidence Store receipt to `/dev/termination-log` and
     exit successfully.
 
-The observer sequence is fixed:
+The MetricObserver sequence is fixed:
 
 1. strict-decode and validate the same intent;
 2. construct the edge-metrics source from the frozen power contract;
@@ -161,16 +173,25 @@ The observer sequence is fixed:
 5. observe for the frozen power duration; and
 6. atomically publish `metric-result.json` and exit.
 
+The WorkloadObserver sequence is fixed:
+
+1. strict-decode the intent and verify its own Pod and Job ownership;
+2. establish the target-Node Pod list-watch and publish its readiness signal;
+3. retain bounded membership changes until `measurement-end`;
+4. close the resource-version boundary with a bounded bookmark wait; and
+5. atomically publish `workload-result.json` and exit.
+
 ## Raw evidence and receipt
 
-The `profiling-raw-measurement.v1alpha2` object is the worker output.
+The `profiling-raw-measurement.v1alpha3` object is the worker output.
 It contains only facts available before the worker exits:
 
 - intent digest and actual Pod UID;
-- the existing validated runtime result; and
-- the complete MetricObserver result.
+- the existing validated runtime result;
+- the complete MetricObserver result; and
+- the complete bounded WorkloadObserver result.
 
-It contains no Job completion, terminal Pod state, co-resident Pod snapshot,
+It contains no Job completion, terminal Pod state, or post-run Node snapshot,
 credentials, or backend response. Those Kubernetes facts are added only by the
 Profiler controller during independent finalization.
 
@@ -186,7 +207,7 @@ The first worker uses stable failure classes:
 |---:|---|
 | 2 | invalid or drifted frozen/delivery contract |
 | 3 | artifact, runtime, provider, inference, or output validation failure |
-| 4 | MetricObserver readiness, execution, handoff, or result validation failure |
+| 4 | observer readiness, execution, handoff, or result validation failure |
 | 5 | raw evidence encoding, immutable write, or post-write verification failure |
 
 Failures write diagnostics to stderr but never place credentials, raw samples,
@@ -280,12 +301,17 @@ runtime worker
 metric-observer helper
   -> internal/metricobserver
   -> edge-metrics adapter
+
+workload-observer helper
+  -> internal/workloadobserver
+  -> read-only Kubernetes Pod list-watch adapter
 ```
 
-Neither Job container imports controller-runtime, reconciles Kubernetes
-objects, or receives a Kubernetes API token. The controller does not trust
-shared-volume files after Pod termination; it trusts only independently read
-and verified immutable evidence plus native Kubernetes observations.
+No Job container imports controller-runtime or reconciles Kubernetes objects.
+Only WorkloadObserver receives the projected read-only Kubernetes API token.
+The controller does not trust shared-volume files after Pod termination; it
+trusts only independently read and verified immutable evidence plus native
+Kubernetes observations.
 
 ## Implementation order
 
@@ -303,15 +329,7 @@ and verified immutable evidence plus native Kubernetes observations.
 7. Compare one live Lattepanda Run byte-for-byte and fact-for-fact with the
    retained spike evidence before removing any spike path.
 
-Items 1 through 3 are implemented through the fail-closed worker adapters, the
-production CPU ORT subprocess, and the MetricObserver container entrypoint. The
-Go adapter's exact runtime request is checked against the production Python
-strict decoder as a cross-language contract test. The Operator now supplies
-the owning `ChillSystem` name to each Profiler instance. A fail-closed
-Kubernetes resolver can exact-read that system and its configured Evidence
-Store into a non-secret delivery binding. Its Job projection and Job
-materialization remain later steps. The production CPU ORT measurement-worker
-image composes the frozen-intent loader, runtime adapter, file-based power
-handoff, immutable S3 writer, coordinator, stable failure exits, bounded
-termination receipt, and pinned Python runtime dependencies. This changes no
-public CRD field and does not create a Job.
+Items 1 through 6 are implemented. The worker composes the frozen-intent
+loader, runtime adapter, bounded observer handoffs, immutable Evidence Store
+writer, stable failure exits, and bounded termination receipt. The final live
+comparison remains pending and no public CRD field is added.

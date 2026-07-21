@@ -33,6 +33,7 @@ type ExecutionPlan struct {
 	ObserverStartTimeout    time.Duration
 	MetricResultTimeout     time.Duration
 	WorkloadEndFenceTimeout time.Duration
+	WorkloadResultTimeout   time.Duration
 
 	MaxLatencySamples      int
 	MaxInputBytes          int64
@@ -87,6 +88,7 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 		ObserverStartTimeout:    2 * time.Minute,
 		MetricResultTimeout:     metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second + 30*time.Second,
 		WorkloadEndFenceTimeout: 15 * time.Second,
+		WorkloadResultTimeout:   30 * time.Second,
 
 		MaxLatencySamples:      1_000_000,
 		MaxInputBytes:          64 * mebibyte,

@@ -24,8 +24,9 @@ func TestProjectTerminalFacts(t *testing.T) {
 	if facts.Node.Name != "edge-node" || facts.Pod.NodeName != facts.Node.Name {
 		t.Fatal("actual Node binding was not projected")
 	}
-	if len(facts.Containers) != 3 || facts.Containers[0].Name != "artifact" ||
-		facts.Containers[1].Name != "metric-observer" || facts.Containers[2].Name != "runtime" {
+	if len(facts.Containers) != 4 || facts.Containers[0].Name != "artifact" ||
+		facts.Containers[1].Name != "metric-observer" || facts.Containers[2].Name != "runtime" ||
+		facts.Containers[3].Name != "workload-observer" {
 		t.Fatalf("unexpected projected containers: %#v", facts.Containers)
 	}
 	if len(facts.NodeWorkload.Pods) != 2 || facts.NodeWorkload.Pods[0].Name != "profiling-pod" {
@@ -172,6 +173,7 @@ func validObservation() Observation {
 			Containers: []corev1.Container{
 				{Name: "runtime", Image: "runtime@sha256:2"},
 				{Name: "metric-observer", Image: "power@sha256:3"},
+				{Name: "workload-observer", Image: "workload@sha256:4"},
 			},
 		},
 		Status: corev1.PodStatus{
@@ -180,6 +182,7 @@ func validObservation() Observation {
 			ContainerStatuses: []corev1.ContainerStatus{
 				done("runtime", "runtime@sha256:2"),
 				done("metric-observer", "power@sha256:3"),
+				done("workload-observer", "workload@sha256:4"),
 			},
 		},
 	}

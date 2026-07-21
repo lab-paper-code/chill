@@ -12,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
@@ -67,6 +68,7 @@ func TestRetainedRawMeasurementWireShapeRemainsReadable(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	raw.SchemaVersion = legacyRawMeasurementSchemaVersion
+	raw.Workload = nil
 	raw.Metrics.Source.ThermalMetrics = nil
 	for index := range raw.Metrics.Samples {
 		raw.Metrics.Samples[index].Thermal = nil
@@ -77,6 +79,27 @@ func TestRetainedRawMeasurementWireShapeRemainsReadable(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), `"power":`) || strings.Contains(string(payload), `"metrics":`) {
 		t.Fatalf("retained raw measurement wire shape = %s", payload)
+	}
+	var decoded RawMeasurement
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.Validate(intent); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetainedMetricRawMeasurementRemainsReadableWithoutWorkloadObservation(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	raw.SchemaVersion = metricRawMeasurementSchemaVersion
+	raw.Workload = nil
+	payload, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"metrics":`) || strings.Contains(string(payload), `"workload":`) {
+		t.Fatalf("retained metric raw measurement wire shape = %s", payload)
 	}
 	var decoded RawMeasurement
 	if err := json.Unmarshal(payload, &decoded); err != nil {
@@ -130,6 +153,44 @@ func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) 
 	}
 }
 
+func TestCurrentRawMeasurementBindsWorkloadObservationToIntentAndRuntime(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	runtimeStarted, _, err := raw.Runtime.MeasurementWindow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*RawMeasurement)
+		match  string
+	}{
+		{name: "missing", mutate: func(candidate *RawMeasurement) {
+			candidate.Workload = nil
+		}, match: "required"},
+		{name: "policy", mutate: func(candidate *RawMeasurement) {
+			candidate.Workload.PolicyDigest = "sha256:" + strings.Repeat("0", 64)
+		}, match: "policy digest"},
+		{name: "node", mutate: func(candidate *RawMeasurement) {
+			candidate.Workload.Target.NodeUID = "other-node"
+		}, match: "identity"},
+		{name: "coverage", mutate: func(candidate *RawMeasurement) {
+			candidate.Workload.CoverageStartedAt = runtimeStarted.Add(time.Second)
+		}, match: "does not cover"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := raw
+			workload := *raw.Workload
+			candidate.Workload = &workload
+			test.mutate(&candidate)
+			if err := candidate.Validate(intent); err == nil || !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("Validate() error = %v, want %q", err, test.match)
+			}
+		})
+	}
+}
+
 func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
@@ -175,6 +236,22 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 		t.Fatal("expected Job-to-Pod ownership rejection")
 	}
 
+	driftedRaw := raw
+	workload := *raw.Workload
+	driftedRaw.Workload = &workload
+	driftedRaw.Workload.Run.JobUID = "other-job"
+	driftedBytes, err := driftedRaw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftedEvidence := evidence
+	driftedSum := sha256.Sum256(driftedBytes)
+	driftedEvidence.RawMeasurement.Digest = "sha256:" + hex.EncodeToString(driftedSum[:])
+	driftedEvidence.RawMeasurement.Size = int64(len(driftedBytes))
+	if err := driftedEvidence.Validate(driftedRaw); err == nil || !strings.Contains(err.Error(), "terminal Kubernetes") {
+		t.Fatalf("expected workload-to-terminal identity rejection, got %v", err)
+	}
+
 	invalid = evidence
 	invalid.Terminal.NodeWorkload.Pods = invalid.Terminal.NodeWorkload.Pods[:1]
 	if err := invalid.Validate(raw); err == nil {
@@ -192,6 +269,12 @@ func loadIntent(t *testing.T) profilingrun.Intent {
 	if err := json.Unmarshal(payload, &intent); err != nil {
 		t.Fatal(err)
 	}
+	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	intent.Workload = profilingrun.WorkloadContract{AllowedBackground: profilingrun.AllowedBackgroundPolicy{
+		SchemaVersion: profilingrun.AllowedBackgroundPolicySchemaVersion,
+	}}
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +291,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 	started := time.Date(2026, time.July, 16, 12, 0, 0, 0, location)
 	podUID := "profiling-pod-uid"
 	targetDuration := float64(intent.Measurement.DurationSeconds)
-	return RawMeasurement{
+	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
 		IntentDigest:  digest,
 		PodUID:        podUID,
@@ -291,6 +374,29 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			},
 		},
 	}
+	policyDigest, err := intent.Workload.AllowedBackground.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runPod := workloadobserver.Pod{
+		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Running",
+		Images: []string{intent.Images.Runtime},
+	}
+	raw.Workload = &workloadobserver.Result{
+		SchemaVersion: workloadobserver.ResultSchemaVersion,
+		Target: workloadobserver.TargetIdentity{
+			NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID,
+		},
+		Run: workloadobserver.RunIdentity{
+			Namespace: "chill-system", JobUID: "job-uid", PodName: "profiling-run-pod", PodUID: podUID,
+		},
+		PolicyDigest:      policyDigest,
+		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(31 * time.Second),
+		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
+		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
+		Continuous: true,
+	}
+	return raw
 }
 
 func validExecutionEvidence(
@@ -354,6 +460,7 @@ func validExecutionEvidence(
 			Node: NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
 			Containers: []ContainerTerminal{
 				container("metric-observer", intent.Images.MetricObserver),
+				container("workload-observer", intent.Images.WorkloadObserver),
 				container("runtime", intent.Images.Runtime),
 				container("artifact", intent.Images.Artifact),
 			},

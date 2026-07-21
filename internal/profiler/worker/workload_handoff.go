@@ -73,10 +73,11 @@ func PublishWorkloadResult(path string, maxBytes int64, result workloadobserver.
 	if maxBytes < 1 {
 		return errors.New("workload result maximum size must be positive")
 	}
-	if err := result.Validate(); err != nil {
+	canonical, err := result.Canonical()
+	if err != nil {
 		return fmt.Errorf("validate workload result: %w", err)
 	}
-	payload, err := json.Marshal(result)
+	payload, err := json.Marshal(canonical)
 	if err != nil {
 		return fmt.Errorf("encode workload result: %w", err)
 	}

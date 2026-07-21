@@ -52,6 +52,9 @@ func validateContainers(intent profilingrun.Intent, containers []ContainerTermin
 		"runtime":         intent.Images.Runtime,
 		"metric-observer": intent.Images.MetricObserver,
 	}
+	if intent.Images.WorkloadObserver != "" {
+		expected["workload-observer"] = intent.Images.WorkloadObserver
+	}
 	if len(containers) != len(expected) {
 		return fmt.Errorf("expected %d terminal containers, found %d", len(expected), len(containers))
 	}

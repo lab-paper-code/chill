@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 const (
 	legacyRawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha1"
-	RawMeasurementSchemaVersion       = "chill.dacs.io/profiling-raw-measurement.v1alpha2"
+	metricRawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha2"
+	RawMeasurementSchemaVersion       = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
 )
 
 // RawMeasurement contains only facts available to the in-Job worker before it
@@ -25,6 +28,7 @@ type RawMeasurement struct {
 	PodUID        string                     `json:"podUID"`
 	Runtime       profilingrun.RuntimeResult `json:"runtime"`
 	Metrics       metricobserver.Result      `json:"metrics"`
+	Workload      *workloadobserver.Result   `json:"workload,omitempty"`
 }
 
 // UnmarshalJSON keeps retained immutable v1alpha1 evidence readable while the
@@ -37,6 +41,7 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 		Runtime       profilingrun.RuntimeResult `json:"runtime"`
 		Metrics       *metricobserver.Result     `json:"metrics"`
 		LegacyMetrics *metricobserver.Result     `json:"power"`
+		Workload      *workloadobserver.Result   `json:"workload"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -65,11 +70,14 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 	} else {
 		m.Metrics = *wire.LegacyMetrics
 	}
+	m.Workload = wire.Workload
 	return nil
 }
 
 func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion && m.SchemaVersion != legacyRawMeasurementSchemaVersion {
+	if m.SchemaVersion != RawMeasurementSchemaVersion &&
+		m.SchemaVersion != metricRawMeasurementSchemaVersion &&
+		m.SchemaVersion != legacyRawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
 	}
 	digest, err := intent.Digest()
@@ -85,7 +93,7 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 	if err := profilingrun.ValidateRuntime(intent, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics, m.SchemaVersion == RawMeasurementSchemaVersion); err != nil {
+	if err := validateMetricObservation(intent, m.Metrics, m.SchemaVersion != legacyRawMeasurementSchemaVersion); err != nil {
 		return err
 	}
 	runtimeStarted, runtimeEnded, err := m.Runtime.MeasurementWindow()
@@ -94,6 +102,18 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 	}
 	if !m.Metrics.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(m.Metrics.EndedAt) {
 		return errors.New("runtime and metric observation windows do not overlap")
+	}
+	if m.SchemaVersion != RawMeasurementSchemaVersion {
+		if m.Workload != nil {
+			return errors.New("retained raw measurement cannot contain workload observation")
+		}
+		return nil
+	}
+	if m.Workload == nil {
+		return errors.New("raw measurement workload observation is required")
+	}
+	if err := validateWorkloadObservation(intent, m.PodUID, runtimeStarted, runtimeEnded, *m.Workload); err != nil {
+		return err
 	}
 	return nil
 }
@@ -113,6 +133,13 @@ func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error
 	for i := range canonical.Metrics.Failures {
 		canonical.Metrics.Failures[i].ObservedAt = canonical.Metrics.Failures[i].ObservedAt.UTC()
 	}
+	if m.Workload != nil {
+		workload, err := m.Workload.Canonical()
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize workload observation: %w", err)
+		}
+		canonical.Workload = &workload
+	}
 	if canonical.SchemaVersion == legacyRawMeasurementSchemaVersion {
 		return json.Marshal(struct {
 			SchemaVersion string                     `json:"schemaVersion"`
@@ -123,6 +150,33 @@ func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error
 		}{canonical.SchemaVersion, canonical.IntentDigest, canonical.PodUID, canonical.Runtime, canonical.Metrics})
 	}
 	return json.Marshal(canonical)
+}
+
+func validateWorkloadObservation(
+	intent profilingrun.Intent,
+	podUID string,
+	runtimeStarted time.Time,
+	runtimeEnded time.Time,
+	result workloadobserver.Result,
+) error {
+	if err := result.Validate(); err != nil {
+		return fmt.Errorf("validate workload observation: %w", err)
+	}
+	policyDigest, err := intent.Workload.AllowedBackground.Digest()
+	if err != nil {
+		return fmt.Errorf("digest allowed-background policy: %w", err)
+	}
+	if result.PolicyDigest != policyDigest {
+		return errors.New("workload observation policy digest mismatch")
+	}
+	if result.Target.NodeName != intent.TargetNode.Name || result.Target.NodeUID != intent.TargetNode.UID ||
+		result.Run.PodUID != podUID {
+		return errors.New("workload observation target or Run Pod identity mismatch")
+	}
+	if result.CoverageStartedAt.After(runtimeStarted) || result.CoverageEndedAt.Before(runtimeEnded) {
+		return errors.New("workload observation does not cover the runtime measurement window")
+	}
+	return nil
 }
 
 func validateMetricObservation(intent profilingrun.Intent, result metricobserver.Result, requireThermalIdentity bool) error {

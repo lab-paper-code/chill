@@ -270,6 +270,8 @@ func runtimeContainer(
 			"--max-input-bytes=" + strconv.FormatInt(plan.MaxInputBytes, 10),
 			"--max-runtime-result-bytes=" + strconv.FormatInt(plan.MaxRuntimeResultBytes, 10),
 			"--max-metric-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
+			"--workload-result-timeout=" + plan.WorkloadResultTimeout.String(),
+			"--max-workload-result-bytes=" + strconv.FormatInt(plan.MaxWorkloadResultBytes, 10),
 			"--store-name=" + binding.Store,
 			"--store-endpoint=" + binding.Endpoint,
 			"--store-bucket=" + binding.Bucket,
