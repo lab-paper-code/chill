@@ -116,11 +116,13 @@ target's usable readiness.
 
 The direct `jetson_power_vdd_in_watts` trace contains 392 raw samples inside
 the transition window: 1.370 Hz mean cadence and 1.101 seconds maximum gap.
-Six stable pre-source samples of the same metric give a post-hoc idle candidate
-of 4.997 W. Assigning the high-resolution samples to retained runtime epochs
-produces:
+Six stable pre-source samples of the same metric give a post-hoc
+`nodeStandby` candidate of 4.997 W. The original derived field names use
+`idleReferenced`; under the refined taxonomy they mean node-standby-referenced
+sensitivity only. Assigning the high-resolution samples to retained runtime
+epochs produces:
 
-| Phase | Seconds | Raw rail samples | Max gap (s) | Mean rail W | Rail J | Excess over idle J |
+| Phase | Seconds | Raw rail samples | Max gap (s) | Mean rail W | Rail J | Excess over `nodeStandby` J |
 |---|---:|---:|---:|---:|---:|---:|
 | source termination grace through last completed source window | 4.258 | 6 | 0.739 | 10.684 | 45.488 | 24.213 |
 | last source window to target process start | 9.881 | 13 | 0.890 | 6.966 | 68.829 | 19.452 |
@@ -131,16 +133,16 @@ produces:
 | post-engine warm-up to Ready | 0.134 | 1 | 0.068 | 11.108 | 1.490 | 0.820 |
 
 The source-grace row is source serving, not preparation. Excluding it leaves a
-624.279 J idle-referenced rail proxy across the target-preparation phases; the
-engine phase contributes 588.281 J, about 94% of that proxy. The
+624.279 J node-standby-referenced rail proxy across the target-preparation
+phases; the engine phase contributes 588.281 J, about 94% of that proxy. The
 last-source-window-to-process row still mixes termination, capacity wait,
 sandbox/image work, and runtime handoff, so it is not a purified artifact-pull
 coefficient.
 
 Wall power remains canonical. Its 10-second series has 26 raw samples inside
 the long engine phase and gives 3,453.940 J total for that phase, or 937.326 J
-above the post-hoc 9.667 W wall-idle candidate. The shorter phases contain at
-most one raw wall sample each and are insufficient for wall-level phase
+above the post-hoc 9.667 W wall `nodeStandby` candidate. The shorter phases
+contain at most one raw wall sample each and are insufficient for wall-level phase
 attribution. The rail phase table is therefore diagnostic attribution, while
 the 3,810.75 J wall integral remains the canonical total cross-check.
 
@@ -180,21 +182,22 @@ request and service-ready boundaries produced:
 
 The original analysis implicitly selected the source-serving baseline. A
 post-hoc sensitivity analysis selected six stable pre-source samples from
-`09:42:22.138Z` through `09:43:12.138Z` as an idle candidate. Their mean was
-9.667 W. Applying the same transition window changes only the counterfactual:
+`09:42:22.138Z` through `09:43:12.138Z` as a `nodeStandby` candidate. Their
+mean was 9.667 W. Applying the same transition window changes only the
+counterfactual:
 
 | Named counterfactual | Baseline power | Counterfactual energy | Observed minus counterfactual |
 |---|---:|---:|---:|
 | zero | 0 W | 0 J | +3,810.75 J |
-| post-hoc idle candidate | 9.667 W | 2,766.30 J | **+1,044.45 J** |
+| post-hoc `nodeStandby` candidate | 9.667 W | 2,766.30 J | **+1,044.45 J** |
 | post-hoc source serving | 17.283 W | 4,945.95 J | **-1,135.20 J** |
 
 The sign reversal is produced solely by baseline selection. Neither signed
 delta is promoted to transition cost because no baseline was frozen before the
 run and the aggregate wall trace cannot isolate preparation from the source's
 4.258-second termination grace. Under the component method,
-`+1,044.45 J` is only a whole-window idle-referenced excess; the phase table
-above replaces it with separately labeled rail proxies. `E_overlap=0` is
+`+1,044.45 J` is only a whole-window node-standby-referenced excess; the phase
+table above replaces it with separately labeled rail proxies. `E_overlap=0` is
 identified for this full-GPU BBM path, while `E_forgone` is unavailable because
 no external serving load was declared. The 3,810.75 J total integral remains a
 physical observation rather than accepted `eta`.

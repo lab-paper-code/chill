@@ -57,13 +57,20 @@ warm Prometheus samples cannot resolve short phases.
 | transition command to target Ready | 280.846 s | 26.165 s | -254.681 s | **90.68%** |
 | first inference | 254.957 s | 0.752 s | -254.204 s | **99.70%** |
 | canonical wall energy, total window | 3,700.617 J | 360.688 J | -3,339.929 J | **90.25%** |
-| wall excess over independently measured idle | 831.191 J | 93.118 J | -738.074 J | **88.80%** |
+| wall excess over measured `nodeStandby` | 831.191 J | 93.118 J | -738.074 J | **88.80%** |
 | diagnostic rail energy, total window | 2,033.669 J | 190.125 J | -1,843.544 J | 90.65% |
 
-The independently measured wall-idle baselines were 10.217 W for cold and
-10.226 W for warm. Source-serving baselines were 17.697 W and 17.802 W. The
-source-serving-referenced wall deltas remain negative in both runs; that sign
-is the opportunity effect of BBM, not negative preparation work.
+The frozen v1 intent called its no-model condition `experimentIdle` and also
+marked `standby` as unmeasured. Under the refined taxonomy that condition is
+`nodeStandby`: 10.217 W before cold and 10.226 W before warm. The frozen intent
+bytes and digest remain unchanged; the correction is retained in the derived
+analysis. State-specific `modelLoadedIdle` was not measured. The 88.80% row is
+therefore a node-standby sensitivity result, not accepted incremental energy,
+and may change materially when the model-loaded baseline is observed.
+
+Source-serving baselines were 17.697 W and 17.802 W. Their referenced wall
+deltas remain negative in both runs; that sign is the opportunity effect of
+BBM, not negative preparation work.
 
 The one-factor observation supports the narrow statement that, on this exact
 state pair and actuator, supplying the verified TensorRT engine cache removed
@@ -74,9 +81,9 @@ are still required to estimate variance or attach a confidence interval.
 
 Samples were assigned to lifecycle phases before baseline subtraction. The
 long cold first-inference/engine phase lasted 254.959 seconds, contained 349
-raw wall samples, and contributed 738.899 J above idle. This phase passed the
-per-phase gate. Cold session creation lasted 10.426 seconds with 14 samples
-and contributed 22.953 J above idle.
+raw wall samples, and contributed 738.899 J above `nodeStandby`. This phase
+passed the per-phase gate. Cold session creation lasted 10.426 seconds with 14
+samples and contributed 22.953 J above `nodeStandby`.
 
 The warm engine-cache phase lasted only 0.752 seconds and contained one raw
 wall sample and one raw rail sample. It therefore fails the declared minimum
@@ -87,10 +94,15 @@ energy attribution.
 
 The retained component statuses are:
 
-- `E_prepare`: proxy, not identified. Excluding source grace, the sum of only
-  wall phases that pass their individual coverage gates is 795.637 J cold and
-  56.187 J warm, a 739.451 J reduction. Mixed startup and uncovered microphases
-  prevent promotion to a purified preparation coefficient.
+- `E_prepare`: unavailable under the required state-specific
+  `modelLoadedIdle` baseline. As a node-standby-referenced diagnostic,
+  excluding source grace gives coverage-qualified sums of 795.637 J cold and
+  56.187 J warm, a 739.451 J difference. Their phase sets are asymmetric: four
+  versus three passing wall phases overall, or three versus two after source
+  grace is excluded, because the cold engine phase passes and the 0.752-second
+  warm engine phase does not. Bounding the missing warm phase by
+  `0.752 s * 13.8 W` gives about 10.4 J, about 1.4% of the diagnostic
+  difference. It is not an identified like-for-like phase delta.
 - `E_overlap = 0`: identified for this realized full-GPU BBM path; source and
   target did not execute concurrently.
 - `E_forgone`: unavailable. There was no external request path from which to
@@ -119,7 +131,11 @@ comparison identity.
 
 ## Next evidence step
 
-Repeat randomized cold/warm pairs under the same intent family to estimate
-variance before promoting an E1 coefficient. Separately, a resource contract
-with `coResidencyCapacity >= 2` is required to enter the MBB regime and observe
+Before repetition, freeze the external request path and add the 30-second
+source-state `modelLoadedIdle` window defined in
+[`../NEXT_PROTOCOL.md`](../NEXT_PROTOCOL.md). Only then should randomized
+cold/warm repetitions estimate variance and confidence intervals. The v1
+`servingDuring=none` pair is a different protocol family and cannot be pooled
+with those runs. Separately, a resource contract with
+`coResidencyCapacity >= 2` is required to enter the MBB regime and observe
 `E_overlap`; this full-GPU Node cannot answer that question.

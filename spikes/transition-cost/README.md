@@ -10,6 +10,11 @@ minimum frozen protocol, state-pair, environment, energy-component, and
 availability boundaries required for an observation to support causal
 comparison.
 
+Read [NEXT_PROTOCOL.md](NEXT_PROTOCOL.md) before freezing a repeated pair. The
+next family first adds a Plan-03-compatible 30-second model-loaded-idle window
+and an external request path; v1 `servingDuring=none` repetitions would not be
+poolable with that family.
+
 The first observation discovered which parameters must be frozen. It did not
 have a pre-run transition intent, so it remains a diagnostic parameter audit,
 not a transition-cost sample. Its retained timestamps and power data still
@@ -27,3 +32,6 @@ Frozen controlled pair:
 - The post-hoc cold observation was not retro-label eligible, so both sides
   were rerun under the frozen protocol. The retained pair passed its declared
   identity, environment, thermal, cache-state, and total wall-coverage gates.
+- The v1 frozen field named `experimentIdle` is retained byte-for-byte, but its
+  no-model condition is now reported as `nodeStandby`. v1 did not measure
+  Plan 03's state-specific `modelLoadedIdle` baseline.

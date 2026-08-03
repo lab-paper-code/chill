@@ -15,7 +15,8 @@ This directory is the retained evidence bundle for
   `*-target-spec-semantic.json` provides the sorted live Pod spec comparison.
 - `prometheus-*.json` contains the lower-resolution diagnostic cross-checks.
 - `paired-analysis.json` contains the derived trapezoidal integrals, coverage
-  gates, phase attribution, deltas, and pair-validity booleans.
+  gates, phase attribution, deltas, pair-validity booleans, and the semantic
+  correction mapping legacy `idleReferenced` names to `nodeStandby`.
 - `SHA256SUMS` covers every retained file other than itself.
 
 The four Prometheus JSON response bodies gained a terminal newline when

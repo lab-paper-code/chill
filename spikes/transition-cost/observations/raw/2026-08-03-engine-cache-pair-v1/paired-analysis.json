@@ -580,6 +580,32 @@
     "thermalThrottleActiveEither": false,
     "pairPass": true
   },
+  "semanticCorrections": {
+    "baselineTaxonomy": {
+      "frozenIntentField": "transitionProtocol.baseline.experimentIdle",
+      "frozenCondition": "no transition model-service Pod on jetsonx",
+      "correctedName": "nodeStandby",
+      "coldWallMeanWatts": 10.217073170731707,
+      "warmWallMeanWatts": 10.226190476190476,
+      "modelLoadedIdleStatus": "not-measured",
+      "legacyIdleReferencedFieldMeaning": "nodeStandby-referenced sensitivity only",
+      "preferredNodeStandbyReferencedExcessReductionFraction": 0.8879710380987654,
+      "modelLoadedIdleReferencedExcessReductionFraction": "unavailable"
+    },
+    "prepareProxyCoverageAsymmetry": {
+      "allPassingWallPhaseCountCold": 4,
+      "allPassingWallPhaseCountWarm": 3,
+      "targetPreparationPassingWallPhaseCountCold": 3,
+      "targetPreparationPassingWallPhaseCountWarm": 2,
+      "phasePresentOnlyInColdPassingSet": "firstInferenceEnginePhase",
+      "warmMissingPhaseSeconds": 0.7521867752075195,
+      "conservativeWarmMissingPhaseBoundJoulesApprox": 10.4,
+      "boundFractionOfReportedDiagnosticDifferenceApprox": 0.0140645,
+      "preferredAsymmetricPhaseSumDifferenceJoules": 739.4505926972498,
+      "legacyCoverageQualifiedWallPrepareProxyReductionFieldIsPublishable": false,
+      "likeForLikePhaseDeltaIdentified": false
+    }
+  },
   "effectSizes": {
     "transitionTimeReductionFraction": 0.9068342869193805,
     "firstInferenceReductionFraction": 0.9970497829536541,
