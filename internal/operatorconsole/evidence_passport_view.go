@@ -9,6 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"gonum.org/v1/gonum/stat"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -336,9 +337,5 @@ func summarizeWatts(samples []metricobserver.Sample) *EvidencePassportWatts {
 }
 
 func nearestRank(sorted []float64, quantile float64) float64 {
-	index := int(math.Ceil(quantile*float64(len(sorted)))) - 1
-	if index < 0 {
-		index = 0
-	}
-	return sorted[index]
+	return stat.Quantile(quantile, stat.Empirical, sorted, nil)
 }

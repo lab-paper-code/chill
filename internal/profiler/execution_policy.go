@@ -66,9 +66,9 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 		return ExecutionPlan{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
 	if !profilingrun.IsSupportedCPUORTIntent(intent) ||
-		intent.Candidate.ExecutionPath != "ort-cpu" ||
-		intent.State.RuntimeFamily != "onnxruntime" ||
-		intent.State.Backend != "CPUExecutionProvider" {
+		intent.Candidate.ExecutionPath != firstExecutionPath ||
+		intent.State.RuntimeFamily != firstRuntimeFamily ||
+		intent.State.Backend != firstRuntimeBackend {
 		return ExecutionPlan{}, errors.New("cpu-ort-worker requires a supported CPU ONNX Runtime intent")
 	}
 

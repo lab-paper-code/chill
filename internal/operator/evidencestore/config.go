@@ -83,5 +83,15 @@ func validBucketName(name string) bool {
 	if strings.Contains(name, "..") || strings.Contains(name, ".-") || strings.Contains(name, "-.") {
 		return false
 	}
+	for _, prefix := range []string{"xn--", "sthree-", "amzn-s3-demo-"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	for _, suffix := range []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3", "-an"} {
+		if strings.HasSuffix(name, suffix) {
+			return false
+		}
+	}
 	return net.ParseIP(name) == nil
 }

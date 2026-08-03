@@ -1,12 +1,12 @@
 package nodediscovery
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/component"
-	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
 const (
@@ -25,7 +25,7 @@ type Options struct {
 }
 
 func (o Options) Defaulted() Options {
-	systemName := defaults.String(o.SystemName, component.DefaultSystemName)
+	systemName := cmp.Or(strings.TrimSpace(o.SystemName), component.DefaultSystemName)
 	defaulted := Options{
 		SystemName:        systemName,
 		Namespace:         strings.TrimSpace(o.Namespace),

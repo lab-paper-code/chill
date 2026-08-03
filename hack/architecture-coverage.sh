@@ -39,7 +39,7 @@ component_for() {
   case "$package_path" in
     api/v1alpha1) echo api ;;
     cmd|cmd/*) echo entrypoints ;;
-    internal/component|internal/defaults|internal/kubeconfig|internal/metadata|internal/nodeprobe)
+    internal/component|internal/kubeconfig|internal/metadata|internal/nodeprobe)
       echo platform-core
       ;;
     internal/deviceclass) echo device-class ;;

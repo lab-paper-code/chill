@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -14,7 +15,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
-	"github.com/lab-paper-code/chill/internal/defaults"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 )
@@ -112,7 +112,7 @@ func (r *DeviceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 }
 
 func (r *DeviceDiscoveryReconciler) systemName() string {
-	return defaults.String(strings.TrimSpace(r.Options.SystemName), component.DefaultSystemName)
+	return cmp.Or(strings.TrimSpace(r.Options.SystemName), component.DefaultSystemName)
 }
 
 func (r *DeviceDiscoveryReconciler) runtimeOptions(system *edgev1alpha1.ChillSystem) DeviceDiscoveryOptions {
@@ -130,17 +130,17 @@ func (r *DeviceDiscoveryReconciler) runtimeOptions(system *edgev1alpha1.ChillSys
 	if len(spec.FallbackPowerModes) > 0 {
 		fallbackPowerModes = append([]edgev1alpha1.PowerMode(nil), spec.FallbackPowerModes...)
 	}
-	namespace := defaults.String(strings.TrimSpace(system.Spec.ManagementNamespace), strings.TrimSpace(r.Options.Namespace))
+	namespace := cmp.Or(strings.TrimSpace(system.Spec.ManagementNamespace), strings.TrimSpace(r.Options.Namespace))
 	return DeviceDiscoveryOptions{
 		SystemName:            system.Name,
 		Namespace:             namespace,
-		LabelKey:              defaults.String(strings.TrimSpace(spec.LabelKey), r.Options.LabelKey),
+		LabelKey:              cmp.Or(strings.TrimSpace(spec.LabelKey), r.Options.LabelKey),
 		OverwriteManualLabels: overwriteManualLabels,
-		NodeLabelSelector:     defaults.String(strings.TrimSpace(spec.NodeLabelSelector), r.Options.NodeLabelSelector),
+		NodeLabelSelector:     cmp.Or(strings.TrimSpace(spec.NodeLabelSelector), r.Options.NodeLabelSelector),
 		RequireCatalogMatch:   requireCatalogMatch,
 		FallbackPowerModes:    fallbackPowerModes,
-		CatalogNamespace:      defaults.String(strings.TrimSpace(catalog.Namespace), namespace),
-		CatalogName:           defaults.String(strings.TrimSpace(catalog.Name), r.Options.CatalogName),
-		CatalogKey:            defaults.String(strings.TrimSpace(catalog.Key), r.Options.CatalogKey),
+		CatalogNamespace:      cmp.Or(strings.TrimSpace(catalog.Namespace), namespace),
+		CatalogName:           cmp.Or(strings.TrimSpace(catalog.Name), r.Options.CatalogName),
+		CatalogKey:            cmp.Or(strings.TrimSpace(catalog.Key), r.Options.CatalogKey),
 	}
 }

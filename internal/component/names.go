@@ -1,6 +1,9 @@
 package component
 
-import "github.com/lab-paper-code/chill/internal/defaults"
+import (
+	"cmp"
+	"strings"
+)
 
 const (
 	DefaultSystemName = "chill"
@@ -61,5 +64,5 @@ func EvidenceStoreBootstrapJobName(systemName string) string {
 }
 
 func defaultSystemName(systemName string) string {
-	return defaults.String(systemName, DefaultSystemName)
+	return cmp.Or(strings.TrimSpace(systemName), DefaultSystemName)
 }

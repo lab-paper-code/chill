@@ -1,11 +1,11 @@
 package evidencestore
 
 import (
+	"cmp"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
-	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
 // Instance is the resolved Kubernetes identity for one Evidence Store operand.
@@ -25,10 +25,10 @@ func resolveInstance(system *edgev1alpha1.ChillSystem, base Options) Instance {
 	options := base.Defaulted()
 	return Instance{
 		SystemName:     system.Name,
-		Namespace:      defaults.String(strings.TrimSpace(system.Spec.ManagementNamespace), options.Namespace),
+		Namespace:      cmp.Or(strings.TrimSpace(system.Spec.ManagementNamespace), options.Namespace),
 		DeploymentName: component.EvidenceStoreDeploymentName(system.Name),
 		ServiceName:    component.EvidenceStoreServiceName(system.Name),
-		ConfigMapName: defaults.String(
+		ConfigMapName: cmp.Or(
 			strings.TrimSpace(system.Spec.EvidenceStore.ConfigRef.Name),
 			component.EvidenceStoreConfigMapName(system.Name),
 		),

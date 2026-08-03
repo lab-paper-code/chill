@@ -28,7 +28,6 @@ components:
   platform-core:
     in:
       - internal/component
-      - internal/defaults
       - internal/kubeconfig
       - internal/metadata
       - internal/nodeprobe

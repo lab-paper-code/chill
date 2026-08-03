@@ -1,12 +1,12 @@
 package system
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/component"
-	"github.com/lab-paper-code/chill/internal/defaults"
 )
 
 // Options configures CHILL system reconciliation defaults.
@@ -25,7 +25,7 @@ func DefaultNamespace() string {
 
 func (o Options) Defaulted() Options {
 	defaulted := Options{
-		SystemName: defaults.String(o.SystemName, component.DefaultSystemName),
+		SystemName: cmp.Or(strings.TrimSpace(o.SystemName), component.DefaultSystemName),
 		Namespace:  strings.TrimSpace(o.Namespace),
 	}
 	return defaulted

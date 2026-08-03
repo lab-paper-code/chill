@@ -1,10 +1,10 @@
 package kubeconfig
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/defaults"
 	"k8s.io/client-go/rest"
 )
 
@@ -34,8 +34,8 @@ func BuildConfig(options Options) (*rest.Config, error) {
 		return config, nil
 	}
 
-	tokenFile := defaults.String(options.TokenFile, DefaultServiceAccountTokenFile)
-	caFile := defaults.String(options.CAFile, DefaultServiceAccountCAFile)
+	tokenFile := cmp.Or(strings.TrimSpace(options.TokenFile), DefaultServiceAccountTokenFile)
+	caFile := cmp.Or(strings.TrimSpace(options.CAFile), DefaultServiceAccountCAFile)
 	return &rest.Config{
 		Host:            strings.TrimSpace(options.APIServer),
 		BearerTokenFile: tokenFile,

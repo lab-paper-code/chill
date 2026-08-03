@@ -50,7 +50,22 @@ func TestValidBucketName(t *testing.T) {
 			t.Errorf("validBucketName(%q) = false", name)
 		}
 	}
-	for _, name := range []string{"ab", "Uppercase", "bucket..name", "bucket.-name", "192.168.1.1"} {
+	for _, name := range []string{
+		"ab",
+		"Uppercase",
+		"bucket..name",
+		"bucket.-name",
+		"192.168.1.1",
+		"xn--bucket",
+		"sthree-bucket",
+		"amzn-s3-demo-bucket",
+		"bucket-s3alias",
+		"bucket--ol-s3",
+		"bucket.mrap",
+		"bucket--x-s3",
+		"bucket--table-s3",
+		"bucket-an",
+	} {
 		if validBucketName(name) {
 			t.Errorf("validBucketName(%q) = true", name)
 		}
