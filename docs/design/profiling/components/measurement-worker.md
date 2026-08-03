@@ -38,6 +38,13 @@ and WorkloadObserver images as one tested compatibility set. Their image
 identities remain independently digest-pinned; this rule does not merge their
 responsibilities.
 
+The same promoted image set then ran
+`active-regression-live-ad7b84f` through the existing active protocol. It
+completed 5,434 inference calls, retained 31 successful power samples with no
+failed reads and continuous workload observation, and was `Accepted` by
+`wall-power-v2`. This verifies that the idle-compatible delivery set preserves
+the active producer, finalization, and admission path.
+
 This verification covers the Profiler Run, Job, immutable evidence, and
 admission lifecycle. It does not extend the active-only Operator Console
 Evidence Passport projection; requesting a passport for this idle Run remains
