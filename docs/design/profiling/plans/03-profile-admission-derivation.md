@@ -29,6 +29,10 @@ E_incremental(window) = E_total(window) - P_idle(state) * window duration
 epsilon(batch)        = E_incremental(window) / completed items in that window
 ```
 
+The research note's total-wall form `epsilon = P_act * T / b` is superseded
+here. `P_node(lambda) = P_idle + lambda * epsilon` composes only with this
+incremental definition; the total-wall form would count idle twice.
+
 `P_idle(state)` must come from separately admitted idle evidence with the same
 material execution-state and environment identity. Missing or unstable idle
 baseline makes incremental energy and `b_sat` unavailable. Mean power times
@@ -47,6 +51,10 @@ The derivation boundary uses three independently versioned identities:
 | `StateIdentity` | execution state including model/artifact digest and path, runtime image, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
 | `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
+
+Binding the actual Node UID intentionally makes this first derivation
+node-instance-scoped; it does not assert within-type homogeneity or authorize
+cross-node pooling.
 
 For an owner-controlled external Pod, environment identity binds the observed
 controller owner `kind`, `name`, and UID. Recreating a Pod under the same owner
@@ -139,7 +147,8 @@ Plan 3 is complete when synthetic golden curves close accepted, candidate,
 censored, and ambiguous cases; malformed or insufficient real evidence fails
 closed with precise reasons; estimator units and identity binding are tested;
 and the retained Plan 2 Run produces no accepted energy curve or `b_sat` without
-idle and repeated-trial evidence.
+idle and repeated-trial evidence. An `IdleTrial` must carry the verified object
+identity of the raw evidence that produced its mean wall power.
 
 ## Implementation result
 
