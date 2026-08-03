@@ -403,7 +403,7 @@ func fixtureRequest(intent profilingrun.Intent) PreparationRequest {
 
 func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	t.Helper()
-	intentBytes, err := os.ReadFile("../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	intentBytes, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
-	candidateBytes, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
+	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}

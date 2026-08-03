@@ -160,7 +160,7 @@ func installPodObservationReactors(
 
 func writeWorkloadTestIntent(t *testing.T, directory string) string {
 	t.Helper()
-	payload, err := os.ReadFile("../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

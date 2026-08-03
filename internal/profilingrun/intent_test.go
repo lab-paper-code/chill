@@ -28,6 +28,32 @@ func TestIntentDigestIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCurrentIntentCanonicalBytesAndDigestRemainStable(t *testing.T) {
+	payload, err := os.ReadFile("testdata/intent-v1alpha6.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := decodeTestIntent(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != string(canonical)+"\n" {
+		t.Fatalf("current intent canonical bytes changed:\nwant %s\n got %s", payload, canonical)
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantDigest = "sha256:a45a0a91f397b863fca9eb124419233bc240e5e5eb9395055ffa09640af4523b"
+	if digest != wantDigest {
+		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
+	}
+}
+
 func TestIntentRejectsMutableImage(t *testing.T) {
 	intent := validIntent()
 	intent.Images.Runtime = "registry/runtime:latest"

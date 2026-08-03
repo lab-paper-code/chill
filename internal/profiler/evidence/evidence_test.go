@@ -341,7 +341,7 @@ func TestExecutionEvidenceValidatesIdleRawObjectIdentity(t *testing.T) {
 
 func loadIntent(t *testing.T) profilingrun.Intent {
 	t.Helper()
-	payload, err := os.ReadFile("../../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func validExecutionEvidenceBytes(
 ) ExecutionEvidence {
 	t.Helper()
 	sum := sha256.Sum256(rawBytes)
-	candidate, err := os.ReadFile("../../../spikes/profilingrun/fixtures/candidate-report.json")
+	candidate, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}

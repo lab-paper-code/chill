@@ -10,11 +10,11 @@ import (
 )
 
 func TestCandidateReportBindsEveryMaterialSelection(t *testing.T) {
-	payload, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
+	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	intentPayload, err := os.ReadFile("../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	intentPayload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,11 +119,11 @@ func TestCandidateReportReadsRetainedObserverImageName(t *testing.T) {
 }
 
 func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T) {
-	payload, err := os.ReadFile("../../spikes/profilingrun/fixtures/candidate-report.json")
+	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	intentPayload, err := os.ReadFile("../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	intentPayload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -139,7 +139,7 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 
 func writeTestIntent(t *testing.T, directory, endpoint string) (profilingrun.Intent, string) {
 	t.Helper()
-	payload, err := os.ReadFile("../../spikes/profilingrun/fixtures/lattepanda-ort-cpu-bs1.json")
+	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

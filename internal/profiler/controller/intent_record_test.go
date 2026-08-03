@@ -230,7 +230,7 @@ func testPreparedRun(t *testing.T) profiler.PreparedRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := os.ReadFile("../../../spikes/profilingrun/fixtures/candidate-report.json")
+	candidate, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}
