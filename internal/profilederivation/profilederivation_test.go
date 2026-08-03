@@ -297,7 +297,7 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 }
 
 func pointPolicy(version string) PointPolicy {
-	return PointPolicy{Version: version, MinimumTrials: 3, ConfidenceMethod: "student-t", ConfidenceLevel: .95}
+	return PointPolicy{Version: version, MinimumTrials: 3}
 }
 
 func rawEvidence(key string) RawEvidenceIdentity {

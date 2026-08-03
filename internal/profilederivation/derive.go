@@ -113,8 +113,8 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		EstimatorIdentity:           trials[0].EstimatorIdentity,
 		Batch:                       trials[0].Batch,
 		PointPolicyVersion:          policy.Version,
-		ConfidenceMethod:            policy.ConfidenceMethod,
-		ConfidenceLevel:             policy.ConfidenceLevel,
+		ConfidenceMethod:            PointConfidenceMethod,
+		ConfidenceLevel:             PointConfidenceLevel,
 		Trials:                      append([]AdmittedTrial(nil), trials...),
 	}
 	values := make([]float64, len(trials))

@@ -137,11 +137,14 @@ type IdleBaseline struct {
 	PolicyVersion               string      `json:"policyVersion"`
 	AdmissionPolicyVersion      string      `json:"admissionPolicyVersion"`
 }
+
+// PointPolicy selects a versioned minimum-trial rule. The first scientific
+// path fixes the estimator itself at PointConfidenceMethod and
+// PointConfidenceLevel instead of exposing method-shaped fields that cannot
+// vary.
 type PointPolicy struct {
-	Version          string  `json:"version"`
-	MinimumTrials    int     `json:"minimumTrials"`
-	ConfidenceMethod string  `json:"confidenceMethod"`
-	ConfidenceLevel  float64 `json:"confidenceLevel"`
+	Version       string `json:"version"`
+	MinimumTrials int    `json:"minimumTrials"`
 }
 type Point struct {
 	StateIdentity                string          `json:"stateIdentity"`

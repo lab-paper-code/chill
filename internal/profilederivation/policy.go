@@ -2,6 +2,11 @@ package profilederivation
 
 import "errors"
 
+const (
+	PointConfidenceMethod = "student-t"
+	PointConfidenceLevel  = 0.95
+)
+
 func validAdmissionPolicy(policy AdmissionPolicy) bool {
 	return policy.Version != "" && policy.MinimumSamples >= 2 && policy.MaximumGapSeconds > 0 &&
 		policy.MaximumBoundaryDistanceSeconds >= 0 && policy.MinimumCoverage > 0 && policy.MinimumCoverage <= 1
@@ -21,8 +26,7 @@ func verdictFromReasons(reasons []Reason) Verdict {
 }
 
 func validatePointPolicy(policy PointPolicy) error {
-	if policy.Version == "" || policy.MinimumTrials < 3 || policy.ConfidenceMethod != "student-t" ||
-		policy.ConfidenceLevel != 0.95 {
+	if policy.Version == "" || policy.MinimumTrials < 3 {
 		return errors.New("point policy must use 95% Student-t with at least three trials")
 	}
 	return nil
