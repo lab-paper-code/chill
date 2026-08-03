@@ -44,6 +44,32 @@ is resident in the declared runtime and power mode, but no inference call is
 issued during the retained measurement window. It is not an unloaded Node or
 the separate `inactive`/standby state.
 
+The idle window is runtime-declared and observer-independent. The runtime loads
+the exact artifact, retains the session, waits the positive settling duration
+frozen in the `v1alpha6` intent, and then opens a fixed-duration window using its
+monotonic clock. It issues no inference during settling or measurement and
+records that the model remained resident through the end. Metric and workload
+observers only establish coverage and contamination facts for those immutable
+boundaries; power values must not be used to choose a quieter sub-window.
+
+For idle, `SteadyWindow` means protocol-conditioned model-loaded idle: model
+load and other preparation precede the declared settling interval, the full
+settling interval completes before the window, no inference or preparation
+occurs during settling or measurement, and the runtime remains resident. This
+does not by itself claim thermodynamic equilibrium. Known non-throttled thermal
+evidence remains a separate single-trial gate, while residual between-trial
+variation remains visible in the idle-baseline confidence interval.
+
+The active and idle admission paths share only gates whose evidence has the
+same meaning:
+
+| Gate family | Shared | Active only | Idle only |
+|---|---|---|---|
+| provenance and identity | immutable raw-object identity; Run, Pod, Node, state, environment, protocol, runtime image, CPU, and meter binding | completed-item denominator and latency-to-call binding | raw-object identity retained in `IdleTrial`; canonical idle protocol |
+| declared window | valid runtime-declared interval; metric/workload coverage; no observer-derived boundary | warm-up and preparation precede the window | model load precedes settling; full settling interval completes; model remains resident |
+| execution result | successful exact runtime/provider/artifact realization | positive inference count, complete latency distribution, and output validation | zero inference during settling and measurement; no input or output validation |
+| quality and contamination | sample count, gaps, boundaries, failures, timestamp semantics, known non-throttled thermal state, workload continuity, and concurrent/external workload rejection | total wall joules plus completed items | total wall joules divided by declared duration gives mean idle wall watts |
+
 The derivation boundary uses three independently versioned identities:
 
 | Identity | Bound fields | Deliberately excluded |
@@ -125,6 +151,7 @@ The output status is `Accepted`, `CandidateOnly`, `Censored`, `Ambiguous`, or
 
 ```text
 internal/profilederivation/       pure admission, integration, aggregation, b_sat
+internal/profiler/admission/      verified evidence-to-trial projection
 spikes/profilederivation/cmd/     read-only Plan 2 bundle adapter
 ```
 

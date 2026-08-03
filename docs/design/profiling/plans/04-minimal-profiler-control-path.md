@@ -91,6 +91,13 @@ Nodes with selectable power modes are rejected until CHILL can independently
 observe and enforce their current mode; a manually asserted Jetson mode is not
 accepted as Run evidence.
 
+The follow-on model-loaded-idle path is another measurement mode of the same
+CPU ORT Run, not another runtime and not a separate frozen request type. It uses
+`profilingrun.Intent v1alpha6`, so the existing preparation, one-Job ownership,
+terminal finalization, and immutable evidence chain remain common. The runtime
+result and raw-measurement schemas are mode-specific because active inference
+and zero-inference idle have different completeness facts.
+
 ## Responsibility boundary
 
 ### CHILL Operator owns
@@ -174,6 +181,12 @@ state in process memory.
   evidence sink;
 - emitting a bounded receipt that identifies the committed object; and
 - exiting with an execution result that Kubernetes records on the Job and Pod.
+
+For model-loaded idle, the worker also owns the only authoritative window
+declaration: after exact model load it completes the intent-bound settling
+duration, opens a monotonic fixed-duration window without issuing inference,
+and closes it while the model remains resident. Observer results never feed
+back into start/end selection.
 
 The Job is the execution plane. A Profiler controller restart or leader change
 does not restart measurement in controller memory or create a second
@@ -532,6 +545,12 @@ retains the spike-proven runtime plus observer topology without adding an
 uploader sidecar. Both durable writes use the same evidence-store contract and
 distinct immutable object identities. Logs and controller memory are not
 handoff paths.
+
+The idle revision keeps that topology and finalization boundary. It advances
+the frozen intent schema rather than adding a parallel intent type, and uses a
+separate idle raw/runtime result so zero inference, settling completion, model
+residency, and the runtime-declared window are explicit evidence rather than
+sentinel values accepted by the active result validator.
 
 ## Implementation sequence
 

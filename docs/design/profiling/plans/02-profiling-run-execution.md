@@ -31,6 +31,22 @@ The first Run intent freezes:
 The intent identity is the SHA-256 of canonical JSON. It is not a Job, Pod, or
 Kubernetes UID. A changed snapshot or decision creates a different intent.
 
+The model-loaded-idle extension remains one `profilingrun.Intent`; it does not
+introduce a second frozen-intent type. Candidate, execution state, images, Node,
+CPU, metric source, and workload-observation provenance are common execution
+facts, and duplicating them would create two validation and finalization paths.
+The extension therefore advances the current intent schema to `v1alpha6` and
+adds a measurement-protocol `settlingDurationSeconds` field. Retained
+`v1alpha1` through `v1alpha5` intents keep their exact canonical bytes and
+digests.
+
+`v1alpha6` validation is mode-aware. The active mode retains a positive batch,
+declared warm-up, input generation, output validation, and measured inference
+calls. Model-loaded idle uses the canonical protocol values `batch=1`,
+`warmupIterations=0`, `workloadMode=idle-model-loaded`,
+`inputGenerator=none`, and `outputValidation=none`, plus a positive settling
+duration. These are frozen protocol facts, not delivery defaults.
+
 The first CPU policy is deliberately concrete: under the existing one-serving-
 Pod-per-Node profiling assumption, integer allocatable CPU becomes the runtime
 limit and ORT intra-op thread count; inter-op is one. CPU scheduling request is
@@ -84,6 +100,12 @@ terminal Pod or Job state.
 Power samples are raw Run evidence only. Receipt timestamps are not device
 timestamps. Coverage, gaps, integration, repetitions, uncertainty, energy, and
 `b_sat` belong to Plan 3.
+
+For either active or idle execution, the runtime declares the scientific
+measurement window from its own monotonic clock and retains the corresponding
+wall-clock timestamps. MetricObserver and WorkloadObserver results may prove or
+fail coverage of that already declared window; they must never select, trim, or
+move its boundaries from observed power or workload values.
 
 ## Code boundary
 

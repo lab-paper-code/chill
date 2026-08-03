@@ -79,8 +79,12 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-The current internal intent schema is `v1alpha4`; retained earlier intents
-remain readable without changing their canonical bytes or digests.
+The implemented active path uses internal intent schema `v1alpha5`; retained
+earlier intents remain readable without changing their canonical bytes or
+digests. The model-loaded-idle revision advances new intents to `v1alpha6` and
+adds the frozen measurement-protocol settling duration. It reuses the same
+intent type and common execution provenance rather than creating a parallel
+frozen type.
 
 The following values are delivery bindings, not scientific Run inputs:
 
@@ -142,6 +146,14 @@ metric-result.json    complete MetricObserver Result, written by temp-file + ren
 workload-result.json  complete WorkloadObserver Result, written atomically
 ```
 
+For `idle-model-loaded`, the same signals retain the same ownership but have
+mode-specific preconditions: `measurement-start` means exact model load and the
+full frozen settling interval completed with no inference; `measurement-end`
+means the monotonic duration completed with no inference and the model still
+resident. The runtime creates both signals without reading metric or workload
+results. Observers can therefore prove coverage or fail closed, but cannot
+derive a preferred window from the values they observe.
+
 Logs are diagnostic only. They are never parsed as evidence or used as a
 controller handoff. A partial metric-result file is never visible under the
 final filename.
@@ -193,6 +205,14 @@ It contains only facts available before the worker exits:
 - the existing validated runtime result;
 - the complete MetricObserver result; and
 - the complete bounded WorkloadObserver result.
+
+That schema remains the retained active output. Model-loaded idle uses a
+separate idle raw schema because its runtime completeness proof is exact model
+load, settling completion, zero inference, retained residency, and a
+runtime-declared duration rather than active latency and output-validation
+evidence. Both raw schemas retain the same intent digest, actual Pod UID,
+MetricObserver result, WorkloadObserver result, and immutable object-identity
+verification boundary.
 
 It contains no Job completion, terminal Pod state, or post-run Node snapshot,
 credentials, or backend response. Those Kubernetes facts are added only by the
