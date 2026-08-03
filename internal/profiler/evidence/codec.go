@@ -2,35 +2,14 @@ package evidence
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
-
-func (f *Finalizer) read(ctx context.Context, location evidencestore.ObjectLocation) ([]byte, error) {
-	stream, err := f.store.OpenLocation(ctx, location)
-	if err != nil {
-		return nil, err
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, f.maxObjectBytes+1))
-	closeErr := stream.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if int64(len(payload)) > f.maxObjectBytes {
-		return nil, fmt.Errorf("evidence object exceeds %d-byte limit", f.maxObjectBytes)
-	}
-	return payload, nil
-}
 
 func validateStoredExecution(
 	payload []byte,

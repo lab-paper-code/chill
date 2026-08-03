@@ -58,7 +58,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		return FinalizeResult{}, errors.New("raw and finalized evidence locations must differ")
 	}
 
-	rawBytes, err := f.read(ctx, request.RawReceipt.Object.Location())
+	rawBytes, err := readBounded(ctx, f.store, request.RawReceipt.Object.Location(), f.maxObjectBytes)
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read raw measurement: %w", err)
 	}
@@ -91,7 +91,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		return FinalizeResult{}, fmt.Errorf("construct execution evidence: %w", err)
 	}
 
-	existingBytes, err := f.read(ctx, request.FinalLocation)
+	existingBytes, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err == nil {
 		return f.reuseExisting(existingBytes, request, raw)
 	}
@@ -107,7 +107,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err := receipt.Validate(); err != nil || receipt.Object != identity {
 		return FinalizeResult{}, errors.New("finalized evidence writer returned an invalid receipt")
 	}
-	retained, err := f.read(ctx, request.FinalLocation)
+	retained, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read finalized evidence after create: %w", err)
 	}

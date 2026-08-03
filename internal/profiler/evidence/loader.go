@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
@@ -63,7 +62,7 @@ func (l *Loader) load(
 	ctx context.Context,
 	reference evidencestore.ObjectIdentity,
 ) (ExecutionEvidence, rawRecord, error) {
-	finalBytes, err := l.read(ctx, reference)
+	finalBytes, err := readVerified(ctx, l.store, reference, l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read finalized evidence: %w", err)
 	}
@@ -74,7 +73,7 @@ func (l *Loader) load(
 	if err := execution.RawMeasurement.Validate(); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement reference: %w", err)
 	}
-	rawBytes, err := l.read(ctx, execution.RawMeasurement)
+	rawBytes, err := readVerified(ctx, l.store, execution.RawMeasurement, l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read raw measurement: %w", err)
 	}
@@ -97,26 +96,4 @@ func (l *Loader) load(
 		return ExecutionEvidence{}, nil, errors.New("retained finalized evidence is not canonical")
 	}
 	return execution, raw, nil
-}
-
-func (l *Loader) read(ctx context.Context, identity evidencestore.ObjectIdentity) ([]byte, error) {
-	stream, err := l.store.OpenLocation(ctx, identity.Location())
-	if err != nil {
-		return nil, err
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, l.maxObjectBytes+1))
-	closeErr := stream.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if int64(len(payload)) > l.maxObjectBytes {
-		return nil, fmt.Errorf("evidence object exceeds %d-byte limit", l.maxObjectBytes)
-	}
-	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
-		return nil, err
-	}
-	return payload, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -160,8 +159,4 @@ func (f *KubernetesExecutionFinalizer) observe(
 		Job: job.DeepCopy(), Pod: pod, Node: node,
 		NodePods: nodePods.Items, ObservedAt: f.now().UTC(),
 	}, nil
-}
-
-func finalizedEvidenceObjectKey(uid types.UID, digest string) string {
-	return "profiling-runs/" + string(uid) + "/execution/" + strings.TrimPrefix(digest, "sha256:") + ".json"
 }
