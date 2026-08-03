@@ -35,6 +35,38 @@ baseline makes incremental energy and `b_sat` unavailable. Mean power times
 mean call latency remains a diagnostic cross-check, never the accepted
 estimator.
 
+The specification defines this idle state as model-loaded idle: the exact model
+is resident in the declared runtime and power mode, but no inference call is
+issued during the retained measurement window. It is not an unloaded Node or
+the separate `inactive`/standby state.
+
+The derivation boundary uses three independently versioned identities:
+
+| Identity | Bound fields | Deliberately excluded |
+|---|---|---|
+| `StateIdentity` | execution state including model/artifact digest and path, runtime image, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
+| `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
+| `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
+
+For an owner-controlled external Pod, environment identity binds the observed
+controller owner `kind`, `name`, and UID. Recreating a Pod under the same owner
+between trials therefore does not manufacture environment drift. A changed
+owner UID, image, phase, selected label, or replica count still changes the
+identity. A Pod with no observed controller owner remains bound to its Pod name
+and UID and therefore fails safe across replacement. Any membership change
+during one measurement window remains a typed admission failure even when the
+departing and replacement Pods share an owner.
+
+Active evidence and its idle baseline must match `StateIdentity` and
+`EnvironmentIdentity`. Their `MeasurementProtocolIdentity` values are expected
+to differ because active and model-loaded idle use different workload modes;
+both identities and both admission policies are retained in the estimator
+identity. Idle trials may aggregate only when their three identities match.
+Active trials and batch points likewise require matching identities, with batch
+validated separately. Identity strings include their projection schema version
+and digest. This changes no retained intent bytes, intent schema, or intent
+digest.
+
 Observer timestamps are receipt timestamps. The first implementation uses a
 declared nearest-boundary, piecewise-linear integration rule and rejects windows
 whose boundary distance, maximum gap, failures, or coverage exceed explicit
@@ -58,11 +90,12 @@ It does not repair evidence, alter static compatibility, or classify SLO.
 
 ## Checkpoint 3: repeated point aggregation
 
-Runs aggregate only when all material state identities and estimator policy
-versions match. Independent trial values remain visible. Minimum trial count is
-an explicit policy input; request-level latency samples are not pooled to erase
-between-trial variance. A batch point retains p99 latency, mean incremental
-joules per item, and a trial-level confidence interval.
+Runs aggregate only when state, owner-bound environment, measurement-protocol,
+estimator, and admission-policy identities match. Independent trial values
+remain visible. Minimum trial count is an explicit policy input; request-level
+latency samples are not pooled to erase between-trial variance. A batch point
+retains p99 latency, mean incremental joules per item, and a trial-level
+confidence interval.
 
 ## Checkpoint 4: curve and `b_sat`
 
@@ -110,12 +143,13 @@ idle and repeated-trial evidence.
 
 ## Implementation result
 
-The pure implementation now distinguishes execution-state identity from unique
-trial identity, rejects duplicate trials, binds every result to admission,
-point, confidence, and `b_sat` policy versions, and uses a 95% Student-t interval
-with at least three independent trials. It validates the complete measured batch
-domain from batch one before searching for the first adjacent plateau. Missing
-lower or intermediate batches cannot yield an accepted result.
+The pure implementation now distinguishes execution-state, owner-bound
+environment, measurement-protocol, and unique trial identities. It rejects
+duplicate trials, binds every result to admission, estimator, point, confidence,
+and `b_sat` policy versions, and uses a 95% Student-t interval with at least
+three independent trials. It validates the complete measured batch domain from
+batch one before searching for the first adjacent plateau. Missing lower or
+intermediate batches cannot yield an accepted result.
 
 The adapter strict-decodes and revalidates the Plan 2 bundle, including intent,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-

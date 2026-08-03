@@ -21,23 +21,25 @@ type Sample struct {
 	Watts      float64   `json:"watts"`
 }
 type Trial struct {
-	StateIdentity            string    `json:"stateIdentity"`
-	TrialID                  string    `json:"trialID"`
-	Batch                    int       `json:"batch"`
-	WindowStart              time.Time `json:"windowStart"`
-	WindowEnd                time.Time `json:"windowEnd"`
-	CompletedItems           int       `json:"completedItems"`
-	CompletedCalls           int       `json:"completedCalls"`
-	LatencyMilliseconds      []float64 `json:"latencyMilliseconds"`
-	Samples                  []Sample  `json:"samples"`
-	Failures                 int       `json:"failures"`
-	SourceTimestampAbsent    bool      `json:"sourceTimestampAbsent"`
-	ConcurrentCHILLWorkloads []string  `json:"concurrentCHILLWorkloads"`
-	ExternalWorkloadChanges  []string  `json:"externalWorkloadChanges"`
-	WorkloadWindowKnown      bool      `json:"workloadWindowKnown"`
-	ThermalStateKnown        bool      `json:"thermalStateKnown"`
-	ThermallyThrottled       bool      `json:"thermallyThrottled"`
-	SteadyWindowVerified     bool      `json:"steadyWindowVerified"`
+	StateIdentity               string    `json:"stateIdentity"`
+	EnvironmentIdentity         string    `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string    `json:"measurementProtocolIdentity"`
+	TrialID                     string    `json:"trialID"`
+	Batch                       int       `json:"batch"`
+	WindowStart                 time.Time `json:"windowStart"`
+	WindowEnd                   time.Time `json:"windowEnd"`
+	CompletedItems              int       `json:"completedItems"`
+	CompletedCalls              int       `json:"completedCalls"`
+	LatencyMilliseconds         []float64 `json:"latencyMilliseconds"`
+	Samples                     []Sample  `json:"samples"`
+	Failures                    int       `json:"failures"`
+	SourceTimestampAbsent       bool      `json:"sourceTimestampAbsent"`
+	ConcurrentCHILLWorkloads    []string  `json:"concurrentCHILLWorkloads"`
+	ExternalWorkloadChanges     []string  `json:"externalWorkloadChanges"`
+	WorkloadWindowKnown         bool      `json:"workloadWindowKnown"`
+	ThermalStateKnown           bool      `json:"thermalStateKnown"`
+	ThermallyThrottled          bool      `json:"thermallyThrottled"`
+	SteadyWindowVerified        bool      `json:"steadyWindowVerified"`
 }
 type AdmissionPolicy struct {
 	Version                        string        `json:"version"`
@@ -52,18 +54,22 @@ type AdmissionPolicy struct {
 	RejectExternalWorkloadChanges  bool          `json:"rejectExternalWorkloadChanges"`
 }
 type AdmissionResult struct {
-	Verdict         Verdict  `json:"verdict"`
-	PolicyVersion   string   `json:"policyVersion"`
-	StateIdentity   string   `json:"stateIdentity"`
-	TrialID         string   `json:"trialID"`
-	Reasons         []Reason `json:"reasons"`
-	TotalWallJoules *float64 `json:"totalWallJoules,omitempty"`
-	WindowSeconds   float64  `json:"windowSeconds"`
-	CompletedItems  int      `json:"completedItems"`
+	Verdict                     Verdict  `json:"verdict"`
+	PolicyVersion               string   `json:"policyVersion"`
+	StateIdentity               string   `json:"stateIdentity"`
+	EnvironmentIdentity         string   `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string   `json:"measurementProtocolIdentity"`
+	TrialID                     string   `json:"trialID"`
+	Reasons                     []Reason `json:"reasons"`
+	TotalWallJoules             *float64 `json:"totalWallJoules,omitempty"`
+	WindowSeconds               float64  `json:"windowSeconds"`
+	CompletedItems              int      `json:"completedItems"`
 }
 
 type AdmittedTrial struct {
 	StateIdentity                    string  `json:"stateIdentity"`
+	EnvironmentIdentity              string  `json:"environmentIdentity"`
+	MeasurementProtocolIdentity      string  `json:"measurementProtocolIdentity"`
 	TrialID                          string  `json:"trialID"`
 	AdmissionPolicyVersion           string  `json:"admissionPolicyVersion"`
 	EstimatorIdentity                string  `json:"estimatorIdentity"`
@@ -73,18 +79,22 @@ type AdmittedTrial struct {
 	LatencyP99Milliseconds           float64 `json:"latencyP99Milliseconds"`
 }
 type IdleTrial struct {
-	StateIdentity          string  `json:"stateIdentity"`
-	TrialID                string  `json:"trialID"`
-	AdmissionPolicyVersion string  `json:"admissionPolicyVersion"`
-	MeanWallWatts          float64 `json:"meanWallWatts"`
+	StateIdentity               string  `json:"stateIdentity"`
+	EnvironmentIdentity         string  `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string  `json:"measurementProtocolIdentity"`
+	TrialID                     string  `json:"trialID"`
+	AdmissionPolicyVersion      string  `json:"admissionPolicyVersion"`
+	MeanWallWatts               float64 `json:"meanWallWatts"`
 }
 type IdleBaseline struct {
-	StateIdentity          string      `json:"stateIdentity"`
-	Trials                 []IdleTrial `json:"trials"`
-	MeanWallWatts          float64     `json:"meanWallWatts"`
-	ConfidenceHalfWidth    float64     `json:"confidenceHalfWidth"`
-	PolicyVersion          string      `json:"policyVersion"`
-	AdmissionPolicyVersion string      `json:"admissionPolicyVersion"`
+	StateIdentity               string      `json:"stateIdentity"`
+	EnvironmentIdentity         string      `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string      `json:"measurementProtocolIdentity"`
+	Trials                      []IdleTrial `json:"trials"`
+	MeanWallWatts               float64     `json:"meanWallWatts"`
+	ConfidenceHalfWidth         float64     `json:"confidenceHalfWidth"`
+	PolicyVersion               string      `json:"policyVersion"`
+	AdmissionPolicyVersion      string      `json:"admissionPolicyVersion"`
 }
 type PointPolicy struct {
 	Version          string  `json:"version"`
@@ -94,6 +104,8 @@ type PointPolicy struct {
 }
 type Point struct {
 	StateIdentity                string          `json:"stateIdentity"`
+	EnvironmentIdentity          string          `json:"environmentIdentity"`
+	MeasurementProtocolIdentity  string          `json:"measurementProtocolIdentity"`
 	Batch                        int             `json:"batch"`
 	PointPolicyVersion           string          `json:"pointPolicyVersion"`
 	EstimatorIdentity            string          `json:"estimatorIdentity"`
@@ -120,10 +132,12 @@ type BSatPolicy struct {
 	RelativeEquivalenceTolerance float64 `json:"relativeEquivalenceTolerance"`
 }
 type BSatResult struct {
-	Status          BSatStatus `json:"status"`
-	PolicyVersion   string     `json:"policyVersion"`
-	StateIdentity   string     `json:"stateIdentity,omitempty"`
-	Batch           *int       `json:"batch,omitempty"`
-	Code            string     `json:"code"`
-	MeasuredBatches []int      `json:"measuredBatches"`
+	Status                      BSatStatus `json:"status"`
+	PolicyVersion               string     `json:"policyVersion"`
+	StateIdentity               string     `json:"stateIdentity,omitempty"`
+	EnvironmentIdentity         string     `json:"environmentIdentity,omitempty"`
+	MeasurementProtocolIdentity string     `json:"measurementProtocolIdentity,omitempty"`
+	Batch                       *int       `json:"batch,omitempty"`
+	Code                        string     `json:"code"`
+	MeasuredBatches             []int      `json:"measuredBatches"`
 }

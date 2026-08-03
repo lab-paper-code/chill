@@ -11,16 +11,21 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 		return IdleBaseline{}, errors.New("idle trial count or policy is insufficient")
 	}
 	baseline := IdleBaseline{
-		StateIdentity:          trials[0].StateIdentity,
-		Trials:                 append([]IdleTrial(nil), trials...),
-		PolicyVersion:          policy.Version,
-		AdmissionPolicyVersion: trials[0].AdmissionPolicyVersion,
+		StateIdentity:               trials[0].StateIdentity,
+		EnvironmentIdentity:         trials[0].EnvironmentIdentity,
+		MeasurementProtocolIdentity: trials[0].MeasurementProtocolIdentity,
+		Trials:                      append([]IdleTrial(nil), trials...),
+		PolicyVersion:               policy.Version,
+		AdmissionPolicyVersion:      trials[0].AdmissionPolicyVersion,
 	}
 	values := make([]float64, len(trials))
 	seen := map[string]struct{}{}
 	admissionVersion := trials[0].AdmissionPolicyVersion
 	for index, trial := range trials {
-		if trial.StateIdentity != baseline.StateIdentity || trial.TrialID == "" ||
+		if trial.StateIdentity != baseline.StateIdentity ||
+			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
+			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
+			trial.TrialID == "" ||
 			trial.AdmissionPolicyVersion != admissionVersion ||
 			admissionVersion == "" ||
 			trial.MeanWallWatts < 0 ||
@@ -43,9 +48,14 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 	if admission.Verdict != VerdictAccepted || admission.TotalWallJoules == nil {
 		return AdmittedTrial{}, errors.New("trial is not admitted")
 	}
-	if admission.StateIdentity != trial.StateIdentity || admission.TrialID != trial.TrialID ||
+	if admission.StateIdentity != trial.StateIdentity ||
+		admission.EnvironmentIdentity != trial.EnvironmentIdentity ||
+		admission.MeasurementProtocolIdentity != trial.MeasurementProtocolIdentity ||
+		admission.TrialID != trial.TrialID ||
 		admission.PolicyVersion == "" ||
 		baseline.StateIdentity != trial.StateIdentity ||
+		baseline.EnvironmentIdentity != trial.EnvironmentIdentity ||
+		baseline.MeasurementProtocolIdentity == "" ||
 		baseline.PolicyVersion == "" ||
 		baseline.AdmissionPolicyVersion == "" ||
 		len(baseline.Trials) < 3 ||
@@ -63,10 +73,15 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 		return AdmittedTrial{}, errors.New("incremental energy is negative")
 	}
 	baselineUncertainty := baseline.ConfidenceHalfWidth * admission.WindowSeconds / float64(trial.CompletedItems)
-	estimatorIdentity := trial.StateIdentity + "|active=" + admission.PolicyVersion +
+	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
+		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
+		"|idleProtocol=" + baseline.MeasurementProtocolIdentity +
+		"|activeAdmission=" + admission.PolicyVersion +
 		"|idleAdmission=" + baseline.AdmissionPolicyVersion + "|idlePoint=" + baseline.PolicyVersion
 	return AdmittedTrial{
 		StateIdentity:                    trial.StateIdentity,
+		EnvironmentIdentity:              trial.EnvironmentIdentity,
+		MeasurementProtocolIdentity:      trial.MeasurementProtocolIdentity,
 		TrialID:                          trial.TrialID,
 		AdmissionPolicyVersion:           admission.PolicyVersion,
 		EstimatorIdentity:                estimatorIdentity,
@@ -85,13 +100,15 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		return Point{}, errors.New("independent trial count is below policy")
 	}
 	point := Point{
-		StateIdentity:      trials[0].StateIdentity,
-		EstimatorIdentity:  trials[0].EstimatorIdentity,
-		Batch:              trials[0].Batch,
-		PointPolicyVersion: policy.Version,
-		ConfidenceMethod:   policy.ConfidenceMethod,
-		ConfidenceLevel:    policy.ConfidenceLevel,
-		Trials:             append([]AdmittedTrial(nil), trials...),
+		StateIdentity:               trials[0].StateIdentity,
+		EnvironmentIdentity:         trials[0].EnvironmentIdentity,
+		MeasurementProtocolIdentity: trials[0].MeasurementProtocolIdentity,
+		EstimatorIdentity:           trials[0].EstimatorIdentity,
+		Batch:                       trials[0].Batch,
+		PointPolicyVersion:          policy.Version,
+		ConfidenceMethod:            policy.ConfidenceMethod,
+		ConfidenceLevel:             policy.ConfidenceLevel,
+		Trials:                      append([]AdmittedTrial(nil), trials...),
 	}
 	values := make([]float64, len(trials))
 	var latency float64
@@ -99,7 +116,10 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 	admissionVersion := trials[0].AdmissionPolicyVersion
 	var baselineUncertainty float64
 	for index, trial := range trials {
-		if trial.StateIdentity != point.StateIdentity || trial.TrialID == "" ||
+		if trial.StateIdentity != point.StateIdentity ||
+			trial.EnvironmentIdentity != point.EnvironmentIdentity ||
+			trial.MeasurementProtocolIdentity != point.MeasurementProtocolIdentity ||
+			trial.TrialID == "" ||
 			trial.AdmissionPolicyVersion != admissionVersion ||
 			admissionVersion == "" ||
 			trial.EstimatorIdentity != point.EstimatorIdentity ||
@@ -108,7 +128,7 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 			trial.IncrementalJoulesPerItem <= 0 ||
 			math.IsNaN(trial.IncrementalJoulesPerItem) ||
 			math.IsInf(trial.IncrementalJoulesPerItem, 0) {
-			return Point{}, errors.New("trial state identity or batch mismatch")
+			return Point{}, errors.New("trial state, environment, protocol, estimator, or batch mismatch")
 		}
 		if _, exists := seen[trial.TrialID]; exists {
 			return Point{}, errors.New("duplicate active trial ID")
@@ -143,28 +163,27 @@ func DeriveBSat(points []Point, policy BSatPolicy) BSatResult {
 	ordered := append([]Point(nil), points...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Batch < ordered[j].Batch })
 	identity := ordered[0].StateIdentity
+	environmentIdentity := ordered[0].EnvironmentIdentity
+	measurementProtocolIdentity := ordered[0].MeasurementProtocolIdentity
 	estimatorIdentity := ordered[0].EstimatorIdentity
 	pointPolicyVersion := ordered[0].PointPolicyVersion
 	confidenceMethod := ordered[0].ConfidenceMethod
 	confidenceLevel := ordered[0].ConfidenceLevel
+	curve := curveIdentity{
+		state: identity, environment: environmentIdentity, protocol: measurementProtocolIdentity,
+		estimator: estimatorIdentity, pointPolicy: pointPolicyVersion,
+		confidenceMethod: confidenceMethod, confidenceLevel: confidenceLevel,
+	}
 	result.StateIdentity = identity
+	result.EnvironmentIdentity = environmentIdentity
+	result.MeasurementProtocolIdentity = measurementProtocolIdentity
 	if ordered[0].Batch != 1 {
 		result.Code = "MissingLowerBatchDomain"
 		return result
 	}
 	for index, point := range ordered {
 		result.MeasuredBatches = append(result.MeasuredBatches, point.Batch)
-		if point.StateIdentity != identity || point.EstimatorIdentity != estimatorIdentity || estimatorIdentity == "" ||
-			point.PointPolicyVersion != pointPolicyVersion ||
-			pointPolicyVersion == "" ||
-			point.ConfidenceMethod != confidenceMethod ||
-			point.ConfidenceLevel != confidenceLevel ||
-			point.MeanIncrementalJoulesPerItem <= 0 ||
-			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
-			math.IsInf(point.MeanIncrementalJoulesPerItem, 0) ||
-			point.ConfidenceHalfWidth < 0 ||
-			math.IsNaN(point.ConfidenceHalfWidth) ||
-			math.IsInf(point.ConfidenceHalfWidth, 0) {
+		if !validCurvePoint(point, curve) {
 			result.Code = "CurveIdentityMismatch"
 			return result
 		}
@@ -205,6 +224,32 @@ func DeriveBSat(points []Point, policy BSatPolicy) BSatResult {
 	result.Status = BSatCensored
 	result.Code = "NoSaturationObserved"
 	return result
+}
+
+type curveIdentity struct {
+	state            string
+	environment      string
+	protocol         string
+	estimator        string
+	pointPolicy      string
+	confidenceMethod string
+	confidenceLevel  float64
+}
+
+func validCurvePoint(point Point, identity curveIdentity) bool {
+	return point.StateIdentity == identity.state && identity.state != "" &&
+		point.EnvironmentIdentity == identity.environment && identity.environment != "" &&
+		point.MeasurementProtocolIdentity == identity.protocol && identity.protocol != "" &&
+		point.EstimatorIdentity == identity.estimator && identity.estimator != "" &&
+		point.PointPolicyVersion == identity.pointPolicy && identity.pointPolicy != "" &&
+		point.ConfidenceMethod == identity.confidenceMethod &&
+		point.ConfidenceLevel == identity.confidenceLevel &&
+		point.MeanIncrementalJoulesPerItem > 0 &&
+		!math.IsNaN(point.MeanIncrementalJoulesPerItem) &&
+		!math.IsInf(point.MeanIncrementalJoulesPerItem, 0) &&
+		point.ConfidenceHalfWidth >= 0 &&
+		!math.IsNaN(point.ConfidenceHalfWidth) &&
+		!math.IsInf(point.ConfidenceHalfWidth, 0)
 }
 
 func percentile(values []float64, q float64) float64 {

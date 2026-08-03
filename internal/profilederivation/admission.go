@@ -10,11 +10,13 @@ import (
 //nolint:gocyclo // Admission intentionally keeps every fail-closed scientific gate visible in one ordered audit.
 func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 	result := AdmissionResult{
-		PolicyVersion:  policy.Version,
-		StateIdentity:  trial.StateIdentity,
-		TrialID:        trial.TrialID,
-		WindowSeconds:  trial.WindowEnd.Sub(trial.WindowStart).Seconds(),
-		CompletedItems: trial.CompletedItems,
+		PolicyVersion:               policy.Version,
+		StateIdentity:               trial.StateIdentity,
+		EnvironmentIdentity:         trial.EnvironmentIdentity,
+		MeasurementProtocolIdentity: trial.MeasurementProtocolIdentity,
+		TrialID:                     trial.TrialID,
+		WindowSeconds:               trial.WindowEnd.Sub(trial.WindowStart).Seconds(),
+		CompletedItems:              trial.CompletedItems,
 	}
 	add := func(kind Verdict, code, message string) {
 		result.Reasons = append(result.Reasons, Reason{Kind: kind, Code: code, Message: message})
@@ -27,7 +29,8 @@ func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 		result.Verdict = VerdictRejected
 		return result
 	}
-	if trial.StateIdentity == "" || trial.TrialID == "" || trial.Batch < 1 ||
+	if trial.StateIdentity == "" || trial.EnvironmentIdentity == "" ||
+		trial.MeasurementProtocolIdentity == "" || trial.TrialID == "" || trial.Batch < 1 ||
 		!trial.WindowEnd.After(trial.WindowStart) ||
 		trial.CompletedCalls < 1 ||
 		trial.CompletedItems != trial.CompletedCalls*trial.Batch ||

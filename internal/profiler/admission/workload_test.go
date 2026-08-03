@@ -19,7 +19,8 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 		t.Fatal(err)
 	}
 	if !window.Known || len(window.ConcurrentCHILLWorkloads) != 0 ||
-		len(window.ExternalWorkloadChanges) != 0 || !strings.HasPrefix(window.ExternalEnvironmentIdentity, "sha256:") {
+		len(window.ExternalWorkloadChanges) != 0 ||
+		!strings.HasPrefix(window.EnvironmentIdentity, environmentIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("stable external workload projection = %#v", window)
 	}
 }
@@ -47,9 +48,83 @@ func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstWindow.ExternalEnvironmentIdentity == secondWindow.ExternalEnvironmentIdentity ||
+	if firstWindow.EnvironmentIdentity == secondWindow.EnvironmentIdentity ||
 		len(secondWindow.ExternalWorkloadChanges) != 0 {
-		t.Fatalf("environment identities = %q, %q", firstWindow.ExternalEnvironmentIdentity, secondWindow.ExternalEnvironmentIdentity)
+		t.Fatalf("environment identities = %q, %q", firstWindow.EnvironmentIdentity, secondWindow.EnvironmentIdentity)
+	}
+}
+
+func TestWorkloadEnvironmentIdentityUsesStableControllerOwner(t *testing.T) {
+	t.Parallel()
+	first := workloadobserver.Pod{
+		Namespace: "monitoring", Name: "agent-a", UID: "pod-a", Phase: "Running",
+		Owner:  &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "agent", UID: "owner-uid"},
+		Images: []string{"registry.example/agent@sha256:" + strings.Repeat("a", 64)},
+	}
+	replacement := first
+	replacement.Name = "agent-b"
+	replacement.UID = "pod-b"
+
+	base, err := workloadEnvironmentIdentity([]workloadobserver.Pod{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := workloadEnvironmentIdentity([]workloadobserver.Pod{replacement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced != base {
+		t.Fatalf("same owner replacement drifted: %q != %q", replaced, base)
+	}
+
+	newOwner := replacement
+	newOwner.Owner = &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "agent", UID: "new-owner-uid"}
+	changed, err := workloadEnvironmentIdentity([]workloadobserver.Pod{newOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == base {
+		t.Fatal("owner UID change must change environment identity")
+	}
+
+	newImage := replacement
+	newImage.Images = []string{"registry.example/agent@sha256:" + strings.Repeat("c", 64)}
+	changed, err = workloadEnvironmentIdentity([]workloadobserver.Pod{newImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == base {
+		t.Fatal("owner-controlled image change must change environment identity")
+	}
+
+	twoReplicas, err := workloadEnvironmentIdentity([]workloadobserver.Pod{first, replacement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if twoReplicas == base {
+		t.Fatal("owner replica count must change environment identity")
+	}
+}
+
+func TestWorkloadEnvironmentIdentityKeepsUnownedPodsUIDBound(t *testing.T) {
+	t.Parallel()
+	first := workloadobserver.Pod{
+		Namespace: "default", Name: "standalone", UID: "pod-a", Phase: "Running",
+		Images: []string{"registry.example/standalone@sha256:" + strings.Repeat("b", 64)},
+	}
+	replacement := first
+	replacement.UID = "pod-b"
+
+	base, err := workloadEnvironmentIdentity([]workloadobserver.Pod{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := workloadEnvironmentIdentity([]workloadobserver.Pod{replacement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == base {
+		t.Fatal("unowned Pod replacement must remain fail-safe and UID-bound")
 	}
 }
 

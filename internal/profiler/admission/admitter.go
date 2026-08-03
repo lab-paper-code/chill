@@ -3,9 +3,6 @@
 package admission
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -14,7 +11,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilederivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
 const WallPowerPolicyV2 = "wall-power-v2"
@@ -106,30 +102,30 @@ func projectTrial(
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
-	stateIdentity, err := materialStateIdentity(
-		execution.Intent, execution.Terminal.Node.UID, workload.ExternalEnvironmentIdentity,
-	)
+	identities, err := ProjectRunIdentities(execution.Intent, execution.Terminal.Node.UID)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
 	return profilederivation.Trial{
-		StateIdentity:            stateIdentity,
-		TrialID:                  execution.Terminal.Pod.UID,
-		Batch:                    execution.Intent.Measurement.Batch,
-		WindowStart:              windowStart,
-		WindowEnd:                windowEnd,
-		CompletedCalls:           raw.Runtime.InferenceCount,
-		CompletedItems:           raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
-		LatencyMilliseconds:      latencies,
-		Samples:                  samples,
-		Failures:                 len(raw.Metrics.Failures),
-		SourceTimestampAbsent:    raw.Metrics.Summary.SourceTimestampAbsent,
-		ConcurrentCHILLWorkloads: workload.ConcurrentCHILLWorkloads,
-		ExternalWorkloadChanges:  workload.ExternalWorkloadChanges,
-		WorkloadWindowKnown:      workload.Known,
-		ThermalStateKnown:        thermalKnown,
-		ThermallyThrottled:       thermallyThrottled,
-		SteadyWindowVerified:     true,
+		StateIdentity:               identities.StateIdentity,
+		EnvironmentIdentity:         workload.EnvironmentIdentity,
+		MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
+		TrialID:                     execution.Terminal.Pod.UID,
+		Batch:                       execution.Intent.Measurement.Batch,
+		WindowStart:                 windowStart,
+		WindowEnd:                   windowEnd,
+		CompletedCalls:              raw.Runtime.InferenceCount,
+		CompletedItems:              raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
+		LatencyMilliseconds:         latencies,
+		Samples:                     samples,
+		Failures:                    len(raw.Metrics.Failures),
+		SourceTimestampAbsent:       raw.Metrics.Summary.SourceTimestampAbsent,
+		ConcurrentCHILLWorkloads:    workload.ConcurrentCHILLWorkloads,
+		ExternalWorkloadChanges:     workload.ExternalWorkloadChanges,
+		WorkloadWindowKnown:         workload.Known,
+		ThermalStateKnown:           thermalKnown,
+		ThermallyThrottled:          thermallyThrottled,
+		SteadyWindowVerified:        true,
 	}, nil
 }
 
@@ -194,38 +190,4 @@ func thermalState(samples []metricobserver.Sample, windowStart, windowEnd time.T
 		}
 	}
 	return available && !counterReset && (directComplete || coreComplete || packageComplete), false
-}
-
-func materialStateIdentity(intent profilingrun.Intent, nodeUID, externalEnvironmentIdentity string) (string, error) {
-	measurement := intent.Measurement
-	measurement.Batch = 0
-	type materialState struct {
-		State                       profilingrun.ExecutionState      `json:"state"`
-		Images                      profilingrun.Images              `json:"images"`
-		NodeUID                     string                           `json:"nodeUID"`
-		CPU                         profilingrun.CPUContract         `json:"cpu"`
-		Measurement                 profilingrun.MeasurementContract `json:"measurement"`
-		Metrics                     profilingrun.MetricContract      `json:"metrics"`
-		ExternalEnvironmentIdentity string                           `json:"externalEnvironmentIdentity,omitempty"`
-	}
-	base := materialState{
-		State: intent.State, Images: intent.Images, NodeUID: nodeUID, CPU: intent.CPU,
-		Measurement: measurement, Metrics: intent.Metrics,
-		ExternalEnvironmentIdentity: externalEnvironmentIdentity,
-	}
-	var payload []byte
-	var err error
-	if intent.Workload.SchemaVersion == "" && intent.Workload.AllowedBackground == nil {
-		payload, err = json.Marshal(base)
-	} else {
-		payload, err = json.Marshal(struct {
-			materialState
-			Workload profilingrun.WorkloadContract `json:"workload"`
-		}{base, intent.Workload})
-	}
-	if err != nil {
-		return "", fmt.Errorf("encode material execution state: %w", err)
-	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

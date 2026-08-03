@@ -15,6 +15,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profilederivation"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -103,7 +104,14 @@ func deriveReport(payload []byte, digest string, policy profilederivation.Admiss
 	for _, repetition := range e.Runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
 	}
-	stateIdentity := materialStateIdentity(e.Intent, string(e.ActualNode.UID))
+	identities, err := profileradmission.ProjectRunIdentities(e.Intent, string(e.ActualNode.UID))
+	if err != nil {
+		return report{}, err
+	}
+	environmentIdentity, err := profileradmission.UnknownEnvironmentIdentity()
+	if err != nil {
+		return report{}, err
+	}
 	start, err := time.Parse(time.RFC3339Nano, e.Runtime.MeasurementStartedAt)
 	if err != nil {
 		return report{}, err
@@ -117,52 +125,41 @@ func deriveReport(payload []byte, digest string, policy profilederivation.Admiss
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	trial := profilederivation.Trial{
-		StateIdentity:         stateIdentity,
-		TrialID:               string(e.Pod.UID),
-		Batch:                 e.Intent.Measurement.Batch,
-		WindowStart:           start,
-		WindowEnd:             end,
-		CompletedCalls:        e.Runtime.InferenceCount,
-		CompletedItems:        e.Runtime.InferenceCount * e.Intent.Measurement.Batch,
-		LatencyMilliseconds:   latencies,
-		Samples:               samples,
-		Failures:              len(e.Power.Failures),
-		SourceTimestampAbsent: e.Power.Summary.SourceTimestampAbsent,
-		WorkloadWindowKnown:   false,
-		SteadyWindowVerified:  true,
-		ThermalStateKnown:     false,
+		StateIdentity:               identities.StateIdentity,
+		EnvironmentIdentity:         environmentIdentity,
+		MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
+		TrialID:                     string(e.Pod.UID),
+		Batch:                       e.Intent.Measurement.Batch,
+		WindowStart:                 start,
+		WindowEnd:                   end,
+		CompletedCalls:              e.Runtime.InferenceCount,
+		CompletedItems:              e.Runtime.InferenceCount * e.Intent.Measurement.Batch,
+		LatencyMilliseconds:         latencies,
+		Samples:                     samples,
+		Failures:                    len(e.Power.Failures),
+		SourceTimestampAbsent:       e.Power.Summary.SourceTimestampAbsent,
+		WorkloadWindowKnown:         false,
+		SteadyWindowVerified:        true,
+		ThermalStateKnown:           false,
 	}
 	admission := profilederivation.Admit(trial, policy)
 	result := report{
-		SchemaVersion:  "spikes.chill.dacs.io/profile-derivation-report.v1alpha1",
+		SchemaVersion:  "spikes.chill.dacs.io/profile-derivation-report.v1alpha2",
 		EvidenceDigest: digest,
 		Admission:      admission,
 		BSat: profilederivation.BSatResult{
-			Status:          profilederivation.BSatUnavailable,
-			PolicyVersion:   "not-applied",
-			StateIdentity:   stateIdentity,
-			Code:            "MissingIdleBaselineAndRepeatedCurve",
-			MeasuredBatches: []int{trial.Batch},
+			Status:                      profilederivation.BSatUnavailable,
+			PolicyVersion:               "not-applied",
+			StateIdentity:               identities.StateIdentity,
+			EnvironmentIdentity:         environmentIdentity,
+			MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
+			Code:                        "MissingIdleBaselineAndRepeatedCurve",
+			MeasuredBatches:             []int{trial.Batch},
 		},
 	}
 	result.IncrementalEnergy.Status = "Unavailable"
 	result.IncrementalEnergy.Code = "MissingIdleBaseline"
 	return result, nil
-}
-
-func materialStateIdentity(intent profilingrun.Intent, nodeUID string) string {
-	measurement := intent.Measurement
-	measurement.Batch = 0
-	payload, _ := json.Marshal(struct {
-		State       profilingrun.ExecutionState      `json:"state"`
-		Images      profilingrun.Images              `json:"images"`
-		NodeUID     string                           `json:"nodeUID"`
-		CPU         profilingrun.CPUContract         `json:"cpu"`
-		Measurement profilingrun.MeasurementContract `json:"measurement"`
-		Metrics     profilingrun.MetricContract      `json:"metrics"`
-	}{intent.State, intent.Images, nodeUID, intent.CPU, measurement, intent.Metrics})
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func validatePlan2(e evidence) error {

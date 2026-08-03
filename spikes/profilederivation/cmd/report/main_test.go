@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
@@ -42,24 +43,39 @@ func TestRetainedPlan2BundleFailsClosed(t *testing.T) {
 	}
 }
 
-func TestMaterialStateIdentityBindsMeasurementAndMetricsButNotBatch(t *testing.T) {
+func TestRunIdentitiesSeparateStateAndProtocolButNotBatch(t *testing.T) {
 	intent := profilingrun.Intent{
 		Measurement: profilingrun.MeasurementContract{Batch: 1, InputGenerator: "a"},
 		Metrics:     profilingrun.MetricContract{PowerMetric: "watts"},
 	}
-	base := materialStateIdentity(intent, "node")
+	base, err := profileradmission.ProjectRunIdentities(intent, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
 	intent.Measurement.Batch = 2
-	if got := materialStateIdentity(intent, "node"); got != base {
+	got, err := profileradmission.ProjectRunIdentities(intent, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != base {
 		t.Fatal("batch must remain the curve dimension")
 	}
 	intent.Measurement.InputGenerator = "b"
-	if materialStateIdentity(intent, "node") == base {
-		t.Fatal("input generator must change state identity")
+	got, err = profileradmission.ProjectRunIdentities(intent, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StateIdentity != base.StateIdentity || got.MeasurementProtocolIdentity == base.MeasurementProtocolIdentity {
+		t.Fatal("input generator must change only measurement-protocol identity")
 	}
 	intent.Measurement.InputGenerator = "a"
 	intent.Metrics.PowerMetric = "other"
-	if materialStateIdentity(intent, "node") == base {
-		t.Fatal("power metric must change state identity")
+	got, err = profileradmission.ProjectRunIdentities(intent, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StateIdentity == base.StateIdentity {
+		t.Fatal("power metric must change execution-state compatibility identity")
 	}
 }
 

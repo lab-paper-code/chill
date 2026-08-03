@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,17 +16,19 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 		latencies[index] = 1
 	}
 	trial := Trial{
-		StateIdentity:        "state",
-		TrialID:              "active-1",
-		Batch:                1,
-		WindowStart:          start,
-		WindowEnd:            start.Add(10 * time.Second),
-		CompletedCalls:       100,
-		CompletedItems:       100,
-		LatencyMilliseconds:  latencies,
-		SteadyWindowVerified: true,
-		ThermalStateKnown:    true,
-		WorkloadWindowKnown:  true,
+		StateIdentity:               "state",
+		EnvironmentIdentity:         "environment",
+		MeasurementProtocolIdentity: "active-protocol",
+		TrialID:                     "active-1",
+		Batch:                       1,
+		WindowStart:                 start,
+		WindowEnd:                   start.Add(10 * time.Second),
+		CompletedCalls:              100,
+		CompletedItems:              100,
+		LatencyMilliseconds:         latencies,
+		SteadyWindowVerified:        true,
+		ThermalStateKnown:           true,
+		WorkloadWindowKnown:         true,
 		Samples: []Sample{
 			{start.Add(time.Second), 10},
 			{start.Add(5 * time.Second), 10},
@@ -49,9 +52,9 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	baseline, err := DeriveIdleBaseline(
 		[]IdleTrial{
-			{StateIdentity: "state", TrialID: "idle-1", AdmissionPolicyVersion: "v1", MeanWallWatts: 5},
-			{StateIdentity: "state", TrialID: "idle-2", AdmissionPolicyVersion: "v1", MeanWallWatts: 5.1},
-			{StateIdentity: "state", TrialID: "idle-3", AdmissionPolicyVersion: "v1", MeanWallWatts: 4.9},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", AdmissionPolicyVersion: "v1", MeanWallWatts: 5},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", AdmissionPolicyVersion: "v1", MeanWallWatts: 5.1},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", AdmissionPolicyVersion: "v1", MeanWallWatts: 4.9},
 		},
 		pointPolicy("idle-v1"),
 	)
@@ -63,12 +66,31 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if _, err := DeriveIdleBaseline(mixedIdle, pointPolicy("idle-v1")); err == nil {
 		t.Fatal("expected mixed idle policy rejection")
 	}
+	mixedIdle = append([]IdleTrial(nil), baseline.Trials...)
+	mixedIdle[2].MeasurementProtocolIdentity = otherPolicy
+	if _, err := DeriveIdleBaseline(mixedIdle, pointPolicy("idle-v1")); err == nil {
+		t.Fatal("expected mixed idle protocol rejection")
+	}
 	admitted, err := IncrementalTrial(trial, result, baseline)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if math.Abs(admitted.IncrementalJoulesPerItem-.5) > 1e-9 {
 		t.Fatal(admitted.IncrementalJoulesPerItem)
+	}
+	if admitted.MeasurementProtocolIdentity != "active-protocol" ||
+		!strings.Contains(admitted.EstimatorIdentity, "idleProtocol=idle-protocol") {
+		t.Fatalf("estimator identity lost active/idle protocols: %#v", admitted)
+	}
+	mismatchedEnvironment := baseline
+	mismatchedEnvironment.EnvironmentIdentity = "other-environment"
+	if _, err := IncrementalTrial(trial, result, mismatchedEnvironment); err == nil {
+		t.Fatal("expected active/idle environment mismatch rejection")
+	}
+	mismatchedAdmission := result
+	mismatchedAdmission.MeasurementProtocolIdentity = "other-active-protocol"
+	if _, err := IncrementalTrial(trial, mismatchedAdmission, baseline); err == nil {
+		t.Fatal("expected active admission protocol mismatch rejection")
 	}
 	invalidBaseline := baseline
 	invalidBaseline.ConfidenceHalfWidth = math.NaN()
@@ -107,31 +129,19 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	trials := []AdmittedTrial{
 		{
-			StateIdentity:            "s",
-			TrialID:                  "1",
-			AdmissionPolicyVersion:   "a",
-			EstimatorIdentity:        "e",
-			Batch:                    1,
-			IncrementalJoulesPerItem: 1,
-			LatencyP99Milliseconds:   2,
+			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
+			TrialID: "1", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			IncrementalJoulesPerItem: 1, LatencyP99Milliseconds: 2,
 		},
 		{
-			StateIdentity:            "s",
-			TrialID:                  "2",
-			AdmissionPolicyVersion:   "a",
-			EstimatorIdentity:        "e",
-			Batch:                    1,
-			IncrementalJoulesPerItem: 1.1,
-			LatencyP99Milliseconds:   3,
+			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
+			TrialID: "2", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			IncrementalJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
 		},
 		{
-			StateIdentity:            "s",
-			TrialID:                  "3",
-			AdmissionPolicyVersion:   "a",
-			EstimatorIdentity:        "e",
-			Batch:                    1,
-			IncrementalJoulesPerItem: .9,
-			LatencyP99Milliseconds:   2.5,
+			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
+			TrialID: "3", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			IncrementalJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
 		},
 	}
 	point, err := Aggregate(trials, pointPolicy("v1"))
@@ -154,6 +164,16 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
 		t.Fatal("expected mixed admission policy rejection")
 	}
+	mixed = append([]AdmittedTrial(nil), trials...)
+	mixed[2].EnvironmentIdentity = otherPolicy
+	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
+		t.Fatal("expected mixed environment identity rejection")
+	}
+	mixed = append([]AdmittedTrial(nil), trials...)
+	mixed[2].MeasurementProtocolIdentity = otherPolicy
+	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
+		t.Fatal("expected mixed measurement protocol rejection")
+	}
 	uncertain := append([]AdmittedTrial(nil), trials...)
 	for index := range uncertain {
 		uncertain[index].BaselineUncertaintyJoulesPerItem = .5
@@ -175,6 +195,8 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 	p := func(batch int, mean, half float64) Point {
 		return Point{
 			StateIdentity:                "s",
+			EnvironmentIdentity:          "environment",
+			MeasurementProtocolIdentity:  "protocol",
 			EstimatorIdentity:            "e",
 			PointPolicyVersion:           "p",
 			ConfidenceMethod:             "student-t",
@@ -201,6 +223,16 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 		{"mixed point policy", func() []Point {
 			values := []Point{p(1, 1, .001), p(2, .99, .001)}
 			values[1].PointPolicyVersion = otherPolicy
+			return values
+		}(), BSatUnavailable, 0},
+		{"mixed environment", func() []Point {
+			values := []Point{p(1, 1, .001), p(2, .99, .001)}
+			values[1].EnvironmentIdentity = otherPolicy
+			return values
+		}(), BSatUnavailable, 0},
+		{"mixed measurement protocol", func() []Point {
+			values := []Point{p(1, 1, .001), p(2, .99, .001)}
+			values[1].MeasurementProtocolIdentity = otherPolicy
 			return values
 		}(), BSatUnavailable, 0},
 	}

@@ -1,8 +1,7 @@
 package admission
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,10 +13,10 @@ import (
 )
 
 type workloadWindow struct {
-	Known                       bool
-	ConcurrentCHILLWorkloads    []string
-	ExternalWorkloadChanges     []string
-	ExternalEnvironmentIdentity string
+	Known                    bool
+	ConcurrentCHILLWorkloads []string
+	ExternalWorkloadChanges  []string
+	EnvironmentIdentity      string
 }
 
 func projectWorkloadWindow(
@@ -27,7 +26,11 @@ func projectWorkloadWindow(
 	runtimeEnded time.Time,
 ) (workloadWindow, error) {
 	if result == nil {
-		return workloadWindow{}, nil
+		identity, err := UnknownEnvironmentIdentity()
+		if err != nil {
+			return workloadWindow{}, fmt.Errorf("derive unknown workload environment identity: %w", err)
+		}
+		return workloadWindow{EnvironmentIdentity: identity}, nil
 	}
 	if err := result.Validate(); err != nil {
 		return workloadWindow{}, fmt.Errorf("validate workload observation: %w", err)
@@ -100,10 +103,10 @@ func projectWorkloadWindow(
 		return workloadWindow{}, err
 	}
 	return workloadWindow{
-		Known:                       result.Continuous && !endDrainAmbiguous,
-		ConcurrentCHILLWorkloads:    sortedValues(concurrent),
-		ExternalWorkloadChanges:     sortedValues(externalChanges),
-		ExternalEnvironmentIdentity: environmentIdentity,
+		Known:                    result.Continuous && !endDrainAmbiguous,
+		ConcurrentCHILLWorkloads: sortedValues(concurrent),
+		ExternalWorkloadChanges:  sortedValues(externalChanges),
+		EnvironmentIdentity:      environmentIdentity,
 	}, nil
 }
 
@@ -129,14 +132,39 @@ func sortedValues(values map[string]string) []string {
 }
 
 func workloadEnvironmentIdentity(pods []workloadobserver.Pod) (string, error) {
-	canonical := append([]workloadobserver.Pod(nil), pods...)
-	sort.Slice(canonical, func(i, j int) bool {
-		return workloadIdentity(canonical[i]) < workloadIdentity(canonical[j])
-	})
-	payload, err := json.Marshal(canonical)
-	if err != nil {
-		return "", fmt.Errorf("encode external workload environment: %w", err)
+	type podIdentity struct {
+		Name string `json:"name"`
+		UID  string `json:"uid"`
 	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	type member struct {
+		Namespace string                          `json:"namespace"`
+		Owner     *workloadobserver.OwnerIdentity `json:"owner,omitempty"`
+		Pod       *podIdentity                    `json:"pod,omitempty"`
+		Phase     string                          `json:"phase"`
+		Images    []string                        `json:"images"`
+		Labels    map[string]string               `json:"labels,omitempty"`
+	}
+	encoded := make([]json.RawMessage, 0, len(pods))
+	for _, pod := range pods {
+		entry := member{
+			Namespace: pod.Namespace, Owner: pod.Owner, Phase: pod.Phase,
+			Images: pod.Images, Labels: pod.Labels,
+		}
+		if pod.Owner == nil {
+			entry.Pod = &podIdentity{Name: pod.Name, UID: pod.UID}
+		}
+		payload, err := json.Marshal(entry)
+		if err != nil {
+			return "", fmt.Errorf("encode external workload member: %w", err)
+		}
+		encoded = append(encoded, payload)
+	}
+	sort.Slice(encoded, func(i, j int) bool { return bytes.Compare(encoded[i], encoded[j]) < 0 })
+	return digestIdentity(
+		environmentIdentitySchemaVersion,
+		struct {
+			Known   bool              `json:"known"`
+			Members []json.RawMessage `json:"members"`
+		}{Known: true, Members: encoded},
+	)
 }

@@ -51,6 +51,10 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		!trial.SteadyWindowVerified || trial.ThermalStateKnown || trial.WorkloadWindowKnown {
 		t.Fatalf("projected trial = %#v", trial)
 	}
+	if trial.StateIdentity == "" || trial.EnvironmentIdentity == "" ||
+		trial.MeasurementProtocolIdentity == "" {
+		t.Fatalf("projected identities = %#v", trial)
+	}
 	if len(trial.ConcurrentCHILLWorkloads) != 0 || len(trial.ExternalWorkloadChanges) != 0 {
 		t.Fatalf("terminal snapshot was treated as measurement-window evidence: %#v", trial)
 	}
@@ -109,28 +113,81 @@ func TestThermalStateProjectsOnlyObservedWindowFacts(t *testing.T) {
 func admissionBool(value bool) *bool     { return &value }
 func admissionUint(value uint64) *uint64 { return &value }
 
-func TestMaterialStateIdentityExcludesBatchButBindsNode(t *testing.T) {
+func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T) {
 	t.Parallel()
 	intent := admissionIntentWithWorkloadContract()
-	first, err := materialStateIdentity(intent, "node-a", "environment-a")
+	base, err := ProjectRunIdentities(intent, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.Measurement.Batch = 8
-	second, err := materialStateIdentity(intent, "node-a", "environment-a")
+
+	batch := intent
+	batch.Measurement.Batch = 8
+	batchIdentities, err := ProjectRunIdentities(batch, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := materialStateIdentity(intent, "node-b", "environment-a")
+	if batchIdentities != base {
+		t.Fatalf("batch changed identity family: %#v != %#v", batchIdentities, base)
+	}
+
+	idle := intent
+	idle.Measurement.WorkloadMode = "idle-model-loaded"
+	idle.Measurement.InputGenerator = "none"
+	idle.Measurement.OutputValidation = "none"
+	idle.Measurement.WarmupIterations = 0
+	idle.Measurement.DurationSeconds = 60
+	idle.Metrics.DurationSeconds = 61
+	idleIdentities, err := ProjectRunIdentities(idle, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fourth, err := materialStateIdentity(intent, "node-a", "environment-b")
+	if idleIdentities.StateIdentity != base.StateIdentity ||
+		idleIdentities.MeasurementProtocolIdentity == base.MeasurementProtocolIdentity {
+		t.Fatalf("idle split = %#v, active = %#v", idleIdentities, base)
+	}
+
+	observer := intent
+	observer.Images.MetricObserver = "registry.example/metric-observer@sha256:" + strings.Repeat("b", 64)
+	observerIdentities, err := ProjectRunIdentities(observer, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first == third || first == fourth || !strings.HasPrefix(first, "sha256:") {
-		t.Fatalf("state identities = %q, %q, %q, %q", first, second, third, fourth)
+	if observerIdentities.StateIdentity != base.StateIdentity ||
+		observerIdentities.MeasurementProtocolIdentity == base.MeasurementProtocolIdentity {
+		t.Fatalf("observer split = %#v, base = %#v", observerIdentities, base)
+	}
+
+	runtime := intent
+	runtime.Images.Runtime = "registry.example/runtime@sha256:" + strings.Repeat("c", 64)
+	runtimeIdentities, err := ProjectRunIdentities(runtime, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeIdentities.StateIdentity == base.StateIdentity {
+		t.Fatal("runtime image must change execution-state identity")
+	}
+
+	metricSource := intent
+	metricSource.Metrics.Endpoint = "http://other-meter"
+	metricSourceIdentities, err := ProjectRunIdentities(metricSource, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metricSourceIdentities.StateIdentity == base.StateIdentity {
+		t.Fatal("wall-meter source must change execution-state identity")
+	}
+
+	nodeIdentities, err := ProjectRunIdentities(intent, "node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodeIdentities.StateIdentity == base.StateIdentity {
+		t.Fatal("actual Node UID must change execution-state identity")
+	}
+	if !strings.HasPrefix(base.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
+		!strings.HasPrefix(base.MeasurementProtocolIdentity, measurementProtocolIdentitySchemaVersion+"@sha256:") {
+		t.Fatalf("unversioned identities: %#v", base)
 	}
 }
 

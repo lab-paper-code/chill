@@ -200,10 +200,16 @@ measurement is CHILL-owned interference and is rejected. An external Pod
 entering, leaving, restarting, or materially changing during the window is
 reported as external-environment change and is rejected for that Run.
 
-When no such change occurs, the complete stable external Pod set is hashed into
-the material environment identity. Trials measured under different observed
-external Pod sets therefore remain individually usable but cannot be aggregated
-as the same state. CHILL never mutates or pauses those external workloads.
+When no such change occurs, the complete stable external workload set is
+projected into an owner-bound environment identity. Owner-controlled Pods bind
+to the observed controller owner kind, name, and UID plus phase, images,
+selected labels, and replica multiplicity; Pod name and UID are excluded so a
+same-owner replacement between trials does not create false drift. An owner UID,
+image, phase, selected-label, or replica-count change produces a different
+identity. Unowned Pods remain Pod-name/UID-bound and therefore fail safe across
+replacement. Trials with different environment identities remain individually
+usable but cannot be aggregated as the same environment. CHILL never mutates
+or pauses those external workloads.
 
 ## Explicit non-goals
 
