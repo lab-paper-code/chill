@@ -86,7 +86,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 	}
 	if report.SchemaVersion != profilingrun.CandidateReportSchemaVersion || report.Inputs.ModelSpec.UID != "model-uid" ||
 		report.Inputs.ModelSpec.ResourceVersion != "10" ||
-		report.Inputs.RuntimeDeclaration.Namespace != "chill-system" ||
+		report.Inputs.RuntimeDeclaration.Namespace != testSystemNamespace ||
 		report.Inputs.RuntimeDeclaration.Name != "chill-profiler-facts" ||
 		report.Inputs.RuntimeDeclaration.UID != "config-uid" ||
 		report.Inputs.RuntimeDeclaration.ResourceVersion != "30" ||
@@ -324,7 +324,7 @@ func candidateFakeReader(t *testing.T, objects ...client.Object) client.Client {
 
 func candidateResolverOptions() CandidateResolverOptions {
 	return CandidateResolverOptions{
-		Namespace: "chill-system", ConfigMapName: "chill-profiler-facts", ConfigMapKey: "execution-facts.yaml",
+		Namespace: testSystemNamespace, ConfigMapName: "chill-profiler-facts", ConfigMapKey: "execution-facts.yaml",
 	}
 }
 
@@ -365,7 +365,7 @@ func validCandidateObjects() []client.Object {
 	}
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "chill-system", Name: "chill-profiler-facts",
+			Namespace: testSystemNamespace, Name: "chill-profiler-facts",
 			UID: types.UID("config-uid"), ResourceVersion: "30",
 		},
 		Data: map[string]string{"execution-facts.yaml": validExecutionFacts()},

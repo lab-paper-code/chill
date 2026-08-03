@@ -106,10 +106,12 @@ init-container supply image.
 
 ## Frozen and delivery inputs
 
-The immutable intent record remains the scientific execution authority. All
-regular containers mount its canonical `intent.json` read-only and verify the
-expected digest before doing work. The candidate report remains controller-side
-provenance and is not a worker input.
+The immutable intent record remains the scientific execution authority. It
+also retains the exact admission and worker-execution policies selected before
+Job creation. All regular containers mount only its canonical `intent.json`
+read-only and verify the expected digest before doing work. The candidate
+report and frozen policy payloads remain controller-side provenance and are not
+worker inputs.
 
 One missing execution fact must be added before Job materialization:
 
@@ -303,10 +305,13 @@ The controller creates one deterministic Job owned by the `ProfilingRun`:
 - one bounded active deadline covering startup, warm-up, measurement, handoff,
   and evidence commit.
 
-Deadline and handoff margins are versioned implementation constants for this
-first worker, not new user knobs. The Job name is derived from the Run UID, so
-deleting or losing a recorded Job cannot be mistaken for permission to repeat
-the measurement.
+Deadline and handoff margins are versioned installation policy for this worker,
+not Run knobs. Helm provides the default measured envelope. Before Job creation,
+the Profiler selects it by frozen DeviceClass, execution path, and workload mode
+and copies the exact canonical policy and ConfigMap provenance into the
+immutable Run record. The Job name is derived from the Run UID, so deleting or
+losing a recorded Job cannot be mistaken for permission to repeat the
+measurement.
 
 Job composition supplies each process with its handoff wait budget from the
 same bounded attempt timing contract. Runtime and MetricObserver entrypoints
@@ -328,9 +333,10 @@ Run knobs and do not add fields to `ProfilingRun.spec`.
 Job materialization must derive container resources, handoff deadlines, and
 producer capacities through one versioned worker policy. It must not assemble
 independent positive numbers that can only be discovered to conflict after a
-large in-memory result has been built. The immutable Job retains the native
-resource requirements and policy identity needed to reconstruct that delivery
-decision; CR status does not copy these implementation details.
+large in-memory result has been built. The immutable Run record retains the
+exact selected policy and source, while the immutable Job retains the projected
+native resource requirements and content-derived policy identity. CR status
+does not copy these implementation details.
 
 The first policy must enforce these relationships:
 
@@ -357,9 +363,10 @@ distribution to fit a budget.
 
 Numeric reserves and serialized-byte coefficients are not fixed by this
 document. They require measurements from the exact promoted worker/runtime
-image and become implementation constants of that versioned path. A later
-runtime may define its own policy; this first contract does not introduce a
-generic resource-planner framework.
+image and become defaults in a versioned installation policy. Changing those
+values affects only newly frozen Runs and changes the content-derived execution
+identity. A later runtime may define its own policy; this first contract does
+not introduce a generic resource-planner framework.
 
 ## Responsibility and dependency boundary
 

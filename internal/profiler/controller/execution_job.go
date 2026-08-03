@@ -10,7 +10,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
-	"github.com/lab-paper-code/chill/internal/profiler"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -65,7 +64,7 @@ func NewExecutionJobs(
 func (j *ExecutionJobs) Ensure(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	prepared profiler.PreparedRun,
+	frozen FrozenRun,
 ) (*batchv1.Job, bool, error) {
 	jobName, err := executionJobName(run)
 	if err != nil {
@@ -78,7 +77,7 @@ func (j *ExecutionJobs) Ensure(
 		if err != nil {
 			return nil, false, err
 		}
-		desired, err := buildExecutionJob(run, prepared, binding, j.options, j.scheme)
+		desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
 		if err != nil {
 			return nil, false, err
 		}
@@ -94,7 +93,7 @@ func (j *ExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve Evidence Store delivery binding: %w", err)
 	}
-	desired, err := buildExecutionJob(run, prepared, binding, j.options, j.scheme)
+	desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
 	if err != nil {
 		return nil, false, err
 	}
@@ -110,7 +109,7 @@ func (j *ExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, err
 	}
-	desired, err = buildExecutionJob(run, prepared, retainedBinding, j.options, j.scheme)
+	desired, err = buildExecutionJob(run, frozen, retainedBinding, j.options, j.scheme)
 	if err != nil {
 		return nil, false, err
 	}

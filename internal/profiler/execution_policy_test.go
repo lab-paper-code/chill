@@ -1,6 +1,7 @@
 package profiler
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 
-	plan, err := DeriveExecutionPlan(intent)
+	plan, err := deriveLegacyExecutionPlan(intent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 	intent.Candidate.ExecutionPath = "tensorrt"
-	if _, err := DeriveExecutionPlan(intent); err == nil {
+	if _, err := deriveLegacyExecutionPlan(intent); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want unsupported path rejection")
 	}
 }
@@ -55,7 +56,7 @@ func TestDeriveExecutionPlanKeepsRetainedV1Alpha5ActiveIntentRunnable(t *testing
 	intent.SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha5"
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
-	if _, err := DeriveExecutionPlan(intent); err != nil {
+	if _, err := deriveLegacyExecutionPlan(intent); err != nil {
 		t.Fatalf("retained active intent became unrunnable: %v", err)
 	}
 }
@@ -71,7 +72,7 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
 	intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
 
-	plan, err := DeriveExecutionPlan(intent)
+	plan, err := deriveLegacyExecutionPlan(intent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +92,42 @@ func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testi
 	addWorkloadObservation(&intent)
 	intent.Metrics.DurationSeconds = 60_000
 	intent.Metrics.IntervalMilliseconds = 1000
-	if _, err := DeriveExecutionPlan(intent); err == nil {
+	if _, err := deriveLegacyExecutionPlan(intent); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want bounded event-capacity rejection")
 	}
+}
+
+func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
+	intent := currentExecutionPolicyTestIntent(t)
+	frozen, err := FreezeConfiguredExecutionPolicy(
+		executionPolicyCatalogFixture(t, intent),
+		intent,
+		validExecutionPolicySource(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen.Policy.MaxLatencySamples = 2048
+	frozen.Policy.ObserverCPURequest = "10m"
+	frozen.Policy.ObserverCPULimit = "200m"
+	plan, err := DeriveExecutionPlan(intent, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.MaxLatencySamples != 2048 || plan.ObserverCPURequest != "10m" || plan.ObserverCPULimit != "200m" {
+		t.Fatalf("configured execution envelope was not projected: %#v", plan)
+	}
+	if !strings.HasPrefix(plan.PolicyVersion, "sha256:") {
+		t.Fatalf("configured policy version = %q", plan.PolicyVersion)
+	}
+}
+
+func deriveLegacyExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
+	policy, err := LegacyFrozenExecutionPolicy(intent)
+	if err != nil {
+		return ExecutionPlan{}, err
+	}
+	return DeriveExecutionPlan(intent, policy)
 }
 
 func addWorkloadObservation(intent *profilingrun.Intent) {

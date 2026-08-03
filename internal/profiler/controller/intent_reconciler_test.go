@@ -11,6 +11,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,10 +39,10 @@ func (f *recordingIntentFreezer) Freeze(
 }
 
 type recordingExecutionJobs struct {
-	calls    int
-	prepared profiler.PreparedRun
-	job      *batchv1.Job
-	err      error
+	calls  int
+	frozen FrozenRun
+	job    *batchv1.Job
+	err    error
 }
 
 type recordingRunEvidenceFinalizer struct {
@@ -80,10 +81,10 @@ func (f *recordingRunEvidenceFinalizer) Finalize(
 func (j *recordingExecutionJobs) Ensure(
 	_ context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	prepared profiler.PreparedRun,
+	frozen FrozenRun,
 ) (*batchv1.Job, bool, error) {
 	j.calls++
-	j.prepared = prepared
+	j.frozen = frozen
 	if j.err != nil {
 		return nil, false, j.err
 	}
@@ -121,7 +122,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if freezer.calls != 1 || jobs.calls != 1 || jobs.prepared.IntentDigest != prepared.IntentDigest {
+	if freezer.calls != 1 || jobs.calls != 1 || jobs.frozen.Prepared.IntentDigest != prepared.IntentDigest {
 		t.Fatalf("unexpected transition calls: freezer=%d jobs=%d", freezer.calls, jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
@@ -334,14 +335,26 @@ func runReconcilerTestScheme(t *testing.T) *runtime.Scheme {
 
 func frozenRunForPrepared(t *testing.T, prepared profiler.PreparedRun) FrozenRun {
 	t.Helper()
+	admissionPolicyName := profileradmission.WallPowerPolicyV2
+	if prepared.Intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		admissionPolicyName = profileradmission.IdleWallPowerPolicyV1
+	}
 	policy, err := profileradmission.LegacyFrozenPolicy(
-		profileradmission.WallPowerPolicyV2,
+		admissionPolicyName,
 		prepared.Intent.Measurement.WorkloadMode,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
+	executionPolicy, err := profiler.LegacyFrozenExecutionPolicy(prepared.Intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return FrozenRun{
+		Prepared:        prepared,
+		AdmissionPolicy: policy,
+		ExecutionPolicy: executionPolicy,
+	}
 }
 
 func findRunCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {

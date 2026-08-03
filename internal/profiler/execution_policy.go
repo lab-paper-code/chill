@@ -3,22 +3,10 @@ package profiler
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
-)
-
-const (
-	CPUORTWorkerPolicy        = "cpu-ort-worker"
-	CPUORTWorkerPolicyVersion = "v1"
-	CPUORTIdlePolicyVersion   = "idle-v1"
-
-	mebibyte                 = int64(1024 * 1024)
-	maxMetricEventsV1        = int64(50_000)
-	maxWorkloadEventsV1      = 10_000
-	maxMetricResultBytesV1   = 8 * mebibyte
-	maxWorkloadResultBytesV1 = 8 * mebibyte
-	coordinationReserveV1    = 1 * mebibyte
 )
 
 // ExecutionPlan is the bounded delivery policy for one already-frozen Run.
@@ -58,12 +46,17 @@ type ExecutionPlan struct {
 	WorkspaceBytes                     int64
 }
 
-// DeriveExecutionPlan applies the first measured CPU ORT worker envelope. CPU
-// request and limit remain Node-specific frozen facts; only worker overhead is
-// fixed by this versioned implementation policy.
-func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
+// DeriveExecutionPlan combines a frozen worker envelope with Run-derived
+// durations. CPU request and limit remain Node-specific frozen intent facts.
+func DeriveExecutionPlan(
+	intent profilingrun.Intent,
+	frozen FrozenExecutionPolicy,
+) (ExecutionPlan, error) {
 	if err := intent.Validate(); err != nil {
 		return ExecutionPlan{}, fmt.Errorf("validate frozen Run intent: %w", err)
+	}
+	if err := frozen.Validate(); err != nil {
+		return ExecutionPlan{}, err
 	}
 	if !profilingrun.IsSupportedCPUORTIntent(intent) ||
 		intent.Candidate.ExecutionPath != firstExecutionPath ||
@@ -71,50 +64,87 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 		intent.State.Backend != firstRuntimeBackend {
 		return ExecutionPlan{}, errors.New("cpu-ort-worker requires a supported CPU ONNX Runtime intent")
 	}
+	policy := frozen.Policy
+	if (policy.DeviceClass != "*" && policy.DeviceClass != intent.State.DeviceClass) ||
+		policy.ExecutionPath != intent.Candidate.ExecutionPath ||
+		policy.WorkloadMode != intent.Measurement.WorkloadMode {
+		return ExecutionPlan{}, errors.New("frozen execution policy does not match the Run intent")
+	}
 
 	metricDuration := time.Duration(intent.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(intent.Metrics.IntervalMilliseconds) * time.Millisecond
 	maxEvents64 := int64(metricDuration/interval) + 2
-	if maxEvents64 < 1 || maxEvents64 > maxMetricEventsV1 || maxEvents64 > int64(^uint(0)>>1) {
+	if maxEvents64 < 1 || maxEvents64 > int64(policy.MaxMetricEvents) || maxEvents64 > int64(^uint(0)>>1) {
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
 
-	policyVersion := CPUORTWorkerPolicyVersion
-	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
-		policyVersion = CPUORTIdlePolicyVersion
+	policyIdentity, err := frozen.Identity()
+	if err != nil {
+		return ExecutionPlan{}, err
 	}
-	return ExecutionPlan{
-		Policy:        CPUORTWorkerPolicy,
+	policyVersion := strings.TrimPrefix(policyIdentity, policy.Name+"/")
+	if frozen.Source.Kind == BuiltInExecutionPolicySourceKind {
+		policyVersion = strings.TrimPrefix(policyIdentity, CPUORTWorkerPolicy+"/")
+	}
+	plan := ExecutionPlan{
+		Policy:        policy.Name,
 		PolicyVersion: policyVersion,
 
-		ActiveDeadline:          metricDuration + settlingDuration + 3*time.Minute,
-		AttemptTimeout:          metricDuration + settlingDuration + 150*time.Second,
-		ObserverReadyTimeout:    30 * time.Second,
-		ObserverStartTimeout:    settlingDuration + 2*time.Minute,
-		MetricResultTimeout:     metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second + 30*time.Second,
-		WorkloadEndFenceTimeout: 15 * time.Second,
-		WorkloadResultTimeout:   30 * time.Second,
+		ActiveDeadline: metricDuration + settlingDuration +
+			time.Duration(policy.ActiveDeadlineOverheadSeconds)*time.Second,
+		AttemptTimeout: metricDuration + settlingDuration +
+			time.Duration(policy.AttemptTimeoutOverheadSeconds)*time.Second,
+		ObserverReadyTimeout: time.Duration(policy.ObserverReadyTimeoutSeconds) * time.Second,
+		ObserverStartTimeout: settlingDuration +
+			time.Duration(policy.ObserverStartOverheadSeconds)*time.Second,
+		MetricResultTimeout: metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second +
+			time.Duration(policy.MetricResultOverheadSeconds)*time.Second,
+		WorkloadEndFenceTimeout: time.Duration(policy.WorkloadEndFenceTimeoutSeconds) * time.Second,
+		WorkloadResultTimeout:   time.Duration(policy.WorkloadResultTimeoutSeconds) * time.Second,
 
-		MaxLatencySamples:      1_000_000,
-		MaxInputBytes:          64 * mebibyte,
-		MaxRuntimeResultBytes:  32 * mebibyte,
-		MaxMetricResultBytes:   maxMetricResultBytesV1,
+		MaxLatencySamples:      policy.MaxLatencySamples,
+		MaxInputBytes:          policy.MaxInputBytes,
+		MaxRuntimeResultBytes:  policy.MaxRuntimeResultBytes,
+		MaxMetricResultBytes:   policy.MaxMetricResultBytes,
 		MaxMetricEvents:        int(maxEvents64),
-		MaxWorkloadEvents:      maxWorkloadEventsV1,
-		MaxWorkloadResultBytes: maxWorkloadResultBytesV1,
+		MaxWorkloadEvents:      policy.MaxWorkloadEvents,
+		MaxWorkloadResultBytes: policy.MaxWorkloadResultBytes,
 
-		RuntimeMemoryRequestBytes:          128 * mebibyte,
-		RuntimeMemoryLimitBytes:            1024 * mebibyte,
-		ObserverCPURequest:                 "5m",
-		ObserverCPULimit:                   "100m",
-		ObserverMemoryRequestBytes:         16 * mebibyte,
-		ObserverMemoryLimitBytes:           64 * mebibyte,
-		WorkloadObserverCPURequest:         "5m",
-		WorkloadObserverCPULimit:           "100m",
-		WorkloadObserverMemoryRequestBytes: 32 * mebibyte,
-		WorkloadObserverMemoryLimitBytes:   128 * mebibyte,
-		CoordinationBytes:                  maxMetricResultBytesV1 + maxWorkloadResultBytesV1 + coordinationReserveV1,
-		WorkspaceBytes:                     128 * mebibyte,
-	}, nil
+		RuntimeMemoryRequestBytes:          policy.RuntimeMemoryRequestBytes,
+		RuntimeMemoryLimitBytes:            policy.RuntimeMemoryLimitBytes,
+		ObserverCPURequest:                 policy.ObserverCPURequest,
+		ObserverCPULimit:                   policy.ObserverCPULimit,
+		ObserverMemoryRequestBytes:         policy.ObserverMemoryRequestBytes,
+		ObserverMemoryLimitBytes:           policy.ObserverMemoryLimitBytes,
+		WorkloadObserverCPURequest:         policy.WorkloadObserverCPURequest,
+		WorkloadObserverCPULimit:           policy.WorkloadObserverCPULimit,
+		WorkloadObserverMemoryRequestBytes: policy.WorkloadObserverMemoryRequestBytes,
+		WorkloadObserverMemoryLimitBytes:   policy.WorkloadObserverMemoryLimitBytes,
+		CoordinationBytes: policy.MaxMetricResultBytes + policy.MaxWorkloadResultBytes +
+			policy.CoordinationReserveBytes,
+		WorkspaceBytes: policy.WorkspaceBytes,
+	}
+	if err := validateExecutionPlan(plan); err != nil {
+		return ExecutionPlan{}, err
+	}
+	return plan, nil
+}
+
+func validateExecutionPlan(plan ExecutionPlan) error {
+	if plan.ActiveDeadline <= plan.AttemptTimeout {
+		return errors.New("execution policy active deadline must exceed the attempt timeout")
+	}
+	for name, timeout := range map[string]time.Duration{
+		"observer ready timeout":     plan.ObserverReadyTimeout,
+		"observer start timeout":     plan.ObserverStartTimeout,
+		"metric result timeout":      plan.MetricResultTimeout,
+		"workload end-fence timeout": plan.WorkloadEndFenceTimeout,
+		"workload result timeout":    plan.WorkloadResultTimeout,
+	} {
+		if timeout <= 0 || timeout >= plan.AttemptTimeout {
+			return fmt.Errorf("execution policy %s must be positive and below the attempt timeout", name)
+		}
+	}
+	return nil
 }

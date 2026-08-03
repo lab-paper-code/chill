@@ -25,7 +25,7 @@ type RunIntentFreezer interface {
 }
 
 type RunExecutionJobs interface {
-	Ensure(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun) (*batchv1.Job, bool, error)
+	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*batchv1.Job, bool, error)
 }
 
 // RunReconciler advances one ProfilingRun through short, durable transitions.
@@ -67,7 +67,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	if run.Status.Job == nil {
-		job, _, err := r.jobs.Ensure(ctx, run, frozen.Run.Prepared)
+		job, _, err := r.jobs.Ensure(ctx, run, frozen.Run)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("materialize ProfilingRun %s Job: %w", req.NamespacedName, err)
 		}

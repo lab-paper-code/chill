@@ -27,12 +27,14 @@ import (
 )
 
 const (
-	intentRecordIntentKey          = "intent.json"
-	intentRecordCandidateKey       = "candidate-report.json"
-	intentRecordAdmissionPolicyKey = "admission-policy.json"
-	intentDigestAnnotation         = "edge.dacs.io/profiling-run-intent-digest"
-	admissionPolicyAnnotation      = "edge.dacs.io/profiling-run-admission-policy-digest"
-	intentRecordNameHashCharacters = 32
+	intentRecordIntentKey           = "intent.json"
+	intentRecordCandidateKey        = "candidate-report.json"
+	intentRecordAdmissionPolicyKey  = "admission-policy.json"
+	intentRecordExecutionPolicyKey  = "execution-policy.json"
+	intentDigestAnnotation          = "edge.dacs.io/profiling-run-intent-digest"
+	admissionPolicyAnnotation       = "edge.dacs.io/profiling-run-admission-policy-digest"
+	executionPolicyRecordAnnotation = "edge.dacs.io/profiling-run-execution-policy-digest"
+	intentRecordNameHashCharacters  = 32
 )
 
 // IntentRecords owns only the immutable frozen-input ConfigMap lifecycle.
@@ -113,13 +115,17 @@ func buildIntentRecord(
 	if err != nil {
 		return nil, err
 	}
-	intentBytes, policyBytes, err := validateFrozenRunForRun(run, frozen)
+	intentBytes, admissionPolicyBytes, executionPolicyBytes, err := validateFrozenRunForRun(run, frozen)
 	if err != nil {
 		return nil, err
 	}
 	policyDigest, err := frozen.AdmissionPolicy.Policy.Digest()
 	if err != nil {
 		return nil, fmt.Errorf("digest frozen admission policy: %w", err)
+	}
+	executionPolicyDigest, err := frozen.ExecutionPolicy.Policy.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("digest frozen execution policy: %w", err)
 	}
 	record := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -130,15 +136,17 @@ func buildIntentRecord(
 				"app.kubernetes.io/component": component.Profiler,
 			},
 			Annotations: map[string]string{
-				intentDigestAnnotation:    frozen.Prepared.IntentDigest,
-				admissionPolicyAnnotation: policyDigest,
+				intentDigestAnnotation:          frozen.Prepared.IntentDigest,
+				admissionPolicyAnnotation:       policyDigest,
+				executionPolicyRecordAnnotation: executionPolicyDigest,
 			},
 		},
 		Immutable: ptr.To(true),
 		BinaryData: map[string][]byte{
 			intentRecordIntentKey:          append([]byte(nil), intentBytes...),
 			intentRecordCandidateKey:       append([]byte(nil), frozen.Prepared.CandidateReportBytes...),
-			intentRecordAdmissionPolicyKey: append([]byte(nil), policyBytes...),
+			intentRecordAdmissionPolicyKey: append([]byte(nil), admissionPolicyBytes...),
+			intentRecordExecutionPolicyKey: append([]byte(nil), executionPolicyBytes...),
 		},
 	}
 	if err := controllerutil.SetControllerReference(run, record, scheme); err != nil {
@@ -150,25 +158,35 @@ func buildIntentRecord(
 func validateFrozenRunForRun(
 	run *edgev1alpha1.ProfilingRun,
 	frozen FrozenRun,
-) ([]byte, []byte, error) {
+) ([]byte, []byte, []byte, error) {
 	if err := frozen.Validate(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	intentBytes, err := validatePreparedForRun(run, frozen.Prepared)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if frozen.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy {
-		return nil, nil, errors.New("frozen admission policy does not match immutable ProfilingRun spec")
+		return nil, nil, nil, errors.New("frozen admission policy does not match immutable ProfilingRun spec")
 	}
 	if frozen.AdmissionPolicy.Policy.WorkloadMode != frozen.Prepared.Intent.Measurement.WorkloadMode {
-		return nil, nil, errors.New("frozen admission policy workload mode does not match immutable Run intent")
+		return nil, nil, nil, errors.New("frozen admission policy workload mode does not match immutable Run intent")
 	}
-	policyBytes, err := frozen.AdmissionPolicy.CanonicalJSON()
+	if (frozen.ExecutionPolicy.Policy.DeviceClass != "*" &&
+		frozen.ExecutionPolicy.Policy.DeviceClass != frozen.Prepared.Intent.State.DeviceClass) ||
+		frozen.ExecutionPolicy.Policy.ExecutionPath != frozen.Prepared.Intent.Candidate.ExecutionPath ||
+		frozen.ExecutionPolicy.Policy.WorkloadMode != frozen.Prepared.Intent.Measurement.WorkloadMode {
+		return nil, nil, nil, errors.New("frozen execution policy does not match immutable Run intent")
+	}
+	admissionPolicyBytes, err := frozen.AdmissionPolicy.CanonicalJSON()
 	if err != nil {
-		return nil, nil, fmt.Errorf("encode frozen admission policy: %w", err)
+		return nil, nil, nil, fmt.Errorf("encode frozen admission policy: %w", err)
 	}
-	return intentBytes, policyBytes, nil
+	executionPolicyBytes, err := frozen.ExecutionPolicy.CanonicalJSON()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("encode frozen execution policy: %w", err)
+	}
+	return intentBytes, admissionPolicyBytes, executionPolicyBytes, nil
 }
 
 func intentRecordName(run *edgev1alpha1.ProfilingRun) (string, error) {
@@ -239,12 +257,21 @@ func verifyExpectedIntentRecord(
 	}
 	retainedPolicy, retainedPolicyErr := retained.AdmissionPolicy.CanonicalJSON()
 	expectedPolicy, expectedPolicyErr := expected.AdmissionPolicy.CanonicalJSON()
-	if retainedPolicyErr != nil || expectedPolicyErr != nil {
-		return errors.Join(retainedPolicyErr, expectedPolicyErr)
+	retainedExecution, retainedExecutionErr := retained.ExecutionPolicy.CanonicalJSON()
+	expectedExecution, expectedExecutionErr := expected.ExecutionPolicy.CanonicalJSON()
+	if retainedPolicyErr != nil || expectedPolicyErr != nil ||
+		retainedExecutionErr != nil || expectedExecutionErr != nil {
+		return errors.Join(
+			retainedPolicyErr,
+			expectedPolicyErr,
+			retainedExecutionErr,
+			expectedExecutionErr,
+		)
 	}
 	if retained.Prepared.IntentDigest != expected.Prepared.IntentDigest ||
 		!bytes.Equal(retained.Prepared.CandidateReportBytes, expected.Prepared.CandidateReportBytes) ||
-		!bytes.Equal(retainedPolicy, expectedPolicy) {
+		!bytes.Equal(retainedPolicy, expectedPolicy) ||
+		!bytes.Equal(retainedExecution, expectedExecution) {
 		return errors.New("existing frozen intent ConfigMap contains different Run inputs")
 	}
 	return nil
@@ -267,7 +294,7 @@ func decodeIntentRecord(
 	if record.Immutable == nil || !*record.Immutable {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap is not immutable")
 	}
-	if len(record.Data) != 0 || (len(record.BinaryData) != 2 && len(record.BinaryData) != 3) {
+	if len(record.Data) != 0 || len(record.BinaryData) < 2 || len(record.BinaryData) > 4 {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected data keys")
 	}
 	intentBytes, intentOK := record.BinaryData[intentRecordIntentKey]
@@ -291,8 +318,16 @@ func decodeIntentRecord(
 	if err != nil {
 		return FrozenRun{}, err
 	}
-	frozen := FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
-	if _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
+	executionPolicy, err := decodeStoredExecutionPolicy(record, intent)
+	if err != nil {
+		return FrozenRun{}, err
+	}
+	frozen := FrozenRun{
+		Prepared:        prepared,
+		AdmissionPolicy: policy,
+		ExecutionPolicy: executionPolicy,
+	}
+	if _, _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
 		return FrozenRun{}, err
 	}
 	return frozen, nil
@@ -335,7 +370,7 @@ func decodeStoredAdmissionPolicy(
 		}
 		return profileradmission.LegacyFrozenPolicy(run.Spec.AdmissionPolicy, workloadMode)
 	}
-	if len(record.BinaryData) != 3 || len(policyBytes) == 0 {
+	if (len(record.BinaryData) != 3 && len(record.BinaryData) != 4) || len(policyBytes) == 0 {
 		return profileradmission.FrozenPolicy{}, errors.New("frozen admission-policy payload is incomplete")
 	}
 	policy, err := profileradmission.DecodeFrozenPolicy(policyBytes)
@@ -348,6 +383,37 @@ func decodeStoredAdmissionPolicy(
 	}
 	if record.Annotations[admissionPolicyAnnotation] != policyDigest {
 		return profileradmission.FrozenPolicy{}, errors.New("frozen admission-policy annotation digest mismatch")
+	}
+	return policy, nil
+}
+
+func decodeStoredExecutionPolicy(
+	record *corev1.ConfigMap,
+	intent profilingrun.Intent,
+) (profiler.FrozenExecutionPolicy, error) {
+	policyBytes, hasPolicy := record.BinaryData[intentRecordExecutionPolicyKey]
+	if !hasPolicy {
+		if (len(record.BinaryData) != 2 && len(record.BinaryData) != 3) ||
+			record.Annotations[executionPolicyRecordAnnotation] != "" {
+			return profiler.FrozenExecutionPolicy{}, errors.New(
+				"legacy frozen intent ConfigMap has inconsistent execution-policy data",
+			)
+		}
+		return profiler.LegacyFrozenExecutionPolicy(intent)
+	}
+	if len(record.BinaryData) != 4 || len(policyBytes) == 0 {
+		return profiler.FrozenExecutionPolicy{}, errors.New("frozen execution-policy payload is incomplete")
+	}
+	policy, err := profiler.DecodeFrozenExecutionPolicy(policyBytes)
+	if err != nil {
+		return profiler.FrozenExecutionPolicy{}, err
+	}
+	policyDigest, err := policy.Policy.Digest()
+	if err != nil {
+		return profiler.FrozenExecutionPolicy{}, err
+	}
+	if record.Annotations[executionPolicyRecordAnnotation] != policyDigest {
+		return profiler.FrozenExecutionPolicy{}, errors.New("frozen execution-policy annotation digest mismatch")
 	}
 	return policy, nil
 }

@@ -287,6 +287,7 @@ or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 | selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
 | Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration content digest |
 | single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics, policy content digest, and exact ConfigMap namespace, name, UID, resourceVersion, key, and entry digest |
+| worker execution envelope | DeviceClass, execution-path, and workload-mode entry in the fact-source ConfigMap | timeout margins, producer capacities, container resources, policy content digest, and exact ConfigMap namespace, name, UID, resourceVersion, key, and catalog digest |
 
 The Profiler Deployment configuration contains only a local ConfigMap key
 reference to these facts. The Operator passes that reference to the Deployment
@@ -309,6 +310,23 @@ status and carried into derivation. ConfigMap changes therefore affect only new
 Runs. Restart recovery reads the retained bytes and never re-resolves mutable
 policy configuration. Two-key intent records created before this contract use
 the exact legacy built-in thresholds solely as a compatibility path.
+
+Worker timeout, capacity, and resource values are installation inputs, not Run
+inputs. The Profiler strict-decodes the execution-policy catalog and selects
+one entry by the already frozen DeviceClass, execution path, and workload mode.
+An exact DeviceClass selector takes precedence over the explicit `*` fallback,
+so device-specific envelopes do not require a new binary or a Run-level resource
+override. The Profiler validates the envelope's resource and capacity
+relationships, then retains its
+canonical bytes and exact source provenance beside the intent before creating
+a Job. When both policies are configured, admission and execution selections
+must come from the same ConfigMap UID and resourceVersion; a concurrent catalog
+update therefore fails closed instead of producing a mixed snapshot. The Job
+annotation uses the selected policy's semantic content digest;
+ConfigMap-only revision changes do not create a new execution identity. Restart
+recovery never consults mutable execution-policy configuration. Intent records
+that predate this payload reconstruct the exact `cpu-ort-worker/v1` or
+`cpu-ort-worker/idle-v1` envelope so an already-created Job remains recoverable.
 
 `ProfilingRun.spec.candidate.powerMode` is required. The candidate resolver
 verifies that it is declared by the selected `DeviceClass`. The first CPU path

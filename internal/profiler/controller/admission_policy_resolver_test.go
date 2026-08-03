@@ -33,13 +33,13 @@ func TestKubernetesAdmissionPolicyResolverFreezesExactConfigMapSource(t *testing
 	}
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "chill-system", Name: "chill-profiler-facts", UID: "facts-uid", ResourceVersion: "19",
+			Namespace: testSystemNamespace, Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "19",
 		},
 		Data: map[string]string{"admission-policies.yaml": controllerPolicyCatalog},
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
 	resolver, err := NewKubernetesAdmissionPolicyResolver(reader, AdmissionPolicyResolverOptions{
-		Namespace: "chill-system", ConfigMapName: "chill-profiler-facts", ConfigMapKey: "admission-policies.yaml",
+		Namespace: testSystemNamespace, ConfigMapName: "chill-profiler-facts", ConfigMapKey: "admission-policies.yaml",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestKubernetesAdmissionPolicyResolverFreezesExactConfigMapSource(t *testing
 		t.Fatal(err)
 	}
 	if frozen.Policy.MinimumSamples != 7 || frozen.Policy.MaximumGapSeconds != 2.5 ||
-		frozen.Source.Kind != profileradmission.ConfigMapPolicySourceKind || frozen.Source.UID != "facts-uid" ||
+		frozen.Source.Kind != profileradmission.ConfigMapPolicySourceKind || frozen.Source.UID != testFactsUID ||
 		frozen.Source.ResourceVersion != "19" || !strings.HasPrefix(frozen.Source.EntryContentDigest, "sha256:") {
 		t.Fatalf("resolved frozen policy = %#v", frozen)
 	}
@@ -63,13 +63,13 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	}
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "1",
+			Namespace: testSystemNamespace, Name: "facts", UID: testFactsUID, ResourceVersion: "1",
 		},
 		BinaryData: map[string][]byte{"admission-policies.yaml": []byte(controllerPolicyCatalog)},
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
 	resolver, err := NewKubernetesAdmissionPolicyResolver(reader, AdmissionPolicyResolverOptions{
-		Namespace: "chill-system", ConfigMapName: "facts", ConfigMapKey: "admission-policies.yaml",
+		Namespace: testSystemNamespace, ConfigMapName: "facts", ConfigMapKey: "admission-policies.yaml",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 
 	missingReader := fake.NewClientBuilder().WithScheme(scheme).Build()
 	missing, _ := NewKubernetesAdmissionPolicyResolver(missingReader, AdmissionPolicyResolverOptions{
-		Namespace: "chill-system", ConfigMapName: "missing", ConfigMapKey: "admission-policies.yaml",
+		Namespace: testSystemNamespace, ConfigMapName: "missing", ConfigMapKey: "admission-policies.yaml",
 	})
 	if _, err := missing.Resolve(context.Background(), "operator-meter-policy"); err == nil {
 		t.Fatal("missing admission-policy ConfigMap was accepted")

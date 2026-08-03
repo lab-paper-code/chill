@@ -24,6 +24,7 @@ data:
       metricSourcesKey: {{ .Values.profiler.factSource.metricSourcesKey | quote }}
       workloadObservationKey: {{ .Values.profiler.factSource.workloadObservationKey | quote }}
       admissionPoliciesKey: {{ .Values.profiler.factSource.admissionPoliciesKey | quote }}
+      executionPoliciesKey: {{ .Values.profiler.factSource.executionPoliciesKey | quote }}
     workloadObserver:
       serviceAccountName: {{ include "chill.profilerWorkloadObserverServiceAccountName" . | quote }}
       kubeAPIServer: {{ $workloadObserverKubeAPIServer | quote }}

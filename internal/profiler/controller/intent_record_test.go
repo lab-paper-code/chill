@@ -16,6 +16,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const (
+	testSystemNamespace = "chill-system"
+	testFactsUID        = "facts-uid"
+)
+
 func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	ctx := context.Background()
 	run := testRun()
@@ -32,8 +37,9 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !created || record.Immutable == nil || !*record.Immutable ||
-		len(record.BinaryData) != 3 || record.Annotations[intentDigestAnnotation] != frozen.Prepared.IntentDigest ||
-		record.Annotations[admissionPolicyAnnotation] == "" {
+		len(record.BinaryData) != 4 || record.Annotations[intentDigestAnnotation] != frozen.Prepared.IntentDigest ||
+		record.Annotations[admissionPolicyAnnotation] == "" ||
+		record.Annotations[executionPolicyRecordAnnotation] == "" {
 		t.Fatalf("created frozen intent record is incomplete: %#v", record)
 	}
 	if len(record.OwnerReferences) != 1 || record.OwnerReferences[0].UID != run.UID ||
@@ -159,14 +165,40 @@ func TestIntentRecordsLoadLegacyTwoKeyRecordWithoutMutableLookup(t *testing.T) {
 	}
 	delete(record.BinaryData, intentRecordAdmissionPolicyKey)
 	delete(record.Annotations, admissionPolicyAnnotation)
+	delete(record.BinaryData, intentRecordExecutionPolicyKey)
+	delete(record.Annotations, executionPolicyRecordAnnotation)
 
 	loaded, err := decodeIntentRecord(run, record)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.AdmissionPolicy.Source.Kind != profileradmission.BuiltInPolicySourceKind ||
-		loaded.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy {
+		loaded.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy ||
+		loaded.ExecutionPolicy.Source.Kind != profiler.BuiltInExecutionPolicySourceKind {
 		t.Fatalf("legacy policy reconstruction = %#v", loaded.AdmissionPolicy)
+	}
+}
+
+func TestIntentRecordsLoadThreeKeyRecordWithoutMutableExecutionPolicyLookup(t *testing.T) {
+	run := testRun()
+	frozen := testFrozenRun(t)
+	scheme := intentRecordTestScheme(t)
+	record, err := buildIntentRecord(run, frozen, scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(record.BinaryData, intentRecordExecutionPolicyKey)
+	delete(record.Annotations, executionPolicyRecordAnnotation)
+
+	loaded, err := decodeIntentRecord(run, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedAdmission, _ := loaded.AdmissionPolicy.CanonicalJSON()
+	frozenAdmission, _ := frozen.AdmissionPolicy.CanonicalJSON()
+	if !bytes.Equal(loadedAdmission, frozenAdmission) ||
+		loaded.ExecutionPolicy.Source.Kind != profiler.BuiltInExecutionPolicySourceKind {
+		t.Fatalf("three-key policy reconstruction = %#v", loaded)
 	}
 }
 
@@ -217,7 +249,15 @@ func testFrozenRun(t *testing.T) FrozenRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
+	executionPolicy, err := profiler.LegacyFrozenExecutionPolicy(prepared.Intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return FrozenRun{
+		Prepared:        prepared,
+		AdmissionPolicy: policy,
+		ExecutionPolicy: executionPolicy,
+	}
 }
 
 func intentRecordTestScheme(t *testing.T) *runtime.Scheme {

@@ -71,7 +71,23 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct admission-policy resolver: %w", err)
 	}
-	freezer, err := profilercontroller.NewIntentFreezer(mgr.GetClient(), preparer, policies, records)
+	executionPolicies, err := profilercontroller.NewKubernetesExecutionPolicyResolver(
+		reader,
+		profilercontroller.ExecutionPolicyResolverOptions{
+			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey: opts.executionPoliciesKey,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("construct execution-policy resolver: %w", err)
+	}
+	freezer, err := profilercontroller.NewIntentFreezer(
+		mgr.GetClient(),
+		preparer,
+		policies,
+		executionPolicies,
+		records,
+	)
 	if err != nil {
 		return fmt.Errorf("construct intent freezer: %w", err)
 	}

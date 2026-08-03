@@ -35,7 +35,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
 
-	job, err := buildExecutionJob(run, prepared, binding, testExecutionJobOptions(), scheme)
+	job, err := buildExecutionJob(run, frozenRunForPrepared(t, prepared), binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,13 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	job, err := buildExecutionJob(run, prepared, testEvidenceStoreBinding(), testExecutionJobOptions(), executionJobTestScheme(t))
+	job, err := buildExecutionJob(
+		run,
+		frozenRunForPrepared(t, prepared),
+		testEvidenceStoreBinding(),
+		testExecutionJobOptions(),
+		executionJobTestScheme(t),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +127,46 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	assertArgument(t, runtimeContainer.Args, "--attempt-timeout=4m1s")
 	observer := findContainer(t, job.Spec.Template.Spec.Containers, "metric-observer")
 	assertArgument(t, observer.Args, "--start-wait-timeout=3m0s")
+}
+
+func TestBuildExecutionJobUsesConfiguredExecutionPolicyIdentity(t *testing.T) {
+	run := testRun()
+	prepared := currentPreparedRun(t)
+	frozen := frozenRunForPrepared(t, prepared)
+	policy, err := profiler.FreezeConfiguredExecutionPolicy(
+		controllerExecutionPolicyCatalog(t),
+		prepared.Intent,
+		profiler.ExecutionPolicySource{
+			Kind:            profiler.ConfigMapExecutionPolicySourceKind,
+			Namespace:       run.Namespace,
+			Name:            "chill-profiler-facts",
+			UID:             testFactsUID,
+			ResourceVersion: "42",
+			Key:             "execution-policies.yaml",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen.ExecutionPolicy = policy
+	job, err := buildExecutionJob(
+		run,
+		frozen,
+		testEvidenceStoreBinding(),
+		testExecutionJobOptions(),
+		executionJobTestScheme(t),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIdentity, err := policy.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Annotations[executionPolicyAnnotation] != wantIdentity ||
+		!strings.Contains(wantIdentity, "/sha256:") {
+		t.Fatalf("configured Job policy identity = %q, want %q", job.Annotations[executionPolicyAnnotation], wantIdentity)
+	}
 }
 
 func assertWorkloadObserverCredentialIsolation(
@@ -153,7 +199,8 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
-	desired, err := buildExecutionJob(run, prepared, binding, testExecutionJobOptions(), scheme)
+	frozen := frozenRunForPrepared(t, prepared)
+	desired, err := buildExecutionJob(run, frozen, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +215,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, created, err := jobs.Ensure(ctx, run, prepared)
+	recovered, created, err := jobs.Ensure(ctx, run, frozen)
 	if err != nil || created || recovered.UID != testJobUID {
 		t.Fatalf("expected exact Job recovery, got created=%v job=%#v err=%v", created, recovered, err)
 	}
@@ -181,7 +228,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err := kubeClient.Update(ctx, retained); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := jobs.Ensure(ctx, run, prepared); err == nil || !strings.Contains(err.Error(), "frozen execution contract") {
+	if _, _, err := jobs.Ensure(ctx, run, frozen); err == nil || !strings.Contains(err.Error(), "frozen execution contract") {
 		t.Fatalf("conflicting retained Job accepted: %v", err)
 	}
 }

@@ -37,7 +37,7 @@ const (
 
 func buildExecutionJob(
 	run *edgev1alpha1.ProfilingRun,
-	prepared profiler.PreparedRun,
+	frozen FrozenRun,
 	binding EvidenceStoreBinding,
 	options ExecutionJobOptions,
 	scheme *runtime.Scheme,
@@ -54,10 +54,11 @@ func buildExecutionJob(
 	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" {
 		return nil, errors.New("WorkloadObserver ServiceAccount name is required")
 	}
-	if _, err := validatePreparedForRun(run, prepared); err != nil {
+	if _, _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
 		return nil, err
 	}
-	plan, err := profiler.DeriveExecutionPlan(prepared.Intent)
+	prepared := frozen.Prepared
+	plan, err := profiler.DeriveExecutionPlan(prepared.Intent, frozen.ExecutionPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("derive measurement Job policy: %w", err)
 	}
@@ -70,7 +71,10 @@ func buildExecutionJob(
 		return nil, err
 	}
 	rawKey := rawEvidenceObjectKey(run.UID, prepared.IntentDigest)
-	policyIdentity := plan.Policy + "/" + plan.PolicyVersion
+	policyIdentity, err := frozen.ExecutionPolicy.Identity()
+	if err != nil {
+		return nil, fmt.Errorf("identify frozen execution policy: %w", err)
+	}
 	labels := map[string]string{
 		"app.kubernetes.io/name":                 component.DefaultSystemName,
 		"app.kubernetes.io/component":            component.Profiler,

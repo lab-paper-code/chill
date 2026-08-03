@@ -19,6 +19,7 @@ type options struct {
 	metricSourcesKey               string
 	workloadObservationKey         string
 	admissionPoliciesKey           string
+	executionPoliciesKey           string
 	workloadObserverServiceAccount string
 	workloadObserverKubeAPIServer  string
 }
@@ -57,6 +58,12 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"ConfigMap key containing versioned scientific admission policies.",
 	)
 	flags.StringVar(
+		&o.executionPoliciesKey,
+		"execution-policies-key",
+		"",
+		"ConfigMap key containing versioned worker execution envelopes.",
+	)
+	flags.StringVar(
 		&o.workloadObservationKey,
 		"workload-observation-key",
 		"",
@@ -76,6 +83,7 @@ func (o options) validate() error {
 		{name: "metric-sources key", value: o.metricSourcesKey},
 		{name: "workload-observation key", value: o.workloadObservationKey},
 		{name: "admission-policies key", value: o.admissionPoliciesKey},
+		{name: "execution-policies key", value: o.executionPoliciesKey},
 		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
 	}
 	if strings.TrimSpace(o.workloadObserverKubeAPIServer) != o.workloadObserverKubeAPIServer {
@@ -88,11 +96,12 @@ func (o options) validate() error {
 	}
 	keys := map[string]struct{}{}
 	for _, key := range []string{
-		o.executionFactsKey, o.metricSourcesKey, o.workloadObservationKey, o.admissionPoliciesKey,
+		o.executionFactsKey, o.metricSourcesKey, o.workloadObservationKey,
+		o.admissionPoliciesKey, o.executionPoliciesKey,
 	} {
 		keys[key] = struct{}{}
 	}
-	if len(keys) != 4 {
+	if len(keys) != 5 {
 		return errors.New("Profiler fact-source keys must be different")
 	}
 	return nil

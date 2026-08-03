@@ -16,9 +16,10 @@ const (
 	previousCurrentIntentVersion    = "chill.dacs.io/profiling-run-intent.v1alpha5"
 	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha6"
 
-	IdleModelLoadedWorkloadMode = "idle-model-loaded"
-	NoInputGenerator            = "none"
-	NoOutputValidation          = "none"
+	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
+	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
+	NoInputGenerator                      = "none"
+	NoOutputValidation                    = "none"
 )
 
 type Intent struct {

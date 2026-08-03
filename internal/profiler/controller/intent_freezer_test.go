@@ -10,6 +10,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -52,12 +53,21 @@ func TestIntentFreezerRestartDoesNotResolveFactsAgain(t *testing.T) {
 	restartedRun := getIntentFreezerRun(t, ctx, kubeClient, run)
 	restarted := &countingPreparer{err: errors.New("must not prepare")}
 	policies := &countingPolicyResolver{err: errors.New("must not resolve policy")}
-	result, err := mustIntentFreezer(t, kubeClient, restarted, policies, records).Freeze(ctx, restartedRun)
+	executionPolicies := &countingExecutionPolicyResolver{err: errors.New("must not resolve execution policy")}
+	result, err := mustIntentFreezer(t, kubeClient, restarted, policies, records, executionPolicies).
+		Freeze(ctx, restartedRun)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.calls != 0 || policies.calls != 0 || result.StatusUpdated || result.RecordCreated || result.RecordRecovered {
-		t.Fatalf("restart recomputed frozen facts: %#v preparer=%d policies=%d", result, restarted.calls, policies.calls)
+	if restarted.calls != 0 || policies.calls != 0 || executionPolicies.calls != 0 ||
+		result.StatusUpdated || result.RecordCreated || result.RecordRecovered {
+		t.Fatalf(
+			"restart recomputed frozen facts: %#v preparer=%d admission=%d execution=%d",
+			result,
+			restarted.calls,
+			policies.calls,
+			executionPolicies.calls,
+		)
 	}
 }
 
@@ -143,6 +153,33 @@ func TestIntentFreezerPreservesPolicyResolutionFailureAndStatus(t *testing.T) {
 	}
 }
 
+func TestIntentFreezerPreservesExecutionPolicyResolutionFailureAndStatus(t *testing.T) {
+	ctx := context.Background()
+	run, kubeClient, records := intentFreezerFixture(t)
+	sentinel := errors.New("execution-policy catalog unavailable")
+	preparer := &countingPreparer{prepared: testPreparedRun(t)}
+	executionPolicies := &countingExecutionPolicyResolver{err: sentinel}
+
+	_, err := mustIntentFreezer(
+		t,
+		kubeClient,
+		preparer,
+		testPolicyResolver(t),
+		records,
+		executionPolicies,
+	).Freeze(ctx, run)
+	if !errors.Is(err, sentinel) || preparer.calls != 1 || executionPolicies.calls != 1 {
+		t.Fatalf("execution-policy error = %v preparer=%d execution=%d", err, preparer.calls, executionPolicies.calls)
+	}
+	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
+	if stored.Status.IntentDigest != "" || stored.Status.ObservedGeneration != 0 {
+		t.Fatalf("failed execution-policy resolution changed status: %#v", stored.Status)
+	}
+	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
+		t.Fatalf("failed execution-policy resolution retained a record: %v", err)
+	}
+}
+
 func TestIntentFreezerStopsForDeletingRun(t *testing.T) {
 	run := testRun()
 	now := metav1.NewTime(time.Now())
@@ -220,6 +257,20 @@ type countingPolicyResolver struct {
 	calls  int
 }
 
+type countingExecutionPolicyResolver struct {
+	policy profiler.FrozenExecutionPolicy
+	err    error
+	calls  int
+}
+
+func (r *countingExecutionPolicyResolver) Resolve(
+	_ context.Context,
+	_ profilingrun.Intent,
+) (profiler.FrozenExecutionPolicy, error) {
+	r.calls++
+	return r.policy, r.err
+}
+
 func (r *countingPolicyResolver) Resolve(context.Context, string) (profileradmission.FrozenPolicy, error) {
 	r.calls++
 	return r.policy, r.err
@@ -276,11 +327,25 @@ func mustIntentFreezer(
 	preparer RunPreparer,
 	policies AdmissionPolicyResolver,
 	records IntentRecordRepository,
+	executionPolicies ...ExecutionPolicyResolver,
 ) *IntentFreezer {
 	t.Helper()
-	freezer, err := NewIntentFreezer(kubeClient, preparer, policies, records)
+	executionPolicy := ExecutionPolicyResolver(testExecutionPolicyResolver(t))
+	if len(executionPolicies) > 0 {
+		executionPolicy = executionPolicies[0]
+	}
+	freezer, err := NewIntentFreezer(kubeClient, preparer, policies, executionPolicy, records)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return freezer
+}
+
+func testExecutionPolicyResolver(t *testing.T) *countingExecutionPolicyResolver {
+	t.Helper()
+	policy, err := profiler.LegacyFrozenExecutionPolicy(testPreparedRun(t).Intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &countingExecutionPolicyResolver{policy: policy}
 }
