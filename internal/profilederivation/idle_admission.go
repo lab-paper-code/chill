@@ -2,11 +2,7 @@ package profilederivation
 
 import (
 	"math"
-	"regexp"
-	"strings"
 )
-
-var rawEvidenceDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // AdmitIdle applies idle-specific completeness gates and the same power-window
 // quality core used by active admission.
@@ -62,32 +58,4 @@ func powerWindowFromIdle(observation IdleObservation) powerWindow {
 		ThermalStateKnown:        observation.ThermalStateKnown,
 		ThermallyThrottled:       observation.ThermallyThrottled,
 	}
-}
-
-func validAdmissionPolicy(policy AdmissionPolicy) bool {
-	return policy.Version != "" && policy.MinimumSamples >= 2 && policy.MaximumGapSeconds > 0 &&
-		policy.MaximumBoundaryDistanceSeconds >= 0 && policy.MinimumCoverage > 0 && policy.MinimumCoverage <= 1
-}
-
-func verdictFromReasons(reasons []Reason) Verdict {
-	verdict := VerdictAccepted
-	for _, reason := range reasons {
-		if reason.Kind == VerdictRejected {
-			return VerdictRejected
-		}
-		if reason.Kind == VerdictInsufficient {
-			verdict = VerdictInsufficient
-		}
-	}
-	return verdict
-}
-
-func validRawEvidenceIdentity(identity RawEvidenceIdentity) bool {
-	return strings.TrimSpace(identity.Store) == identity.Store && identity.Store != "" &&
-		strings.TrimSpace(identity.Key) == identity.Key && identity.Key != "" &&
-		rawEvidenceDigestPattern.MatchString(identity.Digest) && identity.Size > 0
-}
-
-func rawEvidenceIdentityKey(identity RawEvidenceIdentity) string {
-	return identity.Store + "\x00" + identity.Key + "\x00" + identity.Digest
 }
