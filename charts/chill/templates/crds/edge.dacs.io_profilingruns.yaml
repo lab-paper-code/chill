@@ -61,11 +61,9 @@ spec:
               admissionPolicy:
                 description: AdmissionPolicy identifies the configured single-Run
                   scientific admission policy.
-                enum:
-                - wall-power-v2
-                - idle-wall-power-v1
-                maxLength: 128
+                maxLength: 63
                 minLength: 1
+                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                 type: string
               candidate:
                 description: Candidate selects one static catalog execution path.
@@ -211,9 +209,6 @@ spec:
               rule: self.metricObservation.durationSeconds >= self.measurement.durationSeconds
             - message: cpuRequest must be positive
               rule: quantity(self.cpuRequest).compareTo(quantity('0')) > 0
-            - message: admissionPolicy must match the measurement workloadMode
-              rule: 'self.measurement.workloadMode == ''idle-model-loaded'' ? self.admissionPolicy
-                == ''idle-wall-power-v1'' : self.admissionPolicy == ''wall-power-v2'''
           status:
             description: ProfilingRunStatus contains compact, reconstructable Run
               outcomes.

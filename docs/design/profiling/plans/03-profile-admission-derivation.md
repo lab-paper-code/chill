@@ -205,6 +205,14 @@ Each projected trial retains the verified raw object's logical store, opaque
 key, SHA-256 digest, and byte size; baseline aggregation rejects missing or
 reused raw identities.
 
+Power-window thresholds are installation-time configured policy data rather
+than Go constants or caller-supplied Run fields. A Run selects a policy name;
+the control path freezes that policy's canonical bytes and ConfigMap provenance
+before execution. Admission verifies that the retained policy workload mode
+matches the frozen intent and uses the selected policy content digest as its
+version. This preserves exact replay and aggregation identity while allowing an
+operator to add a meter-specific policy without a CRD or binary release.
+
 The producer uses the public `ProfilingRun` mode discriminator and a separate
 idle runtime/raw schema. Common worker orchestration and immutable evidence
 finalization are shared with active execution; only runtime completeness, raw

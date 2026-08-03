@@ -59,7 +59,7 @@ type recordingRunEvidenceAdmitter struct {
 func (a *recordingRunEvidenceAdmitter) Admit(
 	context.Context,
 	*edgev1alpha1.ProfilingRun,
-	profiler.PreparedRun,
+	FrozenRun,
 	*batchv1.Job,
 	evidencestore.ObjectIdentity,
 ) (profileradmission.Result, error) {
@@ -108,7 +108,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	run.Status.IntentDigest = prepared.IntentDigest
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
-	freezer := &recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}}
+	freezer := &recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
@@ -179,7 +179,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}},
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -247,7 +247,7 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			finalizer := &recordingRunEvidenceFinalizer{}
 			reconciler, err := NewRunReconciler(
 				kubeClient,
-				&recordingIntentFreezer{result: FreezeIntentResult{PreparedRun: prepared}},
+				&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
 				jobs,
 				finalizer,
 				admitter,
@@ -330,6 +330,18 @@ func runReconcilerTestScheme(t *testing.T) *runtime.Scheme {
 		}
 	}
 	return scheme
+}
+
+func frozenRunForPrepared(t *testing.T, prepared profiler.PreparedRun) FrozenRun {
+	t.Helper()
+	policy, err := profileradmission.LegacyFrozenPolicy(
+		profileradmission.WallPowerPolicyV2,
+		prepared.Intent.Measurement.WorkloadMode,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
 }
 
 func findRunCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {

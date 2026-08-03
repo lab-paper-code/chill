@@ -9,6 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,7 +21,8 @@ func TestIntentFreezerCreatesRecordBeforePublishingStatus(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)
 	preparer := &countingPreparer{prepared: testPreparedRun(t)}
-	freezer := mustIntentFreezer(t, kubeClient, preparer, records)
+	policies := testPolicyResolver(t)
+	freezer := mustIntentFreezer(t, kubeClient, preparer, policies, records)
 
 	result, err := freezer.Freeze(ctx, run)
 	if err != nil {
@@ -30,7 +32,7 @@ func TestIntentFreezerCreatesRecordBeforePublishingStatus(t *testing.T) {
 		t.Fatalf("unexpected first freeze result: %#v calls=%d", result, preparer.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != result.PreparedRun.IntentDigest ||
+	if stored.Status.IntentDigest != result.Run.Prepared.IntentDigest ||
 		stored.Status.ObservedGeneration != run.Generation {
 		t.Fatalf("published status = %#v", stored.Status)
 	}
@@ -43,31 +45,32 @@ func TestIntentFreezerRestartDoesNotResolveFactsAgain(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)
 	first := &countingPreparer{prepared: testPreparedRun(t)}
-	if _, err := mustIntentFreezer(t, kubeClient, first, records).Freeze(ctx, run); err != nil {
+	if _, err := mustIntentFreezer(t, kubeClient, first, testPolicyResolver(t), records).Freeze(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 
 	restartedRun := getIntentFreezerRun(t, ctx, kubeClient, run)
 	restarted := &countingPreparer{err: errors.New("must not prepare")}
-	result, err := mustIntentFreezer(t, kubeClient, restarted, records).Freeze(ctx, restartedRun)
+	policies := &countingPolicyResolver{err: errors.New("must not resolve policy")}
+	result, err := mustIntentFreezer(t, kubeClient, restarted, policies, records).Freeze(ctx, restartedRun)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.calls != 0 || result.StatusUpdated || result.RecordCreated || result.RecordRecovered {
-		t.Fatalf("restart recomputed frozen facts: %#v calls=%d", result, restarted.calls)
+	if restarted.calls != 0 || policies.calls != 0 || result.StatusUpdated || result.RecordCreated || result.RecordRecovered {
+		t.Fatalf("restart recomputed frozen facts: %#v preparer=%d policies=%d", result, restarted.calls, policies.calls)
 	}
 }
 
 func TestIntentFreezerRecoversCrashBetweenRecordAndStatus(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)
-	prepared := testPreparedRun(t)
-	if _, created, err := records.Ensure(ctx, run, prepared); err != nil || !created {
+	frozen := testFrozenRun(t)
+	if _, created, err := records.Ensure(ctx, run, frozen); err != nil || !created {
 		t.Fatalf("precreate record: created=%v err=%v", created, err)
 	}
 	preparer := &countingPreparer{err: errors.New("must not prepare")}
 
-	result, err := mustIntentFreezer(t, kubeClient, preparer, records).Freeze(ctx, run)
+	result, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +78,7 @@ func TestIntentFreezerRecoversCrashBetweenRecordAndStatus(t *testing.T) {
 		t.Fatalf("crash recovery result: %#v calls=%d", result, preparer.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != prepared.IntentDigest {
+	if stored.Status.IntentDigest != frozen.Prepared.IntentDigest {
 		t.Fatalf("recovered digest = %q", stored.Status.IntentDigest)
 	}
 }
@@ -95,7 +98,7 @@ func TestIntentFreezerNeverRecreatesRecordClaimedByStatus(t *testing.T) {
 	}
 	preparer := &countingPreparer{prepared: testPreparedRun(t)}
 
-	_, err = mustIntentFreezer(t, kubeClient, preparer, records).Freeze(ctx, stored)
+	_, err = mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, stored)
 	if err == nil || !apierrors.IsNotFound(err) || preparer.calls != 0 {
 		t.Fatalf("missing claimed record should stop: err=%v calls=%d", err, preparer.calls)
 	}
@@ -107,7 +110,7 @@ func TestIntentFreezerPreservesPreparationFailureAndStatus(t *testing.T) {
 	sentinel := errors.New("resolver unavailable")
 	preparer := &countingPreparer{err: sentinel}
 
-	_, err := mustIntentFreezer(t, kubeClient, preparer, records).Freeze(ctx, run)
+	_, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
 	if !errors.Is(err, sentinel) || preparer.calls != 1 {
 		t.Fatalf("preparation error = %v calls=%d", err, preparer.calls)
 	}
@@ -117,6 +120,26 @@ func TestIntentFreezerPreservesPreparationFailureAndStatus(t *testing.T) {
 	}
 	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
 		t.Fatalf("failed preparation retained a record: %v", err)
+	}
+}
+
+func TestIntentFreezerPreservesPolicyResolutionFailureAndStatus(t *testing.T) {
+	ctx := context.Background()
+	run, kubeClient, records := intentFreezerFixture(t)
+	sentinel := errors.New("policy catalog unavailable")
+	preparer := &countingPreparer{prepared: testPreparedRun(t)}
+	policies := &countingPolicyResolver{err: sentinel}
+
+	_, err := mustIntentFreezer(t, kubeClient, preparer, policies, records).Freeze(ctx, run)
+	if !errors.Is(err, sentinel) || preparer.calls != 1 || policies.calls != 1 {
+		t.Fatalf("policy error = %v preparer=%d policies=%d", err, preparer.calls, policies.calls)
+	}
+	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
+	if stored.Status.IntentDigest != "" || stored.Status.ObservedGeneration != 0 {
+		t.Fatalf("failed policy resolution changed status: %#v", stored.Status)
+	}
+	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
+		t.Fatalf("failed policy resolution retained a record: %v", err)
 	}
 }
 
@@ -132,7 +155,7 @@ func TestIntentFreezerStopsForDeletingRun(t *testing.T) {
 	}
 	preparer := &countingPreparer{err: errors.New("must not prepare")}
 
-	result, err := mustIntentFreezer(t, kubeClient, preparer, records).
+	result, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).
 		Freeze(context.Background(), run)
 	if err != nil || !result.Stopped || preparer.calls != 0 {
 		t.Fatalf("deletion result: %#v err=%v calls=%d", result, err, preparer.calls)
@@ -142,8 +165,8 @@ func TestIntentFreezerStopsForDeletingRun(t *testing.T) {
 func TestIntentFreezerRejectsStatusAndRecordDigestMismatch(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)
-	prepared := testPreparedRun(t)
-	if _, _, err := records.Ensure(ctx, run, prepared); err != nil {
+	frozen := testFrozenRun(t)
+	if _, _, err := records.Ensure(ctx, run, frozen); err != nil {
 		t.Fatal(err)
 	}
 	base := run.DeepCopy()
@@ -151,9 +174,9 @@ func TestIntentFreezerRejectsStatusAndRecordDigestMismatch(t *testing.T) {
 	if err := kubeClient.Status().Patch(ctx, run, client.MergeFrom(base)); err != nil {
 		t.Fatal(err)
 	}
-	preparer := &countingPreparer{prepared: prepared}
+	preparer := &countingPreparer{prepared: frozen.Prepared}
 
-	_, err := mustIntentFreezer(t, kubeClient, preparer, records).Freeze(ctx, run)
+	_, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
 	if err == nil || !strings.Contains(err.Error(), "does not match") || preparer.calls != 0 {
 		t.Fatalf("digest mismatch = %v calls=%d", err, preparer.calls)
 	}
@@ -175,7 +198,7 @@ func TestIntentFreezerStatusPatchPreservesConditions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := mustIntentFreezer(t, kubeClient, &countingPreparer{prepared: testPreparedRun(t)}, records).
+	if _, err := mustIntentFreezer(t, kubeClient, &countingPreparer{prepared: testPreparedRun(t)}, testPolicyResolver(t), records).
 		Freeze(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +212,22 @@ type countingPreparer struct {
 	prepared profiler.PreparedRun
 	err      error
 	calls    int
+}
+
+type countingPolicyResolver struct {
+	policy profileradmission.FrozenPolicy
+	err    error
+	calls  int
+}
+
+func (r *countingPolicyResolver) Resolve(context.Context, string) (profileradmission.FrozenPolicy, error) {
+	r.calls++
+	return r.policy, r.err
+}
+
+func testPolicyResolver(t *testing.T) *countingPolicyResolver {
+	t.Helper()
+	return &countingPolicyResolver{policy: testFrozenRun(t).AdmissionPolicy}
 }
 
 func (p *countingPreparer) Prepare(
@@ -235,10 +274,11 @@ func mustIntentFreezer(
 	t *testing.T,
 	kubeClient client.Client,
 	preparer RunPreparer,
+	policies AdmissionPolicyResolver,
 	records IntentRecordRepository,
 ) *IntentFreezer {
 	t.Helper()
-	freezer, err := NewIntentFreezer(kubeClient, preparer, records)
+	freezer, err := NewIntentFreezer(kubeClient, preparer, policies, records)
 	if err != nil {
 		t.Fatal(err)
 	}

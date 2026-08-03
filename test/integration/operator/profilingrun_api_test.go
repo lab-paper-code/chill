@@ -38,6 +38,15 @@ var _ = Describe("ProfilingRun API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
 	})
 
+	It("accepts an operator-configured admission policy name", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("configured-policy"))
+		run.Spec.AdmissionPolicy = "lab-wall-meter-2026.08"
+
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+	})
+
 	DescribeTable("rejects structurally invalid Run requests",
 		func(mutate func(*edgev1alpha1.ProfilingRun)) {
 			ctx := context.Background()
@@ -72,11 +81,8 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("empty admission policy", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.AdmissionPolicy = ""
 		}),
-		Entry("unsupported admission policy", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.AdmissionPolicy = "unknown"
-		}),
-		Entry("active mode with idle policy", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.AdmissionPolicy = idleAdmissionPolicy
+		Entry("malformed admission policy name", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.AdmissionPolicy = "Invalid Policy"
 		}),
 		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.WarmupIterations = 0

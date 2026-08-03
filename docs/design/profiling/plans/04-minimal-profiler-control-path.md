@@ -286,6 +286,7 @@ or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 | trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration content digest plus digest-pinned runtime and artifact workload images |
 | selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
 | Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration content digest |
+| single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics, policy content digest, and exact ConfigMap namespace, name, UID, resourceVersion, key, and entry digest |
 
 The Profiler Deployment configuration contains only a local ConfigMap key
 reference to these facts. The Operator passes that reference to the Deployment
@@ -297,6 +298,17 @@ Changing fact-source content may affect new Runs but never rewrites an already
 frozen Run. The Profiler hashes the exact entries used for a candidate and
 retains that digest, the ConfigMap namespace, name, UID, resourceVersion, and
 all selected image digests in the immutable intent record.
+
+Admission policy names are Run inputs, but thresholds are not. An administrator
+defines the named policies in the installation-time fact-source ConfigMap. The
+Profiler strict-decodes the catalog, selects the requested entry, verifies its
+workload mode, and retains canonical selected-policy bytes plus exact source
+provenance in the immutable intent record before creating a Job. Policy content
+digest, rather than a compiled label, is the admission version published in
+status and carried into derivation. ConfigMap changes therefore affect only new
+Runs. Restart recovery reads the retained bytes and never re-resolves mutable
+policy configuration. Two-key intent records created before this contract use
+the exact legacy built-in thresholds solely as a compatibility path.
 
 `ProfilingRun.spec.candidate.powerMode` is required. The candidate resolver
 verifies that it is declared by the selected `DeviceClass`. The first CPU path

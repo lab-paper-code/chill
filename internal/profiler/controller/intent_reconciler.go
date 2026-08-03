@@ -67,7 +67,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	if run.Status.Job == nil {
-		job, _, err := r.jobs.Ensure(ctx, run, frozen.PreparedRun)
+		job, _, err := r.jobs.Ensure(ctx, run, frozen.Run.Prepared)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("materialize ProfilingRun %s Job: %w", req.NamespacedName, err)
 		}
@@ -85,7 +85,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		return ctrl.Result{}, fmt.Errorf("get recorded measurement Job %s: %w", jobKey, err)
 	}
-	snapshot, err := ProjectSnapshot(run, &frozen.PreparedRun.Intent, job)
+	snapshot, err := ProjectSnapshot(run, &frozen.Run.Prepared.Intent, job)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("project ProfilingRun %s lifecycle: %w", req.NamespacedName, err)
 	}
@@ -99,7 +99,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionReportExecutionFailure:
 		return ctrl.Result{}, r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "JobFailed", "measurement Job failed")
 	case profiler.ActionFinalizeEvidence:
-		finalized, finalizeErr := r.finalize.Finalize(ctx, run, frozen.PreparedRun, job)
+		finalized, finalizeErr := r.finalize.Finalize(ctx, run, frozen.Run.Prepared, job)
 		if finalizeErr != nil {
 			statusErr := r.publishEvidenceFailure(ctx, run)
 			if statusErr != nil {
@@ -115,7 +115,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if decision.EvidenceReference == nil {
 			return ctrl.Result{}, errors.New("admission decision omitted evidence reference")
 		}
-		admission, admitErr := r.admit.Admit(ctx, run, frozen.PreparedRun, job, *decision.EvidenceReference)
+		admission, admitErr := r.admit.Admit(ctx, run, frozen.Run, job, *decision.EvidenceReference)
 		if admitErr != nil {
 			statusErr := r.publishAdmissionFailure(ctx, run)
 			if statusErr != nil {

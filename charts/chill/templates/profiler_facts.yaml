@@ -21,4 +21,8 @@ data:
   {{ .Values.profiler.factSource.workloadObservationKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-workload-observation.v1alpha2
     image: {{ .Values.profiler.factSource.workloadObserverImage | quote }}
+  {{ .Values.profiler.factSource.admissionPoliciesKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
+    policies:
+{{- toYaml .Values.profiler.factSource.admissionPolicies | nindent 6 }}
 {{- end }}

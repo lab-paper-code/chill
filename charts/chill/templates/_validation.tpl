@@ -62,8 +62,17 @@
 {{- if empty .Values.profiler.factSource.workloadObservationKey -}}
 {{- fail "profiler.factSource.workloadObservationKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if or (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey) -}}
+{{- if empty .Values.profiler.factSource.admissionPoliciesKey -}}
+{{- fail "profiler.factSource.admissionPoliciesKey must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- if or (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.admissionPoliciesKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.admissionPoliciesKey) (eq .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.admissionPoliciesKey) -}}
 {{- fail "profiler.factSource keys must be different" -}}
+{{- end -}}
+{{- if not (kindIs "slice" .Values.profiler.factSource.admissionPolicies) -}}
+{{- fail "profiler.factSource.admissionPolicies must be a list" -}}
+{{- end -}}
+{{- if empty .Values.profiler.factSource.admissionPolicies -}}
+{{- fail "profiler.factSource.admissionPolicies must not be empty" -}}
 {{- end -}}
 {{- if not (kindIs "slice" .Values.profiler.factSource.executionDeclarations) -}}
 {{- fail "profiler.factSource.executionDeclarations must be a list" -}}

@@ -8,7 +8,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
-	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
@@ -21,7 +20,7 @@ type RunEvidenceAdmitter interface {
 	Admit(
 		context.Context,
 		*edgev1alpha1.ProfilingRun,
-		profiler.PreparedRun,
+		FrozenRun,
 		*batchv1.Job,
 		evidencestore.ObjectIdentity,
 	) (profileradmission.Result, error)
@@ -55,16 +54,17 @@ func NewKubernetesEvidenceAdmitter(
 func (a *KubernetesEvidenceAdmitter) Admit(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	prepared profiler.PreparedRun,
+	frozen FrozenRun,
 	job *batchv1.Job,
 	reference evidencestore.ObjectIdentity,
 ) (profileradmission.Result, error) {
 	if run == nil || job == nil {
 		return profileradmission.Result{}, errors.New("ProfilingRun and measurement Job are required")
 	}
-	if _, err := validatePreparedForRun(run, prepared); err != nil {
+	if _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
 		return profileradmission.Result{}, err
 	}
+	prepared := frozen.Prepared
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
@@ -77,7 +77,7 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		if execution.IntentDigest != prepared.IntentDigest {
 			return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
 		}
-		result, _, err := profileradmission.EvaluateIdle(execution, raw, run.Spec.AdmissionPolicy)
+		result, _, err := profileradmission.EvaluateIdle(execution, raw, frozen.AdmissionPolicy)
 		return result, err
 	}
 	execution, raw, err := a.loader.Load(ctx, run, reference)
@@ -87,5 +87,5 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 	if execution.IntentDigest != prepared.IntentDigest {
 		return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
 	}
-	return profileradmission.Evaluate(execution, raw, run.Spec.AdmissionPolicy)
+	return profileradmission.Evaluate(execution, raw, frozen.AdmissionPolicy)
 }

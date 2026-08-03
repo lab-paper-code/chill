@@ -19,7 +19,6 @@ const (
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
-// +kubebuilder:validation:XValidation:rule="self.measurement.workloadMode == 'idle-model-loaded' ? self.admissionPolicy == 'idle-wall-power-v1' : self.admissionPolicy == 'wall-power-v2'",message="admissionPolicy must match the measurement workloadMode"
 type ProfilingRunSpec struct {
 	// Candidate selects one static catalog execution path.
 	Candidate ProfilingRunCandidateSpec `json:"candidate"`
@@ -40,8 +39,8 @@ type ProfilingRunSpec struct {
 
 	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Enum=wall-power-v2;idle-wall-power-v1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	AdmissionPolicy string `json:"admissionPolicy"`
 }
 

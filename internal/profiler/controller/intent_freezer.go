@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,8 +18,12 @@ type RunPreparer interface {
 }
 
 type IntentRecordRepository interface {
-	Ensure(context.Context, *edgev1alpha1.ProfilingRun, profiler.PreparedRun) (*corev1.ConfigMap, bool, error)
-	Load(context.Context, *edgev1alpha1.ProfilingRun) (profiler.PreparedRun, error)
+	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*corev1.ConfigMap, bool, error)
+	Load(context.Context, *edgev1alpha1.ProfilingRun) (FrozenRun, error)
+}
+
+type AdmissionPolicyResolver interface {
+	Resolve(context.Context, string) (profileradmission.FrozenPolicy, error)
 }
 
 // IntentFreezer coordinates only the durable transition from mutable observed
@@ -26,11 +31,12 @@ type IntentRecordRepository interface {
 type IntentFreezer struct {
 	kubeClient client.Client
 	preparer   RunPreparer
+	policies   AdmissionPolicyResolver
 	records    IntentRecordRepository
 }
 
 type FreezeIntentResult struct {
-	PreparedRun     profiler.PreparedRun
+	Run             FrozenRun
 	RecordCreated   bool
 	RecordRecovered bool
 	StatusUpdated   bool
@@ -40,12 +46,13 @@ type FreezeIntentResult struct {
 func NewIntentFreezer(
 	kubeClient client.Client,
 	preparer RunPreparer,
+	policies AdmissionPolicyResolver,
 	records IntentRecordRepository,
 ) (*IntentFreezer, error) {
-	if kubeClient == nil || preparer == nil || records == nil {
-		return nil, errors.New("Kubernetes client, Run preparer, and intent records are required")
+	if kubeClient == nil || preparer == nil || policies == nil || records == nil {
+		return nil, errors.New("Kubernetes client, Run preparer, admission-policy resolver, and intent records are required")
 	}
-	return &IntentFreezer{kubeClient: kubeClient, preparer: preparer, records: records}, nil
+	return &IntentFreezer{kubeClient: kubeClient, preparer: preparer, policies: policies, records: records}, nil
 }
 
 // Freeze makes the immutable record durable before publishing its digest in
@@ -63,28 +70,28 @@ func (f *IntentFreezer) Freeze(
 	}
 
 	if run.Status.IntentDigest != "" {
-		prepared, err := f.records.Load(ctx, run)
+		frozen, err := f.records.Load(ctx, run)
 		if err != nil {
 			return FreezeIntentResult{}, fmt.Errorf("load recorded Run intent: %w", err)
 		}
-		if prepared.IntentDigest != run.Status.IntentDigest {
+		if frozen.Prepared.IntentDigest != run.Status.IntentDigest {
 			return FreezeIntentResult{}, errors.New("status intent digest does not match frozen intent record")
 		}
-		updated, err := f.publishStatus(ctx, run, prepared.IntentDigest)
+		updated, err := f.publishStatus(ctx, run, frozen.Prepared.IntentDigest)
 		if err != nil {
 			return FreezeIntentResult{}, err
 		}
-		return FreezeIntentResult{PreparedRun: prepared, StatusUpdated: updated}, nil
+		return FreezeIntentResult{Run: frozen, StatusUpdated: updated}, nil
 	}
 
-	prepared, err := f.records.Load(ctx, run)
+	frozen, err := f.records.Load(ctx, run)
 	if err == nil {
-		updated, err := f.publishStatus(ctx, run, prepared.IntentDigest)
+		updated, err := f.publishStatus(ctx, run, frozen.Prepared.IntentDigest)
 		if err != nil {
 			return FreezeIntentResult{}, err
 		}
 		return FreezeIntentResult{
-			PreparedRun: prepared, RecordRecovered: true, StatusUpdated: updated,
+			Run: frozen, RecordRecovered: true, StatusUpdated: updated,
 		}, nil
 	}
 	if !apierrors.IsNotFound(err) {
@@ -95,11 +102,16 @@ func (f *IntentFreezer) Freeze(
 	if err != nil {
 		return FreezeIntentResult{}, err
 	}
-	prepared, err = f.preparer.Prepare(ctx, requested.Preparation)
+	prepared, err := f.preparer.Prepare(ctx, requested.Preparation)
 	if err != nil {
 		return FreezeIntentResult{}, fmt.Errorf("prepare Run intent: %w", err)
 	}
-	_, created, err := f.records.Ensure(ctx, run, prepared)
+	policy, err := f.policies.Resolve(ctx, requested.AdmissionPolicy)
+	if err != nil {
+		return FreezeIntentResult{}, fmt.Errorf("resolve admission policy: %w", err)
+	}
+	frozen = FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
+	_, created, err := f.records.Ensure(ctx, run, frozen)
 	if err != nil {
 		return FreezeIntentResult{}, fmt.Errorf("retain frozen Run intent: %w", err)
 	}
@@ -108,7 +120,7 @@ func (f *IntentFreezer) Freeze(
 		return FreezeIntentResult{}, err
 	}
 	return FreezeIntentResult{
-		PreparedRun: prepared, RecordCreated: created, StatusUpdated: updated,
+		Run: frozen, RecordCreated: created, StatusUpdated: updated,
 	}, nil
 }
 

@@ -88,6 +88,7 @@ func profilerArgs(options Options, config Config) []string {
 		"--execution-facts-key=" + config.FactSource.ExecutionFactsKey,
 		"--metric-sources-key=" + config.FactSource.MetricSourcesKey,
 		"--workload-observation-key=" + config.FactSource.WorkloadObservationKey,
+		"--admission-policies-key=" + config.FactSource.AdmissionPoliciesKey,
 		"--workload-observer-service-account=" + config.WorkloadObserver.ServiceAccountName,
 	}
 	if config.WorkloadObserver.KubeAPIServer != "" {

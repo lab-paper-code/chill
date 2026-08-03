@@ -30,11 +30,14 @@ type Result struct {
 func Evaluate(
 	execution profilerevidence.ExecutionEvidence,
 	raw profilerevidence.RawMeasurement,
-	policyName string,
+	frozenPolicy FrozenPolicy,
 ) (Result, error) {
-	policy, err := builtInPolicy(policyName)
+	policy, err := frozenPolicy.AdmissionPolicy()
 	if err != nil {
 		return Result{}, err
+	}
+	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
+		return Result{}, errors.New("admission policy workload mode does not match execution intent")
 	}
 	if err := execution.Validate(raw); err != nil {
 		return Result{}, fmt.Errorf("validate execution evidence: %w", err)
@@ -52,11 +55,14 @@ func Evaluate(
 func EvaluateIdle(
 	execution profilerevidence.ExecutionEvidence,
 	raw profilerevidence.IdleRawMeasurement,
-	policyName string,
+	frozenPolicy FrozenPolicy,
 ) (Result, *profilederivation.IdleTrial, error) {
-	policy, err := builtInIdlePolicy(policyName)
+	policy, err := frozenPolicy.AdmissionPolicy()
 	if err != nil {
 		return Result{}, nil, err
+	}
+	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
+		return Result{}, nil, errors.New("idle admission policy workload mode does not match execution intent")
 	}
 	if err := execution.ValidateIdle(raw); err != nil {
 		return Result{}, nil, fmt.Errorf("validate idle execution evidence: %w", err)

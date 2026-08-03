@@ -89,10 +89,30 @@ profiler:
     executionFactsKey: execution-facts.yaml
     metricSourcesKey: metric-sources.yaml
     workloadObservationKey: workload-observation.yaml
+    admissionPoliciesKey: admission-policies.yaml
     metricObserverImage: ""
     workloadObserverImage: ""
     executionDeclarations: []
     metricSources: []
+    admissionPolicies:
+      - name: wall-power-v2
+        workloadMode: saturated-serial-fixed-batch
+        minimumSamples: 20
+        maximumGapSeconds: 1.5
+        maximumBoundaryDistanceSeconds: 1.0
+        minimumCoverage: 0.95
+        allowReceiptTimestamps: true
+        rejectConcurrentCHILLWorkloads: true
+        rejectExternalWorkloadChanges: true
+      - name: idle-wall-power-v1
+        workloadMode: idle-model-loaded
+        minimumSamples: 20
+        maximumGapSeconds: 1.5
+        maximumBoundaryDistanceSeconds: 1.0
+        minimumCoverage: 0.95
+        allowReceiptTimestamps: true
+        rejectConcurrentCHILLWorkloads: true
+        rejectExternalWorkloadChanges: true
 
 console:
   enabled: false

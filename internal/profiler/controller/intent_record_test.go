@@ -9,6 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,7 +19,7 @@ import (
 func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	ctx := context.Background()
 	run := testRun()
-	prepared := testPreparedRun(t)
+	frozen := testFrozenRun(t)
 	scheme := intentRecordTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	records, err := NewIntentRecords(kubeClient, scheme)
@@ -26,12 +27,13 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	record, created, err := records.Ensure(ctx, run, prepared)
+	record, created, err := records.Ensure(ctx, run, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !created || record.Immutable == nil || !*record.Immutable ||
-		len(record.BinaryData) != 2 || record.Annotations[intentDigestAnnotation] != prepared.IntentDigest {
+		len(record.BinaryData) != 3 || record.Annotations[intentDigestAnnotation] != frozen.Prepared.IntentDigest ||
+		record.Annotations[admissionPolicyAnnotation] == "" {
 		t.Fatalf("created frozen intent record is incomplete: %#v", record)
 	}
 	if len(record.OwnerReferences) != 1 || record.OwnerReferences[0].UID != run.UID ||
@@ -39,7 +41,7 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 		t.Fatalf("frozen intent owner = %#v", record.OwnerReferences)
 	}
 
-	if _, created, err = records.Ensure(ctx, run, prepared); err != nil || created {
+	if _, created, err = records.Ensure(ctx, run, frozen); err != nil || created {
 		t.Fatalf("second ensure should reuse exact record: created=%v err=%v", created, err)
 	}
 	restarted, err := NewIntentRecords(kubeClient, scheme)
@@ -50,8 +52,11 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.IntentDigest != prepared.IntentDigest ||
-		!bytes.Equal(loaded.CandidateReportBytes, prepared.CandidateReportBytes) {
+	loadedPolicy, _ := loaded.AdmissionPolicy.CanonicalJSON()
+	frozenPolicy, _ := frozen.AdmissionPolicy.CanonicalJSON()
+	if loaded.Prepared.IntentDigest != frozen.Prepared.IntentDigest ||
+		!bytes.Equal(loaded.Prepared.CandidateReportBytes, frozen.Prepared.CandidateReportBytes) ||
+		!bytes.Equal(loadedPolicy, frozenPolicy) {
 		t.Fatal("restarted manager did not recover exact frozen inputs")
 	}
 }
@@ -59,14 +64,14 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 func TestIntentRecordsNeverOverwriteConflictingRecord(t *testing.T) {
 	ctx := context.Background()
 	run := testRun()
-	prepared := testPreparedRun(t)
+	frozen := testFrozenRun(t)
 	scheme := intentRecordTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	records, err := NewIntentRecords(kubeClient, scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, _, err := records.Ensure(ctx, run, prepared)
+	record, _, err := records.Ensure(ctx, run, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +85,7 @@ func TestIntentRecordsNeverOverwriteConflictingRecord(t *testing.T) {
 	if err := kubeClient.Update(ctx, retained); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := records.Ensure(ctx, run, prepared); err == nil {
+	if _, _, err := records.Ensure(ctx, run, frozen); err == nil {
 		t.Fatal("conflicting frozen intent record was accepted")
 	}
 	after := &corev1.ConfigMap{}
@@ -95,9 +100,9 @@ func TestIntentRecordsNeverOverwriteConflictingRecord(t *testing.T) {
 func TestIntentRecordsRejectForeignSameNamedRecord(t *testing.T) {
 	ctx := context.Background()
 	run := testRun()
-	prepared := testPreparedRun(t)
+	frozen := testFrozenRun(t)
 	scheme := intentRecordTestScheme(t)
-	foreign, err := buildIntentRecord(run, prepared, scheme)
+	foreign, err := buildIntentRecord(run, frozen, scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,25 +112,61 @@ func TestIntentRecordsRejectForeignSameNamedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := records.Ensure(ctx, run, prepared); err == nil || !strings.Contains(err.Error(), "ownership mismatch") {
+	if _, _, err := records.Ensure(ctx, run, frozen); err == nil || !strings.Contains(err.Error(), "ownership mismatch") {
 		t.Fatalf("expected foreign owner rejection, got %v", err)
 	}
 }
 
 func TestIntentRecordsRejectPreparedRunSpecDrift(t *testing.T) {
 	run := testRun()
-	prepared := testPreparedRun(t)
-	prepared.Intent.Measurement.Batch = 2
-	prepared.IntentDigest, _ = prepared.Intent.Digest()
+	frozen := testFrozenRun(t)
+	frozen.Prepared.Intent.Measurement.Batch = 2
+	frozen.Prepared.IntentDigest, _ = frozen.Prepared.Intent.Digest()
 	scheme := intentRecordTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	records, err := NewIntentRecords(kubeClient, scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := records.Ensure(context.Background(), run, prepared); err == nil ||
+	if _, _, err := records.Ensure(context.Background(), run, frozen); err == nil ||
 		!strings.Contains(err.Error(), "does not match immutable ProfilingRun spec") {
 		t.Fatalf("expected spec drift rejection, got %v", err)
+	}
+}
+
+func TestIntentRecordsRejectAdmissionPolicyDrift(t *testing.T) {
+	run := testRun()
+	frozen := testFrozenRun(t)
+	frozen.AdmissionPolicy.Policy.Name = "different-policy"
+	scheme := intentRecordTestScheme(t)
+	records, err := NewIntentRecords(fake.NewClientBuilder().WithScheme(scheme).Build(), scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := records.Ensure(context.Background(), run, frozen); err == nil ||
+		!strings.Contains(err.Error(), "does not match immutable ProfilingRun spec") {
+		t.Fatalf("expected policy drift rejection, got %v", err)
+	}
+}
+
+func TestIntentRecordsLoadLegacyTwoKeyRecordWithoutMutableLookup(t *testing.T) {
+	run := testRun()
+	frozen := testFrozenRun(t)
+	scheme := intentRecordTestScheme(t)
+	record, err := buildIntentRecord(run, frozen, scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(record.BinaryData, intentRecordAdmissionPolicyKey)
+	delete(record.Annotations, admissionPolicyAnnotation)
+
+	loaded, err := decodeIntentRecord(run, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AdmissionPolicy.Source.Kind != profileradmission.BuiltInPolicySourceKind ||
+		loaded.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy {
+		t.Fatalf("legacy policy reconstruction = %#v", loaded.AdmissionPolicy)
 	}
 }
 
@@ -164,6 +205,19 @@ func testPreparedRun(t *testing.T) profiler.PreparedRun {
 	return profiler.PreparedRun{
 		Intent: intent, IntentDigest: digest, CandidateReportBytes: candidate,
 	}
+}
+
+func testFrozenRun(t *testing.T) FrozenRun {
+	t.Helper()
+	prepared := testPreparedRun(t)
+	policy, err := profileradmission.LegacyFrozenPolicy(
+		profileradmission.WallPowerPolicyV2,
+		prepared.Intent.Measurement.WorkloadMode,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return FrozenRun{Prepared: prepared, AdmissionPolicy: policy}
 }
 
 func intentRecordTestScheme(t *testing.T) *runtime.Scheme {
