@@ -1,0 +1,249 @@
+{
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"annotations\":{},\"labels\":{\"app.kubernetes.io/name\":\"transition-model-service\",\"transition.chill.dacs.io/role\":\"source\"},\"name\":\"model-a-mobilenet\",\"namespace\":\"chill-transition-spike\"},\"spec\":{\"automountServiceAccountToken\":false,\"containers\":[{\"command\":[\"python3\",\"/experiment/model_service.py\"],\"env\":[{\"name\":\"MODEL_PATH\",\"value\":\"/model/model.onnx\"},{\"name\":\"MODEL_NAME\",\"value\":\"mobilenet-v2-050\"},{\"name\":\"ARTIFACT_DIGEST\",\"value\":\"sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2\"}],\"image\":\"155.230.35.213:5000/chill/spike-batch-characterization@sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"runtime\",\"readinessProbe\":{\"exec\":{\"command\":[\"test\",\"-f\",\"/tmp/model-ready\"]},\"failureThreshold\":900,\"periodSeconds\":1,\"timeoutSeconds\":1},\"resources\":{\"limits\":{\"cpu\":\"4\",\"memory\":\"5Gi\",\"nvidia.com/gpu\":\"1\"},\"requests\":{\"cpu\":\"2\",\"memory\":\"1Gi\",\"nvidia.com/gpu\":\"1\"}},\"volumeMounts\":[{\"mountPath\":\"/model\",\"name\":\"model\",\"readOnly\":true},{\"mountPath\":\"/engine-cache\",\"name\":\"engine-cache\"},{\"mountPath\":\"/experiment\",\"name\":\"experiment-script\",\"readOnly\":true}]}],\"initContainers\":[{\"args\":[\"cp /artifact/mobilenet-v2-050.onnx /model/model.onnx; echo '8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2  /model/model.onnx' | sha256sum -c -\"],\"command\":[\"sh\",\"-ec\"],\"image\":\"155.230.35.213:5000/chill/transition-mobilenet-v2-050-artifact@sha256:1db7b031013d0c5bdf0f4a30c8647f694baf377243bf845d3ccf2e8a64a079b6\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"artifact\",\"volumeMounts\":[{\"mountPath\":\"/model\",\"name\":\"model\"}]}],\"nodeSelector\":{\"kubernetes.io/hostname\":\"jetsonx\"},\"restartPolicy\":\"Never\",\"terminationGracePeriodSeconds\":5,\"tolerations\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/edge\",\"operator\":\"Exists\"}],\"volumes\":[{\"emptyDir\":{},\"name\":\"model\"},{\"emptyDir\":{},\"name\":\"engine-cache\"},{\"configMap\":{\"name\":\"transition-model-service-v1\"},\"name\":\"experiment-script\"}]}}\n"
+        },
+        "creationTimestamp": "2026-08-03T11:36:39Z",
+        "labels": {
+            "app.kubernetes.io/name": "transition-model-service",
+            "transition.chill.dacs.io/role": "source"
+        },
+        "name": "model-a-mobilenet",
+        "namespace": "chill-transition-spike",
+        "resourceVersion": "275430626",
+        "uid": "844fabe9-aae9-4dcd-b039-2e75d10967cd"
+    },
+    "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+            {
+                "command": [
+                    "python3",
+                    "/experiment/model_service.py"
+                ],
+                "env": [
+                    {
+                        "name": "MODEL_PATH",
+                        "value": "/model/model.onnx"
+                    },
+                    {
+                        "name": "MODEL_NAME",
+                        "value": "mobilenet-v2-050"
+                    },
+                    {
+                        "name": "ARTIFACT_DIGEST",
+                        "value": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
+                    }
+                ],
+                "image": "155.230.35.213:5000/chill/spike-batch-characterization@sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "runtime",
+                "readinessProbe": {
+                    "exec": {
+                        "command": [
+                            "test",
+                            "-f",
+                            "/tmp/model-ready"
+                        ]
+                    },
+                    "failureThreshold": 900,
+                    "periodSeconds": 1,
+                    "successThreshold": 1,
+                    "timeoutSeconds": 1
+                },
+                "resources": {
+                    "limits": {
+                        "cpu": "4",
+                        "memory": "5Gi",
+                        "nvidia.com/gpu": "1"
+                    },
+                    "requests": {
+                        "cpu": "2",
+                        "memory": "1Gi",
+                        "nvidia.com/gpu": "1"
+                    }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                    {
+                        "mountPath": "/model",
+                        "name": "model",
+                        "readOnly": true
+                    },
+                    {
+                        "mountPath": "/engine-cache",
+                        "name": "engine-cache"
+                    },
+                    {
+                        "mountPath": "/experiment",
+                        "name": "experiment-script",
+                        "readOnly": true
+                    }
+                ]
+            }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "initContainers": [
+            {
+                "args": [
+                    "cp /artifact/mobilenet-v2-050.onnx /model/model.onnx; echo '8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2  /model/model.onnx' | sha256sum -c -"
+                ],
+                "command": [
+                    "sh",
+                    "-ec"
+                ],
+                "image": "155.230.35.213:5000/chill/transition-mobilenet-v2-050-artifact@sha256:1db7b031013d0c5bdf0f4a30c8647f694baf377243bf845d3ccf2e8a64a079b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "artifact",
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                    {
+                        "mountPath": "/model",
+                        "name": "model"
+                    }
+                ]
+            }
+        ],
+        "nodeName": "jetsonx",
+        "nodeSelector": {
+            "kubernetes.io/hostname": "jetsonx"
+        },
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Never",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 5,
+        "tolerations": [
+            {
+                "effect": "NoSchedule",
+                "key": "node-role.kubernetes.io/edge",
+                "operator": "Exists"
+            },
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/not-ready",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            },
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/unreachable",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            }
+        ],
+        "volumes": [
+            {
+                "emptyDir": {},
+                "name": "model"
+            },
+            {
+                "emptyDir": {},
+                "name": "engine-cache"
+            },
+            {
+                "configMap": {
+                    "defaultMode": 420,
+                    "name": "transition-model-service-v1"
+                },
+                "name": "experiment-script"
+            }
+        ]
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-08-03T11:36:40Z",
+                "status": "True",
+                "type": "PodReadyToStartContainers"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-08-03T11:36:41Z",
+                "status": "True",
+                "type": "Initialized"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-08-03T11:37:14Z",
+                "status": "True",
+                "type": "Ready"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-08-03T11:37:14Z",
+                "status": "True",
+                "type": "ContainersReady"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-08-03T11:36:39Z",
+                "status": "True",
+                "type": "PodScheduled"
+            }
+        ],
+        "containerStatuses": [
+            {
+                "containerID": "containerd://42491449387234b8365ecf52312c8ed8275d6faafb95a31100f9fe840f91b63c",
+                "image": "155.230.35.213:5000/chill/spike-batch-characterization:jetson-trt-v2",
+                "imageID": "155.230.35.213:5000/chill/spike-batch-characterization@sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec",
+                "lastState": {},
+                "name": "runtime",
+                "ready": true,
+                "restartCount": 0,
+                "started": true,
+                "state": {
+                    "running": {
+                        "startedAt": "2026-08-03T11:36:42Z"
+                    }
+                }
+            }
+        ],
+        "hostIP": "155.230.34.179",
+        "hostIPs": [
+            {
+                "ip": "155.230.34.179"
+            }
+        ],
+        "initContainerStatuses": [
+            {
+                "containerID": "containerd://b7a0ce658a23c754a9b33dd1782df3e065aa10697d53c4414802034591cb5b1b",
+                "image": "155.230.35.213:5000/chill/transition-mobilenet-v2-050-artifact:prelim-c46d0b3",
+                "imageID": "155.230.35.213:5000/chill/transition-mobilenet-v2-050-artifact@sha256:1db7b031013d0c5bdf0f4a30c8647f694baf377243bf845d3ccf2e8a64a079b6",
+                "lastState": {},
+                "name": "artifact",
+                "ready": true,
+                "restartCount": 0,
+                "started": false,
+                "state": {
+                    "terminated": {
+                        "containerID": "containerd://b7a0ce658a23c754a9b33dd1782df3e065aa10697d53c4414802034591cb5b1b",
+                        "exitCode": 0,
+                        "finishedAt": "2026-08-03T11:36:40Z",
+                        "reason": "Completed",
+                        "startedAt": "2026-08-03T11:36:40Z"
+                    }
+                }
+            }
+        ],
+        "phase": "Running",
+        "podIP": "10.88.0.122",
+        "podIPs": [
+            {
+                "ip": "10.88.0.122"
+            }
+        ],
+        "qosClass": "Burstable",
+        "startTime": "2026-08-03T11:36:39Z"
+    }
+}

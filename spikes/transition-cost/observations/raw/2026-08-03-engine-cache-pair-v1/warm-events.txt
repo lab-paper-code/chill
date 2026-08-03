@@ -1,0 +1,15 @@
+LAST SEEN   TYPE      REASON             OBJECT                            MESSAGE
+36m         Normal    Scheduled          pod/cache-inspector               Successfully assigned chill-transition-spike/cache-inspector to jetsonx
+35m         Normal    Scheduled          pod/cache-inspector               Successfully assigned chill-transition-spike/cache-inspector to jetsonx
+34m         Normal    Scheduled          pod/cache-inspector               Successfully assigned chill-transition-spike/cache-inspector to jetsonx
+27m         Normal    Scheduled          pod/engine-cache-builder          Successfully assigned chill-transition-spike/engine-cache-builder to jetsonx
+19m         Normal    Scheduled          pod/power-mode-inspector          Successfully assigned chill-transition-spike/power-mode-inspector to jetsonx
+19m         Normal    Scheduled          pod/engine-cache-asset-verifier   Successfully assigned chill-transition-spike/engine-cache-asset-verifier to jetsonx
+10m         Normal    Scheduled          pod/model-a-mobilenet             Successfully assigned chill-transition-spike/model-a-mobilenet to jetsonx
+9m6s        Normal    Scheduled          pod/power-mode-cold-pre           Successfully assigned chill-transition-spike/power-mode-cold-pre to jetsonx
+8m42s       Warning   FailedScheduling   pod/model-b-efficientnet          0/10 nodes are available: 1 Insufficient nvidia.com/gpu, 1 node(s) had untolerated taint {node.kubernetes.io/unreachable: }, 8 node(s) didn't match Pod's node affinity/selector. preemption: 0/10 nodes are available: 1 No preemption victims found for incoming pod, 9 Preemption is not helpful for scheduling.
+8m35s       Normal    Scheduled          pod/model-b-efficientnet          Successfully assigned chill-transition-spike/model-b-efficientnet to jetsonx
+2m20s       Normal    Scheduled          pod/model-a-mobilenet             Successfully assigned chill-transition-spike/model-a-mobilenet to jetsonx
+53s         Normal    Scheduled          pod/power-mode-warm-pre           Successfully assigned chill-transition-spike/power-mode-warm-pre to jetsonx
+27s         Warning   FailedScheduling   pod/model-b-efficientnet          0/10 nodes are available: 1 Insufficient nvidia.com/gpu, 1 node(s) had untolerated taint {node.kubernetes.io/unreachable: }, 8 node(s) didn't match Pod's node affinity/selector. preemption: 0/10 nodes are available: 1 No preemption victims found for incoming pod, 9 Preemption is not helpful for scheduling.
+21s         Normal    Scheduled          pod/model-b-efficientnet          Successfully assigned chill-transition-spike/model-b-efficientnet to jetsonx

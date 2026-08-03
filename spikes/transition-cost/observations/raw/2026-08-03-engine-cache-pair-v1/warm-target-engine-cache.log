@@ -1,0 +1,5 @@
+2026-08-03T20:38:43.865726126+09:00 /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.engine: OK
+2026-08-03T20:38:43.870889927+09:00 /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.profile: OK
+2026-08-03T20:38:44.863174042+09:00 total 78024
+2026-08-03T20:38:44.863251322+09:00 -rw-r--r--    1 0        0         79889599 Aug  3 11:38 TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.engine
+2026-08-03T20:38:44.863295162+09:00 -rw-r--r--    1 0        0               21 Aug  3 11:38 TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.profile

@@ -1,0 +1,2 @@
+NV Power Mode: MODE_15W_6CORE
+2

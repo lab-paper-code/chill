@@ -19,10 +19,11 @@ toggle.
 Observations:
 
 - [Jetson Xavier NX MobileNet to EfficientNet cold transition](observations/jetson-xavier-nx-mobilenet-to-efficientnet-cold.md)
+- [Jetson Xavier NX cold/warm engine-cache paired transition](observations/jetson-xavier-nx-engine-cache-pair-v1.md)
 
-Frozen controlled follow-up:
+Frozen controlled pair:
 
 - [Jetson Xavier NX cold/warm engine-cache paired intent](intents/jetsonx-mobilenet-to-efficientnet-engine-cache-pair-v1.json)
-- The post-hoc cold observation is not retro-label eligible. Execute the frozen
-  cold variant before the warm variant; only the target engine-cache presence
-  may differ between the two rendered target Pods.
+- The post-hoc cold observation was not retro-label eligible, so both sides
+  were rerun under the frozen protocol. The retained pair passed its declared
+  identity, environment, thermal, cache-state, and total wall-coverage gates.
