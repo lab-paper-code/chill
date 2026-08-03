@@ -1,0 +1,39 @@
+TRANSITION_EVENT {"epochNs":1785750378999875201,"event":"process_started","model":"efficientnet-b4","pid":1,"providers":["TensorrtExecutionProvider","CUDAExecutionProvider","CPUExecutionProvider"],"runtimeVersion":"1.16.0"}
+TRANSITION_EVENT {"bytes":77264016,"digest":"sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30","epochNs":1785750379148018262,"event":"artifact_verified","model":"efficientnet-b4","seconds":0.1477002426981926}
+TRANSITION_EVENT {"cache":{"bytes":0,"files":0},"epochNs":1785750379149964096,"event":"session_create_started","model":"efficientnet-b4"}
+2026-08-03 09:46:26.367889916 [W:onnxruntime:Default, tensorrt_execution_provider.h:77 log] [2026-08-03 09:46:26 WARNING] onnx2trt_utils.cpp:375: Your ONNX model has been generated with INT64 weights, while TensorRT does not natively support INT64. Attempting to cast down to INT32.
+2026-08-03 09:46:28.601937362 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2173 Compile] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+TRANSITION_EVENT {"cache":{"bytes":0,"files":0},"epochNs":1785750390536190508,"event":"session_created","model":"efficientnet-b4","providers":["TensorrtExecutionProvider","CUDAExecutionProvider","CPUExecutionProvider"],"seconds":11.387316463515162}
+TRANSITION_EVENT {"cache":{"bytes":0,"files":0},"epochNs":1785750390556079958,"event":"first_inference_started","inputShape":[1,3,380,380],"model":"efficientnet-b4"}
+2026-08-03 09:46:30.560951952 [W:onnxruntime:Default, tensorrt_execution_provider.cc:2608 operator()] [TensorRT EP] Builder optimization level can only be used on TRT 8.6 onwards!
+TRANSITION_EVENT {"cache":{"bytes":79883571,"files":2},"epochNs":1785750650895496828,"event":"first_inference_completed","model":"efficientnet-b4","seconds":260.3336466643959}
+TRANSITION_EVENT {"epochNs":1785750651025124234,"event":"warmup_completed","iterations":3,"model":"efficientnet-b4","seconds":0.12849706411361694}
+TRANSITION_EVENT {"cache":{"bytes":79883571,"files":2},"epochNs":1785750651029625026,"event":"ready","model":"efficientnet-b4","totalSeconds":271.880606982857}
+TRANSITION_EVENT {"epochNs":1785750652043292724,"event":"service_window","index":1,"inferences":24,"meanMs":41.66543504166666,"model":"efficientnet-b4","p95Ms":45.34048909999999,"p99Ms":45.70458097}
+TRANSITION_EVENT {"epochNs":1785750653067198524,"event":"service_window","index":2,"inferences":23,"meanMs":44.37365795652173,"model":"efficientnet-b4","p95Ms":47.476257499999996,"p99Ms":48.579514280000005}
+TRANSITION_EVENT {"epochNs":1785750654122196840,"event":"service_window","index":3,"inferences":23,"meanMs":45.73242982608695,"model":"efficientnet-b4","p95Ms":51.174603499999996,"p99Ms":52.86740748}
+TRANSITION_EVENT {"epochNs":1785750655155802532,"event":"service_window","index":4,"inferences":23,"meanMs":44.807608173913046,"model":"efficientnet-b4","p95Ms":48.8777594,"p99Ms":52.148690740000006}
+TRANSITION_EVENT {"epochNs":1785750656198293134,"event":"service_window","index":5,"inferences":23,"meanMs":45.19924278260869,"model":"efficientnet-b4","p95Ms":49.528017999999996,"p99Ms":52.46548898}
+TRANSITION_EVENT {"epochNs":1785750657229847934,"event":"service_window","index":6,"inferences":23,"meanMs":44.72180604347826,"model":"efficientnet-b4","p95Ms":49.071930200000004,"p99Ms":51.450445280000004}
+TRANSITION_EVENT {"epochNs":1785750658270171293,"event":"service_window","index":7,"inferences":23,"meanMs":45.09730291304348,"model":"efficientnet-b4","p95Ms":48.2862169,"p99Ms":53.596212900000005}
+TRANSITION_EVENT {"epochNs":1785750659300688616,"event":"service_window","index":8,"inferences":23,"meanMs":44.66774786956522,"model":"efficientnet-b4","p95Ms":48.7269747,"p99Ms":48.76668936}
+TRANSITION_EVENT {"epochNs":1785750660325392309,"event":"service_window","index":9,"inferences":23,"meanMs":44.425431565217394,"model":"efficientnet-b4","p95Ms":47.780409500000005,"p99Ms":48.604890499999996}
+TRANSITION_EVENT {"epochNs":1785750661350664068,"event":"service_window","index":10,"inferences":23,"meanMs":44.44881534782609,"model":"efficientnet-b4","p95Ms":48.3226237,"p99Ms":50.051347680000006}
+TRANSITION_EVENT {"epochNs":1785750662389453339,"event":"service_window","index":11,"inferences":23,"meanMs":45.03474534782608,"model":"efficientnet-b4","p95Ms":51.3866875,"p99Ms":52.262778520000005}
+TRANSITION_EVENT {"epochNs":1785750663426606249,"event":"service_window","index":12,"inferences":23,"meanMs":44.97112473913044,"model":"efficientnet-b4","p95Ms":48.722878099999996,"p99Ms":52.20103498}
+TRANSITION_EVENT {"epochNs":1785750664471027133,"event":"service_window","index":13,"inferences":23,"meanMs":45.275637086956515,"model":"efficientnet-b4","p95Ms":49.43821749999999,"p99Ms":50.63071376}
+TRANSITION_EVENT {"epochNs":1785750665503619219,"event":"service_window","index":14,"inferences":23,"meanMs":44.77433217391305,"model":"efficientnet-b4","p95Ms":49.29701849999999,"p99Ms":50.59717362}
+TRANSITION_EVENT {"epochNs":1785750666536225897,"event":"service_window","index":15,"inferences":23,"meanMs":44.7549997826087,"model":"efficientnet-b4","p95Ms":46.8215054,"p99Ms":50.47799152}
+TRANSITION_EVENT {"epochNs":1785750667570867786,"event":"service_window","index":16,"inferences":23,"meanMs":44.863275869565214,"model":"efficientnet-b4","p95Ms":49.464107999999996,"p99Ms":57.37104084000001}
+TRANSITION_EVENT {"epochNs":1785750668606567089,"event":"service_window","index":17,"inferences":23,"meanMs":44.90505282608696,"model":"efficientnet-b4","p95Ms":49.7040452,"p99Ms":51.56225778}
+TRANSITION_EVENT {"epochNs":1785750669649955712,"event":"service_window","index":18,"inferences":23,"meanMs":45.228854173913035,"model":"efficientnet-b4","p95Ms":49.6939141,"p99Ms":51.803136640000005}
+TRANSITION_EVENT {"epochNs":1785750670681052142,"event":"service_window","index":19,"inferences":23,"meanMs":44.699618739130436,"model":"efficientnet-b4","p95Ms":51.021722499999996,"p99Ms":55.030151120000006}
+TRANSITION_EVENT {"epochNs":1785750671693288632,"event":"service_window","index":20,"inferences":22,"meanMs":45.87366968181818,"model":"efficientnet-b4","p95Ms":51.987940599999995,"p99Ms":53.54115255}
+TRANSITION_EVENT {"epochNs":1785750672727780088,"event":"service_window","index":21,"inferences":23,"meanMs":44.85357430434782,"model":"efficientnet-b4","p95Ms":48.9353372,"p99Ms":49.27850312}
+TRANSITION_EVENT {"epochNs":1785750673763479839,"event":"service_window","index":22,"inferences":23,"meanMs":44.90939369565217,"model":"efficientnet-b4","p95Ms":49.898324800000005,"p99Ms":52.45652956000001}
+TRANSITION_EVENT {"epochNs":1785750674805970377,"event":"service_window","index":23,"inferences":23,"meanMs":45.19280382608695,"model":"efficientnet-b4","p95Ms":49.548447499999995,"p99Ms":50.713721039999996}
+TRANSITION_EVENT {"epochNs":1785750675834107463,"event":"service_window","index":24,"inferences":23,"meanMs":44.5723985652174,"model":"efficientnet-b4","p95Ms":48.4291811,"p99Ms":50.33230412}
+TRANSITION_EVENT {"epochNs":1785750676870885747,"event":"service_window","index":25,"inferences":23,"meanMs":44.956406130434786,"model":"efficientnet-b4","p95Ms":51.5649869,"p99Ms":51.82010518}
+TRANSITION_EVENT {"epochNs":1785750677901239294,"event":"service_window","index":26,"inferences":23,"meanMs":44.67300291304347,"model":"efficientnet-b4","p95Ms":48.9173725,"p99Ms":52.14292306000001}
+TRANSITION_EVENT {"epochNs":1785750678931048005,"event":"service_window","index":27,"inferences":23,"meanMs":44.644404565217386,"model":"efficientnet-b4","p95Ms":47.9914756,"p99Ms":51.48261128}
+TRANSITION_EVENT {"epochNs":1785750679969635674,"event":"service_window","index":28,"inferences":23,"meanMs":45.01860060869566,"model":"efficientnet-b4","p95Ms":47.6639676,"p99Ms":56.74471978000001}

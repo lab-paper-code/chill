@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Node
+metadata:
+  annotations:
+    cloudcore: 155.230.35.213
+    edge.dacs.io/device-class-discovery-class: jetson-xavier-nx-8g
+    edge.dacs.io/device-class-discovery-reason: catalog-matched
+    edge.dacs.io/device-class-discovery-result: matched
+    edge.dacs.io/device-model-raw: ASUS PE1000N/XAVIER NX/JXANS-IM-A
+    edge.dacs.io/discovery-source: chill-node-discovery
+    edge.dacs.io/managed-by: chill-discovery
+    edge.dacs.io/node-discovery-reason: signature-matched
+    edge.dacs.io/node-discovery-result: matched
+    edge.dacs.io/system: chill
+    node.alpha.kubernetes.io/ttl: "0"
+    volumes.kubernetes.io/controller-managed-attach-detach: "true"
+  creationTimestamp: "2026-02-04T17:32:16Z"
+  labels:
+    beta.kubernetes.io/arch: arm64
+    beta.kubernetes.io/os: linux
+    device-family: jetson
+    edge.dacs.io/accelerator: nvidia-jetson-xavier-nx
+    edge.dacs.io/device-class: jetson-xavier-nx-8g
+    edge.dacs.io/device-family: jetson
+    edge.dacs.io/device-model: xavier-nx
+    edge.dacs.io/device-vendor: nvidia
+    jetson-model: xavier-nx
+    kubernetes.io/arch: arm64
+    kubernetes.io/hostname: jetsonx
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/agent: ""
+    node-role.kubernetes.io/edge: ""
+    nvidia.com/gpu.memory: "8192"
+  name: jetsonx
+  resourceVersion: "275350602"
+  uid: 4a093de6-af5f-4df0-96b2-c6f6c561c970
+spec:
+  podCIDR: 192.168.13.0/24
+  podCIDRs:
+  - 192.168.13.0/24
+  taints:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/edge
+status:
+  addresses:
+  - address: 155.230.34.179
+    type: InternalIP
+  - address: jetsonx
+    type: Hostname
+  allocatable:
+    cpu: "6"
+    ephemeral-storage: "441995857189"
+    hugepages-1Gi: "0"
+    hugepages-2Mi: "0"
+    hugepages-32Mi: "0"
+    hugepages-64Ki: "0"
+    memory: 6916000Ki
+    nvidia.com/gpu: "1"
+    pods: "110"
+  capacity:
+    cpu: "6"
+    ephemeral-storage: 479596200Ki
+    hugepages-1Gi: "0"
+    hugepages-2Mi: "0"
+    hugepages-32Mi: "0"
+    hugepages-64Ki: "0"
+    memory: 7018400Ki
+    nvidia.com/gpu: "1"
+    pods: "110"
+  conditions:
+  - lastHeartbeatTime: "2026-08-03T09:52:36Z"
+    lastTransitionTime: "2026-04-27T10:10:18Z"
+    message: kubelet has sufficient memory available
+    reason: KubeletHasSufficientMemory
+    status: "False"
+    type: MemoryPressure
+  - lastHeartbeatTime: "2026-08-03T09:52:36Z"
+    lastTransitionTime: "2026-04-27T10:10:18Z"
+    message: kubelet has no disk pressure
+    reason: KubeletHasNoDiskPressure
+    status: "False"
+    type: DiskPressure
+  - lastHeartbeatTime: "2026-08-03T09:52:36Z"
+    lastTransitionTime: "2026-04-27T10:10:18Z"
+    message: kubelet has sufficient PID available
+    reason: KubeletHasSufficientPID
+    status: "False"
+    type: PIDPressure
+  - lastHeartbeatTime: "2026-08-03T09:52:36Z"
+    lastTransitionTime: "2026-04-27T10:10:18Z"
+    message: edge is posting ready status
+    reason: EdgeReady
+    status: "True"
+    type: Ready
+  daemonEndpoints:
+    kubeletEndpoint:
+      Port: 10352
+  nodeInfo:
+    architecture: arm64
+    bootID: 0b621a17-0c98-41c0-9827-fa1b2be5dba1
+    containerRuntimeVersion: containerd://1.7.12
+    kernelVersion: 5.10.120-tegra
+    kubeProxyVersion: v0.0.0-master+$Format:%H$
+    kubeletVersion: v1.29.5-kubeedge-v1.18.1
+    machineID: dbfef1aa0b064bcf9d30ec3ad0886edb
+    operatingSystem: linux
+    osImage: Ubuntu 20.04.6 LTS
+    systemUUID: dbfef1aa0b064bcf9d30ec3ad0886edb
