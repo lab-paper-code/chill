@@ -153,6 +153,45 @@ func TestIntentFreezerPreservesPolicyResolutionFailureAndStatus(t *testing.T) {
 	}
 }
 
+func TestIntentFreezerClassifiesAdmissionWorkloadMismatchBeforeExecutionPolicyResolution(t *testing.T) {
+	ctx := context.Background()
+	run, kubeClient, records := intentFreezerFixture(t)
+	raw := strings.ReplaceAll(controllerPolicyCatalog, "operator-meter-policy", run.Spec.AdmissionPolicy)
+	raw = strings.ReplaceAll(raw, "saturated-serial-fixed-batch", "idle-model-loaded")
+	policy, err := profileradmission.FreezeConfiguredPolicy(
+		[]byte(raw),
+		run.Spec.AdmissionPolicy,
+		profileradmission.PolicySource{
+			Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: testSystemNamespace,
+			Name: "facts", UID: testFactsUID, ResourceVersion: "1", Key: "admission-policies.yaml",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := &countingExecutionPolicyResolver{err: errors.New("must not resolve execution policy")}
+	freezer := mustIntentFreezer(
+		t,
+		kubeClient,
+		&countingPreparer{prepared: testPreparedRun(t)},
+		&countingPolicyResolver{policy: policy},
+		records,
+		execution,
+	)
+
+	_, err = freezer.Freeze(ctx, run)
+	reason, terminal := terminalFreezeReason(err)
+	if err == nil || !terminal || reason != freezeReasonAdmissionPolicyInvalid || execution.calls != 0 {
+		t.Fatalf(
+			"workload mismatch error = %v, reason=%q terminal=%t executionCalls=%d",
+			err,
+			reason,
+			terminal,
+			execution.calls,
+		)
+	}
+}
+
 func TestIntentFreezerPreservesExecutionPolicyResolutionFailureAndStatus(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)

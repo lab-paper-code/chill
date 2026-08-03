@@ -6,7 +6,8 @@ import (
 )
 
 const (
-	// ProfilingRunConditionExecutionComplete reports the native Job outcome.
+	// ProfilingRunConditionExecutionComplete reports whether the requested execution completed.
+	// It is False when intent freezing rejects the Run or the native Job fails or is lost.
 	ProfilingRunConditionExecutionComplete = "ExecutionComplete"
 	// ProfilingRunConditionEvidenceVerified reports independent durable evidence verification.
 	ProfilingRunConditionEvidenceVerified = "EvidenceVerified"

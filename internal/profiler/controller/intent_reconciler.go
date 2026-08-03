@@ -61,6 +61,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	frozen, err := r.freezer.Freeze(ctx, run)
 	if err != nil {
+		if reason, terminal := terminalFreezeReason(err); terminal {
+			return ctrl.Result{}, r.publishIntentFreezeFailure(ctx, run, reason, err.Error())
+		}
 		return ctrl.Result{}, fmt.Errorf("freeze ProfilingRun %s intent: %w", req.NamespacedName, err)
 	}
 	if frozen.Stopped {
@@ -223,6 +226,21 @@ func (r *RunReconciler) publishExecutionOutcome(
 			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
 			Status: status, ObservedGeneration: run.Generation,
 			Reason: reason, Message: message,
+		})
+	})
+}
+
+func (r *RunReconciler) publishIntentFreezeFailure(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reason, message string,
+) error {
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.ObservedGeneration = run.Generation
+		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
+			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			Status: metav1.ConditionFalse, ObservedGeneration: run.Generation,
+			Reason: reason, Message: "Run intent could not be frozen: " + message,
 		})
 	})
 }

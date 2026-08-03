@@ -70,6 +70,27 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary execution policy error = %v", err)
 	}
+	if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonExecutionPolicyInvalid {
+		t.Fatalf("binary execution policy classification = %q, terminal=%t", reason, terminal)
+	}
+
+	malformedConfigMap := configMap.DeepCopy()
+	malformedConfigMap.BinaryData = nil
+	malformedConfigMap.Data = map[string]string{"execution-policies.yaml": "policies: ["}
+	malformed, err := NewKubernetesExecutionPolicyResolver(
+		fake.NewClientBuilder().WithObjects(malformedConfigMap).Build(),
+		ExecutionPolicyResolverOptions{
+			Namespace: testSystemNamespace, ConfigMapName: "facts", ConfigMapKey: "execution-policies.yaml",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := malformed.Resolve(context.Background(), currentPreparedRun(t).Intent); err == nil {
+		t.Fatal("malformed execution-policy catalog was accepted")
+	} else if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonExecutionPolicyInvalid {
+		t.Fatalf("malformed execution-policy classification = %q, terminal=%t", reason, terminal)
+	}
 }
 
 func controllerExecutionPolicyCatalog(t *testing.T) []byte {

@@ -311,6 +311,13 @@ Runs. Restart recovery reads the retained bytes and never re-resolves mutable
 policy configuration. Two-key intent records created before this contract use
 the exact legacy built-in thresholds solely as a compatibility path.
 
+Before an intent record exists, a successfully read but malformed policy
+catalog, an unconfigured selected name, or a selected policy whose workload
+mode does not match the immutable Run is terminal for that Run. The controller
+records `ExecutionComplete=False` with `AdmissionPolicyInvalid` instead of
+returning a stateless reconcile error. A retry uses a new `ProfilingRun`; the
+failed Run never starts a Job under policy semantics that were not frozen.
+
 Worker timeout, capacity, and resource values are installation inputs, not Run
 inputs. The Profiler strict-decodes the execution-policy catalog and selects
 one entry by the already frozen DeviceClass, execution path, and workload mode.
@@ -573,6 +580,17 @@ collection of its Job. It does not delete committed evidence. Profiler restart,
 transient observation errors, and duplicate events re-observe the same Run,
 Job/Pod, receipt, raw object, and finalized record without launching measurement
 again.
+
+Intent freezing distinguishes retryable infrastructure failures from terminal
+input and installation-policy failures. Kubernetes API reads and writes,
+including a fact-source ConfigMap lookup failure, remain retryable. A concurrent
+fact-source revision observed between admission- and execution-policy reads also
+remains retryable so the next attempt can select one coherent snapshot. Once a
+catalog has been read successfully, malformed catalog data, an absent selected
+entry, or a policy-to-intent mismatch is terminal and is published on
+`ExecutionComplete=False` with `InvalidRunSpec`, `AdmissionPolicyInvalid`, or
+`ExecutionPolicyInvalid`. The Condition and top-level `observedGeneration`
+identify the processed immutable Run generation; no Job is created.
 
 The public API must make these outcome boundaries observable without copying
 native Job status, raw evidence, logs, credentials, or endpoints into the Run.

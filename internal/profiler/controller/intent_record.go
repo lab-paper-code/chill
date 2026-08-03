@@ -166,17 +166,8 @@ func validateFrozenRunForRun(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if frozen.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy {
-		return nil, nil, nil, errors.New("frozen admission policy does not match immutable ProfilingRun spec")
-	}
-	if frozen.AdmissionPolicy.Policy.WorkloadMode != frozen.Prepared.Intent.Measurement.WorkloadMode {
-		return nil, nil, nil, errors.New("frozen admission policy workload mode does not match immutable Run intent")
-	}
-	if (frozen.ExecutionPolicy.Policy.DeviceClass != "*" &&
-		frozen.ExecutionPolicy.Policy.DeviceClass != frozen.Prepared.Intent.State.DeviceClass) ||
-		frozen.ExecutionPolicy.Policy.ExecutionPath != frozen.Prepared.Intent.Candidate.ExecutionPath ||
-		frozen.ExecutionPolicy.Policy.WorkloadMode != frozen.Prepared.Intent.Measurement.WorkloadMode {
-		return nil, nil, nil, errors.New("frozen execution policy does not match immutable Run intent")
+	if err := validateSelectedPolicies(run, frozen); err != nil {
+		return nil, nil, nil, err
 	}
 	admissionPolicyBytes, err := frozen.AdmissionPolicy.CanonicalJSON()
 	if err != nil {

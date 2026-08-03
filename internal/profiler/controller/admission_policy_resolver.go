@@ -48,7 +48,9 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 	name string,
 ) (profileradmission.FrozenPolicy, error) {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return profileradmission.FrozenPolicy{}, errors.New("admission-policy name is required without surrounding whitespace")
+		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+			"admission-policy name is required without surrounding whitespace",
+		)
 	}
 	configMap := &corev1.ConfigMap{}
 	key := types.NamespacedName{Namespace: r.options.Namespace, Name: r.options.ConfigMapName}
@@ -56,17 +58,29 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 		return profileradmission.FrozenPolicy{}, fmt.Errorf("get admission-policy ConfigMap %s: %w", key, err)
 	}
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profileradmission.FrozenPolicy{}, errors.New("admission-policy ConfigMap has incomplete Kubernetes identity")
+		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+			"admission-policy ConfigMap has incomplete Kubernetes identity",
+		)
 	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
-		return profileradmission.FrozenPolicy{}, errors.New("admission-policy ConfigMap key must be stored in text data")
+		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+			"admission-policy ConfigMap key must be stored in text data",
+		)
 	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || raw == "" {
-		return profileradmission.FrozenPolicy{}, fmt.Errorf("admission-policy ConfigMap %s is missing key %q", key, r.options.ConfigMapKey)
+		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+			"admission-policy ConfigMap %s is missing key %q",
+			key,
+			r.options.ConfigMapKey,
+		)
 	}
-	return profileradmission.FreezeConfiguredPolicy([]byte(raw), name, profileradmission.PolicySource{
+	frozen, err := profileradmission.FreezeConfiguredPolicy([]byte(raw), name, profileradmission.PolicySource{
 		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: configMap.Namespace, Name: configMap.Name,
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
+	if err != nil {
+		return profileradmission.FrozenPolicy{}, newTerminalFreezeError(freezeReasonAdmissionPolicyInvalid, err)
+	}
+	return frozen, nil
 }

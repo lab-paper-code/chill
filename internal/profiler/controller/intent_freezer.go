@@ -115,7 +115,7 @@ func (f *IntentFreezer) Freeze(
 
 	requested, err := ProjectRequest(run.Spec)
 	if err != nil {
-		return FreezeIntentResult{}, err
+		return FreezeIntentResult{}, newTerminalFreezeError(freezeReasonInvalidRunSpec, err)
 	}
 	prepared, err := f.preparer.Prepare(ctx, requested.Preparation)
 	if err != nil {
@@ -125,9 +125,15 @@ func (f *IntentFreezer) Freeze(
 	if err != nil {
 		return FreezeIntentResult{}, fmt.Errorf("resolve admission policy: %w", err)
 	}
+	if err := validateSelectedAdmissionPolicy(run, prepared, policy); err != nil {
+		return FreezeIntentResult{}, err
+	}
 	executionPolicy, err := f.execution.Resolve(ctx, prepared.Intent)
 	if err != nil {
 		return FreezeIntentResult{}, fmt.Errorf("resolve execution policy: %w", err)
+	}
+	if err := validateSelectedExecutionPolicy(prepared, executionPolicy); err != nil {
+		return FreezeIntentResult{}, err
 	}
 	frozen = FrozenRun{
 		Prepared:        prepared,

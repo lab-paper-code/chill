@@ -320,6 +320,54 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, want) {
 		t.Fatalf("Reconcile() error = %v, want wrapped %v", err, want)
 	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.ObservedGeneration != 0 || len(actual.Status.Conditions) != 0 {
+		t.Fatalf("retryable freeze failure changed status: %#v", actual.Status)
+	}
+}
+
+func TestRunReconcilerPublishesTerminalFreezeFailureWithoutRequeue(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run := testRun()
+	run.Generation = 7
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
+	freezer := &recordingIntentFreezer{
+		err: invalidAdmissionPolicy("admission policy %q is not configured", "typo-v9"),
+	}
+	jobs := &recordingExecutionJobs{}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		freezer,
+		jobs,
+		&recordingRunEvidenceFinalizer{},
+		&recordingRunEvidenceAdmitter{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil || result != (ctrl.Result{}) {
+		t.Fatalf("terminal freeze result = %#v, error = %v", result, err)
+	}
+	if freezer.calls != 1 || jobs.calls != 0 {
+		t.Fatalf("terminal freeze calls: freezer=%d jobs=%d", freezer.calls, jobs.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if actual.Status.ObservedGeneration != run.Generation || condition == nil ||
+		condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != run.Generation ||
+		condition.Reason != freezeReasonAdmissionPolicyInvalid ||
+		!strings.Contains(condition.Message, `admission policy "typo-v9" is not configured`) {
+		t.Fatalf("terminal freeze status = %#v", actual.Status)
+	}
 }
 
 func runReconcilerTestScheme(t *testing.T) *runtime.Scheme {
