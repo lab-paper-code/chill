@@ -11,6 +11,7 @@ import (
 const (
 	CPUORTWorkerPolicy        = "cpu-ort-worker"
 	CPUORTWorkerPolicyVersion = "v1"
+	CPUORTIdlePolicyVersion   = "idle-v1"
 
 	mebibyte                 = int64(1024 * 1024)
 	maxMetricEventsV1        = int64(50_000)
@@ -64,28 +65,33 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 	if err := intent.Validate(); err != nil {
 		return ExecutionPlan{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
-	if !profilingrun.IsSupportedActiveIntent(intent) ||
+	if !profilingrun.IsSupportedCPUORTIntent(intent) ||
 		intent.Candidate.ExecutionPath != "ort-cpu" ||
 		intent.State.RuntimeFamily != "onnxruntime" ||
 		intent.State.Backend != "CPUExecutionProvider" {
-		return ExecutionPlan{}, errors.New("cpu-ort-worker v1 requires the current CPU ONNX Runtime intent")
+		return ExecutionPlan{}, errors.New("cpu-ort-worker requires a supported CPU ONNX Runtime intent")
 	}
 
 	metricDuration := time.Duration(intent.Metrics.DurationSeconds) * time.Second
+	settlingDuration := time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(intent.Metrics.IntervalMilliseconds) * time.Millisecond
 	maxEvents64 := int64(metricDuration/interval) + 2
 	if maxEvents64 < 1 || maxEvents64 > maxMetricEventsV1 || maxEvents64 > int64(^uint(0)>>1) {
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
 
+	policyVersion := CPUORTWorkerPolicyVersion
+	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		policyVersion = CPUORTIdlePolicyVersion
+	}
 	return ExecutionPlan{
 		Policy:        CPUORTWorkerPolicy,
-		PolicyVersion: CPUORTWorkerPolicyVersion,
+		PolicyVersion: policyVersion,
 
-		ActiveDeadline:          metricDuration + 3*time.Minute,
-		AttemptTimeout:          metricDuration + 150*time.Second,
+		ActiveDeadline:          metricDuration + settlingDuration + 3*time.Minute,
+		AttemptTimeout:          metricDuration + settlingDuration + 150*time.Second,
 		ObserverReadyTimeout:    30 * time.Second,
-		ObserverStartTimeout:    2 * time.Minute,
+		ObserverStartTimeout:    settlingDuration + 2*time.Minute,
 		MetricResultTimeout:     metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second + 30*time.Second,
 		WorkloadEndFenceTimeout: 15 * time.Second,
 		WorkloadResultTimeout:   30 * time.Second,

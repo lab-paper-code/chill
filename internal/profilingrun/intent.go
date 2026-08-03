@@ -196,6 +196,13 @@ func IsSupportedActiveIntent(i Intent) bool {
 		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode
 }
 
+// IsSupportedCPUORTIntent covers the retained active path and the current
+// model-loaded-idle path implemented by the explicit CPU ORT worker.
+func IsSupportedCPUORTIntent(i Intent) bool {
+	return IsSupportedActiveIntent(i) ||
+		(i.SchemaVersion == SchemaVersion && i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+}
+
 func hasWorkloadObservationFields(intent Intent) bool {
 	return intent.Images.WorkloadObserver != "" || intent.Workload.SchemaVersion != "" ||
 		intent.Workload.AllowedBackground != nil

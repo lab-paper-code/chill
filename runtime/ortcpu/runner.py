@@ -19,13 +19,17 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha7"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha8"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha6"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
+IDLE_WORKLOAD = "idle-model-loaded"
+NO_INPUT_GENERATOR = "none"
+NO_OUTPUT_VALIDATION = "none"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha1"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
@@ -187,17 +191,29 @@ def validate_request(request: dict[str, Any]) -> None:
         raise ContractError("CPU limit does not match the frozen allocatable CPU")
 
     measurement = require_object(intent["measurement"], "intent.measurement")
-    require_fields(
-        measurement,
-        {"batch", "warmupIterations", "durationSeconds", "repetitions", "workloadMode", "inputGenerator", "outputValidation"},
-        "intent.measurement",
-    )
+    common_measurement_fields = {
+        "batch", "warmupIterations", "durationSeconds", "repetitions",
+        "workloadMode", "inputGenerator", "outputValidation",
+    }
+    if measurement.get("workloadMode") == IDLE_WORKLOAD:
+        require_fields(measurement, common_measurement_fields | {"settlingDurationSeconds"}, "intent.measurement")
+    else:
+        require_fields(measurement, common_measurement_fields, "intent.measurement")
     require_integer(measurement["batch"], "intent.measurement.batch", 1)
     require_integer(measurement["warmupIterations"], "intent.measurement.warmupIterations")
     require_integer(measurement["durationSeconds"], "intent.measurement.durationSeconds", 1)
     if measurement["repetitions"] != 1:
         raise ContractError("CPU ORT runtime requires exactly one repetition")
-    if (
+    if measurement["workloadMode"] == IDLE_WORKLOAD:
+        if (
+            measurement["batch"] != 1
+            or measurement["warmupIterations"] != 0
+            or require_integer(measurement["settlingDurationSeconds"], "intent.measurement.settlingDurationSeconds", 1) < 1
+            or measurement["inputGenerator"] != NO_INPUT_GENERATOR
+            or measurement["outputValidation"] != NO_OUTPUT_VALIDATION
+        ):
+            raise ContractError("unsupported model-loaded idle contract")
+    elif (
         measurement["workloadMode"] != SUPPORTED_WORKLOAD
         or measurement["inputGenerator"] != SUPPORTED_INPUT_GENERATOR
         or measurement["outputValidation"] != SUPPORTED_OUTPUT_VALIDATION
@@ -398,6 +414,110 @@ def derived_contract(intent: dict[str, Any], intent_digest: str) -> dict[str, An
     }
 
 
+def runtime_cpu_evidence(
+    cpu: dict[str, Any],
+    cpu_max: str,
+    affinity: list[int],
+    cpuset: str,
+    process_cpu_seconds: float,
+    stat_before: dict[str, int],
+    stat_after: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "osCPUCount": os.cpu_count(),
+        "cgroupCPUMax": cpu_max,
+        "ortIntraOpThreads": cpu["ortIntraOpThreads"],
+        "ortInterOpThreads": cpu["ortInterOpThreads"],
+        "affinityCPUCount": len(affinity),
+        "affinityCPUs": affinity,
+        "cpusetCPUsEffective": cpuset,
+        "processCPUSeconds": round(process_cpu_seconds, 6),
+        "cgroupCPUStatDelta": {key: value - stat_before.get(key, 0) for key, value in stat_after.items()},
+    }
+
+
+def execute_idle(
+    request: dict[str, Any],
+    ort: Any,
+    session: Any,
+    available_providers: list[str],
+    actual_digest: str,
+    architecture: str,
+    cpu_max: str,
+    affinity: list[int],
+    cpuset: str,
+    model_load_completed_at: str,
+) -> dict[str, Any]:
+    intent = request["intent"]
+    state, measurement, cpu = intent["state"], intent["measurement"], intent["cpu"]
+    for ready_path in request["observerReadyPaths"]:
+        wait_for_signal(Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0)
+
+    publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
+    wait_for_signal(
+        Path(request["workloadWindowReadyPath"]),
+        request["observerReadyTimeoutMilliseconds"] / 1000.0,
+    )
+
+    settling_started_at = now()
+    settling_started = time.monotonic()
+    settling_duration = measurement["settlingDurationSeconds"]
+    while True:
+        remaining = settling_duration - (time.monotonic() - settling_started)
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, 0.1))
+    settling_completed_at = now()
+
+    publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
+    stat_before = cpu_stat()
+    process_before = time.process_time()
+    measurement_started_at = now()
+    monotonic_started = time.monotonic()
+    duration = measurement["durationSeconds"]
+    while True:
+        remaining = duration - (time.monotonic() - monotonic_started)
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, 0.1))
+    measurement_elapsed = time.monotonic() - monotonic_started
+    measurement_ended_at = now()
+    providers_at_end = session.get_providers()
+    model_resident_at_end = bool(providers_at_end and providers_at_end[0] == state["backend"])
+    publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
+    process_cpu_seconds = time.process_time() - process_before
+    stat_after = cpu_stat()
+
+    result = {
+        "schemaVersion": IDLE_RESULT_SCHEMA,
+        "status": "Succeeded",
+        "intentDigest": request["intentDigest"],
+        "podUID": request["podUID"],
+        "nodeName": request["scheduledNodeName"],
+        "model": state["model"],
+        "artifactDigest": actual_digest,
+        "architecture": architecture,
+        "runtime": "onnxruntime",
+        "runtimeVersion": ort.__version__,
+        "provider": providers_at_end[0] if providers_at_end else "",
+        "availableProviders": available_providers,
+        "modelLoadCompletedAt": model_load_completed_at,
+        "settlingStartedAt": settling_started_at,
+        "settlingCompletedAt": settling_completed_at,
+        "measurementStartedAt": measurement_started_at,
+        "measurementEndedAt": measurement_ended_at,
+        "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),
+        "inferenceCountAfterModelLoad": 0,
+        "modelResidentAtEnd": model_resident_at_end,
+        "cpuContract": runtime_cpu_evidence(
+            cpu, cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after,
+        ),
+        "derivedExecutionContract": derived_contract(intent, request["intentDigest"]),
+    }
+    log("result", "completed model-loaded idle measurement", elapsedSeconds=round(measurement_elapsed, 3))
+    return result
+
+
 def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     validate_request(request)
     intent = request["intent"]
@@ -424,6 +544,11 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         raise ContractError(f"load ONNX model: {error}") from error
     if not session.get_providers() or session.get_providers()[0] != state["backend"]:
         raise ContractError("actual ONNX Runtime provider does not match the frozen backend")
+    if measurement["workloadMode"] == IDLE_WORKLOAD:
+        return execute_idle(
+            request, ort, session, available_providers, actual_digest, architecture,
+            cpu_max, affinity, cpuset, now(),
+        )
     inputs = session.get_inputs()
     if len(inputs) != 1 or inputs[0].type != "tensor(float)":
         raise ContractError("input generator supports exactly one float32 tensor input")
@@ -503,17 +628,9 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "measurementEndedAt": measurement_ended_at,
         "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),
         "outputValidation": {"method": SUPPORTED_OUTPUT_VALIDATION, "passed": True, "outputShapes": output_shapes},
-        "cpuContract": {
-            "osCPUCount": os.cpu_count(),
-            "cgroupCPUMax": cpu_max,
-            "ortIntraOpThreads": cpu["ortIntraOpThreads"],
-            "ortInterOpThreads": cpu["ortInterOpThreads"],
-            "affinityCPUCount": len(affinity),
-            "affinityCPUs": affinity,
-            "cpusetCPUsEffective": cpuset,
-            "processCPUSeconds": round(process_cpu_seconds, 6),
-            "cgroupCPUStatDelta": {key: value - stat_before.get(key, 0) for key, value in stat_after.items()},
-        },
+        "cpuContract": runtime_cpu_evidence(
+            cpu, cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after,
+        ),
         "derivedExecutionContract": derived_contract(intent, request["intentDigest"]),
         "repetitionResults": [{
             "repetition": 1,

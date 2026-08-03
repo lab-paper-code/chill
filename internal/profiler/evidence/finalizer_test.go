@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
 func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
@@ -53,6 +54,41 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 	}
 	if !reused.Reused || reused.Reference != created.Reference || store.puts != 1 {
 		t.Fatalf("restart finalization = %+v, first = %+v, puts = %d", reused, created, store.puts)
+	}
+}
+
+func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
+	intent := idleIntent(t)
+	raw := validIdleRaw(t, intent)
+	record := validIdleExecutionEvidence(t, intent, raw)
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeObjectStore()
+	store.objects[record.RawMeasurement.Location()] = rawBytes
+	finalizer, err := NewFinalizer(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := finalizer.Finalize(context.Background(), requestFrom(record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader, err := NewLoader(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedExecution, loadedRaw, err := loader.LoadIdle(context.Background(), result.Reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedExecution.Intent.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode ||
+		loadedRaw.Runtime.InferenceCountAfterModelLoad != 0 || !loadedRaw.Runtime.ModelResidentAtEnd {
+		t.Fatalf("idle evidence schema drifted during finalization: %#v %#v", loadedExecution, loadedRaw)
+	}
+	if _, _, err := loader.Load(context.Background(), result.Reference); err == nil {
+		t.Fatal("active loader accepted retained idle raw evidence")
 	}
 }
 

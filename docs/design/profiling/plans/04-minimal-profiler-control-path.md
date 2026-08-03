@@ -19,10 +19,11 @@ codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
 The internal intent is now `v1alpha6`, with retained `v1alpha1` through
-`v1alpha5` canonical bytes preserved. Contract-side idle runtime/raw validation
-and admission projection are implemented, but the public request projection,
-Job branch, idle worker execution, and controller loading path remain follow-on
-work and have not been live-verified.
+`v1alpha5` canonical bytes preserved. The public request schema, request-to-
+intent projection, bounded Job envelope, idle CPU ORT execution, raw commit,
+mode-aware finalization/loading, and named idle admission dispatch are
+implemented. The active path remains live-verified; the idle path is locally
+verified and awaits one retained live Run.
 
 ## Purpose
 
@@ -314,6 +315,13 @@ The concrete adapters remain narrow:
 Caller-supplied image references, runtime declarations, and metric endpoints are
 not accepted in `ProfilingRun`.
 
+`ProfilingRun.spec.measurement.workloadMode` is the only execution-mode
+discriminator. `idle-model-loaded` requires `batch=1`, zero warm-up, a positive
+settling duration, and `none` input/output protocols; it is accepted only with
+`idle-wall-power-v1`. Active fields and `wall-power-v2` remain unchanged. The
+controller projects these frozen facts but does not implement runtime or raw-
+schema behavior itself.
+
 Status remains compact and reconstructable:
 
 - `observedGeneration`;
@@ -598,6 +606,9 @@ sentinel values accepted by the active result validator.
     digest. Implemented through the evidence digest.
 15. Remove no spike path until equivalent evidence and fail-closed behavior are
     confirmed.
+16. Expose and execute `idle-model-loaded` through the same Run/Job lifecycle,
+    while retaining distinct runtime/raw completeness and idle admission.
+    Implemented locally; live Run verification remains.
 
 ## Acceptance gates
 

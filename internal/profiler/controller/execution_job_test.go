@@ -87,6 +87,42 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
 }
 
+func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
+	run := testRun()
+	settling := int32(60)
+	run.Spec.Measurement.WarmupIterations = 0
+	run.Spec.Measurement.SettlingDurationSeconds = &settling
+	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
+	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	run.Spec.AdmissionPolicy = testIdleAdmissionPolicy
+	prepared := currentPreparedRun(t)
+	prepared.Intent.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
+		DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	var err error
+	prepared.IntentDigest, err = prepared.Intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := buildExecutionJob(run, prepared, testEvidenceStoreBinding(), testExecutionJobOptions(), executionJobTestScheme(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Annotations[executionPolicyAnnotation] != profiler.CPUORTWorkerPolicy+"/"+profiler.CPUORTIdlePolicyVersion ||
+		job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 271 {
+		t.Fatalf("idle Job policy drifted: %#v", job)
+	}
+	runtimeContainer := findContainer(t, job.Spec.Template.Spec.Containers, "runtime")
+	assertArgument(t, runtimeContainer.Args, "--attempt-timeout=4m1s")
+	observer := findContainer(t, job.Spec.Template.Spec.Containers, "metric-observer")
+	assertArgument(t, observer.Args, "--start-wait-timeout=3m0s")
+}
+
 func assertWorkloadObserverCredentialIsolation(
 	t *testing.T,
 	pod corev1.PodSpec,

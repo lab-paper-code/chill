@@ -5,9 +5,10 @@
 ## Status
 
 Implemented as a pure, read-only path for active and model-loaded-idle
-admission and derivation. The verified-evidence idle projector exists, but no
-Job currently produces idle raw evidence. No `DeviceProfile` API or status
-write is authorized by this plan.
+admission and derivation. The Job, worker, finalizer, verified loader, and
+single-Run controller admission branch now produce and consume idle raw
+evidence; one retained live idle Run is still pending. No `DeviceProfile` API
+or status write is authorized by this plan.
 
 ## Question
 
@@ -198,6 +199,12 @@ runtime-declared window. Only an Accepted result projects to `IdleTrial`.
 Each projected trial retains the verified raw object's logical store, opaque
 key, SHA-256 digest, and byte size; baseline aggregation rejects missing or
 reused raw identities.
+
+The producer uses the public `ProfilingRun` mode discriminator and a separate
+idle runtime/raw schema. Common worker orchestration and immutable evidence
+finalization are shared with active execution; only runtime completeness, raw
+projection, verified loading, and final admission dispatch are mode-specific.
+A controller never infers idle from metric values.
 
 The adapter strict-decodes and revalidates the Plan 2 bundle, including intent,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-

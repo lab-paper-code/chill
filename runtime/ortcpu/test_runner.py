@@ -192,6 +192,21 @@ def valid_request(model_path: Path) -> dict[str, object]:
     }
 
 
+def valid_idle_request(model_path: Path) -> dict[str, object]:
+    request = valid_request(model_path)
+    request["intent"]["measurement"] = {
+        "batch": 1,
+        "warmupIterations": 0,
+        "settlingDurationSeconds": 60,
+        "durationSeconds": 30,
+        "repetitions": 1,
+        "workloadMode": runner.IDLE_WORKLOAD,
+        "inputGenerator": runner.NO_INPUT_GENERATOR,
+        "outputValidation": runner.NO_OUTPUT_VALIDATION,
+    }
+    return request
+
+
 class RunnerTest(unittest.TestCase):
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
@@ -234,6 +249,20 @@ class RunnerTest(unittest.TestCase):
                     del request[field]
                     with self.assertRaisesRegex(runner.ContractError, field):
                         runner.validate_request(request)
+
+    def test_validate_request_keeps_active_and_idle_measurement_fields_disjoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            active = valid_request(model)
+            active["intent"]["measurement"]["settlingDurationSeconds"] = 60
+            with self.assertRaisesRegex(runner.ContractError, "unknown=\\['settlingDurationSeconds'\\]"):
+                runner.validate_request(active)
+
+            idle = valid_idle_request(model)
+            del idle["intent"]["measurement"]["settlingDurationSeconds"]
+            with self.assertRaisesRegex(runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"):
+                runner.validate_request(idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "input tensor"):
@@ -306,6 +335,53 @@ class RunnerTest(unittest.TestCase):
             self.assertLessEqual(
                 max(generator.calls), runner.INPUT_GENERATION_CHUNK_ELEMENTS
             )
+
+    def test_execute_idle_loads_model_then_issues_no_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_idle_request(model)
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
+                stack.enter_context(mock.patch.object(
+                    runner, "validate_cpu_contract", return_value=("400000 100000", [0, 1, 2, 3], "0-3")
+                ))
+                wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+                publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                sleep = stack.enter_context(mock.patch.object(runner.time, "sleep"))
+                stack.enter_context(mock.patch.object(
+                    runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 15}]
+                ))
+                stack.enter_context(mock.patch.object(runner, "now", side_effect=[
+                    "2026-07-16T00:00:00.000000Z",
+                    "2026-07-16T00:00:01.000000Z",
+                    "2026-07-16T00:01:01.000000Z",
+                    "2026-07-16T00:01:01.100000Z",
+                    "2026-07-16T00:01:31.200000Z",
+                    "2026-07-16T00:01:31.300000Z",
+                ]))
+                stack.enter_context(mock.patch.object(
+                    runner.time, "monotonic", side_effect=[0.0, 0.0, 60.0, 100.0, 100.0, 130.0, 130.0]
+                ))
+                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.1]))
+                result = runner.execute(request, FakeORT, FakeNumpy)
+
+            self.assertEqual(FakeORT.last_session.calls, 0)
+            self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
+            self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
+            self.assertTrue(result["modelResidentAtEnd"])
+            self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")
+            self.assertEqual(result["measurementStartedAt"], "2026-07-16T00:01:01.100000Z")
+            self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 5})
+            self.assertGreaterEqual(sleep.call_count, 2)
+            self.assertEqual(publish.call_args_list, [
+                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
+                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
+            ])
+            self.assertEqual(wait.call_args_list, [
+                mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]
+            ] + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)])
 
 
 if __name__ == "__main__":

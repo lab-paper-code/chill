@@ -35,7 +35,7 @@ func (f *Finalizer) read(ctx context.Context, location evidencestore.ObjectLocat
 func validateStoredExecution(
 	payload []byte,
 	identity evidencestore.ObjectIdentity,
-	raw RawMeasurement,
+	raw rawRecord,
 ) error {
 	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
 		return err
@@ -44,7 +44,7 @@ func validateStoredExecution(
 	if err := decodeExact(payload, &retained); err != nil {
 		return err
 	}
-	canonical, err := retained.CanonicalJSON(raw)
+	canonical, err := raw.canonicalExecutionJSON(retained)
 	if err != nil {
 		return err
 	}

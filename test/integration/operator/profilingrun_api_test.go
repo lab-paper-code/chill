@@ -15,10 +15,24 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+const (
+	idleAdmissionPolicy = "idle-wall-power-v1"
+	noProtocol          = "none"
+)
+
 var _ = Describe("ProfilingRun API", func() {
 	It("accepts one minimum immutable CPU ORT Run request", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("valid"))
+
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+	})
+
+	It("accepts one model-loaded idle Run request", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("idle"))
+		configureIdleProfilingRun(run)
 
 		Expect(k8sClient.Create(ctx, run)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
@@ -60,6 +74,16 @@ var _ = Describe("ProfilingRun API", func() {
 		}),
 		Entry("unsupported admission policy", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.AdmissionPolicy = "unknown"
+		}),
+		Entry("active mode with idle policy", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.AdmissionPolicy = idleAdmissionPolicy
+		}),
+		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.WarmupIterations = 0
+			run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
+			run.Spec.Measurement.InputGenerator = noProtocol
+			run.Spec.Measurement.OutputValidation = noProtocol
+			run.Spec.AdmissionPolicy = idleAdmissionPolicy
 		}),
 	)
 
@@ -135,4 +159,14 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 			AdmissionPolicy: "wall-power-v2",
 		},
 	}
+}
+
+func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
+	settling := int32(60)
+	run.Spec.Measurement.WarmupIterations = 0
+	run.Spec.Measurement.SettlingDurationSeconds = &settling
+	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
+	run.Spec.Measurement.InputGenerator = noProtocol
+	run.Spec.Measurement.OutputValidation = noProtocol
+	run.Spec.AdmissionPolicy = idleAdmissionPolicy
 }

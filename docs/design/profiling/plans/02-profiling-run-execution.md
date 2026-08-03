@@ -4,10 +4,11 @@
 
 ## Status
 
-Implemented for the first CPU ONNX Runtime active path. The shared `v1alpha6`
-intent and model-loaded-idle runtime/raw validation contracts are implemented;
-the idle Job producer is not. This plan does not authorize profile admission,
-energy derivation, `b_sat`, or `DeviceProfile` status writes.
+Implemented for the first CPU ONNX Runtime active path and for the same Job's
+model-loaded-idle producer branch. Active execution is live-verified; idle
+execution is locally verified but still awaits one retained live Run. This plan
+does not authorize profile admission, energy derivation, `b_sat`, or
+`DeviceProfile` status writes.
 
 ## Question
 
@@ -71,9 +72,9 @@ A one-shot CPU ORT adapter translates the intent into native objects. The Job:
 Plan 2 does not claim that selection intent guarantees scheduling. It records
 Kubernetes admission, placement, image, and container outcomes as evidence.
 
-There is no public ProfilingRun CRD, controller, generic runtime registry, or
-DeviceProfile write in the first path. Those abstractions require more than one
-proven runtime lifecycle.
+The public `ProfilingRun` CRD and controller that expose this execution mode
+belong to Plan 4. This Plan 2 boundary still introduces no generic runtime
+registry or `DeviceProfile` write.
 
 ## Checkpoint 3: read-only evidence collector
 
@@ -111,14 +112,17 @@ move its boundaries from observed power or workload values.
 ## Code boundary
 
 ```text
-internal/profilingrun/          plain intent and evidence validation
-spikes/profilingrun/cmd/        concrete CPU ORT Kubernetes adapter
-spikes/profilingrun/fixtures/   exact first-path input
+api/v1alpha1/                   public active/idle Run request schema
+internal/profilingrun/          plain intent and runtime-result validation
+internal/profiler/worker/       Job-local orchestration and raw projection
+runtime/ortcpu/                 explicit active/idle CPU ORT execution adapter
+internal/profiler/evidence/     raw/final record verification and loading
+spikes/profilingrun/            retained first-path regression oracle
 ```
 
 `internal/profilingrun` imports no Kubernetes API, controller-runtime, client,
-or CHILL API package. Kubernetes translation and collection remain in the
-one-shot adapter.
+or CHILL API package. Kubernetes projection remains in the Plan 4 controller;
+the runtime adapter and worker remain Kubernetes-free.
 
 ## Acceptance boundary
 

@@ -18,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const testIdleAdmissionPolicy = "idle-wall-power-v1"
+
 func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	run := testRun()
 	request, err := ProjectRequest(run.Spec)
@@ -30,6 +32,28 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 		request.Preparation.Measurement.Batch != 1 || request.Preparation.Metrics.IntervalMilliseconds != 1000 ||
 		request.AdmissionPolicy != run.Spec.AdmissionPolicy {
 		t.Fatalf("ProfilingRun request projection drifted: %#v", request)
+	}
+}
+
+func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
+	run := testRun()
+	settling := int32(60)
+	run.Spec.Measurement.WarmupIterations = 0
+	run.Spec.Measurement.SettlingDurationSeconds = &settling
+	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
+	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	run.Spec.AdmissionPolicy = testIdleAdmissionPolicy
+
+	request, err := ProjectRequest(run.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	measurement := request.Preparation.Measurement
+	if measurement.SettlingDurationSeconds != 60 ||
+		measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode ||
+		request.AdmissionPolicy != testIdleAdmissionPolicy {
+		t.Fatalf("idle request projection drifted: %#v", request)
 	}
 }
 

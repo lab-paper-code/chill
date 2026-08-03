@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha7"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha8"
 
 type ORTCPURuntimeConfig struct {
 	Command                 []string
@@ -113,19 +113,19 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 func (r *ORTCPURuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
-) (profilingrun.RuntimeResult, error) {
+) (RuntimeMeasurement, error) {
 	intent := request.Intent
 	if intent.State.RuntimeFamily != "onnxruntime" || intent.State.Backend != "CPUExecutionProvider" {
-		return profilingrun.RuntimeResult{}, errors.New("CPU ORT adapter received an unsupported runtime path")
+		return RuntimeMeasurement{}, errors.New("CPU ORT adapter received an unsupported runtime path")
 	}
 	if _, err := os.Lstat(r.config.ResultPath); err == nil {
-		return profilingrun.RuntimeResult{}, errors.New("CPU ORT result path already exists")
+		return RuntimeMeasurement{}, errors.New("CPU ORT result path already exists")
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("inspect CPU ORT result path: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("inspect CPU ORT result path: %w", err)
 	}
 	payload, err := r.encodeRequest(request)
 	if err != nil {
-		return profilingrun.RuntimeResult{}, err
+		return RuntimeMeasurement{}, err
 	}
 
 	arguments := append([]string(nil), r.config.Command[1:]...)
@@ -135,17 +135,26 @@ func (r *ORTCPURuntime) Measure(
 	command.Stdout = r.config.Stdout
 	command.Stderr = r.config.Stderr
 	if err := command.Run(); err != nil {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("run CPU ORT entrypoint: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("run CPU ORT entrypoint: %w", err)
 	}
-
+	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		var result profilingrun.IdleRuntimeResult
+		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
+			return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT idle result: %w", err)
+		}
+		if err := profilingrun.ValidateIdleRuntime(intent, request.PodUID, result); err != nil {
+			return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT idle result: %w", err)
+		}
+		return RuntimeMeasurement{Idle: &result}, nil
+	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("read CPU ORT result: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT result: %w", err)
 	}
 	if err := profilingrun.ValidateRuntime(intent, request.PodUID, result); err != nil {
-		return profilingrun.RuntimeResult{}, fmt.Errorf("validate CPU ORT result: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT result: %w", err)
 	}
-	return result, nil
+	return RuntimeMeasurement{Active: &result}, nil
 }
 
 func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {

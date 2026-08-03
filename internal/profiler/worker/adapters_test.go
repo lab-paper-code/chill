@@ -29,39 +29,66 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Provider != intent.State.Backend || result.ExperimentID != testPodUID {
+	if result.Active == nil || result.Idle != nil || result.Active.Provider != intent.State.Backend ||
+		result.Active.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
 	}
 }
 
+func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
+	t.Setenv("CHILL_ORT_CPU_HELPER", "idle-success")
+	directory := t.TempDir()
+	runtime := newTestORTCPURuntime(t, filepath.Join(directory, "runtime-result.json"))
+	intent := testIdleIntent(t)
+
+	result, err := runtime.Measure(context.Background(), runtimeRequest(intent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Idle == nil || result.Active != nil || result.Idle.PodUID != testPodUID ||
+		result.Idle.InferenceCountAfterModelLoad != 0 || !result.Idle.ModelResidentAtEnd {
+		t.Fatalf("unexpected idle runtime result: %#v", result)
+	}
+}
+
 func TestORTCPURequestMatchesPythonContract(t *testing.T) {
-	runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
-	payload, err := runtime.encodeRequest(runtimeRequest(testIntent(t)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Fatal("python3 is required for the Go-to-Python runtime contract test")
-	}
-	runtimeDirectory, err := filepath.Abs("../../../runtime/ortcpu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const validator = `
+	for _, test := range []struct {
+		name   string
+		intent profilingrun.Intent
+	}{
+		{name: "active", intent: testIntent(t)},
+		{name: "idle", intent: testIdleIntent(t)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
+			payload, err := runtime.encodeRequest(runtimeRequest(test.intent))
+			if err != nil {
+				t.Fatal(err)
+			}
+			python, err := exec.LookPath("python3")
+			if err != nil {
+				t.Fatal("python3 is required for the Go-to-Python runtime contract test")
+			}
+			runtimeDirectory, err := filepath.Abs("../../../runtime/ortcpu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			const validator = `
 import sys
 sys.path.insert(0, sys.argv[1])
 import runner
 request = runner.decode_request(sys.stdin.buffer)
 runner.validate_request(request)
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, python, "-c", validator, runtimeDirectory)
-	command.Stdin = bytes.NewReader(payload)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python rejected the Go runtime request: %v\n%s", err, output)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, python, "-c", validator, runtimeDirectory)
+			command.Stdin = bytes.NewReader(payload)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Python rejected the Go runtime request: %v\n%s", err, output)
+			}
+		})
 	}
 }
 
@@ -351,9 +378,19 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if request.ScheduledNodeName != request.Intent.TargetNode.Name {
 		os.Exit(11)
 	}
-	result, err := runtimeResult(request.Intent, request.PodUID)
-	if err != nil {
-		os.Exit(13)
+	var result any
+	if mode == "idle-success" {
+		idle, err := idleRuntimeResult(request.Intent, request.PodUID)
+		if err != nil {
+			os.Exit(13)
+		}
+		result = idle
+	} else {
+		active, err := runtimeResult(request.Intent, request.PodUID)
+		if err != nil {
+			os.Exit(13)
+		}
+		result = active
 	}
 	if mode == "unknown-field" {
 		payload, marshalErr := json.Marshal(result)

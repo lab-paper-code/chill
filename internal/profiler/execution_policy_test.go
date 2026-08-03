@@ -60,6 +60,30 @@ func TestDeriveExecutionPlanKeepsRetainedV1Alpha5ActiveIntentRunnable(t *testing
 	}
 }
 
+func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
+	intent := testIntent(t)
+	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&intent)
+	intent.Measurement.WarmupIterations = 0
+	intent.Measurement.SettlingDurationSeconds = 60
+	intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
+	intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
+
+	plan, err := DeriveExecutionPlan(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Policy != CPUORTWorkerPolicy || plan.PolicyVersion != CPUORTIdlePolicyVersion {
+		t.Fatalf("unexpected idle policy identity: %#v", plan)
+	}
+	if plan.ActiveDeadline != 271*time.Second || plan.AttemptTimeout != 241*time.Second ||
+		plan.ObserverStartTimeout != 180*time.Second {
+		t.Fatalf("idle settling time is not bound into the Job envelope: %#v", plan)
+	}
+}
+
 func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testing.T) {
 	intent := testIntent(t)
 	intent.SchemaVersion = profilingrun.SchemaVersion

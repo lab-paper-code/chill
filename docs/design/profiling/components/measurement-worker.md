@@ -9,9 +9,10 @@ metric/workload end-fence success path was live-verified with three sequential,
 same-intent Runs admitted by `wall-power-v2`. This document does not authorize
 batch campaigns, `b_sat` derivation, another runtime, or serving.
 
-The `v1alpha6` intent plus model-loaded-idle runtime/raw codecs and validation
-are implemented. The current Job still executes only the active runner branch;
-no idle raw object has yet been produced or live-verified.
+The `v1alpha6` intent, public idle request, CPU ORT runner branch, separate idle
+runtime/raw schemas, shared immutable finalization/loading, and idle admission
+dispatch are implemented. Active is live-verified; no idle raw object has yet
+been retained from a live Run.
 
 ## Purpose
 
@@ -83,12 +84,11 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-The implemented active path uses internal intent schema `v1alpha5`; retained
-earlier intents remain readable without changing their canonical bytes or
-digests. The model-loaded-idle revision advances new intents to `v1alpha6` and
-adds the frozen measurement-protocol settling duration. It reuses the same
-intent type and common execution provenance rather than creating a parallel
-frozen type.
+New active and idle Runs use internal intent schema `v1alpha6`; retained
+`v1alpha1` through `v1alpha5` intents remain readable without changing their
+canonical bytes or digests. The model-loaded-idle revision adds the frozen
+measurement-protocol settling duration. It reuses the same intent type and
+common execution provenance rather than creating a parallel frozen type.
 
 The following values are delivery bindings, not scientific Run inputs:
 
@@ -168,15 +168,18 @@ The runtime sequence is fixed:
 2. verify Pod UID, scheduled Node name, artifact bytes, CPU contract, runtime,
    provider, and output-validation capability;
 3. wait with a bounded timeout for both observer readiness signals;
-4. execute the declared warm-up iterations;
+4. execute active warm-up, or for idle retain the loaded model for the full
+   observer-independent settling duration without inference;
 5. atomically create `measurement-start`;
 6. execute the one duration-based measurement;
-7. atomically create `measurement-end` after the final measured inference;
+7. atomically create `measurement-end` after the final active inference, or
+   after the idle duration completes with zero inference and verified session
+   residency;
 8. wait with bounded timeouts for both result files;
 9. validate metric source and workload identities, summaries, timestamps, and
    coverage of the runtime measurement window;
-10. canonicalize `RawMeasurement`, calculate its digest and size, and perform
-   one immutable create; and
+10. canonicalize the mode-specific active or idle raw measurement, calculate
+    its digest and size, and perform one immutable create; and
 11. write the validated Evidence Store receipt to `/dev/termination-log` and
     exit successfully.
 

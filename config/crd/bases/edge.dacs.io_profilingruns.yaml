@@ -61,6 +61,7 @@ spec:
                   scientific admission policy.
                 enum:
                 - wall-power-v2
+                - idle-wall-power-v1
                 maxLength: 128
                 minLength: 1
                 type: string
@@ -130,13 +131,21 @@ spec:
                     maximum: 1
                     minimum: 1
                     type: integer
+                  settlingDurationSeconds:
+                    description: |-
+                      SettlingDurationSeconds is required only for model-loaded idle. The
+                      runtime loads the model before this observer-independent settling period.
+                    format: int32
+                    minimum: 1
+                    type: integer
                   warmupIterations:
                     format: int32
                     minimum: 0
                     type: integer
                   workloadMode:
-                    maxLength: 128
-                    minLength: 1
+                    enum:
+                    - saturated-serial-fixed-batch
+                    - idle-model-loaded
                     type: string
                 required:
                 - batch
@@ -147,6 +156,14 @@ spec:
                 - warmupIterations
                 - workloadMode
                 type: object
+                x-kubernetes-validations:
+                - message: measurement fields must match the selected workloadMode
+                  rule: 'self.workloadMode == ''idle-model-loaded'' ? self.batch ==
+                    1 && self.warmupIterations == 0 && has(self.settlingDurationSeconds)
+                    && self.inputGenerator == ''none'' && self.outputValidation ==
+                    ''none'' : !has(self.settlingDurationSeconds) && self.inputGenerator
+                    == ''numpy-default-rng-seed-0-fp32-v1'' && self.outputValidation
+                    == ''nonempty-shape-batch-v1'''
               metricObservation:
                 description: MetricObservation fixes polling behavior. The source
                   is resolved from TargetNode.
@@ -192,6 +209,9 @@ spec:
               rule: self.metricObservation.durationSeconds >= self.measurement.durationSeconds
             - message: cpuRequest must be positive
               rule: quantity(self.cpuRequest).compareTo(quantity('0')) > 0
+            - message: admissionPolicy must match the measurement workloadMode
+              rule: 'self.measurement.workloadMode == ''idle-model-loaded'' ? self.admissionPolicy
+                == ''idle-wall-power-v1'' : self.admissionPolicy == ''wall-power-v2'''
           status:
             description: ProfilingRunStatus contains compact, reconstructable Run
               outcomes.

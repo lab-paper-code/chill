@@ -43,41 +43,9 @@ func (l *RetainedLoader) Load(
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
 ) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error) {
-	if run == nil || run.Namespace == "" || run.Status.Job == nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			errors.New("ProfilingRun with a recorded Job is required")
-	}
-	job := &batchv1.Job{}
-	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
-	if err := l.reader.Get(ctx, key, job); err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			fmt.Errorf("get recorded measurement Job %s: %w", key, err)
-	}
-	if string(job.UID) != run.Status.Job.UID || !metav1.IsControlledBy(job, run) {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			errors.New("measurement Job does not match the recorded Run execution")
-	}
-	binding, err := storekube.BindingFromJob(job, "runtime")
+	loader, err := l.loaderFor(ctx, run, reference)
 	if err != nil {
 		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
-	}
-	if reference.Store != binding.Store {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			errors.New("evidence reference store does not match the retained Job binding")
-	}
-	credentials, err := storekube.LoadCredentials(ctx, l.reader, run.Namespace, binding.CredentialsSecretName)
-	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
-	}
-	store, err := l.stores(binding, credentials)
-	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			fmt.Errorf("construct retained evidence reader: %w", err)
-	}
-	loader, err := profilerevidence.NewLoader(store, l.maxObjectBytes)
-	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{},
-			fmt.Errorf("construct verified evidence loader: %w", err)
 	}
 	execution, raw, err := loader.Load(ctx, reference)
 	if err != nil {
@@ -87,6 +55,63 @@ func (l *RetainedLoader) Load(
 		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
 	}
 	return execution, raw, nil
+}
+
+func (l *RetainedLoader) LoadIdle(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reference evidencestore.ObjectIdentity,
+) (profilerevidence.ExecutionEvidence, profilerevidence.IdleRawMeasurement, error) {
+	loader, err := l.loaderFor(ctx, run, reference)
+	if err != nil {
+		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+	}
+	execution, raw, err := loader.LoadIdle(ctx, reference)
+	if err != nil {
+		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+	}
+	if err := validateRunEvidenceBinding(run, execution); err != nil {
+		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+	}
+	return execution, raw, nil
+}
+
+func (l *RetainedLoader) loaderFor(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reference evidencestore.ObjectIdentity,
+) (*profilerevidence.Loader, error) {
+	if run == nil || run.Namespace == "" || run.Status.Job == nil {
+		return nil, errors.New("ProfilingRun with a recorded Job is required")
+	}
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
+	if err := l.reader.Get(ctx, key, job); err != nil {
+		return nil, fmt.Errorf("get recorded measurement Job %s: %w", key, err)
+	}
+	if string(job.UID) != run.Status.Job.UID || !metav1.IsControlledBy(job, run) {
+		return nil, errors.New("measurement Job does not match the recorded Run execution")
+	}
+	binding, err := storekube.BindingFromJob(job, "runtime")
+	if err != nil {
+		return nil, err
+	}
+	if reference.Store != binding.Store {
+		return nil, errors.New("evidence reference store does not match the retained Job binding")
+	}
+	credentials, err := storekube.LoadCredentials(ctx, l.reader, run.Namespace, binding.CredentialsSecretName)
+	if err != nil {
+		return nil, err
+	}
+	store, err := l.stores(binding, credentials)
+	if err != nil {
+		return nil, fmt.Errorf("construct retained evidence reader: %w", err)
+	}
+	loader, err := profilerevidence.NewLoader(store, l.maxObjectBytes)
+	if err != nil {
+		return nil, fmt.Errorf("construct verified evidence loader: %w", err)
+	}
+	return loader, nil
 }
 
 func validateRunEvidenceBinding(

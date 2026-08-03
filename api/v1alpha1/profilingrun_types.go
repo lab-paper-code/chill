@@ -19,6 +19,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
+// +kubebuilder:validation:XValidation:rule="self.measurement.workloadMode == 'idle-model-loaded' ? self.admissionPolicy == 'idle-wall-power-v1' : self.admissionPolicy == 'wall-power-v2'",message="admissionPolicy must match the measurement workloadMode"
 type ProfilingRunSpec struct {
 	// Candidate selects one static catalog execution path.
 	Candidate ProfilingRunCandidateSpec `json:"candidate"`
@@ -40,7 +41,7 @@ type ProfilingRunSpec struct {
 	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Enum=wall-power-v2
+	// +kubebuilder:validation:Enum=wall-power-v2;idle-wall-power-v1
 	AdmissionPolicy string `json:"admissionPolicy"`
 }
 
@@ -67,12 +68,19 @@ type ProfilingRunCandidateSpec struct {
 	PowerMode string `json:"powerMode"`
 }
 
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.batch == 1 && self.warmupIterations == 0 && has(self.settlingDurationSeconds) && self.inputGenerator == 'none' && self.outputValidation == 'none' : !has(self.settlingDurationSeconds) && self.inputGenerator == 'numpy-default-rng-seed-0-fp32-v1' && self.outputValidation == 'nonempty-shape-batch-v1'",message="measurement fields must match the selected workloadMode"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
 
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
+
+	// SettlingDurationSeconds is required only for model-loaded idle. The
+	// runtime loads the model before this observer-independent settling period.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	SettlingDurationSeconds *int32 `json:"settlingDurationSeconds,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
@@ -82,8 +90,7 @@ type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Maximum=1
 	Repetitions int32 `json:"repetitions"`
 
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Enum=saturated-serial-fixed-batch;idle-model-loaded
 	WorkloadMode string `json:"workloadMode"`
 
 	// +kubebuilder:validation:MinLength=1

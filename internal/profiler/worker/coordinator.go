@@ -14,7 +14,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
@@ -22,7 +21,7 @@ import (
 // Runtime performs the frozen warm-up and measurement protocol. Concrete
 // runtime verification and measurement signaling belong to its adapter.
 type Runtime interface {
-	Measure(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error)
+	Measure(context.Context, RuntimeRequest) (RuntimeMeasurement, error)
 }
 
 type RuntimeRequest struct {
@@ -111,7 +110,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		)
 	}
 
-	runtimeResult, err := c.runtime.Measure(ctx, RuntimeRequest{
+	runtimeMeasurement, err := c.runtime.Measure(ctx, RuntimeRequest{
 		Intent:            request.Intent,
 		PodUID:            request.PodUID,
 		ScheduledNodeName: request.ScheduledNodeName,
@@ -119,10 +118,9 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
-	if err := profilingrun.ValidateRuntime(request.Intent, request.PodUID, runtimeResult); err != nil {
+	if err := runtimeMeasurement.Validate(request.Intent, request.PodUID); err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: validate runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
-
 	metricResult, err := c.metrics.Read(ctx)
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read metric observation result: %w", ErrMetricObservation, err)
@@ -131,15 +129,14 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read workload observation result: %w", ErrWorkloadObservation, err)
 	}
-	raw := evidence.RawMeasurement{
-		SchemaVersion: evidence.RawMeasurementSchemaVersion,
-		IntentDigest:  digest,
-		PodUID:        request.PodUID,
-		Runtime:       runtimeResult,
-		Metrics:       metricResult,
-		Workload:      &workloadResult,
-	}
-	payload, err := raw.CanonicalJSON(request.Intent)
+	payload, err := canonicalRawMeasurement(
+		request.Intent,
+		digest,
+		request.PodUID,
+		runtimeMeasurement,
+		metricResult,
+		workloadResult,
+	)
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: construct raw measurement: %w", ErrMetricObservation, err)
 	}

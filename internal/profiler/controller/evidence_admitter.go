@@ -11,6 +11,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,6 +68,17 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
+	}
+	if prepared.Intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+		execution, raw, err := a.loader.LoadIdle(ctx, run, reference)
+		if err != nil {
+			return profileradmission.Result{}, err
+		}
+		if execution.IntentDigest != prepared.IntentDigest {
+			return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
+		}
+		result, _, err := profileradmission.EvaluateIdle(execution, raw, run.Spec.AdmissionPolicy)
+		return result, err
 	}
 	execution, raw, err := a.loader.Load(ctx, run, reference)
 	if err != nil {
