@@ -7,8 +7,10 @@
 Implemented as a pure, read-only path for active and model-loaded-idle
 admission and derivation. The Job, worker, finalizer, verified loader, and
 single-Run controller admission branch now produce and consume idle raw
-evidence. One retained live idle Run has passed `idle-wall-power-v1`; campaign
-aggregation and baseline-to-active derivation remain unwired. No
+evidence. Three sequential retained live idle Runs have passed
+`idle-wall-power-v1`, projected to identity-compatible `IdleTrial` values, and
+produced the first live `DeriveIdleBaseline` result. Production campaign
+orchestration and baseline-to-active derivation remain unwired. No
 `DeviceProfile` API or status write is authorized by this plan.
 
 ## Question
@@ -211,6 +213,43 @@ The adapter strict-decodes and revalidates the Plan 2 bundle, including intent,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-
 latency count, and immutable content filename. Thermal state is not silently
 assumed healthy when no producer exists.
+
+### Live model-loaded-idle baseline result
+
+On 2026-08-03, three same-condition Runs were executed sequentially on the
+live Lattepanda Node:
+
+| Run | intent digest | Node resourceVersion | admitted mean wall power |
+|---|---|---:|---:|
+| `idle-baseline-live-ad7b84f-a` | `sha256:febddc5fcab32f0c8aae37970f49cb5893d3e3bc4d48f300368b58451aa07db0` | 275297891 | 4.929898 W |
+| `idle-baseline-live-ad7b84f-b` | `sha256:febddc5fcab32f0c8aae37970f49cb5893d3e3bc4d48f300368b58451aa07db0` | 275297891 | 4.893351 W |
+| `idle-baseline-live-ad7b84f-c` | `sha256:28eaf098a7da910fe6f4770c6195a38abbab190f97dead7870a6876662ad28a4` | 275301868 | 4.897335 W |
+
+All three reached `ExecutionComplete=True`, `EvidenceVerified=True`, and
+`EvidenceAdmitted=True` with `idle-wall-power-v1`. Re-reading each retained raw
+object through `RetainedLoader` and `EvaluateIdle` produced distinct Pod trial
+IDs and distinct verified raw-object identities. The projections nevertheless
+agreed exactly on:
+
+- `StateIdentity`: `chill.dacs.io/execution-state-identity.v1alpha1@sha256:fdf063288ab6695ce2f2e2e93a9d43b60bfdc13ba37785a22cf4715c17b399e8`;
+- `EnvironmentIdentity`: `chill.dacs.io/external-environment-identity.v1alpha1@sha256:4e7f69c7ab9450af5bc06f11e5e76c930ca3431dc8f0e5f9dd6097af38ba2d58`; and
+- idle `MeasurementProtocolIdentity`: `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:c7a36290499e36e445d709e61509c3d5112c07bfd61149a6407998facefe0d7d`.
+
+The first two intents were byte-identical. A normalized byte comparison showed
+that the third differed only in `targetNode.resourceVersion`, confirming on the
+live path that this causal execution snapshot changes the intent digest without
+changing any of the three aggregation identities.
+
+Calling `DeriveIdleBaseline` with those three independently admitted trials and
+policy `idle-baseline-v1` produced 4.906861 W with a 95% Student-t confidence
+half-width of 0.049809 W. The read-only diagnostic reconstructed each retained
+Job and store binding, verified all immutable bytes, and routed only the S3
+transport through a local port-forward. It did not add a production caller or
+persist a baseline. Production campaign ownership therefore remains open even
+though the pure derivation and identity-stability assumptions now have live
+evidence.
+
+### Earlier active-only evidence result
 
 For retained evidence
 `sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42`,

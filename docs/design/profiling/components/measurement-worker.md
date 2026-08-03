@@ -125,6 +125,9 @@ New active and idle Runs use internal intent schema `v1alpha6`; retained
 canonical bytes or digests. The model-loaded-idle revision adds the frozen
 measurement-protocol settling duration. It reuses the same intent type and
 common execution provenance rather than creating a parallel frozen type.
+The Go intent codec owns retained-evidence and reconciliation compatibility and
+therefore reads `v1alpha1` through `v1alpha6`; the Python CPU ORT adapter owns
+only current Job execution and intentionally accepts `v1alpha6` exactly.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that
