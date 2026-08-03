@@ -11,10 +11,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-func validateStoredExecution(
+func verifyStoredExecution(
 	payload []byte,
 	identity evidencestore.ObjectIdentity,
 	raw rawRecord,
+	intentDigest string,
 ) error {
 	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
 		return err
@@ -23,7 +24,10 @@ func validateStoredExecution(
 	if err := decodeExact(payload, &retained); err != nil {
 		return err
 	}
-	canonical, err := raw.canonicalExecutionJSON(retained)
+	if err := raw.validateExecution(retained, intentDigest); err != nil {
+		return err
+	}
+	canonical, err := retained.canonicalJSON()
 	if err != nil {
 		return err
 	}

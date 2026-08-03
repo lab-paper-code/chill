@@ -10,9 +10,9 @@ import (
 // evidence. The concrete raw schemas remain distinct and externally visible;
 // only schema-neutral orchestration depends on this interface.
 type rawRecord interface {
-	canonicalRawJSON(profilingrun.Intent) ([]byte, error)
-	canonicalExecutionJSON(ExecutionEvidence) ([]byte, error)
-	rawIntentDigest() string
+	validate(profilingrun.Intent, string) error
+	canonicalRawJSON() ([]byte, error)
+	validateExecution(ExecutionEvidence, string) error
 }
 
 func decodeRawRecord(payload []byte, intent profilingrun.Intent) (rawRecord, error) {
@@ -30,22 +30,18 @@ func decodeRawRecord(payload []byte, intent profilingrun.Intent) (rawRecord, err
 	return raw, nil
 }
 
-func (m RawMeasurement) canonicalRawJSON(intent profilingrun.Intent) ([]byte, error) {
-	return m.CanonicalJSON(intent)
+func (m RawMeasurement) canonicalRawJSON() ([]byte, error) {
+	return m.canonicalJSON()
 }
 
-func (m RawMeasurement) canonicalExecutionJSON(execution ExecutionEvidence) ([]byte, error) {
-	return execution.CanonicalJSON(m)
+func (m RawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {
+	return execution.validateLinkedRaw(m.PodUID, m.Workload, intentDigest)
 }
 
-func (m RawMeasurement) rawIntentDigest() string { return m.IntentDigest }
-
-func (m IdleRawMeasurement) canonicalRawJSON(intent profilingrun.Intent) ([]byte, error) {
-	return m.CanonicalJSON(intent)
+func (m IdleRawMeasurement) canonicalRawJSON() ([]byte, error) {
+	return m.canonicalJSON()
 }
 
-func (m IdleRawMeasurement) canonicalExecutionJSON(execution ExecutionEvidence) ([]byte, error) {
-	return execution.CanonicalIdleJSON(m)
+func (m IdleRawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {
+	return execution.validateLinkedRaw(m.PodUID, m.Workload, intentDigest)
 }
-
-func (m IdleRawMeasurement) rawIntentDigest() string { return m.IntentDigest }

@@ -205,13 +205,6 @@ func validatePreparedForRun(
 	if err != nil {
 		return nil, fmt.Errorf("encode prepared Run intent: %w", err)
 	}
-	digest, err := prepared.Intent.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("digest prepared Run intent: %w", err)
-	}
-	if prepared.IntentDigest != digest {
-		return nil, errors.New("prepared Run intent digest mismatch")
-	}
 	if err := profilingrun.ValidateCandidateReport(prepared.CandidateReportBytes, prepared.Intent); err != nil {
 		return nil, fmt.Errorf("validate prepared candidate report: %w", err)
 	}

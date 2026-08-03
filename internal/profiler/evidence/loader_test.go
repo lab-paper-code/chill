@@ -49,7 +49,11 @@ func TestLoaderVerifiesFinalAndRawObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedExecution, loadedRaw, err := loader.Load(context.Background(), executionIdentity)
+	verified, err := loader.Load(context.Background(), executionIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedExecution, loadedRaw, err := verified.Records()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +63,7 @@ func TestLoaderVerifiesFinalAndRawObjects(t *testing.T) {
 
 	drifted := executionIdentity
 	drifted.Digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	if _, _, err := loader.Load(context.Background(), drifted); err == nil {
+	if _, err := loader.Load(context.Background(), drifted); err == nil {
 		t.Fatal("digest mismatch was accepted")
 	}
 }

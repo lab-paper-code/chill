@@ -43,37 +43,67 @@ func (l *RetainedLoader) Load(
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
 ) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error) {
+	verified, err := l.loadActive(ctx, run, reference)
+	if err != nil {
+		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
+	}
+	return verified.Records()
+}
+
+// LoadForAdmission returns the sealed active evidence consumed by admission.
+// Load remains the plain read projection used by the operator console.
+func (l *RetainedLoader) LoadForAdmission(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reference evidencestore.ObjectIdentity,
+) (profilerevidence.VerifiedEvidence, error) {
+	return l.loadActive(ctx, run, reference)
+}
+
+func (l *RetainedLoader) loadActive(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reference evidencestore.ObjectIdentity,
+) (profilerevidence.VerifiedEvidence, error) {
 	loader, err := l.loaderFor(ctx, run, reference)
 	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
+		return profilerevidence.VerifiedEvidence{}, err
 	}
-	execution, raw, err := loader.Load(ctx, reference)
+	verified, err := loader.Load(ctx, reference)
 	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
+		return profilerevidence.VerifiedEvidence{}, err
+	}
+	execution, _, err := verified.Records()
+	if err != nil {
+		return profilerevidence.VerifiedEvidence{}, err
 	}
 	if err := validateRunEvidenceBinding(run, execution); err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
+		return profilerevidence.VerifiedEvidence{}, err
 	}
-	return execution, raw, nil
+	return verified, nil
 }
 
 func (l *RetainedLoader) LoadIdle(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
-) (profilerevidence.ExecutionEvidence, profilerevidence.IdleRawMeasurement, error) {
+) (profilerevidence.VerifiedIdleEvidence, error) {
 	loader, err := l.loaderFor(ctx, run, reference)
 	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+		return profilerevidence.VerifiedIdleEvidence{}, err
 	}
-	execution, raw, err := loader.LoadIdle(ctx, reference)
+	verified, err := loader.LoadIdle(ctx, reference)
 	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+		return profilerevidence.VerifiedIdleEvidence{}, err
+	}
+	execution, _, err := verified.Records()
+	if err != nil {
+		return profilerevidence.VerifiedIdleEvidence{}, err
 	}
 	if err := validateRunEvidenceBinding(run, execution); err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.IdleRawMeasurement{}, err
+		return profilerevidence.VerifiedIdleEvidence{}, err
 	}
-	return execution, raw, nil
+	return verified, nil
 }
 
 func (l *RetainedLoader) loaderFor(

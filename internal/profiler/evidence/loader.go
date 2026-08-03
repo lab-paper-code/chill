@@ -29,16 +29,16 @@ func NewLoader(store evidencestore.LocationReader, maxObjectBytes int64) (*Loade
 func (l *Loader) Load(
 	ctx context.Context,
 	reference evidencestore.ObjectIdentity,
-) (ExecutionEvidence, RawMeasurement, error) {
+) (VerifiedEvidence, error) {
 	execution, record, err := l.load(ctx, reference)
 	if err != nil {
-		return ExecutionEvidence{}, RawMeasurement{}, err
+		return VerifiedEvidence{}, err
 	}
 	raw, ok := record.(RawMeasurement)
 	if !ok {
-		return ExecutionEvidence{}, RawMeasurement{}, errors.New("retained evidence contains idle raw measurement")
+		return VerifiedEvidence{}, errors.New("retained evidence contains idle raw measurement")
 	}
-	return execution, raw, nil
+	return newVerifiedEvidence(execution, raw), nil
 }
 
 // LoadIdle retrieves the distinct model-loaded idle raw schema while reusing
@@ -46,16 +46,16 @@ func (l *Loader) Load(
 func (l *Loader) LoadIdle(
 	ctx context.Context,
 	reference evidencestore.ObjectIdentity,
-) (ExecutionEvidence, IdleRawMeasurement, error) {
+) (VerifiedIdleEvidence, error) {
 	execution, record, err := l.load(ctx, reference)
 	if err != nil {
-		return ExecutionEvidence{}, IdleRawMeasurement{}, err
+		return VerifiedIdleEvidence{}, err
 	}
 	raw, ok := record.(IdleRawMeasurement)
 	if !ok {
-		return ExecutionEvidence{}, IdleRawMeasurement{}, errors.New("retained evidence contains active raw measurement")
+		return VerifiedIdleEvidence{}, errors.New("retained evidence contains active raw measurement")
 	}
-	return execution, raw, nil
+	return newVerifiedIdleEvidence(execution, raw), nil
 }
 
 func (l *Loader) load(
@@ -70,9 +70,6 @@ func (l *Loader) load(
 	if err := decodeExact(finalBytes, &execution); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("decode finalized evidence: %w", err)
 	}
-	if err := execution.RawMeasurement.Validate(); err != nil {
-		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement reference: %w", err)
-	}
 	rawBytes, err := readVerified(ctx, l.store, execution.RawMeasurement, l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read raw measurement: %w", err)
@@ -81,16 +78,26 @@ func (l *Loader) load(
 	if err != nil {
 		return ExecutionEvidence{}, nil, err
 	}
-	canonicalRaw, err := raw.canonicalRawJSON(execution.Intent)
+	intentDigest, err := execution.Intent.Digest()
 	if err != nil {
+		return ExecutionEvidence{}, nil, fmt.Errorf("validate retained Run intent: %w", err)
+	}
+	if err := raw.validate(execution.Intent, intentDigest); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement: %w", err)
+	}
+	canonicalRaw, err := raw.canonicalRawJSON()
+	if err != nil {
+		return ExecutionEvidence{}, nil, fmt.Errorf("canonicalize raw measurement: %w", err)
 	}
 	if !bytes.Equal(rawBytes, canonicalRaw) {
 		return ExecutionEvidence{}, nil, errors.New("retained raw measurement is not canonical")
 	}
-	canonicalExecution, err := raw.canonicalExecutionJSON(execution)
-	if err != nil {
+	if err := raw.validateExecution(execution, intentDigest); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate finalized evidence: %w", err)
+	}
+	canonicalExecution, err := execution.canonicalJSON()
+	if err != nil {
+		return ExecutionEvidence{}, nil, fmt.Errorf("canonicalize finalized evidence: %w", err)
 	}
 	if !bytes.Equal(finalBytes, canonicalExecution) {
 		return ExecutionEvidence{}, nil, errors.New("retained finalized evidence is not canonical")

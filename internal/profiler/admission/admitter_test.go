@@ -11,6 +11,16 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
+func TestEvaluateRequiresVerifiedEvidence(t *testing.T) {
+	t.Parallel()
+	if _, err := Evaluate(profilerevidence.VerifiedEvidence{}, FrozenPolicy{}); err == nil {
+		t.Fatal("empty active evidence was accepted")
+	}
+	if _, _, err := EvaluateIdle(profilerevidence.VerifiedIdleEvidence{}, FrozenPolicy{}); err == nil {
+		t.Fatal("empty idle evidence was accepted")
+	}
+}
+
 func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapshot(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)

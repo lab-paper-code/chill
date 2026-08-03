@@ -14,47 +14,60 @@ import (
 )
 
 func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
-	rawBytes, err := raw.CanonicalJSON(e.Intent)
+	digest, err := e.Intent.Digest()
 	if err != nil {
+		return fmt.Errorf("validate Run intent: %w", err)
+	}
+	if err := raw.validate(e.Intent, digest); err != nil {
 		return fmt.Errorf("validate raw measurement: %w", err)
 	}
-	return e.validateLinkedRaw(raw.PodUID, raw.Workload, rawBytes)
+	if err := e.RawMeasurement.Validate(); err != nil {
+		return fmt.Errorf("validate raw measurement identity: %w", err)
+	}
+	rawBytes, err := raw.canonicalJSON()
+	if err != nil {
+		return fmt.Errorf("canonicalize raw measurement: %w", err)
+	}
+	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload, digest); err != nil {
+		return err
+	}
+	return verifyIdentityBytes(e.RawMeasurement, rawBytes)
 }
 
 func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
-	rawBytes, err := raw.CanonicalJSON(e.Intent)
+	digest, err := e.Intent.Digest()
 	if err != nil {
+		return fmt.Errorf("validate Run intent: %w", err)
+	}
+	if err := raw.validate(e.Intent, digest); err != nil {
 		return fmt.Errorf("validate idle raw measurement: %w", err)
 	}
-	return e.validateLinkedRaw(raw.PodUID, raw.Workload, rawBytes)
+	if err := e.RawMeasurement.Validate(); err != nil {
+		return fmt.Errorf("validate raw measurement identity: %w", err)
+	}
+	rawBytes, err := raw.canonicalJSON()
+	if err != nil {
+		return fmt.Errorf("canonicalize idle raw measurement: %w", err)
+	}
+	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload, digest); err != nil {
+		return err
+	}
+	return verifyIdentityBytes(e.RawMeasurement, rawBytes)
 }
 
 func (e ExecutionEvidence) validateLinkedRaw(
 	rawPodUID string,
 	workload *workloadobserver.Result,
-	rawBytes []byte,
+	intentDigest string,
 ) error {
 	if e.SchemaVersion != ExecutionEvidenceSchemaVersion {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
-	digest, err := e.Intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate Run intent: %w", err)
-	}
-	if e.IntentDigest != digest {
+	if e.IntentDigest != intentDigest {
 		return errors.New("execution evidence intent digest mismatch")
-	}
-	if !json.Valid(e.CandidateReportBytes) {
-		return errors.New("candidate report is not valid JSON")
 	}
 	if err := profilingrun.ValidateCandidateReport(e.CandidateReportBytes, e.Intent); err != nil {
 		return fmt.Errorf("validate candidate report: %w", err)
-	}
-	if err := e.RawMeasurement.Validate(); err != nil {
-		return fmt.Errorf("validate raw measurement identity: %w", err)
-	}
-	if err := verifyIdentityBytes(e.RawMeasurement, rawBytes); err != nil {
-		return err
 	}
 	if err := e.Terminal.validate(e.Intent, rawPodUID); err != nil {
 		return err

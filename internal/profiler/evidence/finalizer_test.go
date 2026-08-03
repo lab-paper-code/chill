@@ -79,7 +79,11 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedExecution, loadedRaw, err := loader.LoadIdle(context.Background(), result.Reference)
+	verified, err := loader.LoadIdle(context.Background(), result.Reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedExecution, loadedRaw, err := verified.Records()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +91,7 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 		loadedRaw.Runtime.InferenceCountAfterModelLoad != 0 || !loadedRaw.Runtime.ModelResidentAtEnd {
 		t.Fatalf("idle evidence schema drifted during finalization: %#v %#v", loadedExecution, loadedRaw)
 	}
-	if _, _, err := loader.Load(context.Background(), result.Reference); err == nil {
+	if _, err := loader.Load(context.Background(), result.Reference); err == nil {
 		t.Fatal("active loader accepted retained idle raw evidence")
 	}
 }

@@ -516,6 +516,10 @@ The controller trusts the handoff only after it:
 6. independently retrieves and verifies that finalized record; and
 7. publishes its compact reference and evidence/admission Conditions.
 
+Retrieval and verification produce an opaque evidence value. Scientific
+admission consumes that value directly, so the same raw and finalized bytes
+are not rehashed or structurally revalidated inside the admission package.
+
 Finalization uses a deterministic object key and canonical bytes. Before
 constructing a record, the controller checks that key and reuses an existing
 valid record. When no record exists, it projects the required UIDs, ownership,

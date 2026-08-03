@@ -4,7 +4,6 @@ package admission
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
@@ -28,19 +27,19 @@ type Result struct {
 }
 
 func Evaluate(
-	execution profilerevidence.ExecutionEvidence,
-	raw profilerevidence.RawMeasurement,
+	evidence profilerevidence.VerifiedEvidence,
 	frozenPolicy FrozenPolicy,
 ) (Result, error) {
+	execution, raw, err := evidence.Records()
+	if err != nil {
+		return Result{}, err
+	}
 	policy, err := frozenPolicy.AdmissionPolicy()
 	if err != nil {
 		return Result{}, err
 	}
 	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
 		return Result{}, errors.New("admission policy workload mode does not match execution intent")
-	}
-	if err := execution.Validate(raw); err != nil {
-		return Result{}, fmt.Errorf("validate execution evidence: %w", err)
 	}
 	trial, err := projectTrial(execution, raw)
 	if err != nil {
@@ -53,19 +52,19 @@ func Evaluate(
 // EvaluateIdle validates the full immutable evidence chain, applies the named
 // idle policy, and projects an IdleTrial only for Accepted evidence.
 func EvaluateIdle(
-	execution profilerevidence.ExecutionEvidence,
-	raw profilerevidence.IdleRawMeasurement,
+	evidence profilerevidence.VerifiedIdleEvidence,
 	frozenPolicy FrozenPolicy,
 ) (Result, *profilederivation.IdleTrial, error) {
+	execution, raw, err := evidence.Records()
+	if err != nil {
+		return Result{}, nil, err
+	}
 	policy, err := frozenPolicy.AdmissionPolicy()
 	if err != nil {
 		return Result{}, nil, err
 	}
 	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
 		return Result{}, nil, errors.New("idle admission policy workload mode does not match execution intent")
-	}
-	if err := execution.ValidateIdle(raw); err != nil {
-		return Result{}, nil, fmt.Errorf("validate idle execution evidence: %w", err)
 	}
 	observation, err := projectIdleObservation(execution, raw)
 	if err != nil {

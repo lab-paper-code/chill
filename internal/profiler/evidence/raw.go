@@ -50,14 +50,18 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 }
 
 func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion {
-		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
-	}
 	digest, err := intent.Digest()
 	if err != nil {
 		return fmt.Errorf("validate Run intent: %w", err)
 	}
-	if m.IntentDigest != digest {
+	return m.validate(intent, digest)
+}
+
+func (m RawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
+	if m.SchemaVersion != RawMeasurementSchemaVersion {
+		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
+	}
+	if m.IntentDigest != intentDigest {
 		return errors.New("raw measurement intent digest mismatch")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
@@ -76,12 +80,6 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 	if !m.Metrics.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(m.Metrics.EndedAt) {
 		return errors.New("runtime and metric observation windows do not overlap")
 	}
-	if m.SchemaVersion != RawMeasurementSchemaVersion {
-		if m.Workload != nil {
-			return errors.New("retained raw measurement cannot contain workload observation")
-		}
-		return nil
-	}
 	if m.Workload == nil {
 		return errors.New("raw measurement workload observation is required")
 	}
@@ -95,6 +93,10 @@ func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error
 	if err := m.Validate(intent); err != nil {
 		return nil, err
 	}
+	return m.canonicalJSON()
+}
+
+func (m RawMeasurement) canonicalJSON() ([]byte, error) {
 	canonical := m
 	canonical.Metrics.StartedAt = canonical.Metrics.StartedAt.UTC()
 	canonical.Metrics.EndedAt = canonical.Metrics.EndedAt.UTC()

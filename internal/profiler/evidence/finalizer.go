@@ -69,9 +69,16 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, err
 	}
-	canonicalRaw, err := raw.canonicalRawJSON(request.Intent)
+	intentDigest, err := request.Intent.Digest()
 	if err != nil {
+		return FinalizeResult{}, fmt.Errorf("validate Run intent: %w", err)
+	}
+	if err := raw.validate(request.Intent, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate raw measurement: %w", err)
+	}
+	canonicalRaw, err := raw.canonicalRawJSON()
+	if err != nil {
+		return FinalizeResult{}, fmt.Errorf("canonicalize raw measurement: %w", err)
 	}
 	if !bytes.Equal(rawBytes, canonicalRaw) {
 		return FinalizeResult{}, errors.New("stored raw measurement is not canonical")
@@ -79,21 +86,24 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 
 	candidate := ExecutionEvidence{
 		SchemaVersion:        ExecutionEvidenceSchemaVersion,
-		IntentDigest:         raw.rawIntentDigest(),
+		IntentDigest:         intentDigest,
 		Intent:               request.Intent,
 		CandidateReportBytes: append([]byte(nil), request.CandidateReportBytes...),
 		RawMeasurement:       request.RawReceipt.Object,
 		Terminal:             request.Terminal,
 		FinalizedAt:          request.FinalizedAt,
 	}
-	candidateBytes, err := raw.canonicalExecutionJSON(candidate)
+	if err := raw.validateExecution(candidate, intentDigest); err != nil {
+		return FinalizeResult{}, fmt.Errorf("validate execution evidence: %w", err)
+	}
+	candidateBytes, err := candidate.canonicalJSON()
 	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("construct execution evidence: %w", err)
+		return FinalizeResult{}, fmt.Errorf("canonicalize execution evidence: %w", err)
 	}
 
 	existingBytes, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err == nil {
-		return f.reuseExisting(existingBytes, request, raw)
+		return f.reuseExisting(existingBytes, request, raw, intentDigest)
 	}
 	if !errors.Is(err, evidencestore.ErrNotFound) {
 		return FinalizeResult{}, fmt.Errorf("inspect finalized evidence: %w", err)
@@ -111,7 +121,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read finalized evidence after create: %w", err)
 	}
-	if err := validateStoredExecution(retained, identity, raw); err != nil {
+	if err := verifyStoredExecution(retained, identity, raw, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("verify finalized evidence after create: %w", err)
 	}
 	return FinalizeResult{
@@ -124,21 +134,25 @@ func (f *Finalizer) reuseExisting(
 	payload []byte,
 	request FinalizeRequest,
 	raw rawRecord,
+	intentDigest string,
 ) (FinalizeResult, error) {
 	identity := identityFor(request.FinalLocation, payload)
 	var existing ExecutionEvidence
 	if err := decodeExact(payload, &existing); err != nil {
 		return FinalizeResult{}, fmt.Errorf("decode existing execution evidence: %w", err)
 	}
-	canonical, err := raw.canonicalExecutionJSON(existing)
-	if err != nil {
+	if err := raw.validateExecution(existing, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate existing execution evidence: %w", err)
+	}
+	canonical, err := existing.canonicalJSON()
+	if err != nil {
+		return FinalizeResult{}, fmt.Errorf("canonicalize existing execution evidence: %w", err)
 	}
 	if !bytes.Equal(payload, canonical) {
 		return FinalizeResult{}, errors.New("existing execution evidence is not canonical")
 	}
 	if existing.RawMeasurement != request.RawReceipt.Object ||
-		existing.IntentDigest != raw.rawIntentDigest() ||
+		existing.IntentDigest != intentDigest ||
 		existing.Terminal.Job.UID != request.Terminal.Job.UID ||
 		existing.Terminal.Pod.UID != request.Terminal.Pod.UID ||
 		existing.Terminal.Node.UID != request.Terminal.Node.UID {

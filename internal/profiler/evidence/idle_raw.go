@@ -47,14 +47,18 @@ func (m *IdleRawMeasurement) UnmarshalJSON(payload []byte) error {
 }
 
 func (m IdleRawMeasurement) Validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != IdleRawMeasurementSchemaVersion {
-		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
-	}
 	digest, err := intent.Digest()
 	if err != nil {
 		return fmt.Errorf("validate idle Run intent: %w", err)
 	}
-	if m.IntentDigest != digest {
+	return m.validate(intent, digest)
+}
+
+func (m IdleRawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
+	if m.SchemaVersion != IdleRawMeasurementSchemaVersion {
+		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
+	}
+	if m.IntentDigest != intentDigest {
 		return errors.New("idle raw measurement intent digest mismatch")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
@@ -86,6 +90,10 @@ func (m IdleRawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, e
 	if err := m.Validate(intent); err != nil {
 		return nil, err
 	}
+	return m.canonicalJSON()
+}
+
+func (m IdleRawMeasurement) canonicalJSON() ([]byte, error) {
 	canonical := m
 	canonical.Metrics.StartedAt = m.Metrics.StartedAt.UTC()
 	canonical.Metrics.EndedAt = m.Metrics.EndedAt.UTC()

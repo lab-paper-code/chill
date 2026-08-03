@@ -70,22 +70,22 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
 	}
 	if prepared.Intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
-		execution, raw, err := a.loader.LoadIdle(ctx, run, reference)
+		verified, err := a.loader.LoadIdle(ctx, run, reference)
 		if err != nil {
 			return profileradmission.Result{}, err
 		}
-		if execution.IntentDigest != prepared.IntentDigest {
+		if verified.IntentDigest() != prepared.IntentDigest {
 			return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
 		}
-		result, _, err := profileradmission.EvaluateIdle(execution, raw, frozen.AdmissionPolicy)
+		result, _, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
 		return result, err
 	}
-	execution, raw, err := a.loader.Load(ctx, run, reference)
+	verified, err := a.loader.LoadForAdmission(ctx, run, reference)
 	if err != nil {
 		return profileradmission.Result{}, err
 	}
-	if execution.IntentDigest != prepared.IntentDigest {
+	if verified.IntentDigest() != prepared.IntentDigest {
 		return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
 	}
-	return profileradmission.Evaluate(execution, raw, frozen.AdmissionPolicy)
+	return profileradmission.Evaluate(verified, frozen.AdmissionPolicy)
 }

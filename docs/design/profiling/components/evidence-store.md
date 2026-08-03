@@ -230,6 +230,14 @@ measurement, writes and verifies a separate execution-evidence record from
 terminal Kubernetes facts, and publishes the compact finalized reference and
 Conditions.
 
+The evidence loader is the single read-side verification boundary. It checks
+the referenced object bytes, canonical encoding, schema, and cross-record
+links once, then returns an opaque active or idle evidence value. Admission
+accepts only that verified value and does not repeat content hashing or full
+record validation. Finalization retains its independent read-after-write check;
+that check covers the external store write rather than rechecking an in-memory
+value.
+
 ## Acceptance boundary
 
 The boundary is acceptable when exact duplicate and conflict behavior have
