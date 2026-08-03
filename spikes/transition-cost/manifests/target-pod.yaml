@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-b-efficientnet
+  namespace: chill-transition-spike
+  labels:
+    app.kubernetes.io/name: transition-model-service
+    transition.chill.dacs.io/role: target
+spec:
+  automountServiceAccountToken: false
+  nodeSelector:
+    kubernetes.io/hostname: jetsonx
+  tolerations:
+  - key: node-role.kubernetes.io/edge
+    operator: Exists
+    effect: NoSchedule
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  initContainers:
+  - name: artifact
+    image: 155.230.35.213:5000/chill/transition-efficientnet-b4-artifact@sha256:33bda75cb21051bb626831980254b2afb79514e3673f862c8695c94e3360c770
+    imagePullPolicy: IfNotPresent
+    command: [sh, -ec]
+    args:
+    - >-
+      cp /artifact/efficientnet-b4.onnx /model/model.onnx;
+      echo 'f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30  /model/model.onnx' | sha256sum -c -
+    volumeMounts:
+    - name: model
+      mountPath: /model
+  - name: engine-cache
+    image: 155.230.35.213:5000/chill/transition-efficientnet-b4-engine-cache@sha256:31b8c2e06458343b5e897351043362c01d6502c638892021c0d68cdb1d4a9628
+    imagePullPolicy: IfNotPresent
+    command: [sh, -ec]
+    env:
+    - name: ENGINE_CACHE_MODE
+      value: cold
+    args:
+    - >-
+      cp /engine-cache/* /prepared-cache/;
+      echo 'fef8b938645c09aae6f56927cee9d15697f91d72ddeae26b126747f05673ea96  /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.engine' | sha256sum -c -;
+      echo 'be4fea15a21c3129da3b9cfa10d94fbabbcf1edb1d5132e6f20ca7ff25387963  /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.profile' | sha256sum -c -;
+      test "$(wc -c < /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.engine)" -eq 79889599;
+      test "$(wc -c < /prepared-cache/TensorrtExecutionProvider_TRTKernel_graph_main_graph_12774712659127405121_0_0_sm72.profile)" -eq 21;
+      if [ "$ENGINE_CACHE_MODE" = cold ]; then rm -f /prepared-cache/*; fi;
+      ls -ln /prepared-cache
+    volumeMounts:
+    - name: engine-cache
+      mountPath: /prepared-cache
+  containers:
+  - name: runtime
+    image: 155.230.35.213:5000/chill/spike-batch-characterization@sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec
+    imagePullPolicy: IfNotPresent
+    command: [python3, /experiment/model_service.py]
+    env:
+    - name: MODEL_PATH
+      value: /model/model.onnx
+    - name: MODEL_NAME
+      value: efficientnet-b4
+    - name: ARTIFACT_DIGEST
+      value: sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30
+    readinessProbe:
+      exec:
+        command: [test, -f, /tmp/model-ready]
+      periodSeconds: 1
+      timeoutSeconds: 1
+      failureThreshold: 900
+    resources:
+      requests:
+        cpu: "2"
+        memory: 2Gi
+        nvidia.com/gpu: "1"
+      limits:
+        cpu: "4"
+        memory: 5Gi
+        nvidia.com/gpu: "1"
+    volumeMounts:
+    - name: model
+      mountPath: /model
+      readOnly: true
+    - name: engine-cache
+      mountPath: /engine-cache
+    - name: experiment-script
+      mountPath: /experiment
+      readOnly: true
+  volumes:
+  - name: model
+    emptyDir: {}
+  - name: engine-cache
+    emptyDir: {}
+  - name: experiment-script
+    configMap:
+      name: transition-model-service-v1

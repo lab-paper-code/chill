@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-a-mobilenet
+  namespace: chill-transition-spike
+  labels:
+    app.kubernetes.io/name: transition-model-service
+    transition.chill.dacs.io/role: source
+spec:
+  automountServiceAccountToken: false
+  nodeSelector:
+    kubernetes.io/hostname: jetsonx
+  tolerations:
+  - key: node-role.kubernetes.io/edge
+    operator: Exists
+    effect: NoSchedule
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  initContainers:
+  - name: artifact
+    image: 155.230.35.213:5000/chill/transition-mobilenet-v2-050-artifact@sha256:1db7b031013d0c5bdf0f4a30c8647f694baf377243bf845d3ccf2e8a64a079b6
+    imagePullPolicy: IfNotPresent
+    command: [sh, -ec]
+    args:
+    - >-
+      cp /artifact/mobilenet-v2-050.onnx /model/model.onnx;
+      echo '8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2  /model/model.onnx' | sha256sum -c -
+    volumeMounts:
+    - name: model
+      mountPath: /model
+  containers:
+  - name: runtime
+    image: 155.230.35.213:5000/chill/spike-batch-characterization@sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec
+    imagePullPolicy: IfNotPresent
+    command: [python3, /experiment/model_service.py]
+    env:
+    - name: MODEL_PATH
+      value: /model/model.onnx
+    - name: MODEL_NAME
+      value: mobilenet-v2-050
+    - name: ARTIFACT_DIGEST
+      value: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+    readinessProbe:
+      exec:
+        command: [test, -f, /tmp/model-ready]
+      periodSeconds: 1
+      timeoutSeconds: 1
+      failureThreshold: 900
+    resources:
+      requests:
+        cpu: "2"
+        memory: 1Gi
+        nvidia.com/gpu: "1"
+      limits:
+        cpu: "4"
+        memory: 5Gi
+        nvidia.com/gpu: "1"
+    volumeMounts:
+    - name: model
+      mountPath: /model
+      readOnly: true
+    - name: engine-cache
+      mountPath: /engine-cache
+    - name: experiment-script
+      mountPath: /experiment
+      readOnly: true
+  volumes:
+  - name: model
+    emptyDir: {}
+  - name: engine-cache
+    emptyDir: {}
+  - name: experiment-script
+    configMap:
+      name: transition-model-service-v1
