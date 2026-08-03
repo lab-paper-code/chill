@@ -15,7 +15,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,15 +39,17 @@ type PodSource interface {
 
 // Request contains identities and bounds already frozen for one profiling Run.
 // SelectorLabelKeys limits captured labels to facts needed to identify another
-// CHILL measurement workload. EndFenceTimeout bounds the final catch-up
-// watch used to prove that events preceding the stop signal were consumed.
+// CHILL measurement workload. EndFenceContainerName identifies the companion
+// whose successful termination is causally after measurement-end, and
+// EndFenceTimeout bounds the wait for that status on the same Pod watch.
 type Request struct {
-	Target            workloadobserver.TargetIdentity
-	Run               workloadobserver.RunIdentity
-	PolicyDigest      string
-	SelectorLabelKeys []string
-	EventLimit        int
-	EndFenceTimeout   time.Duration
+	Target                workloadobserver.TargetIdentity
+	Run                   workloadobserver.RunIdentity
+	PolicyDigest          string
+	SelectorLabelKeys     []string
+	EventLimit            int
+	EndFenceContainerName string
+	EndFenceTimeout       time.Duration
 }
 
 // Observer owns one bounded LIST/WATCH session.
@@ -77,7 +78,7 @@ func (o *Observer) Probe(ctx context.Context, request Request) error {
 	if err := validateRequest(request, func() {}); err != nil {
 		return err
 	}
-	prepared, err := o.prepare(ctx, request)
+	prepared, err := o.prepare(ctx, ctx, request)
 	if err != nil {
 		return err
 	}
@@ -86,9 +87,9 @@ func (o *Observer) Probe(ctx context.Context, request Request) error {
 }
 
 // Observe lists active Pods, establishes a watch from the list resourceVersion,
-// then calls onStarted exactly once. Cancellation starts a bounded catch-up watch
-// from the last processed resourceVersion; only a Kubernetes bookmark closes a
-// continuous observation. Post-start failures are retained as incomplete evidence.
+// then calls onStarted exactly once. After cancellation it drains that same
+// watch until the frozen Run Pod reports successful termination of the end-fence
+// companion. Post-start failures are retained as incomplete evidence.
 func (o *Observer) Observe(
 	ctx context.Context,
 	request Request,
@@ -97,7 +98,9 @@ func (o *Observer) Observe(
 	if err := validateRequest(request, onStarted); err != nil {
 		return workloadobserver.Result{}, err
 	}
-	prepared, err := o.prepare(ctx, request)
+	watchContext, stopWatch := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopWatch()
+	prepared, err := o.prepare(ctx, watchContext, request)
 	if err != nil {
 		return workloadobserver.Result{}, err
 	}
@@ -120,7 +123,11 @@ func (o *Observer) Observe(
 	return o.receive(ctx, prepared.retry, request, prepared.active, result)
 }
 
-func (o *Observer) prepare(ctx context.Context, request Request) (preparedObservation, error) {
+func (o *Observer) prepare(
+	ctx context.Context,
+	watchContext context.Context,
+	request Request,
+) (preparedObservation, error) {
 	selector := fields.OneTermEqualSelector("spec.nodeName", request.Target.NodeName).String()
 	list, err := o.source.List(ctx, metav1.ListOptions{FieldSelector: selector})
 	if err != nil {
@@ -137,7 +144,7 @@ func (o *Observer) prepare(ctx context.Context, request Request) (preparedObserv
 	if err != nil {
 		return preparedObservation{}, err
 	}
-	first, err := o.source.Watch(ctx, metav1.ListOptions{
+	first, err := o.source.Watch(watchContext, metav1.ListOptions{
 		FieldSelector:       selector,
 		ResourceVersion:     list.ResourceVersion,
 		AllowWatchBookmarks: true,
@@ -149,7 +156,7 @@ func (o *Observer) prepare(ctx context.Context, request Request) (preparedObserv
 		return preparedObservation{}, errors.New("watch Pods: Kubernetes returned a nil watcher")
 	}
 
-	continuation := &continuingWatcher{ctx: ctx, source: o.source, fieldSelector: selector, first: first}
+	continuation := &continuingWatcher{ctx: watchContext, source: o.source, fieldSelector: selector, first: first}
 	retry, err := watchtools.NewRetryWatcher(list.ResourceVersion, continuation)
 	if err != nil {
 		first.Stop()
@@ -166,6 +173,7 @@ func (o *Observer) receive(
 	result workloadobserver.Result,
 ) (workloadobserver.Result, error) {
 	lastObservedAt := result.CoverageStartedAt
+	endFenceResourceVersion := ""
 	finish := func(failure *workloadobserver.Failure) (workloadobserver.Result, error) {
 		endedAt := o.nextTime(lastObservedAt)
 		result.CoverageEndedAt = endedAt
@@ -204,6 +212,9 @@ func (o *Observer) receive(
 			}
 		}
 		result.LastResourceVersion = pod.ResourceVersion
+		if reachesEndFence(*pod, request) {
+			endFenceResourceVersion = pod.ResourceVersion
+		}
 
 		projected, err := projectPod(*pod, request.Target.NodeName, request.SelectorLabelKeys)
 		if err != nil {
@@ -235,45 +246,35 @@ func (o *Observer) receive(
 		return nil
 	}
 	endFence := func() (workloadobserver.Result, error) {
-		retry.Stop()
+		if endFenceResourceVersion != "" {
+			return finish(nil)
+		}
 		fenceContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), request.EndFenceTimeout)
 		defer cancel()
-		timeoutSeconds := int64(request.EndFenceTimeout / time.Second)
-		fence, err := o.source.Watch(fenceContext, metav1.ListOptions{
-			FieldSelector:       fields.OneTermEqualSelector("spec.nodeName", request.Target.NodeName).String(),
-			ResourceVersion:     result.LastResourceVersion,
-			AllowWatchBookmarks: true,
-			TimeoutSeconds:      &timeoutSeconds,
-		})
-		if err != nil {
-			return fail(workloadobserver.FailureReasonEndFenceFailed, fmt.Sprintf("establish end fence: %v", err))
-		}
-		if fence == nil {
-			return fail(workloadobserver.FailureReasonEndFenceFailed, "establish end fence: Kubernetes returned a nil watcher")
-		}
-		defer fence.Stop()
 
 		for {
 			select {
 			case <-fenceContext.Done():
 				return fail(
 					workloadobserver.FailureReasonEndFenceFailed,
-					fmt.Sprintf("end fence did not receive a Kubernetes bookmark within %s", request.EndFenceTimeout),
+					fmt.Sprintf(
+						"Pod watch did not observe successful termination of end-fence container %q within %s",
+						request.EndFenceContainerName,
+						request.EndFenceTimeout,
+					),
 				)
-			case event, ok := <-fence.ResultChan():
+			case event, ok := <-retry.ResultChan():
 				if !ok {
-					return fail(workloadobserver.FailureReasonEndFenceFailed, "end-fence Kubernetes Pod watch stopped before a bookmark")
-				}
-				if event.Type == watch.Bookmark {
-					accessor, err := meta.Accessor(event.Object)
-					if err != nil || strings.TrimSpace(accessor.GetResourceVersion()) == "" {
-						return fail(workloadobserver.FailureReasonEndFenceFailed, "end-fence bookmark has an empty resourceVersion")
-					}
-					result.LastResourceVersion = accessor.GetResourceVersion()
-					return finish(nil)
+					return fail(workloadobserver.FailureReasonEndFenceFailed, "Pod watch stopped before the causal end fence")
 				}
 				if failure := process(event); failure != nil {
-					return finish(failure)
+					return fail(
+						workloadobserver.FailureReasonEndFenceFailed,
+						fmt.Sprintf("Pod watch failed before the causal end fence: %s", failure.Message),
+					)
+				}
+				if endFenceResourceVersion != "" {
+					return finish(nil)
 				}
 			}
 		}
@@ -296,6 +297,20 @@ func (o *Observer) receive(
 			}
 		}
 	}
+}
+
+func reachesEndFence(pod corev1.Pod, request Request) bool {
+	if pod.Namespace != request.Run.Namespace || pod.Name != request.Run.PodName ||
+		string(pod.UID) != request.Run.PodUID {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == request.EndFenceContainerName && status.State.Terminated != nil &&
+			status.State.Terminated.ExitCode == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func initialActivePods(items []corev1.Pod, request Request) (map[string]workloadobserver.Pod, error) {
@@ -453,12 +468,13 @@ func validateRequest(request Request, onStarted func()) error {
 		return errors.New("workload observer start callback is required")
 	}
 	for name, value := range map[string]string{
-		"target Node name": request.Target.NodeName,
-		"target Node UID":  request.Target.NodeUID,
-		"Run namespace":    request.Run.Namespace,
-		"Run Job UID":      request.Run.JobUID,
-		"Run Pod name":     request.Run.PodName,
-		"Run Pod UID":      request.Run.PodUID,
+		"target Node name":         request.Target.NodeName,
+		"target Node UID":          request.Target.NodeUID,
+		"Run namespace":            request.Run.Namespace,
+		"Run Job UID":              request.Run.JobUID,
+		"Run Pod name":             request.Run.PodName,
+		"Run Pod UID":              request.Run.PodUID,
+		"end-fence container name": request.EndFenceContainerName,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("workload observer %s is required without surrounding whitespace", name)

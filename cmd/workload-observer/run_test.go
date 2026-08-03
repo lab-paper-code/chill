@@ -31,14 +31,13 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	client := fake.NewSimpleClientset(pod.DeepCopy())
 	preflight := watch.NewRaceFreeFake()
 	initial := watch.NewRaceFreeFake()
-	fence := watch.NewRaceFreeFake()
-	watchCalls := make(chan string, 3)
+	watchCalls := make(chan string, 2)
 	transient := *workloadTestPod()
 	transient.Namespace = "default"
 	transient.Name = "warmup-only"
 	transient.UID = "warmup-only-uid"
 	transient.OwnerReferences = nil
-	installPodObservationReactors(t, client, *pod, transient, watchCalls, preflight, initial, fence)
+	installPodObservationReactors(t, client, *pod, transient, watchCalls, preflight, initial)
 
 	done := make(chan error, 1)
 	go func() {
@@ -58,10 +57,13 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	if err := worker.PublishSignal(opts.endPath); err != nil {
 		t.Fatal(err)
 	}
-	if got := <-watchCalls; got != "20" {
-		t.Fatalf("end-fence watch resourceVersion = %q, want 20", got)
-	}
-	fence.Action(watch.Bookmark, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{ResourceVersion: "21"}})
+	fence := pod.DeepCopy()
+	fence.ResourceVersion = "21"
+	fence.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:  endFenceContainerName,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+	}}
+	initial.Modify(fence)
 
 	select {
 	case err := <-done:

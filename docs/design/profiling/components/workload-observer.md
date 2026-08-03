@@ -4,10 +4,10 @@
 
 ## Status
 
-Implemented. The Kubernetes-free observation contract, isolated Kubernetes
-list-watch adapter, bounded executable, immutable installation-fact resolution,
-read-only identity, Job-local execution, raw evidence retention, admission
-projection, and read-only operator projection are live-verified.
+Implemented. The causal Pod-status end-fence success path was live-verified
+with three sequential, same-intent Runs admitted by `wall-power-v2`. The
+read-only identity and raw-evidence schema remain unchanged, while admission
+fails closed on material events with ambiguous end-drain timestamps.
 
 ## Purpose
 
@@ -81,17 +81,24 @@ workload-observer-ready  preflight list-watch capability is established
 workload-window-start    warm-up is complete; open the retained observation
 workload-window-ready    retained list-watch continuity is established
 measurement-end          runtime has closed its measurement window
-workload-result.json     validated bounded result after the closing bookmark
+workload-result.json     validated result after the causal Pod-status end fence
 ```
 
-The observer continues until the runtime end signal. It then opens one bounded
-catch-up watch from the last processed `resourceVersion` and closes coverage
-only after receiving a Kubernetes bookmark. Events replayed before that bookmark
-remain part of the observation. A missing bookmark, expired history, an
-unresumable watch, or a bounded-result overflow makes coverage incomplete. Its
-coverage timestamps must surround the runtime result's exact measurement
-timestamps. It never fills a gap by treating a later list as proof of the
-missing interval.
+The observer continues consuming the established watch after the runtime end
+signal. MetricObserver cannot exit successfully until it has observed that same
+Job-local signal and atomically published its result. WorkloadObserver therefore
+closes only when the same Pod watch reports successful termination of the
+`metric-observer` container. This ordinary Pod status event establishes a
+resource-version boundary causally after measurement-end without relying on a
+discretionary watch bookmark or interpreting a later list as stream progress.
+
+Material events drained before that fence remain in evidence. Because their
+observer receipt timestamps cannot prove which side of the runtime end instant
+the source transition occurred on, admission marks such a window unknown rather
+than silently ignoring the events. A missing fence, expired watch history, an
+unresumable watch, or a bounded-result overflow makes coverage incomplete.
+Coverage timestamps must surround the runtime result's exact measurement
+timestamps.
 
 ## Evidence contract
 
@@ -100,7 +107,7 @@ The bounded result retains only facts needed to reconstruct membership:
 - target Node name and frozen Node UID;
 - initial list `resourceVersion` and observer coverage bounds;
 - active Pod identities at measurement start and end;
-- material membership changes during the window;
+- material membership changes during observation coverage;
 - Pod namespace, name, UID, owner identity, phase, and requested images;
 - the profiling Job and Pod identities used to exclude the Run itself;
 - the last continuous `resourceVersion`;
@@ -125,7 +132,8 @@ Admission can set the window-known fact only when:
 - list-to-watch continuity is established;
 - observer coverage surrounds the runtime measurement window;
 - target Node, Run Pod, Job, and intent identities match;
-- no watch gap, expired history, overflow, or observer failure exists; and
+- no watch gap, expired history, overflow, or observer failure exists;
+- no material event has an ambiguous post-runtime drain timestamp; and
 - the workload result passes strict evidence validation.
 
 Another CHILL measurement workload overlapping the Run is a typed rejection.

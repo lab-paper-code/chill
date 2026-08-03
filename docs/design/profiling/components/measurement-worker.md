@@ -4,10 +4,10 @@
 
 ## Status
 
-Implemented for the first CPU ONNX Runtime profiling path. The earlier
-runtime-and-metric path was live-verified; the workload-window extension is
-code-verified and awaits a live Run. This document does not authorize batch
-campaigns, `b_sat` derivation, another runtime, or serving.
+Implemented for the first CPU ONNX Runtime profiling path. The causal
+metric/workload end-fence success path was live-verified with three sequential,
+same-intent Runs admitted by `wall-power-v2`. This document does not authorize
+batch campaigns, `b_sat` derivation, another runtime, or serving.
 
 ## Purpose
 
@@ -41,11 +41,11 @@ runtime container (the measurement worker and sole raw writer)
 metric-observer container
   -> wait for the runtime measurement signal
   -> invoke internal/metricobserver for one bounded window
-  -> atomically write only the metric result
+  -> observe measurement-end, atomically write only the metric result, and exit
 
 workload-observer container
   -> establish a continuous target-Node Pod list-watch
-  -> close observation after the runtime end signal
+  -> close only after the same watch observes the metric-observer exit fence
   -> atomically write only the workload result
 ```
 
@@ -170,15 +170,18 @@ The MetricObserver sequence is fixed:
 2. construct the edge-metrics source from the frozen power contract;
 3. atomically create `observer-ready`;
 4. wait with a bounded timeout for `measurement-start`;
-5. observe for the frozen power duration; and
-6. atomically publish `metric-result.json` and exit.
+5. observe for the frozen power duration;
+6. wait with a bounded timeout for `measurement-end`; and
+7. atomically publish `metric-result.json` and exit successfully. Therefore its
+   successful Pod container status is causally after runtime closed the window.
 
 The WorkloadObserver sequence is fixed:
 
 1. strict-decode the intent and verify its own Pod and Job ownership;
 2. establish the target-Node Pod list-watch and publish its readiness signal;
 3. retain bounded membership changes until `measurement-end`;
-4. close the resource-version boundary with a bounded bookmark wait; and
+4. continue the same watch until the Run Pod reports successful termination of
+   `metric-observer`, the causal post-end status fence; and
 5. atomically publish `workload-result.json` and exit.
 
 ## Raw evidence and receipt

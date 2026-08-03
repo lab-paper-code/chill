@@ -102,7 +102,7 @@ func projectTrial(
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
-	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload)
+	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload, windowStart, windowEnd)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}

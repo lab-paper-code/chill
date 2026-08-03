@@ -67,6 +67,9 @@ func execute(
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("metric observation interrupted: %w", err)
 	}
+	if err := worker.WaitForSignal(ctx, opts.endPath, opts.endWaitTimeout, pollInterval); err != nil {
+		return fmt.Errorf("wait for measurement-end: %w", err)
+	}
 	if err := worker.PublishMetricResult(opts.metricResultPath, maximumResultBytes, result); err != nil {
 		return err
 	}

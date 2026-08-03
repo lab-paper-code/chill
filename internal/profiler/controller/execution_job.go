@@ -311,6 +311,7 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 		Args: []string{
 			"--intent-digest=" + prepared.IntentDigest,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
+			"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
 		},
 		Resources: corev1.ResourceRequirements{

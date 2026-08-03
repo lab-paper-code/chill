@@ -78,6 +78,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	}
 	observer := findContainer(t, pod.Containers, "metric-observer")
 	assertArgument(t, observer.Args, "--max-events=33")
+	assertArgument(t, observer.Args, "--end-wait-timeout=3m1s")
 	workloads := findContainer(t, pod.Containers, "workload-observer")
 	assertArgument(t, workloads.Args, "--kube-api-server=https://kubernetes.example:6443")
 	assertArgument(t, workloads.Args, "--max-events=10000")

@@ -33,6 +33,9 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	if err := worker.PublishSignal(options.startPath); err != nil {
 		t.Fatal(err)
 	}
+	if err := worker.PublishSignal(options.endPath); err != nil {
+		t.Fatal(err)
+	}
 	if err := execute(context.Background(), options, server.Client(), time.Second, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,29 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 		!*result.Samples[0].Thermal.ObservationAvailable || result.Samples[0].Thermal.Active == nil ||
 		*result.Samples[0].Thermal.Active {
 		t.Fatalf("typed thermal evidence was not retained: %#v", result.Samples[0].Thermal)
+	}
+}
+
+func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte("shelly_power_total_watts 5.2\n"))
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	_, digest := writeTestIntent(t, directory, server.URL)
+	options := testOptions(directory, digest)
+	options.endWaitTimeout = 20 * time.Millisecond
+	if err := worker.PublishSignal(options.startPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err := execute(context.Background(), options, server.Client(), time.Second, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "wait for measurement-end") {
+		t.Fatalf("expected bounded measurement-end failure, got %v", err)
+	}
+	if _, statErr := os.Stat(options.metricResultPath); !os.IsNotExist(statErr) {
+		t.Fatalf("missing measurement-end produced a metric result: %v", statErr)
 	}
 }
 
@@ -148,6 +174,8 @@ func testOptions(directory, digest string) options {
 	return options{
 		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
-		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second, maxEvents: 100,
+		endPath:          filepath.Join(directory, "measurement-end"),
+		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
+		endWaitTimeout: time.Second, maxEvents: 100,
 	}
 }

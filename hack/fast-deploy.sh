@@ -13,6 +13,7 @@ node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
 metric_observer_image="${METRIC_OBSERVER_IMG:-}"
+workload_observer_image="${WORKLOAD_OBSERVER_IMG:-}"
 measurement_worker_image="${MEASUREMENT_WORKER_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
 measurement_worker_platforms="${MEASUREMENT_WORKER_PLATFORMS:-linux/amd64}"
@@ -54,7 +55,8 @@ Options:
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
   --components NAME            all, operator, node-discovery, profiler, console,
-                               metric-observer, or measurement-worker. Default: ${components}
+                               metric-observer, workload-observer, or measurement-worker.
+                               Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -73,6 +75,7 @@ Environment:
   PROFILER_IMG                 Full Profiler image ref. Overrides registry/tag defaults.
   CONSOLE_IMG                  Full Console API image ref. Overrides registry/tag defaults.
   METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
+  WORKLOAD_OBSERVER_IMG        Full WorkloadObserver image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_IMG       Full measurement worker image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_PLATFORMS Measurement worker platforms. Default: ${measurement_worker_platforms}
   IMAGE_TAG                    Image tag when --tag is not provided.
@@ -224,7 +227,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|profiler|console|metric-observer|measurement-worker) ;;
+all|operator|node-discovery|profiler|console|metric-observer|workload-observer|measurement-worker) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -334,6 +337,9 @@ fi
 if [[ -z "${metric_observer_image}" ]] && component_selected metric-observer; then
 	metric_observer_image="${registry}/${image_namespace}/chill-metric-observer:${image_tag}"
 fi
+if [[ -z "${workload_observer_image}" ]] && component_selected workload-observer; then
+	workload_observer_image="${registry}/${image_namespace}/chill-workload-observer:${image_tag}"
+fi
 if [[ -z "${measurement_worker_image}" ]] && component_selected measurement-worker; then
 	measurement_worker_image="${registry}/${image_namespace}/chill-measurement-worker:${image_tag}"
 fi
@@ -349,6 +355,9 @@ if [[ -n "${console_image}" ]]; then
 fi
 if [[ -n "${metric_observer_image}" ]]; then
 	split_image_ref "${metric_observer_image}" "metric-observer"
+fi
+if [[ -n "${workload_observer_image}" ]]; then
+	split_image_ref "${workload_observer_image}" "workload-observer"
 fi
 if [[ -n "${measurement_worker_image}" ]]; then
 	split_image_ref "${measurement_worker_image}" "measurement-worker"
@@ -391,6 +400,7 @@ echo "node-discovery image: ${node_discovery_image}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
+echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "platforms: ${platforms}"
 echo "measurement-worker platforms: ${measurement_worker_platforms}"
@@ -551,6 +561,11 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("metric-observer")
 	fi
+	if component_selected workload-observer; then
+		"${function_name}" "build/docker/workload-observer.Dockerfile" "${workload_observer_image}" &
+		pids+=("$!")
+		names+=("workload-observer")
+	fi
 	if component_selected measurement-worker; then
 		"${function_name}" "build/docker/measurement-worker.Dockerfile" \
 			"${measurement_worker_image}" "${measurement_worker_platforms}" &
@@ -601,6 +616,12 @@ run_ctr_plain_http_components() {
 			"build/docker/metric-observer.Dockerfile" "${metric_observer_image}" &
 		pids+=("$!")
 		names+=("metric-observer")
+	fi
+	if component_selected workload-observer; then
+		ctr_plain_http_build_push_one workload-observer \
+			"build/docker/workload-observer.Dockerfile" "${workload_observer_image}" &
+		pids+=("$!")
+		names+=("workload-observer")
 	fi
 	if component_selected measurement-worker; then
 		ctr_plain_http_build_push_one measurement-worker \
@@ -723,6 +744,7 @@ echo "node-discovery image: ${node_discovery_image}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
+echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"
 try "${kubectl_bin}" get chillsystems.edge.dacs.io -A -o wide

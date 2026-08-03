@@ -67,7 +67,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 		&o.endFenceTimeout,
 		"end-fence-timeout",
 		0,
-		"Job-derived maximum wait for the closing Kubernetes bookmark",
+		"Job-derived maximum wait for the causal Pod-status end fence",
 	)
 	set.IntVar(&o.maxEvents, "max-events", 0, "Job-derived maximum retained material Pod events")
 	set.Int64Var(&o.maxResultBytes, "max-result-bytes", 0, "Job-derived maximum workload result bytes")

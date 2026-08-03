@@ -14,7 +14,7 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 	intent := admissionIntentWithWorkloadContract()
 	result := admissionWorkloadResult(t, intent)
 
-	window, err := projectWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(intent, &result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +39,11 @@ func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
 		sort.Slice(pods, func(i, j int) bool { return workloadIdentity(pods[i]) < workloadIdentity(pods[j]) })
 	}
 
-	firstWindow, err := projectWorkloadWindow(intent, &first)
+	firstWindow, err := projectDefaultWorkloadWindow(intent, &first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondWindow, err := projectWorkloadWindow(intent, &second)
+	secondWindow, err := projectDefaultWorkloadWindow(intent, &second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
 	}
 	result.LastResourceVersion = "12"
 
-	window, err := projectWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(intent, &result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
 		})
 	}
 
-	window, err := projectWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(intent, &result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +115,9 @@ func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
 	result.Failure = &workloadobserver.Failure{
 		ObservedAt: result.CoverageEndedAt,
 		Reason:     workloadobserver.FailureReasonEndFenceFailed,
-		Message:    "closing bookmark was not observed",
+		Message:    "causal Pod-status end fence failed",
 	}
-	window, err := projectWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(intent, &result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +126,97 @@ func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
 	}
 }
 
+func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
+	intent := admissionIntentWithWorkloadContract()
+	result := admissionWorkloadResult(t, intent)
+	runtimeStarted := result.CoverageStartedAt.Add(10 * time.Second)
+	runtimeEnded := result.CoverageStartedAt.Add(20 * time.Second)
+	before := workloadobserver.Pod{
+		Namespace: "default", Name: "before", UID: "before-uid", Phase: "Running",
+		Images: []string{"registry.example/before@sha256:" + strings.Repeat("c", 64)},
+	}
+	after := workloadobserver.Pod{
+		Namespace: "default", Name: "after", UID: "after-uid", Phase: "Running",
+		Images: []string{"registry.example/after@sha256:" + strings.Repeat("d", 64)},
+	}
+	result.Events = []workloadobserver.Event{
+		{
+			Kind: workloadobserver.EventEntered, ObservedAt: runtimeStarted.Add(-2 * time.Second),
+			ResourceVersion: "11", Pod: before,
+		},
+		{
+			Kind: workloadobserver.EventExited, ObservedAt: runtimeStarted.Add(-time.Second),
+			ResourceVersion: "12", Pod: before,
+		},
+		{
+			Kind: workloadobserver.EventEntered, ObservedAt: runtimeEnded.Add(time.Second),
+			ResourceVersion: "13", Pod: after,
+		},
+		{
+			Kind: workloadobserver.EventExited, ObservedAt: runtimeEnded.Add(2 * time.Second),
+			ResourceVersion: "14", Pod: after,
+		},
+	}
+	result.LastResourceVersion = "14"
+
+	window, err := projectWorkloadWindow(intent, &result, runtimeStarted, runtimeEnded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.Known || len(window.ExternalWorkloadChanges) != 0 ||
+		len(window.ConcurrentCHILLWorkloads) != 0 {
+		t.Fatalf("ambiguous end-drain workload projection = %#v", window)
+	}
+}
+
+func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *testing.T) {
+	intent := admissionIntentWithWorkloadContract()
+	result := admissionWorkloadResult(t, intent)
+	other := workloadobserver.Pod{
+		Namespace: "chill-system", Name: "earlier-run", UID: "earlier-run-uid", Phase: "Running",
+		Owner: &workloadobserver.OwnerIdentity{Kind: "Job", Name: "profilingrun-earlier", UID: "earlier-job-uid"},
+		Labels: map[string]string{
+			profilingrun.MeasurementWorkloadLabelKey: profilingrun.MeasurementWorkloadLabelValue,
+		},
+		Images: []string{"registry.example/runtime@sha256:" + strings.Repeat("d", 64)},
+	}
+	result.InitialActivePods = append(result.InitialActivePods, other)
+	sort.Slice(result.InitialActivePods, func(i, j int) bool {
+		return workloadIdentity(result.InitialActivePods[i]) < workloadIdentity(result.InitialActivePods[j])
+	})
+	runtimeStarted := result.CoverageStartedAt.Add(10 * time.Second)
+	runtimeEnded := result.CoverageStartedAt.Add(20 * time.Second)
+	result.Events = []workloadobserver.Event{{
+		Kind: workloadobserver.EventExited, ObservedAt: runtimeStarted.Add(-time.Second),
+		ResourceVersion: "11", Pod: other,
+	}}
+	result.LastResourceVersion = "11"
+
+	window, err := projectWorkloadWindow(intent, &result, runtimeStarted, runtimeEnded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !window.Known || len(window.ConcurrentCHILLWorkloads) != 0 || len(window.ExternalWorkloadChanges) != 0 {
+		t.Fatalf("pre-runtime CHILL workload projection = %#v", window)
+	}
+}
+
 func admissionIntentWithWorkloadContract() profilingrun.Intent {
 	intent := admissionIntent()
 	intent.Workload = profilingrun.CurrentWorkloadContract()
 	return intent
+}
+
+func projectDefaultWorkloadWindow(
+	intent profilingrun.Intent,
+	result *workloadobserver.Result,
+) (workloadWindow, error) {
+	return projectWorkloadWindow(
+		intent,
+		result,
+		result.CoverageStartedAt.Add(time.Second),
+		result.CoverageEndedAt.Add(-time.Second),
+	)
 }
 
 func admissionWorkloadResult(t *testing.T, intent profilingrun.Intent) workloadobserver.Result {

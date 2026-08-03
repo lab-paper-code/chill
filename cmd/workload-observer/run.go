@@ -15,7 +15,10 @@ import (
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 )
 
-const signalPollInterval = 10 * time.Millisecond
+const (
+	signalPollInterval    = 10 * time.Millisecond
+	endFenceContainerName = "metric-observer"
+)
 
 type observation struct {
 	result workloadobserver.Result
@@ -65,10 +68,11 @@ func execute(
 			PodName:   opts.podName,
 			PodUID:    opts.podUID,
 		},
-		PolicyDigest:      opts.contractDigest,
-		SelectorLabelKeys: keys,
-		EventLimit:        opts.maxEvents,
-		EndFenceTimeout:   opts.endFenceTimeout,
+		PolicyDigest:          opts.contractDigest,
+		SelectorLabelKeys:     keys,
+		EventLimit:            opts.maxEvents,
+		EndFenceContainerName: endFenceContainerName,
+		EndFenceTimeout:       opts.endFenceTimeout,
 	}
 	if err := observer.Probe(ctx, request); err != nil {
 		return fmt.Errorf("probe workload observation: %w", err)
