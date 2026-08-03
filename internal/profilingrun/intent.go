@@ -78,14 +78,11 @@ func (i Intent) Validate() error {
 			return fmt.Errorf("%s must be repository@sha256", name)
 		}
 	}
-	if i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousCurrentIntentVersion ||
-		i.SchemaVersion == allowedBackgroundIntentVersion {
-		if !imagePattern.MatchString(i.Images.WorkloadObserver) {
-			return errors.New("images.workloadObserver must be repository@sha256")
-		}
-		if err := i.Workload.Validate(); err != nil {
-			return fmt.Errorf("validate workload contract: %w", err)
-		}
+	if !imagePattern.MatchString(i.Images.WorkloadObserver) {
+		return errors.New("images.workloadObserver must be repository@sha256")
+	}
+	if err := i.Workload.Validate(); err != nil {
+		return fmt.Errorf("validate workload contract: %w", err)
 	}
 	if i.Metrics.NodeName != i.TargetNode.Name {
 		return errors.New("metrics nodeName must match target Node")
@@ -111,57 +108,17 @@ func (i Intent) Validate() error {
 }
 
 func (i Intent) validateSchema() error {
-	switch i.SchemaVersion {
-	case SchemaVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-		if i.Workload.SchemaVersion != WorkloadContractSchemaVersion || i.Workload.AllowedBackground != nil {
-			return errors.New("current intent requires the current workload observation contract")
-		}
-	case previousCurrentIntentVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-		if i.Workload.SchemaVersion != WorkloadContractSchemaVersion || i.Workload.AllowedBackground != nil {
-			return errors.New("retained v1alpha5 intent requires the current workload observation contract")
-		}
-		if i.Measurement.SettlingDurationSeconds != 0 {
-			return errors.New("retained v1alpha5 intent cannot contain settlingDurationSeconds")
-		}
-	case allowedBackgroundIntentVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-		if i.Images.WorkloadObserver == "" || i.Workload.SchemaVersion != "" || i.Workload.AllowedBackground == nil {
-			return errors.New("retained v1alpha4 intent requires its workload observation fields")
-		}
-		if err := i.Workload.Validate(); err != nil {
-			return fmt.Errorf("validate retained workload contract: %w", err)
-		}
-	case workloadFreeIntentSchemaVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-		if i.Images.WorkloadObserver != "" || i.Workload.SchemaVersion != "" || i.Workload.AllowedBackground != nil {
-			return errors.New("retained workload-free intent must not contain workload observation fields")
-		}
-	case previousIntentSchemaVersion:
-		if !validArtifactPath(i.State.ArtifactPath) {
-			return errors.New("state.artifactPath must be a clean absolute container path")
-		}
-		if hasWorkloadObservationFields(i) {
-			return errors.New("retained intent must not contain workload observation fields")
-		}
-	case legacyIntentSchemaVersion:
-		if i.State.ArtifactPath != "" {
-			return errors.New("legacy intent must not contain state.artifactPath")
-		}
-		if hasWorkloadObservationFields(i) {
-			return errors.New("legacy intent must not contain workload observation fields")
-		}
-	default:
+	if i.SchemaVersion != SchemaVersion && i.SchemaVersion != previousCurrentIntentVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
+	}
+	if !validArtifactPath(i.State.ArtifactPath) {
+		return errors.New("state.artifactPath must be a clean absolute container path")
+	}
+	if i.Workload.SchemaVersion != WorkloadContractSchemaVersion {
+		return errors.New("intent requires the current workload observation contract")
+	}
+	if i.SchemaVersion == previousCurrentIntentVersion && i.Measurement.SettlingDurationSeconds != 0 {
+		return errors.New("retained v1alpha5 intent cannot contain settlingDurationSeconds")
 	}
 	return nil
 }
@@ -203,11 +160,6 @@ func IsSupportedCPUORTIntent(i Intent) bool {
 		(i.SchemaVersion == SchemaVersion && i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
 
-func hasWorkloadObservationFields(intent Intent) bool {
-	return intent.Images.WorkloadObserver != "" || intent.Workload.SchemaVersion != "" ||
-		intent.Workload.AllowedBackground != nil
-}
-
 func (i Intent) validateCPUContract() error {
 	if i.CPU.ExclusivityClaimed {
 		return errors.New("first CPU policy must not claim Node exclusivity")
@@ -244,55 +196,10 @@ func (i Intent) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(i)
 }
 
-// MarshalJSON preserves the exact retained wire shape of older immutable
-// intents while emitting only the current component name for new intents.
+// MarshalJSON fixes the canonical field order used by intent digests.
 func (i Intent) MarshalJSON() ([]byte, error) {
-	if i.SchemaVersion == legacyIntentSchemaVersion || i.SchemaVersion == previousIntentSchemaVersion {
-		return json.Marshal(struct {
-			SchemaVersion string               `json:"schemaVersion"`
-			Candidate     CandidateIdentity    `json:"candidate"`
-			State         ExecutionState       `json:"state"`
-			Images        legacyImages         `json:"images"`
-			TargetNode    NodeSnapshot         `json:"targetNode"`
-			CPU           CPUContract          `json:"cpu"`
-			Measurement   MeasurementContract  `json:"measurement"`
-			Metrics       legacyMetricContract `json:"power"`
-		}{
-			i.SchemaVersion, i.Candidate, i.State,
-			legacyImages{i.Images.Runtime, i.Images.Artifact, i.Images.MetricObserver},
-			i.TargetNode, i.CPU, i.Measurement, legacyMetricContractFromCurrent(i.Metrics),
-		})
-	}
-	if i.SchemaVersion == workloadFreeIntentSchemaVersion {
-		return json.Marshal(struct {
-			SchemaVersion string              `json:"schemaVersion"`
-			Candidate     CandidateIdentity   `json:"candidate"`
-			State         ExecutionState      `json:"state"`
-			Images        workloadFreeImages  `json:"images"`
-			TargetNode    NodeSnapshot        `json:"targetNode"`
-			CPU           CPUContract         `json:"cpu"`
-			Measurement   MeasurementContract `json:"measurement"`
-			Metrics       MetricContract      `json:"metrics"`
-		}{
-			i.SchemaVersion, i.Candidate, i.State,
-			workloadFreeImages{i.Images.Runtime, i.Images.Artifact, i.Images.MetricObserver},
-			i.TargetNode, i.CPU, i.Measurement, i.Metrics,
-		})
-	}
 	type wire Intent
 	return json.Marshal(wire(i))
-}
-
-type legacyImages struct {
-	Runtime  string `json:"runtime"`
-	Artifact string `json:"artifact"`
-	Observer string `json:"powerObserver"`
-}
-
-type workloadFreeImages struct {
-	Runtime        string `json:"runtime"`
-	Artifact       string `json:"artifact"`
-	MetricObserver string `json:"metricObserver"`
 }
 
 func (i Intent) Digest() (string, error) {

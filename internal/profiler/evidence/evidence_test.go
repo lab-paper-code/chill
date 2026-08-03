@@ -64,31 +64,6 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
-func TestRetainedRawMeasurementWireShapeRemainsReadable(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	raw.SchemaVersion = legacyRawMeasurementSchemaVersion
-	raw.Workload = nil
-	raw.Metrics.Source.ThermalMetrics = nil
-	for index := range raw.Metrics.Samples {
-		raw.Metrics.Samples[index].Thermal = nil
-	}
-	payload, err := raw.CanonicalJSON(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(payload), `"power":`) || strings.Contains(string(payload), `"metrics":`) {
-		t.Fatalf("retained raw measurement wire shape = %s", payload)
-	}
-	var decoded RawMeasurement
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if err := decoded.Validate(intent); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRetainedMetricRawMeasurementRemainsReadableWithoutWorkloadObservation(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)

@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	legacyRawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha1"
 	metricRawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha2"
 	RawMeasurementSchemaVersion       = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
 )
@@ -31,21 +30,13 @@ type RawMeasurement struct {
 	Workload      *workloadobserver.Result   `json:"workload,omitempty"`
 }
 
-// UnmarshalJSON keeps retained immutable v1alpha1 evidence readable while the
-// current schema exposes only the MetricObserver result name.
+// UnmarshalJSON strictly decodes the current metric field name.
 func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
-	var wire struct {
-		SchemaVersion string                     `json:"schemaVersion"`
-		IntentDigest  string                     `json:"intentDigest"`
-		PodUID        string                     `json:"podUID"`
-		Runtime       profilingrun.RuntimeResult `json:"runtime"`
-		Metrics       *metricobserver.Result     `json:"metrics"`
-		LegacyMetrics *metricobserver.Result     `json:"power"`
-		Workload      *workloadobserver.Result   `json:"workload"`
-	}
+	type wire RawMeasurement
+	var decoded wire
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
 	var trailing any
@@ -55,29 +46,12 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 		}
 		return err
 	}
-	if wire.Metrics != nil && wire.LegacyMetrics != nil {
-		return errors.New("raw measurement contains multiple metric observations")
-	}
-	if wire.Metrics == nil && wire.LegacyMetrics == nil {
-		return errors.New("raw measurement metric observation is required")
-	}
-	m.SchemaVersion = wire.SchemaVersion
-	m.IntentDigest = wire.IntentDigest
-	m.PodUID = wire.PodUID
-	m.Runtime = wire.Runtime
-	if wire.Metrics != nil {
-		m.Metrics = *wire.Metrics
-	} else {
-		m.Metrics = *wire.LegacyMetrics
-	}
-	m.Workload = wire.Workload
+	*m = RawMeasurement(decoded)
 	return nil
 }
 
 func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion &&
-		m.SchemaVersion != metricRawMeasurementSchemaVersion &&
-		m.SchemaVersion != legacyRawMeasurementSchemaVersion {
+	if m.SchemaVersion != RawMeasurementSchemaVersion && m.SchemaVersion != metricRawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
 	}
 	digest, err := intent.Digest()
@@ -93,7 +67,7 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 	if err := profilingrun.ValidateRuntime(intent, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics, m.SchemaVersion != legacyRawMeasurementSchemaVersion); err != nil {
+	if err := validateMetricObservation(intent, m.Metrics, true); err != nil {
 		return err
 	}
 	runtimeStarted, runtimeEnded, err := m.Runtime.MeasurementWindow()
@@ -139,15 +113,6 @@ func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error
 			return nil, fmt.Errorf("canonicalize workload observation: %w", err)
 		}
 		canonical.Workload = &workload
-	}
-	if canonical.SchemaVersion == legacyRawMeasurementSchemaVersion {
-		return json.Marshal(struct {
-			SchemaVersion string                     `json:"schemaVersion"`
-			IntentDigest  string                     `json:"intentDigest"`
-			PodUID        string                     `json:"podUID"`
-			Runtime       profilingrun.RuntimeResult `json:"runtime"`
-			Metrics       metricobserver.Result      `json:"power"`
-		}{canonical.SchemaVersion, canonical.IntentDigest, canonical.PodUID, canonical.Runtime, canonical.Metrics})
 	}
 	return json.Marshal(canonical)
 }

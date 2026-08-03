@@ -293,12 +293,6 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 	if err != nil {
 		return err
 	}
-	// Spike reports predate the internal material contract. They remain
-	// readable for fixture migration, but newly resolved candidates must bind
-	// all side facts used by Node selection and artifact execution.
-	if report.SchemaVersion != profilingrun.CandidateReportSchemaVersion {
-		return nil
-	}
 	checks := []struct{ name, want, got string }{
 		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
 		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
