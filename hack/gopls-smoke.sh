@@ -48,7 +48,7 @@ require_contains workspace-go-version "$workspace_stats" "\"GoVersion\": \"$expe
 require_contains workspace-diagnostics "$workspace_stats" '"Diagnostics": 0'
 
 mapfile -d '' go_files < <(
-  find . -path './spikes' -prune -o -type f -name '*.go' -print0
+  find . -type f -name '*.go' -print0
 )
 diagnostics="$(gopls_command check -severity=error "${go_files[@]}")"
 if [[ -n "$diagnostics" ]]; then
@@ -95,7 +95,7 @@ require_contains reconcile-freeze-callee "$reconcile_hierarchy" \
 printf 'phase1.go_toolchain=%s\n' "$expected_go"
 printf 'phase1.gopls=%s\n' "$expected_gopls"
 printf 'phase1.workspace_diagnostics=0\n'
-printf 'phase1.non_spike_file_errors=0\n'
+printf 'phase1.file_errors=0\n'
 printf 'phase1.freezer_implementation=pass\n'
 printf 'phase1.setup_definition=pass\n'
 printf 'phase1.intent_digest_references=pass\n'

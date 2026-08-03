@@ -9,20 +9,20 @@ module="$(go list -m)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-non_spike_packages="$tmp_dir/non-spike-packages"
+packages="$tmp_dir/packages"
 internal_edges="$tmp_dir/internal-edges"
 default_manifest="$tmp_dir/default.yaml"
 profiler_manifest="$tmp_dir/profiler.yaml"
 default_resources="$tmp_dir/default-resources"
 profiler_resources="$tmp_dir/profiler-resources"
 
-go list ./... | awk '!/\/spikes(\/|$)/' | sort >"$non_spike_packages"
+go list ./... | sort >"$packages"
 go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... |
   awk -v module="$module" '
-    $1 !~ /\/spikes(\/|$)/ {
+    {
       source = $1
       for (i = 2; i <= NF; i++) {
-        if (index($i, module) == 1 && $i !~ /\/spikes(\/|$)/) {
+        if (index($i, module) == 1) {
           print source " -> " $i
         }
       }
@@ -70,10 +70,9 @@ extract_resources "$profiler_manifest" "$profiler_resources"
 printf 'baseline.commit=%s\n' "$(git rev-parse HEAD)"
 printf 'baseline.go_version=%s\n' "$(go version | awk '{print $3}')"
 printf 'baseline.module_go=%s\n' "$(awk '$1 == "go" { print $2; exit }' go.mod)"
-printf 'baseline.go_files_non_spike=%s\n' \
-  "$(find . -path './spikes' -prune -o -type f -name '*.go' -print | wc -l)"
-printf 'baseline.go_packages_non_spike=%s\n' "$(wc -l <"$non_spike_packages")"
-printf 'baseline.internal_import_edges_non_spike=%s\n' "$(wc -l <"$internal_edges")"
+printf 'baseline.go_files=%s\n' "$(find . -type f -name '*.go' -print | wc -l)"
+printf 'baseline.go_packages=%s\n' "$(wc -l <"$packages")"
+printf 'baseline.internal_import_edges=%s\n' "$(wc -l <"$internal_edges")"
 printf 'baseline.helm_template_files=%s\n' \
   "$(rg -l -F '{{' charts/chill/templates | wc -l)"
 printf 'baseline.helm_default_resources=%s\n' "$(wc -l <"$default_resources")"

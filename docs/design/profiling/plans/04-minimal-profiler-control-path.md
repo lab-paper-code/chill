@@ -18,12 +18,13 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is now `v1alpha6`, with retained `v1alpha1` through
-`v1alpha5` canonical bytes preserved. The public request schema, request-to-
-intent projection, bounded Job envelope, idle CPU ORT execution, raw commit,
-mode-aware finalization/loading, and named idle admission dispatch are
-implemented and live-verified. The accepted idle Run retains distinct
-runtime/raw completeness while reusing the active control lifecycle.
+The internal intent is `v1alpha6`. Each immutable intent record contains the
+canonical intent, candidate report, admission policy, and execution policy.
+The public request schema, request-to-intent projection, bounded Job envelope,
+idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
+idle admission dispatch are implemented and live-verified. The accepted idle
+Run retains distinct runtime/raw completeness while reusing the active control
+lifecycle.
 
 ## Purpose
 
@@ -41,21 +42,9 @@ The first Profiler answers one bounded question:
 
 It does not search a batch curve or produce a `DeviceProfile`.
 
-## Before and after
+## Current flow
 
 ```text
-Before
-
-human / spike CLI
-  -> materialize one Job
-  -> wait and collect evidence
-  -> call admission logic
-
-CHILL Operator does not observe or own this lifecycle.
-```
-
-```text
-After
 
 ChillSystem desired state
   -> Helm installs Profiler runtime identity, permissions, and base configuration
@@ -79,8 +68,7 @@ duplicate individual Run state.
 
 ## First supported path
 
-The first path deliberately preserves the boundary already proven by the
-spike:
+The first path deliberately fixes this boundary:
 
 - one statically `Compatible` candidate;
 - one selected Kubernetes Node;
@@ -308,8 +296,7 @@ provenance in the immutable intent record before creating a Job. Policy content
 digest, rather than a compiled label, is the admission version published in
 status and carried into derivation. ConfigMap changes therefore affect only new
 Runs. Restart recovery reads the retained bytes and never re-resolves mutable
-policy configuration. Two-key intent records created before this contract use
-the exact legacy built-in thresholds solely as a compatibility path.
+policy configuration.
 
 Before an intent record exists, a successfully read but malformed policy
 catalog, an unconfigured selected name, or a selected policy whose workload
@@ -456,16 +443,13 @@ Neither controller lists and enqueues every root resource for an unrelated
 event. A Pod remains owned by its Job, so Pod identity is discovered through
 the Job UID rather than by introducing a second controller owner.
 
-The existing spike remains a characterization harness and regression oracle
-until live equivalence is demonstrated. It is not imported by production code.
-
 ## Run-path checkpoints
 
 ### Checkpoint 1: request and immutability boundary
 
 Decide the minimum `ChillSystem.spec.profiler` configuration, the minimum
 `ProfilingRun.spec` references, and which resolved facts are frozen into the
-intent. The APIs must avoid embedding Deployment details or spike fixture
+intent. The APIs must avoid embedding Deployment details or adapter fixture
 structure while preserving every identity required by current validation.
 
 Recommended decision: one enabled Profiler operand per `ChillSystem` and one
@@ -556,8 +540,8 @@ research lineage references an object, CHILL performs no automatic evidence
 garbage collection. This conservative initial retention is acceptable for the
 bounded single-Run path and avoids publishing references that silently expire.
 
-This closes evidence responsibility and handoff semantics. The promoted
-Evidence Store contract now supplies the immutable writer, independent reader,
+This closes evidence responsibility and handoff semantics. The Evidence Store
+contract supplies the immutable writer, independent reader,
 compact receipt identity, retained credentials, and operator-managed lifecycle
 required by this path.
 
@@ -602,9 +586,9 @@ mutable cancel field is required by this checkpoint.
 
 The concrete serialization, Job-local synchronization, raw-measurement write,
 bounded termination receipt, and worker exit classes are fixed by the
-[Measurement Worker contract](../components/measurement-worker.md). It
-retains the spike-proven runtime plus observer topology without adding an
-uploader sidecar. Both durable writes use the same evidence-store contract and
+[Measurement Worker contract](../components/measurement-worker.md). It retains
+the validated runtime plus observer topology without adding an uploader
+sidecar. Both durable writes use the same evidence-store contract and
 distinct immutable object identities. Logs and controller memory are not
 handoff paths.
 
@@ -636,8 +620,8 @@ sentinel values accepted by the active result validator.
 8. Extend `cmd/profiler` with its `ProfilingRun` controller using the dedicated
    Helm-installed runtime identity and direct owner-based event mapping.
    Implemented through Job outcome and evidence status publication.
-9. Add the one-shot measurement Job boundary, then promote only the proven CPU
-   ORT runtime-worker and MetricObserver-helper behavior from the spike into it.
+9. Add the one-shot measurement Job boundary, then integrate the validated CPU
+   ORT runtime-worker and MetricObserver-helper behavior into it.
    Implemented and live-verified.
 10. Add the selected durable evidence sink. Implemented and live-verified for
     raw and finalized execution evidence.
@@ -646,15 +630,12 @@ sentinel values accepted by the active result validator.
     the execution/evidence path.
 12. Verify failure, cancellation, identity drift, duplicate events, and both
     controller restarts with envtest and unit tests.
-13. Run one live Lattepanda measurement and compare the new evidence and
-    admission output with the spike path. Measurement and evidence are
-    live-verified; admission comparison remains.
+13. Run live Lattepanda active and model-loaded-idle measurements through the
+    production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
     through `kubectl get/describe profilingrun`, its owned Job, and the evidence
     digest. Implemented through the evidence digest.
-15. Remove no spike path until equivalent evidence and fail-closed behavior are
-    confirmed.
-16. Expose and execute `idle-model-loaded` through the same Run/Job lifecycle,
+15. Expose and execute `idle-model-loaded` through the same Run/Job lifecycle,
     while retaining distinct runtime/raw completeness and idle admission.
     Implemented and live-verified on Lattepanda.
 
@@ -691,7 +672,8 @@ The first Profiler is complete only when:
   and source-entry content digests;
 - Node-to-edge-metrics resolution is explicit and captured in the frozen intent;
 - exactly one native Job/Pod attempt is attributable to the Run;
-- strict evidence validation is unchanged or stronger than the spike path;
+- strict evidence validation is covered by the current worker, evidence,
+  restart, drift, and fail-closed tests;
 - raw evidence is durable, content-addressed, and referenced rather than copied
   into status;
 - execution failure, evidence failure, and admission rejection remain distinct;

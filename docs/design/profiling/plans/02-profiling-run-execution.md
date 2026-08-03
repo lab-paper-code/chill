@@ -36,10 +36,9 @@ The model-loaded-idle extension remains one `profilingrun.Intent`; it does not
 introduce a second frozen-intent type. Candidate, execution state, images, Node,
 CPU, metric source, and workload-observation provenance are common execution
 facts, and duplicating them would create two validation and finalization paths.
-The extension therefore advances the current intent schema to `v1alpha6` and
-adds a measurement-protocol `settlingDurationSeconds` field. Retained
-`v1alpha1` through `v1alpha5` intents keep their exact canonical bytes and
-digests.
+The intent schema is `v1alpha6` and includes the measurement-protocol
+`settlingDurationSeconds` field. Its canonical bytes are protected by a golden
+digest test.
 
 `v1alpha6` validation is mode-aware. The active mode retains a positive batch,
 declared warm-up, input generation, output validation, and measured inference
@@ -93,9 +92,8 @@ alone is not a valid Run. Missing, duplicate, malformed, mismatched, or failed
 runtime evidence fails the Run evidence gate. Collection/I/O failure remains
 distinct from an observed Run failure.
 
-This collector runs outside the completed Job and can therefore observe
-terminal Kubernetes facts. Its combined spike bundle is a regression oracle,
-not a contract requiring the future in-Job measurement worker to know its own
+The controller-side finalizer observes the completed Job and can therefore own
+terminal Kubernetes facts. The in-Job measurement worker cannot author its own
 terminal Pod or Job state.
 
 Power samples are raw Run evidence only. Receipt timestamps are not device
@@ -116,7 +114,6 @@ internal/profilingrun/          plain intent and runtime-result validation
 internal/profiler/worker/       Job-local orchestration and raw projection
 runtime/ortcpu/                 explicit active/idle CPU ORT execution adapter
 internal/profiler/evidence/     raw/final record verification and loading
-spikes/profilingrun/            retained first-path regression oracle
 ```
 
 `internal/profilingrun` imports no Kubernetes API, controller-runtime, client,

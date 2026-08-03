@@ -110,7 +110,7 @@ be written back into this desired input.
 - RKNN artifact shape capability and its evidence source
 - RKNN toolkit, runtime library, and driver compatibility relation
 
-The current privileged device path and host library mount are spike wiring,
+The privileged device path and host library mount are experiment-specific wiring,
 not reusable runtime-path fields.
 
 ### ONNX Runtime TensorRT on Jetson
@@ -215,7 +215,7 @@ Rejected:
 ## Step 2 conclusion
 
 Do not implement one large `internal/executioncontract.Contract` from the
-current spike outputs.
+observed characterization outputs.
 
 The defensible decomposition is:
 

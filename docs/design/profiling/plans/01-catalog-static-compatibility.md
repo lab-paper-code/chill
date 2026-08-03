@@ -50,13 +50,13 @@ Not included in the first schema:
 
 The demonstrated canonical ONNX artifact is not architecture-specific, and
 the selected campaign batches do not establish a digest-bound artifact batch
-capability. Those fields remain absent rather than being guessed from the
-current CPU spike or added for future runtimes.
+capability. Those fields remain absent rather than being guessed from one CPU
+Run or added for future runtimes.
 
 ## Checkpoint 2 decision: runtime declaration producer
 
-The first declaration is generated in the isolated batch-characterization
-spike after the CPU ORT image is pushed:
+The first declaration is trusted exact-image inspection output for the CPU ORT
+image:
 
 ```text
 buildx push metadata
@@ -87,39 +87,36 @@ producer output, but are not declaration fields because the first consumer
 does not compare them. No CRD, registry controller, signing, attestation, or
 generic provenance schema is introduced.
 
-Generated declarations live under the spike results directory and are named
-by digest. A failed producer emits no new declaration; a consumer treats a
-missing or untrusted declaration as `Unknown` and never rebinds an older file
-to a new image.
+Configured declarations now live in the trusted Profiler fact source and are
+bound by exact source and content identity when a Run is frozen. A consumer
+treats a missing or untrusted declaration as `Unknown` and never rebinds an
+older declaration to a new image.
 
 ## Checkpoint 3 decision: first read-only consumer
 
-The first consumer is a one-shot offline CLI in the root Go module:
+The first consumer is split across a pure evaluator and trusted fact adapter:
 
 ```text
-spikes/modelcompat/cmd/candidate-report/
-  main.go
-  main_test.go
+internal/modelcompat/                         pure compatibility evaluator
+internal/profiler/controller/candidate_resolver.go
+                                              trusted fact adapter
 ```
 
-It requires exactly one ModelSpec file, one DeviceClass file, one runtime
-declaration file, and one execution-path local name. It selects the referenced
-artifact through that path, translates the three declarations into plain
-`internal/modelcompat` values, invokes the evaluator once, and exits. It has no
-Kubernetes client, hidden fixture defaults, discovery, enumeration, status
-write, image inspection, or workload execution.
+The adapter reads one `ModelSpec`, one `DeviceClass`, and one matching runtime
+declaration from the trusted fact source. It selects the referenced artifact,
+translates the facts into plain `internal/modelcompat` values, and invokes the
+evaluator once. The pure evaluator has no Kubernetes client, hidden defaults,
+discovery, enumeration, status write, image inspection, or workload execution.
 
-The adapter preserves exact input identity with the content SHA-256 of each
-input, the selected path/artifact identity, and the declaration's immutable
-image reference. It writes one deterministic JSON report to stdout and a
-short `StaticCompatibility` explanation to stderr. The report never describes
-the result as runnable, schedulable, executable, ready, or admitted.
+The adapter preserves exact Kubernetes object and content identity, the
+selected path/artifact identity, and the declaration's immutable image
+reference. The deterministic candidate report never describes the result as
+runnable, schedulable, executable, ready, or admitted.
 
-`Compatible`, `Incompatible`, and `Unknown` are all successfully computed
-domain results and therefore exit zero. I/O, strict decoding, structural
-reference, identity-integrity, or usage failure is nonzero and does not emit a
-successful report. A future caller gates explicitly on the JSON verdict rather
-than treating process success as compatibility.
+`Compatible`, `Incompatible`, and `Unknown` are computed domain results.
+Configuration I/O, strict decoding, structural reference, and identity-
+integrity failures do not produce a candidate. Callers gate explicitly on the
+verdict rather than treating successful evaluation as compatibility.
 
 The pure evaluator, not the CLI adapter, owns the first narrow known relation
 between artifact format `onnx` and required runtime family `onnxruntime`. This
@@ -135,9 +132,8 @@ Compatible | Incompatible | Unknown
 + zero or more local static reasons
 ```
 
-The first consumer is a read-only CPU profiling-candidate report used by the
-profiling spike. The result is not written into `ModelSpec.status` or
-`DeviceClass.status`.
+The first consumer produces a read-only CPU profiling-candidate report. The
+result is not written into `ModelSpec.status` or `DeviceClass.status`.
 
 ## Responsibilities
 
@@ -224,18 +220,16 @@ generic adapter framework is introduced.
 The three prerequisites above are approved. Implementation proceeds as small
 review boundaries:
 
-1. Add the accepted CPU-only ModelSpec fixture/validator in an isolated path;
-   retain the old multi-runtime spike as background evidence, not an API
-   source.
-2. Implement and exercise the exact-image runtime-declaration producer in the
-   batch-characterization spike.
+1. Define the CPU-only `ModelSpec` fields and structural validation.
+2. Define and verify the exact-image runtime-declaration contract.
 3. Evolve the existing ModelSpec API with only the accepted fields, generate
    artifacts, and verify structural validation.
 4. Implement plain `internal/modelcompat` inputs, tri-state evaluation, local
    reasons, and deterministic unit tests.
-5. Implement the offline candidate-report adapter and its input/output tests.
-6. Run the report against the exact CPU fixtures, then run repository tests,
-   targeted race tests, lint, generated-diff checks, and import audit.
+5. Integrate the evaluator with the trusted candidate resolver and its focused
+   tests.
+6. Run repository tests, targeted race tests, lint, generated-diff checks, and
+   import audit.
 
 Each boundary is reviewed before the next begins. API/generated-schema changes
 remain separate from pure evaluator changes so neither hides the other.

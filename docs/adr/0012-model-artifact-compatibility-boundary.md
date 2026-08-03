@@ -21,7 +21,7 @@ through several distinct paths:
 
 The RKNN artifacts have their own digests and retain the source ONNX digest,
 target platform, fixed batch size, and conversion metadata. The measurement
-harness also validates the loaded model, selected execution provider, batch
+path also validates the loaded model, selected execution provider, batch
 size, and device operating mode before admitting a result. These facts show
 that compatibility applies to an executable artifact variant and execution
 path, not only to a logical model and CPU architecture.
@@ -130,6 +130,6 @@ image or explicit runtime declaration that can prove the required backend is
 available. This is intentional: the system does not convert hardware naming
 conventions into unsupported execution guarantees.
 
-The concrete ONNX TensorRT and RKNNLite RK3588 examples, field ownership, and
-minimum validation rules are maintained in the isolated
-[`spikes/modelspec/`](../../spikes/modelspec/) workspace.
+Current ownership and validation live in
+[`internal/modelcompat`](../../internal/modelcompat/) and the
+[static-compatibility plan](../design/profiling/plans/01-catalog-static-compatibility.md).

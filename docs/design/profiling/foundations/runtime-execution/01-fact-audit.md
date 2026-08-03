@@ -4,9 +4,8 @@
 
 ## Status
 
-Step 1 complete. This document inventories the current CPU, RKNN, and Jetson
-spike evidence. It does not define a shared schema or authorize an internal
-implementation.
+Historical Step 1 characterization audit for the CPU, RKNN, and Jetson paths.
+It does not define a current schema or authorize an implementation.
 
 ## Audit rule
 
@@ -17,7 +16,7 @@ by what the current code and retained execution evidence establish:
 - verified declaration: immutable or versioned input checked before execution
 - run observation: read or validated from the running process, Pod, or Node
 - derived decision: a CHILL rule applied to input facts
-- spike constant: a manifest, environment, image, or runner value that is not
+- experiment constant: a manifest, environment, image, or runner value that is not
   independently verified at the point where it is reported
 - unknown: evidence required for a broader claim is absent
 
@@ -54,9 +53,9 @@ unmeasured batches.
 
 | Current value or claim | Audit result |
 |---|---|
-| `OnePodPerNodeFullCPU` | spike policy name only. The Pod requests 100m, has no node-exclusivity mechanism, and does not validate absence of co-tenants. |
+| `OnePodPerNodeFullCPU` | experiment policy name only. The Pod requests 100m, has no node-exclusivity mechanism, and does not validate absence of co-tenants. |
 | allocatable CPU is an available exclusive execution budget | false generalization. Allocatable is scheduling capacity, not current free capacity, physical-core count, NUMA topology, or an exclusive cpuset. |
-| `interOpThreads=1` | CHILL spike decision, not a Node, artifact, or runtime fact. |
+| `interOpThreads=1` | CHILL experiment decision, not a Node, artifact, or runtime fact. |
 | runtime/provider in the derived contract | hardcoded before the runtime image is inspected. Availability is observed only after the Pod starts. |
 | arbitrary ONNX batch capability | unknown. The runner creates the selected input and observes success, but the contract has no artifact-declared supported set. |
 | complete model semantic validation | unknown. The CPU runner does not validate output shape or content. |
@@ -65,7 +64,7 @@ unmeasured batches.
 
 ### CPU verdict
 
-The CPU spike proves one executable state and verifies quota/thread equality.
+The CPU characterization proves one executable state and verifies quota/thread equality.
 It does not enforce the policy implied by `OnePodPerNodeFullCPU`. That name and
 the derived CPU limit cannot be promoted as an effective isolation contract
 without either enforcement evidence or a narrower claim.
@@ -79,9 +78,8 @@ without either enforcement evidence or a narrower claim.
 | selected RKNN artifact bytes and digest | verified declaration and run observation | runner recomputes the digest (`rknn_runner.py:68-83`) |
 | selected batch belongs to the supplied batch declaration | declaration validation | runner checks `BATCH_SIZE`, shape mode, and `SUPPORTED_BATCHES` (`rknn_runner.py:68-80`) |
 | selected artifact loads and runtime initializes on NPU core 0 | run observation for one Pod | return codes from `load_rknn` and `init_runtime` are checked (`rknn_runner.py:85-89`) |
-| NHWC runtime input works for the selected artifact | run observation and spike decision | steady buffer uses NHWC after the reproduced layout failure (`rknn_runner.py:91-104`) |
+| NHWC runtime input works for the selected artifact | run observation and experiment decision | steady buffer uses NHWC after the reproduced layout failure (`rknn_runner.py:91-104`) |
 | every measured call returns `(batch, 1000)` | run observation | checked during warm-up and measurement (`rknn_runner.py:34-44,103-120`) |
-| artifact target and fixed batch lineage in the ModelSpec fixture | verified offline declaration for the fixture | artifact build metadata and execution-path constraint are cross-checked (`spikes/modelspec/fixtures/mobilenet-v2-050.yaml:11-19,37-48`) |
 
 ### Values that are not established facts
 
@@ -91,13 +89,13 @@ without either enforcement evidence or a narrower claim.
 | RKNNLite/librknnrt ABI 2.3.2 | incomplete. The Python package is image-owned, while `librknnrt.so` is injected from the host; driver, library digest, and ABI comparison are not recorded. |
 | `RKNPUExecutionProvider` | misleading vocabulary. This path calls RKNNLite directly and is not an ONNX Runtime Execution Provider. |
 | `OnePodPerNodeSingleNPUCore` | unresolved policy. Privileged `/dev/dri` host access is not a Kubernetes extended-resource allocation and does not enforce NPU sharing or exclusivity. |
-| `/dev/dri/renderD129` | spike wiring tied to one host, not a stable DeviceClass capability or portable runtime contract. |
+| `/dev/dri/renderD129` | experiment wiring tied to one host, not a stable DeviceClass capability or portable runtime contract. |
 | FP16 execution | unknown. `do_quantization=false` or an observation note does not prove the effective precision of every executed operation. |
 | source NCHW and runtime NHWC ownership | mixed. Source layout, compiled artifact interface, and runtime buffer policy require separate sources rather than one runtime-owned value. |
 
 ### RKNN verdict
 
-The RKNN spike strongly proves load, initialization, selected-batch execution,
+The RKNN characterization strongly proves load, initialization, selected-batch execution,
 and output shape for one Pod. Static reusable compatibility remains `Unknown`
 for runtime/driver ABI and device allocation until the host substrate has an
 identifiable producer and the NPU has a Kubernetes resource contract.
@@ -142,12 +140,11 @@ L4T/TensorRT ABI match.
 ## Cross-cutting facts and ownership hazards
 
 1. Artifact content digest, runtime image identity, and mutable host ABI are
-   three different identities. The current spikes do not consistently retain
+   three different identities. The original experiments did not consistently retain
    all three.
 2. A provider observed anywhere in the EEP inventory is vocabulary evidence,
    not proof that it exists on the selected Node or in the selected image. The
-   ModelSpec validator currently unions provider names across devices
-   (`spikes/modelspec/validate.py:107-125`).
+   a global provider union cannot prove per-Node or per-image availability.
 3. Provider request, provider registration, and graph assignment are distinct.
 4. Artifact-supported batches, a selected successful batch, and the Profiler's
    campaign search range are distinct.
@@ -158,7 +155,7 @@ L4T/TensorRT ABI match.
    placement decisions. Node Ready, taints, and allocatable values remain
    current Kubernetes eligibility facts, not ModelSpec compatibility facts.
 7. A mutable power mode or installed driver/runtime must not become stable
-   DeviceClass metadata merely because a spike pins it.
+   DeviceClass metadata merely because an experiment pins it.
 
 ## Adversarial review disposition
 
@@ -173,7 +170,7 @@ Accepted findings:
 - Jetson provider ordering is not graph-placement evidence
 - mutable Node software/power state is mixed into runner constants
 - runtime image identity is missing from all derived contracts
-- the ModelSpec spike's global provider union cannot prove per-Node runtime
+- a global provider union cannot prove per-Node runtime
   availability
 
 Narrowed findings:
@@ -190,7 +187,7 @@ Narrowed findings:
 
 No current printed `runtimeContract` or `derivedExecutionContract` can be
 promoted wholesale. The reusable input to later design work is the decomposed
-set of verified declarations, run observations, derived decisions, spike
+set of verified declarations, run observations, derived decisions, experiment
 constants, and explicit unknowns above.
 
 Step 2 may now examine which of these decomposed values are genuinely common

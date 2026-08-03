@@ -127,7 +127,7 @@ available, or schedulable.
 
 - Jetson `nvidia.com/gpu: 1`: requested Pod resource, not allocation evidence
 - requested TensorRT/CUDA path and provider options: desired runtime decision
-- RKNN hostPath/device exposure: current spike intent, not a Kubernetes NPU
+- RKNN hostPath/device exposure: experiment-specific intent, not a Kubernetes NPU
   allocation contract
 - TensorRT cache/build policy: desired lifecycle policy; engine existence and
   identity are not yet observed

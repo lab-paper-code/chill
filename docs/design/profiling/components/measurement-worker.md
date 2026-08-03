@@ -29,17 +29,13 @@ continuous with no entered, updated, or exited Pod. The Run reached
 `ExecutionComplete=True`, `EvidenceVerified=True`, and
 `EvidenceAdmitted=True`.
 
-The preceding `idle-model-loaded-live-ad7b84f` attempt exposed a delivery
-compatibility requirement: old MetricObserver and WorkloadObserver images
-rejected the new strict intent field and the Job retained no evidence. Because
-all three regular containers strictly decode the same frozen intent, an
-intent-schema advance must deploy compatible runtime-worker, MetricObserver,
-and WorkloadObserver images as one tested compatibility set. Their image
-identities remain independently digest-pinned; this rule does not merge their
-responsibilities.
+All three regular containers strictly decode the same frozen intent. Delivery
+therefore deploys runtime-worker, MetricObserver, and WorkloadObserver images
+as one tested schema-compatible set. Their image identities remain
+independently digest-pinned; this rule does not merge their responsibilities.
 
-The same promoted image set then ran
-`active-regression-live-ad7b84f` through the existing active protocol. It
+The validated image set ran `active-regression-live-ad7b84f` through the active
+protocol. It
 completed 5,434 inference calls, retained 31 successful power samples with no
 failed reads and continuous workload observation, and was `Accepted` by
 `wall-power-v2`. This verifies that the idle-compatible delivery set preserves
@@ -100,9 +96,8 @@ selected path. It contains the CHILL worker entrypoint and the explicit CPU ORT
 adapter. The separately pinned `metricObserver` image contains the bounded
 observer helper. A separately pinned WorkloadObserver image receives the only
 Kubernetes API credential in the Job. The trusted execution declaration must
-therefore reference a promoted worker/runtime image; the spike runtime image
-is not itself a production contract. The artifact image remains an
-init-container supply image.
+therefore reference the worker/runtime image selected for the Run. The artifact
+image remains an init-container supply image.
 
 ## Frozen and delivery inputs
 
@@ -122,19 +117,16 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-New active and idle Runs use internal intent schema `v1alpha6`; retained
-`v1alpha1` through `v1alpha5` intents remain readable without changing their
-canonical bytes or digests. The model-loaded-idle revision adds the frozen
-measurement-protocol settling duration. It reuses the same intent type and
-common execution provenance rather than creating a parallel frozen type.
-The Go intent codec owns retained-evidence and reconciliation compatibility and
-therefore reads `v1alpha1` through `v1alpha6`; the Python CPU ORT adapter owns
-only current Job execution and intentionally accepts `v1alpha6` exactly.
+Active and idle Runs use internal intent schema `v1alpha6`. The frozen
+measurement protocol includes settling duration and reuses the same intent
+type and common execution provenance rather than creating a parallel frozen
+type. The Go intent codec and Python CPU ORT adapter both accept `v1alpha6`
+exactly.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that
 support the same current intent schema. Compatibility is established at image
-promotion/deployment time, while each image remains a separate frozen fact in
+deployment time, while each image remains a separate frozen fact in
 the intent and each process keeps the responsibility described below.
 
 The following values are delivery bindings, not scientific Run inputs:
@@ -362,7 +354,7 @@ fails explicitly. It never truncates, samples, or silently aggregates the raw
 distribution to fit a budget.
 
 Numeric reserves and serialized-byte coefficients are not fixed by this
-document. They require measurements from the exact promoted worker/runtime
+document. They require measurements from the exact pinned worker/runtime
 image and become defaults in a versioned installation policy. Changing those
 values affects only newly frozen Runs and changes the content-derived execution
 identity. A later runtime may define its own policy; this first contract does
@@ -401,19 +393,19 @@ Kubernetes observations.
    projection.
 2. Add a pure worker coordinator with fake runtime, observer-result, and store
    ports; keep Kubernetes out.
-3. Promote the CPU ORT runtime entrypoint and file-based MetricObserver handoff
-   from the spike without importing spike code.
+3. Implement the CPU ORT runtime entrypoint and file-based MetricObserver
+   handoff within the worker and adapter package boundaries.
 4. Add the CHILL-managed Evidence Store delivery binding to Profiler startup
    configuration and Job projection.
 5. Add deterministic Job materialization with its coherent resource-capacity
    envelope and status reference publication.
 6. Connect terminal observation to the existing evidence finalizer.
-7. Compare one live Lattepanda Run byte-for-byte and fact-for-fact with the
-   retained spike evidence before removing any spike path.
+7. Verify active and model-loaded-idle Lattepanda Runs through the worker,
+   immutable store, finalizer, loader, and admission path.
 
-Items 1 through 6 are implemented. The worker composes the frozen-intent
+Items 1 through 7 are implemented. The worker composes the frozen-intent
 loader, runtime adapter, bounded observer handoffs, immutable Evidence Store
 writer, stable failure exits, and bounded termination receipt. The final live
-comparison with the retained spike path remains pending. This worker contract
-does not independently own the public request schema; Plan 4 owns the exposed
-mode and validation fields.
+active and idle paths are verified. This worker contract does not independently
+own the public request schema; Plan 4 owns the exposed mode and validation
+fields.

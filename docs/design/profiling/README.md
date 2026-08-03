@@ -145,7 +145,6 @@ plans but do not expand a plan's authorization:
 The following documents are background analysis, not active implementation
 plans or competing architecture authorities:
 
-- [Data lifecycle fact audit](foundations/data-lifecycle-fact-audit.md)
 - [Step 1: runtime execution fact audit](foundations/runtime-execution/01-fact-audit.md)
 - [Step 2: runtime execution commonality](foundations/runtime-execution/02-commonality.md)
 - [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)

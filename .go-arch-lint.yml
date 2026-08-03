@@ -10,11 +10,10 @@ allow:
   deepScan: false
   ignoreNotFoundComponents: false
 
-# Spikes and tests are intentionally outside the merge-blocking architecture
-# policy. hack/ contains the negative-test fixture. Test imports are still
-# measured by hack/architecture-coverage.sh.
+# Tests are intentionally outside the merge-blocking architecture policy.
+# hack/ contains the negative-test fixture. Test imports are still measured by
+# hack/architecture-coverage.sh.
 exclude:
-  - spikes
   - test
   - hack
 excludeFiles:

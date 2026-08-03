@@ -21,7 +21,7 @@ import (
 
 const (
 	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha2"
-	runtimeDeclarationSchema = "spikes.chill.dacs.io/runtime-declaration.v1alpha1"
+	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha1"
 	artifactSupplySchema     = "chill.dacs.io/artifact-supply.v1alpha1"
 	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
 )

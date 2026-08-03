@@ -120,10 +120,10 @@ is Pending, Running, or Unknown during any part of the window is conservatively
 active. The result is size-bounded. Exceeding the bound is evidence
 insufficiency, not permission to truncate silently.
 
-Raw measurement evidence requires a new schema version. Previously retained
-raw evidence remains readable but has unknown workload-window coverage. The
-terminal Node workload snapshot remains a separate post-run historical fact;
-it is not replaced or reinterpreted as window evidence.
+Raw measurement evidence is valid only when its current schema includes the
+bounded workload-observation result. A terminal Node workload snapshot remains
+a separate post-run historical fact; it is not replaced or reinterpreted as
+window evidence.
 
 ## Admission projection
 

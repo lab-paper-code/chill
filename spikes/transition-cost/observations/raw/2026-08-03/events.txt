@@ -1,4 +1,0 @@
-LAST SEEN   TYPE      REASON             OBJECT                     MESSAGE
-8m1s        Normal    Scheduled          pod/model-a-mobilenet      Successfully assigned chill-transition-spike/model-a-mobilenet to jetsonx
-5m16s       Warning   FailedScheduling   pod/model-b-efficientnet   0/10 nodes are available: 1 Insufficient nvidia.com/gpu, 1 node(s) had untolerated taint {node.kubernetes.io/unreachable: }, 8 node(s) didn't match Pod's node affinity/selector. preemption: 0/10 nodes are available: 1 No preemption victims found for incoming pod, 9 Preemption is not helpful for scheduling.
-5m10s       Normal    Scheduled          pod/model-b-efficientnet   Successfully assigned chill-transition-spike/model-b-efficientnet to jetsonx

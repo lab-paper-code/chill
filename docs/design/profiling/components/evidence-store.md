@@ -1,19 +1,19 @@
-# Evidence Store Internal Promotion
+# Evidence Store Contract
 
 > Navigation: [Profiling design index](../README.md)
 
 ## Status
 
-Approved high-level design. Plans 1 through 3 are implemented and
-live-verified for the first CPU ONNX Runtime `ProfilingRun` path.
+Implemented and live-verified for the first CPU ONNX Runtime `ProfilingRun`
+path.
 
 ## Purpose
 
-Promote the immutable evidence-storage contract proven by the isolated spike
-into CHILL. CHILL owns the data and Kubernetes management boundary while the
+Define the immutable evidence-storage contract used by CHILL. CHILL owns the
+data and Kubernetes management boundary while the
 S3-compatible storage engine remains a replaceable dependency.
 
-The first promoted path answers one question:
+The first path answers one question:
 
 > Can CHILL producers commit immutable evidence objects and can a separate
 > reader later reconstruct and verify the exact retained bytes?
@@ -21,7 +21,7 @@ The first promoted path answers one question:
 This is not a general data platform, profile database, research catalog, or
 scheduler history store.
 
-## Promotion evidence and claim limit
+## Evidence and claim limit
 
 The current testbed demonstrated:
 
@@ -39,17 +39,9 @@ The resulting claim is deliberately narrow: one complete object is immutable
 and survives process and Pod replacement. Node or Ceph failure, HA, backup,
 TLS, credential rotation, retention, and garbage collection remain unproven.
 
-## Before and after
+## Current flow
 
 ```text
-Before
-
-spike Jobs -> AWS CLI -> spike store
-human-run scripts interpret receipts and verification output
-```
-
-```text
-After the complete promotion
 
 CHILL Operator -> manages Evidence Store operand
 
@@ -65,8 +57,8 @@ Profiler controller
   -> immutable execution-evidence record + compact verified reference
 ```
 
-The three parts are promoted separately. An internal storage module does not
-authorize an Operator or Profiler controller change.
+The three parts have separate responsibility boundaries. An internal storage
+module does not authorize an Operator or Profiler controller change.
 
 ## Responsibility boundary
 
@@ -203,7 +195,7 @@ storage details do not become Run inputs or public `ChillSystem` fields. The
 operand is a sibling of the Profiler under `ChillSystem`, not a
 Profiler-owned Deployment.
 
-## Bounded promotion plan
+## Implementation boundaries
 
 ### Plan 1: internal contract and S3 adapter — implemented
 
@@ -211,10 +203,9 @@ Profiler-owned Deployment.
    `internal/evidencestore`.
 2. Add one S3-compatible adapter in its subpackage, including pre-create
    candidate verification.
-3. Replace the spike AWS CLI mechanics with a small spike executable that
-   consumes the internal package.
-4. Re-run only the retained regression set: create, exact duplicate, conflicting
-   duplicate, independent verification, and store Pod replacement.
+3. Cover create, exact duplicate, conflicting duplicate, and independent
+   verification through the internal package and S3 adapter tests.
+4. Verify store Pod replacement against the retained persistent object.
 
 Stop for review. Plan 1 adds no API fields, controller watches, or managed
 Kubernetes resources.
@@ -241,12 +232,11 @@ Conditions.
 
 ## Acceptance boundary
 
-Promotion is acceptable when the spike consumes the internal package rather
-than retaining a second implementation, exact duplicate and conflict behavior
-have deterministic tests, S3 failures remain distinguishable, raw evidence and
+The boundary is acceptable when exact duplicate and conflict behavior have
+deterministic tests, S3 failures remain distinguishable, raw evidence and
 credentials stay out of CR status and logs, and each plan stops for review.
 
-The following remain outside this promotion:
+The following remain outside this contract:
 
 - metadata databases and searchable catalogs;
 - profile, scheduler, campaign, and research-export storage;
@@ -257,7 +247,7 @@ The following remain outside this promotion:
 
 ## Review question
 
-Does this design promote only the verified immutable evidence primitive while
+Does this design expose only the verified immutable evidence primitive while
 keeping storage operation with the CHILL Operator, measurement execution with
 the worker, evidence finalization with the Profiler controller, and raw bytes
 outside Kubernetes status?

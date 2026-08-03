@@ -15,8 +15,8 @@ This step builds on:
 - [`01-fact-audit.md`](01-fact-audit.md)
 - [`02-commonality.md`](02-commonality.md)
 
-The four Step 1 audit labels—verified declaration, run observation, derived
-decision, spike constant, and unknown—remain useful for reasoning. They are not
+The Step 1 audit labels—verified declaration, run observation, derived
+decision, experiment constant, and unknown—remain useful for reasoning. They are not
 sufficient as a production provenance enum.
 
 ## Principal finding

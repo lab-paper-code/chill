@@ -160,7 +160,6 @@ The output status is `Accepted`, `CandidateOnly`, `Censored`, `Ambiguous`, or
 ```text
 internal/profilederivation/       pure admission, integration, aggregation, b_sat
 internal/profiler/admission/      verified evidence-to-trial projection
-spikes/profilederivation/cmd/     read-only Plan 2 bundle adapter
 ```
 
 The pure package imports no Kubernetes, CHILL API, controller-runtime,
