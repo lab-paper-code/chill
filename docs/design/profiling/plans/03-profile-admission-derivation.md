@@ -9,9 +9,11 @@ admission and derivation. The Job, worker, finalizer, verified loader, and
 single-Run controller admission branch now produce and consume idle raw
 evidence. Three sequential retained live idle Runs have passed
 `idle-wall-power-v1`, projected to identity-compatible `IdleTrial` values, and
-produced the first live `DeriveIdleBaseline` result. Production campaign
-orchestration and baseline-to-active derivation remain unwired. No
-`DeviceProfile` API or status write is authorized by this plan.
+produced the first live `DeriveIdleBaseline` result. Three subsequent active
+Runs have passed `wall-power-v2` and produced the first live batch-one
+`IncrementalTrial` and `Aggregate` result. Production campaign orchestration,
+persistence, and multi-batch curve derivation remain unwired. No `DeviceProfile`
+API or status write is authorized by this plan.
 
 ## Question
 
@@ -248,6 +250,54 @@ transport through a local port-forward. It did not add a production caller or
 persist a baseline. Production campaign ownership therefore remains open even
 though the pure derivation and identity-stability assumptions now have live
 evidence.
+
+### Earlier idle-trial selection audit
+
+The earlier `idle-model-loaded-live-ad7b84f-v2` Run was not rejected by the
+identity scheme. Re-reading its retained bytes through the same loader and idle
+projector produced 4.862052 W, and its state, owner-bound environment, and idle
+protocol identities all matched the later three-trial baseline exactly. It was
+absent only because that read-only diagnostic named the later A/B/C Runs as its
+inputs; no production campaign selector or automatic exclusion was involved.
+
+The earlier value also lies inside the later baseline's 95% interval of
+4.857052--4.956671 W. Combining all four identity-compatible trials produces
+4.895659 W with a 95% Student-t half-width of 0.044147 W. This audit therefore
+does not establish time-separated environment drift. It does establish that a
+future campaign driver must predeclare an evidence-inclusion or temporal-block
+rule instead of allowing an ad-hoc Run-name list to define the baseline.
+
+### First live incremental batch point
+
+Using the already fixed three-trial idle baseline above, three active Runs with
+the exact `active-regression-live-ad7b84f` spec were then executed sequentially:
+
+| Run | total wall energy | completed items | incremental energy/item | trial p99 |
+|---|---:|---:|---:|---:|
+| `active-epsilon-live-69a83ad-a` | 519.935 J | 5,417 | 0.068805 J | 8.843 ms |
+| `active-epsilon-live-69a83ad-b` | 492.160 J | 5,255 | 0.065637 J | 8.945 ms |
+| `active-epsilon-live-69a83ad-c` | 485.927 J | 5,178 | 0.065410 J | 9.295 ms |
+
+All three passed `wall-power-v2`, carried the same frozen intent digest, and
+matched the idle baseline's state and environment identities. Their active
+measurement-protocol identity also matched one another and intentionally
+differed from the idle protocol identity. Re-loading the immutable evidence and
+calling the existing projector, `Admit`, `IncrementalTrial`, and `Aggregate`
+paths produced the first live batch-one estimate:
+
+```text
+epsilon(batch=1) = 0.066617 J/item
+95% CI           = 0.066617 +/- 0.004723 J/item
+interval         = [0.061894, 0.071341] J/item
+point p99        = 9.295 ms
+```
+
+The confidence half-width combines active between-trial uncertainty with the
+fixed idle-baseline uncertainty. The three incremental trial values have sample
+standard deviation 0.001898 J/item and coefficient of variation 2.85%. With
+only three trials this is an empirical campaign-sizing input, not yet a stable
+variance model. As with the idle diagnostic, no production caller or derived
+object was added or persisted.
 
 ### Earlier active-only evidence result
 
