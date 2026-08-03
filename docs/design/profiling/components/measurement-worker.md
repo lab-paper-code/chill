@@ -9,6 +9,10 @@ metric/workload end-fence success path was live-verified with three sequential,
 same-intent Runs admitted by `wall-power-v2`. This document does not authorize
 batch campaigns, `b_sat` derivation, another runtime, or serving.
 
+The `v1alpha6` intent plus model-loaded-idle runtime/raw codecs and validation
+are implemented. The current Job still executes only the active runner branch;
+no idle raw object has yet been produced or live-verified.
+
 ## Purpose
 
 The Profiler controller has frozen one exact `ProfilingRun` intent. The

@@ -13,7 +13,10 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 )
 
-const WallPowerPolicyV2 = "wall-power-v2"
+const (
+	WallPowerPolicyV2     = "wall-power-v2"
+	IdleWallPowerPolicyV1 = "idle-wall-power-v1"
+)
 
 type Verdict string
 
@@ -65,6 +68,44 @@ func Evaluate(
 	}, nil
 }
 
+// EvaluateIdle validates the full immutable evidence chain, applies the named
+// idle policy, and projects an IdleTrial only for Accepted evidence.
+func EvaluateIdle(
+	execution profilerevidence.ExecutionEvidence,
+	raw profilerevidence.IdleRawMeasurement,
+	policyName string,
+) (Result, *profilederivation.IdleTrial, error) {
+	policy, err := builtInIdlePolicy(policyName)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	if err := execution.ValidateIdle(raw); err != nil {
+		return Result{}, nil, fmt.Errorf("validate idle execution evidence: %w", err)
+	}
+	observation, err := projectIdleObservation(execution, raw)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	evaluated := profilederivation.AdmitIdle(observation, policy)
+	compact, err := compactResult(evaluated.Verdict, evaluated.PolicyVersion, evaluated.Reasons)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	if evaluated.Verdict != profilederivation.VerdictAccepted {
+		return compact, nil, nil
+	}
+	if evaluated.MeanWallWatts == nil {
+		return Result{}, nil, errors.New("accepted idle admission omitted mean wall power")
+	}
+	trial := &profilederivation.IdleTrial{
+		StateIdentity: evaluated.StateIdentity, EnvironmentIdentity: evaluated.EnvironmentIdentity,
+		MeasurementProtocolIdentity: evaluated.MeasurementProtocolIdentity, TrialID: evaluated.TrialID,
+		RawEvidence: evaluated.RawEvidence, AdmissionPolicyVersion: evaluated.PolicyVersion,
+		MeanWallWatts: *evaluated.MeanWallWatts,
+	}
+	return compact, trial, nil
+}
+
 func builtInPolicy(name string) (profilederivation.AdmissionPolicy, error) {
 	if name != WallPowerPolicyV2 {
 		return profilederivation.AdmissionPolicy{}, fmt.Errorf("unsupported admission policy %q", name)
@@ -78,6 +119,90 @@ func builtInPolicy(name string) (profilederivation.AdmissionPolicy, error) {
 		AllowReceiptTimestamps:         true,
 		RejectConcurrentCHILLWorkloads: true,
 		RejectExternalWorkloadChanges:  true,
+	}, nil
+}
+
+func builtInIdlePolicy(name string) (profilederivation.AdmissionPolicy, error) {
+	if name != IdleWallPowerPolicyV1 {
+		return profilederivation.AdmissionPolicy{}, fmt.Errorf("unsupported idle admission policy %q", name)
+	}
+	policy, err := builtInPolicy(WallPowerPolicyV2)
+	if err != nil {
+		return profilederivation.AdmissionPolicy{}, err
+	}
+	policy.Version = IdleWallPowerPolicyV1
+	return policy, nil
+}
+
+func compactResult(verdict profilederivation.Verdict, policyVersion string, reasons []profilederivation.Reason) (Result, error) {
+	reasonCodes := make([]string, 0, len(reasons))
+	seen := make(map[string]struct{}, len(reasons))
+	for _, reason := range reasons {
+		if reason.Code == "" {
+			return Result{}, errors.New("admission result contains an empty reason code")
+		}
+		if _, exists := seen[reason.Code]; !exists {
+			seen[reason.Code] = struct{}{}
+			reasonCodes = append(reasonCodes, reason.Code)
+		}
+	}
+	sort.Strings(reasonCodes)
+	return Result{Verdict: Verdict(verdict), PolicyVersion: policyVersion, ReasonCodes: reasonCodes}, nil
+}
+
+func projectIdleObservation(
+	execution profilerevidence.ExecutionEvidence,
+	raw profilerevidence.IdleRawMeasurement,
+) (profilederivation.IdleObservation, error) {
+	windowStart, windowEnd, err := raw.Runtime.MeasurementWindow()
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	modelLoaded, err := time.Parse(time.RFC3339Nano, raw.Runtime.ModelLoadCompletedAt)
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	settlingStarted, err := time.Parse(time.RFC3339Nano, raw.Runtime.SettlingStartedAt)
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	settlingCompleted, err := time.Parse(time.RFC3339Nano, raw.Runtime.SettlingCompletedAt)
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))
+	for index, sample := range raw.Metrics.Samples {
+		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
+	}
+	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
+	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload, windowStart, windowEnd)
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	identities, err := ProjectRunIdentities(execution.Intent, execution.Terminal.Node.UID)
+	if err != nil {
+		return profilederivation.IdleObservation{}, err
+	}
+	return profilederivation.IdleObservation{
+		StateIdentity: identities.StateIdentity, EnvironmentIdentity: workload.EnvironmentIdentity,
+		MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
+		TrialID:                     execution.Terminal.Pod.UID,
+		RawEvidence: profilederivation.RawEvidenceIdentity{
+			Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key,
+			Digest: execution.RawMeasurement.Digest, Size: execution.RawMeasurement.Size,
+		},
+		WindowStart: windowStart, WindowEnd: windowEnd,
+		ModelLoadedBeforeSettling: !modelLoaded.After(settlingStarted),
+		SettlingWindowVerified: !settlingCompleted.After(windowStart) &&
+			settlingCompleted.Sub(settlingStarted) >= time.Duration(execution.Intent.Measurement.SettlingDurationSeconds)*time.Second,
+		InferenceCountAfterModelLoad: raw.Runtime.InferenceCountAfterModelLoad,
+		ModelResidentAtEnd:           raw.Runtime.ModelResidentAtEnd,
+		Samples:                      samples, Failures: len(raw.Metrics.Failures),
+		SourceTimestampAbsent:    raw.Metrics.Summary.SourceTimestampAbsent,
+		ConcurrentCHILLWorkloads: workload.ConcurrentCHILLWorkloads,
+		ExternalWorkloadChanges:  workload.ExternalWorkloadChanges,
+		WorkloadWindowKnown:      workload.Known, ThermalStateKnown: thermalKnown,
+		ThermallyThrottled: thermallyThrottled,
 	}, nil
 }
 

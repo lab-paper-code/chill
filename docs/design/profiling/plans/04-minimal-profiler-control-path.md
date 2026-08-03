@@ -18,6 +18,12 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
+The internal intent is now `v1alpha6`, with retained `v1alpha1` through
+`v1alpha5` canonical bytes preserved. Contract-side idle runtime/raw validation
+and admission projection are implemented, but the public request projection,
+Job branch, idle worker execution, and controller loading path remain follow-on
+work and have not been live-verified.
+
 ## Purpose
 
 CHILL has reusable internal functions for static compatibility, bounded power

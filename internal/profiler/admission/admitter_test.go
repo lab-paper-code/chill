@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
@@ -57,6 +58,47 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 	}
 	if len(trial.ConcurrentCHILLWorkloads) != 0 || len(trial.ExternalWorkloadChanges) != 0 {
 		t.Fatalf("terminal snapshot was treated as measurement-window evidence: %#v", trial)
+	}
+}
+
+func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing.T) {
+	t.Parallel()
+	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	intent := admissionIntent()
+	intent.Measurement.SettlingDurationSeconds = 60
+	execution := profilerevidence.ExecutionEvidence{
+		Intent: intent,
+		RawMeasurement: evidencestore.ObjectIdentity{
+			Store: "chill-evidence", Key: "runs/idle/raw.json",
+			Digest: "sha256:" + strings.Repeat("a", 64), Size: 1024,
+		},
+		Terminal: profilerevidence.TerminalFacts{
+			Pod:  profilerevidence.PodTerminalFacts{UID: "idle-pod"},
+			Node: profilerevidence.NodeTerminalFacts{UID: "node-uid"},
+		},
+	}
+	raw := profilerevidence.IdleRawMeasurement{
+		Runtime: profilingrun.IdleRuntimeResult{
+			ModelLoadCompletedAt: started.Add(-61 * time.Second).Format(time.RFC3339Nano),
+			SettlingStartedAt:    started.Add(-60 * time.Second).Format(time.RFC3339Nano),
+			SettlingCompletedAt:  started.Format(time.RFC3339Nano),
+			MeasurementStartedAt: started.Format(time.RFC3339Nano),
+			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
+			ModelResidentAtEnd:   true,
+		},
+		Metrics: metricobserver.Result{Samples: []metricobserver.Sample{{ObservedAt: started, Watts: 4}}},
+	}
+
+	observation, err := projectIdleObservation(execution, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.TrialID != "idle-pod" || observation.RawEvidence.Store != "chill-evidence" ||
+		observation.RawEvidence.Key != "runs/idle/raw.json" ||
+		!observation.ModelLoadedBeforeSettling || !observation.SettlingWindowVerified ||
+		!observation.ModelResidentAtEnd || observation.InferenceCountAfterModelLoad != 0 ||
+		!observation.WindowStart.Equal(started) || !observation.WindowEnd.Equal(started.Add(30*time.Second)) {
+		t.Fatalf("projected idle observation = %#v", observation)
 	}
 }
 
@@ -205,6 +247,17 @@ func TestBuiltInPolicyIsExplicitAndClosed(t *testing.T) {
 	}
 	if _, err := builtInPolicy("unknown"); err == nil {
 		t.Fatal("unsupported policy was accepted")
+	}
+	idle, err := builtInIdlePolicy(IdleWallPowerPolicyV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idle.Version != IdleWallPowerPolicyV1 || idle.MinimumSamples != policy.MinimumSamples ||
+		idle.MaximumGapSeconds != policy.MaximumGapSeconds || idle.MinimumCoverage != policy.MinimumCoverage {
+		t.Fatalf("idle policy = %#v", idle)
+	}
+	if _, err := builtInIdlePolicy(WallPowerPolicyV2); err == nil {
+		t.Fatal("active policy was accepted as an idle policy")
 	}
 }
 

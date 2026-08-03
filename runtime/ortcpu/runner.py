@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha7"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha5"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha6"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"

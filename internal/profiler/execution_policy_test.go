@@ -50,6 +50,16 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	}
 }
 
+func TestDeriveExecutionPlanKeepsRetainedV1Alpha5ActiveIntentRunnable(t *testing.T) {
+	intent := testIntent(t)
+	intent.SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha5"
+	intent.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&intent)
+	if _, err := DeriveExecutionPlan(intent); err != nil {
+		t.Fatalf("retained active intent became unrunnable: %v", err)
+	}
+}
+
 func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testing.T) {
 	intent := testIntent(t)
 	intent.SchemaVersion = profilingrun.SchemaVersion

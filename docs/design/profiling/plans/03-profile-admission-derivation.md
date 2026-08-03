@@ -4,8 +4,10 @@
 
 ## Status
 
-Implemented as a pure, read-only first path. No `DeviceProfile` API or
-status write is authorized by this plan.
+Implemented as a pure, read-only path for active and model-loaded-idle
+admission and derivation. The verified-evidence idle projector exists, but no
+Job currently produces idle raw evidence. No `DeviceProfile` API or status
+write is authorized by this plan.
 
 ## Question
 
@@ -186,6 +188,16 @@ and `b_sat` policy versions, and uses a 95% Student-t interval with at least
 three independent trials. It validates the complete measured batch domain from
 batch one before searching for the first adjacent plateau. Missing lower or
 intermediate batches cannot yield an accepted result.
+
+Active and idle admission now share one power-window quality core for sample
+count, failures, receipt-timestamp policy, boundaries, gaps, coverage, thermal
+state, and workload contamination. Idle admission separately requires the
+`v1alpha6` canonical idle protocol, exact model load before the full settling
+interval, zero inference after model load, retained end residency, and a
+runtime-declared window. Only an Accepted result projects to `IdleTrial`.
+Each projected trial retains the verified raw object's logical store, opaque
+key, SHA-256 digest, and byte size; baseline aggregation rejects missing or
+reused raw identities.
 
 The adapter strict-decodes and revalidates the Plan 2 bundle, including intent,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-

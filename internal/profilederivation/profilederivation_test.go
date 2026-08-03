@@ -52,9 +52,9 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	baseline, err := DeriveIdleBaseline(
 		[]IdleTrial{
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", AdmissionPolicyVersion: "v1", MeanWallWatts: 5},
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", AdmissionPolicyVersion: "v1", MeanWallWatts: 5.1},
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", AdmissionPolicyVersion: "v1", MeanWallWatts: 4.9},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", RawEvidence: rawEvidence("1"), AdmissionPolicyVersion: "v1", MeanWallWatts: 5},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("2"), AdmissionPolicyVersion: "v1", MeanWallWatts: 5.1},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("3"), AdmissionPolicyVersion: "v1", MeanWallWatts: 4.9},
 		},
 		pointPolicy("idle-v1"),
 	)
@@ -70,6 +70,11 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	mixedIdle[2].MeasurementProtocolIdentity = otherPolicy
 	if _, err := DeriveIdleBaseline(mixedIdle, pointPolicy("idle-v1")); err == nil {
 		t.Fatal("expected mixed idle protocol rejection")
+	}
+	duplicateEvidence := append([]IdleTrial(nil), baseline.Trials...)
+	duplicateEvidence[2].RawEvidence = duplicateEvidence[1].RawEvidence
+	if _, err := DeriveIdleBaseline(duplicateEvidence, pointPolicy("idle-v1")); err == nil {
+		t.Fatal("expected duplicate idle raw evidence rejection")
 	}
 	admitted, err := IncrementalTrial(trial, result, baseline)
 	if err != nil {
@@ -123,6 +128,48 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	result = Admit(trial, policy)
 	if result.Verdict != VerdictInsufficient {
 		t.Fatal("unknown workload window must not be accepted")
+	}
+}
+
+func TestIdleAdmissionUsesSharedWindowQualityAndIdleCompleteness(t *testing.T) {
+	start := time.Unix(0, 0).UTC()
+	observation := IdleObservation{
+		StateIdentity: "state", EnvironmentIdentity: "environment",
+		MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1",
+		RawEvidence: rawEvidence("idle-1"), WindowStart: start, WindowEnd: start.Add(10 * time.Second),
+		ModelLoadedBeforeSettling: true, SettlingWindowVerified: true, ModelResidentAtEnd: true,
+		ThermalStateKnown: true, WorkloadWindowKnown: true,
+		Samples: []Sample{{start.Add(time.Second), 5}, {start.Add(5 * time.Second), 5}, {start.Add(9 * time.Second), 5}},
+	}
+	policy := AdmissionPolicy{
+		Version: "idle-v1", MinimumSamples: 3, MaximumGapSeconds: 5,
+		MaximumBoundaryDistanceSeconds: 1, MinimumCoverage: .8, AllowReceiptTimestamps: true,
+		RejectConcurrentCHILLWorkloads: true, RejectExternalWorkloadChanges: true,
+	}
+	result := AdmitIdle(observation, policy)
+	if result.Verdict != VerdictAccepted || result.TotalWallJoules == nil || result.MeanWallWatts == nil ||
+		math.Abs(*result.TotalWallJoules-50) > 1e-9 || math.Abs(*result.MeanWallWatts-5) > 1e-9 ||
+		result.RawEvidence != observation.RawEvidence {
+		t.Fatalf("unexpected idle admission: %+v", result)
+	}
+
+	for _, test := range []struct {
+		name string
+		want Verdict
+		edit func(*IdleObservation)
+	}{
+		{name: "inference", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.InferenceCountAfterModelLoad = 1 }},
+		{name: "settling", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.SettlingWindowVerified = false }},
+		{name: "provenance", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.RawEvidence.Digest = "bad" }},
+		{name: "coverage", want: VerdictInsufficient, edit: func(candidate *IdleObservation) { candidate.Samples = candidate.Samples[:1] }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := observation
+			test.edit(&candidate)
+			if got := AdmitIdle(candidate, policy); got.Verdict != test.want {
+				t.Fatalf("verdict = %s, want %s: %+v", got.Verdict, test.want, got)
+			}
+		})
 	}
 }
 
@@ -251,4 +298,11 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 
 func pointPolicy(version string) PointPolicy {
 	return PointPolicy{Version: version, MinimumTrials: 3, ConfidenceMethod: "student-t", ConfidenceLevel: .95}
+}
+
+func rawEvidence(key string) RawEvidenceIdentity {
+	return RawEvidenceIdentity{
+		Store: "chill-evidence", Key: "runs/" + key + "/raw.json",
+		Digest: "sha256:" + strings.Repeat("a", 64), Size: 1,
+	}
 }

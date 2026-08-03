@@ -39,10 +39,7 @@ func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 	add := func(kind Verdict, code, message string) {
 		result.Reasons = append(result.Reasons, Reason{Kind: kind, Code: code, Message: message})
 	}
-	if policy.Version == "" || policy.MinimumSamples < 2 || policy.MaximumGapSeconds <= 0 ||
-		policy.MaximumBoundaryDistanceSeconds < 0 ||
-		policy.MinimumCoverage <= 0 ||
-		policy.MinimumCoverage > 1 {
+	if !validAdmissionPolicy(policy) {
 		add(VerdictRejected, "InvalidPolicy", "admission policy is invalid")
 		result.Verdict = VerdictRejected
 		return result
@@ -67,16 +64,7 @@ func Admit(trial Trial, policy AdmissionPolicy) AdmissionResult {
 	window := assessPowerWindow(powerWindowFromTrial(trial), policy)
 	result.Reasons = append(result.Reasons, window.Reasons...)
 	result.TotalWallJoules = window.TotalWallJoules
-	result.Verdict = VerdictAccepted
-	for _, reason := range result.Reasons {
-		if reason.Kind == VerdictRejected {
-			result.Verdict = VerdictRejected
-			break
-		}
-		if reason.Kind == VerdictInsufficient {
-			result.Verdict = VerdictInsufficient
-		}
-	}
+	result.Verdict = verdictFromReasons(result.Reasons)
 	return result
 }
 

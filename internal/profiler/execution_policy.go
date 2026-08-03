@@ -64,7 +64,7 @@ func DeriveExecutionPlan(intent profilingrun.Intent) (ExecutionPlan, error) {
 	if err := intent.Validate(); err != nil {
 		return ExecutionPlan{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
-	if intent.SchemaVersion != profilingrun.SchemaVersion ||
+	if !profilingrun.IsSupportedActiveIntent(intent) ||
 		intent.Candidate.ExecutionPath != "ort-cpu" ||
 		intent.State.RuntimeFamily != "onnxruntime" ||
 		intent.State.Backend != "CPUExecutionProvider" {

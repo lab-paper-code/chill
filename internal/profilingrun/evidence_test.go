@@ -141,3 +141,45 @@ func TestNormalizeRuntimeArchitecture(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
+	intent := validIntent()
+	intent.Measurement = MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
+		OutputValidation: NoOutputValidation,
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := IdleRuntimeResult{
+		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded", IntentDigest: digest,
+		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
+		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1", Provider: intent.State.Backend,
+		AvailableProviders:   []string{intent.State.Backend},
+		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
+		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
+		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
+		ModelResidentAtEnd: true,
+		CPUContract: RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4,
+			ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"},
+		DerivedContract: DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+	}
+	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*IdleRuntimeResult){
+		func(r *IdleRuntimeResult) { r.SettlingCompletedAt = "2026-01-01T00:00:30Z" },
+		func(r *IdleRuntimeResult) { r.InferenceCountAfterModelLoad = 1 },
+		func(r *IdleRuntimeResult) { r.ModelResidentAtEnd = false },
+		func(r *IdleRuntimeResult) { r.MeasurementStartedAt = "2026-01-01T00:00:30Z" },
+	} {
+		candidate := result
+		mutate(&candidate)
+		if err := ValidateIdleRuntime(intent, "pod-uid", candidate); err == nil {
+			t.Fatal("invalid idle runtime evidence was accepted")
+		}
+	}
+}

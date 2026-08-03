@@ -13,7 +13,12 @@ const (
 	previousIntentSchemaVersion     = "chill.dacs.io/profiling-run-intent.v1alpha2"
 	workloadFreeIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha3"
 	allowedBackgroundIntentVersion  = "chill.dacs.io/profiling-run-intent.v1alpha4"
-	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha5"
+	previousCurrentIntentVersion    = "chill.dacs.io/profiling-run-intent.v1alpha5"
+	SchemaVersion                   = "chill.dacs.io/profiling-run-intent.v1alpha6"
+
+	IdleModelLoadedWorkloadMode = "idle-model-loaded"
+	NoInputGenerator            = "none"
+	NoOutputValidation          = "none"
 )
 
 type Intent struct {
@@ -158,14 +163,15 @@ type CPUContract struct {
 }
 
 type MeasurementContract struct {
-	Batch            int           `json:"batch"`
-	WarmupIterations int           `json:"warmupIterations"`
-	Duration         time.Duration `json:"-"`
-	DurationSeconds  int           `json:"durationSeconds"`
-	Repetitions      int           `json:"repetitions"`
-	WorkloadMode     string        `json:"workloadMode"`
-	InputGenerator   string        `json:"inputGenerator"`
-	OutputValidation string        `json:"outputValidation"`
+	Batch                   int           `json:"batch"`
+	WarmupIterations        int           `json:"warmupIterations"`
+	SettlingDurationSeconds int           `json:"settlingDurationSeconds,omitempty"`
+	Duration                time.Duration `json:"-"`
+	DurationSeconds         int           `json:"durationSeconds"`
+	Repetitions             int           `json:"repetitions"`
+	WorkloadMode            string        `json:"workloadMode"`
+	InputGenerator          string        `json:"inputGenerator"`
+	OutputValidation        string        `json:"outputValidation"`
 }
 
 type MetricContract struct {

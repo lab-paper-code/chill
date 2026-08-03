@@ -10,9 +10,30 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
+	rawBytes, err := raw.CanonicalJSON(e.Intent)
+	if err != nil {
+		return fmt.Errorf("validate raw measurement: %w", err)
+	}
+	return e.validateLinkedRaw(raw.PodUID, raw.Workload, rawBytes)
+}
+
+func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
+	rawBytes, err := raw.CanonicalJSON(e.Intent)
+	if err != nil {
+		return fmt.Errorf("validate idle raw measurement: %w", err)
+	}
+	return e.validateLinkedRaw(raw.PodUID, raw.Workload, rawBytes)
+}
+
+func (e ExecutionEvidence) validateLinkedRaw(
+	rawPodUID string,
+	workload *workloadobserver.Result,
+	rawBytes []byte,
+) error {
 	if e.SchemaVersion != ExecutionEvidenceSchemaVersion {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
@@ -29,25 +50,18 @@ func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
 	if err := profilingrun.ValidateCandidateReport(e.CandidateReportBytes, e.Intent); err != nil {
 		return fmt.Errorf("validate candidate report: %w", err)
 	}
-	if err := raw.Validate(e.Intent); err != nil {
-		return fmt.Errorf("validate raw measurement: %w", err)
-	}
 	if err := e.RawMeasurement.Validate(); err != nil {
 		return fmt.Errorf("validate raw measurement identity: %w", err)
-	}
-	rawBytes, err := raw.CanonicalJSON(e.Intent)
-	if err != nil {
-		return fmt.Errorf("encode raw measurement: %w", err)
 	}
 	if err := verifyIdentityBytes(e.RawMeasurement, rawBytes); err != nil {
 		return err
 	}
-	if err := e.Terminal.validate(e.Intent, raw.PodUID); err != nil {
+	if err := e.Terminal.validate(e.Intent, rawPodUID); err != nil {
 		return err
 	}
-	if raw.Workload != nil && (raw.Workload.Run.Namespace != e.Terminal.Pod.Namespace ||
-		raw.Workload.Run.JobUID != e.Terminal.Job.UID || raw.Workload.Run.PodName != e.Terminal.Pod.Name ||
-		raw.Workload.Run.PodUID != e.Terminal.Pod.UID) {
+	if workload != nil && (workload.Run.Namespace != e.Terminal.Pod.Namespace ||
+		workload.Run.JobUID != e.Terminal.Job.UID || workload.Run.PodName != e.Terminal.Pod.Name ||
+		workload.Run.PodUID != e.Terminal.Pod.UID) {
 		return errors.New("workload observation Run identity does not match terminal Kubernetes facts")
 	}
 	if e.FinalizedAt.IsZero() || e.FinalizedAt.Before(e.Terminal.Job.CompletionTime) {
@@ -60,6 +74,17 @@ func (e ExecutionEvidence) CanonicalJSON(raw RawMeasurement) ([]byte, error) {
 	if err := e.Validate(raw); err != nil {
 		return nil, err
 	}
+	return e.canonicalJSON()
+}
+
+func (e ExecutionEvidence) CanonicalIdleJSON(raw IdleRawMeasurement) ([]byte, error) {
+	if err := e.ValidateIdle(raw); err != nil {
+		return nil, err
+	}
+	return e.canonicalJSON()
+}
+
+func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 	canonical := e
 	canonical.FinalizedAt = canonical.FinalizedAt.UTC()
 	canonical.Terminal.Job.CompletionTime = canonical.Terminal.Job.CompletionTime.UTC()

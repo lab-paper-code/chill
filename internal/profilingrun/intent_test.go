@@ -112,6 +112,47 @@ func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
 	}
 }
 
+func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
+	idle := validIntent()
+	idle.Measurement = MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
+		OutputValidation: NoOutputValidation,
+	}
+	if err := idle.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Intent){
+		func(i *Intent) { i.Measurement.Batch = 2 },
+		func(i *Intent) { i.Measurement.WarmupIterations = 1 },
+		func(i *Intent) { i.Measurement.SettlingDurationSeconds = 0 },
+		func(i *Intent) { i.Measurement.InputGenerator = "seeded" },
+		func(i *Intent) { i.Measurement.OutputValidation = "shape" },
+	} {
+		candidate := idle
+		mutate(&candidate)
+		if err := candidate.Validate(); err == nil {
+			t.Fatal("invalid model-loaded idle protocol was accepted")
+		}
+	}
+}
+
+func TestRetainedV1Alpha5IntentCannotGainSettlingField(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = previousCurrentIntentVersion
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "settlingDurationSeconds") {
+		t.Fatalf("retained v1alpha5 intent gained settling field: %s", payload)
+	}
+	intent.Measurement.SettlingDurationSeconds = 1
+	if err := intent.Validate(); err == nil {
+		t.Fatal("retained v1alpha5 intent accepted the v1alpha6 field")
+	}
+}
+
 func TestCurrentIntentRequiresCleanArtifactPath(t *testing.T) {
 	for _, artifactPath := range []string{"", "/", "artifact/model.onnx", "/artifact/../model.onnx"} {
 		intent := validIntent()

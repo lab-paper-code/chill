@@ -78,13 +78,54 @@ type AdmittedTrial struct {
 	IncrementalJoulesPerItem         float64 `json:"incrementalJoulesPerItem"`
 	LatencyP99Milliseconds           float64 `json:"latencyP99Milliseconds"`
 }
+type RawEvidenceIdentity struct {
+	Store  string `json:"store"`
+	Key    string `json:"key"`
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+}
+type IdleObservation struct {
+	StateIdentity                string              `json:"stateIdentity"`
+	EnvironmentIdentity          string              `json:"environmentIdentity"`
+	MeasurementProtocolIdentity  string              `json:"measurementProtocolIdentity"`
+	TrialID                      string              `json:"trialID"`
+	RawEvidence                  RawEvidenceIdentity `json:"rawEvidence"`
+	WindowStart                  time.Time           `json:"windowStart"`
+	WindowEnd                    time.Time           `json:"windowEnd"`
+	ModelLoadedBeforeSettling    bool                `json:"modelLoadedBeforeSettling"`
+	SettlingWindowVerified       bool                `json:"settlingWindowVerified"`
+	InferenceCountAfterModelLoad int                 `json:"inferenceCountAfterModelLoad"`
+	ModelResidentAtEnd           bool                `json:"modelResidentAtEnd"`
+	Samples                      []Sample            `json:"samples"`
+	Failures                     int                 `json:"failures"`
+	SourceTimestampAbsent        bool                `json:"sourceTimestampAbsent"`
+	ConcurrentCHILLWorkloads     []string            `json:"concurrentCHILLWorkloads"`
+	ExternalWorkloadChanges      []string            `json:"externalWorkloadChanges"`
+	WorkloadWindowKnown          bool                `json:"workloadWindowKnown"`
+	ThermalStateKnown            bool                `json:"thermalStateKnown"`
+	ThermallyThrottled           bool                `json:"thermallyThrottled"`
+}
+type IdleAdmissionResult struct {
+	Verdict                     Verdict             `json:"verdict"`
+	PolicyVersion               string              `json:"policyVersion"`
+	StateIdentity               string              `json:"stateIdentity"`
+	EnvironmentIdentity         string              `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string              `json:"measurementProtocolIdentity"`
+	TrialID                     string              `json:"trialID"`
+	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
+	Reasons                     []Reason            `json:"reasons"`
+	TotalWallJoules             *float64            `json:"totalWallJoules,omitempty"`
+	MeanWallWatts               *float64            `json:"meanWallWatts,omitempty"`
+	WindowSeconds               float64             `json:"windowSeconds"`
+}
 type IdleTrial struct {
-	StateIdentity               string  `json:"stateIdentity"`
-	EnvironmentIdentity         string  `json:"environmentIdentity"`
-	MeasurementProtocolIdentity string  `json:"measurementProtocolIdentity"`
-	TrialID                     string  `json:"trialID"`
-	AdmissionPolicyVersion      string  `json:"admissionPolicyVersion"`
-	MeanWallWatts               float64 `json:"meanWallWatts"`
+	StateIdentity               string              `json:"stateIdentity"`
+	EnvironmentIdentity         string              `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string              `json:"measurementProtocolIdentity"`
+	TrialID                     string              `json:"trialID"`
+	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
+	AdmissionPolicyVersion      string              `json:"admissionPolicyVersion"`
+	MeanWallWatts               float64             `json:"meanWallWatts"`
 }
 type IdleBaseline struct {
 	StateIdentity               string      `json:"stateIdentity"`

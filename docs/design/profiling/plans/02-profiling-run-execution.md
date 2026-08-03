@@ -4,9 +4,10 @@
 
 ## Status
 
-Implemented for the first CPU ONNX Runtime path. This plan does not
-authorize profile admission, energy derivation, `b_sat`, or `DeviceProfile`
-status writes.
+Implemented for the first CPU ONNX Runtime active path. The shared `v1alpha6`
+intent and model-loaded-idle runtime/raw validation contracts are implemented;
+the idle Job producer is not. This plan does not authorize profile admission,
+energy derivation, `b_sat`, or `DeviceProfile` status writes.
 
 ## Question
 

@@ -191,6 +191,64 @@ func TestCurrentRawMeasurementBindsWorkloadObservationToIntentAndRuntime(t *test
 	}
 }
 
+func TestIdleRawMeasurementBindsRuntimeDeclaredWindowAndObservers(t *testing.T) {
+	intent := idleIntent(t)
+	raw := validIdleRaw(t, intent)
+	first, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded IdleRawMeasurement
+	if err := json.Unmarshal(first, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	second, err := decoded.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("idle raw measurement does not survive canonical round trip")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*IdleRawMeasurement)
+	}{
+		{name: "inference", mutate: func(candidate *IdleRawMeasurement) { candidate.Runtime.InferenceCountAfterModelLoad = 1 }},
+		{name: "residency", mutate: func(candidate *IdleRawMeasurement) { candidate.Runtime.ModelResidentAtEnd = false }},
+		{name: "metric identity", mutate: func(candidate *IdleRawMeasurement) { candidate.Metrics.Source.NodeName = "other" }},
+		{name: "workload coverage", mutate: func(candidate *IdleRawMeasurement) {
+			workload := *candidate.Workload
+			candidate.Workload = &workload
+			started, _, windowErr := candidate.Runtime.MeasurementWindow()
+			if windowErr != nil {
+				t.Fatal(windowErr)
+			}
+			candidate.Workload.CoverageStartedAt = started.Add(time.Second)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := raw
+			test.mutate(&candidate)
+			if err := candidate.Validate(intent); err == nil {
+				t.Fatal("invalid idle raw measurement was accepted")
+			}
+		})
+	}
+}
+
+func TestIdleRawMeasurementStrictDecodeRejectsUnknownFields(t *testing.T) {
+	intent := idleIntent(t)
+	payload, err := validIdleRaw(t, intent).CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = []byte(strings.Replace(string(payload), `"podUID":`, `"unknown":true,"podUID":`, 1))
+	var decoded IdleRawMeasurement
+	if err := json.Unmarshal(payload, &decoded); err == nil {
+		t.Fatal("idle raw measurement accepted an unknown field")
+	}
+}
+
 func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
@@ -256,6 +314,28 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	invalid.Terminal.NodeWorkload.Pods = invalid.Terminal.NodeWorkload.Pods[:1]
 	if err := invalid.Validate(raw); err == nil {
 		t.Fatal("expected missing Run Pod workload observation rejection")
+	}
+}
+
+func TestExecutionEvidenceValidatesIdleRawObjectIdentity(t *testing.T) {
+	intent := idleIntent(t)
+	raw := validIdleRaw(t, intent)
+	execution := validIdleExecutionEvidence(t, intent, raw)
+	payload, err := execution.CanonicalIdleJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ExecutionEvidence
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.ValidateIdle(raw); err != nil {
+		t.Fatal(err)
+	}
+	invalid := execution
+	invalid.RawMeasurement.Size++
+	if err := invalid.ValidateIdle(raw); err == nil {
+		t.Fatal("idle execution evidence accepted a drifted raw object identity")
 	}
 }
 
@@ -397,6 +477,56 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 	return raw
 }
 
+func idleIntent(t *testing.T) profilingrun.Intent {
+	t.Helper()
+	intent := loadIntent(t)
+	intent.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return intent
+}
+
+func validIdleRaw(t *testing.T, intent profilingrun.Intent) IdleRawMeasurement {
+	t.Helper()
+	activeShape := validRaw(t, intent)
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := activeShape.Metrics.StartedAt
+	return IdleRawMeasurement{
+		SchemaVersion: IdleRawMeasurementSchemaVersion,
+		IntentDigest:  digest,
+		PodUID:        activeShape.PodUID,
+		Runtime: profilingrun.IdleRuntimeResult{
+			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
+			IntentDigest: digest, PodUID: activeShape.PodUID, NodeName: intent.TargetNode.Name,
+			Model: intent.State.Model, ArtifactDigest: intent.State.ArtifactDigest,
+			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+			Provider: intent.State.Backend, AvailableProviders: []string{intent.State.Backend},
+			ModelLoadCompletedAt:      started.Add(-61 * time.Second).UTC().Format(time.RFC3339Nano),
+			SettlingStartedAt:         started.Add(-60 * time.Second).UTC().Format(time.RFC3339Nano),
+			SettlingCompletedAt:       started.UTC().Format(time.RFC3339Nano),
+			MeasurementStartedAt:      started.UTC().Format(time.RFC3339Nano),
+			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
+			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
+			CPUContract: profilingrun.RuntimeCPU{
+				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
+				ORTInterOpThreads: intent.CPU.ORTInterOpThreads,
+				AffinityCPUCount:  intent.CPU.ORTIntraOpThreads, CPUSetEffective: "0-3",
+			},
+			DerivedContract: profilingrun.DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		},
+		Metrics:  activeShape.Metrics,
+		Workload: activeShape.Workload,
+	}
+}
+
 func validExecutionEvidence(
 	t *testing.T,
 	intent profilingrun.Intent,
@@ -407,6 +537,29 @@ func validExecutionEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
+	return validExecutionEvidenceBytes(t, intent, raw.PodUID, rawBytes)
+}
+
+func validIdleExecutionEvidence(
+	t *testing.T,
+	intent profilingrun.Intent,
+	raw IdleRawMeasurement,
+) ExecutionEvidence {
+	t.Helper()
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return validExecutionEvidenceBytes(t, intent, raw.PodUID, rawBytes)
+}
+
+func validExecutionEvidenceBytes(
+	t *testing.T,
+	intent profilingrun.Intent,
+	podUID string,
+	rawBytes []byte,
+) ExecutionEvidence {
+	t.Helper()
 	sum := sha256.Sum256(rawBytes)
 	candidate, err := os.ReadFile("../../../spikes/profilingrun/fixtures/candidate-report.json")
 	if err != nil {
@@ -450,7 +603,7 @@ func validExecutionEvidence(
 			Pod: PodTerminalFacts{
 				Namespace:          "chill-system",
 				Name:               "profiling-run-pod",
-				UID:                raw.PodUID,
+				UID:                podUID,
 				ControllerOwnerUID: "job-uid",
 				NodeName:           intent.TargetNode.Name,
 				Phase:              "Succeeded",
@@ -466,7 +619,7 @@ func validExecutionEvidence(
 				ObservedAt: completed.Add(time.Second),
 				Pods: []WorkloadPod{
 					{Namespace: "monitoring", Name: "edge-metric", UID: "edge-metric-uid", Phase: "Running", Images: []string{"image-b", "image-a"}},
-					{Namespace: "chill-system", Name: "profiling-run-pod", UID: raw.PodUID, Phase: "Succeeded", Images: []string{intent.Images.Runtime}},
+					{Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Succeeded", Images: []string{intent.Images.Runtime}},
 				},
 			},
 		},

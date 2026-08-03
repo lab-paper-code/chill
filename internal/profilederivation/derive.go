@@ -20,6 +20,7 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 	}
 	values := make([]float64, len(trials))
 	seen := map[string]struct{}{}
+	seenEvidence := map[string]struct{}{}
 	admissionVersion := trials[0].AdmissionPolicyVersion
 	for index, trial := range trials {
 		if trial.StateIdentity != baseline.StateIdentity ||
@@ -28,6 +29,7 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 			trial.TrialID == "" ||
 			trial.AdmissionPolicyVersion != admissionVersion ||
 			admissionVersion == "" ||
+			!validRawEvidenceIdentity(trial.RawEvidence) ||
 			trial.MeanWallWatts < 0 ||
 			math.IsNaN(trial.MeanWallWatts) ||
 			math.IsInf(trial.MeanWallWatts, 0) {
@@ -37,6 +39,11 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 			return IdleBaseline{}, errors.New("duplicate idle trial ID")
 		}
 		seen[trial.TrialID] = struct{}{}
+		evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
+		if _, exists := seenEvidence[evidenceKey]; exists {
+			return IdleBaseline{}, errors.New("duplicate idle raw evidence identity")
+		}
+		seenEvidence[evidenceKey] = struct{}{}
 		values[index] = trial.MeanWallWatts
 	}
 	baseline.MeanWallWatts = mean(values)

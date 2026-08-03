@@ -78,7 +78,8 @@ func (i Intent) Validate() error {
 			return fmt.Errorf("%s must be repository@sha256", name)
 		}
 	}
-	if i.SchemaVersion == SchemaVersion || i.SchemaVersion == allowedBackgroundIntentVersion {
+	if i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousCurrentIntentVersion ||
+		i.SchemaVersion == allowedBackgroundIntentVersion {
 		if !imagePattern.MatchString(i.Images.WorkloadObserver) {
 			return errors.New("images.workloadObserver must be repository@sha256")
 		}
@@ -98,6 +99,9 @@ func (i Intent) Validate() error {
 	if i.Measurement.Repetitions != 1 {
 		return errors.New("first profiling path requires exactly one measurement repetition")
 	}
+	if err := i.validateMeasurementMode(); err != nil {
+		return err
+	}
 	if i.Metrics.IntervalMilliseconds < 1 || i.Metrics.TimeoutMilliseconds < 1 ||
 		i.Metrics.TimeoutMilliseconds >= i.Metrics.IntervalMilliseconds ||
 		i.Metrics.DurationSeconds < i.Measurement.DurationSeconds {
@@ -114,6 +118,16 @@ func (i Intent) validateSchema() error {
 		}
 		if i.Workload.SchemaVersion != WorkloadContractSchemaVersion || i.Workload.AllowedBackground != nil {
 			return errors.New("current intent requires the current workload observation contract")
+		}
+	case previousCurrentIntentVersion:
+		if !validArtifactPath(i.State.ArtifactPath) {
+			return errors.New("state.artifactPath must be a clean absolute container path")
+		}
+		if i.Workload.SchemaVersion != WorkloadContractSchemaVersion || i.Workload.AllowedBackground != nil {
+			return errors.New("retained v1alpha5 intent requires the current workload observation contract")
+		}
+		if i.Measurement.SettlingDurationSeconds != 0 {
+			return errors.New("retained v1alpha5 intent cannot contain settlingDurationSeconds")
 		}
 	case allowedBackgroundIntentVersion:
 		if !validArtifactPath(i.State.ArtifactPath) {
@@ -150,6 +164,36 @@ func (i Intent) validateSchema() error {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
 	return nil
+}
+
+func (i Intent) validateMeasurementMode() error {
+	if i.SchemaVersion != SchemaVersion {
+		if i.Measurement.SettlingDurationSeconds != 0 {
+			return errors.New("retained intent cannot contain settlingDurationSeconds")
+		}
+		return nil
+	}
+	if i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
+		if i.Measurement.Batch != 1 || i.Measurement.WarmupIterations != 0 ||
+			i.Measurement.SettlingDurationSeconds < 1 ||
+			i.Measurement.InputGenerator != NoInputGenerator ||
+			i.Measurement.OutputValidation != NoOutputValidation {
+			return errors.New("model-loaded idle measurement protocol is invalid")
+		}
+		return nil
+	}
+	if i.Measurement.SettlingDurationSeconds != 0 {
+		return errors.New("active measurement cannot contain settlingDurationSeconds")
+	}
+	return nil
+}
+
+// IsSupportedActiveIntent reports whether the first CPU ORT active worker
+// family can execute a newly frozen or retained intent. Callers must validate
+// the intent separately.
+func IsSupportedActiveIntent(i Intent) bool {
+	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousCurrentIntentVersion) &&
+		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode
 }
 
 func hasWorkloadObservationFields(intent Intent) bool {
