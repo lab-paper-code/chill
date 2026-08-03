@@ -96,5 +96,48 @@
       "max": 52.0,
       "mean": 51.80357142857143
     }
+  },
+  "posthoc_baseline_sensitivity": {
+    "status": "diagnostic-only-no-pre-run-baseline",
+    "transition_duration_seconds": 286.1686236858368,
+    "observed_wall_joules": 3810.748314345161,
+    "zero": {
+      "baseline_watts": 0,
+      "counterfactual_joules": 0,
+      "observed_minus_counterfactual_joules": 3810.748314345161
+    },
+    "idle_candidate": {
+      "selection": "six stable Prometheus samples before the first source-start power rise",
+      "sample_epoch_seconds": [
+        1785750142.138,
+        1785750152.138,
+        1785750162.138,
+        1785750172.138,
+        1785750182.138,
+        1785750192.138
+      ],
+      "sample_watts": [9.6, 9.7, 9.7, 9.7, 9.6, 9.7],
+      "baseline_watts": 9.666666666666666,
+      "counterfactual_joules": 2766.2966956297555,
+      "observed_minus_counterfactual_joules": 1044.4516187154054,
+      "energy_component_status": "proxy-for-E_prepare"
+    },
+    "source_serving": {
+      "sample_count": 6,
+      "baseline_watts": 17.28333333333333,
+      "counterfactual_joules": 4945.947712703545,
+      "observed_minus_counterfactual_joules": -1135.1993983583843,
+      "energy_component_status": "mixed-scalar-not-transition-cost"
+    },
+    "identified_components": {
+      "E_prepare": "proxy-only",
+      "E_overlap_joules": 0,
+      "E_forgone": "unavailable-without-declared-external-serving-load"
+    },
+    "availability": {
+      "internal_loop_gap_seconds": 282.9247224330902,
+      "request_violation_count": null,
+      "unit_separated_from_energy": true
+    }
   }
 }

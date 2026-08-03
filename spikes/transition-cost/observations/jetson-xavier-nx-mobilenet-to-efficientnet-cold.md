@@ -4,8 +4,9 @@ Date: 2026-08-03
 
 This observation records one live Kubernetes model replacement from a running
 MobileNet-V2-050 TensorRT process to a cold EfficientNet-B4 TensorRT process.
-It is a preliminary order-of-magnitude check. It is not an accepted
-`tau`, `eta`, or E1 result.
+It did not retain a frozen transition intent before execution. It is therefore
+a post-hoc parameter-discovery observation, not an accepted `tau`, `eta`, or
+E1 sample.
 
 ## Question and boundary
 
@@ -21,6 +22,32 @@ not compare loaders, and does not provide the repetitions and confidence
 interval required for an energy result. The Node's power-mode identity was not
 captured. No external request generator or Service measured request-level SLO
 survival.
+
+## Post-hoc parameter audit
+
+The run predates the contract in [`../METHOD.md`](../METHOD.md). The
+following values can be reconstructed from retained evidence, but their
+post-hoc status is part of the result:
+
+| Record | Reconstructed value | Attribution status |
+|---|---|---|
+| procedure requested | direct Pod `BBM` | not frozen before mutation |
+| procedure realized | capacity-forced `BBM` | observed: target first failed scheduling on GPU capacity |
+| serving during transition | no external load; internal source loop continued until termination | request-level behavior unavailable |
+| target runtime image | warm | observed pre-existing runtime image |
+| target artifact image | cold | observed unique new image and target image ID |
+| target materialized artifact | cold | observed empty model volume populated by init container |
+| target engine | cold | observed 0-byte cache becoming 79,883,571 bytes |
+| analysis baseline | source-serving | chosen only during post-run analysis |
+| canonical window | delete-request issue to target runtime readiness marker | reconstructed from retained epochs |
+| co-residency capacity | one full-GPU serving Pod | observed Node capacity 1 and request 1 per Pod |
+| power mode | unavailable | not captured |
+| co-resident Pod set at both boundaries | unavailable | not captured |
+| thermal/throttle state | observed over the window | available and unthrottled |
+
+The shorthand `all-cold` would be inaccurate: the target artifact and engine
+paths were cold, but the TensorRT runtime image was warm. This distinction is
+one reason later runs must bind each cache independently.
 
 ## Frozen execution facts
 
@@ -96,11 +123,26 @@ request and service-ready boundaries produced:
 - diagnostic difference from continuing that active-source baseline for the
   same duration: -1,135.20 J
 
-The negative diagnostic difference does not mean that replacement has
-negative overhead: most of the interval has no ready model and draws less than
-the running source. The 3,810.75 J value is retained as one total wall-energy
-integral, not promoted to accepted `eta`; the counterfactual and aggregation
-contract remain open.
+The original analysis implicitly selected the source-serving baseline. A
+post-hoc sensitivity analysis selected six stable pre-source samples from
+`09:42:22.138Z` through `09:43:12.138Z` as an idle candidate. Their mean was
+9.667 W. Applying the same transition window changes only the counterfactual:
+
+| Named counterfactual | Baseline power | Counterfactual energy | Observed minus counterfactual |
+|---|---:|---:|---:|
+| zero | 0 W | 0 J | +3,810.75 J |
+| post-hoc idle candidate | 9.667 W | 2,766.30 J | **+1,044.45 J** |
+| post-hoc source serving | 17.283 W | 4,945.95 J | **-1,135.20 J** |
+
+The sign reversal is produced solely by baseline selection. Neither signed
+delta is promoted to transition cost because no baseline was frozen before the
+run and the aggregate wall trace cannot isolate preparation from the source's
+4.258-second termination grace. Under the component method,
+`+1,044.45 J` is only an idle-referenced observed-excess proxy for
+`E_prepare`; `E_overlap=0` is identified for this full-GPU BBM path; and
+`E_forgone` is unavailable because no external serving load was declared. The
+3,810.75 J total integral remains a physical observation rather than accepted
+`eta`.
 
 A separate approximately 0.72-second direct sampler observed the Jetson input
 rail. It integrated to 2,078.48 J at 7.263 W mean over the same exact
@@ -129,10 +171,10 @@ power-mode actuators.
 
 ## Preliminary decision
 
-This state path rules out the hypothesis that every relevant model transition
-is trivially small: one cold replacement took about 4.8 minutes, dominated by
-device-specific TensorRT engine construction. It does not establish that
-ordinary transitions always cost minutes because that dominant component is
+This diagnostic path took about 4.8 minutes and exposed device-specific
+TensorRT construction as the first controlled toggle. Without a frozen intent,
+it cannot support a general transition-cost claim or establish that ordinary
+transitions always cost minutes. The dominant observed component is also
 cacheable.
 
 The next premise-checking experiment is therefore the same state pair with a

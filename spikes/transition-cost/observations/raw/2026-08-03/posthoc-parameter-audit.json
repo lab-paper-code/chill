@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "transition-spike-posthoc-parameter-audit/v1",
+  "status": "reconstructed-after-run",
+  "sourceCommit": "4019c20",
+  "controlledTransitionSample": false,
+  "reason": "no exact transition intent bytes or digest were retained before mutation",
+  "transitionProtocol": {
+    "actuatorKind": "kubernetes-full-gpu-pod-replacement",
+    "procedureRequested": "BBM",
+    "procedureRealized": "BBM",
+    "procedureCause": "capacity-forced",
+    "cachePrecondition": {
+      "targetRuntimeImage": "warm",
+      "targetArtifactImage": "cold",
+      "targetMaterializedArtifact": "cold",
+      "targetBackendEngine": "cold"
+    },
+    "servingDuring": {
+      "externalLoad": "none",
+      "internalSourceLoop": "continued-until-source-termination"
+    },
+    "analysisBaseline": {
+      "original": "sourceServing",
+      "frozenBeforeRun": false
+    },
+    "window": {
+      "start": "source-pod-delete-request-issued",
+      "startEpochNs": 1785750364861001508,
+      "end": "target-runtime-readiness-marker-written",
+      "endEpochNs": 1785750651029625026
+    }
+  },
+  "transitionStatePair": {
+    "nodeUID": "4a093de6-af5f-4df0-96b2-c6f6c561c970",
+    "deviceClass": "jetson-xavier-nx-8g",
+    "from": {
+      "model": "mobilenet-v2-050",
+      "modelDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
+      "runtimeImageDigest": "sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec",
+      "runtimeVersion": "onnxruntime-1.16.0",
+      "backend": "TensorrtExecutionProvider",
+      "precision": "fp32",
+      "powerMode": null,
+      "gpuRequest": 1
+    },
+    "to": {
+      "model": "efficientnet-b4",
+      "modelDigest": "sha256:f19aa28943b7a79ef31952cd6ac126109edbab16c7bc0eb2ef01ad9a5dc03b30",
+      "runtimeImageDigest": "sha256:ee5cc6e44bed05a9003e367785bc26a1b8f6e8e8aafb9bbf0acc8de0edbc5fec",
+      "runtimeVersion": "onnxruntime-1.16.0",
+      "backend": "TensorrtExecutionProvider",
+      "precision": "fp32",
+      "powerMode": null,
+      "gpuRequest": 1
+    },
+    "coResidencyCapacity": {
+      "fullGpuServingPods": 1,
+      "nodeAllocatableGpu": 1,
+      "gpuPerPod": 1
+    }
+  },
+  "transitionEnvironment": {
+    "coResidentPodsAtBoundaries": null,
+    "thermalObservationAvailable": true,
+    "thermalThrottleActive": false,
+    "temperatureCelsiusRange": [51.6, 52.0]
+  },
+  "uncontrolledOrUnavailable": [
+    "power-mode identity",
+    "co-resident Pod identities at both boundaries",
+    "external request load and violation count",
+    "independently admitted idle baseline",
+    "standard image-pull timestamps",
+    "host page and inode cache state"
+  ]
+}

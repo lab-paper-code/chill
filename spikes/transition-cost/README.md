@@ -5,12 +5,16 @@ state-transition quantities. It is outside the online Profiler path: nothing
 here defines a production API, controller, `DeviceProfile`, or accepted
 transition-cost record.
 
-The first observation asks only whether one real model replacement is
-obviously cheap or large enough to justify continued transition-aware work. It
-separates Kubernetes handoff, artifact materialization, ONNX Runtime session
-creation, first-inference TensorRT engine construction, readiness, power, and
-serving-boundary facts. The result is a preliminary digit check, not the E1
-campaign required by the specification.
+Read [METHOD.md](METHOD.md) before running another transition. It defines the
+minimum frozen protocol, state-pair, environment, energy-component, and
+availability boundaries required for an observation to support causal
+comparison.
+
+The first observation discovered which parameters must be frozen. It did not
+have a pre-run transition intent, so it remains a diagnostic parameter audit,
+not a transition-cost sample. Its retained timestamps and power data still
+support baseline-sensitivity analysis and selection of the next controlled
+toggle.
 
 Observations:
 
