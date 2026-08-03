@@ -34,8 +34,9 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
+	frozen := frozenRunForPrepared(t, prepared)
 
-	job, err := buildExecutionJob(run, frozenRunForPrepared(t, prepared), binding, testExecutionJobOptions(), scheme)
+	job, err := buildExecutionJob(run, frozen, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +48,12 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
 		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
 	}
+	wantPolicyIdentity, err := frozen.ExecutionPolicy.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !metav1.IsControlledBy(job, run) || job.Annotations[intentDigestAnnotation] != prepared.IntentDigest ||
-		job.Annotations[executionPolicyAnnotation] != profiler.CPUORTWorkerPolicy+"/"+profiler.CPUORTWorkerPolicyVersion {
+		job.Annotations[executionPolicyAnnotation] != wantPolicyIdentity {
 		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
 	}
 	pod := job.Spec.Template.Spec
@@ -109,9 +114,10 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	frozen := frozenRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(
 		run,
-		frozenRunForPrepared(t, prepared),
+		frozen,
 		testEvidenceStoreBinding(),
 		testExecutionJobOptions(),
 		executionJobTestScheme(t),
@@ -119,7 +125,11 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Annotations[executionPolicyAnnotation] != profiler.CPUORTWorkerPolicy+"/"+profiler.CPUORTIdlePolicyVersion ||
+	wantPolicyIdentity, err := frozen.ExecutionPolicy.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Annotations[executionPolicyAnnotation] != wantPolicyIdentity ||
 		job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 271 {
 		t.Fatalf("idle Job policy drifted: %#v", job)
 	}

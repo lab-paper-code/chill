@@ -141,9 +141,6 @@ func (f FrozenExecutionPolicy) Identity() (string, error) {
 	if err := f.Validate(); err != nil {
 		return "", err
 	}
-	if f.Source.Kind == BuiltInExecutionPolicySourceKind {
-		return f.Source.Name, nil
-	}
 	digest, err := f.Policy.Digest()
 	if err != nil {
 		return "", err

@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	metricRawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha2"
-	RawMeasurementSchemaVersion       = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
+	RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
 )
 
 // RawMeasurement contains only facts available to the in-Job worker before it
@@ -51,7 +50,7 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 }
 
 func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion && m.SchemaVersion != metricRawMeasurementSchemaVersion {
+	if m.SchemaVersion != RawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
 	}
 	digest, err := intent.Digest()

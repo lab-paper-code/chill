@@ -387,14 +387,20 @@ func frozenRunForPrepared(t *testing.T, prepared profiler.PreparedRun) FrozenRun
 	if prepared.Intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		admissionPolicyName = profileradmission.IdleWallPowerPolicyV1
 	}
-	policy, err := profileradmission.LegacyFrozenPolicy(
+	policy := configuredAdmissionPolicy(
+		t,
 		admissionPolicyName,
 		prepared.Intent.Measurement.WorkloadMode,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	executionPolicy, err := profiler.LegacyFrozenExecutionPolicy(prepared.Intent)
+	executionPolicy, err := profiler.FreezeConfiguredExecutionPolicy(
+		controllerExecutionPolicyCatalog(t),
+		prepared.Intent,
+		profiler.ExecutionPolicySource{
+			Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: testSystemNamespace,
+			Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "42",
+			Key: "execution-policies.yaml",
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

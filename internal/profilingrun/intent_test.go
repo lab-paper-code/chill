@@ -120,22 +120,6 @@ func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
 	}
 }
 
-func TestRetainedV1Alpha5IntentCannotGainSettlingField(t *testing.T) {
-	intent := validIntent()
-	intent.SchemaVersion = previousCurrentIntentVersion
-	payload, err := intent.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(payload), "settlingDurationSeconds") {
-		t.Fatalf("retained v1alpha5 intent gained settling field: %s", payload)
-	}
-	intent.Measurement.SettlingDurationSeconds = 1
-	if err := intent.Validate(); err == nil {
-		t.Fatal("retained v1alpha5 intent accepted the v1alpha6 field")
-	}
-}
-
 func TestCurrentIntentRequiresCleanArtifactPath(t *testing.T) {
 	for _, artifactPath := range []string{"", "/", "artifact/model.onnx", "/artifact/../model.onnx"} {
 		intent := validIntent()

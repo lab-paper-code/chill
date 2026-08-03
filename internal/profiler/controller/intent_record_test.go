@@ -9,7 +9,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -155,50 +154,26 @@ func TestIntentRecordsRejectAdmissionPolicyDrift(t *testing.T) {
 	}
 }
 
-func TestIntentRecordsLoadLegacyTwoKeyRecordWithoutMutableLookup(t *testing.T) {
+func TestIntentRecordsRejectIncompletePayloadSets(t *testing.T) {
 	run := testRun()
 	frozen := testFrozenRun(t)
 	scheme := intentRecordTestScheme(t)
-	record, err := buildIntentRecord(run, frozen, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete(record.BinaryData, intentRecordAdmissionPolicyKey)
-	delete(record.Annotations, admissionPolicyAnnotation)
-	delete(record.BinaryData, intentRecordExecutionPolicyKey)
-	delete(record.Annotations, executionPolicyRecordAnnotation)
 
-	loaded, err := decodeIntentRecord(run, record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.AdmissionPolicy.Source.Kind != profileradmission.BuiltInPolicySourceKind ||
-		loaded.AdmissionPolicy.Policy.Name != run.Spec.AdmissionPolicy ||
-		loaded.ExecutionPolicy.Source.Kind != profiler.BuiltInExecutionPolicySourceKind {
-		t.Fatalf("legacy policy reconstruction = %#v", loaded.AdmissionPolicy)
-	}
-}
-
-func TestIntentRecordsLoadThreeKeyRecordWithoutMutableExecutionPolicyLookup(t *testing.T) {
-	run := testRun()
-	frozen := testFrozenRun(t)
-	scheme := intentRecordTestScheme(t)
-	record, err := buildIntentRecord(run, frozen, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete(record.BinaryData, intentRecordExecutionPolicyKey)
-	delete(record.Annotations, executionPolicyRecordAnnotation)
-
-	loaded, err := decodeIntentRecord(run, record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loadedAdmission, _ := loaded.AdmissionPolicy.CanonicalJSON()
-	frozenAdmission, _ := frozen.AdmissionPolicy.CanonicalJSON()
-	if !bytes.Equal(loadedAdmission, frozenAdmission) ||
-		loaded.ExecutionPolicy.Source.Kind != profiler.BuiltInExecutionPolicySourceKind {
-		t.Fatalf("three-key policy reconstruction = %#v", loaded)
+	for _, keys := range [][]string{
+		{intentRecordAdmissionPolicyKey, intentRecordExecutionPolicyKey},
+		{intentRecordExecutionPolicyKey},
+	} {
+		record, err := buildIntentRecord(run, frozen, scheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range keys {
+			delete(record.BinaryData, key)
+		}
+		if _, err := decodeIntentRecord(run, record); err == nil ||
+			!strings.Contains(err.Error(), "unexpected data keys") {
+			t.Fatalf("payload set without %v was accepted: %v", keys, err)
+		}
 	}
 }
 
@@ -241,23 +216,7 @@ func testPreparedRun(t *testing.T) profiler.PreparedRun {
 
 func testFrozenRun(t *testing.T) FrozenRun {
 	t.Helper()
-	prepared := testPreparedRun(t)
-	policy, err := profileradmission.LegacyFrozenPolicy(
-		profileradmission.WallPowerPolicyV2,
-		prepared.Intent.Measurement.WorkloadMode,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	executionPolicy, err := profiler.LegacyFrozenExecutionPolicy(prepared.Intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return FrozenRun{
-		Prepared:        prepared,
-		AdmissionPolicy: policy,
-		ExecutionPolicy: executionPolicy,
-	}
+	return frozenRunForPrepared(t, testPreparedRun(t))
 }
 
 func intentRecordTestScheme(t *testing.T) *runtime.Scheme {

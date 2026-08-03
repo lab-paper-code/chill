@@ -9,8 +9,7 @@ import (
 )
 
 const (
-	previousCurrentIntentVersion = "chill.dacs.io/profiling-run-intent.v1alpha5"
-	SchemaVersion                = "chill.dacs.io/profiling-run-intent.v1alpha6"
+	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha6"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -30,8 +29,7 @@ type Intent struct {
 	Workload      WorkloadContract    `json:"workload"`
 }
 
-// UnmarshalJSON strictly decodes the current wire field names while retaining
-// the immediately previous schema version until live Runs are removed.
+// UnmarshalJSON strictly decodes the current wire field names.
 func (i *Intent) UnmarshalJSON(payload []byte) error {
 	type wire Intent
 	var decoded wire

@@ -382,9 +382,5 @@ func mustIntentFreezer(
 
 func testExecutionPolicyResolver(t *testing.T) *countingExecutionPolicyResolver {
 	t.Helper()
-	policy, err := profiler.LegacyFrozenExecutionPolicy(testPreparedRun(t).Intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &countingExecutionPolicyResolver{policy: policy}
+	return &countingExecutionPolicyResolver{policy: testFrozenRun(t).ExecutionPolicy}
 }

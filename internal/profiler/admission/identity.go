@@ -36,7 +36,7 @@ type metricSamplingProtocol struct {
 	DurationSeconds      int `json:"durationSeconds"`
 }
 
-// ProjectRunIdentities derives versioned identities from one retained intent
+// ProjectRunIdentities derives versioned identities from one frozen intent
 // and the actual Node UID recorded in finalized evidence.
 func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdentities, error) {
 	state, err := digestIdentity(stateIdentitySchemaVersion, struct {

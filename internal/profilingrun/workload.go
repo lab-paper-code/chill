@@ -55,16 +55,7 @@ func (c WorkloadContract) LabelKeys() ([]string, error) {
 }
 
 func IsMeasurementWorkload(ownerKind string, labels map[string]string) bool {
-	if ownerKind != "Job" {
-		return false
-	}
-	if labels[MeasurementWorkloadLabelKey] == MeasurementWorkloadLabelValue {
-		return true
-	}
-	// Recognize retained CHILL profiling Jobs created before the dedicated role
-	// label existed while current Jobs roll through the cluster.
-	return labels["app.kubernetes.io/name"] == "chill" &&
-		labels["app.kubernetes.io/component"] == "profiler"
+	return ownerKind == "Job" && labels[MeasurementWorkloadLabelKey] == MeasurementWorkloadLabelValue
 }
 
 func sha256Digest(payload []byte) string {

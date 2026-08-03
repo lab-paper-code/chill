@@ -108,7 +108,7 @@ func (i Intent) Validate() error {
 }
 
 func (i Intent) validateSchema() error {
-	if i.SchemaVersion != SchemaVersion && i.SchemaVersion != previousCurrentIntentVersion {
+	if i.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
 	if !validArtifactPath(i.State.ArtifactPath) {
@@ -117,19 +117,10 @@ func (i Intent) validateSchema() error {
 	if i.Workload.SchemaVersion != WorkloadContractSchemaVersion {
 		return errors.New("intent requires the current workload observation contract")
 	}
-	if i.SchemaVersion == previousCurrentIntentVersion && i.Measurement.SettlingDurationSeconds != 0 {
-		return errors.New("retained v1alpha5 intent cannot contain settlingDurationSeconds")
-	}
 	return nil
 }
 
 func (i Intent) validateMeasurementMode() error {
-	if i.SchemaVersion != SchemaVersion {
-		if i.Measurement.SettlingDurationSeconds != 0 {
-			return errors.New("retained intent cannot contain settlingDurationSeconds")
-		}
-		return nil
-	}
 	if i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
 		if i.Measurement.Batch != 1 || i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
@@ -146,15 +137,14 @@ func (i Intent) validateMeasurementMode() error {
 }
 
 // IsSupportedActiveIntent reports whether the first CPU ORT active worker
-// family can execute a newly frozen or retained intent. Callers must validate
-// the intent separately.
+// family can execute a current intent. Callers must validate the intent separately.
 func IsSupportedActiveIntent(i Intent) bool {
-	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousCurrentIntentVersion) &&
+	return i.SchemaVersion == SchemaVersion &&
 		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode
 }
 
-// IsSupportedCPUORTIntent covers the retained active path and the current
-// model-loaded-idle path implemented by the explicit CPU ORT worker.
+// IsSupportedCPUORTIntent covers the active and model-loaded-idle paths
+// implemented by the explicit CPU ORT worker.
 func IsSupportedCPUORTIntent(i Intent) bool {
 	return IsSupportedActiveIntent(i) ||
 		(i.SchemaVersion == SchemaVersion && i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)

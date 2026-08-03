@@ -22,7 +22,6 @@ const (
 	FrozenPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-admission-policy.v1alpha1"
 
 	ConfigMapPolicySourceKind = "ConfigMap"
-	BuiltInPolicySourceKind   = "BuiltIn"
 )
 
 var (
@@ -163,25 +162,16 @@ func (f FrozenPolicy) Validate() error {
 	if !digestPattern.MatchString(f.Source.EntryContentDigest) {
 		return errors.New("admission-policy source entryContentDigest must be a canonical SHA-256 digest")
 	}
-	switch f.Source.Kind {
-	case ConfigMapPolicySourceKind:
-		for name, value := range map[string]string{
-			"namespace": f.Source.Namespace, "name": f.Source.Name, "uid": f.Source.UID,
-			"resourceVersion": f.Source.ResourceVersion, "key": f.Source.Key,
-		} {
-			if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-				return fmt.Errorf("admission-policy ConfigMap source %s is required without surrounding whitespace", name)
-			}
-		}
-	case BuiltInPolicySourceKind:
-		if strings.TrimSpace(f.Source.Name) == "" || strings.TrimSpace(f.Source.Name) != f.Source.Name {
-			return errors.New("built-in admission-policy source name is required without surrounding whitespace")
-		}
-		if f.Source.Namespace != "" || f.Source.UID != "" || f.Source.ResourceVersion != "" || f.Source.Key != "" {
-			return errors.New("built-in admission-policy source cannot contain ConfigMap identity")
-		}
-	default:
+	if f.Source.Kind != ConfigMapPolicySourceKind {
 		return fmt.Errorf("unsupported admission-policy source kind %q", f.Source.Kind)
+	}
+	for name, value := range map[string]string{
+		"namespace": f.Source.Namespace, "name": f.Source.Name, "uid": f.Source.UID,
+		"resourceVersion": f.Source.ResourceVersion, "key": f.Source.Key,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("admission-policy ConfigMap source %s is required without surrounding whitespace", name)
+		}
 	}
 	return nil
 }

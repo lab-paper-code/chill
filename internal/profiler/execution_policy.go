@@ -84,9 +84,6 @@ func DeriveExecutionPlan(
 		return ExecutionPlan{}, err
 	}
 	policyVersion := strings.TrimPrefix(policyIdentity, policy.Name+"/")
-	if frozen.Source.Kind == BuiltInExecutionPolicySourceKind {
-		policyVersion = strings.TrimPrefix(policyIdentity, CPUORTWorkerPolicy+"/")
-	}
 	plan := ExecutionPlan{
 		Policy:        policy.Name,
 		PolicyVersion: policyVersion,

@@ -285,7 +285,7 @@ func decodeIntentRecord(
 	if record.Immutable == nil || !*record.Immutable {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap is not immutable")
 	}
-	if len(record.Data) != 0 || len(record.BinaryData) < 2 || len(record.BinaryData) > 4 {
+	if len(record.Data) != 0 || len(record.BinaryData) != 4 {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected data keys")
 	}
 	intentBytes, intentOK := record.BinaryData[intentRecordIntentKey]
@@ -305,11 +305,11 @@ func decodeIntentRecord(
 		Intent: intent, IntentDigest: digest,
 		CandidateReportBytes: append([]byte(nil), candidateBytes...),
 	}
-	policy, err := decodeStoredAdmissionPolicy(run, record, intent.Measurement.WorkloadMode)
+	policy, err := decodeStoredAdmissionPolicy(record)
 	if err != nil {
 		return FrozenRun{}, err
 	}
-	executionPolicy, err := decodeStoredExecutionPolicy(record, intent)
+	executionPolicy, err := decodeStoredExecutionPolicy(record)
 	if err != nil {
 		return FrozenRun{}, err
 	}
@@ -349,19 +349,9 @@ func decodeStoredIntent(raw []byte) (profilingrun.Intent, string, error) {
 	return intent, digest, nil
 }
 
-func decodeStoredAdmissionPolicy(
-	run *edgev1alpha1.ProfilingRun,
-	record *corev1.ConfigMap,
-	workloadMode string,
-) (profileradmission.FrozenPolicy, error) {
-	policyBytes, hasPolicy := record.BinaryData[intentRecordAdmissionPolicyKey]
-	if !hasPolicy {
-		if len(record.BinaryData) != 2 || record.Annotations[admissionPolicyAnnotation] != "" {
-			return profileradmission.FrozenPolicy{}, errors.New("legacy frozen intent ConfigMap has inconsistent admission-policy data")
-		}
-		return profileradmission.LegacyFrozenPolicy(run.Spec.AdmissionPolicy, workloadMode)
-	}
-	if (len(record.BinaryData) != 3 && len(record.BinaryData) != 4) || len(policyBytes) == 0 {
+func decodeStoredAdmissionPolicy(record *corev1.ConfigMap) (profileradmission.FrozenPolicy, error) {
+	policyBytes := record.BinaryData[intentRecordAdmissionPolicyKey]
+	if len(policyBytes) == 0 {
 		return profileradmission.FrozenPolicy{}, errors.New("frozen admission-policy payload is incomplete")
 	}
 	policy, err := profileradmission.DecodeFrozenPolicy(policyBytes)
@@ -378,21 +368,9 @@ func decodeStoredAdmissionPolicy(
 	return policy, nil
 }
 
-func decodeStoredExecutionPolicy(
-	record *corev1.ConfigMap,
-	intent profilingrun.Intent,
-) (profiler.FrozenExecutionPolicy, error) {
-	policyBytes, hasPolicy := record.BinaryData[intentRecordExecutionPolicyKey]
-	if !hasPolicy {
-		if (len(record.BinaryData) != 2 && len(record.BinaryData) != 3) ||
-			record.Annotations[executionPolicyRecordAnnotation] != "" {
-			return profiler.FrozenExecutionPolicy{}, errors.New(
-				"legacy frozen intent ConfigMap has inconsistent execution-policy data",
-			)
-		}
-		return profiler.LegacyFrozenExecutionPolicy(intent)
-	}
-	if len(record.BinaryData) != 4 || len(policyBytes) == 0 {
+func decodeStoredExecutionPolicy(record *corev1.ConfigMap) (profiler.FrozenExecutionPolicy, error) {
+	policyBytes := record.BinaryData[intentRecordExecutionPolicyKey]
+	if len(policyBytes) == 0 {
 		return profiler.FrozenExecutionPolicy{}, errors.New("frozen execution-policy payload is incomplete")
 	}
 	policy, err := profiler.DecodeFrozenExecutionPolicy(policyBytes)

@@ -26,28 +26,19 @@ func (f FrozenExecutionPolicy) Validate() error {
 	if !executionPolicyDigestPattern.MatchString(f.Source.CatalogContentDigest) {
 		return errors.New("execution-policy source catalogContentDigest must be a canonical SHA-256 digest")
 	}
-	switch f.Source.Kind {
-	case ConfigMapExecutionPolicySourceKind:
-		for name, value := range map[string]string{
-			"namespace":       f.Source.Namespace,
-			"name":            f.Source.Name,
-			"uid":             f.Source.UID,
-			"resourceVersion": f.Source.ResourceVersion,
-			"key":             f.Source.Key,
-		} {
-			if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-				return fmt.Errorf("execution-policy ConfigMap source %s is required without surrounding whitespace", name)
-			}
-		}
-	case BuiltInExecutionPolicySourceKind:
-		if strings.TrimSpace(f.Source.Name) == "" || strings.TrimSpace(f.Source.Name) != f.Source.Name {
-			return errors.New("built-in execution-policy source name is required without surrounding whitespace")
-		}
-		if f.Source.Namespace != "" || f.Source.UID != "" || f.Source.ResourceVersion != "" || f.Source.Key != "" {
-			return errors.New("built-in execution-policy source cannot contain ConfigMap identity")
-		}
-	default:
+	if f.Source.Kind != ConfigMapExecutionPolicySourceKind {
 		return fmt.Errorf("unsupported execution-policy source kind %q", f.Source.Kind)
+	}
+	for name, value := range map[string]string{
+		"namespace":       f.Source.Namespace,
+		"name":            f.Source.Name,
+		"uid":             f.Source.UID,
+		"resourceVersion": f.Source.ResourceVersion,
+		"key":             f.Source.Key,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("execution-policy ConfigMap source %s is required without surrounding whitespace", name)
+		}
 	}
 	return nil
 }

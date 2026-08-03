@@ -6,7 +6,6 @@ const (
 	FrozenExecutionPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-execution-policy.v1alpha1"
 
 	ConfigMapExecutionPolicySourceKind = "ConfigMap"
-	BuiltInExecutionPolicySourceKind   = "BuiltIn"
 )
 
 // ExecutionPolicyCatalog is installation-time worker-delivery configuration.

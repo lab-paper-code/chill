@@ -9,9 +9,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	testConfiguredActivePolicy = "configured-active"
+	testConfiguredIdlePolicy   = "configured-idle"
+)
+
 func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
-	raw := executionPolicyCatalogFixture(t, intent)
+	raw := executionPolicyCatalogFixture(t)
 	source := ExecutionPolicySource{
 		Kind:            ConfigMapExecutionPolicySourceKind,
 		Namespace:       "chill-system",
@@ -25,7 +30,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frozen.Policy.Name != "configured-active" || frozen.Source.CatalogContentDigest == "" {
+	if frozen.Policy.Name != testConfiguredActivePolicy || frozen.Source.CatalogContentDigest == "" {
 		t.Fatalf("selected execution policy = %#v", frozen)
 	}
 	identity, err := frozen.Identity()
@@ -50,7 +55,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 
 func TestExecutionPolicyIdentityDependsOnSemanticsNotConfigMapRevision(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
-	raw := executionPolicyCatalogFixture(t, intent)
+	raw := executionPolicyCatalogFixture(t)
 	freeze := func(resourceVersion string) FrozenExecutionPolicy {
 		t.Helper()
 		frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, ExecutionPolicySource{
@@ -80,11 +85,7 @@ func TestExecutionPolicyIdentityDependsOnSemanticsNotConfigMapRevision(t *testin
 
 func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
-	legacy, err := LegacyFrozenExecutionPolicy(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	exact := legacy.Policy.ExecutionPolicySpec
+	exact := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
 	exact.Name = "exact-device"
 	exact.DeviceClass = intent.State.DeviceClass
 	fallback := exact
@@ -108,11 +109,7 @@ func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
 
 func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
-	legacy, err := LegacyFrozenExecutionPolicy(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := legacy.Policy.ExecutionPolicySpec
+	first := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
 	first.Name = "first"
 	second := first
 	second.Name = "second"
@@ -128,7 +125,7 @@ func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *test
 		t.Fatalf("ambiguous catalog error = %v", err)
 	}
 
-	unknown := append(executionPolicyCatalogFixture(t, intent), []byte("unknownField: true\n")...)
+	unknown := append(executionPolicyCatalogFixture(t), []byte("unknownField: true\n")...)
 	if _, err := FreezeConfiguredExecutionPolicy(unknown, intent, validExecutionPolicySource()); err == nil {
 		t.Fatal("strict decoder accepted an unknown catalog field")
 	}
@@ -136,11 +133,10 @@ func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *test
 
 func TestExecutionPolicyRejectsIncoherentResourceEnvelope(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
-	legacy, err := LegacyFrozenExecutionPolicy(intent)
-	if err != nil {
-		t.Fatal(err)
+	policy := ExecutionPolicy{
+		SchemaVersion:       ExecutionPolicySchemaVersion,
+		ExecutionPolicySpec: testExecutionPolicySpec(intent.Measurement.WorkloadMode),
 	}
-	policy := legacy.Policy
 	policy.RuntimeMemoryRequestBytes = 1
 	policy.RuntimeMemoryLimitBytes = policy.MaxInputBytes + policy.MaxRuntimeResultBytes
 	if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), "runtime capacities") {
@@ -157,16 +153,12 @@ func currentExecutionPolicyTestIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
-func executionPolicyCatalogFixture(t *testing.T, intent profilingrun.Intent) []byte {
+func executionPolicyCatalogFixture(t *testing.T) []byte {
 	t.Helper()
-	active, err := LegacyFrozenExecutionPolicy(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	activeSpec := active.Policy.ExecutionPolicySpec
-	activeSpec.Name = "configured-active"
+	activeSpec := testExecutionPolicySpec(profilingrun.SaturatedSerialFixedBatchWorkloadMode)
+	activeSpec.Name = testConfiguredActivePolicy
 	idleSpec := activeSpec
-	idleSpec.Name = "configured-idle"
+	idleSpec.Name = testConfiguredIdlePolicy
 	idleSpec.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	raw, err := yaml.Marshal(ExecutionPolicyCatalog{
 		SchemaVersion: ExecutionPolicyCatalogSchemaVersion,
@@ -176,6 +168,29 @@ func executionPolicyCatalogFixture(t *testing.T, intent profilingrun.Intent) []b
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func testExecutionPolicySpec(workloadMode string) ExecutionPolicySpec {
+	const mebibyte = int64(1024 * 1024)
+	return ExecutionPolicySpec{
+		Name: "test-policy", DeviceClass: "*", ExecutionPath: firstExecutionPath,
+		WorkloadMode:                  workloadMode,
+		ActiveDeadlineOverheadSeconds: 180, AttemptTimeoutOverheadSeconds: 150,
+		ObserverReadyTimeoutSeconds: 30, ObserverStartOverheadSeconds: 120,
+		MetricResultOverheadSeconds: 30, WorkloadEndFenceTimeoutSeconds: 15,
+		WorkloadResultTimeoutSeconds: 30,
+		MaxLatencySamples:            1_000_000, MaxInputBytes: 64 * mebibyte,
+		MaxRuntimeResultBytes: 32 * mebibyte, MaxMetricResultBytes: 8 * mebibyte,
+		MaxMetricEvents: 50_000, MaxWorkloadEvents: 10_000,
+		MaxWorkloadResultBytes:    8 * mebibyte,
+		RuntimeMemoryRequestBytes: 128 * mebibyte, RuntimeMemoryLimitBytes: 1024 * mebibyte,
+		ObserverCPURequest: "5m", ObserverCPULimit: "100m",
+		ObserverMemoryRequestBytes: 16 * mebibyte, ObserverMemoryLimitBytes: 64 * mebibyte,
+		WorkloadObserverCPURequest: "5m", WorkloadObserverCPULimit: "100m",
+		WorkloadObserverMemoryRequestBytes: 32 * mebibyte,
+		WorkloadObserverMemoryLimitBytes:   128 * mebibyte,
+		CoordinationReserveBytes:           1 * mebibyte, WorkspaceBytes: 128 * mebibyte,
+	}
 }
 
 func validExecutionPolicySource() ExecutionPolicySource {

@@ -233,43 +233,6 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	}
 }
 
-func TestLegacyPolicyIsExplicitAndClosed(t *testing.T) {
-	t.Parallel()
-	frozen, err := LegacyFrozenPolicy(WallPowerPolicyV2, "saturated-serial-fixed-batch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := frozen.AdmissionPolicy()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(policy.Version, "sha256:") || frozen.Policy.Name != WallPowerPolicyV2 ||
-		policy.MinimumSamples != 20 ||
-		policy.MaximumGapSeconds != 1.5 || policy.MaximumBoundaryDistanceSeconds != 1 ||
-		policy.MinimumCoverage != 0.95 || !policy.AllowReceiptTimestamps ||
-		!policy.RejectConcurrentCHILLWorkloads || !policy.RejectExternalWorkloadChanges {
-		t.Fatalf("policy = %#v", policy)
-	}
-	if _, err := LegacyFrozenPolicy("unknown", "saturated-serial-fixed-batch"); err == nil {
-		t.Fatal("unsupported policy was accepted")
-	}
-	idleFrozen, err := LegacyFrozenPolicy(IdleWallPowerPolicyV1, profilingrun.IdleModelLoadedWorkloadMode)
-	if err != nil {
-		t.Fatal(err)
-	}
-	idle, err := idleFrozen.AdmissionPolicy()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if idleFrozen.Policy.Name != IdleWallPowerPolicyV1 || idle.MinimumSamples != policy.MinimumSamples ||
-		idle.MaximumGapSeconds != policy.MaximumGapSeconds || idle.MinimumCoverage != policy.MinimumCoverage {
-		t.Fatalf("idle policy = %#v", idle)
-	}
-	if _, err := LegacyFrozenPolicy(WallPowerPolicyV2, profilingrun.IdleModelLoadedWorkloadMode); err == nil {
-		t.Fatal("active policy was accepted as an idle policy")
-	}
-}
-
 func admissionIntent() profilingrun.Intent {
 	return profilingrun.Intent{
 		State: profilingrun.ExecutionState{

@@ -64,27 +64,6 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
-func TestRetainedMetricRawMeasurementRemainsReadableWithoutWorkloadObservation(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	raw.SchemaVersion = metricRawMeasurementSchemaVersion
-	raw.Workload = nil
-	payload, err := raw.CanonicalJSON(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(payload), `"metrics":`) || strings.Contains(string(payload), `"workload":`) {
-		t.Fatalf("retained metric raw measurement wire shape = %s", payload)
-	}
-	var decoded RawMeasurement
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if err := decoded.Validate(intent); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
