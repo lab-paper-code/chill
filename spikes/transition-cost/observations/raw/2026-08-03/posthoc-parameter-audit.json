@@ -23,6 +23,20 @@
       "original": "sourceServing",
       "frozenBeforeRun": false
     },
+    "powerObservation": {
+      "canonicalWall": {
+        "metric": "shelly_power_total_watts",
+        "source": "prometheus-retained",
+        "nominalCadenceSeconds": 10,
+        "shortPhaseCoverage": "insufficient"
+      },
+      "diagnosticRail": {
+        "metric": "jetson_power_vdd_in_watts",
+        "source": "direct-exporter-poll",
+        "meanCadenceHz": 1.3697609889809916,
+        "maximumTransitionGapSeconds": 1.1002650260925293
+      }
+    },
     "window": {
       "start": "source-pod-delete-request-issued",
       "startEpochNs": 1785750364861001508,
@@ -64,6 +78,21 @@
     "thermalObservationAvailable": true,
     "thermalThrottleActive": false,
     "temperatureCelsiusRange": [51.6, 52.0]
+  },
+  "retroLabelDecision": {
+    "eligibleForOneFactorCausalDelta": false,
+    "controlledColdRerunRequired": true,
+    "blockingUnknowns": [
+      "source and target power-mode identity",
+      "co-resident Pod identities and resource contracts at both boundaries",
+      "source Pod full resource and image-status snapshot",
+      "canonical wall-power coverage compatible with the future short warm protocol"
+    ]
+  },
+  "availability": {
+    "semantic": "potential-capacity-gap-upper-bound",
+    "deleteRequestToTargetReadySeconds": 286.1686236858368,
+    "requestViolationCount": null
   },
   "uncontrolledOrUnavailable": [
     "power-mode identity",

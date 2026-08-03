@@ -49,6 +49,23 @@ The shorthand `all-cold` would be inaccurate: the target artifact and engine
 paths were cold, but the TensorRT runtime image was warm. This distinction is
 one reason later runs must bind each cache independently.
 
+### Retro-label decision: not eligible for a causal delta
+
+The cold observation cannot be retro-labeled as the reference side of a
+one-factor warm-engine comparison. Required values remain unavailable:
+
+- source and target power-mode identity;
+- co-resident Pod identities and resource contracts at both boundaries;
+- the source Pod's retained full resource and image-status snapshot; and
+- wall-power sampling at the sub-second/one-second resolution needed for an
+  expected roughly 25-second warm transition.
+
+The retained 10-second wall series is sufficient for the cold total and long
+engine-build phase, but it cannot satisfy the future warm protocol's
+short-phase coverage. A controlled cold run under the same frozen protocol is
+therefore required before interpreting `warm - cold` as an engine-cache-only
+delta.
+
 ## Frozen execution facts
 
 - Node: `jetsonx`, UID `4a093de6-af5f-4df0-96b2-c6f6c561c970`
@@ -95,6 +112,44 @@ The lazy engine-construction interval alone accounts for about **91%** of the
 request-to-ready time. Session creation is therefore not a valid proxy for the
 target's usable readiness.
 
+### Post-hoc phase energy attribution
+
+The direct `jetson_power_vdd_in_watts` trace contains 392 raw samples inside
+the transition window: 1.370 Hz mean cadence and 1.101 seconds maximum gap.
+Six stable pre-source samples of the same metric give a post-hoc idle candidate
+of 4.997 W. Assigning the high-resolution samples to retained runtime epochs
+produces:
+
+| Phase | Seconds | Raw rail samples | Max gap (s) | Mean rail W | Rail J | Excess over idle J |
+|---|---:|---:|---:|---:|---:|---:|
+| source termination grace through last completed source window | 4.258 | 6 | 0.739 | 10.684 | 45.488 | 24.213 |
+| last source window to target process start | 9.881 | 13 | 0.890 | 6.966 | 68.829 | 19.452 |
+| artifact verify and handoff to session creation | 0.150 | 0 | 0.150 | 6.633 | 0.996 | 0.246 |
+| ONNX Runtime session creation | 11.386 | 15 | 0.788 | 6.355 | 72.355 | 15.458 |
+| session-to-first-inference handoff | 0.020 | 0 | 0.020 | 6.165 | 0.123 | 0.023 |
+| first inference and TensorRT engine construction | 260.339 | 357 | 1.101 | 7.257 | 1,889.197 | **588.281** |
+| post-engine warm-up to Ready | 0.134 | 1 | 0.068 | 11.108 | 1.490 | 0.820 |
+
+The source-grace row is source serving, not preparation. Excluding it leaves a
+624.279 J idle-referenced rail proxy across the target-preparation phases; the
+engine phase contributes 588.281 J, about 94% of that proxy. The
+last-source-window-to-process row still mixes termination, capacity wait,
+sandbox/image work, and runtime handoff, so it is not a purified artifact-pull
+coefficient.
+
+Wall power remains canonical. Its 10-second series has 26 raw samples inside
+the long engine phase and gives 3,453.940 J total for that phase, or 937.326 J
+above the post-hoc 9.667 W wall-idle candidate. The shorter phases contain at
+most one raw wall sample each and are insufficient for wall-level phase
+attribution. The rail phase table is therefore diagnostic attribution, while
+the 3,810.75 J wall integral remains the canonical total cross-check.
+
+This decomposition separates the potential preparation proxy from source
+grace and the unobserved service opportunity. `E_forgone` itself remains
+unavailable: without a declared external request path, the retained process
+epochs provide only a potential capacity-gap upper bound, not actual unserved
+work.
+
 The cold image-pull component cannot be isolated exactly from this run.
 KubeEdge retained the target's scheduling and container-state times but emitted
 no `Pulling` or `Pulled` event. The target was scheduled at
@@ -138,11 +193,11 @@ The sign reversal is produced solely by baseline selection. Neither signed
 delta is promoted to transition cost because no baseline was frozen before the
 run and the aggregate wall trace cannot isolate preparation from the source's
 4.258-second termination grace. Under the component method,
-`+1,044.45 J` is only an idle-referenced observed-excess proxy for
-`E_prepare`; `E_overlap=0` is identified for this full-GPU BBM path; and
-`E_forgone` is unavailable because no external serving load was declared. The
-3,810.75 J total integral remains a physical observation rather than accepted
-`eta`.
+`+1,044.45 J` is only a whole-window idle-referenced excess; the phase table
+above replaces it with separately labeled rail proxies. `E_overlap=0` is
+identified for this full-GPU BBM path, while `E_forgone` is unavailable because
+no external serving load was declared. The 3,810.75 J total integral remains a
+physical observation rather than accepted `eta`.
 
 A separate approximately 0.72-second direct sampler observed the Jetson input
 rail. It integrated to 2,078.48 J at 7.263 W mean over the same exact
@@ -156,11 +211,13 @@ temperature remained between 51.6 and 52.0 degrees Celsius.
 ## Serving and performance boundary
 
 The source process continued its internal one-second inference loop for 4.258
-seconds after the deletion request before termination. The elapsed time from
-the source's last completed service window to the target's first completed
-service window was 282.925 seconds. The target then sustained approximately 23
-inferences per second with roughly 44--45 ms mean latency in its first steady
-windows.
+seconds after the deletion request before termination. Delete request to
+target Ready was 286.169 seconds; without an external request path this is a
+potential capacity-gap upper bound, not a measured request outage. The elapsed
+time from the source's last completed service window to the target's first
+completed service window was 282.925 seconds. The target then sustained
+approximately 23 inferences per second with roughly 44--45 ms mean latency in
+its first steady windows.
 
 This establishes a capacity gap for the measured break-before-make path. It
 does not prove request-level outage duration or compare source and target
@@ -177,9 +234,9 @@ it cannot support a general transition-cost claim or establish that ordinary
 transitions always cost minutes. The dominant observed component is also
 cacheable.
 
-The next premise-checking experiment is therefore the same state pair with a
-verified persistent or prebuilt target engine-cache hit, followed by a truly
-cold repeated campaign. The full E1 campaign must add at least 20 randomized
+The next comparison must first rerun this cold side under a frozen protocol,
+then run the same state pair with only a verified persistent or prebuilt target
+engine-cache hit changed. The full E1 campaign must add at least 20 randomized
 cold-start trials for load timing, at least five energy trials with confidence
 intervals, explicit power-mode identity, controlled cache and loader groups,
 standard image-pull timing, and an external serving/load path.

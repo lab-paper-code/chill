@@ -25,12 +25,23 @@ The protocol records what the experimenter chose:
 - `servingDuring`: `none` or a fixed external load and rate;
 - `baseline`: `sourceServing`, `idle`, `standby`, or `zero`, with an independent
   baseline window and evidence identity;
+- `powerObservation`: canonical and diagnostic metric identities, direct poll
+  cadence, minimum phase/window samples, maximum sample gap, maximum boundary
+  distance, and the handling of missing or duplicated samples;
 - `window.start`: one canonical transition-command event; and
 - `window.end`: one canonical target service-ready event.
 
 The baseline is part of the protocol, not a property discovered after looking
 at the sign of the result. A run may be re-evaluated against another retained
 baseline only as an explicitly named sensitivity analysis.
+
+Wall power remains the canonical energy source required by
+`docs/spec/00_measurement.md` section 4.2. Internal rail power may provide
+higher-resolution phase attribution, but it is diagnostic and cannot replace
+the wall integral unless a run declares that explicit spec exception before
+execution. A short transition must not inherit a 10-second Prometheus scrape
+implicitly: its intent must either configure a sufficiently fast direct
+wall-power poll or fail its energy-coverage gate.
 
 ### `TransitionStatePair`: material physical configuration
 
@@ -66,6 +77,20 @@ window:
 Missing environment evidence is reported as unavailable. It is never filled by
 a protocol default.
 
+## Retro-label decision
+
+Before comparing a pre-contract observation with a controlled run, enumerate
+every required field above and ask whether its value and evidence identity are
+recoverable from retained raw evidence. The decision is binary:
+
+- all fields recoverable: retain a post-hoc label and mark that it was not
+  frozen before mutation; or
+- any field unavailable: the observation cannot be one side of a one-factor
+  causal delta, and that side must be rerun under the frozen protocol.
+
+A digest created after execution does not repair a missing value or turn the
+old run into a controlled run.
+
 ## Energy vector
 
 Retain the total wall-power integral as a physical observation, but do not call
@@ -83,6 +108,15 @@ Aggregate wall power cannot identify a component when serving and preparation
 overlap without an additional phase boundary or comparator. Such a value is a
 proxy or unavailable; it is not silently assigned to `E_prepare`.
 
+Assign high-resolution samples to declared lifecycle phases before applying a
+baseline. At minimum, keep source termination grace, capacity/scheduling and
+container startup, artifact materialization, runtime session creation, backend
+engine construction or cache load, and post-engine readiness separate. Report
+the raw sample count and maximum gap for every phase. A lower-resolution wall
+series may validate only the total and long phases while a diagnostic rail
+series resolves the shorter phases; that evidence asymmetry must remain
+visible.
+
 Do not collapse this vector back into one signed number. In particular,
 `E_forgone` can make a source-serving-referenced delta negative while
 preparation still consumed positive energy above idle.
@@ -91,12 +125,16 @@ preparation still consumed positive energy above idle.
 
 Availability is a different measurement family and unit:
 
-- service-capacity gap in seconds; and
+- potential service-capacity gap upper bound in seconds when no external load
+  generator is present;
+- measured service-capacity gap in seconds only when a declared request path
+  observes it; and
 - violated or unserved requests under a declared external load.
 
 Availability is never added to joules. An internal inference loop can identify
-process-lifecycle boundaries, but without an external request path it cannot
-identify request-level outage or violation counts.
+process-lifecycle boundaries, but without an external request path it provides
+only a potential gap upper bound and cannot identify request-level outage or
+violation counts.
 
 ## Minimal comparison design
 

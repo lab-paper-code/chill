@@ -139,5 +139,107 @@
       "request_violation_count": null,
       "unit_separated_from_energy": true
     }
+  },
+  "posthoc_phase_attribution": {
+    "status": "diagnostic-only-no-pre-run-phase-or-idle-protocol",
+    "canonicalEnergySource": "shelly_power_total_watts",
+    "phaseAttributionSource": "jetson_power_vdd_in_watts",
+    "railSampling": {
+      "rawTransitionSamples": 392,
+      "samplesWithInterpolatedBounds": 394,
+      "meanCadenceHz": 1.3697609889809916,
+      "medianIntervalSeconds": 0.7261795997619629,
+      "maximumGapSeconds": 1.1002650260925293
+    },
+    "railIdleCandidateWatts": 4.997,
+    "railPhases": [
+      {
+        "phase": "source-termination-grace-to-last-completed-source-window",
+        "classification": "source-serving-not-E_prepare",
+        "seconds": 4.257568836212158,
+        "rawSamples": 6,
+        "maximumGapSeconds": 0.7386364936828613,
+        "meanWatts": 10.683966107248432,
+        "joules": 45.48772114536785,
+        "idleReferencedExcessJoules": 24.212649670815697
+      },
+      {
+        "phase": "last-source-window-to-target-process",
+        "classification": "mixed-startup-E_prepare-proxy",
+        "seconds": 9.88130497932434,
+        "rawSamples": 13,
+        "maximumGapSeconds": 0.8899407386779785,
+        "meanWatts": 6.965567992335027,
+        "joules": 68.82890168648235,
+        "idleReferencedExcessJoules": 19.45202070479862
+      },
+      {
+        "phase": "artifact-verify-to-session-start",
+        "classification": "short-E_prepare-proxy-no-interior-sample",
+        "seconds": 0.15008878707885742,
+        "rawSamples": 0,
+        "maximumGapSeconds": 0.15008878707885742,
+        "meanWatts": 6.633206700132239,
+        "joules": 0.995569948066198,
+        "idleReferencedExcessJoules": 0.24557627903314745
+      },
+      {
+        "phase": "onnxruntime-session-create",
+        "classification": "E_prepare-proxy",
+        "seconds": 11.386226415634155,
+        "rawSamples": 15,
+        "maximumGapSeconds": 0.7881934642791748,
+        "meanWatts": 6.354574353127178,
+        "joules": 72.354622359688,
+        "idleReferencedExcessJoules": 15.457648960764125
+      },
+      {
+        "phase": "session-to-first-inference",
+        "classification": "short-E_prepare-proxy-no-interior-sample",
+        "seconds": 0.019889354705810547,
+        "rawSamples": 0,
+        "maximumGapSeconds": 0.019889354705810547,
+        "meanWatts": 6.164842203785687,
+        "joules": 0.12261473329644432,
+        "idleReferencedExcessJoules": 0.023227627831509015
+      },
+      {
+        "phase": "first-inference-and-tensorrt-engine-build",
+        "classification": "E_prepare-proxy",
+        "seconds": 260.33941674232483,
+        "rawSamples": 357,
+        "maximumGapSeconds": 1.1002650260925293,
+        "meanWatts": 7.256668880431217,
+        "joules": 1889.1969438236424,
+        "idleReferencedExcessJoules": 588.2808783622452
+      },
+      {
+        "phase": "post-engine-warmup-to-ready",
+        "classification": "short-E_prepare-proxy",
+        "seconds": 0.13412857055664062,
+        "rawSamples": 1,
+        "maximumGapSeconds": 0.0682377815246582,
+        "meanWatts": 11.107511662006278,
+        "joules": 1.4898346616661176,
+        "idleReferencedExcessJoules": 0.8195941945945844
+      }
+    ],
+    "railTargetPreparationProxy": {
+      "excludesSourceGrace": true,
+      "idleReferencedExcessJoules": 624.2789461292679,
+      "engineBuildShare": 0.9423365660651822
+    },
+    "wallCrossCheck": {
+      "totalTransitionJoules": 3810.748314345161,
+      "enginePhaseRawSamples": 26,
+      "enginePhaseMaximumGapSeconds": 10.003000020980835,
+      "enginePhaseJoules": 3453.9400169868236,
+      "wallIdleCandidateWatts": 9.666666666666666,
+      "enginePhaseIdleReferencedExcessJoules": 937.3256551443505,
+      "shorterPhaseCoverage": "insufficient-at-ten-second-scrape"
+    },
+    "E_overlapJoules": 0,
+    "E_forgone": "unavailable-without-declared-external-request-path",
+    "potentialCapacityGapUpperBoundSeconds": 286.1686236858368
   }
 }
