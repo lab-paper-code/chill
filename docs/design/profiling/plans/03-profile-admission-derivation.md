@@ -7,8 +7,9 @@
 Implemented as a pure, read-only path for active and model-loaded-idle
 admission and derivation. The Job, worker, finalizer, verified loader, and
 single-Run controller admission branch now produce and consume idle raw
-evidence; one retained live idle Run is still pending. No `DeviceProfile` API
-or status write is authorized by this plan.
+evidence. One retained live idle Run has passed `idle-wall-power-v1`; campaign
+aggregation and baseline-to-active derivation remain unwired. No
+`DeviceProfile` API or status write is authorized by this plan.
 
 ## Question
 

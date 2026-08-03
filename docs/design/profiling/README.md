@@ -89,8 +89,8 @@ Answers only:
 
 Its first CPU ONNX Runtime path is implemented through an immutable public Run,
 one native Job attempt, raw evidence persistence, and finalized execution
-evidence. Active is live-verified; model-loaded idle is implemented through the
-same lifecycle and awaits live verification.
+evidence. Active and model-loaded idle are live-verified through the same
+lifecycle.
 
 ### 3. Profile admission and derivation — implemented first read-only path
 
@@ -119,8 +119,8 @@ component availability. The Profiler resolves trusted facts, freezes one Run,
 creates one owned Job, verifies the worker's durable raw object, finalizes
 terminal Kubernetes evidence, independently reloads it, applies the named
 single-Run admission policy, and publishes compact execution, evidence, and
-admission status. Model-loaded-idle request and admission dispatch are
-implemented but not yet live-verified. The scope does not orchestrate a batch
+admission status. Model-loaded-idle request, evidence, and admission dispatch
+are live-verified. The scope does not orchestrate a batch
 campaign, derive `b_sat`, publish a `DeviceProfile`, or connect to the
 scheduler.
 

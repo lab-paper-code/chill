@@ -4,11 +4,10 @@
 
 ## Status
 
-Implemented for the first CPU ONNX Runtime active path and for the same Job's
-model-loaded-idle producer branch. Active execution is live-verified; idle
-execution is locally verified but still awaits one retained live Run. This plan
-does not authorize profile admission, energy derivation, `b_sat`, or
-`DeviceProfile` status writes.
+Implemented and live-verified for the first CPU ONNX Runtime active path and
+for the same Job's model-loaded-idle producer branch. This plan does not
+authorize profile admission, energy derivation, `b_sat`, or `DeviceProfile`
+status writes.
 
 ## Question
 

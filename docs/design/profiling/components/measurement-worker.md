@@ -11,8 +11,37 @@ batch campaigns, `b_sat` derivation, another runtime, or serving.
 
 The `v1alpha6` intent, public idle request, CPU ORT runner branch, separate idle
 runtime/raw schemas, shared immutable finalization/loading, and idle admission
-dispatch are implemented. Active is live-verified; no idle raw object has yet
-been retained from a live Run.
+dispatch are implemented and live-verified.
+
+## Model-loaded-idle live verification
+
+On 2026-08-03, `idle-model-loaded-live-ad7b84f-v2` completed on Lattepanda and
+was `Accepted` by `idle-wall-power-v1`. The immutable raw object used
+`chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha1`; its receipt digest
+and size matched a direct Evidence Store read, and the finalized execution
+evidence retained that exact raw-object identity.
+
+The runtime evidence records model load before a 60-second settling interval,
+a 30-second monotonic measurement window, zero inference after model load, and
+model residency through the window. The metric result retained 31 successful
+power samples with no failed reads, and workload observation remained
+continuous with no entered, updated, or exited Pod. The Run reached
+`ExecutionComplete=True`, `EvidenceVerified=True`, and
+`EvidenceAdmitted=True`.
+
+The preceding `idle-model-loaded-live-ad7b84f` attempt exposed a delivery
+compatibility requirement: old MetricObserver and WorkloadObserver images
+rejected the new strict intent field and the Job retained no evidence. Because
+all three regular containers strictly decode the same frozen intent, an
+intent-schema advance must deploy compatible runtime-worker, MetricObserver,
+and WorkloadObserver images as one tested compatibility set. Their image
+identities remain independently digest-pinned; this rule does not merge their
+responsibilities.
+
+This verification covers the Profiler Run, Job, immutable evidence, and
+admission lifecycle. It does not extend the active-only Operator Console
+Evidence Passport projection; requesting a passport for this idle Run remains
+a separate follow-on boundary.
 
 ## Purpose
 
@@ -89,6 +118,12 @@ New active and idle Runs use internal intent schema `v1alpha6`; retained
 canonical bytes or digests. The model-loaded-idle revision adds the frozen
 measurement-protocol settling duration. It reuses the same intent type and
 common execution provenance rather than creating a parallel frozen type.
+
+The runtime worker and both observers consume that canonical intent through
+strict decoders. Delivery configuration must therefore select images that
+support the same current intent schema. Compatibility is established at image
+promotion/deployment time, while each image remains a separate frozen fact in
+the intent and each process keeps the responsibility described below.
 
 The following values are delivery bindings, not scientific Run inputs:
 
@@ -362,4 +397,6 @@ Kubernetes observations.
 Items 1 through 6 are implemented. The worker composes the frozen-intent
 loader, runtime adapter, bounded observer handoffs, immutable Evidence Store
 writer, stable failure exits, and bounded termination receipt. The final live
-comparison remains pending and no public CRD field is added.
+comparison with the retained spike path remains pending. This worker contract
+does not independently own the public request schema; Plan 4 owns the exposed
+mode and validation fields.
