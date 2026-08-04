@@ -72,6 +72,28 @@ not replaced by code-intelligence checks.
   Measure or test them with their owning mechanisms instead of claiming they
   are enforced.
 
+## Configured behavior
+
+- Values that decide what a Run measures, or how its evidence is judged, belong
+  in configuration, not in Go constants. Reproducibility comes from freezing the
+  selected entry and its digest into the immutable Run record, not from
+  compiling the value in.
+- Do not give a policy struct fields that accept only one value. Either accept
+  the range or make it a constant.
+- Prefer a maintained library over a hand-rolled numeric, statistical, or
+  protocol primitive. Never ship a silent approximation; return an error outside
+  the range actually implemented.
+
+## Verification boundaries
+
+- Verify what crosses a boundary (object store, ConfigMap, another process), not
+  what you already hold. Re-hashing or re-encoding a value to compare it with
+  itself is not a check.
+- Verify once at that boundary, return a type only that boundary can construct,
+  and do not re-validate it downstream.
+- Keep canonicalization separate from validation so a caller can take one without
+  the other.
+
 ## Deployment and safety
 
 - Keep default and `profiler.enabled=true` Helm profiles separate. Never present
