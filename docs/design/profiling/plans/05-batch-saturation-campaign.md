@@ -68,18 +68,24 @@ confirmation tests, on evidence discovery never saw.
 
 ### The batch domain
 
-The campaign measures batches `1` through `Kmax`. `Kmax` is fixed before
-execution, and it is part of what gets claimed: the accepted statement is that
-saturation occurs somewhere within `1..Kmax`. Nothing is claimed about batch
-sizes above `Kmax`.
+The campaign measures batches `1` through `Kmax`, with `Kmax >= 2`. `Kmax` is
+fixed before execution, and it is part of what gets claimed: the accepted
+statement is that saturation occurs somewhere within `1..Kmax`. Nothing is
+claimed about batch sizes above `Kmax`.
+
+Candidate batches are restricted to `1..Kmax-1`. `Kmax` is the required final
+witness batch, not a candidate. Allowing `c = Kmax` would make the set of larger
+batches empty and would accept the upper endpoint without making a comparison.
+If no candidate below `Kmax` satisfies the discovery rule, the typed outcome is
+`Censored: NoSaturationObserved`.
 
 Choosing `Kmax` is a real trade-off, described under
 [typed outcomes](#typed-outcomes) below.
 
 ### The quantity
 
-For a candidate batch `c`, look at every larger batch in the domain and ask how
-much better the best of them is, as a fraction:
+For a candidate batch `c` in `1..Kmax-1`, look at every larger batch in the
+domain and ask how much better the best of them is, as a fraction:
 
 ```text
 R_c = max over b in {c+1, ..., Kmax} of  (epsilon_c - epsilon_b) / epsilon_c
@@ -195,7 +201,7 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 | the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
 | the point estimate plateaus but the bound is too wide | `CandidateOnly` |
 | some batch produced no admissible evidence, or the runtime could not run it | `Censored: CapabilityBoundary` |
-| no candidate in the domain satisfies the rule | `Censored: NoSaturationObserved` |
+| no candidate in `1..Kmax-1` satisfies the rule | `Censored: NoSaturationObserved` |
 | `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
 | the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
 
@@ -474,8 +480,10 @@ versions so each remains reproducible.
 ### Discovery
 
 Discovery measures batches `1..Kmax` at `n_disc` trials each and proposes the
-smallest `c` whose point estimate satisfies `R_c_hat <= tau`, using the `tau`
-already fixed in the discovery policy version.
+smallest `c` in `1..Kmax-1` whose point estimate satisfies
+`R_c_hat <= tau`, using the `tau` already fixed in the discovery policy
+version. `Kmax` remains in every eligible candidate's comparison set but can
+never be returned as the candidate.
 
 This is a screen. It makes no confidence statement, and it is the sole basis for
 the minimality noted in Checkpoint 1. Its one requirement is determinism, so that
@@ -614,6 +622,9 @@ Plan 5 is complete when:
   artifact, execution-path, and batch fields fixed by ADR 0014;
 - `DeriveCurve` rejects a `TrialID` appearing in more than one pass;
 - `DeriveBSatConfirmatory` rejects a candidate its curve does not span;
+- discovery and confirmation reject `Kmax < 2` and a candidate outside
+  `1..Kmax-1`, so the accepted result always has at least one larger witness
+  batch;
 - the rebuilt estimator reproduces the live batch-one point estimate and produces
   a separately versioned interval, with the earlier interval retained;
 - a trial with low observed throughput is admitted, retained, and kept in the
@@ -623,9 +634,9 @@ Plan 5 is complete when:
 
 ## Implementation sequence
 
-1. Fix `Kmax`, `tau`, the `R_c` quantity, the Bonferroni spread of confidence,
-   the positivity condition, the minimality boundary, and the rule that observed
-   throughput never removes evidence.
+1. Fix `Kmax`, the candidate domain `1..Kmax-1`, `tau`, the `R_c` quantity, the
+   Bonferroni spread of confidence, the positivity condition, the minimality
+   boundary, and the rule that observed throughput never removes evidence.
 2. Fix the discovery policy version, including the `n_conf` sizing rule and both
    caps, together with the campaign record, eligible member map, and
    `CurveFamilyContractDigest`. All precede any measurement; the realized
