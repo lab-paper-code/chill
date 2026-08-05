@@ -92,8 +92,12 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: test-runtime-declaration
+test-runtime-declaration: ## Run trusted runtime declaration producer tests.
+	python3 -m unittest discover -s hack/profiling -p 'test_*.py'
+
 .PHONY: test-runtime
-test-runtime: ## Run production runtime contract tests.
+test-runtime: test-runtime-declaration ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/ortcpu -p 'test_*.py'
 
 .PHONY: test
