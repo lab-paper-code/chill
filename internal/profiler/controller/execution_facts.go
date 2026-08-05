@@ -22,7 +22,8 @@ import (
 
 const (
 	executionFactsSchemaV1Alpha2     = "chill.dacs.io/profiler-execution-facts.v1alpha2"
-	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha3"
+	executionFactsSchemaV1Alpha3     = "chill.dacs.io/profiler-execution-facts.v1alpha3"
+	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha4"
 	runtimeDeclarationSchemaV1Alpha1 = "chill.dacs.io/runtime-declaration.v1alpha1"
 	runtimeDeclarationSchema         = "chill.dacs.io/runtime-declaration.v1alpha2"
 	artifactSupplySchema             = "chill.dacs.io/artifact-supply.v1alpha1"
@@ -48,6 +49,7 @@ type executionDeclaration struct {
 	Runtime       runtimeDeclarationSource `json:"runtime"`
 	Artifact      artifactSupply           `json:"artifact"`
 	Host          *hostExecutionContract   `json:"host,omitempty"`
+	Access        *runtimeAccessContract   `json:"access,omitempty"`
 }
 
 // runtimeDeclarationSource preserves the exact producer output instead of
@@ -91,6 +93,7 @@ type hostExecutionContract struct {
 	Libraries  []hostLibraryContract `json:"libraries"`
 	Driver     hostDriverContract    `json:"driver"`
 	Devices    []hostDeviceContract  `json:"devices"`
+	Platform   *hostPlatformContract `json:"platform,omitempty"`
 	Allocation npuAllocationClaim    `json:"allocation"`
 }
 
@@ -111,6 +114,18 @@ type hostDeviceContract struct {
 	Path string `json:"path"`
 }
 
+type hostPlatformContract struct {
+	CompatiblePath  string `json:"compatiblePath"`
+	CompatibleToken string `json:"compatibleToken"`
+}
+
+// runtimeAccessContract is a Kubernetes delivery requirement, not physical
+// host identity. It is retained next to, but excluded from, HostContractDigest.
+type runtimeAccessContract struct {
+	Privileged         bool    `json:"privileged"`
+	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
+}
+
 type npuAllocationClaim struct {
 	ResourceName       string `json:"resourceName"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
@@ -124,6 +139,7 @@ type resolvedExecutionDeclaration struct {
 	RuntimeDeclarationDigest string
 	Artifact                 artifactSupply
 	Host                     *hostExecutionContract
+	Access                   *runtimeAccessContract
 	MetricObserverImage      string
 }
 
@@ -147,7 +163,9 @@ func selectExecutionDeclaration(
 	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
-	if document.SchemaVersion != executionFactsSchema && document.SchemaVersion != executionFactsSchemaV1Alpha2 {
+	if document.SchemaVersion != executionFactsSchema &&
+		document.SchemaVersion != executionFactsSchemaV1Alpha3 &&
+		document.SchemaVersion != executionFactsSchemaV1Alpha2 {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
 	if !pinnedWorkloadImage.MatchString(document.MetricObserverImage) {
@@ -176,6 +194,7 @@ func selectExecutionDeclaration(
 			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
 			copy.Runtime.Packages = append([]runtimePackage(nil), declaration.Runtime.Packages...)
 			copy.Host = cloneHostExecutionContract(declaration.Host)
+			copy.Access = cloneRuntimeAccessContract(declaration.Access)
 			copy.MetricObserverImage = document.MetricObserverImage
 			selected = &copy
 		}
@@ -228,15 +247,32 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 	if schemaVersion == executionFactsSchemaV1Alpha2 && source.Host != nil {
 		return resolvedExecutionDeclaration{}, errors.New("v1alpha2 execution facts cannot contain a host contract")
 	}
+	if schemaVersion == executionFactsSchemaV1Alpha2 && source.Access != nil {
+		return resolvedExecutionDeclaration{}, errors.New("v1alpha2 execution facts cannot contain a runtime access contract")
+	}
+	if schemaVersion == executionFactsSchemaV1Alpha3 && source.Access != nil {
+		return resolvedExecutionDeclaration{}, errors.New("v1alpha3 execution facts cannot contain a runtime access contract")
+	}
+	if schemaVersion == executionFactsSchemaV1Alpha3 && source.Host != nil && source.Host.Platform != nil {
+		return resolvedExecutionDeclaration{}, errors.New("v1alpha3 execution facts cannot contain a host platform contract")
+	}
 	if source.Host != nil {
 		if err := validateHostExecutionContract(*source.Host); err != nil {
+			return resolvedExecutionDeclaration{}, err
+		}
+	}
+	if schemaVersion == executionFactsSchema && (source.Host == nil) != (source.Access == nil) {
+		return resolvedExecutionDeclaration{}, errors.New("host and runtime access contracts must be supplied together")
+	}
+	if source.Access != nil {
+		if err := validateRuntimeAccessContract(*source.Access); err != nil {
 			return resolvedExecutionDeclaration{}, err
 		}
 	}
 	return resolvedExecutionDeclaration{
 		ModelSpec: source.ModelSpec, DeviceClass: source.DeviceClass, ExecutionPath: source.ExecutionPath,
 		Runtime: runtime, RuntimeDeclarationDigest: source.Runtime.ContentDigest, Artifact: source.Artifact,
-		Host: cloneHostExecutionContract(source.Host),
+		Host: cloneHostExecutionContract(source.Host), Access: cloneRuntimeAccessContract(source.Access),
 	}, nil
 }
 
@@ -338,6 +374,13 @@ func validateHostExecutionContract(contract hostExecutionContract) error {
 		}
 		seenDevices[device.Path] = struct{}{}
 	}
+	if contract.Platform != nil {
+		if !cleanAbsolutePath(contract.Platform.CompatiblePath) ||
+			strings.TrimSpace(contract.Platform.CompatibleToken) == "" ||
+			strings.TrimSpace(contract.Platform.CompatibleToken) != contract.Platform.CompatibleToken {
+			return errors.New("host platform compatible path and token are required")
+		}
+	}
 	resourceName := contract.Allocation.ResourceName
 	if strings.TrimSpace(resourceName) != resourceName {
 		return errors.New("NPU resource name has surrounding whitespace")
@@ -358,6 +401,33 @@ func cloneHostExecutionContract(source *hostExecutionContract) *hostExecutionCon
 	copy := *source
 	copy.Libraries = append([]hostLibraryContract(nil), source.Libraries...)
 	copy.Devices = append([]hostDeviceContract(nil), source.Devices...)
+	if source.Platform != nil {
+		platform := *source.Platform
+		copy.Platform = &platform
+	}
+	return &copy
+}
+
+func validateRuntimeAccessContract(contract runtimeAccessContract) error {
+	seen := make(map[int64]struct{}, len(contract.SupplementalGroups))
+	for _, group := range contract.SupplementalGroups {
+		if group < 1 || group > int64(^uint32(0)>>1) {
+			return errors.New("runtime supplemental group must be a positive 32-bit ID")
+		}
+		if _, duplicate := seen[group]; duplicate {
+			return fmt.Errorf("duplicate runtime supplemental group %d", group)
+		}
+		seen[group] = struct{}{}
+	}
+	return nil
+}
+
+func cloneRuntimeAccessContract(source *runtimeAccessContract) *runtimeAccessContract {
+	if source == nil {
+		return nil
+	}
+	copy := *source
+	copy.SupplementalGroups = append([]int64(nil), source.SupplementalGroups...)
 	return &copy
 }
 

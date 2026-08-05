@@ -97,6 +97,8 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
+	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +132,10 @@ func TestCandidateHostContractDigestIsOrderIndependentAndMaterial(t *testing.T) 
 	}
 	reordered := contract
 	reordered.Libraries = []CandidateReportHostLibrary{contract.Libraries[1], contract.Libraries[0]}
-	reordered.Devices = []CandidateReportHostDevice{contract.Devices[1], contract.Devices[0]}
+	reordered.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
+	for left, right := 0, len(reordered.Devices)-1; left < right; left, right = left+1, right-1 {
+		reordered.Devices[left], reordered.Devices[right] = reordered.Devices[right], reordered.Devices[left]
+	}
 	second, err := CandidateHostContractDigest(&reordered)
 	if err != nil {
 		t.Fatal(err)
@@ -157,6 +162,8 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
+	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
 	hostDigest, err := CandidateHostContractDigest(report.HostContract)
 	if err != nil {
 		t.Fatal(err)
@@ -178,13 +185,14 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
 			Artifact: report.Selection.Artifact, ArtifactDigest: report.Selection.ArtifactDigest,
 			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
-			HostContractDigest: hostDigest,
+			RuntimeFamily: "rknnlite", HostContractDigest: hostDigest,
 		},
 		Images: Images{
 			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,
 			MetricObserver: report.MetricObserverImage,
 		},
-		TargetNode: NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
+		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
+		Measurement: MeasurementContract{Batch: 1},
 	}
 	if err := ValidateCandidateReport(payload, intent); err != nil {
 		t.Fatal(err)
@@ -192,6 +200,11 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 	intent.State.HostContractDigest = "sha256:" + strings.Repeat("f", 64)
 	if err := ValidateCandidateReport(payload, intent); err == nil {
 		t.Fatal("expected candidate host contract digest mismatch")
+	}
+	intent.State.HostContractDigest = hostDigest
+	intent.Measurement.Batch = 2
+	if err := ValidateCandidateReport(payload, intent); err == nil {
+		t.Fatal("expected fixed-batch artifact capability mismatch")
 	}
 }
 
@@ -203,8 +216,13 @@ func rknnHostContractForTest() CandidateReportHostContract {
 		}},
 		Driver: CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
 		Devices: []CandidateReportHostDevice{
+			{Path: "/dev/dri/card0"},
+			{Path: "/dev/dri/card1"},
 			{Path: "/dev/dri/renderD128"},
 			{Path: "/dev/dri/renderD129"},
+		},
+		Platform: &CandidateReportHostPlatform{
+			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
 		},
 	}
 }
@@ -231,6 +249,34 @@ func TestDecodeCandidateReportRetainsV1Alpha2EvidenceCompatibility(t *testing.T)
 	}
 	if _, err := DecodeCandidateReport(payload); err == nil {
 		t.Fatal("expected v1alpha2 report with v1alpha3 fields rejection")
+	}
+}
+
+func TestDecodeCandidateReportRetainsV1Alpha3EvidenceCompatibility(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.SchemaVersion = candidateReportSchemaVersionV1Alpha3
+	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
+	contract := rknnHostContractForTest()
+	contract.Platform = nil
+	report.HostContract = &contract
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	contract.Platform = &CandidateReportHostPlatform{
+		CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
+	}
+	report.HostContract = &contract
+	payload, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err == nil {
+		t.Fatal("expected v1alpha3 report with v1alpha4 host platform rejection")
 	}
 }
 

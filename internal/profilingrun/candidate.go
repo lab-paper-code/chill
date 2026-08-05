@@ -16,7 +16,8 @@ import (
 
 const (
 	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
-	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha3"
+	candidateReportSchemaVersionV1Alpha3 = "chill.dacs.io/modelcompat-report.v1alpha3"
+	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha4"
 	candidateReportScope                 = "StaticCompatibility"
 	candidateHostContractSchemaVersion   = "chill.dacs.io/accelerator-host-contract.v1alpha1"
 )
@@ -31,8 +32,10 @@ type CandidateReport struct {
 	Selection           CandidateReportSelection        `json:"selection"`
 	DeviceClassFacts    CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
 	ArtifactSupply      CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
+	ArtifactCapability  *CandidateArtifactCapability    `json:"artifactCapability,omitempty"`
 	RuntimePackages     []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
 	HostContract        *CandidateReportHostContract    `json:"hostContract,omitempty"`
+	RuntimeAccess       *CandidateReportRuntimeAccess   `json:"runtimeAccess,omitempty"`
 	MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
 	Verdict             string                          `json:"verdict"`
 	Reasons             []CandidateReportReason         `json:"reasons"`
@@ -81,6 +84,13 @@ type CandidateReportArtifactSupply struct {
 	Digest       string `json:"digest,omitempty"`
 }
 
+// CandidateArtifactCapability carries only runtime-consumed facts of one
+// derived artifact. Full conversion provenance remains in ModelSpec content.
+type CandidateArtifactCapability struct {
+	TargetPlatform string `json:"targetPlatform"`
+	FixedBatch     int32  `json:"fixedBatch"`
+}
+
 // CandidateReportRuntimePackage is one image-owned package fact from the
 // exact runtime declaration producer.
 type CandidateReportRuntimePackage struct {
@@ -95,6 +105,7 @@ type CandidateReportHostContract struct {
 	Libraries  []CandidateReportHostLibrary `json:"libraries"`
 	Driver     CandidateReportHostDriver    `json:"driver"`
 	Devices    []CandidateReportHostDevice  `json:"devices"`
+	Platform   *CandidateReportHostPlatform `json:"platform,omitempty"`
 	Allocation CandidateReportNPUAllocation `json:"allocation"`
 }
 
@@ -115,12 +126,24 @@ type CandidateReportHostDevice struct {
 	Path string `json:"path"`
 }
 
+type CandidateReportHostPlatform struct {
+	CompatiblePath  string `json:"compatiblePath"`
+	CompatibleToken string `json:"compatibleToken"`
+}
+
 // CandidateReportNPUAllocation states what Kubernetes requests and whether
 // exclusivity is claimed. An empty ResourceName explicitly means no extended
 // resource allocation is configured.
 type CandidateReportNPUAllocation struct {
 	ResourceName       string `json:"resourceName"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
+// CandidateReportRuntimeAccess freezes Kubernetes delivery requirements
+// separately from the physical host contract digest.
+type CandidateReportRuntimeAccess struct {
+	Privileged         bool    `json:"privileged"`
+	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
 }
 
 // CanonicalCandidateHostContract returns the order-normalized identity input
@@ -190,12 +213,19 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		return CandidateReport{}, fmt.Errorf("decode candidate report trailing content: %w", err)
 	}
 	if report.SchemaVersion != CandidateReportSchemaVersion &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha3 &&
 		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
 	}
 	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
-		(len(report.RuntimePackages) != 0 || report.HostContract != nil) {
+		(len(report.RuntimePackages) != 0 || report.HostContract != nil ||
+			report.ArtifactCapability != nil || report.RuntimeAccess != nil) {
 		return CandidateReport{}, errors.New("v1alpha2 candidate report cannot contain runtime packages or a host contract")
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha3 &&
+		(report.ArtifactCapability != nil || report.RuntimeAccess != nil ||
+			(report.HostContract != nil && report.HostContract.Platform != nil)) {
+		return CandidateReport{}, errors.New("v1alpha3 candidate report cannot contain artifact capability, host platform, or runtime access")
 	}
 	if report.Scope != candidateReportScope {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report scope %q", report.Scope)
@@ -254,6 +284,22 @@ func validateInternalCandidateReport(report CandidateReport) error {
 			return err
 		}
 	}
+	if report.ArtifactCapability != nil {
+		if strings.TrimSpace(report.ArtifactCapability.TargetPlatform) == "" ||
+			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
+			report.ArtifactCapability.FixedBatch < 1 {
+			return errors.New("candidate report artifact target platform and fixed batch are required")
+		}
+	}
+	if report.SchemaVersion == CandidateReportSchemaVersion &&
+		(report.HostContract == nil) != (report.RuntimeAccess == nil) {
+		return errors.New("candidate report host and runtime access contracts must be supplied together")
+	}
+	if report.RuntimeAccess != nil {
+		if err := validateCandidateRuntimeAccess(*report.RuntimeAccess); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -307,6 +353,13 @@ func validateCandidateHostContract(contract CandidateReportHostContract) error {
 		}
 		seenDevices[device.Path] = struct{}{}
 	}
+	if contract.Platform != nil {
+		if !validArtifactPath(contract.Platform.CompatiblePath) ||
+			strings.TrimSpace(contract.Platform.CompatibleToken) == "" ||
+			strings.TrimSpace(contract.Platform.CompatibleToken) != contract.Platform.CompatibleToken {
+			return errors.New("candidate report host platform compatible path and token are required")
+		}
+	}
 	resourceName := contract.Allocation.ResourceName
 	if strings.TrimSpace(resourceName) != resourceName {
 		return errors.New("candidate report NPU resource name has surrounding whitespace")
@@ -320,6 +373,20 @@ func validateCandidateHostContract(contract CandidateReportHostContract) error {
 	return nil
 }
 
+func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error {
+	seen := make(map[int64]struct{}, len(contract.SupplementalGroups))
+	for _, group := range contract.SupplementalGroups {
+		if group < 1 || group > int64(^uint32(0)>>1) {
+			return errors.New("candidate report runtime supplemental group must be a positive 32-bit ID")
+		}
+		if _, duplicate := seen[group]; duplicate {
+			return fmt.Errorf("candidate report duplicate runtime supplemental group %d", group)
+		}
+		seen[group] = struct{}{}
+	}
+	return nil
+}
+
 func ValidateCandidateReport(payload []byte, intent Intent) error {
 	sum := sha256.Sum256(payload)
 	actual := "sha256:" + hex.EncodeToString(sum[:])
@@ -329,6 +396,14 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 	report, err := DecodeCandidateReport(payload)
 	if err != nil {
 		return err
+	}
+	if intent.State.RuntimeFamily == "rknnlite" {
+		if report.ArtifactCapability == nil || report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) {
+			return errors.New("candidate RKNN artifact capability does not match the measurement batch")
+		}
+		if report.HostContract == nil || report.RuntimeAccess == nil {
+			return errors.New("candidate RKNN host and runtime access contracts are required")
+		}
 	}
 	hostContractDigest := ""
 	if report.HostContract != nil {

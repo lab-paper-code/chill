@@ -231,3 +231,22 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   intents bind its order-normalized digest into physical state identity. No
   exact RKNN declaration is installed and no production Job verifies the
   expected host values, so both RKNN rows remain L0.
+
+### Restricted-access diagnostic
+
+- Diagnostic Pod `rknn-restricted-diag-v6`, UID
+  `cd61f194-3e96-4f36-9f77-3210efa8dd77`, used the same exact RKNNLite image
+  child and selected RKNN artifact on `orangepi`. It ran as non-root UID/GID
+  65532 with supplemental groups 44 and 110, a read-only root filesystem, and
+  exact host mounts for `card0`, `card1`, `renderD128`, `renderD129`,
+  `librknnrt.so`, driver version, and platform-compatible bytes.
+- With the runtime container privileged, the exact artifact loaded,
+  `init_runtime(NPU_CORE_0)` succeeded, and one `(1, 1000)` inference passed.
+  Render nodes alone had failed NPU open, and the cluster normalized a requested
+  unmasked proc mount back to the default, so neither two-device exposure nor
+  `procMount: Unmasked` is claimed as sufficient.
+- This proves a narrower diagnostic access envelope than the historical root
+  Pod with the whole `/dev/dri` directory. Privileged mode remains an explicit
+  delivery requirement, not a physical host identity or proof of NPU
+  exclusivity. The Pod is still diagnostic rather than retained
+  `ProfilingRun` evidence, so the RKNN rows remain L0.

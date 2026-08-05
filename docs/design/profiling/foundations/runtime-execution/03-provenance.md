@@ -234,8 +234,9 @@ exists.
   separate expected host-contract field exist; its normalized digest is bound
   into new physical state identities, while a Run-bound verifier and observed
   drift comparison are pending
-- `/dev/dri` access and successful initialization: Run-scoped access
-  observation, not Kubernetes allocation evidence
+- `/dev/dri` access and successful initialization: a non-root diagnostic proved
+  the four exact DRM devices with an explicit privileged runtime-access
+  contract; this is not retained Run evidence or Kubernetes allocation evidence
 - NPU isolation: Unknown
 
 ### Jetson

@@ -157,14 +157,17 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
 Partial implementation of the second item is intentionally not marked complete.
-Execution-facts v1alpha3 and candidate-report v1alpha3 now keep image-owned
-packages separate from the expected host library, driver, device paths, and
-Kubernetes allocation/exclusivity claim. Their decoders retain strict
-v1alpha2 compatibility for already frozen CPU evidence. Intent v1alpha7 binds
-only an order-normalized digest of that host contract into physical state;
-host-bound derivation identities use execution-state-identity v1alpha2 while
-CPU identities remain unchanged. No exact RKNN declaration is installed yet
-and no production Job verifies these expected values at the host boundary.
+Execution-facts v1alpha4 and candidate-report v1alpha4 now keep image-owned
+packages separate from the expected host library, driver, platform-compatible
+token, four exact device paths, and Kubernetes allocation/exclusivity claim.
+Privileged mode and supplemental groups are a separate runtime-access contract,
+and the report also retains target platform plus fixed batch. Their decoders
+retain strict v1alpha2/v1alpha3 compatibility for already frozen evidence.
+Intent v1alpha7 binds only an order-normalized digest of the physical host
+contract into state; host-bound derivation identities use execution-state-
+identity v1alpha2 while CPU identities remain unchanged. No exact RKNN
+declaration is installed yet and no production Job verifies these expected
+values at the host boundary.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

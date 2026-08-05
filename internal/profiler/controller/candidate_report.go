@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -101,8 +102,10 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
 			Path: input.Declaration.Artifact.Path, Digest: input.Declaration.Artifact.Digest,
 		},
+		ArtifactCapability:  reportArtifactCapability(input.Artifact.Derivation),
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
 		HostContract:        hostContract,
+		RuntimeAccess:       reportRuntimeAccess(input.Declaration.Access),
 		MetricObserverImage: input.Declaration.MetricObserverImage,
 		Verdict:             string(input.Result.Verdict), Reasons: reasons,
 	}
@@ -111,6 +114,18 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		return builtCandidateReport{}, fmt.Errorf("encode static candidate report: %w", err)
 	}
 	return builtCandidateReport{Bytes: payload, HostContractDigest: hostContractDigest}, nil
+}
+
+func reportArtifactCapability(
+	derivation *edgev1alpha1.ModelArtifactDerivation,
+) *profilingrun.CandidateArtifactCapability {
+	if derivation == nil {
+		return nil
+	}
+	return &profilingrun.CandidateArtifactCapability{
+		TargetPlatform: derivation.TargetPlatform,
+		FixedBatch:     derivation.FixedBatch,
+	}
 }
 
 func reportRuntimePackages(source []runtimePackage) []profilingrun.CandidateReportRuntimePackage {
@@ -138,6 +153,12 @@ func reportHostContract(source *hostExecutionContract) *profilingrun.CandidateRe
 			ResourceName: source.Allocation.ResourceName, ExclusivityClaimed: source.Allocation.ExclusivityClaimed,
 		},
 	}
+	if source.Platform != nil {
+		result.Platform = &profilingrun.CandidateReportHostPlatform{
+			CompatiblePath:  source.Platform.CompatiblePath,
+			CompatibleToken: source.Platform.CompatibleToken,
+		}
+	}
 	for index, library := range source.Libraries {
 		result.Libraries[index] = profilingrun.CandidateReportHostLibrary{
 			Name: library.Name, HostPath: library.HostPath,
@@ -148,6 +169,17 @@ func reportHostContract(source *hostExecutionContract) *profilingrun.CandidateRe
 		result.Devices[index] = profilingrun.CandidateReportHostDevice{Path: device.Path}
 	}
 	return result
+}
+
+func reportRuntimeAccess(source *runtimeAccessContract) *profilingrun.CandidateReportRuntimeAccess {
+	if source == nil {
+		return nil
+	}
+	groups := append([]int64(nil), source.SupplementalGroups...)
+	slices.Sort(groups)
+	return &profilingrun.CandidateReportRuntimeAccess{
+		Privileged: source.Privileged, SupplementalGroups: groups,
+	}
 }
 
 func copyStringMap(source map[string]string) map[string]string {

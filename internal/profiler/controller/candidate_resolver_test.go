@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,9 +64,16 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 	}
 	if report.HostContract == nil || len(report.HostContract.Libraries) != 1 ||
 		report.HostContract.Libraries[0].Digest != "sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8" ||
-		report.HostContract.Driver.Version != "0.9.6" || len(report.HostContract.Devices) != 2 ||
+		report.HostContract.Driver.Version != "0.9.6" || len(report.HostContract.Devices) != 4 ||
+		report.HostContract.Platform == nil || report.HostContract.Platform.CompatibleToken != "rockchip,rk3588" ||
 		report.HostContract.Allocation.ResourceName != "" || report.HostContract.Allocation.ExclusivityClaimed {
 		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
+	}
+	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
+		report.ArtifactCapability.FixedBatch != 1 || report.RuntimeAccess == nil ||
+		!report.RuntimeAccess.Privileged || !slices.Equal(report.RuntimeAccess.SupplementalGroups, []int64{44, 110}) {
+		t.Fatalf("artifact capability or runtime access was not retained: %#v %#v",
+			report.ArtifactCapability, report.RuntimeAccess)
 	}
 	wantHostDigest, err := profilingrun.CandidateHostContractDigest(report.HostContract)
 	if err != nil {
@@ -132,6 +140,23 @@ func TestValidateHostExecutionContractFailsClosed(t *testing.T) {
 	invalidAllocation.Allocation.ResourceName = "npu"
 	if err := validateHostExecutionContract(invalidAllocation); err == nil {
 		t.Fatal("expected non-qualified extended-resource name rejection")
+	}
+}
+
+func TestValidateRuntimeAccessContractFailsClosed(t *testing.T) {
+	valid := runtimeAccessContract{Privileged: true, SupplementalGroups: []int64{44, 110}}
+	if err := validateRuntimeAccessContract(valid); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := valid
+	duplicate.SupplementalGroups = []int64{110, 110}
+	if err := validateRuntimeAccessContract(duplicate); err == nil {
+		t.Fatal("expected duplicate supplemental group rejection")
+	}
+	invalid := valid
+	invalid.SupplementalGroups = []int64{-1}
+	if err := validateRuntimeAccessContract(invalid); err == nil {
+		t.Fatal("expected negative supplemental group rejection")
 	}
 }
 
@@ -554,7 +579,7 @@ func validRKNNCandidateObjects() []client.Object {
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
 	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha3
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha4
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
@@ -576,7 +601,7 @@ declarations:
 func validRKNNExecutionFacts() string {
 	payload := validRKNNRuntimeDeclaration()
 	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha3
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha4
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
@@ -602,12 +627,22 @@ declarations:
         name: rknpu
         versionPath: /sys/module/rknpu/version
         version: 0.9.6
+      platform:
+        compatiblePath: /proc/device-tree/compatible
+        compatibleToken: rockchip,rk3588
       devices:
+        - path: /dev/dri/card0
+        - path: /dev/dri/card1
         - path: /dev/dri/renderD128
         - path: /dev/dri/renderD129
       allocation:
         resourceName: ""
         exclusivityClaimed: false
+    access:
+      privileged: true
+      supplementalGroups:
+        - 44
+        - 110
 `
 }
 
