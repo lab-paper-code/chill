@@ -258,8 +258,8 @@ func validateAdmittedTrialStatistics(
 // DeriveBSat retains the pre-Plan-5 adjacent rule and its previous confidence
 // construction. The opaque-curve confirmatory boundary owns the rebuilt
 // confidence and domain-wide rule.
-func DeriveBSat(points []Point, policy BSatPolicy) BSatResult {
-	result := BSatResult{Status: BSatUnavailable, PolicyVersion: policy.Version, Code: "InsufficientCurve"}
+func DeriveBSat(points []Point, policy LegacyBSatPolicy) LegacyBSatResult {
+	result := LegacyBSatResult{Status: BSatUnavailable, PolicyVersion: policy.Version, Code: "InsufficientCurve"}
 	if policy.Version == "" || policy.RelativeEquivalenceTolerance < 0 || policy.RelativeEquivalenceTolerance >= 1 ||
 		len(points) < 2 {
 		return result
@@ -329,7 +329,7 @@ func DeriveBSat(points []Point, policy BSatPolicy) BSatResult {
 		return result
 	}
 	result.Status = BSatCensored
-	result.Code = "NoSaturationObserved"
+	result.Code = BSatCodeNoSaturationObserved
 	return result
 }
 

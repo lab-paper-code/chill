@@ -195,13 +195,17 @@ const (
 	BSatCensored      BSatStatus = "Censored"
 	BSatAmbiguous     BSatStatus = "Ambiguous"
 	BSatUnavailable   BSatStatus = "Unavailable"
+
+	BSatCodeDiscoveryCandidateSelected = "DiscoveryCandidateSelected"
+	BSatCodeCapabilityBoundary         = "CapabilityBoundary"
+	BSatCodeNoSaturationObserved       = "NoSaturationObserved"
 )
 
-type BSatPolicy struct {
+type LegacyBSatPolicy struct {
 	Version                      string  `json:"version"`
 	RelativeEquivalenceTolerance float64 `json:"relativeEquivalenceTolerance"`
 }
-type BSatResult struct {
+type LegacyBSatResult struct {
 	Status                      BSatStatus `json:"status"`
 	PolicyVersion               string     `json:"policyVersion"`
 	StateIdentity               string     `json:"stateIdentity,omitempty"`
@@ -210,4 +214,31 @@ type BSatResult struct {
 	Batch                       *int       `json:"batch,omitempty"`
 	Code                        string     `json:"code"`
 	MeasuredBatches             []int      `json:"measuredBatches"`
+}
+
+// BSatPolicy is fixed before discovery starts. The complete decoded-policy
+// provenance is added at the policy-file boundary; this pure value owns the
+// fields needed by discovery and confirmation.
+type BSatPolicy struct {
+	Version                      string  `json:"version"`
+	KMax                         int     `json:"kmax"`
+	RelativeImprovementTolerance float64 `json:"relativeImprovementTolerance"`
+	DiscoveryTrials              int     `json:"discoveryTrials"`
+	MaximumConfirmatoryTrials    int     `json:"maximumConfirmatoryTrials"`
+	MaximumActiveRunBudget       int     `json:"maximumActiveRunBudget"`
+}
+
+type BSatDiscoveryResult struct {
+	Status                               BSatStatus `json:"status"`
+	Code                                 string     `json:"code"`
+	CandidateBatch                       *int       `json:"candidateBatch,omitempty"`
+	CandidateMaximumRemainingImprovement *float64   `json:"candidateMaximumRemainingImprovement,omitempty"`
+	MeasuredBatches                      []int      `json:"measuredBatches"`
+	PolicyVersion                        string     `json:"policyVersion"`
+	KMax                                 int        `json:"kmax"`
+	RelativeImprovementTolerance         float64    `json:"relativeImprovementTolerance"`
+	DiscoveryTrials                      int        `json:"discoveryTrials"`
+	CurveFamilyContractDigest            string     `json:"curveFamilyContractDigest"`
+	CurveFamilyIdentity                  string     `json:"curveFamilyIdentity"`
+	BoundaryBatch                        *int       `json:"boundaryBatch,omitempty"`
 }

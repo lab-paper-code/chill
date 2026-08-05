@@ -154,12 +154,13 @@ Approved scope, partially shared foundation only. Plan 5a supplies the frozen
 family, verified family, exact-state curve container, and a live discovery
 candidate. The Plan 5 point estimator and retained previous interval are
 implemented, and the global post-selection error allocation is derived and
-regression-tested. The joint contrast/covariance estimator implementation,
-confirmatory sizing, policy decoding, and confirmatory result are not
-implemented. Campaign provenance is pre-registered in a committed record rather
-than machine-enforced; that boundary is stated in the plan. It does not authorize
-a `DeviceProfile` API, a campaign controller, an intent schema change, or
-scheduler consumption.
+regression-tested. The deterministic domain-wide discovery screen is also
+implemented. The joint contrast/covariance estimator implementation,
+confirmatory sizing, policy decoding, and confirmatory result are not implemented.
+Campaign provenance is pre-registered in a committed record rather than
+machine-enforced; that boundary is stated in the plan. It does not authorize a
+`DeviceProfile` API, a campaign controller, an intent schema change, or scheduler
+consumption.
 
 ### 6. Execution-support expansion — active
 

@@ -363,7 +363,7 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 			},
 		}
 	}
-	policy := BSatPolicy{Version: "v1", RelativeEquivalenceTolerance: .02}
+	policy := LegacyBSatPolicy{Version: "v1", RelativeEquivalenceTolerance: .02}
 	tests := []struct {
 		name   string
 		points []Point

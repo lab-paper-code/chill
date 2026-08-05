@@ -1,6 +1,9 @@
 package profilederivation
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 const (
 	PointEstimatorVersion         = "incremental-point-welch-satterthwaite-v2"
@@ -31,6 +34,19 @@ func verdictFromReasons(reasons []Reason) Verdict {
 func validatePointPolicy(policy PointPolicy) error {
 	if policy.Version == "" || policy.MinimumTrials < 3 {
 		return errors.New("point policy must use 95% Student-t with at least three trials")
+	}
+	return nil
+}
+
+func validateBSatPolicy(policy BSatPolicy) error {
+	if policy.Version == "" || policy.KMax < 2 ||
+		policy.RelativeImprovementTolerance < 0 || policy.RelativeImprovementTolerance >= 1 ||
+		math.IsNaN(policy.RelativeImprovementTolerance) ||
+		math.IsInf(policy.RelativeImprovementTolerance, 0) ||
+		policy.DiscoveryTrials < 3 || policy.MaximumConfirmatoryTrials < 3 ||
+		policy.KMax > math.MaxInt/policy.DiscoveryTrials ||
+		policy.MaximumActiveRunBudget < policy.KMax*policy.DiscoveryTrials {
+		return errors.New("batch-saturation policy is invalid")
 	}
 	return nil
 }

@@ -12,9 +12,10 @@ active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
 baseline's mean variance and degrees of freedom. `Aggregate` now emits the
 versioned Welch--Satterthwaite point interval and retains the previous interval
 under its own version. The post-selection error allocation is also fixed and
-regression-tested across shared- and distinct-baseline regimes. The joint
-contrast estimator, confirmatory sizing, policy decoding, and confirmatory
-result remain unimplemented. This plan fixes the quantity that
+regression-tested across shared- and distinct-baseline regimes, and the
+deterministic domain-wide discovery screen is implemented. The joint contrast
+estimator, confirmatory sizing, policy decoding, and confirmatory result remain
+unimplemented. This plan fixes the quantity that
 decides `b_sat` — the largest remaining energy improvement any larger measured
 batch still offers — gives curve derivation ownership of the exact idle
 baseline set, rebuilds the point-confidence construction, and separates
@@ -637,6 +638,16 @@ smallest `c` in `1..Kmax-1` whose point estimate satisfies
 version. `Kmax` remains in every eligible candidate's comparison set but can
 never be returned as the candidate.
 
+```text
+DeriveBSatDiscovery(discoveryCurve Curve, policy BSatPolicy)
+    (BSatDiscoveryResult, error)
+```
+
+The implemented screen accepts only an opaque discovery-only `Curve`, requires
+its frozen family and complete measured domain to equal policy `Kmax`, and
+checks exactly `n_disc` independent trials at every batch. A declared capability
+boundary is a typed censored result; silent truncation is an invalid input.
+
 This is a screen. It makes no confidence statement, and it is the sole basis for
 the minimality noted in Checkpoint 1. Its one requirement is determinism, so that
 the confirmatory batch list follows from the campaign record rather than from a
@@ -789,6 +800,7 @@ Plan 5 is complete when:
 5. Implement discovery screening, fixed confirmatory sizing, and the
    confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
+   Discovery screening is implemented; sizing and confirmation remain.
 6. Decode the policy file and record its digests. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
