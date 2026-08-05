@@ -141,7 +141,7 @@ selected batch one, and stopped at the batch-three capability boundary. The
 result is a decision without a confidence statement; its selected batch is the
 candidate Plan 5's confirmation pass takes as input.
 
-### 5. Batch-saturation campaign — approved, shared foundation only
+### 5. Batch-saturation campaign — pure derivation implemented
 
 [plans/05-batch-saturation-campaign.md](plans/05-batch-saturation-campaign.md)
 
@@ -156,11 +156,12 @@ candidate. The Plan 5 point estimator and retained previous interval are
 implemented, and the global post-selection error allocation is derived and
 regression-tested. The deterministic domain-wide discovery screen is also
 implemented, as is the global-`H` confirmatory sizing rule. The final joint
-contrast/covariance estimator, policy decoding, and confirmatory result are not
-implemented. Campaign provenance is pre-registered in a committed record rather
-than machine-enforced; that boundary is stated in the plan. It does not authorize
-a `DeviceProfile` API, a campaign controller, an intent schema change, or
-scheduler consumption.
+contrast/covariance estimator and typed confirmatory result are implemented.
+Policy-file decoding and both policy digests, a concrete Plan 5 campaign record,
+and a live confirmatory result are not implemented. Campaign provenance is
+pre-registered in a committed record rather than machine-enforced; that boundary
+is stated in the plan. It does not authorize a `DeviceProfile` API, a campaign
+controller, an intent schema change, or scheduler consumption.
 
 ### 6. Execution-support expansion — active
 

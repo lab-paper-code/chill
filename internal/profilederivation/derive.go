@@ -308,7 +308,7 @@ func DeriveBSat(points []Point, policy LegacyBSatPolicy) LegacyBSatResult {
 		result.Batch = &batch
 		for later := index + 1; later < len(ordered); later++ {
 			if ordered[later].MeanIncrementalJoulesPerItem < current.MeanIncrementalJoulesPerItem*(1-policy.RelativeEquivalenceTolerance) {
-				result.Status = BSatAmbiguous
+				result.Status = LegacyBSatAmbiguous
 				result.Code = "LaterEnergyDecrease"
 				return result
 			}

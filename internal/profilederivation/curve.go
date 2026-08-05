@@ -213,6 +213,18 @@ func (c Curve) pass(role PassRole) (curvePass, bool) {
 	return curvePass{}, false
 }
 
+func (c Curve) discoveryOnly() (Curve, error) {
+	discovery, exists := c.pass(PassDiscovery)
+	if !exists {
+		return Curve{}, errors.New("curve has no discovery pass")
+	}
+	baselines := make(map[string]IdleBaseline, len(c.baselines))
+	for state, baseline := range c.baselines {
+		baselines[state] = cloneIdleBaseline(baseline)
+	}
+	return Curve{family: c.family, passes: []curvePass{discovery}, baselines: baselines}, nil
+}
+
 func (f CurveFamily) validate() error {
 	if err := f.contract.validate(); err != nil {
 		return err

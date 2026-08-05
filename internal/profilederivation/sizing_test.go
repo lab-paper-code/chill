@@ -68,12 +68,12 @@ func TestProjectedContrastPreservesSharedBaselineCancellation(t *testing.T) {
 		StateIdentity: "shared", IncrementalSampleVariance: 0,
 		MeanBaselineCoefficientSecondsPerItem: .2,
 	}
-	shared, err := projectedContrastHalfWidth(reference, baseline, later, baseline, 3, .975)
+	shared, err := contrastHalfWidthForTrials(reference, baseline, later, baseline, 3, .975)
 	if err != nil {
 		t.Fatal(err)
 	}
 	later.StateIdentity = "distinct"
-	distinct, err := projectedContrastHalfWidth(reference, baseline, later, baseline, 3, .975)
+	distinct, err := contrastHalfWidthForTrials(reference, baseline, later, baseline, 3, .975)
 	if err != nil {
 		t.Fatal(err)
 	}

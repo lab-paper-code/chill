@@ -14,15 +14,15 @@ versioned Welch--Satterthwaite point interval and retains the previous interval
 under its own version. The post-selection error allocation is also fixed and
 regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
-estimator and confirmatory result remain unimplemented; the projected
-point/contrast variance path and global-`H` confirmatory sizing are implemented.
-Policy decoding also remains unimplemented. This plan fixes the quantity that
-decides `b_sat` — the largest remaining energy improvement any larger measured
-batch still offers — gives curve derivation ownership of the exact idle
-baseline set, rebuilds the point-confidence construction, and separates
-candidate discovery from confirmation. It does not authorize a `DeviceProfile`
-API, a campaign CRD or controller, an intent schema change, cross-model pooling,
-or scheduler consumption.
+estimator, global-`H` confirmatory sizing, and typed confirmatory result are
+implemented. Policy-file decoding and both policy digests, a concrete Plan 5
+campaign record, and a live confirmatory result remain unimplemented. This plan
+fixes the quantity that decides `b_sat` — the largest remaining energy
+improvement any larger measured batch still offers — gives curve derivation
+ownership of the exact idle baseline set, rebuilds the point-confidence
+construction, and separates candidate discovery from confirmation. It does not
+authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
+change, cross-model pooling, or scheduler consumption.
 
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
 original one-state assumption for runtimes with one immutable artifact per
@@ -680,6 +680,16 @@ Confirmation receives the candidate and evaluates the acceptance rule there. It
 does not search for a candidate of its own; searching and testing on the same
 evidence is what the two-pass split exists to prevent.
 
+The implemented boundary internally reconstructs a discovery-only view of the
+opaque two-pass `Curve`, rechecks the candidate and sizing allocation, requires
+exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
+lower bound and every contrast upper bound at the frozen global-`H` quantile.
+Its result retains both pass point sets, all exact-state idle baselines, bounds
+for every later batch, estimator and sizing versions, and the family contract
+and realized identities. A later measured improvement above tolerance returns
+`CandidateOnly: DomainNoImprovementNotConfirmed`; there is no `Ambiguous`
+outcome in the Plan 5 boundary.
+
 Confirmation still validates that the domain runs from batch 1. Accepting
 saturation at `c` without evidence that batches below `c` were measured would not
 establish that a smaller batch is not equally good. Those lower batches do not
@@ -814,7 +824,8 @@ Plan 5 is complete when:
 5. Implement discovery screening, fixed confirmatory sizing, and the
    confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
-   Discovery screening and sizing are implemented; confirmation remains.
+   Implemented. The earlier adjacent rule remains only under explicit `Legacy*`
+   types and cannot enter the opaque Plan 5 boundary.
 6. Decode the policy file and record its digests. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add

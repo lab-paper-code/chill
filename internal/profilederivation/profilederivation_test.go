@@ -373,7 +373,7 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 		{"accepted", []Point{p(1, 1, .001), p(2, .8, .001), p(3, .795, .001), p(4, .8, .001)}, BSatAccepted, 2},
 		{"candidate uncertainty", []Point{p(1, 1, .001), p(2, .8, .05), p(3, .795, .05)}, BSatCandidateOnly, 2},
 		{"censored", []Point{p(1, 1, .001), p(2, .8, .001), p(3, .6, .001)}, BSatCensored, 0},
-		{"ambiguous later drop", []Point{p(1, 1, .001), p(2, .99, .001), p(3, .7, .001)}, BSatAmbiguous, 1},
+		{"ambiguous later drop", []Point{p(1, 1, .001), p(2, .99, .001), p(3, .7, .001)}, LegacyBSatAmbiguous, 1},
 		{"missing adjacent", []Point{p(1, 1, .001), p(2, .8, .001), p(4, .79, .001)}, BSatUnavailable, 0},
 		{"gap after plateau", []Point{p(1, 1, .001), p(2, .99, .001), p(4, 1, .001)}, BSatUnavailable, 0},
 		{"missing lower domain", []Point{p(2, 1, .001), p(3, .99, .001)}, BSatUnavailable, 0},

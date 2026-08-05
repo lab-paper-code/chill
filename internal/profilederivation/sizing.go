@@ -113,7 +113,7 @@ func projectedBSatPrecision(
 	if !exists {
 		return 0, 0, errors.New("reference point lost its exact-state baseline")
 	}
-	referenceHalfWidth, err := projectedPointHalfWidth(reference, referenceBaseline, trials, quantile)
+	referenceHalfWidth, err := pointHalfWidthForTrials(reference, referenceBaseline, trials, quantile)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -128,7 +128,7 @@ func projectedBSatPrecision(
 		if !exists {
 			return 0, 0, errors.New("later point lost its exact-state baseline")
 		}
-		halfWidth, err := projectedContrastHalfWidth(
+		halfWidth, err := contrastHalfWidthForTrials(
 			reference, referenceBaseline, laterPoint, laterBaseline, trials, quantile,
 		)
 		if err != nil {
@@ -139,7 +139,7 @@ func projectedBSatPrecision(
 	return lowerBound, maximumRelativeHalfWidth, nil
 }
 
-func projectedPointHalfWidth(
+func pointHalfWidthForTrials(
 	point Point,
 	baseline IdleBaseline,
 	trials int,
@@ -158,7 +158,7 @@ func projectedPointHalfWidth(
 	)
 }
 
-func projectedContrastHalfWidth(
+func contrastHalfWidthForTrials(
 	reference Point,
 	referenceBaseline IdleBaseline,
 	later Point,

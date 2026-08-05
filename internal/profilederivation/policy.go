@@ -6,13 +6,14 @@ import (
 )
 
 const (
-	PointEstimatorVersion         = "incremental-point-welch-satterthwaite-v2"
-	PointConfidenceMethod         = "student-t-welch-satterthwaite"
-	PreviousPointEstimatorVersion = "incremental-point-rss-half-width-v1"
-	PreviousPointConfidenceMethod = "student-t"
-	PointConfidenceLevel          = 0.95
-	BSatConfirmatorySizingMethod  = "bonferroni-welch-relative-precision-v1"
-	bsatFamilyWiseAlpha           = 0.05
+	PointEstimatorVersion            = "incremental-point-welch-satterthwaite-v2"
+	PointConfidenceMethod            = "student-t-welch-satterthwaite"
+	PreviousPointEstimatorVersion    = "incremental-point-rss-half-width-v1"
+	PreviousPointConfidenceMethod    = "student-t"
+	PointConfidenceLevel             = 0.95
+	BSatConfirmatorySizingMethod     = "bonferroni-welch-relative-precision-v1"
+	BSatConfirmatoryEstimatorVersion = "bonferroni-welch-domain-v1"
+	bsatFamilyWiseAlpha              = 0.05
 )
 
 func validAdmissionPolicy(policy AdmissionPolicy) bool {

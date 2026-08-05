@@ -190,17 +190,20 @@ type Point struct {
 type BSatStatus string
 
 const (
-	BSatAccepted      BSatStatus = "Accepted"
-	BSatCandidateOnly BSatStatus = "CandidateOnly"
-	BSatCensored      BSatStatus = "Censored"
-	BSatAmbiguous     BSatStatus = "Ambiguous"
-	BSatUnavailable   BSatStatus = "Unavailable"
+	BSatAccepted        BSatStatus = "Accepted"
+	BSatCandidateOnly   BSatStatus = "CandidateOnly"
+	BSatCensored        BSatStatus = "Censored"
+	BSatUnavailable     BSatStatus = "Unavailable"
+	LegacyBSatAmbiguous BSatStatus = "Ambiguous"
 
-	BSatCodeDiscoveryCandidateSelected     = "DiscoveryCandidateSelected"
-	BSatCodeCapabilityBoundary             = "CapabilityBoundary"
-	BSatCodeNoSaturationObserved           = "NoSaturationObserved"
-	BSatCodeConfirmatoryTrialsSized        = "ConfirmatoryTrialsSized"
-	BSatCodeConfirmatoryBudgetInsufficient = "ConfirmatoryBudgetInsufficient"
+	BSatCodeDiscoveryCandidateSelected      = "DiscoveryCandidateSelected"
+	BSatCodeCapabilityBoundary              = "CapabilityBoundary"
+	BSatCodeNoSaturationObserved            = "NoSaturationObserved"
+	BSatCodeConfirmatoryTrialsSized         = "ConfirmatoryTrialsSized"
+	BSatCodeConfirmatoryBudgetInsufficient  = "ConfirmatoryBudgetInsufficient"
+	BSatCodeDomainNoImprovementConfirmed    = "DomainNoImprovementConfirmed"
+	BSatCodeDomainNoImprovementNotConfirmed = "DomainNoImprovementNotConfirmed"
+	BSatCodeNonPositiveReferenceLowerBound  = "NonPositiveReferenceLowerBound"
 )
 
 type LegacyBSatPolicy struct {
@@ -261,4 +264,47 @@ type BSatSizingResult struct {
 	PolicyVersion                     string     `json:"policyVersion"`
 	CurveFamilyContractDigest         string     `json:"curveFamilyContractDigest"`
 	CurveFamilyIdentity               string     `json:"curveFamilyIdentity"`
+}
+
+type BSatContrastBound struct {
+	LaterBatch                        int     `json:"laterBatch"`
+	DifferenceEstimateJoulesPerItem   float64 `json:"differenceEstimateJoulesPerItem"`
+	DifferenceUpperBoundJoulesPerItem float64 `json:"differenceUpperBoundJoulesPerItem"`
+	RelativeImprovementUpperBound     float64 `json:"relativeImprovementUpperBound"`
+	HalfWidthJoulesPerItem            float64 `json:"halfWidthJoulesPerItem"`
+}
+
+type BSatContrastCovariance struct {
+	FirstLaterBatch                       int     `json:"firstLaterBatch"`
+	SecondLaterBatch                      int     `json:"secondLaterBatch"`
+	CovarianceJoulesSquaredPerItemSquared float64 `json:"covarianceJoulesSquaredPerItemSquared"`
+}
+
+type BSatResult struct {
+	Status                                BSatStatus               `json:"status"`
+	Code                                  string                   `json:"code"`
+	DiscoverySelectedBatch                int                      `json:"discoverySelectedBatch"`
+	DomainNoImprovementConfirmed          bool                     `json:"domainNoImprovementConfirmed"`
+	MinimalityConfidenceConfirmed         bool                     `json:"minimalityConfidenceConfirmed"`
+	ReferenceLowerBoundJoulesPerItem      *float64                 `json:"referenceLowerBoundJoulesPerItem,omitempty"`
+	MaximumRemainingImprovementUpperBound *float64                 `json:"maximumRemainingImprovementUpperBound,omitempty"`
+	ContrastBounds                        []BSatContrastBound      `json:"contrastBounds"`
+	ContrastCovariances                   []BSatContrastCovariance `json:"contrastCovariances"`
+	DiscoveryPoints                       []Point                  `json:"discoveryPoints"`
+	ConfirmatoryPoints                    []Point                  `json:"confirmatoryPoints"`
+	IdleBaselinesByState                  map[string]IdleBaseline  `json:"idleBaselinesByState"`
+	DiscoveryMeasuredBatches              []int                    `json:"discoveryMeasuredBatches"`
+	ConfirmatoryMeasuredBatches           []int                    `json:"confirmatoryMeasuredBatches"`
+	BoundaryBatch                         *int                     `json:"boundaryBatch,omitempty"`
+	ConfirmatoryTrials                    int                      `json:"confirmatoryTrials"`
+	GlobalStatementCount                  int                      `json:"globalStatementCount"`
+	OneSidedQuantile                      float64                  `json:"oneSidedQuantile"`
+	RelativeImprovementTolerance          float64                  `json:"relativeImprovementTolerance"`
+	PointEstimatorVersion                 string                   `json:"pointEstimatorVersion"`
+	ConfirmatoryEstimatorVersion          string                   `json:"confirmatoryEstimatorVersion"`
+	ConfidenceLevel                       float64                  `json:"confidenceLevel"`
+	SizingMethod                          string                   `json:"sizingMethod"`
+	PolicyVersion                         string                   `json:"policyVersion"`
+	CurveFamilyContractDigest             string                   `json:"curveFamilyContractDigest"`
+	CurveFamilyIdentity                   string                   `json:"curveFamilyIdentity"`
 }
