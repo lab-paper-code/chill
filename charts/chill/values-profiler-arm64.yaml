@@ -9,8 +9,8 @@ evidenceStore:
 profiler:
   enabled: true
   factSource:
-    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:597306d71bd63f6decf5e53391f3e5516ef66a7c01ac69c37d966f30ced1956e"
-    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:7549bc149b191afcb5f5639ba009d146643e9495e5ecb1980fc3419985354a6b"
+    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe"
+    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7"
     executionDeclarations:
       - modelSpec: mobilenet-v2-050
         deviceClass: raspberry-pi-5-8g
