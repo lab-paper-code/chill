@@ -9,8 +9,8 @@ evidenceStore:
 profiler:
   enabled: true
   factSource:
-    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:ba60407f3bb6119787eafc1e85f7e8d0ab4b3ac48adee736ec237f9d213d53d2"
-    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:d9a24c7698eb7af266d629393ff0ea17320ccf59ee0b2f44f3d2b72f3e44cd28"
+    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer@sha256:81661c7cec84d29de96ea58426382eb5f47e09687a21315138bb4a1cf9960288"
+    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer@sha256:872446ddfed212300296f610bfcc3dc98490be9ff4975af8f626a4ea95d45f6a"
     executionDeclarations:
       - modelSpec: mobilenet-v2-050
         deviceClass: raspberry-pi-5-8g
@@ -40,8 +40,8 @@ profiler:
         deviceClass: orangepi-5-plus-16g
         executionPath: rknnlite
         runtime:
-          contentDigest: sha256:0da93eb72a6358b80e6bb192f2a09ce00c3c480c1d3df2603023360ce046cef6
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker@sha256:d53190af64df423d993c678a3e0753e5c03f4d4f32edc68cb577423822579624","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:2f6647f944bb0466d6503723f20fa6f1c337b81107f0b8d0f1db7ada04a847a9
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker@sha256:e52a0d6e37f34b5a35c7a8a623c2b625988d13db0799709bfa307bfb78dc9af7","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c"
