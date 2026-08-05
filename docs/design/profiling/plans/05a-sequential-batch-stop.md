@@ -13,12 +13,12 @@ claim. It authorizes no API, controller, intent schema, or policy-catalog change
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.
 
-Implementation against a runtime that uses one immutable artifact per fixed
-batch is blocked on the same identity decision as Plan 5. Current RKNN
-batch-one and batch-two evidence has different execution-state identities, so
-it cannot satisfy the rule below that every point shares one idle baseline.
-Plan 6 must first define and justify the fixed-artifact curve and baseline
-contract; this plan does not authorize weakening identity checks.
+[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) closes the
+identity decision for a runtime that uses one immutable artifact per fixed
+batch. Exact point identities remain unchanged; the sweep consumes one frozen
+curve family and one admitted idle baseline per distinct member state. The
+first RKNN family still awaits a batch-one rebuild and remeasurement under the
+same catalog, recipe, and image generation as batch two.
 
 ## Question
 
@@ -229,7 +229,8 @@ substantive parameter rather than a convenience.
 
 The sweep measures `best_batch + patience` batch sizes, at `n` trials each. The
 worked example above cost 5 batch sizes. At three trials per batch that is 15
-active Runs, plus one idle baseline set.
+active Runs, plus one idle baseline set per distinct member state. A
+dynamic-batch artifact still needs only one set.
 
 Nothing has to be declared about how far the domain extends, because the sweep
 discovers its own end.
@@ -244,7 +245,9 @@ MinDelta           = 0.05
 Patience           = 2
 TrialsPerBatch     = 3
 EpsilonByBatch     = the mean at every measured batch
-IdleBaseline       = the one baseline every batch was computed against
+CurveFamilyContractDigest = the pre-frozen eligible member map
+CurveFamilyIdentity = the Loader-verified realized family
+IdleBaselinesByState = every exact baseline used by the measured prefix
 ```
 
 Every measured batch is reported, including the ones that failed to improve. A
@@ -301,9 +304,10 @@ Plan 5's confirmation pass takes as its input.
 internal/profilederivation/   the stopping rule over a sequence of batch means
 ```
 
-The rule consumes the per-batch means that Plan 3's existing aggregation already
-produces. It does not use confidence intervals, so it is unaffected by the
-interval reconstruction that Plan 5 requires. Nothing changes in
+The rule consumes per-batch means only after ADR 0014's family constructor has
+matched every point to its exact-state baseline. It does not use confidence
+intervals, so its stopping comparison is unaffected by the interval
+reconstruction that Plan 5 requires. Nothing changes in
 `api/v1alpha1`, the intent schema, the Profiler controller, the measurement
 worker, or single-Run admission.
 
@@ -327,7 +331,8 @@ Plan 5a is complete when:
 
 - `min_delta`, `patience`, `n`, and `divergence_factor` are fixed before the
   sweep starts and are reported with the result;
-- every batch shares one idle baseline, and the sweep names it in its output;
+- every batch belongs to the frozen family, uses its exact-state idle baseline,
+  and the sweep names the family and all baselines in its output;
 - golden sequences close the no-further-improvement, capability-boundary, and
   energy-divergence stops;
 - a sequence with a single worse batch followed by a recovering one does not stop
@@ -344,12 +349,14 @@ Plan 5a is complete when:
 1. Fix `min_delta`, `patience`, `n`, and `divergence_factor`, and the rule that a
    batch with no admissible trial is a capability boundary rather than a
    non-improving step.
-2. Implement the rule over a sequence of per-batch means, with the improvement
+2. Implement ADR 0014's frozen family projection and exact-state baseline
+   ownership in the pure derivation package.
+3. Implement the rule over a sequence of per-batch means, with the improvement
    test in its relative form and the reference updated only on improvement.
-3. Add the typed stop reasons and the reported fields.
-4. Add golden sequences for each stop reason and for the non-monotonic and
+4. Add the typed stop reasons and the reported fields.
+5. Add golden sequences for each stop reason and for the non-monotonic and
    accumulating cases.
-5. Run the sweep on the live path and record the measured batches, the per-batch
+6. Run the sweep on the live path and record the measured batches, the per-batch
    means, and the selected batch.
 
 ## Follow-on boundary

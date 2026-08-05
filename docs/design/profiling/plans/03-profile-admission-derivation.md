@@ -86,6 +86,14 @@ The derivation boundary uses three independently versioned identities:
 | `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
 
+These remain exact single-Run and single-point identities. A batch curve that
+uses different fixed-batch artifacts does not weaken or normalize them. It uses
+the separate composition identity and per-state baseline ownership fixed by
+[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md). That
+ADR separates the pre-measurement `CurveFamilyContractDigest` from the realized
+`CurveFamilyIdentity`, which is projected only after verified evidence crosses
+the Loader boundary. Neither is stored in or recomputed from one Run.
+
 Binding the actual Node UID intentionally makes this first derivation
 node-instance-scoped; it does not assert within-type homogeneity or authorize
 cross-node pooling.
@@ -110,6 +118,12 @@ and digest. CPU-only state keeps the existing v1alpha1 projection and retained
 v1alpha6/v1alpha7 intent bytes. A v1alpha7 or v1alpha8 intent carrying a
 host-contract digest uses execution-state-identity v1alpha2, so host library, driver, device
 visibility, or allocation drift cannot pool with another physical state.
+
+Consequently, a model-loaded-idle baseline is reusable only by active trials
+with its exact state identity. Curves over one dynamic-batch artifact may have
+one such baseline. Curves over several fixed-batch artifacts retain one
+baseline per member state; curve-level covariance is owned by Plans 5 and 5a,
+not by single-Run admission.
 
 Observer timestamps are receipt timestamps. The first implementation uses a
 declared nearest-boundary, piecewise-linear integration rule and rejects windows

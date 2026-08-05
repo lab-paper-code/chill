@@ -6,19 +6,19 @@
 
 Approved implementation plan. No part of this plan is implemented. It fixes the
 quantity that decides `b_sat` — the largest remaining energy improvement any
-larger measured batch still offers — gives curve derivation ownership of one
-idle baseline, rebuilds the point-confidence construction, and separates
-candidate discovery from confirmation. It does not
-authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
-change, cross-model pooling, or scheduler consumption.
+larger measured batch still offers — gives curve derivation ownership of the
+exact idle baseline set, rebuilds the point-confidence construction, and separates
+candidate discovery from confirmation. It does not authorize a `DeviceProfile`
+API, a campaign CRD or controller, an intent schema change, cross-model pooling,
+or scheduler consumption.
 
-Implementation against a runtime that uses one immutable artifact per fixed
-batch is blocked on an earlier identity decision. Current execution-state
-identity binds the artifact digest and path, so retained RKNN batch-one and
-batch-two evidence are different states and cannot enter this plan's one-state,
-one-baseline `Curve`. Do not exclude artifact identity or reuse one baseline by
-convenience; Plan 6 must first define and justify the fixed-artifact curve and
-idle-baseline contract.
+[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
+original one-state assumption for runtimes with one immutable artifact per
+fixed batch. Exact execution-state and protocol identities remain unchanged.
+An opaque curve instead owns one pre-frozen family contract, one
+Loader-verified realized family identity, and an admitted idle baseline for
+every distinct member state. A dynamic-batch artifact remains the one-state,
+one-baseline special case.
 
 Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
 4 leaves batch selection and repeated trials to a later campaign planner. This
@@ -29,7 +29,7 @@ guarantees.
 ## Question
 
 > Under what predeclared rule does a set of Runs establish batch saturation for
-> one execution state?
+> one frozen curve family?
 
 ## What this plan does
 
@@ -38,7 +38,7 @@ point. Past that point, larger batches stop helping while still costing latency
 and memory. `b_sat` is the batch size at that point. This plan defines how a
 campaign of profiling Runs decides where it is.
 
-The whole procedure runs in two passes over the same execution state.
+The whole procedure runs in two passes over the same frozen curve family.
 
 **Before anything runs**, two files are written and fixed. One is the derivation
 policy: how far up the batch domain we will measure, how much remaining
@@ -327,73 +327,86 @@ if batching turns out to help nothing at all, confirmation has to re-measure the
 entire domain. The physically simplest outcome is the most expensive to confirm.
 The budget cap in the policy file is set against this worst case.
 
-## Checkpoint 3: one idle baseline per curve
+## Checkpoint 3: exact idle baseline ownership
 
 ### Why it matters
 
 `epsilon` is energy above idle, so every point on a curve is computed by
-subtracting an idle-power estimate. If two points on the same curve used
-different idle baselines, their difference would carry two different estimation
-errors instead of one shared one, and the confidence bound built from that
-difference would be wrong — not merely hard to trace.
+subtracting an idle-power estimate. That estimate belongs to an exact execution
+state. Reusing it for another fixed-batch engine would erase a material state
+difference; treating several estimates as if they were one shared random
+quantity would make the confidence bound wrong.
 
 ### How it is guaranteed
 
-The curve is an opaque type with one constructor:
+The curve family and curve are opaque types with one construction path:
 
 ```text
 type Curve struct { /* unexported fields */ }
+type CurveFamily struct { /* unexported fields */ }
 
 type Pass struct {
     Role    discovery | confirmatory
     Batches admitted trials of that pass, grouped by batch
 }
 
-DeriveCurve(passes []Pass, baseline IdleBaseline, policy PointPolicy) (Curve, error)
+FreezeCurveFamilyContract(resolved member contracts) (CurveFamilyContract, error)
+VerifyCurveFamily(contract CurveFamilyContract,
+                  verified frozen members) (CurveFamily, error)
+DeriveCurve(passes []Pass, family CurveFamily,
+            baselinesByState map[string]IdleBaseline,
+            policy PointPolicy) (Curve, error)
 Curve.Points() []Point                      // copies, for reporting
 DeriveBSatConfirmatory(curve Curve, candidate int, policy BSatPolicy) BSatResult
 ```
 
-`DeriveCurve` takes one `baseline` argument and performs the per-trial
-incremental step and the per-batch aggregation internally with it. Since `Curve`
-has no exported fields and no other constructor, every point that reaches the
-decision boundary came from that one baseline. `Points()` hands out copies for
-reporting, and those copies cannot re-enter the decision.
+`FreezeCurveFamilyContract` fixes ADR 0014's shared anchor and exact
+batch-member map before measurement. `VerifyCurveFamily` compares Loader-verified
+frozen Run facts with that contract and binds their common observed environment
+before producing the versioned family identity. `DeriveCurve` resolves each
+trial to that map, selects the baseline with the same `StateIdentity`, and
+performs the per-trial incremental step and per-batch aggregation internally.
+Since `Curve` has no exported fields and no other constructor, every point that
+reaches the decision boundary has an exact family member and baseline.
+`Points()` hands out copies for reporting, and those copies cannot re-enter the
+decision.
 
 Both passes go into the same call:
 
 ```text
-discoveryCurve = DeriveCurve([discovery], baseline, pointPolicy)
+discoveryCurve = DeriveCurve([discovery], family, baselinesByState, pointPolicy)
 candidate      = screen(discoveryCurve, bsatPolicy)
 
-campaignCurve  = DeriveCurve([discovery, confirmatory], baseline, pointPolicy)
+campaignCurve  = DeriveCurve([discovery, confirmatory], family,
+                             baselinesByState, pointPolicy)
 result         = DeriveBSatConfirmatory(campaignCurve, candidate, bsatPolicy)
 ```
 
 The confirmatory decision needs all three at once: the confirmatory points to
 compute `R_c`, the discovery points to establish that lower batches were
-measured, and one baseline to relate them. A single-pass curve cannot hold them
-together.
-
-The screening curve may be built from any baseline without affecting validity,
-since screening asserts nothing. Only `campaignCurve` reaches the decision.
+measured, and the same baseline set to relate every occurrence of each exact
+state. A single-pass curve cannot hold them together.
 
 `DeriveCurve` rejects a `TrialID` that appears in more than one pass. This makes
 the discovery/confirmatory separation mechanical, reusing the trial-uniqueness
 check that aggregation already applies within a batch.
 
-Because a curve has exactly one baseline, splitting the baseline between passes
-would produce two curves, and this plan defines no way to compare across curves.
-One shared baseline is settled here.
+The constructor rejects a missing member baseline, a state or environment
+mismatch, duplicate idle raw evidence across distinct baseline keys, and a
+different baseline object for the same state between passes. A dynamic-batch
+family has one map entry. A fixed-artifact family normally has one entry per
+batch. The distinction is determined by exact state identity, not runtime
+naming.
 
 ### The estimator
 
-With `a_b` the mean seconds-per-item coefficient at batch `b`:
+With `a_b` the mean seconds-per-item coefficient at batch `b`, `A_b` the mean
+active wall energy per item, and `q(b)` the point's exact baseline key:
 
 ```text
-epsilon_bar_b      = mean_i( E_i / N_i ) - a_bar_b * P_idle_hat
+epsilon_bar_b      = A_b - a_b * P_q(b)
 
-Var(epsilon_bar_b) = Var( mean_i( E_i / N_i ) ) + a_bar_b^2 * Var(P_idle_hat)
+Var(epsilon_bar_b) = Var(A_b) + a_b^2 * Var(P_q(b))
 ```
 
 The point estimate is algebraically the same as subtracting the baseline from
@@ -403,26 +416,29 @@ governed by an effective sample size derived from both of them — the
 Welch--Satterthwaite formula, or whatever the chosen joint model supplies. It is
 not taken from either component alone.
 
-For any pair of batches, the shared baseline partially cancels but does not
-disappear:
+For any pair of batches, define `h_b,q = -a_b` when `q = q(b)` and zero
+otherwise. The contrast is:
 
 ```text
 D_j,k      = epsilon_j - epsilon_k
-           = ( mean E/N at j - mean E/N at k ) - ( a_j - a_k ) * P_idle_hat
+           = A_j - A_k + sum_q (h_j,q - h_k,q) * P_q
 
-Var(D_j,k) = Var(A_j) + Var(A_k) + (a_j - a_k)^2 * Var(P_idle_hat)
+Var(D_j,k) = Var(A_j) + Var(A_k)
+             + sum_q (h_j,q - h_k,q)^2 * Var(P_q)
 ```
 
-Full cancellation would need `a_j = a_k`. Under fixed-duration measurement the
-two batches complete different numbers of items, so their `a` values differ and a
-residual baseline term survives. It is computed from the observed `a_i` values,
-with no assumption about how throughput moves with batch size.
+The sum assumes independent admitted baseline trial sets. Reuse of a raw idle
+evidence object across distinct keys is rejected. If `q(j) = q(k)`, the sum
+reduces to `(a_j-a_k)^2 Var(P_q)`, recovering the original shared-baseline
+partial cancellation. If the states differ, both baseline variances remain.
+Every coefficient comes from the observed `T_i/N_i`; no throughput monotonicity
+is assumed.
 
-One shared baseline across the whole curve also links every pair of these
-differences to each other:
+The baseline contribution to covariance between two differences is likewise:
 
 ```text
-Cov( D_j,k , D_c,b ) = (a_j - a_k) * (a_c - a_b) * Var(P_idle_hat)
+Cov( D_j,k , D_c,b )
+    = sum_q (h_j,q - h_k,q) * (h_c,q - h_b,q) * Var(P_q)
 ```
 
 This links the differences inside one acceptance decision, the differences
@@ -431,8 +447,8 @@ Showing that the procedure holds its stated confidence across that whole set is
 what the two-pass requirement in Checkpoint 1 asks for.
 
 So the design is best described as **discovery and confirmation measured on
-separate Runs, sharing one idle-power estimate**. The active evidence is
-disjoint; the idle estimate is not.
+separate Runs, sharing the same exact-state baseline set**. The active evidence
+is disjoint; each baseline estimate is reused wherever its state recurs.
 
 ### What each trial must retain
 
@@ -525,11 +541,11 @@ What the code guarantees, and what a reader has to check:
 
 | Guarantee | Mechanism |
 |---|---|
-| every point on a curve shares one idle baseline | opaque `Curve`, populated only by `DeriveCurve`, which takes one baseline |
+| every point belongs to the frozen family and uses its exact-state idle baseline | opaque `CurveFamily` and `Curve`; `DeriveCurve` takes the family and baseline map |
 | a hand-assembled `Point` cannot reach the decision | `DeriveBSatConfirmatory` accepts `Curve`, not `[]Point` |
 | discovery and confirmatory evidence do not overlap | `DeriveCurve` rejects a `TrialID` present in more than one pass |
 | the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
-| a published number identifies the rule behind it | both policy digests recorded in the result |
+| a published number identifies its planned and realized family and rule | curve-family contract digest, realized identity, and both policy digests recorded in the result |
 | the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
 | every eligible trial was included | **the campaign record's stated rule and its published Run list — read, not enforced** |
 
@@ -552,7 +568,7 @@ version check, and the retained wire shapes, with no consumer for it yet.
 
 ```text
 internal/profilederivation/   the acceptance quantity and rule, curve derivation
-                              owning one baseline, the joint estimator, the
+                              owning exact-state baselines, the joint estimator, the
                               confirmatory boundary, policy file decoding
 ```
 
@@ -565,17 +581,16 @@ import no Kubernetes, CHILL API, controller-runtime, or transport package.
 - `DeviceProfile` or `ClusterEnergyModel` schema, persistence, or status
 - a campaign CRD, controller, or orchestrator
 - any intent schema change
-- machine-enforced selection scope, eligible-population closure, or cryptographic
-  derivation identities
-- a per-pass or otherwise split idle baseline, and any way of comparing points
-  that belong to two different curves
+- machine-enforced campaign assignment or eligible-population closure
+- a per-pass baseline change for the same state, inferred per-engine idle
+  equivalence, or comparison across two curve-family identities
 - confirming at confidence that the accepted batch is the smallest one
 - batch selection outside the campaign record's generating rule
 - a doubling or otherwise non-consecutive batch sweep
 - changing `tau` during a campaign
 - cross-node or cross-model pooling
 - transition-cost measurement, standby-versus-model-loaded idle separation, and
-  per-engine idle equivalence
+  any method that infers per-engine idle equivalence
 - throughput, latency, or SLO feasibility derivation
 - scheduler or enumerator consumption
 
@@ -585,16 +600,18 @@ Plan 5 is complete when:
 
 - `Kmax`, `tau`, the acceptance quantity, and the acceptance rule live in the
   discovery policy version, and both policy digests version the result;
-- the complete two-pass procedure, including candidate selection and the shared
-  idle-power estimate, is shown by derivation or simulation to hold its stated
-  confidence;
+- the complete two-pass procedure, including candidate selection and the
+  exact-state baseline covariance, is shown by derivation or simulation to hold
+  its stated confidence;
 - synthetic golden curves close the accepted, candidate-only, capability-boundary,
   no-saturation, non-positive-reference, and budget-insufficient cases, and a
   later batch that improves too much fails acceptance through `R_c` rather than
   through a separate outcome;
 - `Curve` has no exported field and no constructor besides `DeriveCurve`, so a
   hand-assembled `Point` cannot reach `DeriveBSatConfirmatory` and no curve mixes
-  baselines;
+  curve families or mismatches a point with its exact-state baseline;
+- family freezing and verification reject drift outside the explicitly member-specific
+  artifact, execution-path, and batch fields fixed by ADR 0014;
 - `DeriveCurve` rejects a `TrialID` appearing in more than one pass;
 - `DeriveBSatConfirmatory` rejects a candidate its curve does not span;
 - the rebuilt estimator reproduces the live batch-one point estimate and produces
@@ -610,14 +627,16 @@ Plan 5 is complete when:
    the positivity condition, the minimality boundary, and the rule that observed
    throughput never removes evidence.
 2. Fix the discovery policy version, including the `n_conf` sizing rule and both
-   caps, together with the campaign record. Both precede any measurement.
+   caps, together with the campaign record, eligible member map, and
+   `CurveFamilyContractDigest`. All precede any measurement; the realized
+   `CurveFamilyIdentity` follows Loader verification.
 3. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
    freedom reachable from the derivation path.
-4. Introduce the opaque `Curve` and `DeriveCurve` owning one baseline across both
-   passes. Rebuild aggregation and the point-confidence construction; the current
-   construction combines Student-t half-widths at differing degrees of freedom,
-   so the live batch-one interval is recomputed and the earlier one retained
-   under its own estimator version.
+4. Introduce the opaque `CurveFamily`, `Curve`, and `DeriveCurve`, owning one
+   exact-state baseline set across both passes. Rebuild aggregation and the
+   point-confidence construction; the current construction combines Student-t
+   half-widths at differing degrees of freedom, so the live batch-one interval
+   is recomputed and the earlier one retained under its own estimator version.
 5. Show, by derivation or simulation, that the two-pass procedure holds its
    stated confidence across every batch-to-batch difference the screen and the
    rule touch.
@@ -643,9 +662,10 @@ the machine-enforced provenance described under
 [Verification boundary](#verification-boundary) becomes load-bearing, because a
 controller creating Runs unattended is the condition those mechanisms exist for.
 
-The standby-versus-model-loaded idle distinction, per-engine idle equivalence,
-and transition-cost decomposition belong to a transition plan. They do not gate
-this campaign. Batch is excluded from `StateIdentity` and from
-`MeasurementProtocolIdentity`, so every batch in a single-state sweep is
-compatible with the same idle baseline, and `DeriveCurve` makes that one baseline
-the curve's only source. The per-state idle question does not arise here.
+Standby-versus-model-loaded idle and transition-cost decomposition belong to a
+transition plan. They do not gate this campaign. Per-engine model-loaded idle is
+not deferred: ADR 0014 requires an admitted baseline for every distinct member
+state. Batch remains excluded from the exact state and protocol projections as
+an axis value, but a fixed-batch artifact's digest, path, capability, and supply
+image remain bound. `CurveFamilyIdentity` is the only boundary allowed to
+compose those exact states.

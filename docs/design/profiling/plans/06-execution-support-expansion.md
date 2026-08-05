@@ -11,10 +11,12 @@
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
 physical power-supply correction. Orange Pi CPU ORT and the batch-one and
 batch-two RKNNLite rows have reached L3. RKNNLite batch expansion is now
-blocked at the L4 boundary: fixed-batch artifacts produce distinct execution
-states, while Plans 5 and 5a currently require one state and one idle baseline
-for a curve. Later slices remain deferred until their stated entry condition is
-met or this plan is explicitly revised.
+at the L4 campaign boundary: ADR 0014 preserves those distinct execution states
+and composes them through a frozen curve family with one exact idle baseline per
+member state. The retained batch-one row predates the current conversion recipe,
+catalog snapshot, and image set, so it must be regenerated and remeasured before
+the first family can be derived. Later slices remain deferred until their stated
+entry condition is met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -256,13 +258,15 @@ Entry condition: the owning execution path reaches L3 for
   stable execution state and record that row independently at L3.
 - [x] Keep the batch-one and batch-two rows separate; do not promote the class,
   runtime, model family, or a multi-batch curve from either row alone.
-- [ ] Decide how a curve over fixed-batch artifacts owns execution-state
-  identity and idle baselines. Current source binds artifact bytes/path into
-  state, and the retained batch-one and batch-two state identities differ, so
-  the one-state/one-baseline assumptions in Plans 5 and 5a do not currently
-  admit both points.
-- [ ] Only after that decision, implement Plan 5a discovery and use Plan 5 for
-  confirmatory L4 claims.
+- [x] Preserve exact execution-state identity and define a pre-frozen
+  `CurveFamilyContractDigest`, a Loader-verified `CurveFamilyIdentity`, and idle
+  baselines keyed by member state. ADR 0014 owns the cross-plan contract; Plans
+  5 and 5a own its consumers.
+- [ ] Reconvert batch one with the current repository recipe, freeze batch one
+  and batch two under one catalog/image generation, and admit three active plus
+  three model-loaded-idle Runs for each member state.
+- [ ] Implement Plan 5a discovery over the verified family and use Plan 5 only
+  for confirmatory L4 claims.
 
 ## Common completion gate
 
