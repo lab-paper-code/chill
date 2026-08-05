@@ -225,6 +225,9 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   `renderD128`, and `renderD129`. HostPath visibility does not prove NPU
   allocation or exclusivity, and the diagnostic did not initialize a session.
 - These two Pods are diagnostic cluster objects, not retained
-  `ProfilingRun` evidence. Until production declarations bind the image-owned
-  package separately from the host library, driver, device visibility, and an
-  explicit allocation/exclusivity claim, both RKNN rows remain L0.
+  `ProfilingRun` evidence. The repository now has strict source and retained-
+  report fields that separate the image-owned package from the expected host
+  library, driver, device visibility, and allocation/exclusivity claim. No
+  exact RKNN declaration is installed, no physical state identity binds that
+  host contract, and no production Job verifies it, so both RKNN rows remain
+  L0.

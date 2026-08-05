@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha2"
-	candidateReportScope         = "StaticCompatibility"
+	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
+	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha3"
+	candidateReportScope                 = "StaticCompatibility"
 )
 
 // CandidateReport is the shared wire contract between candidate resolution
@@ -25,6 +28,8 @@ type CandidateReport struct {
 	Selection           CandidateReportSelection        `json:"selection"`
 	DeviceClassFacts    CandidateReportDeviceClassFacts `json:"deviceClassFacts,omitempty"`
 	ArtifactSupply      CandidateReportArtifactSupply   `json:"artifactSupply,omitempty"`
+	RuntimePackages     []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
+	HostContract        *CandidateReportHostContract    `json:"hostContract,omitempty"`
 	MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
 	Verdict             string                          `json:"verdict"`
 	Reasons             []CandidateReportReason         `json:"reasons"`
@@ -73,6 +78,48 @@ type CandidateReportArtifactSupply struct {
 	Digest       string `json:"digest,omitempty"`
 }
 
+// CandidateReportRuntimePackage is one image-owned package fact from the
+// exact runtime declaration producer.
+type CandidateReportRuntimePackage struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// CandidateReportHostContract freezes the expected mutable host ABI, device
+// visibility, and Kubernetes allocation claims separately from image-owned
+// runtime facts. It is not a Run-time observation.
+type CandidateReportHostContract struct {
+	Libraries  []CandidateReportHostLibrary `json:"libraries"`
+	Driver     CandidateReportHostDriver    `json:"driver"`
+	Devices    []CandidateReportHostDevice  `json:"devices"`
+	Allocation CandidateReportNPUAllocation `json:"allocation"`
+}
+
+type CandidateReportHostLibrary struct {
+	Name          string `json:"name"`
+	HostPath      string `json:"hostPath"`
+	ContainerPath string `json:"containerPath"`
+	Digest        string `json:"digest"`
+}
+
+type CandidateReportHostDriver struct {
+	Name        string `json:"name"`
+	VersionPath string `json:"versionPath"`
+	Version     string `json:"version"`
+}
+
+type CandidateReportHostDevice struct {
+	Path string `json:"path"`
+}
+
+// CandidateReportNPUAllocation states what Kubernetes requests and whether
+// exclusivity is claimed. An empty ResourceName explicitly means no extended
+// resource allocation is configured.
+type CandidateReportNPUAllocation struct {
+	ResourceName       string `json:"resourceName"`
+	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
 type CandidateReportReason struct {
 	Kind string `json:"kind"`
 	Code string `json:"code"`
@@ -93,8 +140,13 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		}
 		return CandidateReport{}, fmt.Errorf("decode candidate report trailing content: %w", err)
 	}
-	if report.SchemaVersion != CandidateReportSchemaVersion {
+	if report.SchemaVersion != CandidateReportSchemaVersion &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
+		(len(report.RuntimePackages) != 0 || report.HostContract != nil) {
+		return CandidateReport{}, errors.New("v1alpha2 candidate report cannot contain runtime packages or a host contract")
 	}
 	if report.Scope != candidateReportScope {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report scope %q", report.Scope)
@@ -144,6 +196,77 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	}
 	if report.Verdict == "Compatible" && len(report.Reasons) != 0 {
 		return errors.New("compatible candidate report must not contain reasons")
+	}
+	if err := validateCandidateRuntimePackages(report.RuntimePackages); err != nil {
+		return err
+	}
+	if report.HostContract != nil {
+		if err := validateCandidateHostContract(*report.HostContract); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCandidateRuntimePackages(packages []CandidateReportRuntimePackage) error {
+	seen := make(map[string]struct{}, len(packages))
+	for _, pkg := range packages {
+		if strings.TrimSpace(pkg.Name) == "" || strings.TrimSpace(pkg.Name) != pkg.Name ||
+			strings.TrimSpace(pkg.Version) == "" || strings.TrimSpace(pkg.Version) != pkg.Version {
+			return errors.New("candidate report runtime package name and version are required without surrounding whitespace")
+		}
+		if _, duplicate := seen[pkg.Name]; duplicate {
+			return fmt.Errorf("candidate report duplicate runtime package %q", pkg.Name)
+		}
+		seen[pkg.Name] = struct{}{}
+	}
+	return nil
+}
+
+func validateCandidateHostContract(contract CandidateReportHostContract) error {
+	if len(contract.Libraries) == 0 || len(contract.Devices) == 0 {
+		return errors.New("candidate report host contract requires libraries and devices")
+	}
+	seenLibraries := make(map[string]struct{}, len(contract.Libraries))
+	for _, library := range contract.Libraries {
+		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name {
+			return errors.New("candidate report host library name is required without surrounding whitespace")
+		}
+		if !validArtifactPath(library.HostPath) || !validArtifactPath(library.ContainerPath) {
+			return errors.New("candidate report host library paths must be clean absolute paths")
+		}
+		if !digestPattern.MatchString(library.Digest) {
+			return errors.New("candidate report host library digest must be a canonical SHA-256 digest")
+		}
+		if _, duplicate := seenLibraries[library.Name]; duplicate {
+			return fmt.Errorf("candidate report duplicate host library %q", library.Name)
+		}
+		seenLibraries[library.Name] = struct{}{}
+	}
+	if strings.TrimSpace(contract.Driver.Name) == "" || strings.TrimSpace(contract.Driver.Name) != contract.Driver.Name ||
+		strings.TrimSpace(contract.Driver.Version) == "" || strings.TrimSpace(contract.Driver.Version) != contract.Driver.Version ||
+		!validArtifactPath(contract.Driver.VersionPath) {
+		return errors.New("candidate report host driver name, version path, and version are required")
+	}
+	seenDevices := make(map[string]struct{}, len(contract.Devices))
+	for _, device := range contract.Devices {
+		if !validArtifactPath(device.Path) {
+			return errors.New("candidate report host device must be a clean absolute path")
+		}
+		if _, duplicate := seenDevices[device.Path]; duplicate {
+			return fmt.Errorf("candidate report duplicate host device %q", device.Path)
+		}
+		seenDevices[device.Path] = struct{}{}
+	}
+	resourceName := contract.Allocation.ResourceName
+	if strings.TrimSpace(resourceName) != resourceName {
+		return errors.New("candidate report NPU resource name has surrounding whitespace")
+	}
+	if resourceName != "" && (!strings.Contains(resourceName, "/") || len(k8svalidation.IsQualifiedName(resourceName)) != 0) {
+		return errors.New("candidate report NPU resource name must be a qualified extended-resource name")
+	}
+	if contract.Allocation.ExclusivityClaimed && resourceName == "" {
+		return errors.New("candidate report cannot claim NPU exclusivity without a Kubernetes resource")
 	}
 	return nil
 }

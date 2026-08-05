@@ -21,6 +21,7 @@ import (
 
 const (
 	testArtifactDigest      = "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
+	testRKNNArtifactDigest  = "sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550"
 	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
 	testArchitecture        = "amd64"
 	testRuntimeImage        = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
@@ -38,6 +39,114 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 	}
 	assertResolvedCandidate(t, resolved, selection)
 	assertCandidateReport(t, resolved, selection)
+}
+
+func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.T) {
+	objects := validRKNNCandidateObjects()
+	resolver := newCandidateResolver(t, objects...)
+	selection := profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
+		ExecutionPath: "rknnlite", PowerMode: fixedPowerMode,
+	}
+
+	resolved, err := resolver.ResolveCandidate(context.Background(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.RuntimePackages) != 1 || report.RuntimePackages[0].Name != "rknn-toolkit-lite2" ||
+		report.RuntimePackages[0].Version != "2.3.2" {
+		t.Fatalf("runtime packages were not retained separately: %#v", report.RuntimePackages)
+	}
+	if report.HostContract == nil || len(report.HostContract.Libraries) != 1 ||
+		report.HostContract.Libraries[0].Digest != "sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8" ||
+		report.HostContract.Driver.Version != "0.9.6" || len(report.HostContract.Devices) != 2 ||
+		report.HostContract.Allocation.ResourceName != "" || report.HostContract.Allocation.ExclusivityClaimed {
+		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
+	}
+}
+
+func TestDecodeRuntimeDeclarationValidatesImageOwnedPackages(t *testing.T) {
+	payload := validRKNNRuntimeDeclaration()
+	sum := sha256.Sum256([]byte(payload))
+	declaration, err := decodeRuntimeDeclaration(runtimeDeclarationSource{
+		ContentDigest: "sha256:" + hex.EncodeToString(sum[:]), Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declaration.Packages) != 1 || declaration.Packages[0].Name != "rknn-toolkit-lite2" {
+		t.Fatalf("decoded packages = %#v", declaration.Packages)
+	}
+
+	duplicate := strings.Replace(
+		payload,
+		`"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}]`,
+		`"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"},{"name":"rknn-toolkit-lite2","version":"2.3.2"}]`,
+		1,
+	)
+	duplicateSum := sha256.Sum256([]byte(duplicate))
+	if _, err := decodeRuntimeDeclaration(runtimeDeclarationSource{
+		ContentDigest: "sha256:" + hex.EncodeToString(duplicateSum[:]), Payload: duplicate,
+	}); err == nil || !strings.Contains(err.Error(), "duplicate runtime package") {
+		t.Fatalf("expected duplicate package rejection, got %v", err)
+	}
+}
+
+func TestValidateHostExecutionContractFailsClosed(t *testing.T) {
+	valid := hostExecutionContract{
+		Libraries: []hostLibraryContract{{
+			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+			Digest: "sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8",
+		}},
+		Driver:  hostDriverContract{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
+		Devices: []hostDeviceContract{{Path: "/dev/dri/renderD128"}},
+	}
+	if err := validateHostExecutionContract(valid); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidPath := valid
+	invalidPath.Devices = []hostDeviceContract{{Path: "/dev/dri/../dri/renderD128"}}
+	if err := validateHostExecutionContract(invalidPath); err == nil {
+		t.Fatal("expected non-canonical host device path rejection")
+	}
+
+	invalidAllocation := valid
+	invalidAllocation.Allocation.ExclusivityClaimed = true
+	if err := validateHostExecutionContract(invalidAllocation); err == nil {
+		t.Fatal("expected exclusivity claim without Kubernetes resource rejection")
+	}
+
+	invalidAllocation = valid
+	invalidAllocation.Allocation.ResourceName = "npu"
+	if err := validateHostExecutionContract(invalidAllocation); err == nil {
+		t.Fatal("expected non-qualified extended-resource name rejection")
+	}
+}
+
+func TestSelectExecutionDeclarationRetainsV1Alpha2Compatibility(t *testing.T) {
+	document := strings.Replace(validExecutionFacts(), executionFactsSchema, executionFactsSchemaV1Alpha2, 1)
+	configMap := validCandidateObjects()[2].(*corev1.ConfigMap)
+	configMap.Data["execution-facts.yaml"] = document
+	if _, err := selectExecutionDeclaration(configMap, "execution-facts.yaml", profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
+		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	withHost := strings.Replace(document, "    artifact:\n", "    host: {}\n    artifact:\n", 1)
+	configMap.Data["execution-facts.yaml"] = withHost
+	if _, err := selectExecutionDeclaration(configMap, "execution-facts.yaml", profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
+		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
+	}); err == nil {
+		t.Fatal("expected v1alpha2 execution facts with host contract rejection")
+	}
 }
 
 func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
@@ -415,10 +524,29 @@ func validCandidateObjects() []client.Object {
 	return []client.Object{model, deviceClass, configMap}
 }
 
+func validRKNNCandidateObjects() []client.Object {
+	objects := validCandidateObjects()
+	model := objects[0].(*edgev1alpha1.ModelSpec)
+	model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
+		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn", Digest: testRKNNArtifactDigest,
+		Derivation: validArtifactDerivation("canonical-onnx"),
+	})
+	model.Spec.ExecutionPaths = append(model.Spec.ExecutionPaths, edgev1alpha1.ModelExecutionPath{
+		Name: "rknnlite", Artifact: "mobilenet-v2-050-rk3588-bs1",
+		Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "rknnlite", Backend: "not-applicable"},
+	})
+	class := objects[1].(*edgev1alpha1.DeviceClass)
+	class.Name = "orangepi-5-plus-16g"
+	class.Spec.Architecture = "arm64"
+	class.Spec.NodeSelector = map[string]string{"edge.dacs.io/device-class": class.Name}
+	objects[2].(*corev1.ConfigMap).Data["execution-facts.yaml"] = validRKNNExecutionFacts()
+	return objects
+}
+
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
 	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha2
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha3
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
@@ -437,8 +565,50 @@ declarations:
 `
 }
 
+func validRKNNExecutionFacts() string {
+	payload := validRKNNRuntimeDeclaration()
+	digest := sha256.Sum256([]byte(payload))
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha3
+metricObserverImage: ` + testMetricObserverImage + `
+declarations:
+  - modelSpec: mobilenet-v2-050
+    deviceClass: orangepi-5-plus-16g
+    executionPath: rknnlite
+    runtime:
+      contentDigest: sha256:` + hex.EncodeToString(digest[:]) + `
+      payload: |-
+        ` + payload + `
+    artifact:
+      schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
+      image: ` + testArtifactImage + `
+      architecture: arm64
+      path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
+      digest: ` + testRKNNArtifactDigest + `
+    host:
+      libraries:
+        - name: librknnrt
+          hostPath: /usr/lib/librknnrt.so
+          containerPath: /usr/lib/librknnrt.so
+          digest: sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
+      driver:
+        name: rknpu
+        versionPath: /sys/module/rknpu/version
+        version: 0.9.6
+      devices:
+        - path: /dev/dri/renderD128
+        - path: /dev/dri/renderD129
+      allocation:
+        resourceName: ""
+        exclusivityClaimed: false
+`
+}
+
 func validRuntimeDeclaration() string {
 	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","image":"` + testRuntimeImage + `","architecture":"amd64","runtime":{"family":"onnxruntime","backends":["CPUExecutionProvider"]},"verification":"exact-image-runtime-inspection-v1"}`
+}
+
+func validRKNNRuntimeDeclaration() string {
+	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"arm64","runtime":{"family":"rknnlite","backends":["not-applicable"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}`
 }
 
 func replaceRuntimeDeclaration(config *corev1.ConfigMap, old, replacement string) {

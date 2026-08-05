@@ -91,6 +91,8 @@ func buildCandidateReport(input candidateReportInput) ([]byte, error) {
 			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
 			Path: input.Declaration.Artifact.Path, Digest: input.Declaration.Artifact.Digest,
 		},
+		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
+		HostContract:        reportHostContract(input.Declaration.Host),
 		MetricObserverImage: input.Declaration.MetricObserverImage,
 		Verdict:             string(input.Result.Verdict), Reasons: reasons,
 	}
@@ -99,6 +101,43 @@ func buildCandidateReport(input candidateReportInput) ([]byte, error) {
 		return nil, fmt.Errorf("encode static candidate report: %w", err)
 	}
 	return payload, nil
+}
+
+func reportRuntimePackages(source []runtimePackage) []profilingrun.CandidateReportRuntimePackage {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make([]profilingrun.CandidateReportRuntimePackage, len(source))
+	for index, pkg := range source {
+		result[index] = profilingrun.CandidateReportRuntimePackage{Name: pkg.Name, Version: pkg.Version}
+	}
+	return result
+}
+
+func reportHostContract(source *hostExecutionContract) *profilingrun.CandidateReportHostContract {
+	if source == nil {
+		return nil
+	}
+	result := &profilingrun.CandidateReportHostContract{
+		Libraries: make([]profilingrun.CandidateReportHostLibrary, len(source.Libraries)),
+		Driver: profilingrun.CandidateReportHostDriver{
+			Name: source.Driver.Name, VersionPath: source.Driver.VersionPath, Version: source.Driver.Version,
+		},
+		Devices: make([]profilingrun.CandidateReportHostDevice, len(source.Devices)),
+		Allocation: profilingrun.CandidateReportNPUAllocation{
+			ResourceName: source.Allocation.ResourceName, ExclusivityClaimed: source.Allocation.ExclusivityClaimed,
+		},
+	}
+	for index, library := range source.Libraries {
+		result.Libraries[index] = profilingrun.CandidateReportHostLibrary{
+			Name: library.Name, HostPath: library.HostPath,
+			ContainerPath: library.ContainerPath, Digest: library.Digest,
+		}
+	}
+	for index, device := range source.Devices {
+		result.Devices[index] = profilingrun.CandidateReportHostDevice{Path: device.Path}
+	}
+	return result
 }
 
 func copyStringMap(source map[string]string) map[string]string {

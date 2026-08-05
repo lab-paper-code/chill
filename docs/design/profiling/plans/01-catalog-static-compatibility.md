@@ -117,6 +117,15 @@ bound by exact source and content identity when a Run is frozen. A consumer
 treats a missing or untrusted declaration as `Unknown` and never rebinds an
 older declaration to a new image.
 
+Plan 6 extends this configuration envelope without changing the CPU producer:
+runtime-declaration v1alpha2 can retain image-owned package versions, while
+execution-facts v1alpha3 can separately retain an expected host-library,
+driver, device-path, and Kubernetes allocation contract. Candidate-report
+v1alpha3 freezes both groups into the immutable Run input. Existing v1alpha1
+runtime declarations, v1alpha2 execution facts, and v1alpha2 candidate reports
+remain readable but cannot carry the new fields. These are expected contracts,
+not proof that a particular Job observed or satisfied them.
+
 ## Checkpoint 3 decision: first read-only consumer
 
 The first consumer is split across a pure evaluator and trusted fact adapter:

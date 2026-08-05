@@ -15,15 +15,18 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/profiler"
 	corev1 "k8s.io/api/core/v1"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
 
 const (
-	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha2"
-	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha1"
-	artifactSupplySchema     = "chill.dacs.io/artifact-supply.v1alpha1"
-	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
+	executionFactsSchemaV1Alpha2     = "chill.dacs.io/profiler-execution-facts.v1alpha2"
+	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha3"
+	runtimeDeclarationSchemaV1Alpha1 = "chill.dacs.io/runtime-declaration.v1alpha1"
+	runtimeDeclarationSchema         = "chill.dacs.io/runtime-declaration.v1alpha2"
+	artifactSupplySchema             = "chill.dacs.io/artifact-supply.v1alpha1"
+	trustedRuntimeInspection         = "exact-image-runtime-inspection-v1"
 )
 
 var (
@@ -44,6 +47,7 @@ type executionDeclaration struct {
 	ExecutionPath string                   `json:"executionPath"`
 	Runtime       runtimeDeclarationSource `json:"runtime"`
 	Artifact      artifactSupply           `json:"artifact"`
+	Host          *hostExecutionContract   `json:"host,omitempty"`
 }
 
 // runtimeDeclarationSource preserves the exact producer output instead of
@@ -61,7 +65,13 @@ type runtimeDeclaration struct {
 		Family   string   `json:"family"`
 		Backends []string `json:"backends"`
 	} `json:"runtime"`
-	Verification string `json:"verification"`
+	Packages     []runtimePackage `json:"packages,omitempty"`
+	Verification string           `json:"verification"`
+}
+
+type runtimePackage struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 // artifactSupply is a versioned delivery contract. The future Job worker must
@@ -74,6 +84,38 @@ type artifactSupply struct {
 	Digest        string `json:"digest"`
 }
 
+// hostExecutionContract is installation configuration, not a current host
+// observation. The Job projection and worker must mount and verify every
+// declared boundary before measurement.
+type hostExecutionContract struct {
+	Libraries  []hostLibraryContract `json:"libraries"`
+	Driver     hostDriverContract    `json:"driver"`
+	Devices    []hostDeviceContract  `json:"devices"`
+	Allocation npuAllocationClaim    `json:"allocation"`
+}
+
+type hostLibraryContract struct {
+	Name          string `json:"name"`
+	HostPath      string `json:"hostPath"`
+	ContainerPath string `json:"containerPath"`
+	Digest        string `json:"digest"`
+}
+
+type hostDriverContract struct {
+	Name        string `json:"name"`
+	VersionPath string `json:"versionPath"`
+	Version     string `json:"version"`
+}
+
+type hostDeviceContract struct {
+	Path string `json:"path"`
+}
+
+type npuAllocationClaim struct {
+	ResourceName       string `json:"resourceName"`
+	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
 type resolvedExecutionDeclaration struct {
 	ModelSpec                string
 	DeviceClass              string
@@ -81,6 +123,7 @@ type resolvedExecutionDeclaration struct {
 	Runtime                  runtimeDeclaration
 	RuntimeDeclarationDigest string
 	Artifact                 artifactSupply
+	Host                     *hostExecutionContract
 	MetricObserverImage      string
 }
 
@@ -104,7 +147,7 @@ func selectExecutionDeclaration(
 	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
-	if document.SchemaVersion != executionFactsSchema {
+	if document.SchemaVersion != executionFactsSchema && document.SchemaVersion != executionFactsSchemaV1Alpha2 {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
 	if !pinnedWorkloadImage.MatchString(document.MetricObserverImage) {
@@ -117,7 +160,7 @@ func selectExecutionDeclaration(
 	seen := make(map[string]struct{}, len(document.Declarations))
 	var selected *resolvedExecutionDeclaration
 	for index := range document.Declarations {
-		declaration, err := validateExecutionDeclaration(document.Declarations[index])
+		declaration, err := validateExecutionDeclaration(document.SchemaVersion, document.Declarations[index])
 		if err != nil {
 			return resolvedExecutionDeclaration{}, fmt.Errorf("validate execution declaration %d: %w", index, err)
 		}
@@ -131,6 +174,8 @@ func selectExecutionDeclaration(
 			declaration.ExecutionPath == selection.ExecutionPath {
 			copy := declaration
 			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
+			copy.Runtime.Packages = append([]runtimePackage(nil), declaration.Runtime.Packages...)
+			copy.Host = cloneHostExecutionContract(declaration.Host)
 			copy.MetricObserverImage = document.MetricObserverImage
 			selected = &copy
 		}
@@ -164,7 +209,7 @@ func readSingleYAMLDocument(raw []byte) ([]byte, error) {
 	return document, nil
 }
 
-func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutionDeclaration, error) {
+func validateExecutionDeclaration(schemaVersion string, source executionDeclaration) (resolvedExecutionDeclaration, error) {
 	for name, value := range map[string]string{
 		"modelSpec": source.ModelSpec, "deviceClass": source.DeviceClass,
 		"executionPath": source.ExecutionPath, "runtime declaration digest": source.Runtime.ContentDigest,
@@ -180,9 +225,18 @@ func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutio
 	if err := validateArtifactSupply(source.Artifact); err != nil {
 		return resolvedExecutionDeclaration{}, err
 	}
+	if schemaVersion == executionFactsSchemaV1Alpha2 && source.Host != nil {
+		return resolvedExecutionDeclaration{}, errors.New("v1alpha2 execution facts cannot contain a host contract")
+	}
+	if source.Host != nil {
+		if err := validateHostExecutionContract(*source.Host); err != nil {
+			return resolvedExecutionDeclaration{}, err
+		}
+	}
 	return resolvedExecutionDeclaration{
 		ModelSpec: source.ModelSpec, DeviceClass: source.DeviceClass, ExecutionPath: source.ExecutionPath,
 		Runtime: runtime, RuntimeDeclarationDigest: source.Runtime.ContentDigest, Artifact: source.Artifact,
+		Host: cloneHostExecutionContract(source.Host),
 	}, nil
 }
 
@@ -201,7 +255,8 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return runtimeDeclaration{}, errors.New("runtime producer declaration must contain exactly one JSON object")
 	}
-	if declaration.SchemaVersion != runtimeDeclarationSchema {
+	if declaration.SchemaVersion != runtimeDeclarationSchema &&
+		declaration.SchemaVersion != runtimeDeclarationSchemaV1Alpha1 {
 		return runtimeDeclaration{}, fmt.Errorf("unsupported runtime declaration schema %q", declaration.SchemaVersion)
 	}
 	for name, value := range map[string]string{
@@ -231,7 +286,83 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 		}
 		seen[backend] = struct{}{}
 	}
+	if declaration.SchemaVersion == runtimeDeclarationSchemaV1Alpha1 && len(declaration.Packages) != 0 {
+		return runtimeDeclaration{}, errors.New("v1alpha1 runtime declaration cannot contain packages")
+	}
+	seenPackages := make(map[string]struct{}, len(declaration.Packages))
+	for _, pkg := range declaration.Packages {
+		if strings.TrimSpace(pkg.Name) == "" || strings.TrimSpace(pkg.Name) != pkg.Name ||
+			strings.TrimSpace(pkg.Version) == "" || strings.TrimSpace(pkg.Version) != pkg.Version {
+			return runtimeDeclaration{}, errors.New("runtime package name and version are required without surrounding whitespace")
+		}
+		if _, duplicate := seenPackages[pkg.Name]; duplicate {
+			return runtimeDeclaration{}, fmt.Errorf("duplicate runtime package %q", pkg.Name)
+		}
+		seenPackages[pkg.Name] = struct{}{}
+	}
 	return declaration, nil
+}
+
+func validateHostExecutionContract(contract hostExecutionContract) error {
+	if len(contract.Libraries) == 0 || len(contract.Devices) == 0 {
+		return errors.New("host contract requires libraries and devices")
+	}
+	seenLibraries := make(map[string]struct{}, len(contract.Libraries))
+	for _, library := range contract.Libraries {
+		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name {
+			return errors.New("host library name is required without surrounding whitespace")
+		}
+		if !cleanAbsolutePath(library.HostPath) || !cleanAbsolutePath(library.ContainerPath) {
+			return errors.New("host library paths must be clean absolute paths")
+		}
+		if !digestPattern.MatchString(library.Digest) {
+			return errors.New("host library digest must be a canonical SHA-256 digest")
+		}
+		if _, duplicate := seenLibraries[library.Name]; duplicate {
+			return fmt.Errorf("duplicate host library %q", library.Name)
+		}
+		seenLibraries[library.Name] = struct{}{}
+	}
+	if strings.TrimSpace(contract.Driver.Name) == "" || strings.TrimSpace(contract.Driver.Name) != contract.Driver.Name ||
+		strings.TrimSpace(contract.Driver.Version) == "" || strings.TrimSpace(contract.Driver.Version) != contract.Driver.Version ||
+		!cleanAbsolutePath(contract.Driver.VersionPath) {
+		return errors.New("host driver name, version path, and version are required")
+	}
+	seenDevices := make(map[string]struct{}, len(contract.Devices))
+	for _, device := range contract.Devices {
+		if !cleanAbsolutePath(device.Path) {
+			return errors.New("host device must be a clean absolute path")
+		}
+		if _, duplicate := seenDevices[device.Path]; duplicate {
+			return fmt.Errorf("duplicate host device %q", device.Path)
+		}
+		seenDevices[device.Path] = struct{}{}
+	}
+	resourceName := contract.Allocation.ResourceName
+	if strings.TrimSpace(resourceName) != resourceName {
+		return errors.New("NPU resource name has surrounding whitespace")
+	}
+	if resourceName != "" && (!strings.Contains(resourceName, "/") || len(k8svalidation.IsQualifiedName(resourceName)) != 0) {
+		return errors.New("NPU resource name must be a qualified extended-resource name")
+	}
+	if contract.Allocation.ExclusivityClaimed && resourceName == "" {
+		return errors.New("cannot claim NPU exclusivity without a Kubernetes resource")
+	}
+	return nil
+}
+
+func cloneHostExecutionContract(source *hostExecutionContract) *hostExecutionContract {
+	if source == nil {
+		return nil
+	}
+	copy := *source
+	copy.Libraries = append([]hostLibraryContract(nil), source.Libraries...)
+	copy.Devices = append([]hostDeviceContract(nil), source.Devices...)
+	return &copy
+}
+
+func cleanAbsolutePath(value string) bool {
+	return artifactPath.MatchString(value) && path.Clean(value) == value
 }
 
 func validateArtifactSupply(artifact artifactSupply) error {
@@ -249,7 +380,7 @@ func validateArtifactSupply(artifact artifactSupply) error {
 	if !pinnedWorkloadImage.MatchString(artifact.Image) {
 		return errors.New("artifact image must be digest-pinned")
 	}
-	if !artifactPath.MatchString(artifact.Path) || path.Clean(artifact.Path) != artifact.Path {
+	if !cleanAbsolutePath(artifact.Path) {
 		return errors.New("artifact path must be a clean absolute container path")
 	}
 	if !digestPattern.MatchString(artifact.Digest) {
