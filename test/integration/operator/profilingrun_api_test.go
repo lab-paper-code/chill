@@ -38,6 +38,16 @@ var _ = Describe("ProfilingRun API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
 	})
 
+	It("accepts one batch-fixed model-loaded idle Run request", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("idle-batch-fixed"))
+		configureIdleProfilingRun(run)
+		run.Spec.Measurement.Batch = 2
+
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+	})
+
 	It("accepts an operator-configured admission policy name", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("configured-policy"))
