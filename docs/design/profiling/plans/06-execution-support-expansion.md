@@ -245,7 +245,14 @@ support.
   `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`
   and artifact
   `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721`.
-- [ ] Add its Node-specific metric source and wall-meter identity.
+- [x] Add its Node-specific metric source and wall-meter identity. The frozen
+  v1alpha1 source entry binds Node `orangepi`, kind `edge-metrics`, endpoint
+  `http://155.230.34.143:9102/metrics`, and metric
+  `shelly_power_total_watts`; the resolver digests only that selected entry.
+  The live edge-metrics registry exposed exactly one attached meter,
+  `shellyplugsg3-d0cf13d81a88`. That hardware identifier corroborates the
+  current topology but is not separately carried in the current Prometheus
+  sample or frozen intent identity.
 - [ ] Verify CPU thermal/throttle metric completeness.
 - [ ] Bind CPU request and ORT threads to observed allocatable CPU.
 - [ ] Run and admit three active and three model-loaded-idle Runs.

@@ -41,3 +41,7 @@ profiler:
         kind: edge-metrics
         endpoint: http://155.230.34.243:9102/metrics
         powerMetric: shelly_power_total_watts
+      - node: orangepi
+        kind: edge-metrics
+        endpoint: http://155.230.34.143:9102/metrics
+        powerMetric: shelly_power_total_watts
