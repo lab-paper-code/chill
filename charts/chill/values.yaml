@@ -435,7 +435,7 @@ discovery:
         memory: 4Gi
         accelerator: nvidia-jetson-nano
         powerModes:
-          - name: 10W
+          - name: MAXN
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 0}}
           - name: 5W
             actuator: {kind: JetsonNVPModel, jetsonNVPModel: {id: 1}}

@@ -26,6 +26,25 @@ Do not paste full command transcripts or duplicate implementation rationale.
 - Current support vocabulary and all row blockers were seeded in the support
   matrix before expanding arm64 execution.
 
+## Jetson NVPModel catalog audit (2026-08-06)
+
+The existing SSH administration path ran only read-only `nvpmodel -q --verbose`
+and config-file queries. It did not apply a mode. The complete reachable-host
+comparison was:
+
+| Kubernetes Node | Host model | Current mode | Configured ID/name set | Catalog result |
+|---|---|---|---|---|
+| `jetson-nano` | Jetson Nano 4GB | `0 / MAXN` | `0 / MAXN`, `1 / 5W` | ID 0 was incorrectly named `10W`; the chart and support matrix now use `MAXN`. |
+| `jetsono` | Jetson AGX Orin 64GB | `0 / MAXN` | `0 / MAXN`, `1 / MODE_15W`, `2 / MODE_30W`, `3 / MODE_50W` | Exact match. |
+| `jetsonx` | Jetson Xavier NX 8GB | `2 / MODE_15W_6CORE` | IDs 0--8, from `MODE_15W_2CORE` through `MODE_20W_6CORE` | Exact match for all nine entries. |
+
+`orin-nano` remained `Ready=Unknown` with `NodeStatusUnknown`, had no discovered
+`DeviceClass`, and was unreachable through its configured SSH path. Its Helm
+catalog row is repository intent only and remains unverified until the Node is
+recovered. The installed Jetson Nano `DeviceClass` still carried the old `10W`
+name at capture time; this repository correction is not a live rollout or an
+actuation proof.
+
 ## Shared arm64 CPU ORT facts
 
 | Fact | Verified identity |

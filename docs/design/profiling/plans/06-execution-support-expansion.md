@@ -18,7 +18,9 @@ snapshot, runtime, and helper-image set. The pure Plan 5a family/stop campaign
 then produced 12 new post-freeze Accepted Runs, reproduced both exact-state
 baselines, selected batch one, and stopped at the batch-three capability
 boundary. This closes P7 without retroactively promoting the earlier diagnostic
-Runs. Later slices remain
+Runs. A read-only NVPModel audit now matches every mode on the three Ready
+Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
+`MAXN`; the unreachable `orin-nano` row remains unverified. Later slices remain
 deferred until their stated entry condition is met or this plan is explicitly
 revised.
 
@@ -138,8 +140,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
 ### Jetson NVPModel
 
-- [ ] Read-only probe every live Jetson's NVPModel IDs and names.
-- [ ] Compare the probe with every Helm catalog mode before enabling it.
+- [x] Read-only probe every Ready Jetson's complete NVPModel ID/name set.
+- [x] Compare each reachable host with its Helm catalog row and correct every
+  mismatch before enabling actuation.
+- [ ] Recover `orin-nano`, then probe and compare its complete NVPModel set;
+  neither Kubernetes nor the configured SSH path could reach it during the
+  2026-08-06 audit.
 - [ ] Implement explicit `Apply(ID)` and `Observe()` operations.
 - [ ] Judge success by read-back identity, never command exit alone.
 - [ ] Retain start/end mode observations in execution evidence.
