@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,47 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 	}
 }
 
+func TestRunReconcilerRejectsReplacementJobIdentityDrift(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+
+	initial := newReconcilerHarness(t, kube, prepared)
+	reconcile(t, ctx, initial.reconciler, request)
+	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
+	recordedJob := requireRecordedJob(t, afterCreate)
+
+	deleteJobAndWait(t, ctx, kube, run.Namespace, recordedJob.Name)
+	replacement := createReplacementJob(t, ctx, kube, run.Namespace, recordedJob.Name)
+	if string(replacement.UID) == recordedJob.UID {
+		t.Fatalf("replacement Job unexpectedly retained recorded UID %s", recordedJob.UID)
+	}
+
+	restarted := newReconcilerHarness(t, kube, prepared)
+	_, err := restarted.reconciler.Reconcile(ctx, request)
+	if err == nil || !strings.Contains(err.Error(), "observed Job identity does not match recorded reference") {
+		t.Fatalf("replacement Job reconcile error = %v, want recorded identity mismatch", err)
+	}
+	afterDrift := getRun(t, ctx, kube, request.NamespacedName)
+	if afterDrift.ResourceVersion != afterCreate.ResourceVersion {
+		t.Fatalf(
+			"identity drift rewrote Run status: before=%s after=%s",
+			afterCreate.ResourceVersion,
+			afterDrift.ResourceVersion,
+		)
+	}
+	if afterDrift.Status.Job == nil || *afterDrift.Status.Job != recordedJob {
+		t.Fatalf("identity drift changed recorded Job reference: %#v", afterDrift.Status.Job)
+	}
+	if condition := findCondition(
+		afterDrift.Status.Conditions,
+		edgev1alpha1.ProfilingRunConditionExecutionComplete,
+	); condition != nil {
+		t.Fatalf("identity drift was misreported as an execution outcome: %#v", condition)
+	}
+	assertNoExecutionCalls(t, restarted)
+}
+
 func startProfilerEnvtest(t *testing.T) (context.Context, client.Client) {
 	t.Helper()
 	testEnv := &envtest.Environment{
@@ -334,6 +376,31 @@ func deleteJobAndWait(
 	if err := wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, deleted); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func createReplacementJob(
+	t *testing.T,
+	ctx context.Context,
+	kube client.Client,
+	namespace, name string,
+) *batchv1.Job {
+	t.Helper()
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(0)),
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{
+					Name: "foreign", Image: "example.invalid/foreign:test",
+				}},
+			}},
+		},
+	}
+	if err := kube.Create(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	return job
 }
 
 func reconcile(

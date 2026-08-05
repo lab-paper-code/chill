@@ -35,7 +35,9 @@ state, and disappearance of the recorded Job. It proves that one recorded Job
 UID is never rematerialized and that loss is reported as stable
 `ExecutionLost`. A second restart test proves that evidence finalized before a
 Profiler restart proceeds to admission without repeating finalization, and that
-a completed admission is a stable no-op. Cancellation, the remaining
+a completed admission is a stable no-op. A third envtest proves that recreating
+the recorded Job name with a different UID is rejected without
+rematerialization or Run-status mutation. Cancellation, the remaining
 identity-drift cases, and the Operator-side restart case remain open;
 checkpoint 12 is not reported complete.
 
@@ -651,7 +653,8 @@ sentinel values accepted by the active result validator.
     duplicate reconcile, Profiler reconciler reconstruction, and recorded-Job
     loss now cross a real API server and status subresource. Restart between
     finalization and admission, plus the completed-admission no-op, are also
-    covered. Cancellation, remaining drift cases, and the Operator-side
+    covered. Recorded-Job replacement with a different UID is rejected without
+    status mutation. Cancellation, remaining drift cases, and the Operator-side
     restart case remain.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
