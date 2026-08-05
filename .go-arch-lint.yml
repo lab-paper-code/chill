@@ -87,6 +87,7 @@ deps:
       - api
       - platform-core
       - device-class
+      - node-actuator-core
       - operator
 
   evidence-core:
@@ -125,6 +126,7 @@ deps:
   profiler-app:
     mayDependOn:
       - evidence-core
+      - node-actuator-core
       - profiling-run
 
   profiler-evidence:

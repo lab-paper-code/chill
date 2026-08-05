@@ -1,0 +1,70 @@
+{{- if .Values.nodeActuator.enabled }}
+{{- if .Values.nodeActuator.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.nodeActuatorServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-actuator
+    {{- include "chill.labels" . | nindent 4 }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.nodeActuatorName" . }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["nodeactuations"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["nodeactuations/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.nodeActuatorName" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "chill.nodeActuatorName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.nodeActuatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.nodeActuatorName" . }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.nodeActuatorName" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.nodeActuatorName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.nodeActuatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

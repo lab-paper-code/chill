@@ -173,3 +173,34 @@ func TestFinalizeDeletesDeviceClassesAndCleansNodes(t *testing.T) {
 		t.Fatalf("other-system DeviceClass was deleted: %v", err)
 	}
 }
+
+func TestFinalizeRetainsSystemWhileNodeActuationNeedsOperand(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	system := &edgev1alpha1.ChillSystem{
+		ObjectMeta: metav1.ObjectMeta{Name: "chill"},
+		Spec:       edgev1alpha1.ChillSystemSpec{ManagementNamespace: "chill-system"},
+	}
+	handoff := &edgev1alpha1.NodeActuation{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "pending"},
+		Status:     edgev1alpha1.NodeActuationStatus{Phase: edgev1alpha1.NodeActuationPhasePending},
+	}
+	reconciler := &ChillSystemReconciler{
+		Client:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, handoff).Build(),
+		Options: Options{Namespace: "chill-system"},
+	}
+	done, err := reconciler.finalize(ctx, system)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("finalize completed while a NodeActuation still needed the operand")
+	}
+}

@@ -108,6 +108,30 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.profiler.image.tag -}}
 {{- end -}}
 
+{{- define "chill.nodeActuatorName" -}}
+{{- printf "%s-node-actuator" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.nodeActuatorConfigName" -}}
+{{- printf "%s-node-actuator-config" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.nodeActuatorServiceAccountName" -}}
+{{- if .Values.nodeActuator.serviceAccount.create -}}
+{{- default (include "chill.nodeActuatorName" .) .Values.nodeActuator.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.nodeActuator.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "chill.nodeActuatorImageTag" -}}
+{{- default .Chart.AppVersion .Values.nodeActuator.image.tag -}}
+{{- end -}}
+
+{{- define "chill.nodeActuatorImage" -}}
+{{- printf "%s:%s" .Values.nodeActuator.image.repository (include "chill.nodeActuatorImageTag" .) -}}
+{{- end -}}
+
 {{- define "chill.consoleName" -}}
 {{- printf "%s-console" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

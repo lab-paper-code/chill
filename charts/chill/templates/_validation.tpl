@@ -4,6 +4,7 @@
 {{- $nodeDiscoveryImageTag := include "chill.nodeDiscoveryImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
+{{- $nodeActuatorImageTag := include "chill.nodeActuatorImageTag" . -}}
 {{- $consoleImageTag := include "chill.consoleImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
@@ -45,6 +46,44 @@
 {{- end -}}
 {{- if and (not .Values.operator.serviceAccount.create) (empty .Values.operator.serviceAccount.name) -}}
 {{- fail "operator.serviceAccount.name must be set when operator.serviceAccount.create=false" -}}
+{{- end -}}
+{{- if .Values.nodeActuator.enabled -}}
+{{- if empty .Values.nodeActuator.configMapKey -}}
+{{- fail "nodeActuator.configMapKey must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.image.repository -}}
+{{- fail "nodeActuator.image.repository must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty $nodeActuatorImageTag -}}
+{{- fail "nodeActuator.image.tag or Chart.appVersion must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.image.pullPolicy -}}
+{{- fail "nodeActuator.image.pullPolicy must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.metricsBindAddress -}}
+{{- fail "nodeActuator.metricsBindAddress must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.nodeActuator.healthProbePort) 1) (gt (int .Values.nodeActuator.healthProbePort) 65535) -}}
+{{- fail "nodeActuator.healthProbePort must be between 1 and 65535 when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.nodeActuator.leaseDurationSeconds) 5) (gt (int .Values.nodeActuator.leaseDurationSeconds) 300) -}}
+{{- fail "nodeActuator.leaseDurationSeconds must be between 5 and 300 when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.safetyValidFor -}}
+{{- fail "nodeActuator.safetyValidFor must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.allowedNamespaces -}}
+{{- fail "nodeActuator.allowedNamespaces must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.nodeSelector -}}
+{{- fail "nodeActuator.nodeSelector must explicitly select eligible Nodes" -}}
+{{- end -}}
+{{- if empty .Values.profiler.factSource.actuationPolicies -}}
+{{- fail "profiler.factSource.actuationPolicies must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if and (not .Values.nodeActuator.serviceAccount.create) (empty .Values.nodeActuator.serviceAccount.name) -}}
+{{- fail "nodeActuator.serviceAccount.name must be set when nodeActuator.serviceAccount.create=false" -}}
+{{- end -}}
 {{- end -}}
 {{- if .Values.profiler.enabled -}}
 {{- if lt (int .Values.profiler.replicaCount) 1 -}}

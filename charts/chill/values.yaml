@@ -304,6 +304,42 @@ profiler:
         settlingDurationSeconds: 60
         maxActuationDurationSeconds: 900
 
+nodeActuator:
+  enabled: false
+  configMapKey: config.yaml
+  image:
+    repository: daclab/chill-node-actuator
+    tag: ""
+    pullPolicy: IfNotPresent
+  metricsBindAddress: "0"
+  healthProbePort: 8081
+  leaseDurationSeconds: 30
+  safetyValidFor: 1m
+  allowedNamespaces:
+    - kube-system
+  nodeSelector:
+    edge.dacs.io/node-actuation: enabled
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+
 console:
   enabled: false
   replicaCount: 1

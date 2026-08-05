@@ -18,6 +18,12 @@ spec:
     configRef:
       name: {{ include "chill.profilerConfigName" . | quote }}
     {{- end }}
+  nodeActuator:
+    enabled: {{ .Values.nodeActuator.enabled }}
+    {{- if .Values.nodeActuator.enabled }}
+    configRef:
+      name: {{ include "chill.nodeActuatorConfigName" . | quote }}
+    {{- end }}
   evidenceStore:
     enabled: {{ .Values.evidenceStore.enabled }}
     {{- if .Values.evidenceStore.enabled }}

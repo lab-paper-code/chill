@@ -29,6 +29,7 @@ type ChillSystemReconciler struct {
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=chillsystems/finalizers,verbs=update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=deviceclasses,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=nodeactuations,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch

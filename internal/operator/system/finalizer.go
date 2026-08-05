@@ -12,10 +12,14 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	operatornodeactuator "github.com/lab-paper-code/chill/internal/operator/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/operator/ownership"
 )
 
 func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {
+	if done, err := r.deleteNodeActuatorDaemonSet(ctx, system); err != nil || !done {
+		return done, err
+	}
 	if done, err := r.deleteNodeDiscoveryDaemonSet(ctx, system); err != nil || !done {
 		return done, err
 	}
@@ -26,6 +30,32 @@ func (r *ChillSystemReconciler) finalize(ctx context.Context, system *edgev1alph
 		return false, err
 	}
 	return true, nil
+}
+
+func (r *ChillSystemReconciler) deleteNodeActuatorDaemonSet(
+	ctx context.Context,
+	system *edgev1alpha1.ChillSystem,
+) (bool, error) {
+	namespace := r.managementNamespace(system)
+	safe, err := operatornodeactuator.SafeToStop(ctx, r.Client, namespace)
+	if err != nil {
+		return false, err
+	}
+	if !safe {
+		return false, nil
+	}
+	key := types.NamespacedName{Namespace: namespace, Name: r.nodeActuatorDaemonSetName(system)}
+	daemonSet := &appsv1.DaemonSet{}
+	if err := r.Get(ctx, key, daemonSet); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("get NodeActuator DaemonSet %s during finalization: %w", key, err)
+	}
+	if err := r.Delete(ctx, daemonSet); err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("delete NodeActuator DaemonSet %s during finalization: %w", key, err)
+	}
+	return false, nil
 }
 
 func (r *ChillSystemReconciler) deleteNodeDiscoveryDaemonSet(ctx context.Context, system *edgev1alpha1.ChillSystem) (bool, error) {

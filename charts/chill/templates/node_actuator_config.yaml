@@ -1,0 +1,37 @@
+{{- if .Values.nodeActuator.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chill.nodeActuatorConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: node-actuator
+    {{- include "chill.labels" . | nindent 4 }}
+data:
+  {{ .Values.nodeActuator.configMapKey | quote }}: |
+    image: {{ include "chill.nodeActuatorImage" . | quote }}
+    imagePullPolicy: {{ .Values.nodeActuator.image.pullPolicy | quote }}
+    serviceAccountName: {{ include "chill.nodeActuatorServiceAccountName" . | quote }}
+    metricsBindAddress: {{ .Values.nodeActuator.metricsBindAddress | quote }}
+    healthProbePort: {{ .Values.nodeActuator.healthProbePort }}
+    leaseDurationSeconds: {{ .Values.nodeActuator.leaseDurationSeconds }}
+    safetyValidFor: {{ .Values.nodeActuator.safetyValidFor | quote }}
+    allowedNamespaces:
+{{- toYaml .Values.nodeActuator.allowedNamespaces | nindent 6 }}
+    actuationPolicies:
+{{- toYaml .Values.profiler.factSource.actuationPolicies | nindent 6 }}
+    nodeSelector:
+{{- toYaml .Values.nodeActuator.nodeSelector | nindent 6 }}
+    {{- with .Values.nodeActuator.affinity }}
+    affinity:
+{{- toYaml . | nindent 6 }}
+    {{- end }}
+    tolerations:
+{{- toYaml .Values.nodeActuator.tolerations | nindent 6 }}
+    resources:
+{{- toYaml .Values.nodeActuator.resources | nindent 6 }}
+    podSecurityContext:
+{{- toYaml .Values.nodeActuator.podSecurityContext | nindent 6 }}
+    securityContext:
+{{- toYaml .Values.nodeActuator.securityContext | nindent 6 }}
+{{- end }}

@@ -16,6 +16,7 @@ values_file="${HELM_VALUES:-}"
 extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
+node_actuator_image="${NODE_ACTUATOR_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
 system_name="${CHILL_SYSTEM_NAME:-}"
@@ -40,6 +41,7 @@ Environment:
   CHILL_SYSTEM_NAME      Optional ChillSystem name for cleanup. Default: discover by release labels, then HELM_RELEASE.
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_DISCOVERY_IMG     Optional node-discovery image repository:tag.
+  NODE_ACTUATOR_IMG      Optional NodeActuator image repository:tag.
   PROFILER_IMG           Optional Profiler image repository:tag.
   CONSOLE_IMG            Optional Console API image repository:tag.
   HELM_SKIP_PREFLIGHT    Skip helm lint/template/kubeconform and CRD ownership check during install. Default: false.
@@ -84,6 +86,7 @@ render_validate() {
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
+	append_image_values args nodeActuator "${node_actuator_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
 
@@ -123,6 +126,7 @@ install_release() {
 	local args=("--set" "system.name=${release}")
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeDiscovery "${node_discovery_image}"
+	append_image_values args nodeActuator "${node_actuator_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
 	echo "==> install"

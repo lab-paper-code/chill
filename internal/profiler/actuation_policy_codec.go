@@ -117,17 +117,6 @@ func (f FrozenActuationPolicy) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(f)
 }
 
-func (p ActuationPolicy) Digest() (string, error) {
-	if err := p.Validate(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	return actuationPolicyDigestBytes(payload), nil
-}
-
 func actuationPolicyDigestBytes(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])

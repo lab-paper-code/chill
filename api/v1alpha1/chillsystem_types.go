@@ -12,6 +12,8 @@ const (
 	ChillSystemConditionNodeDiscoveryAvailable = "NodeDiscoveryAvailable"
 	// ChillSystemConditionProfilerAvailable reports Profiler controller workload availability.
 	ChillSystemConditionProfilerAvailable = "ProfilerAvailable"
+	// ChillSystemConditionNodeActuatorAvailable reports NodeActuator workload availability.
+	ChillSystemConditionNodeActuatorAvailable = "NodeActuatorAvailable"
 	// ChillSystemConditionEvidenceStoreAvailable reports immutable evidence-store availability.
 	ChillSystemConditionEvidenceStoreAvailable = "EvidenceStoreAvailable"
 )
@@ -42,9 +44,25 @@ type ChillSystemSpec struct {
 	// +optional
 	Profiler ChillProfilerSpec `json:"profiler,omitempty"`
 
+	// NodeActuator configures the operator-managed per-Node actuator.
+	// +optional
+	NodeActuator ChillNodeActuatorSpec `json:"nodeActuator,omitempty"`
+
 	// EvidenceStore configures the operator-managed immutable evidence store.
 	// +optional
 	EvidenceStore ChillEvidenceStoreSpec `json:"evidenceStore,omitempty"`
+}
+
+// ChillNodeActuatorSpec configures the NodeActuator DaemonSet owned by a ChillSystem.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.configRef) && self.configRef.name.size() > 0)",message="configRef.name is required when nodeActuator is enabled"
+type ChillNodeActuatorSpec struct {
+	// Enabled controls whether the operator should run the per-Node actuator.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ConfigRef references the NodeActuator configuration in the CHILL management namespace.
+	// +optional
+	ConfigRef corev1.LocalObjectReference `json:"configRef,omitempty"`
 }
 
 // ChillEvidenceStoreSpec configures the immutable evidence store owned by a ChillSystem.

@@ -15,6 +15,7 @@ import (
 )
 
 var testNodeDiscoveryDaemonSetName = component.NodeDiscoveryDaemonSetName(component.DefaultSystemName)
+var testNodeActuatorDaemonSetName = component.NodeActuatorDaemonSetName(component.DefaultSystemName)
 var testProfilerDeploymentName = component.ProfilerDeploymentName(component.DefaultSystemName)
 var testEvidenceStoreDeploymentName = component.EvidenceStoreDeploymentName(component.DefaultSystemName)
 var testEvidenceStoreBootstrapJobName = component.EvidenceStoreBootstrapJobName(component.DefaultSystemName)
@@ -39,10 +40,13 @@ func TestBuildStatusReadyWhenEnabledComponentsAreAvailable(t *testing.T) {
 		NodeDiscoveryDaemonSet: daemonSet(6),
 		ProfilerEnabled:        true,
 		ProfilerDeployment:     deployment(1),
+		NodeActuatorEnabled:    true,
+		NodeActuatorDaemonSet:  namedDaemonSet(testNodeActuatorDaemonSetName, 2, 2),
 	}, nil, metav1.Now())
 
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable, metav1.ConditionTrue, reasonNodeDiscoveryReady)
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionProfilerAvailable, metav1.ConditionTrue, reasonProfilerReady)
+	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionNodeActuatorAvailable, metav1.ConditionTrue, reasonNodeActuatorReady)
 	requireConditionStatus(t, status, edgev1alpha1.ChillSystemConditionReady, metav1.ConditionTrue, reasonComponentsAvailable)
 }
 
@@ -273,6 +277,15 @@ func daemonSet(ready int32) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testNodeDiscoveryDaemonSetName},
 		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 6, NumberReady: ready, NumberAvailable: ready},
+	}
+}
+
+func namedDaemonSet(name string, desired, ready int32) *appsv1.DaemonSet {
+	return &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: appsv1.DaemonSetStatus{
+			DesiredNumberScheduled: desired, NumberReady: ready, NumberAvailable: ready,
+		},
 	}
 }
 

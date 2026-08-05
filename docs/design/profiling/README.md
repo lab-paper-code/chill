@@ -210,11 +210,15 @@ workload-safety adapter reports exact active Pod blockers outside explicit
 namespace and Pod-UID allowances. The reconciler also rejects an uninstalled
 actuation-policy digest before any Lease, safety, or host port and enters the
 same restoration path if policy authorization drifts after state was retained.
-Neither path is wired to a runnable operand or installation configuration. The
-host adapter and live apply/read-back/restore proof remain unimplemented, so no
-host mutation is enabled and the Profiler still creates no measurement Job for
-a non-fixed Run. Catalog presence and historical standalone smoke are not
-production execution evidence.
+The opt-in command and Operator/Helm DaemonSet lifecycle are now implemented,
+with exact Node and self-Pod identity supplied through the downward API, shared
+Go policy canonicalization, namespaced Lease/handoff RBAC, and a deletion gate
+that retains the operand while any handoff remains unfinished or unrestored.
+The command still installs an explicit unavailable host port. The chart remains
+disabled by default, the host adapter and live apply/read-back/restore proof
+remain unimplemented, no host access or mutation is enabled, and the Profiler
+still creates no measurement Job for a non-fixed Run. Catalog presence and
+historical standalone smoke are not production execution evidence.
 
 ## Campaign records
 

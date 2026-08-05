@@ -9,6 +9,7 @@ const (
 	DefaultSystemName = "chill"
 
 	NodeDiscovery = "node-discovery"
+	NodeActuator  = "node-actuator"
 	Profiler      = "profiler"
 	EvidenceStore = "evidence-store"
 
@@ -25,6 +26,14 @@ func NodeDiscoveryDaemonSetName(systemName string) string {
 
 func NodeDiscoveryConfigMapName(systemName string) string {
 	return defaultSystemName(systemName) + "-node-discovery-config"
+}
+
+func NodeActuatorDaemonSetName(systemName string) string {
+	return defaultSystemName(systemName) + "-node-actuator"
+}
+
+func NodeActuatorConfigMapName(systemName string) string {
+	return defaultSystemName(systemName) + "-node-actuator-config"
 }
 
 func ProfilerDeploymentName(systemName string) string {

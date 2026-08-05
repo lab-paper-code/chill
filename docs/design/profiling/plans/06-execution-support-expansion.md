@@ -25,8 +25,10 @@ dedicated per-Node actuator as the sole host-state writer while retaining the
 Profiler as Run orchestrator. The durable `NodeActuation` API, Profiler
 producer, strict local-Node consumer projection, pure lifecycle decision core,
 exact Node-UID Lease primitive, internal status reconciler, and fail-closed
-workload-safety observer are implemented. No actuator operand, installed safety
-policy, host adapter, or host mutation is enabled. Later slices remain deferred
+workload-safety observer are implemented. The opt-in command and Operator/Helm
+DaemonSet lifecycle are also implemented, but the chart is disabled by default
+and the command deliberately installs an unavailable host port. No host access,
+host adapter, mutation, or live proof is enabled. Later slices remain deferred
 until their stated entry condition is met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
@@ -159,8 +161,15 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Reject any handoff whose canonical actuation-policy digest is absent from
   the actuator's explicit authorization set before crossing a Lease, safety,
   or host port; policy drift after retained state enters restoration.
-- [ ] Serialize Node-wide changes with a Lease or equivalent lock.
-- [ ] Define actuation safety in the presence of other workloads.
+- [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
+  lifecycle with exact Node/self-Pod identity, shared Go policy digesting,
+  scoped API permissions, and a stop gate that retains the operand for every
+  unfinished or unrestored handoff. Keep the host port unavailable in this
+  slice.
+- [x] Serialize every runnable-operand handoff with the exact Node-UID Lease;
+  live host-mutation proof remains open.
+- [x] Apply the fail-closed workload-safety policy from explicit namespace and
+  exact self-Pod allowances before any host operation.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
 - [ ] Restore after Run failure, controller restart, and worker timeout.
 - [ ] Surface restoration failure as a terminal condition and operator alert.
@@ -210,10 +219,24 @@ the release namespace. An unapproved Pod or an incomplete blocker set fails
 closed. The reconciler independently requires the handoff's canonical policy
 digest to be in its installed authorization set before crossing any port; if
 that authorization drifts after a previous state was retained, it durably
-starts restoration instead of abandoning the Node. These internal paths do not
-close the unchecked production gates: no runnable operand selects the
-allowances, Lease policy, or host adapter, and no host mutation or live
-restoration proof exists.
+starts restoration instead of abandoning the Node. The runnable operand below
+now selects these allowances and consumes the Lease and lifecycle paths. That
+composition does not close the host-actuation gates: no host adapter, mutation,
+or live restoration proof exists.
+
+The next layer makes the controller runnable without pretending the host
+operation exists. Helm renders a disabled-by-default ConfigMap, ServiceAccount,
+namespaced handoff/Lease Role, cluster-scoped Node/Pod read permissions, and the
+`ChillSystem` opt-in reference. The Operator owns the per-eligible-Node
+DaemonSet, reports its availability, and refuses disable or system finalization
+while any handoff is non-terminal or lacks proven restoration. The command
+resolves exact Node UID from the API, excludes only its own downward-API Pod UID
+in addition to explicitly configured infrastructure namespaces, and derives
+authorized policy digests through the same `internal/nodeactuator` canonical
+type used by the Profiler. Its current host port returns
+`host actuator adapter is not installed`; the unprivileged image declares no
+host mount or mutation capability. Therefore this slice proves composition and
+safe lifecycle only, not actuation support.
 
 ### Jetson NVPModel
 

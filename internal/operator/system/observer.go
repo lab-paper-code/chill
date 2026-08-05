@@ -22,6 +22,9 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 		ProfilerEnabled:               system.Spec.Profiler.Enabled,
 		ProfilerNamespace:             r.namespace(),
 		ProfilerDeploymentName:        r.profilerDeploymentName(system),
+		NodeActuatorEnabled:           system.Spec.NodeActuator.Enabled,
+		NodeActuatorNamespace:         r.managementNamespace(system),
+		NodeActuatorDaemonSetName:     r.nodeActuatorDaemonSetName(system),
 		EvidenceStoreEnabled:          system.Spec.EvidenceStore.Enabled,
 		EvidenceStoreNamespace:        r.managementNamespace(system),
 		EvidenceStoreDeploymentName:   r.evidenceStoreDeploymentName(system),
@@ -48,6 +51,18 @@ func (r *ChillSystemReconciler) observe(ctx context.Context, system *edgev1alpha
 			}
 		} else {
 			observed.ProfilerDeployment = deployment
+		}
+	}
+
+	if observed.NodeActuatorEnabled {
+		daemonSet := &appsv1.DaemonSet{}
+		key := types.NamespacedName{Namespace: observed.NodeActuatorNamespace, Name: observed.NodeActuatorDaemonSetName}
+		if err := r.Get(ctx, key, daemonSet); err != nil {
+			if !apierrors.IsNotFound(err) {
+				observed.NodeActuatorError = fmt.Errorf("observe NodeActuator DaemonSet: %w", err)
+			}
+		} else {
+			observed.NodeActuatorDaemonSet = daemonSet
 		}
 	}
 

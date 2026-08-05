@@ -6,6 +6,7 @@ IMAGE_TAG ?= $(if $(GIT_SHORT_SHA),sha-$(GIT_SHORT_SHA),$(CHART_APP_VERSION))
 IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_DISCOVERY_IMG ?= $(IMAGE_NAMESPACE)/chill-node-discovery:$(IMAGE_TAG)
+NODE_ACTUATOR_IMG ?= $(IMAGE_NAMESPACE)/chill-node-actuator:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
@@ -48,7 +49,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" PROFILER_IMG="$(PROFILER_IMG)" CONSOLE_IMG="$(CONSOLE_IMG)"
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" NODE_ACTUATOR_IMG="$(NODE_ACTUATOR_IMG)" PROFILER_IMG="$(PROFILER_IMG)" CONSOLE_IMG="$(CONSOLE_IMG)"
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -296,6 +297,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/operator cmd/main.go
 	go build -o bin/kubectl-chill ./cmd/chill
 	go build -o bin/node-discovery ./cmd/node-discovery
+	go build -o bin/node-actuator ./cmd/node-actuator
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/console ./cmd/console
 	go build -o bin/metric-observer ./cmd/metric-observer
@@ -323,6 +325,10 @@ docker-build-node-discovery: ## Build the node-discovery image.
 docker-build-profiler: ## Build the Profiler image.
 	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
 
+.PHONY: docker-build-node-actuator
+docker-build-node-actuator: ## Build the NodeActuator image.
+	$(CONTAINER_TOOL) build -f build/docker/node-actuator.Dockerfile -t $(NODE_ACTUATOR_IMG) .
+
 .PHONY: docker-build-console
 docker-build-console: ## Build the Console API image.
 	$(CONTAINER_TOOL) build -f build/docker/console.Dockerfile -t $(CONSOLE_IMG) .
@@ -336,7 +342,7 @@ docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -353,6 +359,10 @@ docker-push-node-discovery: ## Push the node-discovery image.
 docker-push-profiler: ## Push the Profiler image.
 	$(CONTAINER_TOOL) push $(PROFILER_IMG)
 
+.PHONY: docker-push-node-actuator
+docker-push-node-actuator: ## Push the NodeActuator image.
+	$(CONTAINER_TOOL) push $(NODE_ACTUATOR_IMG)
+
 .PHONY: docker-push-console
 docker-push-console: ## Push the Console API image.
 	$(CONTAINER_TOOL) push $(CONSOLE_IMG)
@@ -366,7 +376,7 @@ docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-profiler docker-push-console docker-push-metric-observer docker-push-measurement-worker ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer docker-push-measurement-worker ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -397,6 +407,12 @@ docker-buildx-profiler: ## Build and push the Profiler image for cross-platform 
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
+
+.PHONY: docker-buildx-node-actuator
+docker-buildx-node-actuator: ## Build and push the NodeActuator image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-actuator.Dockerfile --tag $(NODE_ACTUATOR_IMG) .
 
 .PHONY: docker-buildx-console
 docker-buildx-console: ## Build and push the Console API image for cross-platform support.
@@ -429,7 +445,7 @@ docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver 
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/workload-observer.Dockerfile --tag $(WORKLOAD_OBSERVER_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

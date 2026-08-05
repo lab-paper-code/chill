@@ -10,7 +10,6 @@ import (
 )
 
 var (
-	actuationPolicyNamePattern   = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 	actuationPolicyDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
@@ -52,39 +51,6 @@ func (f FrozenActuationPolicy) Validate() error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("actuation-policy ConfigMap source %s is required without surrounding whitespace", name)
 		}
-	}
-	return nil
-}
-
-func (p ActuationPolicy) Validate() error {
-	if p.SchemaVersion != ActuationPolicySchemaVersion {
-		return fmt.Errorf("unsupported actuation-policy schema %q", p.SchemaVersion)
-	}
-	if len(p.Name) < 1 || len(p.Name) > 63 || !actuationPolicyNamePattern.MatchString(p.Name) {
-		return errors.New("actuation-policy name must be a lowercase DNS-like identifier of at most 63 characters")
-	}
-	for name, value := range map[string]string{
-		"deviceClass":  p.DeviceClass,
-		"powerMode":    p.PowerMode,
-		"actuatorKind": p.ActuatorKind,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("actuation-policy %s is required without surrounding whitespace", name)
-		}
-	}
-	if p.PowerMode == profilingrun.FixedPowerMode {
-		return errors.New("actuation policy cannot select fixed power mode")
-	}
-	if p.ActuatorKind != profilingrun.ActuatorKindJetsonNVPModel &&
-		p.ActuatorKind != profilingrun.ActuatorKindNvidiaLockedGPUClock {
-		return fmt.Errorf("unsupported actuation-policy actuatorKind %q", p.ActuatorKind)
-	}
-	if p.SettlingDurationSeconds < 1 || p.SettlingDurationSeconds > 86_400 {
-		return errors.New("actuation-policy settlingDurationSeconds must be between 1 second and 24 hours")
-	}
-	if p.MaxActuationDurationSeconds <= p.SettlingDurationSeconds ||
-		p.MaxActuationDurationSeconds > 86_400 {
-		return errors.New("actuation-policy maxActuationDurationSeconds must exceed settling and be at most 24 hours")
 	}
 	return nil
 }

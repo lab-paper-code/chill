@@ -30,6 +30,12 @@ const (
 	reasonProfilerProgressing = "ProfilerProgressing"
 	reasonProfilerDegraded    = "ProfilerDegraded"
 
+	reasonNodeActuatorReady       = "NodeActuatorReady"
+	reasonNodeActuatorMissing     = "NodeActuatorMissing"
+	reasonNodeActuatorPending     = "NodeActuatorPending"
+	reasonNodeActuatorProgressing = "NodeActuatorProgressing"
+	reasonNodeActuatorDegraded    = "NodeActuatorDegraded"
+
 	reasonEvidenceStoreReady       = "EvidenceStoreReady"
 	reasonEvidenceStoreMissing     = "EvidenceStoreMissing"
 	reasonEvidenceStoreProgressing = "EvidenceStoreProgressing"
@@ -56,6 +62,12 @@ type Observation struct {
 	ProfilerDeployment     *appsv1.Deployment
 	ProfilerError          error
 
+	NodeActuatorEnabled       bool
+	NodeActuatorNamespace     string
+	NodeActuatorDaemonSetName string
+	NodeActuatorDaemonSet     *appsv1.DaemonSet
+	NodeActuatorError         error
+
 	EvidenceStoreEnabled          bool
 	EvidenceStoreNamespace        string
 	EvidenceStoreDeploymentName   string
@@ -67,7 +79,7 @@ type Observation struct {
 
 func buildStatus(observed Observation, previousConditions []metav1.Condition, now metav1.Time) edgev1alpha1.ChillSystemStatus {
 	status := edgev1alpha1.ChillSystemStatus{ObservedGeneration: observed.ObservedGeneration}
-	components := make([]metav1.Condition, 0, 3)
+	components := make([]metav1.Condition, 0, 4)
 	if observed.NodeDiscoveryEnabled {
 		condition := nodeDiscoveryAvailableCondition(observed)
 		condition.Type = edgev1alpha1.ChillSystemConditionNodeDiscoveryAvailable
@@ -76,6 +88,11 @@ func buildStatus(observed Observation, previousConditions []metav1.Condition, no
 	if observed.ProfilerEnabled {
 		condition := profilerAvailableCondition(observed)
 		condition.Type = edgev1alpha1.ChillSystemConditionProfilerAvailable
+		components = append(components, condition)
+	}
+	if observed.NodeActuatorEnabled {
+		condition := nodeActuatorAvailableCondition(observed)
+		condition.Type = edgev1alpha1.ChillSystemConditionNodeActuatorAvailable
 		components = append(components, condition)
 	}
 	if observed.EvidenceStoreEnabled {
@@ -220,6 +237,44 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 		Status:  metav1.ConditionTrue,
 		Reason:  reasonProfilerReady,
 		Message: fmt.Sprintf("Profiler Deployment %q is available", deployment.Name),
+	}
+}
+
+func nodeActuatorAvailableCondition(observed Observation) metav1.Condition {
+	if observed.NodeActuatorError != nil {
+		return metav1.Condition{
+			Status: metav1.ConditionUnknown, Reason: reasonObservationFailed,
+			Message: statusMessage(observed.NodeActuatorError.Error(), "failed to observe NodeActuator DaemonSet"),
+		}
+	}
+	if observed.NodeActuatorDaemonSet == nil {
+		return metav1.Condition{
+			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorMissing,
+			Message: fmt.Sprintf("NodeActuator DaemonSet %q is missing", observed.NodeActuatorDaemonSetName),
+		}
+	}
+	daemonSet := observed.NodeActuatorDaemonSet
+	if condition := daemonSetFailureCondition(daemonSet); condition != nil {
+		return metav1.Condition{
+			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorDegraded,
+			Message: statusMessage(condition.Message, fmt.Sprintf("NodeActuator DaemonSet %q is degraded", daemonSet.Name)),
+		}
+	}
+	if daemonSet.Status.DesiredNumberScheduled == 0 {
+		return metav1.Condition{
+			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorPending,
+			Message: fmt.Sprintf("NodeActuator DaemonSet %q has no eligible Nodes", daemonSet.Name),
+		}
+	}
+	if daemonSet.Status.NumberReady < daemonSet.Status.DesiredNumberScheduled {
+		return metav1.Condition{
+			Status: metav1.ConditionFalse, Reason: reasonNodeActuatorProgressing,
+			Message: fmt.Sprintf("NodeActuator DaemonSet %q is progressing", daemonSet.Name),
+		}
+	}
+	return metav1.Condition{
+		Status: metav1.ConditionTrue, Reason: reasonNodeActuatorReady,
+		Message: fmt.Sprintf("NodeActuator DaemonSet %q is available", daemonSet.Name),
 	}
 }
 

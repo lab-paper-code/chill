@@ -214,6 +214,34 @@ spec:
                   ManagementNamespace contains the namespaced CHILL support resources for this system.
                   When omitted, the operator namespace is used.
                 type: string
+              nodeActuator:
+                description: NodeActuator configures the operator-managed per-Node
+                  actuator.
+                properties:
+                  configRef:
+                    description: ConfigRef references the NodeActuator configuration
+                      in the CHILL management namespace.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  enabled:
+                    description: Enabled controls whether the operator should run
+                      the per-Node actuator.
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - message: configRef.name is required when nodeActuator is enabled
+                  rule: '!has(self.enabled) || !self.enabled || (has(self.configRef)
+                    && self.configRef.name.size() > 0)'
               nodeDiscovery:
                 description: NodeDiscovery configures the operator-managed node-discovery
                   DaemonSet.
