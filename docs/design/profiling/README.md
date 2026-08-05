@@ -141,7 +141,7 @@ selected batch one, and stopped at the batch-three capability boundary. The
 result is a decision without a confidence statement; its selected batch is the
 candidate Plan 5's confirmation pass takes as input.
 
-### 5. Batch-saturation campaign — approved, not implemented
+### 5. Batch-saturation campaign — approved, shared foundation only
 
 [plans/05-batch-saturation-campaign.md](plans/05-batch-saturation-campaign.md)
 

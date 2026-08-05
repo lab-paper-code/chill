@@ -164,20 +164,35 @@ them have to hold at once, so the confidence has to be spread across all of them
 Plan 5 spreads it the simplest way. With `n` statements and a 5% total error
 allowance, each individual bound is computed at `1 - 0.05/n` instead of
 `1 - 0.05`. This is the Bonferroni correction. It needs no model of how the
-statements are related to each other, and the [sizing table](#illustrative-sizing)
-shows it still reaches the intended tolerance at a practical trial count. Methods
-that model the relationships get the same guarantee from fewer trials; adopting
-one is a new estimator version rather than a configured option.
+statements are related to each other. The
+[fixed sizing method](#fixed-confirmatory-sizing-method) evaluates its precision
+against the same allocation. Methods that model the relationships may reach the
+same guarantee with fewer trials; adopting one is a new estimator version rather
+than a configured option.
 
 That correction covers the confirmatory decision at a candidate that is already
 fixed. It does not cover the fact that discovery picked the candidate, nor that
 discovery and confirmation share one idle-power estimate. Plan 5 therefore also
 requires showing — by derivation or by simulation — that the complete two-pass
 procedure still holds its stated confidence. If it does not, the plan is
-incomplete; the sizing table does not override this.
+incomplete; a sizing calculation does not override this.
 
-Fieller's method gives a confidence interval for a single ratio. Applying it to
-several larger batches still needs the correction above.
+The fixed construction does not estimate a ratio interval directly. For
+each larger batch `b`, define the linear contrast
+
+```text
+D_c,b = epsilon_c - epsilon_b
+R_c,b = D_c,b / epsilon_c
+```
+
+and obtain a simultaneous upper bound `U_D(c,b)` for every contrast plus one
+lower bound `L_c` for `epsilon_c`. If `L_c <= 0`, the result is unavailable. If
+`U_D(c,b) <= 0`, then `R_c,b <= 0` and its conservative upper bound is zero.
+Otherwise its upper bound is `U_D(c,b) / L_c`. The maximum of those bounds is
+`UCB(R_c)`. This transformation is valid because the positivity statement and
+all contrast statements belong to the same Bonferroni construction; it neither
+divides by a point estimate nor silently applies a first-order ratio
+approximation.
 
 ### What an accepted result claims
 
@@ -278,7 +293,6 @@ BSatPolicy
     kmax
     relativeImprovementTolerance   tau
     discoveryTrials                n_disc
-    confirmatoryTrialSizingRule    how discovery variance determines n_conf
     maximumConfirmatoryTrials      cap on n_conf
     maximumActiveRunBudget         cap on total active Runs
 ```
@@ -286,25 +300,90 @@ BSatPolicy
 `stage` scopes a point policy the way `workloadMode` scopes an admission policy,
 and the selected policy's stage is checked against its use.
 
-The estimator, the confidence level, and the way confidence is spread across
-several statements are package constants rather than policy fields, because the
-implementation supports exactly one of each.
+The estimator, confidence level, Bonferroni allocation, and confirmatory sizing
+method are versioned package constants rather than policy fields, because the
+implementation supports exactly one of each. Their versioned estimator identity
+is recorded in the result. A policy field accepting only that one method would
+pretend to offer configuration that does not exist.
 
 **`tau` is fixed in this file, before any measurement.** It expresses how much
 remaining improvement is small enough to walk away from — a judgment about what
 matters operationally, which the data cannot supply. It is also the threshold
 discovery screens against, so it has to exist before discovery runs.
 
-Discovery variance determines exactly one thing: how many confirmatory trials are
-needed, through the sizing rule already written in this file, and only up to the
-cap already written in this file. If the sizing rule asks for more trials than
-the cap allows, the campaign ends as `Unavailable: ConfirmatoryBudgetInsufficient`.
-The tolerance is never widened to fit the budget.
+Discovery sufficient statistics determine exactly one thing: how many
+confirmatory trials are needed, through the fixed sizing rule below, and only up
+to the cap already written in this file. If the rule asks for more trials than
+the cap or active-Run budget allows, the campaign ends as
+`Unavailable: ConfirmatoryBudgetInsufficient`. The tolerance is never widened
+to fit the budget.
 
 A second version of this file is written after discovery and before the first
 confirmatory Run. It records the discovery version's digest, the realized
 `n_conf`, and the realized Run allocation. It changes nothing else. Both digests
 appear in the result.
+
+### Fixed confirmatory sizing method
+
+The only sizing method is
+`bonferroni-welch-relative-precision-v1`. It chooses the smallest common
+confirmatory trial count `n >= 3` that makes the projected simultaneous bound
+precise enough at the zero-remaining-improvement planning point. This is a
+precision target, not a forecast that confirmation will accept; a real curve
+near `tau` may still return `CandidateOnly`.
+
+For discovery trial `i` at batch `b`, retain
+
+```text
+x_b,i = total active wall joules / completed items
+a_b,i = window seconds / completed items
+z_b,i = x_b,i - a_b,i * Pbar_q(b)
+```
+
+where `Pbar_q(b)` is the exact-state idle-baseline mean. Let `s_z,b^2` be the
+discovery sample variance of `z_b,i`, `abar_b` the mean coefficient, and
+`V_P,q` the variance of the idle-baseline mean with its own degrees of freedom.
+For a prospective common confirmatory count `n`, the projected point variance is
+
+```text
+V_b(n) = s_z,b^2 / n + abar_b^2 * V_P,q(b)
+```
+
+and the projected contrast variance is
+
+```text
+V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
+             + (abar_c - abar_b)^2 * V_P,q       when q(c) = q(b)
+
+V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
+             + abar_c^2 * V_P,q(c) + abar_b^2 * V_P,q(b)
+                                                    otherwise
+```
+
+The observed `a` coefficients are conditioned-on design quantities. Active Run
+sets and distinct idle-baseline sets are independent. Each projected variance
+uses Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
+components: prospective active components use `n-1`, and retained baseline
+components use their admitted baseline degrees of freedom. With
+`M = Kmax - c + 1` simultaneous one-sided statements and `alpha = 0.05`, let
+`h_c(n)` and `h_D(c,b,n)` be their Student-t half-widths at quantile
+`1 - alpha/M`. Let `epsilon_hat_c` be the discovery point estimate and
+
+```text
+L_c(n) = epsilon_hat_c - h_c(n)
+```
+
+The first `n` is selected for which `L_c(n) > 0` and, for every `b > c`,
+
+```text
+h_D(c,b,n) / L_c(n) <= tau
+```
+
+The calculation then checks both declared caps using the exact Run-count formula
+below. A fixed idle-baseline uncertainty creates a nonzero precision floor; if
+no `n` through the cap satisfies the inequalities, the typed budget-insufficient
+outcome is returned. No normal critical value replaces Student-t, and no
+unimplemented extrapolation beyond the declared cap is reported.
 
 ### The campaign record
 
@@ -411,51 +490,49 @@ naming.
 
 ### The estimator
 
-With `a_b` the mean seconds-per-item coefficient at batch `b`, `A_b` the mean
-active wall energy per item, and `q(b)` the point's exact baseline key:
+Use the trial-level `x_b,i`, `a_b,i`, and `z_b,i` defined by the sizing method.
+With `n_b` active Runs at batch `b`, `abar_b` their mean observed coefficient,
+and `q(b)` the exact baseline key:
 
 ```text
-epsilon_bar_b      = A_b - a_b * P_q(b)
+epsilon_bar_b      = mean_i(z_b,i)
 
-Var(epsilon_bar_b) = Var(A_b) + a_b^2 * Var(P_q(b))
+Var(epsilon_bar_b) = s_z,b^2 / n_b
+                      + abar_b^2 * V_P,q(b)
 ```
 
-The point estimate is algebraically the same as subtracting the baseline from
-each trial and then averaging, so published point values do not move. The
-interval does. Combining two estimated variances means the interval's shape is
-governed by an effective sample size derived from both of them — the
-Welch--Satterthwaite formula, or whatever the chosen joint model supplies. It is
-not taken from either component alone.
+The point estimate is algebraically the same as subtracting the exact baseline
+from each trial and then averaging, so published point values do not move. The
+interval does. `s_z,b^2` retains the observed covariance between active wall
+energy and seconds per item instead of pretending those trial quantities vary
+independently. Combining active and baseline components uses the
+Welch--Satterthwaite effective degrees of freedom; it is not taken from either
+component alone.
 
-For any pair of batches, define `h_b,q = -a_b` when `q = q(b)` and zero
-otherwise. The contrast is:
+For a contrast `D_j,k = epsilon_j - epsilon_k`, the active components are
+independent across batches. Its baseline component is
+`(abar_j-abar_k)^2 * V_P,q` when the state is shared, or
+`abar_j^2 * V_P,q(j) + abar_k^2 * V_P,q(k)` otherwise. Reuse of one raw idle
+evidence object across distinct keys is rejected. Shared-state subtraction thus
+retains partial baseline cancellation; distinct states retain both baseline
+variances. Every coefficient comes from observed `T_i/N_i`, and no throughput
+monotonicity is assumed.
+
+Two contrasts can share both an active reference point and idle baselines. Let
+`w_D,r` be `+1` or `-1` when point `r` enters contrast `D`, and zero otherwise.
+Let `g_D,q` be the resulting coefficient on baseline mean `P_q`. Then
 
 ```text
-D_j,k      = epsilon_j - epsilon_k
-           = A_j - A_k + sum_q (h_j,q - h_k,q) * P_q
-
-Var(D_j,k) = Var(A_j) + Var(A_k)
-             + sum_q (h_j,q - h_k,q)^2 * Var(P_q)
+Cov(D_1, D_2)
+    = sum_r w_D1,r * w_D2,r * s_z,r^2 / n_r
+      + sum_q g_D1,q * g_D2,q * V_P,q
 ```
 
-The sum assumes independent admitted baseline trial sets. Reuse of a raw idle
-evidence object across distinct keys is rejected. If `q(j) = q(k)`, the sum
-reduces to `(a_j-a_k)^2 Var(P_q)`, recovering the original shared-baseline
-partial cancellation. If the states differ, both baseline variances remain.
-Every coefficient comes from the observed `T_i/N_i`; no throughput monotonicity
-is assumed.
-
-The baseline contribution to covariance between two differences is likewise:
-
-```text
-Cov( D_j,k , D_c,b )
-    = sum_q (h_j,q - h_k,q) * (h_c,q - h_b,q) * Var(P_q)
-```
-
-This links the differences inside one acceptance decision, the differences
-discovery uses to pick the candidate, and the pairs that span the two passes.
-Showing that the procedure holds its stated confidence across that whole set is
-what the two-pass requirement in Checkpoint 1 asks for.
+Active terms are zero across discovery and confirmation because their Runs are
+disjoint; baseline terms remain because both passes reuse the same exact-state
+baseline set. This covariance model links the differences inside one acceptance
+decision, discovery selection, and the two passes. Showing that the complete
+procedure holds its stated confidence is what Checkpoint 1 requires.
 
 So the design is best described as **discovery and confirmation measured on
 separate Runs, sharing the same exact-state baseline set**. The active evidence
@@ -514,33 +591,14 @@ establish that a smaller batch is not equally good. Those lower batches do not
 need re-measuring in the confirmatory pass unless the candidate search is
 repeated.
 
-### Illustrative sizing
+### Why there is no universal sizing table
 
-The table below shows roughly how many confirmatory trials a given tolerance
-needs. It rests on four assumptions this plan does not establish: that every
-batch has the same trial-to-trial spread, that a first-order approximation of the
-ratio's standard error is good enough, that the approximation is evaluated where
-the true remaining improvement is zero, and that the confidence is spread by the
-Bonferroni correction. It is an illustration, not the budget itself.
-
-The live batch-one trials had a standard deviation of 2.85% of their mean. Taking
-that spread, and the worst case `c = 1` with `Kmax = 10`, which puts 10
-statements under one confidence budget:
-
-| `n_conf` | smallest declarable `tau` |
-|---:|---:|
-| 5 | 8.3% |
-| 6 | 6.6% |
-| 8 | 5.0% |
-| 10 | 4.1% |
-| 12 | 3.6% |
-
-Eight confirmatory trials support a 5% tolerance even in the worst case. Where
-the true remaining improvement is not near zero the table does not apply, because
-the ratio's standard error depends on the value being bounded.
-
-The 2.85% spread above comes from batch one only. Each batch's own spread is
-measured during discovery, and `n_conf` is set from that.
+A fixed table based on one batch's coefficient of variation would discard the
+exact-state baseline floor, shared-baseline covariance, candidate-dependent
+number of statements, and per-batch active variance. The sizing method therefore
+evaluates every integer `n` against the frozen family and discovery sufficient
+statistics. A concrete campaign policy records only the cap and budget; its
+post-discovery policy records the resulting `n_conf` before confirmation starts.
 
 ## Verification boundary
 
@@ -616,6 +674,9 @@ Plan 5 is complete when:
 - the complete two-pass procedure, including candidate selection and the
   exact-state baseline covariance, is shown by derivation or simulation to hold
   its stated confidence;
+- the sizing rule selects the smallest trial count satisfying its simultaneous
+  relative-precision inequalities and returns budget-insufficient when the
+  baseline floor or either cap prevents one;
 - synthetic golden curves close the accepted, candidate-only, capability-boundary,
   no-saturation, non-positive-reference, and budget-insufficient cases, and a
   later batch that improves too much fails acceptance through `R_c` rather than
@@ -639,36 +700,41 @@ Plan 5 is complete when:
 
 ## Implementation sequence
 
-1. Fix `Kmax`, the candidate domain `1..Kmax-1`, `tau`, the `R_c` quantity, the
-   Bonferroni spread of confidence, the positivity condition, the minimality
-   boundary, and the rule that observed throughput never removes evidence.
-2. Fix the discovery policy version, including the `n_conf` sizing rule and both
-   caps, together with the campaign record, eligible member map, and
-   `CurveFamilyContractDigest`. All precede any measurement; the realized
-   `CurveFamilyIdentity` follows Loader verification.
-3. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
+1. Fix the candidate domain `1..Kmax-1`, `R_c`, Bonferroni allocation,
+   positivity condition, conditional-coefficient variance model, confirmatory
+   sizing method, minimality boundary, and the rule that observed throughput
+   never removes evidence. Implemented in this plan.
+2. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
    freedom reachable from the derivation path.
-4. Introduce the opaque `CurveFamily`, `Curve`, and `DeriveCurve`, owning one
-   exact-state baseline set across both passes. Rebuild aggregation and the
-   point-confidence construction; the current construction combines Student-t
-   half-widths at differing degrees of freedom, so the live batch-one interval
-   is recomputed and the earlier one retained under its own estimator version.
-5. Show, by derivation or simulation, that the two-pass procedure holds its
+3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`
+   boundary to retain one exact-state baseline set across both passes. Rebuild
+   aggregation and the point-confidence construction; the current construction
+   combines Student-t half-widths at differing degrees of freedom, so the live
+   batch-one interval is recomputed and the earlier one retained under its own
+   estimator version.
+4. Show, by derivation or simulation, that the two-pass procedure holds its
    stated confidence across every batch-to-batch difference the screen and the
    rule touch.
-6. Implement discovery screening and the confirmatory boundary. Remove the
+5. Implement discovery screening, fixed confirmatory sizing, and the
+   confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
-7. Decode the policy file and record its digests. Rename
+6. Decode the policy file and record its digests. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
    `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
    persisted to the evidence store, since these are a JSON field name and a
    reason-code value. Add golden tests.
+7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
+   campaign record, eligible member map, and `CurveFamilyContractDigest` in the
+   discovery policy version. The realized `CurveFamilyIdentity` follows Loader
+   verification.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
-   allocation inside the caps set at item 2, before any confirmatory Run.
+   allocation inside the caps set at item 7, before any confirmatory Run.
 
-Items 1 and 2 are decisions and close before code. Item 8 records an allocation
-inside limits already set at item 2 and introduces no new scientific parameter.
+Item 1 is the estimator decision and closes before code. Item 7 is the
+campaign-specific freeze and closes before measurement. Item 8 records an
+allocation inside limits already set at item 7 and introduces no new scientific
+parameter.
 
 ## Follow-on boundary
 
