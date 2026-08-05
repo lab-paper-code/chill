@@ -60,4 +60,29 @@ func TestCommittedPlan5Artifacts(t *testing.T) {
 	if confirmatory.Digest() != wantConfirmatoryDigest {
 		t.Fatalf("committed confirmatory-policy digest = %q", confirmatory.Digest())
 	}
+
+	v2Bytes, err := os.ReadFile(filepath.Join(
+		root, "rknn-mobilenet-v2-050-bsat-v2", "discovery-policy.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := DecodeDiscoveryDerivationPolicy(v2Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v2.CurveFamilyContractDigest() != contract.Digest() {
+		t.Fatalf("v2 discovery policy binds %q, want %q", v2.CurveFamilyContractDigest(), contract.Digest())
+	}
+	const wantV2Digest = "sha256:965d093a62b3ca2134da859a50c4566e4e0d5a465ea86b48dc626c6863b987f0"
+	if v2.Digest() != wantV2Digest {
+		t.Fatalf("committed v2 discovery-policy digest = %q", v2.Digest())
+	}
+	v2BSat, err := v2.BSatPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v2BSat.MaximumConfirmatoryTrials != 6 || v2BSat.MaximumActiveRunBudget != 18 {
+		t.Fatalf("v2 pilot-sized caps = %#v", v2BSat)
+	}
 }

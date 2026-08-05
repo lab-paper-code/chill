@@ -23,7 +23,9 @@ retained, Loader-verified, admitted, and included. Discovery selected batch one,
 but the frozen three-trial cap could not meet the 5% confirmatory precision rule.
 The committed second policy and typed final result therefore record
 `Unavailable: ConfirmatoryBudgetInsufficient` with no confirmatory Run
-allocation. This plan fixes the quantity that decides `b_sat` — the largest
+allocation. A disjoint second campaign is frozen with the first campaign used
+only as a pilot for a six-trial cap and 18-active-Run budget; its evidence will
+not be pooled. This plan fixes the quantity that decides `b_sat` — the largest
 remaining energy improvement any larger measured batch still offers — gives curve derivation
 ownership of the exact idle baseline set, rebuilds the point-confidence
 construction, and separates candidate discovery from confirmation. It does not

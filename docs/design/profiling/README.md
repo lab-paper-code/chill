@@ -166,7 +166,9 @@ two-member RKNN family. Discovery selected batch one, but the pre-frozen
 three-trial cap could not meet the simultaneous 5% precision rule. Its committed
 second policy and final result therefore record
 `Unavailable: ConfirmatoryBudgetInsufficient` and allocate no confirmatory Runs.
-No statistical `b_sat` claim was made.
+No statistical `b_sat` claim was made. A disjoint second campaign is frozen
+with a pilot-sized six-trial cap and 18-active-Run budget; none of the first
+campaign's evidence is pooled into it.
 Campaign provenance is pre-registered in a committed record rather than
 machine-enforced; that boundary is stated in the plan. It does not authorize a
 `DeviceProfile` API, a campaign controller, an intent schema change, or scheduler
