@@ -193,9 +193,9 @@ packaging and live admission are still pending.
 Preparation and the frozen execution-policy selector now accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT
-thread settings. Job materialization, the Go adapter, and the Python producer
-are implemented, but no declared production image has executed the protocol
-yet, so the row remains L0.
+thread settings. Job materialization, the Go adapter, the Python producer, and
+an arm64-only RKNNLite worker image recipe are implemented, but no digest-pinned
+runtime declaration has executed the protocol yet, so the row remains L0.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 
