@@ -284,6 +284,7 @@ spec:
                 - Settling
                 - Ready
                 - Restoring
+                - VerifyingRestore
                 - Restored
                 - Failed
                 type: string
@@ -377,6 +378,12 @@ spec:
                 type: string
               reason:
                 maxLength: 128
+                type: string
+              restoreAppliedAt:
+                description: |-
+                  RestoreAppliedAt separates the idempotent restore command from its
+                  independent read-back after restart.
+                format: date-time
                 type: string
               restoreStartedAt:
                 format: date-time
@@ -597,13 +604,22 @@ spec:
                 type: string
             type: object
             x-kubernetes-validations:
-            - message: terminalFailure must be present exactly in Failed phase
-              rule: has(self.terminalFailure) == (has(self.phase) && self.phase ==
-                'Failed')
+            - message: terminalFailure is valid only while restoring or after failure
+              rule: '!has(self.terminalFailure) || has(self.phase) && self.phase in
+                [''Restoring'', ''VerifyingRestore'', ''Failed'']'
+            - message: Failed phase requires terminalFailure
+              rule: '!has(self.phase) || self.phase != ''Failed'' || has(self.terminalFailure)'
             - message: Ready phase requires previous and target observations plus
                 readyAt
               rule: '!has(self.phase) || self.phase != ''Ready'' || has(self.previousObservation)
                 && has(self.targetObservation) && has(self.readyAt)'
+            - message: Restoring phase requires previous observation and restoreStartedAt
+              rule: '!has(self.phase) || self.phase != ''Restoring'' || has(self.previousObservation)
+                && has(self.restoreStartedAt)'
+            - message: VerifyingRestore phase requires previous observation and restore
+                timestamps
+              rule: '!has(self.phase) || self.phase != ''VerifyingRestore'' || has(self.previousObservation)
+                && has(self.restoreStartedAt) && has(self.restoreAppliedAt)'
             - message: Restored phase requires previous and restored observations
                 plus restoredAt
               rule: '!has(self.phase) || self.phase != ''Restored'' || has(self.previousObservation)

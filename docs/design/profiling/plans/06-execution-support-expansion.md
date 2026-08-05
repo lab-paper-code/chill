@@ -23,10 +23,11 @@ Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
 `MAXN`; the unreachable `orin-nano` row remains unverified. ADR 0015 selects a
 dedicated per-Node actuator as the sole host-state writer while retaining the
 Profiler as Run orchestrator. The durable `NodeActuation` API, Profiler
-producer, and strict local-Node consumer projection are implemented; no
-actuator operand, Lease, status controller, or host mutation is enabled. Later
-slices remain deferred until their stated entry condition is met or this plan
-is explicitly revised.
+producer, strict local-Node consumer projection, pure lifecycle decision core,
+and exact Node-UID Lease primitive are implemented. No actuator operand,
+status controller, safety observer, or host mutation is enabled. Later slices
+remain deferred until their stated entry condition is met or this plan is
+explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -144,6 +145,11 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   before wiring any selectable-mode producer.
 - [x] Materialize one owned durable handoff and verify its exact local-Node
   consumer projection without enabling a measurement Job or host mutation.
+- [x] Define and test the Node-UID-keyed Lease acquire, renew, conflict,
+  expiration takeover, and exact-holder release primitive; keep the production
+  serialization gate open until the actuator controller consumes it.
+- [x] Fix the pure happy-path and fail-safe decision order with separate target
+  and restoration read-back phases; no command result directly proves state.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
 - [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
@@ -172,6 +178,19 @@ previous/target/restored observations, phase, timestamps, and terminal failure
 in `status`. Its consumer projection rejects a foreign Node name or UID before
 any Lease or host adapter can receive the request. This closes the durable API
 boundary without enabling host mutation or selectable-mode profiling.
+
+The next internal layer keeps Node locking and lifecycle decisions separate
+from host tooling. Its Lease name is derived from exact Node UID, holder
+identity from exact handoff UID, and takeover is allowed only after a trusted
+renew/acquire timestamp plus configured duration expires. Release uses object
+preconditions and refuses a foreign holder. The pure lifecycle requires
+`observe previous -> apply -> observe target -> settle -> hold -> restore ->
+observe restored`; deadline, safety rejection, target mismatch, and primary
+failure all enter the same restore path. `VerifyingRestore` and
+`restoreAppliedAt` make command application and independent read-back
+reconstructable after restart. A restore read-back mismatch keeps the failure
+terminal and retains or reacquires the Lease. These primitives do not close
+the unchecked production gate until a status controller actually drives them.
 
 ### Jetson NVPModel
 

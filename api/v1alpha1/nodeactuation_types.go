@@ -12,7 +12,7 @@ const (
 )
 
 // NodeActuationPhase is the NodeActuator-owned observed lifecycle phase.
-// +kubebuilder:validation:Enum=Pending;AcquiringLease;CheckingSafety;ObservingPrevious;Applying;Verifying;Settling;Ready;Restoring;Restored;Failed
+// +kubebuilder:validation:Enum=Pending;AcquiringLease;CheckingSafety;ObservingPrevious;Applying;Verifying;Settling;Ready;Restoring;VerifyingRestore;Restored;Failed
 type NodeActuationPhase string
 
 const (
@@ -25,6 +25,7 @@ const (
 	NodeActuationPhaseSettling          NodeActuationPhase = "Settling"
 	NodeActuationPhaseReady             NodeActuationPhase = "Ready"
 	NodeActuationPhaseRestoring         NodeActuationPhase = "Restoring"
+	NodeActuationPhaseVerifyingRestore  NodeActuationPhase = "VerifyingRestore"
 	NodeActuationPhaseRestored          NodeActuationPhase = "Restored"
 	NodeActuationPhaseFailed            NodeActuationPhase = "Failed"
 )
@@ -134,8 +135,11 @@ type NodeActuationFailure struct {
 }
 
 // NodeActuationStatus is written only by the responsible per-Node actuator.
-// +kubebuilder:validation:XValidation:rule="has(self.terminalFailure) == (has(self.phase) && self.phase == 'Failed')",message="terminalFailure must be present exactly in Failed phase"
+// +kubebuilder:validation:XValidation:rule="!has(self.terminalFailure) || has(self.phase) && self.phase in ['Restoring', 'VerifyingRestore', 'Failed']",message="terminalFailure is valid only while restoring or after failure"
+// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Failed' || has(self.terminalFailure)",message="Failed phase requires terminalFailure"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Ready' || has(self.previousObservation) && has(self.targetObservation) && has(self.readyAt)",message="Ready phase requires previous and target observations plus readyAt"
+// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Restoring' || has(self.previousObservation) && has(self.restoreStartedAt)",message="Restoring phase requires previous observation and restoreStartedAt"
+// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'VerifyingRestore' || has(self.previousObservation) && has(self.restoreStartedAt) && has(self.restoreAppliedAt)",message="VerifyingRestore phase requires previous observation and restore timestamps"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Restored' || has(self.previousObservation) && has(self.restoredObservation) && has(self.restoredAt)",message="Restored phase requires previous and restored observations plus restoredAt"
 type NodeActuationStatus struct {
 	// +optional
@@ -179,6 +183,11 @@ type NodeActuationStatus struct {
 
 	// +optional
 	RestoreStartedAt *metav1.Time `json:"restoreStartedAt,omitempty"`
+
+	// RestoreAppliedAt separates the idempotent restore command from its
+	// independent read-back after restart.
+	// +optional
+	RestoreAppliedAt *metav1.Time `json:"restoreAppliedAt,omitempty"`
 
 	// +optional
 	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`

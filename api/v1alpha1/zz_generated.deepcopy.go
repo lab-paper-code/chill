@@ -864,6 +864,10 @@ func (in *NodeActuationStatus) DeepCopyInto(out *NodeActuationStatus) {
 		in, out := &in.RestoreStartedAt, &out.RestoreStartedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.RestoreAppliedAt != nil {
+		in, out := &in.RestoreAppliedAt, &out.RestoreAppliedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.RestoredAt != nil {
 		in, out := &in.RestoredAt, &out.RestoredAt
 		*out = (*in).DeepCopy()
