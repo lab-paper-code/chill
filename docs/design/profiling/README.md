@@ -2,11 +2,12 @@
 
 ## Status
 
-Roadmap with the first three leaf plans and the `ProfilingRun` path through
-durable execution-evidence verification and single-Run admission implemented.
-Repeated-trial aggregation, curve derivation, and profile publication remain
-incomplete. This document itself does not authorize later API or internal
-changes.
+Roadmap with the `ProfilingRun` path through durable execution-evidence
+verification and single-Run admission implemented. Repeated active and idle
+trials, exact-state curve derivation, and the first pre-frozen Plan 5a decision
+are also implemented and live-verified for one two-member RKNN family.
+Statistical Plan 5 confirmation and profile publication remain incomplete. This
+document itself does not authorize later API or internal changes.
 
 ## How to use this directory
 

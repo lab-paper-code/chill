@@ -29,6 +29,14 @@ idle admission dispatch are implemented and live-verified. The accepted idle
 Run retains distinct runtime/raw completeness while reusing the active control
 lifecycle.
 
+A focused Profiler envtest now covers the campaign-risk subset of checkpoint
+12: duplicate reconciles, reconstruction of the reconciler over durable API
+state, and disappearance of the recorded Job. It proves that one recorded Job
+UID is never rematerialized and that loss is reported as stable
+`ExecutionLost`. Cancellation, the remaining identity-drift cases, and restart
+faults around evidence finalization/admission remain open; checkpoint 12 is not
+reported complete.
+
 ## Purpose
 
 CHILL has reusable internal functions for static compatibility, bounded power
@@ -637,7 +645,11 @@ sentinel values accepted by the active result validator.
     permissions, configuration rollout, and upgrade behavior. Implemented for
     the execution/evidence path.
 12. Verify failure, cancellation, identity drift, duplicate events, and both
-    controller restarts with envtest and unit tests.
+    controller restarts with envtest and unit tests. Partially implemented:
+    duplicate reconcile, Profiler reconciler reconstruction, and recorded-Job
+    loss now cross a real API server and status subresource. Cancellation,
+    remaining drift cases, and restart faults around evidence
+    finalization/admission remain.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
