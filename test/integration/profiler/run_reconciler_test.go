@@ -257,22 +257,28 @@ func TestRunReconcilerRejectsReplacementJobIdentityDrift(t *testing.T) {
 		t.Fatalf("replacement Job reconcile error = %v, want recorded identity mismatch", err)
 	}
 	afterDrift := getRun(t, ctx, kube, request.NamespacedName)
-	if afterDrift.ResourceVersion != afterCreate.ResourceVersion {
-		t.Fatalf(
-			"identity drift rewrote Run status: before=%s after=%s",
-			afterCreate.ResourceVersion,
-			afterDrift.ResourceVersion,
-		)
+	assertRunUnchangedAfterDrift(t, afterDrift, afterCreate.ResourceVersion, recordedJob)
+	assertNoExecutionCalls(t, restarted)
+}
+
+func TestRunReconcilerRejectsRecordedJobOwnerDrift(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+
+	initial := newReconcilerHarness(t, kube, prepared)
+	reconcile(t, ctx, initial.reconciler, request)
+	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
+	recordedJob := requireRecordedJob(t, afterCreate)
+	changeJobControllerUID(t, ctx, kube, run.Namespace, recordedJob.Name, "foreign-run-uid")
+
+	restarted := newReconcilerHarness(t, kube, prepared)
+	_, err := restarted.reconciler.Reconcile(ctx, request)
+	if err == nil || !strings.Contains(err.Error(), "observed Job is not controlled by ProfilingRun") {
+		t.Fatalf("owner-drift reconcile error = %v, want controller-owner mismatch", err)
 	}
-	if afterDrift.Status.Job == nil || *afterDrift.Status.Job != recordedJob {
-		t.Fatalf("identity drift changed recorded Job reference: %#v", afterDrift.Status.Job)
-	}
-	if condition := findCondition(
-		afterDrift.Status.Conditions,
-		edgev1alpha1.ProfilingRunConditionExecutionComplete,
-	); condition != nil {
-		t.Fatalf("identity drift was misreported as an execution outcome: %#v", condition)
-	}
+	afterDrift := getRun(t, ctx, kube, request.NamespacedName)
+	assertRunUnchangedAfterDrift(t, afterDrift, afterCreate.ResourceVersion, recordedJob)
 	assertNoExecutionCalls(t, restarted)
 }
 
@@ -403,6 +409,34 @@ func createReplacementJob(
 	return job
 }
 
+func changeJobControllerUID(
+	t *testing.T,
+	ctx context.Context,
+	kube client.Client,
+	namespace, name string,
+	uid types.UID,
+) {
+	t.Helper()
+	job := &batchv1.Job{}
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, job); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	for index := range job.OwnerReferences {
+		if ptr.Deref(job.OwnerReferences[index].Controller, false) {
+			job.OwnerReferences[index].UID = uid
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("recorded Job has no controller owner to mutate")
+	}
+	if err := kube.Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func reconcile(
 	t *testing.T,
 	ctx context.Context,
@@ -453,6 +487,31 @@ func assertExecutionLost(
 	condition := findCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "ExecutionLost" {
 		t.Fatalf("missing typed ExecutionLost condition: %#v", run.Status.Conditions)
+	}
+}
+
+func assertRunUnchangedAfterDrift(
+	t *testing.T,
+	run *edgev1alpha1.ProfilingRun,
+	resourceVersion string,
+	recordedJob edgev1alpha1.ProfilingRunObjectReference,
+) {
+	t.Helper()
+	if run.ResourceVersion != resourceVersion {
+		t.Fatalf(
+			"identity drift rewrote Run status: before=%s after=%s",
+			resourceVersion,
+			run.ResourceVersion,
+		)
+	}
+	if run.Status.Job == nil || *run.Status.Job != recordedJob {
+		t.Fatalf("identity drift changed recorded Job reference: %#v", run.Status.Job)
+	}
+	if condition := findCondition(
+		run.Status.Conditions,
+		edgev1alpha1.ProfilingRunConditionExecutionComplete,
+	); condition != nil {
+		t.Fatalf("identity drift was misreported as an execution outcome: %#v", condition)
 	}
 }
 

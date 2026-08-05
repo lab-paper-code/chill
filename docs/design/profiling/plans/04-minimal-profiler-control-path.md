@@ -37,10 +37,13 @@ UID is never rematerialized and that loss is reported as stable
 Profiler restart proceeds to admission without repeating finalization, and that
 a completed admission is a stable no-op. A third envtest proves that recreating
 the recorded Job name with a different UID is rejected without
-rematerialization or Run-status mutation. The Operator envtest also
-reconstructs its Profiler reconciler over the retained `ChillSystem`, ConfigMap,
-and Deployment, then proves that it retains one Deployment UID and returns to a
-stable no-op. Cancellation and the remaining identity-drift cases remain open;
+rematerialization or Run-status mutation; the same fail-closed result now covers
+an unchanged Job UID whose controller owner drifts. Retained-intent digest,
+immutable Run-spec, evidence-store binding, raw-object identity, and executed
+container-image drift remain covered by their focused unit gates. The Operator
+envtest also reconstructs its Profiler reconciler over the retained
+`ChillSystem`, ConfigMap, and Deployment, then proves that it retains one
+Deployment UID and returns to a stable no-op. Cancellation remains open;
 checkpoint 12 is not reported complete.
 
 ## Purpose
@@ -656,8 +659,10 @@ sentinel values accepted by the active result validator.
     loss now cross a real API server and status subresource. Restart between
     finalization and admission, plus the completed-admission no-op, are also
     covered. Recorded-Job replacement with a different UID is rejected without
-    status mutation. Operator reconciler reconstruction over the retained
-    Deployment is covered. Cancellation and remaining drift cases remain.
+    status mutation, as is controller-owner drift on the retained Job UID. The
+    focused intent, evidence, and retained-loader drift gates remain green.
+    Operator reconciler reconstruction over the retained Deployment is covered.
+    Cancellation remains.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
