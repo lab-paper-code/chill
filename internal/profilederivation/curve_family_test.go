@@ -95,12 +95,16 @@ func TestCurveRequiresExactStateBaselinesAndIndependentEvidence(t *testing.T) {
 	points := curve.Points()
 	if len(points) != 2 || points[0].Batch != 1 || points[1].Batch != 2 ||
 		math.Abs(points[0].MeanIncrementalJoulesPerItem-1) > 1e-12 ||
-		math.Abs(points[1].MeanIncrementalJoulesPerItem-.8) > 1e-12 {
+		math.Abs(points[1].MeanIncrementalJoulesPerItem-.8) > 1e-12 ||
+		points[0].Confidence.VarianceOfMean == nil || *points[0].Confidence.VarianceOfMean != 0 ||
+		points[0].Confidence.EffectiveDegreesOfFreedom != nil || points[0].Confidence.HalfWidth != 0 {
 		t.Fatalf("unexpected exact-baseline curve points: %+v", points)
 	}
 	points[0].Trials[0].IncrementalJoulesPerItem = 99
-	if curve.Points()[0].Trials[0].IncrementalJoulesPerItem == 99 {
-		t.Fatal("Curve.Points exposed mutable internal trials")
+	*points[0].Confidence.VarianceOfMean = 99
+	freshPoint := curve.Points()[0]
+	if freshPoint.Trials[0].IncrementalJoulesPerItem == 99 || *freshPoint.Confidence.VarianceOfMean == 99 {
+		t.Fatal("Curve.Points exposed mutable point statistics")
 	}
 
 	missing := testFamilyBaselines(t, family)

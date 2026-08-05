@@ -269,5 +269,19 @@ func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {
 
 func clonePoint(point Point) Point {
 	point.Trials = append([]AdmittedTrial(nil), point.Trials...)
+	point.Confidence = clonePointConfidence(point.Confidence)
+	point.PreviousConfidence = clonePointConfidence(point.PreviousConfidence)
 	return point
+}
+
+func clonePointConfidence(confidence PointConfidence) PointConfidence {
+	if confidence.VarianceOfMean != nil {
+		variance := *confidence.VarianceOfMean
+		confidence.VarianceOfMean = &variance
+	}
+	if confidence.EffectiveDegreesOfFreedom != nil {
+		degreesOfFreedom := *confidence.EffectiveDegreesOfFreedom
+		confidence.EffectiveDegreesOfFreedom = &degreesOfFreedom
+	}
+	return confidence
 }

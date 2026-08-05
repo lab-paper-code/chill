@@ -9,9 +9,11 @@ opaque exact-state curve boundaries are implemented under Plan 5a, and its live
 sequential result supplies one discovery candidate. They do not implement Plan
 5's joint estimator or statistical claim. The derivation path now retains each
 active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
-baseline's mean variance and degrees of freedom. The complete two-pass
-calibration, rebuilt estimator, confirmatory sizing, policy decoding, and
-confirmatory result remain unimplemented. This plan fixes the quantity that
+baseline's mean variance and degrees of freedom. `Aggregate` now emits the
+versioned Welch--Satterthwaite point interval and retains the previous interval
+under its own version. The complete two-pass calibration, joint contrast
+estimator, confirmatory sizing, policy decoding, and confirmatory result remain
+unimplemented. This plan fixes the quantity that
 decides `b_sat` — the largest remaining energy improvement any larger measured
 batch still offers — gives curve derivation ownership of the exact idle
 baseline set, rebuilds the point-confidence construction, and separates
@@ -557,7 +559,9 @@ when it is zero.
 The live batch-one figure recorded in Plan 3 was produced by the previous
 interval construction. Its point estimate is unaffected by this plan; its
 interval is recomputed. Both results are retained under distinct estimator
-versions so each remains reproducible.
+versions so each remains reproducible. The rebuilt interval is
+`incremental-point-welch-satterthwaite-v2`; the retained interval is
+`incremental-point-rss-half-width-v1`.
 
 ## Checkpoint 4: discovery and confirmation
 
@@ -710,10 +714,10 @@ Plan 5 is complete when:
    freedom reachable from the derivation path. Implemented.
 3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`
    boundary to retain one exact-state baseline set across both passes. Rebuild
-   aggregation and the point-confidence construction; the current construction
-   combines Student-t half-widths at differing degrees of freedom, so the live
+   aggregation and the point-confidence construction; the previous construction
+   combined Student-t half-widths at differing degrees of freedom, so the live
    batch-one interval is recomputed and the earlier one retained under its own
-   estimator version.
+   estimator version. Implemented.
 4. Show, by derivation or simulation, that the two-pass procedure holds its
    stated confidence across every batch-to-batch difference the screen and the
    rule touch.

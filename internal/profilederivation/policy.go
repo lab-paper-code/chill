@@ -3,8 +3,11 @@ package profilederivation
 import "errors"
 
 const (
-	PointConfidenceMethod = "student-t"
-	PointConfidenceLevel  = 0.95
+	PointEstimatorVersion         = "incremental-point-welch-satterthwaite-v2"
+	PointConfidenceMethod         = "student-t-welch-satterthwaite"
+	PreviousPointEstimatorVersion = "incremental-point-rss-half-width-v1"
+	PreviousPointConfidenceMethod = "student-t"
+	PointConfidenceLevel          = 0.95
 )
 
 func validAdmissionPolicy(policy AdmissionPolicy) bool {

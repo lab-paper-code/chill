@@ -1,6 +1,7 @@
 package profilederivation
 
 import (
+	"errors"
 	"math"
 	"sort"
 
@@ -14,14 +15,6 @@ func percentile(values []float64, quantile float64) float64 {
 	return stat.Quantile(quantile, stat.Empirical, ordered, nil)
 }
 
-func mean(values []float64) float64 {
-	var sum float64
-	for _, value := range values {
-		sum += value
-	}
-	return sum / float64(len(values))
-}
-
 func studentTHalfWidth(values []float64) float64 {
 	if len(values) < 3 {
 		return math.Inf(1)
@@ -31,5 +24,105 @@ func studentTHalfWidth(values []float64) float64 {
 }
 
 func studentT95(df int) float64 {
-	return distuv.StudentsT{Mu: 0, Sigma: 1, Nu: float64(df)}.Quantile(0.975)
+	return studentTQuantile(0.975, float64(df))
+}
+
+func studentTQuantile(probability, degreesOfFreedom float64) float64 {
+	return distuv.StudentsT{Mu: 0, Sigma: 1, Nu: degreesOfFreedom}.Quantile(probability)
+}
+
+type varianceComponent struct {
+	variance         float64
+	degreesOfFreedom float64
+}
+
+type pointStatistics struct {
+	meanIncrementalJoulesPerItem          float64
+	incrementalSampleVariance             float64
+	meanBaselineCoefficientSecondsPerItem float64
+	confidence                            PointConfidence
+	previousConfidence                    PointConfidence
+}
+
+func derivePointStatistics(
+	values []float64,
+	coefficients []float64,
+	baselineVariance float64,
+	baselineDegreesOfFreedom int,
+	previousBaselineUncertainty float64,
+) (pointStatistics, error) {
+	result := pointStatistics{}
+	result.meanIncrementalJoulesPerItem, result.incrementalSampleVariance = stat.MeanVariance(values, nil)
+	result.meanBaselineCoefficientSecondsPerItem = stat.Mean(coefficients, nil)
+	activeVariance := result.incrementalSampleVariance / float64(len(values))
+	baselinePointVariance := result.meanBaselineCoefficientSecondsPerItem *
+		result.meanBaselineCoefficientSecondsPerItem * baselineVariance
+	variance, degreesOfFreedom, err := welchSatterthwaite(
+		varianceComponent{variance: activeVariance, degreesOfFreedom: float64(len(values) - 1)},
+		varianceComponent{variance: baselinePointVariance, degreesOfFreedom: float64(baselineDegreesOfFreedom)},
+	)
+	if err != nil {
+		return pointStatistics{}, err
+	}
+	varianceCopy := variance
+	result.confidence = PointConfidence{
+		EstimatorVersion: PointEstimatorVersion, Method: PointConfidenceMethod,
+		Level: PointConfidenceLevel, VarianceOfMean: &varianceCopy,
+		EffectiveDegreesOfFreedom: degreesOfFreedom,
+	}
+	if degreesOfFreedom != nil {
+		result.confidence.HalfWidth = studentTQuantile(
+			1-(1-PointConfidenceLevel)/2, *degreesOfFreedom,
+		) * math.Sqrt(variance)
+	}
+	result.previousConfidence = PointConfidence{
+		EstimatorVersion: PreviousPointEstimatorVersion,
+		Method:           PreviousPointConfidenceMethod,
+		Level:            PointConfidenceLevel,
+		HalfWidth: math.Hypot(
+			studentTHalfWidth(values),
+			previousBaselineUncertainty,
+		),
+	}
+	return result, nil
+}
+
+// welchSatterthwaite combines independent variance components. A nil degree of
+// freedom means every component has zero variance.
+func welchSatterthwaite(components ...varianceComponent) (float64, *float64, error) {
+	var totalVariance float64
+	var scale float64
+	for _, component := range components {
+		if component.variance < 0 || math.IsNaN(component.variance) || math.IsInf(component.variance, 0) ||
+			component.degreesOfFreedom <= 0 || math.IsNaN(component.degreesOfFreedom) ||
+			math.IsInf(component.degreesOfFreedom, 0) {
+			return 0, nil, errors.New("welch variance component is invalid")
+		}
+		totalVariance += component.variance
+		if component.variance > scale {
+			scale = component.variance
+		}
+	}
+	if math.IsInf(totalVariance, 0) {
+		return 0, nil, errors.New("welch total variance exceeds the supported range")
+	}
+	if scale == 0 {
+		return 0, nil, nil
+	}
+	var scaledTotal float64
+	var scaledDenominator float64
+	for _, component := range components {
+		scaledVariance := component.variance / scale
+		scaledTotal += scaledVariance
+		scaledDenominator += scaledVariance * scaledVariance / component.degreesOfFreedom
+	}
+	degreesOfFreedom := scaledTotal * scaledTotal / scaledDenominator
+	if math.IsNaN(degreesOfFreedom) || math.IsInf(degreesOfFreedom, 0) {
+		return 0, nil, errors.New("welch effective degrees of freedom exceeds the supported range")
+	}
+	return totalVariance, &degreesOfFreedom, nil
+}
+
+func equalWithinTolerance(left, right float64) bool {
+	return math.Abs(left-right) <= 1e-12*math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
 }

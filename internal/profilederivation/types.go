@@ -67,13 +67,18 @@ type AdmissionResult struct {
 }
 
 type AdmittedTrial struct {
-	StateIdentity                     string  `json:"stateIdentity"`
-	EnvironmentIdentity               string  `json:"environmentIdentity"`
-	MeasurementProtocolIdentity       string  `json:"measurementProtocolIdentity"`
-	TrialID                           string  `json:"trialID"`
-	AdmissionPolicyVersion            string  `json:"admissionPolicyVersion"`
-	EstimatorIdentity                 string  `json:"estimatorIdentity"`
-	BaselineUncertaintyJoulesPerItem  float64 `json:"baselineUncertaintyJoulesPerItem"`
+	StateIdentity                    string  `json:"stateIdentity"`
+	EnvironmentIdentity              string  `json:"environmentIdentity"`
+	MeasurementProtocolIdentity      string  `json:"measurementProtocolIdentity"`
+	TrialID                          string  `json:"trialID"`
+	AdmissionPolicyVersion           string  `json:"admissionPolicyVersion"`
+	EstimatorIdentity                string  `json:"estimatorIdentity"`
+	BaselineUncertaintyJoulesPerItem float64 `json:"baselineUncertaintyJoulesPerItem"`
+	// Baseline sufficient statistics are copied from the admitted exact-state
+	// baseline for point aggregation. Curve retains the baseline object that
+	// owns cross-point covariance.
+	BaselineMeanWallWattsVariance     float64 `json:"baselineMeanWallWattsVariance"`
+	BaselineDegreesOfFreedom          int     `json:"baselineDegreesOfFreedom"`
 	ActiveWallJoulesPerItem           float64 `json:"activeWallJoulesPerItem"`
 	BaselineCoefficientSecondsPerItem float64 `json:"baselineCoefficientSecondsPerItem"`
 	Batch                             int     `json:"batch"`
@@ -151,6 +156,20 @@ type PointPolicy struct {
 	Version       string `json:"version"`
 	MinimumTrials int    `json:"minimumTrials"`
 }
+
+// PointConfidence versions one interval construction around the shared point
+// estimate. The retained pre-Welch construction has neither a variance nor
+// effective degrees of freedom. A zero-variance Welch estimate retains its
+// zero variance but has no effective degrees of freedom.
+type PointConfidence struct {
+	EstimatorVersion          string   `json:"estimatorVersion"`
+	Method                    string   `json:"method"`
+	Level                     float64  `json:"level"`
+	VarianceOfMean            *float64 `json:"varianceOfMean,omitempty"`
+	EffectiveDegreesOfFreedom *float64 `json:"effectiveDegreesOfFreedom,omitempty"`
+	HalfWidth                 float64  `json:"halfWidth"`
+}
+
 type Point struct {
 	StateIdentity                string          `json:"stateIdentity"`
 	EnvironmentIdentity          string          `json:"environmentIdentity"`
@@ -158,12 +177,14 @@ type Point struct {
 	Batch                        int             `json:"batch"`
 	PointPolicyVersion           string          `json:"pointPolicyVersion"`
 	EstimatorIdentity            string          `json:"estimatorIdentity"`
-	ConfidenceMethod             string          `json:"confidenceMethod"`
-	ConfidenceLevel              float64         `json:"confidenceLevel"`
 	Trials                       []AdmittedTrial `json:"trials"`
 	MeanIncrementalJoulesPerItem float64         `json:"meanIncrementalJoulesPerItem"`
-	ConfidenceHalfWidth          float64         `json:"confidenceHalfWidth"`
-	LatencyP99Milliseconds       float64         `json:"latencyP99Milliseconds"`
+	// IncrementalSampleVariance has units of squared joules per squared item.
+	IncrementalSampleVariance             float64         `json:"incrementalSampleVariance"`
+	MeanBaselineCoefficientSecondsPerItem float64         `json:"meanBaselineCoefficientSecondsPerItem"`
+	Confidence                            PointConfidence `json:"confidence"`
+	PreviousConfidence                    PointConfidence `json:"previousConfidence"`
+	LatencyP99Milliseconds                float64         `json:"latencyP99Milliseconds"`
 }
 
 type BSatStatus string

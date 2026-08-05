@@ -87,7 +87,9 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	if math.Abs(admitted.IncrementalJoulesPerItem-.5) > 1e-9 ||
 		math.Abs(admitted.ActiveWallJoulesPerItem-1) > 1e-9 ||
-		math.Abs(admitted.BaselineCoefficientSecondsPerItem-.1) > 1e-9 {
+		math.Abs(admitted.BaselineCoefficientSecondsPerItem-.1) > 1e-9 ||
+		math.Abs(admitted.BaselineMeanWallWattsVariance-baseline.MeanWallWattsVariance) > 1e-12 ||
+		admitted.BaselineDegreesOfFreedom != baseline.DegreesOfFreedom {
 		t.Fatalf("active sufficient statistics are incomplete: %#v", admitted)
 	}
 	if admitted.MeasurementProtocolIdentity != "active-protocol" ||
@@ -195,19 +197,19 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "1", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 2, BaselineCoefficientSecondsPerItem: 1,
+			ActiveWallJoulesPerItem: 2, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
 			IncrementalJoulesPerItem: 1, LatencyP99Milliseconds: 2,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "2", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 2.1, BaselineCoefficientSecondsPerItem: 1,
+			ActiveWallJoulesPerItem: 2.1, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
 			IncrementalJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "3", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 1.9, BaselineCoefficientSecondsPerItem: 1,
+			ActiveWallJoulesPerItem: 1.9, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
 			IncrementalJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
 		},
 	}
@@ -215,7 +217,8 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if point.MeanIncrementalJoulesPerItem != 1 || point.ConfidenceHalfWidth <= 0 || point.LatencyP99Milliseconds != 3 {
+	if point.MeanIncrementalJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
+		point.PreviousConfidence.HalfWidth <= 0 || point.LatencyP99Milliseconds != 3 {
 		t.Fatalf("unexpected point: %+v", point)
 	}
 	if _, err := Aggregate(trials[:1], pointPolicy("v1")); err == nil {
@@ -241,20 +244,102 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
 		t.Fatal("expected mixed measurement protocol rejection")
 	}
+	mixed = append([]AdmittedTrial(nil), trials...)
+	mixed[2].BaselineDegreesOfFreedom++
+	if _, err := Aggregate(mixed, pointPolicy("v1")); err == nil {
+		t.Fatal("expected mixed baseline sufficient-statistics rejection")
+	}
 	uncertain := append([]AdmittedTrial(nil), trials...)
+	baselineVariance := math.Pow(.5/studentT95(2), 2)
 	for index := range uncertain {
 		uncertain[index].BaselineUncertaintyJoulesPerItem = .5
+		uncertain[index].BaselineMeanWallWattsVariance = baselineVariance
 	}
 	uncertainPoint, err := Aggregate(uncertain, pointPolicy("v1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uncertainPoint.ConfidenceHalfWidth < .5 {
+	if uncertainPoint.Confidence.VarianceOfMean == nil ||
+		*uncertainPoint.Confidence.VarianceOfMean < baselineVariance ||
+		uncertainPoint.PreviousConfidence.HalfWidth < .5 {
 		t.Fatal("baseline uncertainty was discarded")
 	}
 	uncertain[0].BaselineUncertaintyJoulesPerItem = math.NaN()
 	if _, err := Aggregate(uncertain, pointPolicy("v1")); err == nil {
 		t.Fatal("expected invalid uncertainty contribution rejection")
+	}
+}
+
+func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
+	idleValues := []float64{4.929898, 4.893351, 4.897335}
+	idleTrials := make([]IdleTrial, len(idleValues))
+	for index, value := range idleValues {
+		id := []string{"idle-a", "idle-b", "idle-c"}[index]
+		idleTrials[index] = IdleTrial{
+			StateIdentity: "state", EnvironmentIdentity: "environment",
+			MeasurementProtocolIdentity: "idle-protocol", TrialID: id,
+			RawEvidence: rawEvidence(id), AdmissionPolicyVersion: "idle-admission",
+			MeanWallWatts: value,
+		}
+	}
+	baseline, err := DeriveIdleBaseline(idleTrials, pointPolicy("idle-point"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	incrementalValues := []float64{0.068805, 0.065637, 0.065410}
+	completedItems := []int{5417, 5255, 5178}
+	activeTrials := make([]AdmittedTrial, len(incrementalValues))
+	for index, incremental := range incrementalValues {
+		trialID := []string{"active-a", "active-b", "active-c"}[index]
+		total := incremental*float64(completedItems[index]) + baseline.MeanWallWatts*30
+		trial := Trial{
+			StateIdentity: "state", EnvironmentIdentity: "environment",
+			MeasurementProtocolIdentity: "active-protocol", TrialID: trialID,
+			Batch: 1, CompletedItems: completedItems[index], LatencyMilliseconds: []float64{1},
+		}
+		activeTrials[index], err = IncrementalTrial(trial, AdmissionResult{
+			Verdict: VerdictAccepted, PolicyVersion: "active-admission",
+			StateIdentity: "state", EnvironmentIdentity: "environment",
+			MeasurementProtocolIdentity: "active-protocol", TrialID: trialID,
+			TotalWallJoules: &total, WindowSeconds: 30, CompletedItems: completedItems[index],
+		}, baseline)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	point, err := Aggregate(activeTrials, pointPolicy("active-point"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(point.MeanIncrementalJoulesPerItem-0.06661733333333333) > 1e-12 {
+		t.Fatalf("live point estimate moved: %.15f", point.MeanIncrementalJoulesPerItem)
+	}
+	if point.Confidence.EstimatorVersion != PointEstimatorVersion ||
+		point.Confidence.Method != PointConfidenceMethod ||
+		point.Confidence.VarianceOfMean == nil ||
+		point.Confidence.EffectiveDegreesOfFreedom == nil ||
+		point.Confidence.HalfWidth <= 0 {
+		t.Fatalf("rebuilt confidence is incomplete: %+v", point.Confidence)
+	}
+	if point.PreviousConfidence.EstimatorVersion != PreviousPointEstimatorVersion ||
+		point.PreviousConfidence.Method != PreviousPointConfidenceMethod ||
+		math.Abs(point.PreviousConfidence.HalfWidth-0.004723645122343838) > 1e-12 {
+		t.Fatalf("previous live interval was not retained: %+v", point.PreviousConfidence)
+	}
+	activeVariance := point.IncrementalSampleVariance / float64(len(activeTrials))
+	baselineVariance := math.Pow(point.MeanBaselineCoefficientSecondsPerItem, 2) *
+		baseline.MeanWallWattsVariance
+	wantVariance := activeVariance + baselineVariance
+	wantDegreesOfFreedom := wantVariance * wantVariance /
+		(math.Pow(activeVariance, 2)/2 + math.Pow(baselineVariance, 2)/2)
+	wantHalfWidth := studentTQuantile(0.975, wantDegreesOfFreedom) * math.Sqrt(wantVariance)
+	if math.Abs(*point.Confidence.VarianceOfMean-wantVariance) > 1e-15 ||
+		math.Abs(*point.Confidence.EffectiveDegreesOfFreedom-wantDegreesOfFreedom) > 1e-12 ||
+		math.Abs(point.Confidence.HalfWidth-wantHalfWidth) > 1e-12 ||
+		point.Confidence.HalfWidth == point.PreviousConfidence.HalfWidth {
+		t.Fatalf("Welch components were not preserved: %+v", point.Confidence)
 	}
 }
 
@@ -266,11 +351,16 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 			MeasurementProtocolIdentity:  "protocol",
 			EstimatorIdentity:            "e",
 			PointPolicyVersion:           "p",
-			ConfidenceMethod:             "student-t",
-			ConfidenceLevel:              .95,
 			Batch:                        batch,
 			MeanIncrementalJoulesPerItem: mean,
-			ConfidenceHalfWidth:          half,
+			Confidence: PointConfidence{
+				EstimatorVersion: PointEstimatorVersion,
+				Method:           PointConfidenceMethod, Level: PointConfidenceLevel, HalfWidth: half,
+			},
+			PreviousConfidence: PointConfidence{
+				EstimatorVersion: PreviousPointEstimatorVersion,
+				Method:           PreviousPointConfidenceMethod, Level: PointConfidenceLevel, HalfWidth: half,
+			},
 		}
 	}
 	policy := BSatPolicy{Version: "v1", RelativeEquivalenceTolerance: .02}
