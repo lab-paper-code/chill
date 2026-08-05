@@ -4,10 +4,14 @@
 
 ## Status
 
-Approved implementation plan. No part of this plan is implemented. It answers
-the same question as [Plan 5](05-batch-saturation-campaign.md) at a lower
-evidence strength and a much lower measurement cost, by walking batch sizes
-upward and stopping when they stop paying off. It produces a decision, not a
+Active implementation plan. The pure family-contract, family-verification,
+exact-state curve, and sequential-stop constructors are implemented in
+`internal/profilederivation`, with golden tests for every stop reason and the
+recovery/accumulation cases. The first campaign record is frozen under
+[`campaigns/rknn-mobilenet-v2-050-sequential-v1`](../campaigns/rknn-mobilenet-v2-050-sequential-v1/README.md),
+but no post-freeze campaign Run has been submitted. This plan answers the same
+question as [Plan 5](05-batch-saturation-campaign.md) at a lower evidence
+strength and a much lower measurement cost. It produces a decision, not a
 statistical claim. It authorizes no API, controller, intent schema, or
 policy-catalog change.
 
@@ -21,8 +25,8 @@ curve family and one admitted idle baseline per distinct member state. The
 RKNN batch-one and batch-two members now have aligned retained L3 evidence under
 the same catalog, recipe, runtime, and helper-image generation. Those diagnostic
 Runs preceded a committed `CurveFamilyContractDigest`, so they validate the
-input boundary but are not retroactive Plan 5a campaign evidence. Implementation
-and a pre-registered campaign record remain required before any L4 claim.
+input boundary but are not retroactive Plan 5a campaign evidence. The new
+pre-registered campaign must produce fresh Runs before any L4 claim.
 
 ## Question
 
@@ -45,8 +49,9 @@ measure costs cluster time for nothing.
 
 So this plan takes the early-stopping rule as it is actually implemented in those
 frameworks, adapts the two things that differ for energy measurement, and runs it
-over batch sizes. Nothing about the batch domain has to be declared in advance:
-the sweep walks up from batch 1 and finds its own end.
+over batch sizes. It does not preselect a statistical `Kmax` or stopping batch.
+ADR 0014 still requires the catalog-resolved eligible member map to be frozen
+before measurement; exhausting that map is a typed capability boundary.
 
 ## Where the rule comes from
 
@@ -236,8 +241,20 @@ worked example above cost 5 batch sizes. At three trials per batch that is 15
 active Runs, plus one idle baseline set per distinct member state. A
 dynamic-batch artifact still needs only one set.
 
-Nothing has to be declared about how far the domain extends, because the sweep
-discovers its own end.
+No statistical `Kmax` is selected. The sweep discovers its stopping point within
+the frozen eligible member map, or reports exhaustion of that map as
+`CapabilityBoundary`.
+
+## Implementation status
+
+| Boundary | Status |
+|---|---|
+| frozen family contract and strict persisted-contract decoder | implemented |
+| post-Loader plain member verification and realized family identity | implemented with no Kubernetes dependency |
+| exact-state baseline ownership and pass/trial uniqueness | implemented |
+| relative best-so-far rule and typed stop reasons | implemented and golden-tested |
+| first policy/family/inclusion record | frozen; no campaign Runs submitted |
+| live sequential result | not yet available |
 
 ## What this plan reports
 

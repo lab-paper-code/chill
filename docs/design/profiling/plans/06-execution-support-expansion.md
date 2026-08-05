@@ -16,8 +16,10 @@ and composes them through a frozen curve family with one exact idle baseline per
 member state. Batch one has now been regenerated, and both members have aligned
 three-active plus three-idle L3 evidence under one conversion recipe, catalog
 snapshot, runtime, and helper-image set. The next gate is the pure Plan 5a
-family/stop implementation and a pre-registered campaign record; the aligned
-diagnostic Runs are not retroactively promoted to L4. Later slices remain
+family/stop campaign. Its constructors and first pre-registered record are now
+complete, while the aligned diagnostic Runs are not retroactively promoted to
+L4. No post-freeze campaign Run has been submitted, so the support rows remain
+L3 and execution of that record is the current gate. Later slices remain
 deferred until their stated entry condition is met or this plan is explicitly
 revised.
 
@@ -54,7 +56,7 @@ corresponding level.
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed | L3 | Three active and three model-loaded-idle Runs are retained, reloaded, and admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | RKNNLite model and batch expansion | aligned batch-one and batch-two rows at L3 | Implement the ADR 0014 family boundary, then freeze a Plan 5a campaign record before L4 measurement. |
+| current | RKNNLite model and batch expansion | Plan 5a core and campaign record frozen; rows remain L3 | Execute only the post-freeze Run set, verify the realized family, and record the typed stop result. |
 
 ## Stable decisions
 
@@ -268,7 +270,7 @@ Entry condition: the owning execution path reaches L3 for
 - [x] Reconvert batch one with the current repository recipe, freeze batch one
   and batch two under one catalog/image generation, and admit three active plus
   three model-loaded-idle Runs for each member state.
-- [ ] Implement Plan 5a discovery over the verified family and use Plan 5 only
+- [x] Implement Plan 5a discovery over the verified family and use Plan 5 only
   for confirmatory L4 claims.
 
 ## Common completion gate

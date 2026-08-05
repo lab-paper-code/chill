@@ -171,12 +171,18 @@ ORT remains paused at L2 on a physical electrical blocker. Orange Pi CPU ORT
 and two immutable RKNN fixed-batch rows are L3. ADR 0014 closes the
 fixed-artifact curve-composition decision. Batch one was rebuilt and both
 members were remeasured under the same recipe, catalog, and image generation,
-so aligned L3 evidence now exists. The current boundary is implementing the
-pure Plan 5a family/stop constructor and freezing a campaign record before
-collecting any evidence claimed as L4.
+so aligned L3 evidence now exists. The pure Plan 5a family/stop core and first
+frozen campaign record also exist; the current boundary is executing only its
+post-freeze Runs before making any L4 claim.
 Runtime-specific adapters and mutable power-mode ownership remain explicit;
 catalog presence and historical standalone smoke are not treated as production
 execution evidence.
+
+## Campaign records
+
+[campaigns/README.md](campaigns/README.md) indexes immutable offline campaign
+inputs and post-run evidence lists. A record does not expand the scope of its
+owning plan and is not controller state.
 
 ## Component contracts
 

@@ -1,0 +1,7 @@
+{
+  "version": "rknn-mobilenet-v2-050-sequential-v1",
+  "minDelta": 0.05,
+  "patience": 2,
+  "trialsPerBatch": 3,
+  "divergenceFactor": 1.5
+}
