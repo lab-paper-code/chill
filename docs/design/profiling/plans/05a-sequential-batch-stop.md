@@ -4,12 +4,15 @@
 
 ## Status
 
-Active implementation plan. The pure family-contract, family-verification,
+Completed implementation plan. The pure family-contract, family-verification,
 exact-state curve, and sequential-stop constructors are implemented in
 `internal/profilederivation`, with golden tests for every stop reason and the
 recovery/accumulation cases. The first campaign record is frozen under
 [`campaigns/rknn-mobilenet-v2-050-sequential-v1`](../campaigns/rknn-mobilenet-v2-050-sequential-v1/README.md),
-but no post-freeze campaign Run has been submitted. This plan answers the same
+and its post-freeze live campaign is complete. All 12 Runs were retained,
+Loader-verified, admitted, and composed through exact-state baselines. The
+frozen rule selected batch one and stopped at the explicit batch-three
+capability boundary. This plan answers the same
 question as [Plan 5](05-batch-saturation-campaign.md) at a lower evidence
 strength and a much lower measurement cost. It produces a decision, not a
 statistical claim. It authorizes no API, controller, intent schema, or
@@ -26,7 +29,7 @@ RKNN batch-one and batch-two members now have aligned retained L3 evidence under
 the same catalog, recipe, runtime, and helper-image generation. Those diagnostic
 Runs preceded a committed `CurveFamilyContractDigest`, so they validate the
 input boundary but are not retroactive Plan 5a campaign evidence. The new
-pre-registered campaign must produce fresh Runs before any L4 claim.
+pre-registered campaign produced those fresh Runs and closed the L4 gate.
 
 ## Question
 
@@ -253,8 +256,8 @@ the frozen eligible member map, or reports exhaustion of that map as
 | post-Loader plain member verification and realized family identity | implemented with no Kubernetes dependency |
 | exact-state baseline ownership and pass/trial uniqueness | implemented |
 | relative best-so-far rule and typed stop reasons | implemented and golden-tested |
-| first policy/family/inclusion record | frozen; no campaign Runs submitted |
-| live sequential result | not yet available |
+| first policy/family/inclusion record | frozen before measurement and preserved |
+| live sequential result | completed; selected batch 1, `CapabilityBoundary` at batch 3 |
 
 ## What this plan reports
 

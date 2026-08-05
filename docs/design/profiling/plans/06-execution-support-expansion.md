@@ -9,17 +9,16 @@
 ## Status
 
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
-physical power-supply correction. Orange Pi CPU ORT and the batch-one and
-batch-two RKNNLite rows have reached L3. RKNNLite batch expansion is now
-at the L4 campaign boundary: ADR 0014 preserves those distinct execution states
+physical power-supply correction. Orange Pi CPU ORT is L3, while the batch-one
+and batch-two RKNNLite rows have reached L4. ADR 0014 preserves those distinct execution states
 and composes them through a frozen curve family with one exact idle baseline per
 member state. Batch one has now been regenerated, and both members have aligned
 three-active plus three-idle L3 evidence under one conversion recipe, catalog
-snapshot, runtime, and helper-image set. The next gate is the pure Plan 5a
-family/stop campaign. Its constructors and first pre-registered record are now
-complete, while the aligned diagnostic Runs are not retroactively promoted to
-L4. No post-freeze campaign Run has been submitted, so the support rows remain
-L3 and execution of that record is the current gate. Later slices remain
+snapshot, runtime, and helper-image set. The pure Plan 5a family/stop campaign
+then produced 12 new post-freeze Accepted Runs, reproduced both exact-state
+baselines, selected batch one, and stopped at the batch-three capability
+boundary. This closes P7 without retroactively promoting the earlier diagnostic
+Runs. Later slices remain
 deferred until their stated entry condition is met or this plan is explicitly
 revised.
 
@@ -54,9 +53,9 @@ corresponding level.
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
-| completed | Orange Pi RKNNLite / fixed | L3 | Three active and three model-loaded-idle Runs are retained, reloaded, and admitted under stable derivation identities. |
+| completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | RKNNLite model and batch expansion | Plan 5a core and campaign record frozen; rows remain L3 | Execute only the post-freeze Run set, verify the realized family, and record the typed stop result. |
+| completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions
 
@@ -252,7 +251,7 @@ Entry condition: Node-wide GPU clock ownership and restoration are proven.
 - Keep Kubernetes GPU allocation distinct from Node-wide exclusivity.
 - Admit active and model-loaded-idle evidence independently per path.
 
-### P7: Model and batch expansion — current
+### P7: Model and batch expansion — completed
 
 Entry condition: the owning execution path reaches L3 for
 `mobilenet-v2-050`.
@@ -272,6 +271,12 @@ Entry condition: the owning execution path reaches L3 for
   three model-loaded-idle Runs for each member state.
 - [x] Implement Plan 5a discovery over the verified family and use Plan 5 only
   for confirmatory L4 claims.
+- [x] Execute the pre-frozen campaign, retain and re-verify all 12 active/idle
+  Runs, and record the selected batch and typed capability-boundary stop.
+
+Completion: the two exact Orange Pi RKNN fixed-artifact rows compose as one
+Loader-verified Plan 5a family and reach L4 while retaining distinct execution
+states and idle baselines.
 
 ## Common completion gate
 

@@ -525,3 +525,29 @@ This evidence closes the P7 reconversion/aligned-remeasurement item and proves
 that state-keyed baselines work on retained live evidence. It leaves both rows
 at L3 until the Plan 5a family constructor is implemented and a new campaign is
 pre-registered before measurement.
+
+## Post-freeze RKNN Plan 5a campaign (2026-08-05)
+
+The pre-registered
+[`rknn-mobilenet-v2-050-sequential-v1`](../../campaigns/rknn-mobilenet-v2-050-sequential-v1/README.md)
+record was executed with 12 new sequential Runs. All six active and six
+model-loaded-idle Runs reached `Accepted`; the retained Loader independently
+verified their final and raw object identities, owned Job bindings, frozen
+intents and policies, candidate reports, terminal container image IDs, and
+active/idle evidence schemas. The campaign record owns the exact Run UIDs,
+Pod-derived trial IDs, intent/evidence digests, realized identities, and the
+one recorded procedural deviation so this ledger does not duplicate that
+machine-audit list.
+
+The realized family identity is
+`chill.dacs.io/curve-family-identity.v1alpha1@sha256:5fa8ac8447016f259bf75e68549e73bcf8fa6974a958eaf28d1b126fe99cd60a`.
+Batch-one and batch-two incremental means were respectively
+`0.00892543797 J/item` and `0.00885848038 J/item`. The latter improved by only
+0.750188%, below the frozen 5% margin, so the rule retained batch one as the
+selected batch. The frozen family has no batch-three member; the final typed
+result is therefore `Stopped / CapabilityBoundary / boundaryBatch=3`.
+
+This is a Plan 5a decision without a confidence statement or statistical
+`b_sat` claim. It nevertheless satisfies Plan 6's L4 definition: repeated
+trials and multiple batches were produced for one verified family while each
+member kept its exact execution state and state-owned idle baseline.
