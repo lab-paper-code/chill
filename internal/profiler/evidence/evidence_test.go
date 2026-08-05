@@ -293,6 +293,30 @@ func TestExecutionEvidenceValidatesIdleRawObjectIdentity(t *testing.T) {
 	}
 }
 
+func TestExecutionEvidenceRejectsSelectedContainerImageIDDrift(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	evidence := validExecutionEvidence(t, intent, raw)
+
+	for _, name := range []string{"runtime", "metric-observer", "workload-observer"} {
+		t.Run(name, func(t *testing.T) {
+			drifted := evidence
+			drifted.Terminal.Containers = append([]ContainerTerminal(nil), evidence.Terminal.Containers...)
+			for index := range drifted.Terminal.Containers {
+				if drifted.Terminal.Containers[index].Name == name {
+					drifted.Terminal.Containers[index].ImageID =
+						"containerd://registry.example/drifted@sha256:" + strings.Repeat("f", 64)
+				}
+			}
+
+			err := drifted.Validate(raw)
+			if err == nil || !strings.Contains(err.Error(), `terminal container "`+name+`" imageID mismatch`) {
+				t.Fatalf("expected %s child imageID drift rejection, got %v", name, err)
+			}
+		})
+	}
+}
+
 func loadIntent(t *testing.T) profilingrun.Intent {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")

@@ -149,8 +149,11 @@ source evidence proves a shared change is required.
   against the live Node's four allocatable CPUs and `8032080Ki` allocatable
   memory. The current wildcard CPU-ORT policy fits this envelope without a
   Raspberry Pi-specific policy fork.
-- [ ] Add fail-closed tests for architecture, backend, artifact digest, and
-  selected image-child drift.
+- [x] Add fail-closed tests for architecture, backend, artifact digest, and
+  selected image-child drift. Candidate-resolution tests reject runtime
+  architecture/backend and artifact architecture/digest mismatches;
+  terminal-evidence tests reject runtime, MetricObserver, and
+  WorkloadObserver child `imageID` drift.
 - [ ] Run three active and three model-loaded-idle Runs sequentially.
 - [ ] Verify all six Runs report execution complete, evidence verified, and
   evidence admitted.
@@ -192,6 +195,24 @@ It does not satisfy L3 until the electrical throttling is removed and both
 active and idle evidence are admitted. The diagnostic Run had an additional
 ownerless trace Pod in its environment identity and is not a repeated campaign
 trial.
+
+### Remaining P1 TODO, in order
+
+- [ ] Fix the prefix-free Raspberry Pi `get_throttled` hexadecimal parser in
+  the edge-metrics producer repository, add `50000`/`50005` regression cases,
+  deploy it, and verify active/latched gauges against a simultaneous raw sysfs
+  trace. This is an external metric-producer change, not CHILL admission code.
+- [ ] Correct the `rasp5` power supply/cable condition and prove
+  `get_throttled=0` throughout one 30-second active diagnostic. Do not weaken
+  `wall-power-v2` to accommodate electrical throttling.
+- [ ] Run one clean active `ProfilingRun` and require execution complete,
+  evidence verified, and admission accepted before paying for repetitions.
+- [ ] Under the resulting unchanged intent and environment identities, run
+  three new active and three new model-loaded-idle trials sequentially. Do not
+  pool the pre-repair idle trial with the post-repair campaign.
+- [ ] Reload all six retained evidence objects, compare the three identity
+  strings within each mode and the shared state/environment identities across
+  modes, then promote the two matrix rows to L3 only if all admissions pass.
 
 Completion: `raspberry-pi-5-8g / mobilenet-v2-050 / ort-cpu / fixed` is L3 for
 both workload modes on current HEAD.

@@ -174,6 +174,18 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "RuntimeArchitectureMismatch",
 		},
 		{
+			name: "runtime backend incompatible",
+			mutate: func(objects []client.Object) {
+				config := objects[2].(*corev1.ConfigMap)
+				replaceRuntimeDeclaration(
+					config,
+					`"backends":["CPUExecutionProvider"]`,
+					`"backends":["CUDAExecutionProvider"]`,
+				)
+			},
+			match: "RuntimeBackendUnavailable",
+		},
+		{
 			name: "mutable runtime image",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
