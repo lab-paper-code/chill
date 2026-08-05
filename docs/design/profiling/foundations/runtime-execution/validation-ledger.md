@@ -268,3 +268,80 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
 - This is image-delivery evidence only. It did not mount the mutable host
   contract, initialize the NPU, execute the coordinated measurement window, or
   produce retained raw evidence; the support rows therefore remain L0.
+
+## Orange Pi RKNNLite / fixed
+
+### Live corrections before the retained identity family
+
+- `orangepi-rknnlite-active-bs1-a1` failed before runtime start because the
+  installed artifact source path was `/artifact/model.rknn`; the already
+  retained restricted diagnostic proved the image-owned path is
+  `/artifact/mobilenet-v2-050-rk3588-bs1.rknn`. Commit `ef3ce41` corrected only
+  that installation fact.
+- `orangepi-rknnlite-active-bs1-a2` then copied and verified the artifact but
+  exposed two independent delivery gaps. The privileged runtime could see the
+  host cgroup namespace, so its own cgroup-v2 scope had to be resolved from
+  `/proc/self/cgroup`; the previously installed observers also predated intent
+  v1alpha8 and rejected `hostContractDigest`. Commit `ab17ef1` corrected the
+  runtime scope resolution, and current observer images were rebuilt.
+- Active `a3` and idle `i1` were retained and admitted with the corrected
+  implementation, but their facts named buildx manifest-list digests. They are
+  successful pre-finalization evidence, not members of the final L3 identity
+  family because Plan 6 requires runnable child manifests.
+- `orangepi-rknnlite-active-bs1-a4` declared the runtime child manifest and
+  executed successfully, but containerd reported the cached parent-index
+  digest for that repository. Evidence finalization rejected the mismatch.
+  Commit `502787a` therefore publishes the arm64-only worker as a direct OCI
+  manifest in the architecture-specific repository. Smoke Pod
+  `rknnlite-arm64-manifest-smoke-ab17ef1`, UID
+  `01730ba7-42b9-4008-8ba3-edf6933bc79a`, proved declared and observed
+  `imageID` equality before the final Runs.
+
+### Final installed execution identities
+
+| Fact | Verified identity |
+|---|---|
+| RKNNLite worker | arm64 manifest `sha256:88ec18422621a844f2a169a291087a2a334cb8bac32a1a211296bf48cb2245a9`; package 2.3.2; `NPU_CORE_0` |
+| MetricObserver | arm64 manifest `sha256:81661c7cec84d29de96ea58426382eb5f47e09687a21315138bb4a1cf9960288` |
+| WorkloadObserver | arm64 manifest `sha256:872446ddfed212300296f610bfcc3dc98490be9ff4975af8f626a4ea95d45f6a` |
+| RKNN artifact image | arm64 manifest `sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c` |
+| RKNN artifact bytes | `sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550` at `/artifact/mobilenet-v2-050-rk3588-bs1.rknn` |
+| Host contract | `librknnrt.so` `sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8`; driver 0.9.6; RK3588 token; four exact `/dev/dri` character devices |
+
+The final active and idle Pods reported exactly these three runtime/helper
+manifest digests as their Kubernetes `imageID` values. Runtime evidence also
+reported package and library versions, driver, platform, devices, core mask,
+input layout, model load/init success, selected batch, and active output shape.
+
+### Retained L3 admissions and identity audit
+
+| Mode | Run | Final evidence digest |
+|---|---|---|
+| active | `orangepi-rknnlite-active-bs1-a5` | `sha256:f3e85cdd238ac9dde1dfbadd631d759ac097b04c4d86680348f883d47c4dece6` |
+| active | `orangepi-rknnlite-active-bs1-a6` | `sha256:1d329c8d358e8cf08df215e40e30a5d5a8f69ca07db84f8895c2635a0de6fd2b` |
+| active | `orangepi-rknnlite-active-bs1-a7` | `sha256:47a9c45546a972c2049c67eb2630efe2b674c584f77688cc89f6ec70a6ee21c9` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i2` | `sha256:a7a9b106ccfedd0ea477a29c22cc7e31d3043788f6c40e29575ccdfce59c0615` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i3` | `sha256:0cddf43208dbfebfcc32415eabb467cfe525eb177e2c4910725f76df361a0d00` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i4` | `sha256:0e72a81a13fda890d213f7314e01badfb9589a009a0df02ac07fdbea2c7fe0e7` |
+
+All six Runs completed, durably reloaded, independently verified, and admitted
+`Accepted`. A read-only live audit used `RetainedLoader` plus the production
+active/idle projectors and proved:
+
+- one shared execution-state identity,
+  `execution-state-identity.v1alpha2@sha256:dec774c084f4da8fef51feb78208bc402f7aa5068dfa164d9185f88b01cf6905`;
+- one shared owner-bound environment identity,
+  `external-environment-identity.v1alpha1@sha256:1e462e5d2549ac2be0a98c2e74e8a8d07f9365766280cf052cc840227cb2ff31`;
+- one active protocol identity,
+  `measurement-protocol-identity.v1alpha1@sha256:b6a7ffd93c8d21c6908534ea1f14995611f3021509e7c880751f96644583e8ff`;
+- one distinct idle protocol identity,
+  `measurement-protocol-identity.v1alpha1@sha256:59cbd81ac19b738ee739d6aef26ee2353bcb6b818dc4b8d1232ee7d53920513f`;
+- six unique Pod-derived Trial IDs and six unique verified raw-evidence
+  digests.
+
+Full intent digests changed only when the frozen Node
+`resourceVersion` advanced (`277795071`, `277799068`, and `277803120`). Direct
+intent diffs found no other within-mode drift. Node `resourceVersion` is an
+audit field deliberately excluded from all three derivation identities, while
+the Node UID remained fixed. The two support rows therefore satisfy Plan 6 L3;
+multiple fixed-batch artifacts remain P7/L4 work.

@@ -9,10 +9,10 @@
 ## Status
 
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
-physical power-supply correction. Orange Pi CPU ORT has reached L3, making the
-Orange Pi RKNNLite artifact and host-contract boundary the current independent
-slice. Later slices remain deferred until their stated entry condition is met
-or this plan is explicitly revised.
+physical power-supply correction. Orange Pi CPU ORT and RKNNLite have reached
+L3. RKNNLite model and batch expansion is now the current independent slice;
+later slices remain deferred until their stated entry condition is met or this
+plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -45,8 +45,9 @@ corresponding level.
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
+| completed | Orange Pi RKNNLite / fixed | L3 | Three active and three model-loaded-idle Runs are retained, reloaded, and admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | Orange Pi RKNNLite / fixed | L0 | Deploy the digest-pinned declaration and execute active/idle `ProfilingRun` objects through admission. |
+| current | RKNNLite model and batch expansion | L3 to L4 | Add only artifact-backed fixed batches, then execute discovery under Plan 5a. |
 
 ## Stable decisions
 
@@ -143,7 +144,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
 ## Remaining vertical slices
 
-### P3: Orange Pi RKNNLite / fixed — current
+### P3: Orange Pi RKNNLite / fixed — completed
 
 Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
@@ -151,9 +152,9 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
   conversion identity, and fixed-batch capability.
 - [x] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.
-- [ ] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
+- [x] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
   contract, and active/idle evidence path.
-- [ ] Retain core mask, input layout, init/load result, selected batch, and output
+- [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
 Execution-facts v1alpha4 and candidate-report v1alpha5 now keep image-owned
@@ -167,7 +168,9 @@ Intent v1alpha8 binds only an order-normalized digest of the physical host
 contract into state and omits ORT-only thread settings from RKNNLite's common
 CPU quota; v1alpha7/v1alpha6 CPU bytes remain readable by both Go and Python.
 Host-bound derivation identities use execution-state-identity v1alpha2 while
-CPU identities remain unchanged. No exact RKNN declaration is installed yet.
+CPU identities remain unchanged. The installed RKNN declaration pins the
+arm64-only runtime manifest, fixed-batch artifact manifest and bytes, exact
+host ABI/device contract, and runtime access contract.
 The production Job now consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
 Pod-level supplemental groups, runtime-only privilege, and an optional extended
@@ -175,8 +178,8 @@ resource. Observer containers receive neither host mounts nor privilege. The
 worker now reads the exact projected candidate bytes at its process boundary,
 selects the explicit RKNNLite adapter, and compares the producer's package,
 host-library digest, driver, platform, device, batch, layout, and active input-
-shape observations with that sealed candidate delivery. No Python RKNNLite
-producer emits the result yet.
+shape observations with that sealed candidate delivery. The Python producer
+emits the corresponding active or model-loaded-idle runtime result.
 
 Active runtime-result v1alpha2 and idle runtime-result v1alpha2 now discriminate
 the common backend from CPU ORT provider vocabulary and carry an optional RKNN
@@ -187,15 +190,19 @@ current nested results, while the immediately retained CPU raw/runtime pairs
 remain readable. The RKNNLite Python producer now strictly decodes the current
 intent and verified candidate projection, verifies the artifact and mutable
 host contract, runs only `NPU_CORE_0`, and emits active or inference-free
-model-loaded-idle results under the same bounded handoff protocol. Image
-packaging and live admission are still pending.
+model-loaded-idle results under the same bounded handoff protocol. The image
+recipe publishes a direct arm64 manifest so the frozen runtime digest and
+Kubernetes `imageID` remain the same verification identity.
 
-Preparation and the frozen execution-policy selector now accept only the
+Preparation and the frozen execution-policy selector accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT
 thread settings. Job materialization, the Go adapter, the Python producer, and
-an arm64-only RKNNLite worker image recipe are implemented, but no digest-pinned
-runtime declaration has executed the protocol yet, so the row remains L0.
+the arm64-only worker were exercised by three retained active and three
+retained model-loaded-idle Runs. All six evidence objects were reloaded and
+projected through the production identity boundary; both modes share one state
+and environment identity while retaining distinct, mode-stable protocol
+identities.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 
@@ -232,16 +239,16 @@ Entry condition: Node-wide GPU clock ownership and restoration are proven.
 - Keep Kubernetes GPU allocation distinct from Node-wide exclusivity.
 - Admit active and model-loaded-idle evidence independently per path.
 
-### P7: Model and batch expansion
+### P7: Model and batch expansion — current
 
 Entry condition: the owning execution path reaches L3 for
 `mobilenet-v2-050`.
 
-- Bind each logical model to immutable per-runtime artifacts and capabilities.
-- Do not infer RKNN or TensorRT batch flexibility from ONNX shape flexibility.
-- Admit active and idle evidence before a batch campaign; use Plan 5a for
+- [ ] Bind each logical model to immutable per-runtime artifacts and capabilities.
+- [ ] Do not infer RKNN or TensorRT batch flexibility from ONNX shape flexibility.
+- [ ] Admit active and idle evidence before a batch campaign; use Plan 5a for
   discovery and Plan 5 for confirmatory L4 claims.
-- Update rows individually; never promote a class, runtime, or model family
+- [ ] Update rows individually; never promote a class, runtime, or model family
   from one successful row.
 
 ## Common completion gate
