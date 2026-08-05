@@ -1,6 +1,7 @@
 package profilederivation
 
 import (
+	"bytes"
 	"math"
 	"strings"
 	"testing"
@@ -23,6 +24,21 @@ func TestFreezeAndVerifyCurveFamily(t *testing.T) {
 	}
 	if second.Digest() != contract.Digest() {
 		t.Fatalf("batch order changed the contract digest: %s != %s", second.Digest(), contract.Digest())
+	}
+	canonical, err := contract.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCurveFamilyContract(append([]byte(" \n"), canonical...))
+	if err != nil || decoded.Digest() != contract.Digest() {
+		t.Fatalf("decode did not reproduce the frozen contract: %s %v", decoded.Digest(), err)
+	}
+	unknown := bytes.Replace(canonical, []byte(`"schemaVersion":`), []byte(`"unknown":1,"schemaVersion":`), 1)
+	if _, err := DecodeCurveFamilyContract(unknown); err == nil {
+		t.Fatal("expected unknown contract field rejection")
+	}
+	if _, err := DecodeCurveFamilyContract(append(canonical, []byte(` {}`)...)); err == nil {
+		t.Fatal("expected trailing contract value rejection")
 	}
 
 	// Inputs and projections are copies, not mutation paths into the frozen record.

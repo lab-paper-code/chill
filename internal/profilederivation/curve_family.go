@@ -1,11 +1,13 @@
 package profilederivation
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"reflect"
 	"regexp"
@@ -150,6 +152,26 @@ func FreezeCurveFamilyContract(
 		return CurveFamilyContract{}, fmt.Errorf("encode curve-family contract: %w", err)
 	}
 	return CurveFamilyContract{record: record, digest: versionedCurveDigest(curveFamilyContractSchemaVersion, payload)}, nil
+}
+
+// DecodeCurveFamilyContract strict-decodes a persisted contract projection and
+// returns the same frozen canonical identity as structured construction. JSON
+// whitespace is not part of the contract identity.
+func DecodeCurveFamilyContract(raw []byte) (CurveFamilyContract, error) {
+	var record curveFamilyContractRecord
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
+		return CurveFamilyContract{}, fmt.Errorf("decode curve-family contract: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return CurveFamilyContract{}, errors.New("curve-family contract contains a trailing JSON value")
+	}
+	if record.SchemaVersion != curveFamilyContractSchemaVersion {
+		return CurveFamilyContract{}, fmt.Errorf("unsupported curve-family contract schema %q", record.SchemaVersion)
+	}
+	return FreezeCurveFamilyContract(record.Shared, record.Members)
 }
 
 func (c CurveFamilyContract) Digest() string {
