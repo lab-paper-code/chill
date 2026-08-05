@@ -235,6 +235,66 @@ profiler:
         workloadObserverMemoryLimitBytes: 134217728
         coordinationReserveBytes: 1048576
         workspaceBytes: 134217728
+      - name: rknnlite-bs2-active-v1
+        deviceClass: orangepi-5-plus-16g
+        executionPath: rknnlite-bs2
+        workloadMode: saturated-serial-fixed-batch
+        activeDeadlineOverheadSeconds: 180
+        attemptTimeoutOverheadSeconds: 150
+        observerReadyTimeoutSeconds: 30
+        observerStartOverheadSeconds: 120
+        metricResultOverheadSeconds: 30
+        workloadEndFenceTimeoutSeconds: 15
+        workloadResultTimeoutSeconds: 30
+        maxLatencySamples: 1000000
+        maxInputBytes: 67108864
+        maxRuntimeResultBytes: 33554432
+        maxMetricResultBytes: 8388608
+        maxMetricEvents: 50000
+        maxWorkloadEvents: 10000
+        maxWorkloadResultBytes: 8388608
+        runtimeMemoryRequestBytes: 134217728
+        runtimeMemoryLimitBytes: 1073741824
+        observerCPURequest: 5m
+        observerCPULimit: 100m
+        observerMemoryRequestBytes: 16777216
+        observerMemoryLimitBytes: 67108864
+        workloadObserverCPURequest: 5m
+        workloadObserverCPULimit: 100m
+        workloadObserverMemoryRequestBytes: 33554432
+        workloadObserverMemoryLimitBytes: 134217728
+        coordinationReserveBytes: 1048576
+        workspaceBytes: 134217728
+      - name: rknnlite-bs2-idle-v1
+        deviceClass: orangepi-5-plus-16g
+        executionPath: rknnlite-bs2
+        workloadMode: idle-model-loaded
+        activeDeadlineOverheadSeconds: 180
+        attemptTimeoutOverheadSeconds: 150
+        observerReadyTimeoutSeconds: 30
+        observerStartOverheadSeconds: 120
+        metricResultOverheadSeconds: 30
+        workloadEndFenceTimeoutSeconds: 15
+        workloadResultTimeoutSeconds: 30
+        maxLatencySamples: 1000000
+        maxInputBytes: 67108864
+        maxRuntimeResultBytes: 33554432
+        maxMetricResultBytes: 8388608
+        maxMetricEvents: 50000
+        maxWorkloadEvents: 10000
+        maxWorkloadResultBytes: 8388608
+        runtimeMemoryRequestBytes: 134217728
+        runtimeMemoryLimitBytes: 1073741824
+        observerCPURequest: 5m
+        observerCPULimit: 100m
+        observerMemoryRequestBytes: 16777216
+        observerMemoryLimitBytes: 67108864
+        workloadObserverCPURequest: 5m
+        workloadObserverCPULimit: 100m
+        workloadObserverMemoryRequestBytes: 33554432
+        workloadObserverMemoryLimitBytes: 134217728
+        coordinationReserveBytes: 1048576
+        workspaceBytes: 134217728
 
 console:
   enabled: false
