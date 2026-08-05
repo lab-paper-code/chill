@@ -40,8 +40,8 @@ profiler:
         deviceClass: orangepi-5-plus-16g
         executionPath: rknnlite
         runtime:
-          contentDigest: sha256:2f6647f944bb0466d6503723f20fa6f1c337b81107f0b8d0f1db7ada04a847a9
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker@sha256:e52a0d6e37f34b5a35c7a8a623c2b625988d13db0799709bfa307bfb78dc9af7","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:0406d2d5684c3c0d2ed0232758934d2cb14281cf06be56250b898e3e970f137b
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:88ec18422621a844f2a169a291087a2a334cb8bac32a1a211296bf48cb2245a9","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c"
