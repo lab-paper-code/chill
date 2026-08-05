@@ -1,0 +1,307 @@
+package profilederivation
+
+import (
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+)
+
+type PassRole string
+
+const (
+	PassDiscovery    PassRole = "discovery"
+	PassConfirmatory PassRole = "confirmatory"
+)
+
+// CurveRun keeps an exact projected trial beside the admission result that
+// authorized its use.
+type CurveRun struct {
+	Trial     Trial           `json:"trial"`
+	Admission AdmissionResult `json:"admission"`
+}
+
+// PassBatch either carries the admitted Runs needed for one point or an
+// explicit capability boundary. An empty Runs slice alone is not a boundary.
+type PassBatch struct {
+	Batch              int        `json:"batch"`
+	Runs               []CurveRun `json:"runs,omitempty"`
+	CapabilityBoundary bool       `json:"capabilityBoundary,omitempty"`
+}
+
+type Pass struct {
+	Role    PassRole    `json:"role"`
+	Batches []PassBatch `json:"batches"`
+}
+
+type curvePass struct {
+	role               PassRole
+	points             []Point
+	capabilityBoundary *int
+}
+
+// Curve is opaque so only exact-family, exact-baseline points can reach a
+// campaign decision.
+type Curve struct {
+	family    CurveFamily
+	passes    []curvePass
+	baselines map[string]IdleBaseline
+}
+
+func DeriveCurve(
+	passes []Pass,
+	family CurveFamily,
+	baselinesByState map[string]IdleBaseline,
+	policy PointPolicy,
+) (Curve, error) {
+	if err := family.validate(); err != nil {
+		return Curve{}, err
+	}
+	if err := validatePointPolicy(policy); err != nil {
+		return Curve{}, err
+	}
+	if len(passes) == 0 {
+		return Curve{}, errors.New("curve requires at least one pass")
+	}
+	baselines, err := validateCurveBaselines(family, baselinesByState)
+	if err != nil {
+		return Curve{}, err
+	}
+
+	curve := Curve{family: family, baselines: baselines}
+	seenRoles := make(map[PassRole]struct{}, len(passes))
+	seenTrials := make(map[string]struct{})
+	for _, inputPass := range passes {
+		if _, exists := seenRoles[inputPass.Role]; exists {
+			return Curve{}, fmt.Errorf("duplicate curve pass role %q", inputPass.Role)
+		}
+		seenRoles[inputPass.Role] = struct{}{}
+		derivedPass, err := deriveCurvePass(inputPass, family, baselines, policy, seenTrials)
+		if err != nil {
+			return Curve{}, err
+		}
+		curve.passes = append(curve.passes, derivedPass)
+	}
+	sort.Slice(curve.passes, func(i, j int) bool {
+		return curvePassOrder(curve.passes[i].role) < curvePassOrder(curve.passes[j].role)
+	})
+	return curve, nil
+}
+
+func deriveCurvePass(
+	input Pass,
+	family CurveFamily,
+	baselines map[string]IdleBaseline,
+	policy PointPolicy,
+	seenTrials map[string]struct{},
+) (curvePass, error) {
+	if input.Role != PassDiscovery && input.Role != PassConfirmatory {
+		return curvePass{}, fmt.Errorf("unsupported curve pass role %q", input.Role)
+	}
+	if len(input.Batches) == 0 {
+		return curvePass{}, fmt.Errorf("curve pass %q has no batches", input.Role)
+	}
+	batches := append([]PassBatch(nil), input.Batches...)
+	sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
+	if input.Role == PassDiscovery && batches[0].Batch != 1 {
+		return curvePass{}, errors.New("discovery pass must start at batch one")
+	}
+	result := curvePass{role: input.Role}
+	for index, batchInput := range batches {
+		if index > 0 && batchInput.Batch != batches[index-1].Batch+1 {
+			return curvePass{}, fmt.Errorf("curve pass %q batches must be consecutive", input.Role)
+		}
+		member, memberExists := family.members[batchInput.Batch]
+		if batchInput.CapabilityBoundary {
+			if len(batchInput.Runs) != 0 || index != len(batches)-1 ||
+				(!memberExists && batchInput.Batch != len(family.members)+1) {
+				return curvePass{}, errors.New("capability boundary must be an empty final batch")
+			}
+			boundary := batchInput.Batch
+			result.capabilityBoundary = &boundary
+			continue
+		}
+		if !memberExists {
+			return curvePass{}, fmt.Errorf("batch %d is outside the frozen curve family", batchInput.Batch)
+		}
+		point, err := deriveCurvePoint(batchInput, member, family, baselines, policy, seenTrials)
+		if err != nil {
+			return curvePass{}, err
+		}
+		result.points = append(result.points, point)
+	}
+	return result, nil
+}
+
+func deriveCurvePoint(
+	input PassBatch,
+	member VerifiedCurveFamilyMember,
+	family CurveFamily,
+	baselines map[string]IdleBaseline,
+	policy PointPolicy,
+	seenTrials map[string]struct{},
+) (Point, error) {
+	if len(input.Runs) == 0 {
+		return Point{}, fmt.Errorf("batch %d has neither admitted Runs nor an explicit capability boundary", input.Batch)
+	}
+	baseline, exists := baselines[member.StateIdentity]
+	if !exists {
+		return Point{}, fmt.Errorf("batch %d has no exact-state idle baseline", input.Batch)
+	}
+	admitted := make([]AdmittedTrial, 0, len(input.Runs))
+	for _, run := range input.Runs {
+		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != member.StateIdentity ||
+			run.Trial.EnvironmentIdentity != family.environmentIdentity ||
+			run.Trial.MeasurementProtocolIdentity != member.ActiveProtocolIdentity {
+			return Point{}, fmt.Errorf("batch %d trial does not match its verified family member", input.Batch)
+		}
+		if run.Trial.TrialID == "" {
+			return Point{}, fmt.Errorf("batch %d contains an empty trial identity", input.Batch)
+		}
+		if _, exists := seenTrials[run.Trial.TrialID]; exists {
+			return Point{}, fmt.Errorf("trial %q appears in more than one curve position", run.Trial.TrialID)
+		}
+		seenTrials[run.Trial.TrialID] = struct{}{}
+		trial, err := IncrementalTrial(run.Trial, run.Admission, baseline)
+		if err != nil {
+			return Point{}, fmt.Errorf("derive batch %d trial %q: %w", input.Batch, run.Trial.TrialID, err)
+		}
+		admitted = append(admitted, trial)
+	}
+	point, err := Aggregate(admitted, policy)
+	if err != nil {
+		return Point{}, fmt.Errorf("aggregate batch %d: %w", input.Batch, err)
+	}
+	return point, nil
+}
+
+func (c Curve) FamilyIdentity() string { return c.family.Identity() }
+
+func (c Curve) ContractDigest() string { return c.family.ContractDigest() }
+
+func (c Curve) Points() []Point {
+	var result []Point
+	for _, pass := range c.passes {
+		for _, point := range pass.points {
+			result = append(result, clonePoint(point))
+		}
+	}
+	return result
+}
+
+func (c Curve) IdleBaselinesByState() map[string]IdleBaseline {
+	result := make(map[string]IdleBaseline, len(c.baselines))
+	for state, baseline := range c.baselines {
+		result[state] = cloneIdleBaseline(baseline)
+	}
+	return result
+}
+
+func (c Curve) pass(role PassRole) (curvePass, bool) {
+	for _, pass := range c.passes {
+		if pass.role == role {
+			result := curvePass{role: pass.role, points: make([]Point, len(pass.points))}
+			for index, point := range pass.points {
+				result.points[index] = clonePoint(point)
+			}
+			if pass.capabilityBoundary != nil {
+				boundary := *pass.capabilityBoundary
+				result.capabilityBoundary = &boundary
+			}
+			return result, true
+		}
+	}
+	return curvePass{}, false
+}
+
+func (f CurveFamily) validate() error {
+	if err := f.contract.validate(); err != nil {
+		return err
+	}
+	if f.identity == "" || f.environmentIdentity == "" || len(f.members) != len(f.contract.record.Members) {
+		return errors.New("curve family was not verified")
+	}
+	return nil
+}
+
+func validateCurveBaselines(
+	family CurveFamily,
+	input map[string]IdleBaseline,
+) (map[string]IdleBaseline, error) {
+	result := make(map[string]IdleBaseline, len(input))
+	protocolByState := make(map[string]string)
+	for _, member := range family.members {
+		protocolByState[member.StateIdentity] = member.IdleProtocolIdentity
+	}
+	seenEvidence := make(map[string]string)
+	for key, baseline := range input {
+		expectedProtocol, exists := protocolByState[key]
+		if !exists || key != baseline.StateIdentity ||
+			baseline.EnvironmentIdentity != family.environmentIdentity ||
+			baseline.MeasurementProtocolIdentity != expectedProtocol {
+			return nil, fmt.Errorf("idle baseline key %q does not match the verified curve family", key)
+		}
+		if err := validateCurveBaseline(baseline); err != nil {
+			return nil, fmt.Errorf("idle baseline key %q is incomplete", key)
+		}
+		for _, trial := range baseline.Trials {
+			evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
+			if previousState, exists := seenEvidence[evidenceKey]; exists && previousState != key {
+				return nil, errors.New("one idle raw evidence object is reused across distinct baseline states")
+			}
+			seenEvidence[evidenceKey] = key
+		}
+		result[key] = cloneIdleBaseline(baseline)
+	}
+	return result, nil
+}
+
+func validateCurveBaseline(baseline IdleBaseline) error {
+	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
+		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
+		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 ||
+		baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
+		math.IsInf(baseline.MeanWallWatts, 0) || baseline.ConfidenceHalfWidth < 0 ||
+		math.IsNaN(baseline.ConfidenceHalfWidth) || math.IsInf(baseline.ConfidenceHalfWidth, 0) {
+		return errors.New("idle baseline value or identity is invalid")
+	}
+	seenTrials := make(map[string]struct{}, len(baseline.Trials))
+	seenEvidence := make(map[string]struct{}, len(baseline.Trials))
+	for _, trial := range baseline.Trials {
+		if trial.StateIdentity != baseline.StateIdentity ||
+			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
+			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
+			trial.AdmissionPolicyVersion != baseline.AdmissionPolicyVersion || trial.TrialID == "" ||
+			!validRawEvidenceIdentity(trial.RawEvidence) || trial.MeanWallWatts < 0 ||
+			math.IsNaN(trial.MeanWallWatts) || math.IsInf(trial.MeanWallWatts, 0) {
+			return errors.New("idle baseline trial is invalid")
+		}
+		if _, exists := seenTrials[trial.TrialID]; exists {
+			return errors.New("idle baseline contains a duplicate trial")
+		}
+		seenTrials[trial.TrialID] = struct{}{}
+		evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
+		if _, exists := seenEvidence[evidenceKey]; exists {
+			return errors.New("idle baseline contains duplicate raw evidence")
+		}
+		seenEvidence[evidenceKey] = struct{}{}
+	}
+	return nil
+}
+
+func curvePassOrder(role PassRole) int {
+	if role == PassDiscovery {
+		return 0
+	}
+	return 1
+}
+
+func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {
+	baseline.Trials = append([]IdleTrial(nil), baseline.Trials...)
+	return baseline
+}
+
+func clonePoint(point Point) Point {
+	point.Trials = append([]AdmittedTrial(nil), point.Trials...)
+	return point
+}
