@@ -173,6 +173,14 @@ Pod-level supplemental groups, runtime-only privilege, and an optional extended
 resource. Observer containers receive neither host mounts nor privilege. The
 runtime adapter does not yet verify those expected values at the host boundary.
 
+Active runtime-result v1alpha2 and idle runtime-result v1alpha2 now discriminate
+the common backend from CPU ORT provider vocabulary and carry an optional RKNN
+observation containing package, host-library digest, driver, platform token,
+exact character devices, core mask, input layout, initialization/load outcome,
+and selected batch. Active raw v1alpha4 and idle raw v1alpha2 require those
+current nested results, while the immediately retained CPU raw/runtime pairs
+remain readable. No RKNN producer emits this contract yet.
+
 Preparation and the frozen execution-policy selector now accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT

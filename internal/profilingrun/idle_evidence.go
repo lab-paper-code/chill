@@ -7,33 +7,38 @@ import (
 	"time"
 )
 
-const IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha1"
+const (
+	IdleRuntimeResultSchemaVersionV1Alpha1 = "chill.dacs.io/model-loaded-idle-runtime.v1alpha1"
+	IdleRuntimeResultSchemaVersion         = "chill.dacs.io/model-loaded-idle-runtime.v1alpha2"
+)
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
 // window. Observer results never determine these timestamps.
 type IdleRuntimeResult struct {
-	SchemaVersion                string          `json:"schemaVersion"`
-	Status                       string          `json:"status"`
-	IntentDigest                 string          `json:"intentDigest"`
-	PodUID                       string          `json:"podUID"`
-	NodeName                     string          `json:"nodeName"`
-	Model                        string          `json:"model"`
-	ArtifactDigest               string          `json:"artifactDigest"`
-	Architecture                 string          `json:"architecture"`
-	Runtime                      string          `json:"runtime"`
-	RuntimeVersion               string          `json:"runtimeVersion"`
-	Provider                     string          `json:"provider"`
-	AvailableProviders           []string        `json:"availableProviders"`
-	ModelLoadCompletedAt         string          `json:"modelLoadCompletedAt"`
-	SettlingStartedAt            string          `json:"settlingStartedAt"`
-	SettlingCompletedAt          string          `json:"settlingCompletedAt"`
-	MeasurementStartedAt         string          `json:"measurementStartedAt"`
-	MeasurementEndedAt           string          `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds    float64         `json:"measurementElapsedSecondsMonotonic"`
-	InferenceCountAfterModelLoad int             `json:"inferenceCountAfterModelLoad"`
-	ModelResidentAtEnd           bool            `json:"modelResidentAtEnd"`
-	CPUContract                  RuntimeCPU      `json:"cpuContract"`
-	DerivedContract              DerivedContract `json:"derivedExecutionContract"`
+	SchemaVersion                string               `json:"schemaVersion"`
+	Status                       string               `json:"status"`
+	IntentDigest                 string               `json:"intentDigest"`
+	PodUID                       string               `json:"podUID"`
+	NodeName                     string               `json:"nodeName"`
+	Model                        string               `json:"model"`
+	ArtifactDigest               string               `json:"artifactDigest"`
+	Architecture                 string               `json:"architecture"`
+	Runtime                      string               `json:"runtime"`
+	RuntimeVersion               string               `json:"runtimeVersion"`
+	Backend                      string               `json:"backend,omitempty"`
+	Provider                     string               `json:"provider,omitempty"`
+	AvailableProviders           []string             `json:"availableProviders,omitempty"`
+	RKNN                         *RKNNRuntimeEvidence `json:"rknn,omitempty"`
+	ModelLoadCompletedAt         string               `json:"modelLoadCompletedAt"`
+	SettlingStartedAt            string               `json:"settlingStartedAt"`
+	SettlingCompletedAt          string               `json:"settlingCompletedAt"`
+	MeasurementStartedAt         string               `json:"measurementStartedAt"`
+	MeasurementEndedAt           string               `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds    float64              `json:"measurementElapsedSecondsMonotonic"`
+	InferenceCountAfterModelLoad int                  `json:"inferenceCountAfterModelLoad"`
+	ModelResidentAtEnd           bool                 `json:"modelResidentAtEnd"`
+	CPUContract                  RuntimeCPU           `json:"cpuContract"`
+	DerivedContract              DerivedContract      `json:"derivedExecutionContract"`
 }
 
 func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
@@ -50,7 +55,8 @@ func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
 func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
-	if result.SchemaVersion != IdleRuntimeResultSchemaVersion {
+	if result.SchemaVersion != IdleRuntimeResultSchemaVersion &&
+		result.SchemaVersion != IdleRuntimeResultSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported idle runtime result schemaVersion %q", result.SchemaVersion)
 	}
 	if err := intent.Validate(); err != nil {
@@ -59,9 +65,20 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 	if intent.SchemaVersion != SchemaVersion || intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode {
 		return errors.New("idle runtime requires the current model-loaded idle intent")
 	}
+	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
+		return errors.New("v1alpha1 idle runtime result is CPU ONNX Runtime only")
+	}
+	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 &&
+		(result.Backend != "" || result.DerivedContract.Backend != "") {
+		return errors.New("v1alpha1 idle runtime result cannot contain v1alpha2 backend fields")
+	}
 	digest, err := intent.Digest()
 	if err != nil {
 		return err
+	}
+	backend := result.Backend
+	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 {
+		backend = result.Provider
 	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
@@ -71,7 +88,7 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 		{"model", intent.State.Model, result.Model},
 		{"artifact digest", intent.State.ArtifactDigest, result.ArtifactDigest},
 		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
-		{"backend", intent.State.Backend, result.Provider},
+		{"backend", intent.State.Backend, backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
@@ -81,7 +98,7 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(intent.TargetNode.Architecture) {
 		return errors.New("idle runtime architecture does not match the frozen Node")
 	}
-	if strings.TrimSpace(result.RuntimeVersion) == "" || !contains(result.AvailableProviders, intent.State.Backend) {
+	if strings.TrimSpace(result.RuntimeVersion) == "" {
 		return errors.New("idle runtime identity is incomplete")
 	}
 	loaded, loadErr := time.Parse(time.RFC3339Nano, result.ModelLoadCompletedAt)
@@ -108,11 +125,8 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 	if !result.ModelResidentAtEnd {
 		return errors.New("idle runtime did not retain the model through the window")
 	}
-	if result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
-		result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads ||
-		result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads ||
-		strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" {
-		return errors.New("idle runtime CPU evidence mismatch")
+	if err := validateIdleRuntimePathEvidence(intent, result); err != nil {
+		return err
 	}
 	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
@@ -121,5 +135,35 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 		result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("idle derived contract identity mismatch")
 	}
+	derivedBackend := result.DerivedContract.Backend
+	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 {
+		derivedBackend = result.DerivedContract.Provider
+	}
+	if derivedBackend != intent.State.Backend {
+		return errors.New("idle derived contract backend mismatch")
+	}
 	return nil
+}
+
+func validateIdleRuntimePathEvidence(intent Intent, result IdleRuntimeResult) error {
+	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
+		return errors.New("idle runtime CPU evidence is incomplete")
+	}
+	if IsSupportedCPUORTIntent(intent) {
+		if result.RKNN != nil || result.Provider != intent.State.Backend ||
+			!contains(result.AvailableProviders, intent.State.Backend) ||
+			(result.SchemaVersion == IdleRuntimeResultSchemaVersion &&
+				result.DerivedContract.Provider != intent.State.Backend) ||
+			result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
+			result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads ||
+			result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads {
+			return errors.New("idle CPU ONNX Runtime evidence mismatch")
+		}
+		return nil
+	}
+	if !IsSupportedRKNNLiteIntent(intent) || result.SchemaVersion != IdleRuntimeResultSchemaVersion ||
+		result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
+		return errors.New("idle runtime result does not match an explicit supported path")
+	}
+	return validateRKNNRuntimeEvidence(intent, result.RKNN)
 }

@@ -401,6 +401,7 @@ func idleRuntimeResult(intent profilingrun.Intent, podUID string) (profilingrun.
 		Architecture:                 "x86_64",
 		Runtime:                      intent.State.RuntimeFamily,
 		RuntimeVersion:               "1.16.0",
+		Backend:                      intent.State.Backend,
 		Provider:                     intent.State.Backend,
 		AvailableProviders:           []string{intent.State.Backend},
 		ModelLoadCompletedAt:         modelLoaded.Format(time.RFC3339Nano),
@@ -416,7 +417,10 @@ func idleRuntimeResult(intent profilingrun.Intent, podUID string) (profilingrun.
 			ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
 			CPUSetEffective: "0-3",
 		},
-		DerivedContract: profilingrun.DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		DerivedContract: profilingrun.DerivedContract{
+			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			NodeSnapshot: intent.TargetNode,
+		},
 	}, nil
 }
 
@@ -431,7 +435,8 @@ func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.Runt
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
 		ExperimentID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
 		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
-		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0", Provider: intent.State.Backend,
+		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+		Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
 		WarmupIterations:  intent.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
@@ -448,7 +453,10 @@ func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.Runt
 			ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
 			CPUSetEffective: "0-3",
 		},
-		DerivedContract: profilingrun.DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		DerivedContract: profilingrun.DerivedContract{
+			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			NodeSnapshot: intent.TargetNode,
+		},
 		RepetitionResults: []profilingrun.Repetition{{
 			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),

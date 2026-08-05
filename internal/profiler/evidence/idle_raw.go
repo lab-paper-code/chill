@@ -13,7 +13,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha1"
+const (
+	idleRawMeasurementSchemaVersionV1Alpha1 = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha1"
+	IdleRawMeasurementSchemaVersion         = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha2"
+)
 
 // IdleRawMeasurement retains only worker-visible facts. Its runtime result is
 // distinct from active inference evidence, while metric/workload provenance is
@@ -55,8 +58,17 @@ func (m IdleRawMeasurement) Validate(intent profilingrun.Intent) error {
 }
 
 func (m IdleRawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
-	if m.SchemaVersion != IdleRawMeasurementSchemaVersion {
+	if m.SchemaVersion != IdleRawMeasurementSchemaVersion &&
+		m.SchemaVersion != idleRawMeasurementSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
+	}
+	if m.SchemaVersion == idleRawMeasurementSchemaVersionV1Alpha1 &&
+		m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersionV1Alpha1 {
+		return errors.New("v1alpha1 idle raw measurement requires the retained v1alpha1 runtime result")
+	}
+	if m.SchemaVersion == IdleRawMeasurementSchemaVersion &&
+		m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersion {
+		return errors.New("current idle raw measurement requires the current idle runtime result")
 	}
 	if m.IntentDigest != intentDigest {
 		return errors.New("idle raw measurement intent digest mismatch")

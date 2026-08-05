@@ -25,7 +25,7 @@ RETAINED_INTENT_SCHEMAS = {
     "chill.dacs.io/profiling-run-intent.v1alpha7",
     "chill.dacs.io/profiling-run-intent.v1alpha6",
 }
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha2"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
@@ -33,7 +33,7 @@ SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 IDLE_WORKLOAD = "idle-model-loaded"
 NO_INPUT_GENERATOR = "none"
 NO_OUTPUT_VALIDATION = "none"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha1"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha2"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
@@ -403,6 +403,7 @@ def derived_contract(intent: dict[str, Any], intent_digest: str) -> dict[str, An
     return {
         "schemaVersion": DERIVED_CONTRACT_SCHEMA,
         "runIntentDigest": intent_digest,
+        "backend": intent["state"]["backend"],
         "provider": intent["state"]["backend"],
         "nodeSnapshot": intent["targetNode"],
         "cpu": {
@@ -503,6 +504,7 @@ def execute_idle(
         "architecture": architecture,
         "runtime": "onnxruntime",
         "runtimeVersion": ort.__version__,
+        "backend": state["backend"],
         "provider": providers_at_end[0] if providers_at_end else "",
         "availableProviders": available_providers,
         "modelLoadCompletedAt": model_load_completed_at,
@@ -620,6 +622,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "architecture": architecture,
         "runtime": "onnxruntime",
         "runtimeVersion": ort.__version__,
+        "backend": state["backend"],
         "provider": session.get_providers()[0],
         "availableProviders": available_providers,
         "batchSize": measurement["batch"],

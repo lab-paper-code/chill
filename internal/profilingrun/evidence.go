@@ -10,43 +10,52 @@ import (
 	"time"
 )
 
-const RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha1"
+const (
+	RuntimeResultSchemaVersionV1Alpha1 = "chill.dacs.io/batch-characterization.v1alpha1"
+	RuntimeResultSchemaVersion         = "chill.dacs.io/batch-characterization.v1alpha2"
+
+	RKNNLiteCoreMask    = "NPU_CORE_0"
+	RKNNLiteInputLayout = "NHWC"
+	runtimeAArch64      = "aarch64"
+)
 
 type RuntimeResult struct {
-	SchemaVersion             string             `json:"schemaVersion"`
-	Status                    string             `json:"status"`
-	SweepID                   string             `json:"sweepId"`
-	ExperimentID              string             `json:"experimentId"`
-	NodeName                  string             `json:"nodeName"`
-	Model                     string             `json:"model"`
-	ArtifactDigest            string             `json:"artifactDigest"`
-	Architecture              string             `json:"architecture"`
-	Runtime                   string             `json:"runtime"`
-	RuntimeVersion            string             `json:"runtimeVersion"`
-	Provider                  string             `json:"provider"`
-	AvailableProviders        []string           `json:"availableProviders"`
-	BatchSize                 int                `json:"batchSize"`
-	WarmupIterations          int                `json:"warmupIterations"`
-	WarmupCompletedAt         string             `json:"warmupCompletedAt"`
-	InferenceCount            int                `json:"inferenceCount"`
-	MeasurementMode           string             `json:"measurementMode"`
-	Repetitions               int                `json:"repetitions"`
-	MeasurementStartedAt      string             `json:"measurementStartedAt"`
-	MeasurementEndedAt        string             `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds float64            `json:"measurementElapsedSecondsMonotonic"`
-	OutputValidation          OutputValidation   `json:"outputValidation"`
-	CPUContract               RuntimeCPU         `json:"cpuContract"`
-	DerivedContract           DerivedContract    `json:"derivedExecutionContract"`
-	RepetitionResults         []Repetition       `json:"repetitionResults"`
-	CompletionIndex           int                `json:"completionIndex"`
-	InputShape                []int              `json:"inputShape"`
-	MeasurementIterations     int                `json:"measurementIterations"`
-	TargetDurationSeconds     *float64           `json:"targetDurationSecondsPerRepetition"`
-	Latency                   map[string]float64 `json:"latencyMs"`
-	ThroughputItemsPerSecond  float64            `json:"throughputItemsPerSecond"`
-	Power                     json.RawMessage    `json:"power"`
-	EnergyPerRequest          json.RawMessage    `json:"energyPerRequest"`
-	BSat                      json.RawMessage    `json:"bSat"`
+	SchemaVersion             string               `json:"schemaVersion"`
+	Status                    string               `json:"status"`
+	SweepID                   string               `json:"sweepId"`
+	ExperimentID              string               `json:"experimentId"`
+	NodeName                  string               `json:"nodeName"`
+	Model                     string               `json:"model"`
+	ArtifactDigest            string               `json:"artifactDigest"`
+	Architecture              string               `json:"architecture"`
+	Runtime                   string               `json:"runtime"`
+	RuntimeVersion            string               `json:"runtimeVersion"`
+	Backend                   string               `json:"backend,omitempty"`
+	Provider                  string               `json:"provider,omitempty"`
+	AvailableProviders        []string             `json:"availableProviders,omitempty"`
+	RKNN                      *RKNNRuntimeEvidence `json:"rknn,omitempty"`
+	BatchSize                 int                  `json:"batchSize"`
+	WarmupIterations          int                  `json:"warmupIterations"`
+	WarmupCompletedAt         string               `json:"warmupCompletedAt"`
+	InferenceCount            int                  `json:"inferenceCount"`
+	MeasurementMode           string               `json:"measurementMode"`
+	Repetitions               int                  `json:"repetitions"`
+	MeasurementStartedAt      string               `json:"measurementStartedAt"`
+	MeasurementEndedAt        string               `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds float64              `json:"measurementElapsedSecondsMonotonic"`
+	OutputValidation          OutputValidation     `json:"outputValidation"`
+	CPUContract               RuntimeCPU           `json:"cpuContract"`
+	DerivedContract           DerivedContract      `json:"derivedExecutionContract"`
+	RepetitionResults         []Repetition         `json:"repetitionResults"`
+	CompletionIndex           int                  `json:"completionIndex"`
+	InputShape                []int                `json:"inputShape"`
+	MeasurementIterations     int                  `json:"measurementIterations"`
+	TargetDurationSeconds     *float64             `json:"targetDurationSecondsPerRepetition"`
+	Latency                   map[string]float64   `json:"latencyMs"`
+	ThroughputItemsPerSecond  float64              `json:"throughputItemsPerSecond"`
+	Power                     json.RawMessage      `json:"power"`
+	EnergyPerRequest          json.RawMessage      `json:"energyPerRequest"`
+	BSat                      json.RawMessage      `json:"bSat"`
 }
 
 type OutputValidation struct {
@@ -57,8 +66,8 @@ type OutputValidation struct {
 type RuntimeCPU struct {
 	OSCPUCount         int            `json:"osCPUCount"`
 	CgroupCPUMax       string         `json:"cgroupCPUMax"`
-	ORTIntraOpThreads  int            `json:"ortIntraOpThreads"`
-	ORTInterOpThreads  int            `json:"ortInterOpThreads"`
+	ORTIntraOpThreads  int            `json:"ortIntraOpThreads,omitempty"`
+	ORTInterOpThreads  int            `json:"ortInterOpThreads,omitempty"`
 	AffinityCPUCount   int            `json:"affinityCPUCount"`
 	AffinityCPUs       []int          `json:"affinityCPUs"`
 	CPUSetEffective    string         `json:"cpusetCPUsEffective"`
@@ -68,11 +77,54 @@ type RuntimeCPU struct {
 type DerivedContract struct {
 	SchemaVersion   string          `json:"schemaVersion"`
 	RunIntentDigest string          `json:"runIntentDigest"`
-	Provider        string          `json:"provider"`
+	Backend         string          `json:"backend,omitempty"`
+	Provider        string          `json:"provider,omitempty"`
 	NodeSnapshot    NodeSnapshot    `json:"nodeSnapshot"`
 	CPU             json.RawMessage `json:"cpu"`
 	RuntimeOptions  json.RawMessage `json:"runtimeOptions"`
 	Scheduling      json.RawMessage `json:"scheduling"`
+}
+
+type RKNNRuntimeEvidence struct {
+	Package       RKNNPackageObservation       `json:"package"`
+	HostLibraries []RKNNHostLibraryObservation `json:"hostLibraries"`
+	Driver        RKNNDriverObservation        `json:"driver"`
+	Platform      RKNNPlatformObservation      `json:"platform"`
+	Devices       []RKNNDeviceObservation      `json:"devices"`
+	CoreMask      string                       `json:"coreMask"`
+	InputLayout   string                       `json:"inputLayout"`
+	InitSucceeded bool                         `json:"initSucceeded"`
+	LoadSucceeded bool                         `json:"loadSucceeded"`
+	SelectedBatch int                          `json:"selectedBatch"`
+}
+
+type RKNNPackageObservation struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type RKNNHostLibraryObservation struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Digest string `json:"digest"`
+}
+
+type RKNNDriverObservation struct {
+	Name        string `json:"name"`
+	VersionPath string `json:"versionPath"`
+	Version     string `json:"version"`
+}
+
+type RKNNPlatformObservation struct {
+	CompatiblePath  string `json:"compatiblePath"`
+	CompatibleToken string `json:"compatibleToken"`
+	Matched         bool   `json:"matched"`
+}
+
+type RKNNDeviceObservation struct {
+	Path            string `json:"path"`
+	CharacterDevice bool   `json:"characterDevice"`
+	Opened          bool   `json:"opened"`
 }
 type Repetition struct {
 	Repetition           int       `json:"repetition"`
@@ -97,29 +149,34 @@ func (r RuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
-	if result.SchemaVersion != RuntimeResultSchemaVersion {
+	if result.SchemaVersion != RuntimeResultSchemaVersion &&
+		result.SchemaVersion != RuntimeResultSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
+	}
+	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
+		return errors.New("v1alpha1 runtime result is CPU ONNX Runtime only")
+	}
+	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 &&
+		(result.Backend != "" || result.DerivedContract.Backend != "") {
+		return errors.New("v1alpha1 runtime result cannot contain v1alpha2 backend fields")
 	}
 	digest, err := intent.Digest()
 	if err != nil {
 		return err
 	}
+	backend := result.Backend
+	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
+		backend = result.Provider
+	}
 	checks := []struct{ name, want, got string }{
-		{
-			"status",
-			"Succeeded",
-			result.Status,
-		}, {"run intent digest", digest, result.SweepID}, {"Pod UID", podUID, result.ExperimentID},
-		{
-			"Node",
-			intent.TargetNode.Name,
-			result.NodeName,
-		}, {"model", intent.State.Model, result.Model}, {"artifact digest", intent.State.ArtifactDigest, result.ArtifactDigest},
-		{
-			"runtime family",
-			intent.State.RuntimeFamily,
-			result.Runtime,
-		}, {"backend", intent.State.Backend, result.Provider},
+		{"status", "Succeeded", result.Status},
+		{"run intent digest", digest, result.SweepID},
+		{"Pod UID", podUID, result.ExperimentID},
+		{"Node", intent.TargetNode.Name, result.NodeName},
+		{"model", intent.State.Model, result.Model},
+		{"artifact digest", intent.State.ArtifactDigest, result.ArtifactDigest},
+		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
+		{"backend", intent.State.Backend, backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
@@ -152,13 +209,8 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 			return errors.New("output shape batch mismatch")
 		}
 	}
-	if result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
-		result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads {
-		return errors.New("ORT thread evidence mismatch")
-	}
-	if result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads ||
-		strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" {
-		return errors.New("effective CPU evidence contradicts or omits the contract")
+	if err := validateRuntimePathEvidence(intent, result); err != nil {
+		return err
 	}
 	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
@@ -167,8 +219,14 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 		result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("derived contract identity mismatch")
 	}
-	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" ||
-		!contains(result.AvailableProviders, intent.State.Backend) {
+	derivedBackend := result.DerivedContract.Backend
+	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
+		derivedBackend = result.DerivedContract.Provider
+	}
+	if derivedBackend != intent.State.Backend {
+		return errors.New("derived contract backend mismatch")
+	}
+	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" {
 		return errors.New("runtime identity or timestamp evidence is incomplete")
 	}
 	warmupCompleted, err := time.Parse(time.RFC3339Nano, result.WarmupCompletedAt)
@@ -192,11 +250,80 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	return nil
 }
 
+func validateRuntimePathEvidence(intent Intent, result RuntimeResult) error {
+	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
+		return errors.New("effective CPU evidence is incomplete")
+	}
+	if IsSupportedCPUORTIntent(intent) {
+		if result.RKNN != nil || result.Provider != intent.State.Backend ||
+			!contains(result.AvailableProviders, intent.State.Backend) ||
+			(result.SchemaVersion == RuntimeResultSchemaVersion &&
+				result.DerivedContract.Provider != intent.State.Backend) {
+			return errors.New("CPU ONNX Runtime backend evidence mismatch")
+		}
+		if result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
+			result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads ||
+			result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads {
+			return errors.New("ORT thread evidence mismatch")
+		}
+		return nil
+	}
+	if !IsSupportedRKNNLiteIntent(intent) || result.SchemaVersion != RuntimeResultSchemaVersion ||
+		result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
+		return errors.New("runtime result does not match an explicit supported path")
+	}
+	return validateRKNNRuntimeEvidence(intent, result.RKNN)
+}
+
+func validateRKNNRuntimeEvidence(intent Intent, evidence *RKNNRuntimeEvidence) error {
+	if evidence == nil || !evidence.InitSucceeded || !evidence.LoadSucceeded ||
+		evidence.SelectedBatch != intent.Measurement.Batch ||
+		evidence.CoreMask != RKNNLiteCoreMask || evidence.InputLayout != RKNNLiteInputLayout {
+		return errors.New("RKNN initialization, load, batch, core-mask, or input-layout evidence mismatch")
+	}
+	if strings.TrimSpace(evidence.Package.Name) == "" ||
+		strings.TrimSpace(evidence.Package.Version) == "" ||
+		len(evidence.HostLibraries) == 0 || len(evidence.Devices) == 0 {
+		return errors.New("RKNN package or host evidence is incomplete")
+	}
+	seenLibraries := make(map[string]struct{}, len(evidence.HostLibraries))
+	for _, library := range evidence.HostLibraries {
+		if strings.TrimSpace(library.Name) == "" || !validArtifactPath(library.Path) ||
+			!digestPattern.MatchString(library.Digest) {
+			return errors.New("RKNN host library evidence is invalid")
+		}
+		if _, duplicate := seenLibraries[library.Name]; duplicate {
+			return errors.New("RKNN host library evidence contains a duplicate name")
+		}
+		seenLibraries[library.Name] = struct{}{}
+	}
+	if strings.TrimSpace(evidence.Driver.Name) == "" ||
+		strings.TrimSpace(evidence.Driver.Version) == "" ||
+		!validArtifactPath(evidence.Driver.VersionPath) {
+		return errors.New("RKNN driver evidence is invalid")
+	}
+	if !evidence.Platform.Matched || !validArtifactPath(evidence.Platform.CompatiblePath) ||
+		strings.TrimSpace(evidence.Platform.CompatibleToken) == "" {
+		return errors.New("RKNN platform evidence is invalid")
+	}
+	seenDevices := make(map[string]struct{}, len(evidence.Devices))
+	for _, device := range evidence.Devices {
+		if !validArtifactPath(device.Path) || !device.CharacterDevice || !device.Opened {
+			return errors.New("RKNN device evidence is invalid or inaccessible")
+		}
+		if _, duplicate := seenDevices[device.Path]; duplicate {
+			return errors.New("RKNN device evidence contains a duplicate path")
+		}
+		seenDevices[device.Path] = struct{}{}
+	}
+	return nil
+}
+
 func normalizeArchitecture(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "x86_64":
 		return "amd64"
-	case "aarch64":
+	case runtimeAArch64:
 		return "arm64"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))

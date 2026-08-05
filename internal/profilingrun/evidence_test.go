@@ -85,7 +85,7 @@ func validRuntimeResult(intent Intent) RuntimeResult {
 		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
 		ExperimentID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
 		ArtifactDigest: intent.State.ArtifactDigest, Runtime: intent.State.RuntimeFamily,
-		Architecture: "x86_64", RuntimeVersion: "1", Provider: intent.State.Backend,
+		Architecture: "x86_64", RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend},
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
 		InferenceCount: 1, MeasurementMode: "duration", Repetitions: 1,
@@ -98,7 +98,10 @@ func validRuntimeResult(intent Intent) RuntimeResult {
 			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1,
 			AffinityCPUCount: 4, CPUSetEffective: "0-3",
 		},
-		DerivedContract: DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		DerivedContract: DerivedContract{
+			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			NodeSnapshot: intent.TargetNode,
+		},
 		RepetitionResults: []Repetition{{
 			Repetition: 1, MeasurementStartedAt: "2026-01-01T00:00:01Z",
 			MeasurementEndedAt: "2026-01-01T00:00:31Z", LatencyMilliseconds: []float64{1},
@@ -134,6 +137,52 @@ func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
+	intent := validRKNNIntent(false)
+	result := validRuntimeResult(intent)
+	result.Architecture = "aarch64"
+	result.Provider = ""
+	result.AvailableProviders = nil
+	result.CPUContract.ORTIntraOpThreads = 0
+	result.CPUContract.ORTInterOpThreads = 0
+	result.DerivedContract.Provider = ""
+	result.RKNN = validRKNNRuntimeEvidence(intent.Measurement.Batch)
+	if err := ValidateRuntime(intent, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*RuntimeResult){
+		func(candidate *RuntimeResult) { candidate.RKNN.InitSucceeded = false },
+		func(candidate *RuntimeResult) { candidate.RKNN.SelectedBatch++ },
+		func(candidate *RuntimeResult) { candidate.RKNN.CoreMask = "AUTO" },
+		func(candidate *RuntimeResult) { candidate.RKNN.Devices[0].Opened = false },
+		func(candidate *RuntimeResult) { candidate.Provider = "RKNPUExecutionProvider" },
+	} {
+		candidate := result
+		evidence := *result.RKNN
+		evidence.Devices = append([]RKNNDeviceObservation(nil), result.RKNN.Devices...)
+		candidate.RKNN = &evidence
+		mutate(&candidate)
+		if err := ValidateRuntime(intent, "pod-uid", candidate); err == nil {
+			t.Fatal("invalid RKNNLite runtime evidence was accepted")
+		}
+	}
+}
+
+func TestValidateRuntimeRetainsV1Alpha1CPUResult(t *testing.T) {
+	intent := validIntent()
+	result := validRuntimeResult(intent)
+	result.SchemaVersion = RuntimeResultSchemaVersionV1Alpha1
+	result.Backend = ""
+	result.DerivedContract.Backend = ""
+	if err := ValidateRuntime(intent, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	result.Backend = intent.State.Backend
+	if err := ValidateRuntime(intent, "pod-uid", result); err == nil {
+		t.Fatal("retained v1alpha1 runtime result accepted a v1alpha2 backend field")
+	}
+}
+
 func TestNormalizeRuntimeArchitecture(t *testing.T) {
 	for runtime, want := range map[string]string{"x86_64": "amd64", "aarch64": "arm64"} {
 		if got := normalizeArchitecture(runtime); got != want {
@@ -157,7 +206,7 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded", IntentDigest: digest,
 		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
 		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
-		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1", Provider: intent.State.Backend,
+		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders:   []string{intent.State.Backend},
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
@@ -165,7 +214,10 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		ModelResidentAtEnd: true,
 		CPUContract: RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4,
 			ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"},
-		DerivedContract: DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+		DerivedContract: DerivedContract{
+			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			NodeSnapshot: intent.TargetNode,
+		},
 	}
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
 		t.Fatal(err)
@@ -181,5 +233,76 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		if err := ValidateIdleRuntime(intent, "pod-uid", candidate); err == nil {
 			t.Fatal("invalid idle runtime evidence was accepted")
 		}
+	}
+}
+
+func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
+	intent := validRKNNIntent(true)
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := IdleRuntimeResult{
+		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded", IntentDigest: digest,
+		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "aarch64",
+		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: intent.State.Backend,
+		RKNN:                 validRKNNRuntimeEvidence(1),
+		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
+		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
+		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
+		ModelResidentAtEnd: true,
+		CPUContract:        RuntimeCPU{CgroupCPUMax: "400000 100000", AffinityCPUCount: 4, CPUSetEffective: "0-3"},
+		DerivedContract: DerivedContract{
+			RunIntentDigest: digest, Backend: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+		},
+	}
+	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	result.RKNN.LoadSucceeded = false
+	if err := ValidateIdleRuntime(intent, "pod-uid", result); err == nil {
+		t.Fatal("idle RKNNLite result without a loaded model was accepted")
+	}
+}
+
+func validRKNNIntent(idle bool) Intent {
+	intent := validIntent()
+	intent.Candidate.ExecutionPath = RKNNLiteExecutionPath
+	intent.State.Artifact = "model-rk3588-bs1"
+	intent.State.ArtifactPath = "/artifact/model.rknn"
+	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
+	intent.State.Backend = RKNNLiteBackend
+	intent.State.HostContractDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	intent.TargetNode.Architecture = "arm64"
+	intent.CPU.ORTIntraOpThreads = 0
+	intent.CPU.ORTInterOpThreads = 0
+	if idle {
+		intent.Measurement = MeasurementContract{
+			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+			WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
+			OutputValidation: NoOutputValidation,
+		}
+	}
+	return intent
+}
+
+func validRKNNRuntimeEvidence(batch int) *RKNNRuntimeEvidence {
+	return &RKNNRuntimeEvidence{
+		Package: RKNNPackageObservation{Name: "rknn-toolkit-lite2", Version: "2.3.2"},
+		HostLibraries: []RKNNHostLibraryObservation{{
+			Name: "librknnrt", Path: "/usr/lib/librknnrt.so",
+			Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		}},
+		Driver: RKNNDriverObservation{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
+		Platform: RKNNPlatformObservation{
+			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588", Matched: true,
+		},
+		Devices: []RKNNDeviceObservation{
+			{Path: "/dev/dri/card0", CharacterDevice: true, Opened: true},
+			{Path: "/dev/dri/renderD128", CharacterDevice: true, Opened: true},
+		},
+		CoreMask: RKNNLiteCoreMask, InputLayout: RKNNLiteInputLayout,
+		InitSucceeded: true, LoadSucceeded: true, SelectedBatch: batch,
 	}
 }

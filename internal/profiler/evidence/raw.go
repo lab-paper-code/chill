@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
+	rawMeasurementSchemaVersionV1Alpha3 = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
+	RawMeasurementSchemaVersion         = "chill.dacs.io/profiling-raw-measurement.v1alpha4"
 )
 
 // RawMeasurement contains only facts available to the in-Job worker before it
@@ -58,8 +59,17 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 }
 
 func (m RawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion {
+	if m.SchemaVersion != RawMeasurementSchemaVersion &&
+		m.SchemaVersion != rawMeasurementSchemaVersionV1Alpha3 {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
+	}
+	if m.SchemaVersion == rawMeasurementSchemaVersionV1Alpha3 &&
+		m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersionV1Alpha1 {
+		return errors.New("v1alpha3 raw measurement requires the retained v1alpha1 runtime result")
+	}
+	if m.SchemaVersion == RawMeasurementSchemaVersion &&
+		m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersion {
+		return errors.New("current raw measurement requires the current runtime result")
 	}
 	if m.IntentDigest != intentDigest {
 		return errors.New("raw measurement intent digest mismatch")

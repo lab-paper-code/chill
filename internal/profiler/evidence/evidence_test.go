@@ -64,6 +64,22 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
+func TestRawMeasurementRetainsV1Alpha3CPUBytesContract(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	raw.SchemaVersion = rawMeasurementSchemaVersionV1Alpha3
+	raw.Runtime.SchemaVersion = profilingrun.RuntimeResultSchemaVersionV1Alpha1
+	raw.Runtime.Backend = ""
+	raw.Runtime.DerivedContract.Backend = ""
+	if _, err := raw.CanonicalJSON(intent); err != nil {
+		t.Fatal(err)
+	}
+	raw.SchemaVersion = RawMeasurementSchemaVersion
+	if err := raw.Validate(intent); err == nil || !strings.Contains(err.Error(), "current runtime result") {
+		t.Fatalf("current raw schema accepted retained runtime result: %v", err)
+	}
+}
+
 func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
@@ -187,6 +203,22 @@ func TestIdleRawMeasurementBindsRuntimeDeclaredWindowAndObservers(t *testing.T) 
 				t.Fatal("invalid idle raw measurement was accepted")
 			}
 		})
+	}
+}
+
+func TestIdleRawMeasurementRetainsV1Alpha1CPUBytesContract(t *testing.T) {
+	intent := idleIntent(t)
+	raw := validIdleRaw(t, intent)
+	raw.SchemaVersion = idleRawMeasurementSchemaVersionV1Alpha1
+	raw.Runtime.SchemaVersion = profilingrun.IdleRuntimeResultSchemaVersionV1Alpha1
+	raw.Runtime.Backend = ""
+	raw.Runtime.DerivedContract.Backend = ""
+	if _, err := raw.CanonicalJSON(intent); err != nil {
+		t.Fatal(err)
+	}
+	raw.SchemaVersion = IdleRawMeasurementSchemaVersion
+	if err := raw.Validate(intent); err == nil || !strings.Contains(err.Error(), "current idle runtime result") {
+		t.Fatalf("current idle raw schema accepted retained runtime result: %v", err)
 	}
 }
 
@@ -362,6 +394,7 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			Architecture:              "x86_64",
 			Runtime:                   intent.State.RuntimeFamily,
 			RuntimeVersion:            "1.16.0",
+			Backend:                   intent.State.Backend,
 			Provider:                  intent.State.Backend,
 			AvailableProviders:        []string{intent.State.Backend},
 			BatchSize:                 intent.Measurement.Batch,
@@ -389,6 +422,8 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			},
 			DerivedContract: profilingrun.DerivedContract{
 				RunIntentDigest: digest,
+				Backend:         intent.State.Backend,
+				Provider:        intent.State.Backend,
 				NodeSnapshot:    intent.TargetNode,
 			},
 			RepetitionResults: []profilingrun.Repetition{{
@@ -486,7 +521,8 @@ func validIdleRaw(t *testing.T, intent profilingrun.Intent) IdleRawMeasurement {
 			IntentDigest: digest, PodUID: activeShape.PodUID, NodeName: intent.TargetNode.Name,
 			Model: intent.State.Model, ArtifactDigest: intent.State.ArtifactDigest,
 			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Provider: intent.State.Backend, AvailableProviders: []string{intent.State.Backend},
+			Backend: intent.State.Backend, Provider: intent.State.Backend,
+			AvailableProviders:        []string{intent.State.Backend},
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.UTC().Format(time.RFC3339Nano),
@@ -498,7 +534,10 @@ func validIdleRaw(t *testing.T, intent profilingrun.Intent) IdleRawMeasurement {
 				ORTInterOpThreads: intent.CPU.ORTInterOpThreads,
 				AffinityCPUCount:  intent.CPU.ORTIntraOpThreads, CPUSetEffective: "0-3",
 			},
-			DerivedContract: profilingrun.DerivedContract{RunIntentDigest: digest, NodeSnapshot: intent.TargetNode},
+			DerivedContract: profilingrun.DerivedContract{
+				RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+				NodeSnapshot: intent.TargetNode,
+			},
 		},
 		Metrics:  activeShape.Metrics,
 		Workload: activeShape.Workload,

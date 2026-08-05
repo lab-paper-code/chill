@@ -262,7 +262,9 @@ The WorkloadObserver sequence is fixed:
 
 ## Raw evidence and receipt
 
-The `profiling-raw-measurement.v1alpha3` object is the worker output.
+The current `profiling-raw-measurement.v1alpha4` object is the active worker
+output; retained v1alpha3 CPU objects remain readable only with their original
+v1alpha1 CPU runtime result.
 It contains only facts available before the worker exits:
 
 - intent digest and actual Pod UID;
@@ -270,9 +272,9 @@ It contains only facts available before the worker exits:
 - the complete MetricObserver result; and
 - the complete bounded WorkloadObserver result.
 
-That schema remains the retained active output. Model-loaded idle uses a
-separate idle raw schema because its runtime completeness proof is exact model
-load, settling completion, zero inference, retained residency, and a
+Model-loaded idle uses current raw v1alpha2 and retains v1alpha1 CPU objects
+because its runtime completeness proof is exact model load, settling
+completion, zero inference, retained residency, and a
 runtime-declared duration rather than active latency and output-validation
 evidence. Both raw schemas retain the same intent digest, actual Pod UID,
 MetricObserver result, WorkloadObserver result, and immutable object-identity
