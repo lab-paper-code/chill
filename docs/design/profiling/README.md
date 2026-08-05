@@ -199,9 +199,11 @@ frozen campaign then produced and re-verified all 12 post-freeze Runs, selected
 batch one, and stopped at the batch-three capability boundary. That result
 promotes only the two exact RKNN rows to L4; it is not a statistical `b_sat`
 claim.
-Runtime-specific adapters and mutable power-mode ownership remain explicit;
-catalog presence and historical standalone smoke are not treated as production
-execution evidence.
+Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
+assigns mutable power-mode ownership to a dedicated per-Node actuator operand,
+but that operand and its durable handoff are not implemented; catalog presence
+and historical standalone smoke are not treated as production execution
+evidence.
 
 ## Campaign records
 

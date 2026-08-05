@@ -20,9 +20,11 @@ baselines, selected batch one, and stopped at the batch-three capability
 boundary. This closes P7 without retroactively promoting the earlier diagnostic
 Runs. A read-only NVPModel audit now matches every mode on the three Ready
 Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
-`MAXN`; the unreachable `orin-nano` row remains unverified. Later slices remain
-deferred until their stated entry condition is met or this plan is explicitly
-revised.
+`MAXN`; the unreachable `orin-nano` row remains unverified. ADR 0015 selects a
+dedicated per-Node actuator as the sole host-state writer while retaining the
+Profiler as Run orchestrator. No actuator implementation is enabled. Later
+slices remain deferred until their stated entry condition is met or this plan
+is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -56,7 +58,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
+| parallel | Node power-mode actuation | owner/protocol boundary accepted | Implement the durable handoff and prove apply/read-back/restore on one mode. |
 | completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions
@@ -70,6 +72,10 @@ corresponding level.
   not introduce a generic runtime plugin or device-specific copy of CPU ORT.
 - Stable supported power modes belong in `DeviceClass`; mutable desired,
   observed, and previous mode belong to Run/actuator state.
+- [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md) assigns
+  Node-wide mutation exclusively to a dedicated per-Node actuator operand;
+  Profiler orchestrates the durable Run lifecycle, while discovery and the
+  measurement worker remain unprivileged.
 - Exact child-image digests, not manifest-list digests, are frozen into
   runtime, artifact, MetricObserver, and WorkloadObserver facts.
 - Execution-path names select catalog entries and configured envelopes; the
@@ -124,10 +130,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
 ### Ownership and protocol
 
-- [ ] Select the owner process for Node-wide actuation; an unprivileged runtime
-  container must not change host mode directly.
-- [ ] Separate desired, observed, and previous mode; actuator kind/target; and
-  apply/verification timestamps.
+- [x] Select the dedicated per-Node `NodeActuator` operand as the only process
+  allowed to mutate host mode; the Profiler orchestrates and the runtime worker
+  remains unprivileged.
+- [x] Separate desired, observed, previous, and restored mode; actuator
+  kind/target; policy and Run identity; lifecycle stage; and apply,
+  verification, settling, and restoration timestamps in the durable handoff.
 - [ ] Freeze the selected target and configured actuation-policy digest into
   immutable Run intent.
 - [ ] Plan the intent schema revision and simultaneous Go/Python decoder
