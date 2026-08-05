@@ -11,9 +11,10 @@ sequential result supplies one discovery candidate. They do not implement Plan
 active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
 baseline's mean variance and degrees of freedom. `Aggregate` now emits the
 versioned Welch--Satterthwaite point interval and retains the previous interval
-under its own version. The complete two-pass calibration, joint contrast
-estimator, confirmatory sizing, policy decoding, and confirmatory result remain
-unimplemented. This plan fixes the quantity that
+under its own version. The post-selection error allocation is also fixed and
+regression-tested across shared- and distinct-baseline regimes. The joint
+contrast estimator, confirmatory sizing, policy decoding, and confirmatory
+result remain unimplemented. This plan fixes the quantity that
 decides `b_sat` — the largest remaining energy improvement any larger measured
 batch still offers — gives curve derivation ownership of the exact idle
 baseline set, rebuilds the point-confidence construction, and separates
@@ -161,25 +162,87 @@ contradicts that, which the `max` in `R_c` already accounts for.
 
 ### How the bound is calibrated
 
-At a fixed candidate `c`, the rule makes one statement about each larger batch —
-`Kmax - c` of them — plus the one statement that `epsilon_c` is positive. All of
-them have to hold at once, so the confidence has to be spread across all of them.
+At a fixed candidate `c`, the rule makes `Kmax - c` contrast statements plus one
+positivity statement. Allocating 5% only across those statements is insufficient:
+discovery selected `c` after seeing every point estimate, including the shared
+idle-baseline error. The allocation must cover every statement that could enter
+the result after that selection.
 
-Plan 5 spreads it the simplest way. With `n` statements and a 5% total error
-allowance, each individual bound is computed at `1 - 0.05/n` instead of
-`1 - 0.05`. This is the Bonferroni correction. It needs no model of how the
-statements are related to each other. The
-[fixed sizing method](#fixed-confirmatory-sizing-method) evaluates its precision
-against the same allocation. Methods that model the relationships may reach the
-same guarantee with fewer trials; adopting one is a new estimator version rather
-than a configured option.
+Across all possible candidates `c in 1..Kmax-1`, that family contains
 
-That correction covers the confirmatory decision at a candidate that is already
-fixed. It does not cover the fact that discovery picked the candidate, nor that
-discovery and confirmation share one idle-power estimate. Plan 5 therefore also
-requires showing — by derivation or by simulation — that the complete two-pass
-procedure still holds its stated confidence. If it does not, the plan is
-incomplete; a sizing calculation does not override this.
+```text
+S = sum_c (Kmax - c + 1)
+  = (Kmax - 1)(Kmax + 2) / 2
+```
+
+statements: one positivity bound for each candidate and one contrast bound for
+each ordered pair `c < b`. `S` is sufficient only when the confirmatory trial
+count was fixed before discovery. Plan 5 also chooses `n_conf` from discovery,
+so that second selection belongs to the error family too.
+
+Let `B_active` be the fixed maximum active-Run budget and `cap` the fixed maximum
+confirmatory trials per batch. For each candidate, the feasible trial counts are
+
+```text
+nmax(c) = min(cap,
+              floor((B_active - Kmax * n_disc) / (Kmax - c + 1)))
+N_c     = {3, ..., nmax(c)}
+```
+
+with an empty set when `nmax(c) < 3`. The full number of selectable marginal
+statements is fixed before measurement as
+
+```text
+H = sum_c |N_c| * (Kmax - c + 1)
+```
+
+Every bound used for the selected `(c, n_conf)` is computed at one-sided
+quantile `1 - 0.05/H`, not at a candidate- or realized-size-dependent quantile.
+If `n_conf` was independently fixed before discovery, each `N_c` is the same
+singleton; when it is feasible for every candidate, `H = S`. The [fixed sizing
+method](#fixed-confirmatory-sizing-method) evaluates precision against the same
+global allocation. Methods that model the relationships may use less error
+budget, but adopting one is a new estimator version rather than a configured
+option. A selected candidate with an empty `N_c`, or `H = 0`, returns
+`Unavailable: ConfirmatoryBudgetInsufficient` without making a confidence claim.
+
+The post-selection guarantee follows directly. Imagine the predeclared
+confirmatory sample for every feasible candidate and trial count, and let
+`F_c,n,j` be failure of one marginal bound. Regardless of how discovery selects
+`C` and `n_conf`, or how baseline estimates are shared,
+
+```text
+P(selected claim is not covered)
+    <= P(any F_c,n,j over every feasible c, n, and statement j)
+    <= sum_c,n,j P(F_c,n,j)
+    <= H * (0.05 / H)
+    = 0.05
+```
+
+No independence between selection and the baseline is assumed by this union
+bound. Active discovery and confirmation Runs remain disjoint; the exact-state
+baseline is intentionally shared. The guarantee is nominal under the
+independent-Gaussian Run model used by the Student-t and Welch--Satterthwaite
+marginal bounds, not distribution-free.
+
+`plan5_coverage_test.go` is the deterministic regression oracle for the fixed
+`n_conf=3` special case, where `H = S`. It runs 20,000 fixed-seed `Kmax=4`
+procedures under Gaussian active and idle errors. The deliberately
+baseline-dominated shared case gives 5.360% whole-procedure miscoverage under
+the rejected candidate-local allocation, so that allocation cannot silently
+return. The global allocation gives:
+
+| covariance regime | selected procedures | whole-procedure miscoverage |
+|---|---:|---:|
+| shared baseline dominates | 19,943 | 2.270% |
+| balanced shared baseline | 19,762 | 0.975% |
+| active variance dominates | 14,581 | 0.620% |
+| distinct exact-state baselines | 18,245 | 1.625% |
+
+The simulation checks the implemented marginal formulas at the smallest
+allowed trial count and both baseline-sharing extremes. It is regression
+evidence, not a distribution-free proof or a replacement for the union-bound
+derivation above.
 
 The fixed construction does not estimate a ratio interval directly. For
 each larger batch `b`, define the linear contrast
@@ -200,8 +263,9 @@ approximation.
 
 ### What an accepted result claims
 
-An accepted result says: *at batch `c`, no larger batch within `1..Kmax` improves
-energy per item by more than `tau`, at the declared confidence.*
+An accepted result says: *under the declared independent-Gaussian Run model, at
+batch `c`, no larger batch within `1..Kmax` improves energy per item by more than
+`tau`, at the declared nominal confidence.*
 
 It does not say that `c` is the smallest batch for which that is true. The
 candidate came from discovery's point estimates, which carry no confidence
@@ -368,10 +432,10 @@ The observed `a` coefficients are conditioned-on design quantities. Active Run
 sets and distinct idle-baseline sets are independent. Each projected variance
 uses Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
 components: prospective active components use `n-1`, and retained baseline
-components use their admitted baseline degrees of freedom. With
-`M = Kmax - c + 1` simultaneous one-sided statements and `alpha = 0.05`, let
+components use their admitted baseline degrees of freedom. With the global
+post-selection count `H` fixed from both policy caps and `alpha = 0.05`, let
 `h_c(n)` and `h_D(c,b,n)` be their Student-t half-widths at quantile
-`1 - alpha/M`. Let `epsilon_hat_c` be the discovery point estimate and
+`1 - alpha/H`. Let `epsilon_hat_c` be the discovery point estimate and
 
 ```text
 L_c(n) = epsilon_hat_c - h_c(n)
@@ -720,7 +784,8 @@ Plan 5 is complete when:
    estimator version. Implemented.
 4. Show, by derivation or simulation, that the two-pass procedure holds its
    stated confidence across every batch-to-batch difference the screen and the
-   rule touch.
+   rule touch. Implemented with the global statement-family derivation and
+   deterministic Gaussian working-model regression above.
 5. Implement discovery screening, fixed confirmatory sizing, and the
    confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
