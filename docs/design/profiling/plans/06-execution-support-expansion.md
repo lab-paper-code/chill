@@ -114,7 +114,10 @@ Do not create a new runtime abstraction. Reuse the explicit CPU ORT path and
 change only facts, image platforms, and device-specific execution policy until
 source evidence proves a shared change is required.
 
-- [ ] Build a linux/arm64 measurement-worker/ORT runtime image.
+- [x] Build a linux/arm64 measurement-worker/ORT runtime image. The local OCI
+  verification on 2026-08-05 produced runnable child digest
+  `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`;
+  this is build evidence only, not a published installation fact.
 - [ ] Verify linux/arm64 child digests for MetricObserver and
   WorkloadObserver.
 - [ ] Record the selected child image digest, not only a manifest-list digest,

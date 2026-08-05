@@ -339,7 +339,7 @@ docker-push-all: docker-push-operator docker-push-node-discovery docker-push-pro
 # - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
-MEASUREMENT_WORKER_PLATFORMS ?= linux/amd64
+MEASUREMENT_WORKER_PLATFORMS ?= $(PLATFORMS)
 .PHONY: docker-buildx
 docker-buildx: docker-buildx-operator ## Build and push the operator image for cross-platform support.
 

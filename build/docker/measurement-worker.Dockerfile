@@ -13,7 +13,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /o
 
 FROM python:3.11-slim
 
-RUN pip install --no-cache-dir numpy==2.2.6 onnxruntime==1.23.2
+ARG NUMPY_VERSION=2.2.6
+ARG ONNXRUNTIME_VERSION=1.23.2
+
+RUN pip install --no-cache-dir \
+    numpy==${NUMPY_VERSION} \
+    onnxruntime==${ONNXRUNTIME_VERSION} \
+    && python3 -c 'import onnxruntime as ort; assert ort.__version__ == "'"${ONNXRUNTIME_VERSION}"'"; assert "CPUExecutionProvider" in ort.get_available_providers()'
 
 COPY --from=builder /out/measurement-worker /measurement-worker
 COPY runtime/ortcpu/runner.py /opt/chill/runtime/ortcpu/runner.py
