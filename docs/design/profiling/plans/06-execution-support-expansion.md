@@ -184,21 +184,32 @@ controller, worker, or `hack/` producer:
   All 31 thermal samples were observable and none was active.
 
 The active diagnostic also exposed a metric-source defect outside this
-repository: the deployed edge-metrics exporter parses the prefix-free
-hexadecimal `get_throttled` text as decimal. It therefore reports no latched
-samples for `50000`/`50005`. That reporting defect must be fixed at the metric
-producer, but it does not make the active rejection a false positive because
-`0x50005` really does assert the current-throttled bit.
+repository: the deployed edge-metrics exporter parsed the prefix-free
+hexadecimal `get_throttled` text as decimal. The producer fix was committed as
+edge-metrics `a7b3a63`, including regression cases for `50000` and `50005`, and
+deployed as release revision 23 with image tag `sha-a7b3a63` and registry index
+digest `sha256:565c9d4a15787d548341ec7d32fc3af80e3e04e0991e69d381684d8829d7967e`.
+A simultaneous 90-sample raw-sysfs and exporter trace around diagnostic Run
+`rasp5-active-thermal-parser-diag-v2` observed 68 `0`, 10 `50000`, and 12
+`50005` values. Eighty-nine samples matched the required mapping exactly:
+`0 -> active=0,latched=0`, `50000 -> active=0,latched=1`, and
+`50005 -> active=1,latched=1`. The sole mismatch was one sequential raw-read /
+HTTP-scrape pair during a state transition; it retained `latched=1` and does
+not contradict the parser mapping. The retained Run evidence
+`sha256:7b1b9951ed66f9add284fc85d0b8e7f6ac8a9263030b6469e053c6f6dfb28ba1`
+was still correctly rejected with `ThermalOrRuntimeThrottling`, confirming that
+the remaining failure is the electrical condition rather than the producer
+parser.
 
 This raises the Raspberry Pi slice to L2 and proves the idle admission path.
 It does not satisfy L3 until the electrical throttling is removed and both
-active and idle evidence are admitted. The diagnostic Run had an additional
-ownerless trace Pod in its environment identity and is not a repeated campaign
-trial.
+active and idle evidence are admitted. The diagnostic Runs had an additional
+ownerless trace Pod in their environment identity and are not repeated campaign
+trials.
 
 ### Remaining P1 TODO, in order
 
-- [ ] Fix the prefix-free Raspberry Pi `get_throttled` hexadecimal parser in
+- [x] Fix the prefix-free Raspberry Pi `get_throttled` hexadecimal parser in
   the edge-metrics producer repository, add `50000`/`50005` regression cases,
   deploy it, and verify active/latched gauges against a simultaneous raw sysfs
   trace. This is an external metric-producer change, not CHILL admission code.
