@@ -15,8 +15,9 @@ under its own version. The post-selection error allocation is also fixed and
 regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
 estimator, global-`H` confirmatory sizing, and typed confirmatory result are
-implemented. The discovery-policy file has a strict canonical decoder and
-content digest. Confirmatory-policy decoding and binding both policy digests, a
+implemented. Both policy files have strict canonical decoders and content
+digests; the confirmatory file is also checked against the discovery artifact
+and realized sizing allocation. Binding both digests into the final result, a
 concrete Plan 5 campaign record, and a live confirmatory result remain
 unimplemented. This plan fixes the quantity that decides `b_sat` — the largest
 remaining energy improvement any larger measured batch still offers — gives
@@ -833,9 +834,9 @@ Plan 5 is complete when:
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
    `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
    persisted to the evidence store, since these are a JSON field name and a
-   reason-code value. Add golden tests. Discovery-policy canonical decoding and
-   its content digest are implemented; the confirmatory version and final
-   two-digest binding remain.
+   reason-code value. Add golden tests. Both policy artifacts now have canonical
+   decoding and content digests, and the confirmatory allocation is checked
+   against sizing; final two-digest result binding remains.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, eligible member map, and `CurveFamilyContractDigest` in the
    discovery policy version. The realized `CurveFamilyIdentity` follows Loader

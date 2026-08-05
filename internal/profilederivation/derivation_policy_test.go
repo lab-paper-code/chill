@@ -136,9 +136,13 @@ func TestDiscoveryDerivationPolicyOwnsInputCopies(t *testing.T) {
 func testDiscoveryDerivationPolicySpec(t *testing.T) DiscoveryDerivationPolicySpec {
 	t.Helper()
 	contract, _ := testVerifiedFamily(t, 4)
+	return testDiscoveryDerivationPolicySpecForDigest(contract.Digest())
+}
+
+func testDiscoveryDerivationPolicySpecForDigest(contractDigest string) DiscoveryDerivationPolicySpec {
 	return DiscoveryDerivationPolicySpec{
 		Name:                      "e1-batch-saturation",
-		CurveFamilyContractDigest: contract.Digest(),
+		CurveFamilyContractDigest: contractDigest,
 		PointPolicies: []PointPolicyEntry{
 			{Name: "idle-baseline", Stage: PointPolicyStageIdleBaseline, MinimumTrials: 3},
 			{Name: "incremental-point", Stage: PointPolicyStageIncrementalPoint, MinimumTrials: 4},

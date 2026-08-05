@@ -122,6 +122,12 @@ func (p DiscoveryDerivationPolicy) CurveFamilyContractDigest() string {
 	return p.record.CurveFamilyContractDigest
 }
 
+func (p DiscoveryDerivationPolicy) spec() DiscoveryDerivationPolicySpec {
+	spec := p.record.DiscoveryDerivationPolicySpec
+	spec.PointPolicies = append([]PointPolicyEntry(nil), spec.PointPolicies...)
+	return spec
+}
+
 func (p DiscoveryDerivationPolicy) PointPolicy(stage PointPolicyStage) (PointPolicy, error) {
 	if err := p.validate(); err != nil {
 		return PointPolicy{}, err
