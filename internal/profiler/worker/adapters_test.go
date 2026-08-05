@@ -16,7 +16,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const testPodUID = "pod-uid"
+const (
+	testPodUID              = "pod-uid"
+	rknnIdleSuccessTestMode = "idle-success"
+)
 
 func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	t.Setenv("CHILL_ORT_CPU_HELPER", "success")
@@ -253,6 +256,95 @@ func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	}
 }
 
+func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
+	intent := testIntent(t)
+	payload, err := os.ReadFile("../controller/testdata/candidate-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	revision := filepath.Join(directory, "..2026_08_05_00_00_00")
+	if err := os.Mkdir(revision, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(revision, "candidate-report.json"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Base(revision), filepath.Join(directory, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "candidate-report.json")
+	if err := os.Symlink(filepath.Join("..data", "candidate-report.json"), path); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := LoadVerifiedCandidateReport(path, 1<<20, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivery := verified.RuntimeDelivery(); delivery.HostContract != nil || delivery.ArtifactCapability != nil {
+		t.Fatalf("CPU candidate exposed accelerator delivery: %#v", delivery)
+	}
+
+	intent.Candidate.ReportDigest = "sha256:" + strings.Repeat("0", 64)
+	if _, err := LoadVerifiedCandidateReport(path, 1<<20, intent); err == nil ||
+		!strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("expected candidate digest rejection, got %v", err)
+	}
+}
+
+func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		name := "active"
+		mode := "success"
+		if idle {
+			name = "idle"
+			mode = rknnIdleSuccessTestMode
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CHILL_RKNN_LITE_HELPER", mode)
+			resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
+			runtime := newTestRKNNLiteRuntime(t, resultPath, testRKNNDelivery())
+			result, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNIntent(t, idle)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if idle && (result.Idle == nil || result.Active != nil) {
+				t.Fatalf("unexpected idle result: %#v", result)
+			}
+			if !idle && (result.Active == nil || result.Idle != nil || result.Active.RKNN == nil) {
+				t.Fatalf("unexpected active result: %#v", result)
+			}
+		})
+	}
+}
+
+func TestRKNNLiteRuntimeRejectsObservedHostDrift(t *testing.T) {
+	t.Setenv("CHILL_RKNN_LITE_HELPER", "host-drift")
+	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())
+	if _, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNIntent(t, false))); err == nil ||
+		!strings.Contains(err.Error(), "host libraries") {
+		t.Fatalf("expected observed host-contract rejection, got %v", err)
+	}
+}
+
+func TestRKNNLiteRuntimeRequiresCompleteVerifiedDelivery(t *testing.T) {
+	directory := t.TempDir()
+	_, err := NewRKNNLiteRuntime(RKNNLiteRuntimeConfig{
+		Command: []string{"rknnlite"}, ModelPath: filepath.Join(directory, "model.rknn"),
+		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
+		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
+		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
+		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
+		ResultPath:              filepath.Join(directory, "result.json"),
+		ObserverReadyTimeout:    time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
+		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "delivery contract") {
+		t.Fatalf("expected incomplete verified delivery rejection, got %v", err)
+	}
+}
+
 func TestPublishMetricResultDoesNotReplaceExistingHandoff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metric-result.json")
 	result := testMetricResult(testIntent(t))
@@ -379,7 +471,7 @@ func TestORTCPUHelperProcess(t *testing.T) {
 		os.Exit(11)
 	}
 	var result any
-	if mode == "idle-success" {
+	if mode == rknnIdleSuccessTestMode {
 		idle, err := idleRuntimeResult(request.Intent, request.PodUID)
 		if err != nil {
 			os.Exit(13)
@@ -410,6 +502,63 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestRKNNLiteHelperProcess(t *testing.T) {
+	mode := os.Getenv("CHILL_RKNN_LITE_HELPER")
+	if mode == "" {
+		return
+	}
+	var request rknnLiteRequest
+	decoder := json.NewDecoder(os.Stdin)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.SchemaVersion != rknnLiteRequestSchemaVersion {
+		os.Exit(20)
+	}
+	resultPath := helperResultPath(os.Args)
+	if resultPath == "" {
+		os.Exit(21)
+	}
+	var result any
+	if mode == "idle-success" {
+		idle, err := idleRuntimeResult(request.Intent, request.PodUID)
+		if err != nil {
+			os.Exit(22)
+		}
+		idle.Architecture = "aarch64"
+		idle.RuntimeVersion = "2.3.2"
+		idle.Provider = ""
+		idle.AvailableProviders = nil
+		idle.CPUContract.AffinityCPUCount = 4
+		idle.CPUContract.ORTIntraOpThreads = 0
+		idle.CPUContract.ORTInterOpThreads = 0
+		idle.DerivedContract.Provider = ""
+		idle.RKNN = testRKNNEvidence()
+		result = idle
+	} else {
+		active, err := runtimeResult(request.Intent, request.PodUID)
+		if err != nil {
+			os.Exit(22)
+		}
+		active.Architecture = "aarch64"
+		active.RuntimeVersion = "2.3.2"
+		active.Provider = ""
+		active.AvailableProviders = nil
+		active.CPUContract.AffinityCPUCount = 4
+		active.CPUContract.ORTIntraOpThreads = 0
+		active.CPUContract.ORTInterOpThreads = 0
+		active.DerivedContract.Provider = ""
+		active.RKNN = testRKNNEvidence()
+		active.InputShape = []int{1, 224, 224, 3}
+		if mode == "host-drift" {
+			active.RKNN.HostLibraries[0].Digest = "sha256:" + strings.Repeat("f", 64)
+		}
+		result = active
+	}
+	if err := writeAtomicJSON(resultPath, result); err != nil {
+		os.Exit(23)
+	}
+	os.Exit(0)
+}
+
 func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
 	t.Helper()
 	directory := filepath.Dir(resultPath)
@@ -428,6 +577,103 @@ func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
 		t.Fatal(err)
 	}
 	return runtime
+}
+
+func newTestRKNNLiteRuntime(
+	t *testing.T,
+	resultPath string,
+	delivery profilingrun.CandidateRuntimeDelivery,
+) *RKNNLiteRuntime {
+	t.Helper()
+	directory := filepath.Dir(resultPath)
+	runtime, err := NewRKNNLiteRuntime(RKNNLiteRuntimeConfig{
+		Command:                 []string{os.Args[0], "-test.run=TestRKNNLiteHelperProcess", "--"},
+		ModelPath:               filepath.Join(directory, "model.rknn"),
+		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
+		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
+		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
+		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
+		MeasurementEndPath:      filepath.Join(directory, "measurement-end"),
+		ResultPath:              resultPath,
+		ObserverReadyTimeout:    time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
+		MaxResultBytes: 1 << 20, Delivery: delivery, Stdout: io.Discard, Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
+}
+
+func testRKNNIntent(t *testing.T, idle bool) profilingrun.Intent {
+	t.Helper()
+	intent := testIntent(t)
+	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	intent.State.Artifact = "model-rk3588-bs1"
+	intent.State.ArtifactPath = "/artifact/model.rknn"
+	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	intent.State.Backend = profilingrun.RKNNLiteBackend
+	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	intent.TargetNode.Architecture = "arm64"
+	intent.CPU.ORTIntraOpThreads = 0
+	intent.CPU.ORTInterOpThreads = 0
+	if idle {
+		intent.Measurement.WarmupIterations = 0
+		intent.Measurement.SettlingDurationSeconds = 30
+		intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+		intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
+		intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	}
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return intent
+}
+
+func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
+	return profilingrun.CandidateRuntimeDelivery{
+		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
+			TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+			InputLayout: profilingrun.RKNNLiteInputLayout, InputDataType: profilingrun.RKNNLiteInputDataType,
+		},
+		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
+		HostContract: &profilingrun.CandidateReportHostContract{
+			Libraries: []profilingrun.CandidateReportHostLibrary{{
+				Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+				Digest: "sha256:" + strings.Repeat("b", 64),
+			}},
+			Driver: profilingrun.CandidateReportHostDriver{
+				Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
+			},
+			Devices: []profilingrun.CandidateReportHostDevice{
+				{Path: "/dev/dri/card0"}, {Path: "/dev/dri/renderD128"},
+			},
+			Platform: &profilingrun.CandidateReportHostPlatform{
+				CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
+			},
+		},
+		RuntimeAccess: &profilingrun.CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}},
+	}
+}
+
+func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
+	return &profilingrun.RKNNRuntimeEvidence{
+		Package: profilingrun.RKNNPackageObservation{Name: "rknn-toolkit-lite2", Version: "2.3.2"},
+		HostLibraries: []profilingrun.RKNNHostLibraryObservation{{
+			Name: "librknnrt", Path: "/usr/lib/librknnrt.so", Digest: "sha256:" + strings.Repeat("b", 64),
+		}},
+		Driver: profilingrun.RKNNDriverObservation{
+			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
+		},
+		Platform: profilingrun.RKNNPlatformObservation{
+			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588", Matched: true,
+		},
+		Devices: []profilingrun.RKNNDeviceObservation{
+			{Path: "/dev/dri/card0", CharacterDevice: true, Opened: true},
+			{Path: "/dev/dri/renderD128", CharacterDevice: true, Opened: true},
+		},
+		CoreMask: profilingrun.RKNNLiteCoreMask, InputLayout: profilingrun.RKNNLiteInputLayout,
+		InitSucceeded: true, LoadSucceeded: true, SelectedBatch: 1,
+	}
 }
 
 func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {

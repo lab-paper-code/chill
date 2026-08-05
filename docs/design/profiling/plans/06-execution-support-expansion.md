@@ -172,7 +172,11 @@ The production Job now consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
 Pod-level supplemental groups, runtime-only privilege, and an optional extended
 resource. Observer containers receive neither host mounts nor privilege. The
-runtime adapter does not yet verify those expected values at the host boundary.
+worker now reads the exact projected candidate bytes at its process boundary,
+selects the explicit RKNNLite adapter, and compares the producer's package,
+host-library digest, driver, platform, device, batch, layout, and active input-
+shape observations with that sealed candidate delivery. No Python RKNNLite
+producer emits the result yet.
 
 Active runtime-result v1alpha2 and idle runtime-result v1alpha2 now discriminate
 the common backend from CPU ORT provider vocabulary and carry an optional RKNN
@@ -185,8 +189,8 @@ remain readable. No RKNN producer emits this contract yet.
 Preparation and the frozen execution-policy selector now accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT
-thread settings. Job materialization is implemented, but no RKNNLite adapter or
-evidence producer executes it yet, so the row remains L0.
+thread settings. Job materialization and the Go adapter are implemented, but no
+RKNNLite evidence producer executes the protocol yet, so the row remains L0.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

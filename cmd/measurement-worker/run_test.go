@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -34,7 +35,22 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 			}
 			return profilingrun.Intent{}, nil
 		},
-		buildCoordinator: func(got options, stdout, stderr io.Writer) (measurementCoordinator, error) {
+		loadCandidateReport: func(
+			path string,
+			maximum int64,
+			_ profilingrun.Intent,
+		) (profilingrun.VerifiedCandidateReport, error) {
+			if path != opts.candidateReportPath || maximum != maximumCandidateReportBytes {
+				t.Fatalf("candidate report load = %q %d", path, maximum)
+			}
+			return profilingrun.VerifiedCandidateReport{}, nil
+		},
+		buildCoordinator: func(
+			got options,
+			_ profilingrun.Intent,
+			_ profilingrun.VerifiedCandidateReport,
+			stdout, stderr io.Writer,
+		) (measurementCoordinator, error) {
 			if got.storeBucket != opts.storeBucket || stdout == nil || stderr == nil {
 				t.Fatalf("builder options = %#v", got)
 			}
@@ -62,8 +78,9 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 		failure error
 		want    error
 	}{
-		"intent":  {failure: errors.New("load failed"), want: worker.ErrExecutionContract},
-		"runtime": {failure: worker.ErrRuntimeMeasurement, want: worker.ErrRuntimeMeasurement},
+		"intent":    {failure: errors.New("load failed"), want: worker.ErrExecutionContract},
+		"candidate": {failure: errors.New("candidate failed"), want: worker.ErrExecutionContract},
+		"runtime":   {failure: worker.ErrRuntimeMeasurement, want: worker.ErrRuntimeMeasurement},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps := successfulDependencies(validReceipt())
@@ -71,8 +88,18 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 				deps.loadIntent = func(string, string, int64) (profilingrun.Intent, error) {
 					return profilingrun.Intent{}, test.failure
 				}
+			} else if name == "candidate" {
+				deps.loadCandidateReport = func(string, int64, profilingrun.Intent) (profilingrun.VerifiedCandidateReport, error) {
+					return profilingrun.VerifiedCandidateReport{}, test.failure
+				}
 			} else {
-				deps.buildCoordinator = func(options, io.Writer, io.Writer) (measurementCoordinator, error) {
+				deps.buildCoordinator = func(
+					options,
+					profilingrun.Intent,
+					profilingrun.VerifiedCandidateReport,
+					io.Writer,
+					io.Writer,
+				) (measurementCoordinator, error) {
 					return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
 						return evidencestore.Receipt{}, test.failure
 					}}, nil
@@ -87,7 +114,13 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 }
 
 func TestBuildCoordinatorAcceptsCompleteOptionsWithoutExternalIO(t *testing.T) {
-	if _, err := buildCoordinator(validOptions(), io.Discard, io.Discard); err != nil {
+	if _, err := buildCoordinator(
+		validOptions(),
+		validCPUIntent(t),
+		profilingrun.VerifiedCandidateReport{},
+		io.Discard,
+		io.Discard,
+	); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -138,7 +171,8 @@ func TestDiagnosticDoesNotExposeEvidenceTransportDetails(t *testing.T) {
 
 func validOptions() options {
 	return options{
-		intentPath: defaultIntentPath, intentDigest: "sha256:" + strings.Repeat("a", 64), podUID: "pod-uid",
+		intentPath: defaultIntentPath, candidateReportPath: defaultCandidateReportPath,
+		intentDigest: "sha256:" + strings.Repeat("a", 64), podUID: "pod-uid",
 		scheduledNodeName: "lattepanda",
 		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPaths:      []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
@@ -160,6 +194,26 @@ func validOptions() options {
 	}
 }
 
+func validCPUIntent(t *testing.T) profilingrun.Intent {
+	t.Helper()
+	payload, err := os.ReadFile("../../internal/profiler/worker/testdata/lattepanda-ort-cpu-bs1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intent profilingrun.Intent
+	if err := json.Unmarshal(payload, &intent); err != nil {
+		t.Fatal(err)
+	}
+	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	intent.Workload = profilingrun.CurrentWorkloadContract()
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return intent
+}
+
 func validReceipt() evidencestore.Receipt {
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
@@ -176,7 +230,16 @@ func successfulDependencies(receipt evidencestore.Receipt) dependencies {
 		loadIntent: func(string, string, int64) (profilingrun.Intent, error) {
 			return profilingrun.Intent{}, nil
 		},
-		buildCoordinator: func(options, io.Writer, io.Writer) (measurementCoordinator, error) {
+		loadCandidateReport: func(string, int64, profilingrun.Intent) (profilingrun.VerifiedCandidateReport, error) {
+			return profilingrun.VerifiedCandidateReport{}, nil
+		},
+		buildCoordinator: func(
+			options,
+			profilingrun.Intent,
+			profilingrun.VerifiedCandidateReport,
+			io.Writer,
+			io.Writer,
+		) (measurementCoordinator, error) {
 			return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
 				return receipt, nil
 			}}, nil

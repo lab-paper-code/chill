@@ -18,17 +18,33 @@ type measurementCoordinator interface {
 	Execute(context.Context, worker.Request) (evidencestore.Receipt, error)
 }
 
+type candidateReportLoader func(
+	string,
+	int64,
+	profilingrun.Intent,
+) (profilingrun.VerifiedCandidateReport, error)
+
+type coordinatorBuilder func(
+	options,
+	profilingrun.Intent,
+	profilingrun.VerifiedCandidateReport,
+	io.Writer,
+	io.Writer,
+) (measurementCoordinator, error)
+
 type dependencies struct {
-	loadIntent       func(string, string, int64) (profilingrun.Intent, error)
-	buildCoordinator func(options, io.Writer, io.Writer) (measurementCoordinator, error)
-	writeReceipt     func(string, evidencestore.Receipt) error
+	loadIntent          func(string, string, int64) (profilingrun.Intent, error)
+	loadCandidateReport candidateReportLoader
+	buildCoordinator    coordinatorBuilder
+	writeReceipt        func(string, evidencestore.Receipt) error
 }
 
 func productionDependencies() dependencies {
 	return dependencies{
-		loadIntent:       worker.LoadFrozenIntent,
-		buildCoordinator: buildCoordinator,
-		writeReceipt:     writeReceipt,
+		loadIntent:          worker.LoadFrozenIntent,
+		loadCandidateReport: worker.LoadVerifiedCandidateReport,
+		buildCoordinator:    buildCoordinator,
+		writeReceipt:        writeReceipt,
 	}
 }
 
@@ -42,7 +58,11 @@ func execute(
 	if err != nil {
 		return fmt.Errorf("%w: load frozen intent: %w", worker.ErrExecutionContract, err)
 	}
-	coordinator, err := deps.buildCoordinator(opts, stdout, stderr)
+	verified, err := deps.loadCandidateReport(opts.candidateReportPath, maximumCandidateReportBytes, intent)
+	if err != nil {
+		return fmt.Errorf("%w: load verified candidate report: %w", worker.ErrExecutionContract, err)
+	}
+	coordinator, err := deps.buildCoordinator(opts, intent, verified, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("%w: construct worker: %w", worker.ErrExecutionContract, err)
 	}
@@ -65,19 +85,15 @@ func execute(
 	return nil
 }
 
-func buildCoordinator(opts options, stdout, stderr io.Writer) (measurementCoordinator, error) {
-	runtimeAdapter, err := worker.NewORTCPURuntime(worker.ORTCPURuntimeConfig{
-		Command: opts.runtimeCommand, ModelPath: opts.modelPath,
-		ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
-		MeasurementStartPath:    opts.measurementStartPath,
-		WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
-		MeasurementEndPath:      opts.measurementEndPath,
-		ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
-		MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
-		MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
-	})
+func buildCoordinator(
+	opts options,
+	intent profilingrun.Intent,
+	verified profilingrun.VerifiedCandidateReport,
+	stdout, stderr io.Writer,
+) (measurementCoordinator, error) {
+	runtimeAdapter, err := buildRuntimeAdapter(opts, intent, verified, stdout, stderr)
 	if err != nil {
-		return nil, fmt.Errorf("construct CPU ORT adapter: %w", err)
+		return nil, err
 	}
 	metricResult, err := worker.NewMetricResultFile(worker.MetricResultFileConfig{
 		Path: opts.metricResultPath, WaitTimeout: opts.metricResultTimeout,
@@ -107,6 +123,49 @@ func buildCoordinator(opts options, stdout, stderr io.Writer) (measurementCoordi
 		return nil, fmt.Errorf("construct measurement coordinator: %w", err)
 	}
 	return coordinator, nil
+}
+
+func buildRuntimeAdapter(
+	opts options,
+	intent profilingrun.Intent,
+	verified profilingrun.VerifiedCandidateReport,
+	stdout, stderr io.Writer,
+) (worker.Runtime, error) {
+	if profilingrun.IsSupportedCPUORTIntent(intent) {
+		runtimeAdapter, err := worker.NewORTCPURuntime(worker.ORTCPURuntimeConfig{
+			Command: opts.runtimeCommand, ModelPath: opts.modelPath,
+			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
+			MeasurementStartPath:    opts.measurementStartPath,
+			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
+			MeasurementEndPath:      opts.measurementEndPath,
+			ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
+			MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
+			MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("construct CPU ORT adapter: %w", err)
+		}
+		return runtimeAdapter, nil
+	}
+	if profilingrun.IsSupportedRKNNLiteIntent(intent) {
+		runtimeAdapter, err := worker.NewRKNNLiteRuntime(worker.RKNNLiteRuntimeConfig{
+			Command:            []string{"python3", "/opt/chill/runtime/rknnlite/runner.py"},
+			ModelPath:          defaultRKNNLiteModelPath,
+			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
+			MeasurementStartPath:    opts.measurementStartPath,
+			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
+			MeasurementEndPath:      opts.measurementEndPath,
+			ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
+			MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
+			MaxResultBytes: opts.maxRuntimeResultBytes, Delivery: verified.RuntimeDelivery(),
+			Stdout: stdout, Stderr: stderr,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("construct RKNNLite adapter: %w", err)
+		}
+		return runtimeAdapter, nil
+	}
+	return nil, errors.New("construct runtime adapter: frozen execution path is unsupported")
 }
 
 func writeReceipt(path string, receipt evidencestore.Receipt) error {

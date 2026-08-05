@@ -93,6 +93,31 @@ func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (profilingrun
 	return intent, nil
 }
 
+// LoadVerifiedCandidateReport reads the exact projected candidate report and
+// verifies it once against the already-frozen intent. Only the sealed result
+// crosses into runtime construction.
+func LoadVerifiedCandidateReport(
+	path string,
+	maxBytes int64,
+	intent profilingrun.Intent,
+) (profilingrun.VerifiedCandidateReport, error) {
+	if !validAbsoluteFilePath(path) {
+		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report path must be a clean absolute file path")
+	}
+	if maxBytes < 1 {
+		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report maximum size must be positive")
+	}
+	payload, err := readProjectedFile(path, maxBytes)
+	if err != nil {
+		return profilingrun.VerifiedCandidateReport{}, fmt.Errorf("read candidate report file: %w", err)
+	}
+	verified, err := profilingrun.VerifyCandidateReport(payload, intent)
+	if err != nil {
+		return profilingrun.VerifiedCandidateReport{}, fmt.Errorf("verify candidate report file: %w", err)
+	}
+	return verified, nil
+}
+
 // PublishMetricResult validates and atomically publishes one observer result
 // without replacing an existing handoff.
 func PublishMetricResult(path string, maxBytes int64, result metricobserver.Result) error {
@@ -218,20 +243,39 @@ func decodeJSONFile(path string, maxBytes int64, target any) error {
 // verifies and decodes the regular file held by the opened descriptor. Content
 // identity remains protected by the caller's expected digest.
 func decodeProjectedJSONFile(path string, maxBytes int64, target any) error {
-	file, err := os.Open(path)
+	payload, err := readProjectedFile(path, maxBytes)
 	if err != nil {
 		return err
+	}
+	return decodeJSON(payload, target)
+}
+
+func readProjectedFile(path string, maxBytes int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		_ = file.Close()
-		return errors.New("projected input target is not a regular file")
+		return nil, errors.New("projected input target is not a regular file")
 	}
-	return decodeOpenedJSONFile(file, maxBytes, target)
+	payload, readErr := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if int64(len(payload)) > maxBytes {
+		return nil, fmt.Errorf("handoff file exceeds %d-byte limit", maxBytes)
+	}
+	return payload, nil
 }
 
 func decodeOpenedJSONFile(file *os.File, maxBytes int64, target any) error {
@@ -247,6 +291,10 @@ func decodeOpenedJSONFile(file *os.File, maxBytes int64, target any) error {
 		return fmt.Errorf("handoff file exceeds %d-byte limit", maxBytes)
 	}
 
+	return decodeJSON(payload, target)
+}
+
+func decodeJSON(payload []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

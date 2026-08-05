@@ -14,7 +14,9 @@ import (
 
 const (
 	defaultIntentPath                      = "/etc/chill/run/intent.json"
+	defaultCandidateReportPath             = "/etc/chill/run/candidate-report.json"
 	defaultModelPath                       = "/model/model.onnx"
+	defaultRKNNLiteModelPath               = "/model/model.rknn"
 	defaultWorkspacePath                   = "/workspace"
 	defaultObserverReadyPath               = "/coordination/observer-ready"
 	defaultWorkloadObserverReadyPath       = "/coordination/workload-observer-ready"
@@ -26,6 +28,7 @@ const (
 	defaultWorkloadResultPath              = "/coordination/workload-result.json"
 	defaultTerminationMessagePath          = "/dev/termination-log"
 	maximumIntentBytes               int64 = 1 << 20
+	maximumCandidateReportBytes            = 1 << 20
 	maximumReceiptBytes                    = 4 << 10
 	handoffPollInterval                    = 100 * time.Millisecond
 )
@@ -34,6 +37,7 @@ var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type options struct {
 	intentPath              string
+	candidateReportPath     string
 	intentDigest            string
 	podUID                  string
 	scheduledNodeName       string
@@ -69,6 +73,7 @@ type options struct {
 
 func (o *options) bindFlags(set *flag.FlagSet) {
 	o.intentPath = defaultIntentPath
+	o.candidateReportPath = defaultCandidateReportPath
 	o.modelPath = defaultModelPath
 	o.workspacePath = defaultWorkspacePath
 	o.observerReadyPaths = []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath}
@@ -126,7 +131,8 @@ func (o options) validate() error {
 		return errors.New("session token must not have surrounding whitespace")
 	}
 	for name, value := range map[string]string{
-		"intent": o.intentPath, "model": o.modelPath, "workspace": o.workspacePath,
+		"intent": o.intentPath, "candidate report": o.candidateReportPath,
+		"model": o.modelPath, "workspace": o.workspacePath,
 		"workload-window-start": o.workloadWindowStartPath,
 		"measurement-start":     o.measurementStartPath, "measurement-end": o.measurementEndPath,
 		"workload-window-ready": o.workloadWindowReadyPath,
