@@ -253,3 +253,18 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   delivery requirement, not a physical host identity or proof of NPU
   exclusivity. The Pod is still diagnostic rather than retained
   `ProfilingRun` evidence, so the RKNN rows remain L0.
+
+### Production worker image smoke
+
+- Commit `1986d3a` produced the arm64-only RKNNLite worker index
+  `sha256:2279f43c9a47679bb7e54489d35f911cb073792f6855c2e698e5415183345674`.
+  Its arm64 runnable child is
+  `sha256:35d71555f3c122c87adb4cc0318be25d9f983d87006b79d2c2e5c0e7e3559e91`.
+- Pod `rknnlite-worker-image-smoke-1986d3a`, UID
+  `23d33dcf-d855-4449-9dd4-b698efd15432`, pulled that index on `orangepi` and
+  confirmed the arm64 worker binary, RKNNLite runner, package 2.3.2, and
+  `NPU_CORE_0` API are present. Its Kubernetes `imageID` is the same index
+  digest.
+- This is image-delivery evidence only. It did not mount the mutable host
+  contract, initialize the NPU, execute the coordinated measurement window, or
+  produce retained raw evidence; the support rows therefore remain L0.

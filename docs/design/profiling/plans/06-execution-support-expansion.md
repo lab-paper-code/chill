@@ -46,7 +46,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | Orange Pi RKNNLite / fixed | L0 | Configure the exact RKNN runtime/host declaration and add Run-time host verification before enabling the adapter. |
+| current | Orange Pi RKNNLite / fixed | L0 | Deploy the digest-pinned declaration and execute active/idle `ProfilingRun` objects through admission. |
 
 ## Stable decisions
 

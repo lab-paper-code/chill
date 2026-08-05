@@ -1,4 +1,4 @@
-# Opt-in Profiler facts for the current CHILL testbed arm64 CPU ORT paths.
+# Opt-in Profiler facts for the current CHILL testbed arm64 execution paths.
 # The runtime, artifact, and observer images are runnable arm64 child manifests;
 # Node-specific metric sources remain explicit entries in the same frozen facts.
 evidenceStore:
@@ -36,6 +36,42 @@ profiler:
           architecture: arm64
           path: /artifact/mobilenet-v2-050.onnx
           digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+      - modelSpec: mobilenet-v2-050
+        deviceClass: orangepi-5-plus-16g
+        executionPath: rknnlite
+        runtime:
+          contentDigest: sha256:c24e03dccb4e6ed597b2101ec21cf8d99e640bfd7de479924490791d6237a214
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker@sha256:2279f43c9a47679bb7e54489d35f911cb073792f6855c2e698e5415183345674","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        artifact:
+          schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
+          image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c"
+          architecture: arm64
+          path: /artifact/model.rknn
+          digest: sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550
+        host:
+          libraries:
+            - name: librknnrt
+              hostPath: /usr/lib/librknnrt.so
+              containerPath: /usr/lib/librknnrt.so
+              digest: sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
+          driver:
+            name: rknpu
+            versionPath: /sys/module/rknpu/version
+            version: 0.9.6
+          devices:
+            - path: /dev/dri/card0
+            - path: /dev/dri/card1
+            - path: /dev/dri/renderD128
+            - path: /dev/dri/renderD129
+          platform:
+            compatiblePath: /proc/device-tree/compatible
+            compatibleToken: rockchip,rk3588
+          allocation:
+            resourceName: ""
+            exclusivityClaimed: false
+        access:
+          privileged: true
+          supplementalGroups: [44, 110]
     metricSources:
       - node: rasp5
         kind: edge-metrics
