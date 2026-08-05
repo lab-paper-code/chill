@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -78,6 +79,7 @@ const (
 )
 
 type Observation struct {
+	PowerMode  string
 	Target     Target
 	ObservedAt time.Time
 }
@@ -85,6 +87,9 @@ type Observation struct {
 func (o Observation) Validate() error {
 	if err := o.Target.Validate(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(o.PowerMode) != o.PowerMode {
+		return errors.New("observation power mode cannot contain surrounding whitespace")
 	}
 	if o.ObservedAt.IsZero() {
 		return errors.New("observation time is required")
@@ -109,6 +114,8 @@ type Snapshot struct {
 	Phase               Phase
 	Lease               LeaseObservation
 	Safety              SafetyState
+	SafetyObservedAt    *time.Time
+	SafetyValidFor      time.Duration
 	PreviousObservation *Observation
 	TargetObservation   *Observation
 	RestoredObservation *Observation
@@ -148,6 +155,16 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	if snapshot.Lease.RetryAfter == 0 {
 		return Decision{Action: ActionRenewLease}, nil
 	}
+	if snapshot.Safety == SafetyBlocked {
+		failure := &Failure{
+			Stage: FailureStageSafety, Reason: "WorkloadSafetyBlocked",
+			Message: "an unapproved workload prevents Node-wide actuation",
+		}
+		if snapshot.PreviousObservation == nil {
+			return Decision{Action: ActionMarkFailed, Failure: failure}, nil
+		}
+		return Decision{Action: ActionBeginRestore, Failure: failure}, nil
+	}
 	if shouldBeginRestore(snapshot) {
 		failure := snapshot.Failure
 		if failure == nil && !snapshot.Now.Before(snapshot.Request.Deadline) {
@@ -179,11 +196,6 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		switch snapshot.Safety {
 		case SafetyUnknown:
 			return Decision{Action: ActionCheckSafety}, nil
-		case SafetyBlocked:
-			return Decision{Action: ActionMarkFailed, Failure: &Failure{
-				Stage: FailureStageSafety, Reason: "WorkloadSafetyBlocked",
-				Message: "an unapproved workload prevents Node-wide actuation",
-			}}, nil
 		case SafetyAllowed:
 			return Decision{Action: ActionObservePrevious}, nil
 		}
@@ -215,8 +227,12 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		}
 		return Decision{Action: ActionMarkReady}, nil
 	case PhaseReady:
+		if safetyExpired(snapshot) {
+			return Decision{Action: ActionCheckSafety}, nil
+		}
 		return Decision{Action: ActionHold, RequeueAfter: minimumPositive(
 			snapshot.Lease.RetryAfter, snapshot.Request.Deadline.Sub(snapshot.Now),
+			snapshot.SafetyObservedAt.Add(snapshot.SafetyValidFor).Sub(snapshot.Now),
 		)}, nil
 	case PhaseRestoring:
 		return Decision{Action: ActionRestorePrevious, Failure: snapshot.Failure}, nil
@@ -250,6 +266,13 @@ func (s Snapshot) Validate() error {
 	}
 	if s.Safety != "" && s.Safety != SafetyUnknown && s.Safety != SafetyAllowed && s.Safety != SafetyBlocked {
 		return fmt.Errorf("unsupported safety observation %q", s.Safety)
+	}
+	if s.SafetyValidFor <= 0 {
+		return errors.New("positive safety validity duration is required")
+	}
+	if (s.Safety == SafetyUnknown || s.Safety == "") && s.SafetyObservedAt != nil ||
+		s.Safety != SafetyUnknown && s.Safety != "" && s.SafetyObservedAt == nil {
+		return errors.New("safety verdict and observation time must be present together")
 	}
 	for name, observation := range map[string]*Observation{
 		"previous": s.PreviousObservation, "target": s.TargetObservation, "restored": s.RestoredObservation,
@@ -318,6 +341,11 @@ func shouldBeginRestore(snapshot Snapshot) bool {
 
 func targetsEqual(left, right Target) bool {
 	return reflect.DeepEqual(left, right)
+}
+
+func safetyExpired(snapshot Snapshot) bool {
+	return snapshot.Safety != SafetyAllowed || snapshot.SafetyObservedAt == nil ||
+		!snapshot.Now.Before(snapshot.SafetyObservedAt.Add(snapshot.SafetyValidFor))
 }
 
 func validPhase(phase Phase) bool {

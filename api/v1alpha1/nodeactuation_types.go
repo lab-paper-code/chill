@@ -134,6 +134,44 @@ type NodeActuationFailure struct {
 	OccurredAt metav1.Time `json:"occurredAt"`
 }
 
+// NodeActuationSafetyVerdict is the fail-closed workload coexistence result.
+// +kubebuilder:validation:Enum=Allowed;Blocked
+type NodeActuationSafetyVerdict string
+
+const (
+	NodeActuationSafetyAllowed NodeActuationSafetyVerdict = "Allowed"
+	NodeActuationSafetyBlocked NodeActuationSafetyVerdict = "Blocked"
+)
+
+type NodeActuationPodReference struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Namespace string `json:"namespace"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	UID string `json:"uid"`
+}
+
+// NodeActuationSafetyObservation records the workload set result used by the
+// actuator. Raw Pod objects remain authoritative in Kubernetes.
+// +kubebuilder:validation:XValidation:rule="self.verdict == 'Allowed' ? !has(self.blockingPods) || size(self.blockingPods) == 0 : has(self.blockingPods) && size(self.blockingPods) > 0",message="Blocked safety requires blockingPods and Allowed safety forbids them"
+type NodeActuationSafetyObservation struct {
+	Verdict NodeActuationSafetyVerdict `json:"verdict"`
+
+	ObservedAt metav1.Time `json:"observedAt"`
+
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=map
+	// +listMapKey=uid
+	BlockingPods []NodeActuationPodReference `json:"blockingPods,omitempty"`
+}
+
 // NodeActuationStatus is written only by the responsible per-Node actuator.
 // +kubebuilder:validation:XValidation:rule="!has(self.terminalFailure) || has(self.phase) && self.phase in ['Restoring', 'VerifyingRestore', 'Failed']",message="terminalFailure is valid only while restoring or after failure"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Failed' || has(self.terminalFailure)",message="Failed phase requires terminalFailure"
@@ -155,6 +193,10 @@ type NodeActuationStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
+
+	// Safety is the latest fail-closed workload coexistence observation.
+	// +optional
+	Safety *NodeActuationSafetyObservation `json:"safety,omitempty"`
 
 	// Lease names the Node-UID-keyed lock held for this handoff.
 	// +optional
@@ -192,8 +234,9 @@ type NodeActuationStatus struct {
 	// +optional
 	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`
 
-	// TerminalFailure is set only after the actuator has exhausted the
-	// fail-safe path. Restore failures remain visible here and retain the lock.
+	// TerminalFailure makes the measurement path terminal. It may be retained
+	// while fail-safe restoration continues; a restore failure replaces it and
+	// keeps the Node locked for operator attention.
 	// +optional
 	TerminalFailure *NodeActuationFailure `json:"terminalFailure,omitempty"`
 }

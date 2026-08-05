@@ -204,11 +204,14 @@ assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
 The Profiler now creates the durable `NodeActuation` handoff from frozen Run
 inputs, and the future actuator boundary strictly projects only an exact local
 Node name/UID match. The pure apply/read-back/settle/restore decision core and
-exact Node-UID Lease primitive are implemented but not wired to an operand.
-The actuator status reconciler, workload-safety observer, host adapter, and
-live apply/read-back/restore proof remain unimplemented, so the Profiler still
-creates no measurement Job for a non-fixed Run. Catalog presence and
-historical standalone smoke are not production execution evidence.
+exact Node-UID Lease primitive are implemented. An internal status reconciler
+now drives those primitives against the durable handoff, and a fail-closed
+workload-safety adapter reports exact active Pod blockers outside an explicit
+namespace allowlist. Neither is wired to a runnable operand or installation
+configuration. The host adapter and live apply/read-back/restore proof remain
+unimplemented, so no host mutation is enabled and the Profiler still creates
+no measurement Job for a non-fixed Run. Catalog presence and historical
+standalone smoke are not production execution evidence.
 
 ## Campaign records
 

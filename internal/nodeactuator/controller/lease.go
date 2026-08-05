@@ -65,6 +65,66 @@ func NewNodeLeaseManager(kubeClient client.Client, options LeaseOptions) (*NodeL
 	return &NodeLeaseManager{client: kubeClient, options: options}, nil
 }
 
+// Observe classifies the current lock without acquiring, renewing, or
+// releasing it. The returned retry bound is relative to the supplied time.
+func (m *NodeLeaseManager) Observe(
+	ctx context.Context,
+	request nodeactuator.Request,
+	now time.Time,
+) (LeaseBinding, error) {
+	if m == nil || m.client == nil {
+		return LeaseBinding{}, errors.New("Node Lease manager is incomplete")
+	}
+	if err := request.ValidateForNode(request.Node); err != nil {
+		return LeaseBinding{}, fmt.Errorf("validate Lease observation request: %w", err)
+	}
+	if now.IsZero() {
+		return LeaseBinding{}, errors.New("Lease observation time is required")
+	}
+	name := nodeLeaseName(request.Node.UID)
+	holder := nodeLeaseHolder(request.Handoff.UID)
+	key := types.NamespacedName{Namespace: m.options.Namespace, Name: name}
+	lease := &coordinationv1.Lease{}
+	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
+		return LeaseBinding{Name: name, HolderIdentity: holder, State: nodeactuator.LeaseNotHeld}, nil
+	} else if err != nil {
+		return LeaseBinding{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
+	}
+	if err := validateLeaseNodeIdentity(lease, request.Node.UID); err != nil {
+		return LeaseBinding{}, err
+	}
+	expiresAt, err := leaseExpiry(lease)
+	if err != nil {
+		return LeaseBinding{}, err
+	}
+	currentHolder := ptr.Deref(lease.Spec.HolderIdentity, "")
+	binding := LeaseBinding{
+		Name: lease.Name, UID: string(lease.UID), HolderIdentity: currentHolder,
+	}
+	if currentHolder != holder {
+		if now.Before(expiresAt) {
+			binding.State = nodeactuator.LeaseConflict
+			binding.RetryAfter = expiresAt.Sub(now)
+			return binding, nil
+		}
+		binding.State = nodeactuator.LeaseNotHeld
+		return binding, nil
+	}
+	if lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
+		return LeaseBinding{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
+	}
+	if !now.Before(expiresAt) {
+		binding.State = nodeactuator.LeaseLost
+		return binding, nil
+	}
+	binding.State = nodeactuator.LeaseHeld
+	renewAt := expiresAt.Add(-time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second * 2 / 3)
+	if now.Before(renewAt) {
+		binding.RetryAfter = renewAt.Sub(now)
+	}
+	return binding, nil
+}
+
 func (m *NodeLeaseManager) AcquireOrRenew(
 	ctx context.Context,
 	request nodeactuator.Request,

@@ -33,15 +33,10 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 	if err != nil || first.State != nodeactuator.LeaseHeld || first.RetryAfter != 10*time.Second || first.UID == "" {
 		t.Fatalf("first acquire = %#v, error=%v", first, err)
 	}
-	lease := &coordinationv1.Lease{}
-	key := client.ObjectKey{Namespace: "chill-system", Name: nodeLeaseName(firstRequest.Node.UID)}
-	if err := kubeClient.Get(ctx, key, lease); err != nil {
-		t.Fatal(err)
-	}
-	if len(lease.OwnerReferences) != 0 || lease.Annotations[leaseNodeUIDAnnotation] != firstRequest.Node.UID ||
-		lease.Annotations[leaseHandoffUIDAnnotation] != firstRequest.Handoff.UID ||
-		lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != nodeLeaseHolder(firstRequest.Handoff.UID) {
-		t.Fatalf("created Lease = %#v", lease)
+	lease, key := requireCreatedNodeLease(t, ctx, kubeClient, firstRequest)
+	observed, err := manager.Observe(ctx, firstRequest, now)
+	if err != nil || observed.State != nodeactuator.LeaseHeld || observed.RetryAfter != 10*time.Second {
+		t.Fatalf("held observation = %#v, error=%v", observed, err)
 	}
 
 	secondRequest := leaseTestRequest("handoff-b")
@@ -49,6 +44,14 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 	if err != nil || conflict.State != nodeactuator.LeaseConflict || conflict.RetryAfter != 25*time.Second ||
 		conflict.HolderIdentity != first.HolderIdentity {
 		t.Fatalf("conflict = %#v, error=%v", conflict, err)
+	}
+	observed, err = manager.Observe(ctx, secondRequest, now.Add(5*time.Second))
+	if err != nil || observed.State != nodeactuator.LeaseConflict || observed.RetryAfter != 25*time.Second {
+		t.Fatalf("conflict observation = %#v, error=%v", observed, err)
+	}
+	observed, err = manager.Observe(ctx, firstRequest, now.Add(31*time.Second))
+	if err != nil || observed.State != nodeactuator.LeaseLost {
+		t.Fatalf("expired holder observation = %#v, error=%v", observed, err)
 	}
 	taken, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(31*time.Second))
 	if err != nil || taken.State != nodeactuator.LeaseHeld || taken.HolderIdentity == first.HolderIdentity {
@@ -61,6 +64,33 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 		lease.Annotations[leaseHandoffUIDAnnotation] != secondRequest.Handoff.UID {
 		t.Fatalf("taken Lease = %#v", lease.Spec)
 	}
+	observed, err = manager.Observe(ctx, secondRequest, now.Add(31*time.Second))
+	if err != nil || observed.State != nodeactuator.LeaseHeld || observed.HolderIdentity != taken.HolderIdentity {
+		t.Fatalf("takeover observation = %#v, error=%v", observed, err)
+	}
+}
+
+func TestNodeLeaseManagerReleasesOnlyExactHolder(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	scheme := leaseTestScheme(t)
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	kubeClient := &leaseUIDClient{Client: baseClient}
+	manager, err := NewNodeLeaseManager(kubeClient, LeaseOptions{
+		Namespace: "chill-system", DurationSeconds: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	firstRequest := leaseTestRequest("handoff-a")
+	if _, err := manager.AcquireOrRenew(ctx, firstRequest, now); err != nil {
+		t.Fatal(err)
+	}
+	secondRequest := leaseTestRequest("handoff-b")
+	if _, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(31*time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	if released, err := manager.Release(ctx, firstRequest); err == nil || released ||
 		!strings.Contains(err.Error(), "another handoff") {
 		t.Fatalf("foreign release = %t, error=%v", released, err)
@@ -68,6 +98,8 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 	if released, err := manager.Release(ctx, secondRequest); err != nil || !released {
 		t.Fatalf("holder release = %t, error=%v", released, err)
 	}
+	key := client.ObjectKey{Namespace: "chill-system", Name: nodeLeaseName(firstRequest.Node.UID)}
+	lease := &coordinationv1.Lease{}
 	if err := kubeClient.Get(ctx, key, lease); !apierrors.IsNotFound(err) {
 		t.Fatalf("released Lease still exists: %v", err)
 	}
@@ -139,6 +171,26 @@ func leaseTestRequest(handoffUID string) nodeactuator.Request {
 		Deadline: now.Add(15 * time.Minute), DesiredStage: nodeactuator.DesiredStageApply,
 		StageRequestedAt: now,
 	}
+}
+
+func requireCreatedNodeLease(
+	t *testing.T,
+	ctx context.Context,
+	kubeClient client.Client,
+	request nodeactuator.Request,
+) (*coordinationv1.Lease, client.ObjectKey) {
+	t.Helper()
+	lease := &coordinationv1.Lease{}
+	key := client.ObjectKey{Namespace: "chill-system", Name: nodeLeaseName(request.Node.UID)}
+	if err := kubeClient.Get(ctx, key, lease); err != nil {
+		t.Fatal(err)
+	}
+	if len(lease.OwnerReferences) != 0 || lease.Annotations[leaseNodeUIDAnnotation] != request.Node.UID ||
+		lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID ||
+		lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != nodeLeaseHolder(request.Handoff.UID) {
+		t.Fatalf("created Lease = %#v", lease)
+	}
+	return lease, key
 }
 
 type leaseUIDClient struct {

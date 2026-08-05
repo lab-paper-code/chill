@@ -131,6 +131,28 @@ var _ = Describe("NodeActuation API", func() {
 		handoff.Status.RestoreAppliedAt = &now
 		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
 	})
+
+	It("requires exact blocking Pod identities for a blocked safety verdict", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("actuation-safety-owner"))
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+		handoff := validNodeActuation(uniqueNodeActuationName("safety"), run)
+		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+
+		now := metav1.Now()
+		handoff.Status.Safety = &edgev1alpha1.NodeActuationSafetyObservation{
+			Verdict: edgev1alpha1.NodeActuationSafetyBlocked, ObservedAt: now,
+		}
+		err := k8sClient.Status().Update(ctx, handoff)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInvalid(err)).To(BeTrue())
+
+		handoff.Status.Safety.BlockingPods = []edgev1alpha1.NodeActuationPodReference{{
+			Namespace: "tenant-a", Name: "serving", UID: "pod-uid",
+		}}
+		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
+	})
 })
 
 func validNodeActuation(name string, run *edgev1alpha1.ProfilingRun) *edgev1alpha1.NodeActuation {

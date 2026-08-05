@@ -21,7 +21,11 @@ func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
 	}{
 		{name: "acquire Node Lease", mutate: func(s *Snapshot) { s.Lease = LeaseObservation{State: LeaseNotHeld} }, want: ActionAcquireLease},
 		{name: "check safety after Lease", mutate: func(s *Snapshot) { s.Phase = PhasePending }, want: ActionCheckSafety},
-		{name: "repeat unknown safety", mutate: func(s *Snapshot) { s.Phase = PhaseCheckingSafety; s.Safety = SafetyUnknown }, want: ActionCheckSafety},
+		{name: "repeat unknown safety", mutate: func(s *Snapshot) {
+			s.Phase = PhaseCheckingSafety
+			s.Safety = SafetyUnknown
+			s.SafetyObservedAt = nil
+		}, want: ActionCheckSafety},
 		{name: "observe previous after safety", mutate: func(s *Snapshot) { s.Phase = PhaseCheckingSafety; s.Safety = SafetyAllowed }, want: ActionObservePrevious},
 		{name: "repeat previous observation", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious }, want: ActionObservePrevious},
 		{name: "apply retained target", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious; s.PreviousObservation = &previous }, want: ActionApplyTarget},
@@ -208,6 +212,28 @@ func TestSettlingWaitNeverOutlivesLeaseRenewal(t *testing.T) {
 	}
 }
 
+func TestReadyStateRechecksWorkloadSafetyAndRestoresWhenBlocked(t *testing.T) {
+	t.Parallel()
+	snapshot := validSnapshot()
+	previous := observation(1, snapshot.Now.Add(-time.Second))
+	snapshot.Phase = PhaseReady
+	snapshot.PreviousObservation = &previous
+	stale := snapshot.Now.Add(-snapshot.SafetyValidFor)
+	snapshot.SafetyObservedAt = &stale
+	decision, err := Decide(snapshot)
+	if err != nil || decision.Action != ActionCheckSafety {
+		t.Fatalf("stale safety decision = %#v, error=%v", decision, err)
+	}
+
+	snapshot.Safety = SafetyBlocked
+	snapshot.SafetyObservedAt = &snapshot.Now
+	decision, err = Decide(snapshot)
+	if err != nil || decision.Action != ActionBeginRestore || decision.Failure == nil ||
+		decision.Failure.Stage != FailureStageSafety {
+		t.Fatalf("blocked safety decision = %#v, error=%v", decision, err)
+	}
+}
+
 func TestSnapshotRejectsRestoreVerificationWithoutPreviousState(t *testing.T) {
 	t.Parallel()
 	snapshot := validSnapshot()
@@ -233,7 +259,7 @@ func validSnapshot() Snapshot {
 		},
 		Now: now, Phase: PhasePending,
 		Lease:  LeaseObservation{State: LeaseHeld, RetryAfter: 10 * time.Second},
-		Safety: SafetyUnknown,
+		Safety: SafetyAllowed, SafetyObservedAt: &now, SafetyValidFor: 30 * time.Second,
 	}
 }
 

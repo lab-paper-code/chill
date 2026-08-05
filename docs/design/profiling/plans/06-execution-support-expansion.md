@@ -24,10 +24,10 @@ Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
 dedicated per-Node actuator as the sole host-state writer while retaining the
 Profiler as Run orchestrator. The durable `NodeActuation` API, Profiler
 producer, strict local-Node consumer projection, pure lifecycle decision core,
-and exact Node-UID Lease primitive are implemented. No actuator operand,
-status controller, safety observer, or host mutation is enabled. Later slices
-remain deferred until their stated entry condition is met or this plan is
-explicitly revised.
+exact Node-UID Lease primitive, internal status reconciler, and fail-closed
+workload-safety observer are implemented. No actuator operand, installed safety
+policy, host adapter, or host mutation is enabled. Later slices remain deferred
+until their stated entry condition is met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -150,6 +150,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   serialization gate open until the actuator controller consumes it.
 - [x] Fix the pure happy-path and fail-safe decision order with separate target
   and restoration read-back phases; no command result directly proves state.
+- [x] Implement the internal status reconciler with an exact local-Node filter,
+  a durable pre-mutation fence, independent read-back, and restoration-aware
+  finalization; keep its production gate open until an operand wires it.
+- [x] Implement a fail-closed Kubernetes workload-safety observation that
+  retains every active blocking Pod identity outside an explicit namespace
+  allowlist; install no implicit default policy.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
 - [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
@@ -189,8 +195,16 @@ observe restored`; deadline, safety rejection, target mismatch, and primary
 failure all enter the same restore path. `VerifyingRestore` and
 `restoreAppliedAt` make command application and independent read-back
 reconstructable after restart. A restore read-back mismatch keeps the failure
-terminal and retains or reacquires the Lease. These primitives do not close
-the unchecked production gate until a status controller actually drives them.
+terminal and retains or reacquires the Lease. The internal status reconciler
+now drives these primitives from durable `NodeActuation` state. It records the
+apply phase before invoking the host port, separates command completion from
+target and restoration read-back, retains the Lease and finalizer when
+restoration cannot be proven, and reconciles Lease status after restart. Its
+workload-safety adapter lists active Pods on the exact target Node and allows
+only explicitly configured namespaces; an unapproved Pod or an incomplete
+blocker set fails closed. These internal paths do not close the unchecked
+production gates: no runnable operand selects the allowlist, Lease policy, or
+host adapter, and no host mutation or live restoration proof exists.
 
 ### Jetson NVPModel
 

@@ -476,6 +476,55 @@ spec:
                 - actuator
                 - observedAt
                 type: object
+              safety:
+                description: Safety is the latest fail-closed workload coexistence
+                  observation.
+                properties:
+                  blockingPods:
+                    items:
+                      properties:
+                        name:
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        namespace:
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                        uid:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      - uid
+                      type: object
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - uid
+                    x-kubernetes-list-type: map
+                  observedAt:
+                    format: date-time
+                    type: string
+                  verdict:
+                    description: NodeActuationSafetyVerdict is the fail-closed workload
+                      coexistence result.
+                    enum:
+                    - Allowed
+                    - Blocked
+                    type: string
+                required:
+                - observedAt
+                - verdict
+                type: object
+                x-kubernetes-validations:
+                - message: Blocked safety requires blockingPods and Allowed safety
+                    forbids them
+                  rule: 'self.verdict == ''Allowed'' ? !has(self.blockingPods) ||
+                    size(self.blockingPods) == 0 : has(self.blockingPods) && size(self.blockingPods)
+                    > 0'
               settlingStartedAt:
                 format: date-time
                 type: string
@@ -566,8 +615,9 @@ spec:
                 type: object
               terminalFailure:
                 description: |-
-                  TerminalFailure is set only after the actuator has exhausted the
-                  fail-safe path. Restore failures remain visible here and retain the lock.
+                  TerminalFailure makes the measurement path terminal. It may be retained
+                  while fail-safe restoration continues; a restore failure replaces it and
+                  keeps the Node locked for operator attention.
                 properties:
                   message:
                     maxLength: 1024
