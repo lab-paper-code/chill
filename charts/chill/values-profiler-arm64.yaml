@@ -46,7 +46,7 @@ profiler:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c"
           architecture: arm64
-          path: /artifact/model.rknn
+          path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
           digest: sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550
         host:
           libraries:
