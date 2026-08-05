@@ -11,7 +11,7 @@ CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
-RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker:$(IMAGE_TAG)
+RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -386,7 +386,7 @@ docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measure
 docker-buildx-rknnlite-measurement-worker: ## Build and push the verified arm64 RKNNLite measurement worker.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(RKNNLITE_MEASUREMENT_WORKER_PLATFORM) -f build/docker/rknnlite-measurement-worker.Dockerfile --tag $(RKNNLITE_MEASUREMENT_WORKER_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --provenance=false --platform=$(RKNNLITE_MEASUREMENT_WORKER_PLATFORM) -f build/docker/rknnlite-measurement-worker.Dockerfile --tag $(RKNNLITE_MEASUREMENT_WORKER_IMG) .
 
 .PHONY: docker-buildx-workload-observer
 docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver helper image.
