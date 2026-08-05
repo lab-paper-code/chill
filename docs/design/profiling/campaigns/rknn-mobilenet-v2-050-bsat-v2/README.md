@@ -6,12 +6,13 @@
 
 ## Status
 
-Discovery completed on the live testbed on 2026-08-06. The Git commit that first
-contains this directory is the discovery freeze boundary. All 12 matching idle
-and discovery Runs were retained, Loader-verified, admitted, and included.
-Discovery selected batch one and sized four fresh confirmatory Runs at each
-batch. The canonical second policy is committed before those Runs; none has
-been submitted at this checkpoint.
+Completed on the live testbed on 2026-08-06. The Git commit that first contains
+this directory is the discovery freeze boundary, and the commit that first
+contains `confirmatory-policy.json` predates all confirmation Runs. All 20
+matching idle, discovery, and confirmation Runs were retained, Loader-verified,
+admitted, and included. The final result is
+`CandidateOnly: DomainNoImprovementNotConfirmed`; this campaign makes no
+accepted `b_sat` claim.
 
 ## Why this is a new campaign
 
@@ -163,6 +164,53 @@ orangepi-rknnlite-bsat-v2-confirm-bs1-c1..c4
 orangepi-rknnlite-bsat-v2-confirm-bs2-c1..c4
 ```
 
-No confirmatory Run is included or submitted at this checkpoint. Runs `c5` and
-`c6` remain inside the pre-frozen cap but are not in the realized allocation and
-must not be created.
+Runs `c5` and `c6` remain inside the pre-frozen cap but are not in the realized
+allocation and were not created.
+
+### Included confirmatory Runs
+
+| Member | Run | Run UID | Pod-derived Trial ID | Intent digest | Final evidence digest |
+|---|---|---|---|---|---|
+| batch 1 | `orangepi-rknnlite-bsat-v2-confirm-bs1-c1` | `790b15bd-1b60-4ccf-8aea-fcd9e13072b7` | `b6dd15b0-431e-4aec-8213-f80c288002f9` | `sha256:2beb9b2e0faeee41c675fe027bcb3f2fb72db996968e085fb94d8af92ac40450` | `sha256:c7c4635ea0c8d75bb75fe9ed55eb2a8480f0b34b281d759495d62ba9a3dbce73` |
+| batch 1 | `orangepi-rknnlite-bsat-v2-confirm-bs1-c2` | `13701296-f555-4222-9890-02f6aa4ea444` | `ebaa045d-2467-47a8-bfae-19a4430a747b` | `sha256:66ce6dce2345490b9bfce9a5c4bc47c9f5f400fb0d719c56f911aa82a6b30141` | `sha256:302f8e9780fc4f42160fb9b47edc11183e1d4f828fbf2254f3260d7872739488` |
+| batch 1 | `orangepi-rknnlite-bsat-v2-confirm-bs1-c3` | `70dae83b-6189-40ab-af15-7cf793d45cbe` | `67d37009-796e-4673-92cd-644b64c0b372` | `sha256:66ce6dce2345490b9bfce9a5c4bc47c9f5f400fb0d719c56f911aa82a6b30141` | `sha256:7e5b9ac02fb5b239704bb75ff78e552c5f4871ceb76a8c66e004d52b30514eb2` |
+| batch 1 | `orangepi-rknnlite-bsat-v2-confirm-bs1-c4` | `cafff32b-6876-4069-9ada-46c96c70d6eb` | `13cbc22e-6e53-4845-8f58-e284a6dbf08d` | `sha256:66ce6dce2345490b9bfce9a5c4bc47c9f5f400fb0d719c56f911aa82a6b30141` | `sha256:69e3e1c06b8fa252777bf963edc7a5508a28402b9ee318f7f460c664ba7c29b7` |
+| batch 2 | `orangepi-rknnlite-bsat-v2-confirm-bs2-c1` | `ecc61335-10f0-4096-a9bc-8eb3bf6ad312` | `20043adb-7151-41e1-9fa3-e6c163f0db31` | `sha256:53743fee42db288fd7ac24a4333dd2e5c33dbc4992766e7ac19991aadc66ff5b` | `sha256:b20d70a6c86521cd89e9a08a98187af9a735c37a1fb01681573db18937c40e91` |
+| batch 2 | `orangepi-rknnlite-bsat-v2-confirm-bs2-c2` | `1bbdf78d-cd06-4c18-a0a6-9e4d0014d99f` | `4badbae9-562c-4337-bfc4-a3e6e204a0b8` | `sha256:53743fee42db288fd7ac24a4333dd2e5c33dbc4992766e7ac19991aadc66ff5b` | `sha256:62cd1f5504bb2c271d49224f16b98625fc5f6af177f2f35f5723ae9036f7a8c0` |
+| batch 2 | `orangepi-rknnlite-bsat-v2-confirm-bs2-c3` | `a889cc0b-844c-4eba-9a03-ed5feb59f832` | `36aab16f-399b-4c0f-9be4-f4db6c09aa5d` | `sha256:53743fee42db288fd7ac24a4333dd2e5c33dbc4992766e7ac19991aadc66ff5b` | `sha256:f9fe5ff24f9b366211c5444446f463148c0e3b5f507ee91f7a5cc0996131cfc5` |
+| batch 2 | `orangepi-rknnlite-bsat-v2-confirm-bs2-c4` | `2830e453-9617-4c8c-9b34-76cc4ae67f93` | `6be651f4-980a-46be-964e-4da015424fbb` | `sha256:b09081a48168515b1bd08b5848ba8c164f37c80b703edf8845db275c52dc0665` | `sha256:dcf97d0c82b2b9eb84d1db0aea3d10d047691b82ded1b1623408e57b769f2de1` |
+
+Loader projection verified every retained idle and active intent against the
+same realized family and owner-bound environment. `DeriveCurve` also verified
+that the six discovery Trial IDs and eight confirmatory Trial IDs are disjoint.
+The exact-state idle baselines above were intentionally shared across passes.
+
+### Confirmatory points and terminal result
+
+| Batch | Confirmatory incremental energy | Active p99 |
+|---:|---:|---:|
+| 1 | `0.00904314283 +/- 0.00019228681 J/item` | `4.183610 ms` |
+| 2 | `0.00877071789 +/- 0.00015005883 J/item` | `7.988360 ms` |
+
+The final joint estimator used `H=8`, one-sided quantile `0.99375`, and both
+policy digests. Batch one's reference lower bound was positive at
+`0.00875444087 J/item`. The batch-one minus batch-two difference estimate was
+`0.00027242494 J/item`; its upper bound was `0.00055987716 J/item`, or
+`0.0639535032` relative to the positive reference lower bound. Because 6.395%
+exceeds the frozen 5% tolerance, the result is:
+
+```text
+Status                              = CandidateOnly
+Code                                = DomainNoImprovementNotConfirmed
+DiscoverySelectedBatch              = 1
+DomainNoImprovementConfirmed        = false
+MinimalityConfidenceConfirmed       = false
+DiscoveryMeasuredBatches            = [1, 2]
+ConfirmatoryMeasuredBatches         = [1, 2]
+MaximumRemainingImprovementUpperBound = 0.0639535032
+```
+
+This does not establish that batch two is materially better; it establishes
+that this campaign could not bound every larger measured improvement below 5%.
+Adding `c5` or `c6` after this result would violate the frozen allocation rather
+than complete it.

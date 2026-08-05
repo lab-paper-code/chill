@@ -26,8 +26,11 @@ The committed second policy and typed final result therefore record
 allocation. A disjoint second campaign is frozen with the first campaign used
 only as a pilot for a six-trial cap and 18-active-Run budget; its evidence will
 not be pooled. Its own discovery subsequently selected batch one and froze four
-confirmatory Runs at each measured batch before executing any of them. This plan
-fixes the quantity that decides `b_sat` — the largest
+confirmatory Runs at each measured batch before executing any of them. All eight
+were retained and admitted, but the final remaining-improvement upper bound was
+6.395%, above the frozen 5% rule, so the typed result is
+`CandidateOnly: DomainNoImprovementNotConfirmed`. This plan fixes the quantity
+that decides `b_sat` — the largest
 remaining energy improvement any larger measured batch still offers — gives curve derivation
 ownership of the exact idle baseline set, rebuilds the point-confidence
 construction, and separates candidate discovery from confirmation. It does not
