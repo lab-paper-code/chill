@@ -37,8 +37,10 @@ UID is never rematerialized and that loss is reported as stable
 Profiler restart proceeds to admission without repeating finalization, and that
 a completed admission is a stable no-op. A third envtest proves that recreating
 the recorded Job name with a different UID is rejected without
-rematerialization or Run-status mutation. Cancellation, the remaining
-identity-drift cases, and the Operator-side restart case remain open;
+rematerialization or Run-status mutation. The Operator envtest also
+reconstructs its Profiler reconciler over the retained `ChillSystem`, ConfigMap,
+and Deployment, then proves that it retains one Deployment UID and returns to a
+stable no-op. Cancellation and the remaining identity-drift cases remain open;
 checkpoint 12 is not reported complete.
 
 ## Purpose
@@ -654,8 +656,8 @@ sentinel values accepted by the active result validator.
     loss now cross a real API server and status subresource. Restart between
     finalization and admission, plus the completed-admission no-op, are also
     covered. Recorded-Job replacement with a different UID is rejected without
-    status mutation. Cancellation, remaining drift cases, and the Operator-side
-    restart case remain.
+    status mutation. Operator reconciler reconstruction over the retained
+    Deployment is covered. Cancellation and remaining drift cases remain.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow

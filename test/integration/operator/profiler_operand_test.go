@@ -23,7 +23,7 @@ import (
 )
 
 var _ = Describe("Profiler operand reconciliation", func() {
-	It("applies updates idempotently through the Kubernetes API", func() {
+	It("resumes after reconciler reconstruction and applies updates idempotently", func() {
 		testContext := context.Background()
 		suffix := time.Now().UnixNano()
 		systemName := fmt.Sprintf("profiler-it-%d", suffix)
@@ -54,14 +54,7 @@ var _ = Describe("Profiler operand reconciliation", func() {
 		Expect(k8sClient.Create(testContext, system)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(testContext, system) })
 
-		reconciler := &operatorprofiler.Reconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
-			Options: operatorprofiler.Options{
-				SystemName: systemName,
-				Namespace:  namespaceName,
-			},
-		}
+		reconciler := newProfilerIntegrationReconciler(systemName, namespaceName)
 		request := ctrl.Request{NamespacedName: types.NamespacedName{Name: systemName}}
 		_, err = reconciler.Reconcile(testContext, request)
 		Expect(err).NotTo(HaveOccurred())
@@ -71,12 +64,17 @@ var _ = Describe("Profiler operand reconciliation", func() {
 		Expect(k8sClient.Get(testContext, key, created)).To(Succeed())
 		Expect(metav1.IsControlledBy(created, system)).To(BeTrue())
 
-		_, err = reconciler.Reconcile(testContext, request)
+		restarted := newProfilerIntegrationReconciler(systemName, namespaceName)
+		_, err = restarted.Reconcile(testContext, request)
 		Expect(err).NotTo(HaveOccurred())
 		applied := &appsv1.Deployment{}
 		Expect(k8sClient.Get(testContext, key, applied)).To(Succeed())
+		Expect(applied.UID).To(Equal(created.UID))
+		deployments := &appsv1.DeploymentList{}
+		Expect(k8sClient.List(testContext, deployments, client.InNamespace(namespaceName))).To(Succeed())
+		Expect(deployments.Items).To(HaveLen(1))
 
-		_, err = reconciler.Reconcile(testContext, request)
+		_, err = restarted.Reconcile(testContext, request)
 		Expect(err).NotTo(HaveOccurred())
 		stable := &appsv1.Deployment{}
 		Expect(k8sClient.Get(testContext, key, stable)).To(Succeed())
@@ -89,7 +87,7 @@ var _ = Describe("Profiler operand reconciliation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		configMap.Data[operatorprofiler.DefaultConfigKey] = string(configData)
 		Expect(k8sClient.Update(testContext, configMap)).To(Succeed())
-		_, err = reconciler.Reconcile(testContext, request)
+		_, err = restarted.Reconcile(testContext, request)
 		Expect(err).NotTo(HaveOccurred())
 
 		updated := &appsv1.Deployment{}
@@ -100,11 +98,22 @@ var _ = Describe("Profiler operand reconciliation", func() {
 		Expect(k8sClient.Get(testContext, types.NamespacedName{Name: systemName}, system)).To(Succeed())
 		system.Spec.Profiler.Enabled = false
 		Expect(k8sClient.Update(testContext, system)).To(Succeed())
-		_, err = reconciler.Reconcile(testContext, request)
+		_, err = restarted.Reconcile(testContext, request)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(apierrors.IsNotFound(k8sClient.Get(testContext, key, &appsv1.Deployment{}))).To(BeTrue())
 	})
 })
+
+func newProfilerIntegrationReconciler(systemName, namespace string) *operatorprofiler.Reconciler {
+	return &operatorprofiler.Reconciler{
+		Client: k8sClient,
+		Scheme: scheme.Scheme,
+		Options: operatorprofiler.Options{
+			SystemName: systemName,
+			Namespace:  namespace,
+		},
+	}
+}
 
 func profilerIntegrationConfig(image string) operatorprofiler.Config {
 	return operatorprofiler.Config{
