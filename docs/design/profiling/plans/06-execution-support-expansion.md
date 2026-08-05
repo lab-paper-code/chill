@@ -117,26 +117,38 @@ source evidence proves a shared change is required.
 - [x] Build a linux/arm64 measurement-worker/ORT runtime image. The local OCI
   verification on 2026-08-05 produced runnable child digest
   `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`;
-  this is build evidence only, not a published installation fact.
+  the same child is published under the immutable development tag
+  `sha-fb80fa3` and was pulled on `rasp5` with an identical image ID.
 - [x] Verify linux/arm64 child digests for MetricObserver and
   WorkloadObserver. Local OCI builds on 2026-08-05 produced MetricObserver
   `sha256:12bb583bee67761d3089ead9f6296be40aff1159e161cf35261f4ce949eb261d`
   and WorkloadObserver
   `sha256:94053b7789e79332e0e0efd9e927909718a5399e65467d0ce8897c79773dbd28`;
-  these are build evidence only, not published installation facts.
-- [ ] Record the selected child image digest, not only a manifest-list digest,
-  in the trusted runtime and observer declarations.
-- [ ] Produce and verify an arm64 declaration containing ONNX Runtime,
-  `CPUExecutionProvider`, and normalized architecture.
-- [ ] Register the exact arm64 artifact-supply image, digest, and path for
-  `mobilenet-v2-050`.
-- [ ] Add the Raspberry Pi wall-plug source to the Profiler metric-source
-  catalog.
-- [ ] Verify that its endpoint provides power plus thermal/throttle
-  observation; missing thermal evidence must remain fail-closed.
-- [ ] Add the Raspberry Pi execution declaration to installation facts.
-- [ ] Review CPU request, ORT thread count, runtime memory, and workspace
-  against the live Node's allocatable resources.
+  both children are published under `sha-fb80fa3`.
+- [x] Record the selected child image digest, not only a manifest-list digest,
+  in the trusted runtime and observer declarations. The opt-in chart profile is
+  `charts/chill/values-profiler-rasp5.yaml`.
+- [x] Produce and verify an arm64 declaration containing ONNX Runtime,
+  `CPUExecutionProvider`, and normalized architecture. The exact runtime child
+  reported `aarch64`, ONNX Runtime `1.23.2`, and the CPU provider on `rasp5`;
+  the rendered declaration payload digest is
+  `sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3`.
+- [x] Register the exact arm64 artifact-supply image, digest, and path for
+  `mobilenet-v2-050`. Child
+  `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721`
+  reproduced the ModelSpec content digest on `rasp5`.
+- [x] Add the Raspberry Pi wall-plug source to the Profiler metric-source
+  catalog: `http://155.230.34.243:9102/metrics`.
+- [x] Verify that its endpoint provides wall power, temperature, observation
+  availability, and direct active/latched throttling signals. Missing thermal
+  evidence remains fail-closed in admission.
+- [x] Add the Raspberry Pi execution declaration to opt-in installation facts.
+  This records deployable chart configuration; live installation is still an
+  L1/L2 gate below.
+- [x] Review CPU request, ORT thread count, runtime memory, and workspace
+  against the live Node's four allocatable CPUs and `8032080Ki` allocatable
+  memory. The current wildcard CPU-ORT policy fits this envelope without a
+  Raspberry Pi-specific policy fork.
 - [ ] Add fail-closed tests for architecture, backend, artifact digest, and
   selected image-child drift.
 - [ ] Run three active and three model-loaded-idle Runs sequentially.
@@ -145,6 +157,14 @@ source evidence proves a shared change is required.
 
 Completion: `raspberry-pi-5-8g / mobilenet-v2-050 / ort-cpu / fixed` is L3 for
 both workload modes on current HEAD.
+
+The P1 values profile is deliberately arm64-only. Execution and artifact facts
+are declaration-scoped, but MetricObserver and WorkloadObserver image facts are
+currently document-global. Terminal evidence requires each requested digest to
+match the pulled child image ID, so one mixed amd64/arm64 profile cannot use a
+manifest-list digest as a shortcut. This does not block the P1 single-class
+slice; it remains an explicit blocker for simultaneous cross-architecture
+support.
 
 ## P2: Orange Pi CPU ORT / fixed
 
