@@ -1,31 +1,30 @@
 # Plan 6: Execution-Support Expansion
 
 > Navigation: [Profiling design index](../README.md)
+>
+> Row status: [execution support matrix](../foundations/runtime-execution/05-support-matrix.csv)
+>
+> Completed proof: [execution-support validation ledger](../foundations/runtime-execution/validation-ledger.md)
 
 ## Status
 
-Active implementation plan. P0, the support vocabulary and initial matrix, was
-recorded on 2026-08-05. P1, Raspberry Pi 5 CPU ORT at fixed power mode, remains
-at L2 pending a physical power-supply correction. P2 Orange Pi CPU ORT fact
-expansion proceeds independently while that testbed condition remains open.
-Later slices remain unauthorized until their preceding completion condition is
-met or this plan is revised with stronger evidence.
+Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
+physical power-supply correction. Orange Pi CPU ORT is the current independent
+slice. Later slices remain deferred until their stated entry condition is met
+or this plan is explicitly revised.
 
-This plan expands the set of Nodes, power modes, runtime paths, and models that
-the production `ProfilingRun` path can measure. It does not treat catalog
-presence or a historical standalone smoke as production support. It does not
-create a generic runtime plugin or put mutable current power mode in
-`DeviceClass.status`.
+This file owns work order, decisions, and completion conditions. It does not
+accumulate command transcripts, image digests, Run statistics, or historical
+live snapshots. Those belong in the validation ledger; exact row level and
+blocking reason belong in the support matrix.
 
 ## Question
 
 > Which exact DeviceClass, model, artifact, runtime/backend, power mode, and
-> workload-mode rows does the current production path support, and what is the
-> next smallest vertical slice that raises one row to measurement-ready?
+> workload-mode rows does production support, and what is the next smallest
+> vertical slice that raises one row to measurement-ready?
 
 ## Support levels
-
-The word "supported" is always qualified by one of these levels:
 
 | Level | Required evidence |
 |---|---|
@@ -35,242 +34,71 @@ The word "supported" is always qualified by one of these levels:
 | `L3 Measurement-ready` | Both active and model-loaded-idle evidence are durably reloaded, verified, and admitted. |
 | `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one stable execution state under Plan 5 or 5a. |
 
-Levels are cumulative. A historical RKNN or TensorRT script is not L2. A
-successful Job without both admission modes is L2, not L3. A retained live
-result produced by an older binary is retained evidence, but a changed HEAD is
-not called live-reverified until it executes again.
+Levels are cumulative. Catalog presence, standalone smoke tests, and successful
+Jobs without admitted active and idle evidence do not promote a row beyond the
+corresponding level.
 
-## P0 support matrix
+## Current queue
 
-The row-level source of truth is
-[`../foundations/runtime-execution/05-support-matrix.csv`](../foundations/runtime-execution/05-support-matrix.csv).
-Every row binds at least:
+| Order | Slice | State | Next gate |
+|---|---|---|---|
+| paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
+| current | Orange Pi CPU ORT / fixed | L0 | Freeze the CPU request and ORT-thread contract against the live Node. |
+| parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
+| deferred | Orange Pi RKNNLite onward | not active | Complete the preceding vertical-slice entry condition. |
 
-```text
-DeviceClass
-ModelSpec
-artifact name and content digest
-execution path
-runtime family and backend
-runtime image digest
-power mode
-workload mode
-measurement policy
-```
+## Stable decisions
 
-It also separates repository catalog presence, the 2026-08-05 live Node
-snapshot, retained non-production smoke, current production level, and the
-blocking reason. `unresolved` is an explicit missing fact and never a wildcard.
+- The row identity is the exact DeviceClass, ModelSpec, immutable artifact,
+  execution path, runtime/backend, power mode, workload mode, and measurement
+  policy recorded in the support matrix.
+- The first model remains `mobilenet-v2-050` until its owning execution path
+  reaches L3.
+- CPU ORT, RKNNLite, ORT CUDA, and ORT TensorRT remain explicit adapters. Do
+  not introduce a generic runtime plugin or device-specific copy of CPU ORT.
+- Stable supported power modes belong in `DeviceClass`; mutable desired,
+  observed, and previous mode belong to Run/actuator state.
+- Exact child-image digests, not manifest-list digests, are frozen into
+  runtime, artifact, MetricObserver, and WorkloadObserver facts.
+- Installed facts are configuration. A row advances only from retained
+  production evidence at the applicable level.
 
-### Snapshot used to seed the matrix
+## P1: Raspberry Pi 5 CPU ORT / fixed — paused
 
-Read-only cluster evidence on 2026-08-05 showed:
+The implementation, chart facts, metric source, thermal producer correction,
+and live L2/idle-admission proof are complete and recorded in the validation
+ledger. Do not weaken admission or pool pre-repair evidence.
 
-- ten Nodes: nine `Ready`; `orin-nano` was `Unknown`, lacked the CHILL
-  DeviceClass label, and therefore remained below live L0;
-- seven live `DeviceClass` objects; the repository catalog also declares
-  `jetson-orin-nano-8g`;
-- one live `ModelSpec`, `mobilenet-v2-050`, with the `canonical-onnx` artifact
-  and `ort-cpu` path;
-- the installed Profiler fact ConfigMap declared only the Lattepanda amd64 CPU
-  ORT path and only the Lattepanda metric source; and
-- no live `ProfilingRun` objects remained. Plan 3 retains the earlier
-  Lattepanda L3 evidence, but current HEAD has not been live-reverified.
-
-The installed Profiler image (`sha-ad7b84f`) predates current HEAD. Installed
-state and current repository behavior are therefore separate columns, not
-silently merged.
-
-### P0 decisions
-
-- [x] Define L0 through L4 and require their distinct evidence.
-- [x] Record exact row identities and a blocker for every target row.
-- [x] Separate repository catalog, live discovery, historical smoke, and
-  production support.
-- [x] Keep the first model slice fixed to `mobilenet-v2-050`.
-- [x] Keep desired runtime decisions separate from observed runtime evidence,
-  following the runtime-execution provenance records.
-- [x] Retain explicit CPU ORT, RKNNLite, ORT CUDA, and ORT TensorRT adapters;
-  do not introduce a generic plugin registry.
-- [x] Keep stable supported power modes in `DeviceClass`; keep mutable desired,
-  observed, and previous mode in Run/actuator state, never
-  `DeviceClass.status`.
-
-## Delivery order
-
-| Priority | Vertical slice | Completion condition |
-|---|---|---|
-| P1 | Raspberry Pi 5 CPU ORT / fixed | Both workload modes reach L3. |
-| P2 | Orange Pi CPU ORT / fixed | Both workload modes reach L3; common code is extracted only after this second path proves repetition. |
-| P2 parallel | Node power-mode actuation | One Jetson mode can apply, read back, settle, remain stable, and restore under failure. |
-| P3 | Orange Pi RKNNLite / fixed | One exact RKNN artifact and fixed batch reach L3. |
-| P4 | Orin Nano ORT TensorRT / one NVPModel | One exact mode reaches L3 including restoration. |
-| P5 | Remaining Jetson modes and classes | Each mode is independently verified and receives its own idle baseline. |
-| P6 | RTX server ORT CPU/CUDA/TensorRT and GPU clock | Each execution path reaches L3 independently. |
-| P7 | Model and batch expansion | Added only after the owning execution path is L3; Plan 5/5a establishes L4. |
-
-## P1: Raspberry Pi 5 CPU ORT / fixed
-
-Do not create a new runtime abstraction. Reuse the explicit CPU ORT path and
-change only facts, image platforms, and device-specific execution policy until
-source evidence proves a shared change is required.
-
-- [x] Build a linux/arm64 measurement-worker/ORT runtime image. The local OCI
-  verification on 2026-08-05 produced runnable child digest
-  `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`;
-  the same child is published under the immutable development tag
-  `sha-fb80fa3` and was pulled on `rasp5` with an identical image ID.
-- [x] Verify linux/arm64 child digests for MetricObserver and
-  WorkloadObserver. Local OCI builds on 2026-08-05 produced MetricObserver
-  `sha256:12bb583bee67761d3089ead9f6296be40aff1159e161cf35261f4ce949eb261d`
-  and WorkloadObserver
-  `sha256:94053b7789e79332e0e0efd9e927909718a5399e65467d0ce8897c79773dbd28`;
-  both children are published under `sha-fb80fa3`.
-- [x] Record the selected child image digest, not only a manifest-list digest,
-  in the trusted runtime and observer declarations. The opt-in chart profile is
-  `charts/chill/values-profiler-arm64.yaml`.
-- [x] Produce and verify an arm64 declaration containing ONNX Runtime,
-  `CPUExecutionProvider`, and normalized architecture. The exact runtime child
-  reported `aarch64`, ONNX Runtime `1.23.2`, and the CPU provider on `rasp5`;
-  the rendered declaration payload digest is
-  `sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3`.
-- [x] Register the exact arm64 artifact-supply image, digest, and path for
-  `mobilenet-v2-050`. Child
-  `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721`
-  reproduced the ModelSpec content digest on `rasp5`.
-- [x] Add the Raspberry Pi wall-plug source to the Profiler metric-source
-  catalog: `http://155.230.34.243:9102/metrics`.
-- [x] Verify that its endpoint provides wall power, temperature, observation
-  availability, and direct active/latched throttling signals. Missing thermal
-  evidence remains fail-closed in admission.
-- [x] Add the Raspberry Pi execution declaration to opt-in installation facts.
-  This records deployable chart configuration; live installation is still an
-  L1/L2 gate below.
-- [x] Review CPU request, ORT thread count, runtime memory, and workspace
-  against the live Node's four allocatable CPUs and `8032080Ki` allocatable
-  memory. The current wildcard CPU-ORT policy fits this envelope without a
-  Raspberry Pi-specific policy fork.
-- [x] Add fail-closed tests for architecture, backend, artifact digest, and
-  selected image-child drift. Candidate-resolution tests reject runtime
-  architecture/backend and artifact architecture/digest mismatches;
-  terminal-evidence tests reject runtime, MetricObserver, and
-  WorkloadObserver child `imageID` drift.
-- [ ] Run three active and three model-loaded-idle Runs sequentially.
-- [ ] Verify all six Runs report execution complete, evidence verified, and
-  evidence admitted.
-
-### P1 current-HEAD live result
-
-The opt-in Raspberry Pi profile was installed on 2026-08-05 with the Operator,
-Profiler, and Console aligned to repository commit `333457e`. The existing
-class-neutral CPU ORT implementation required no Raspberry Pi-specific
-controller, worker, or `hack/` producer:
-
-- active Run `rasp5-active-bs1-a1` completed on `rasp5`, durably reloaded and
-  verified evidence `sha256:b5bff1c4284e56077b67eb0c2492fe67353aa79ee914ea535274a8cf6c6ec3fe`,
-  and executed 2,304 batch-one calls in 30.001 seconds with ONNX Runtime
-  `1.23.2` and `CPUExecutionProvider`;
-- its wall-power window contained 31 successful samples with 8.668 W mean,
-  but 17 samples reported current throttling, so `wall-power-v2` correctly
-  rejected the Run with `ThermalOrRuntimeThrottling`;
-- a separate diagnostic Run reproduced 16 active samples. A read-only host
-  trace observed Raspberry Pi firmware values alternating between `50005` and
-  `50000` during load. These are hexadecimal values: `0x50005` asserts current
-  undervoltage and current throttling as well as their history bits. This is a
-  testbed power-supply blocker, not a CHILL admission defect; and
-- idle Run `rasp5-idle-model-loaded-i1` used the same retained candidate after
-  a 60-second observer-independent settling period. It completed, durably
-  reloaded, and was admitted with evidence
-  `sha256:30c6870681ebbffac300b3ab959a2767e7be16909045de57db38717246cd8f38`.
-  All 31 thermal samples were observable and none was active.
-
-The active diagnostic also exposed a metric-source defect outside this
-repository: the deployed edge-metrics exporter parsed the prefix-free
-hexadecimal `get_throttled` text as decimal. The producer fix was committed as
-edge-metrics `a7b3a63`, including regression cases for `50000` and `50005`, and
-deployed as release revision 23 with image tag `sha-a7b3a63` and registry index
-digest `sha256:565c9d4a15787d548341ec7d32fc3af80e3e04e0991e69d381684d8829d7967e`.
-A simultaneous 90-sample raw-sysfs and exporter trace around diagnostic Run
-`rasp5-active-thermal-parser-diag-v2` observed 68 `0`, 10 `50000`, and 12
-`50005` values. Eighty-nine samples matched the required mapping exactly:
-`0 -> active=0,latched=0`, `50000 -> active=0,latched=1`, and
-`50005 -> active=1,latched=1`. The sole mismatch was one sequential raw-read /
-HTTP-scrape pair during a state transition; it retained `latched=1` and does
-not contradict the parser mapping. The retained Run evidence
-`sha256:7b1b9951ed66f9add284fc85d0b8e7f6ac8a9263030b6469e053c6f6dfb28ba1`
-was still correctly rejected with `ThermalOrRuntimeThrottling`, confirming that
-the remaining failure is the electrical condition rather than the producer
-parser.
-
-This raises the Raspberry Pi slice to L2 and proves the idle admission path.
-It does not satisfy L3 until the electrical throttling is removed and both
-active and idle evidence are admitted. The diagnostic Runs had an additional
-ownerless trace Pod in their environment identity and are not repeated campaign
-trials.
-
-### Remaining P1 TODO, in order
-
-- [x] Fix the prefix-free Raspberry Pi `get_throttled` hexadecimal parser in
-  the edge-metrics producer repository, add `50000`/`50005` regression cases,
-  deploy it, and verify active/latched gauges against a simultaneous raw sysfs
-  trace. This is an external metric-producer change, not CHILL admission code.
 - [ ] Correct the `rasp5` power supply/cable condition and prove
-  `get_throttled=0` throughout one 30-second active diagnostic. Do not weaken
-  `wall-power-v2` to accommodate electrical throttling.
+  `get_throttled=0` throughout one 30-second active diagnostic.
 - [ ] Run one clean active `ProfilingRun` and require execution complete,
   evidence verified, and admission accepted before paying for repetitions.
-- [ ] Under the resulting unchanged intent and environment identities, run
-  three new active and three new model-loaded-idle trials sequentially. Do not
-  pool the pre-repair idle trial with the post-repair campaign.
-- [ ] Reload all six retained evidence objects, compare the three identity
-  strings within each mode and the shared state/environment identities across
-  modes, then promote the two matrix rows to L3 only if all admissions pass.
+- [ ] Under the unchanged post-repair intent and environment identities, run
+  three new active and three new model-loaded-idle trials sequentially.
+- [ ] Reload all six retained evidence objects, compare identities within and
+  across modes, and promote the two matrix rows to L3 only if all admissions
+  pass.
 
 Completion: `raspberry-pi-5-8g / mobilenet-v2-050 / ort-cpu / fixed` is L3 for
 both workload modes on current HEAD.
 
-The P1 values profile is deliberately arm64-only. Execution and artifact facts
-are declaration-scoped, but MetricObserver and WorkloadObserver image facts are
-currently document-global. Terminal evidence requires each requested digest to
-match the pulled child image ID, so one mixed amd64/arm64 profile cannot use a
-manifest-list digest as a shortcut. This does not block the P1 single-class
-slice; it remains an explicit blocker for simultaneous cross-architecture
-support.
+## P2: Orange Pi CPU ORT / fixed — current
 
-## P2: Orange Pi CPU ORT / fixed
+Reuse the explicit arm64 CPU ORT path. Device-specific work remains limited to
+installation facts and a justified execution policy until source evidence
+proves a shared implementation change is necessary.
 
-- [x] Add exact Orange Pi runtime and artifact declarations. The arm64 profile
-  reuses the already verified child images without adding a device-specific
-  runtime path: measurement worker
-  `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`
-  and artifact
-  `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721`.
-- [x] Add its Node-specific metric source and wall-meter identity. The frozen
-  v1alpha1 source entry binds Node `orangepi`, kind `edge-metrics`, endpoint
-  `http://155.230.34.143:9102/metrics`, and metric
-  `shelly_power_total_watts`; the resolver digests only that selected entry.
-  The live edge-metrics registry exposed exactly one attached meter,
-  `shellyplugsg3-d0cf13d81a88`. That hardware identifier corroborates the
-  current topology but is not separately carried in the current Prometheus
-  sample or frozen intent identity.
-- [x] Verify CPU thermal/throttle metric completeness. The live 5.10 Rockchip
-  kernel exposed seven thermal zones plus three `thermal-cpufreq` and one
-  `thermal-devfreq` cooling device. A 31-second simultaneous trace matched all
-  31 raw cooling states to `observation_available=1` and `active=0`; the
-  producer's focused test also maps a nonzero cooling state to `active=1`.
-  Latched and cumulative counters are unavailable on this host, but CHILL's
-  fail-closed admission contract accepts a complete direct-active channel.
-  Maximum temperature is diagnostic rather than a throttle threshold: 26/31
-  sequential raw/gauge pairs matched exactly and five differed by 0.924 C
-  across the exporter's asynchronous refresh boundary. The separate
-  device-specific `OrangePiCollector` remains an unimplemented, noisy source;
-  wall power and typed thermal facts come from the independent Shelly and
-  `ThermalCollector` paths and do not rely on it.
-- [ ] Bind CPU request and ORT threads to observed allocatable CPU.
+- [x] Add and install the exact runtime and artifact declarations.
+- [x] Add and install the Node-specific metric source; record the current
+  physical wall-meter association as live corroboration, not a frozen serial.
+- [x] Verify the direct CPU thermal/throttle channel against live raw sysfs and
+  the fail-closed admission contract.
+- [ ] Bind CPU request, ORT thread count, runtime memory, and workspace to the
+  live Node's allocatable resources.
 - [ ] Run and admit three active and three model-loaded-idle Runs.
 - [ ] Review whether Raspberry Pi and Orange Pi differ only by declarations
   and configured execution policy.
-- [ ] Extract only behavior that has now repeated on both real arm64 paths.
+- [ ] Extract only behavior demonstrated on both production arm64 paths.
 
 Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
@@ -278,16 +106,16 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
 ### Ownership and protocol
 
-- [ ] Select the owner process for Node-wide actuation; the unprivileged
-  runtime container must not change host mode directly.
+- [ ] Select the owner process for Node-wide actuation; an unprivileged runtime
+  container must not change host mode directly.
 - [ ] Separate desired, observed, and previous mode; actuator kind/target; and
   apply/verification timestamps.
 - [ ] Freeze the selected target and configured actuation-policy digest into
-  the immutable Run intent.
+  immutable Run intent.
 - [ ] Plan the intent schema revision and simultaneous Go/Python decoder
   deployment.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
-- [ ] Define when actuation is allowed in the presence of other workloads.
+- [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
 - [ ] Restore after Run failure, controller restart, and worker timeout.
 - [ ] Surface restoration failure as a terminal condition and operator alert.
@@ -307,84 +135,70 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [ ] Probe apply/read-back feasibility before adding support.
 - [ ] Keep Jetson and discrete NVIDIA tooling, permissions, and read-back
   contracts separate.
-- [ ] Revisit the current one-of actuator API only if an experiment proves
-  NVPModel plus clock must be one combined knob.
-- [ ] Do not add a speculative composite actuator.
+- [ ] Add no composite actuator until an experiment proves NVPModel and clock
+  must be one combined knob.
 
-## P3: Orange Pi RKNNLite / fixed
+## Deferred vertical slices
 
-- [ ] Add the RKNN artifact/RKNNLite relation to static compatibility.
-- [ ] Select the authoritative producer of each RKNN artifact's fixed-batch
-  capability.
-- [ ] Retain source ONNX digest, RKNN digest, target platform, and conversion
-  identity.
-- [ ] Compare RKNNLite package, host `librknnrt`, and driver identities without
-  collapsing image-owned and host-owned facts.
-- [ ] Replace the hard-coded `/model/model.onnx` projection with an explicit
-  RKNN artifact projection for this path.
-- [ ] Project `/dev/dri` and required host libraries explicitly.
-- [ ] Keep device visibility distinct from NPU allocation or exclusivity.
-- [ ] Add an explicit RKNN runtime adapter and runner.
-- [ ] Retain core mask, input layout, init/load result, selected batch, and
-  output shape as RKNN-specific evidence.
-- [ ] Do not use the ORT term `provider` for RKNN evidence.
-- [ ] Implement active and model-loaded-idle modes.
-- [ ] Fail closed on artifact-batch mismatch, ABI mismatch, missing device,
-  and init failure.
-- [ ] Run and admit three trials per workload mode.
+### P3: Orange Pi RKNNLite / fixed
 
-Completion: one exact Orange Pi RKNN row reaches L3. No arbitrary-batch or NPU
-exclusivity claim follows from it.
+Entry condition: Orange Pi CPU ORT reaches L3.
 
-## P4: Orin Nano ORT TensorRT / one NVPModel
+- Bind an immutable RKNN artifact to its source ONNX, target platform,
+  conversion identity, and fixed-batch capability.
+- Keep host `librknnrt`, driver, image-owned package, device visibility, and
+  NPU allocation/exclusivity as separate facts.
+- Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
+  contract, and active/idle evidence path.
+- Retain core mask, input layout, init/load result, selected batch, and output
+  shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-- [ ] Restore Orin Nano to `Ready` and live L0 before runtime work.
-- [ ] Add the ORT TensorRT path and trusted declaration producer.
-- [ ] Retain ORT, TensorRT, CUDA, L4T, and driver component identities.
-- [ ] Require `nvidia.com/gpu: 1` in the explicit Job policy.
-- [ ] Add an ORT TensorRT adapter separate from CPU ORT.
-- [ ] Retain requested and registered provider chains.
-- [ ] Separate engine build from the admitted measurement window.
-- [ ] Define engine-cache creation, reuse, invalidation, and identity.
-- [ ] Leave graph partition/fallback `Unknown` when it cannot be observed.
-- [ ] Keep requested FP16/INT8 distinct from effective precision.
-- [ ] Raise one verified NVPModel mode to L3 first.
-- [ ] Test power mode, GPU allocation, provider, artifact, output shape, and
-  restoration drift.
+Completion: one exact Orange Pi RKNN row reaches L3.
 
-## P5: Jetson modes and classes
+### P4: Orin Nano ORT TensorRT / one NVPModel
 
-- [ ] Add the remaining verified Orin Nano modes.
-- [ ] Verify actuator read-back on Xavier NX, AGX Orin, then Jetson Nano.
-- [ ] Treat every mode as an independent execution state.
-- [ ] Produce a separate model-loaded-idle baseline per device type, model,
-  and mode.
-- [ ] Do not reduce transition combinations before target-state independence
-  is experimentally established.
-- [ ] Do not generalize one Jetson family's success to another.
+Entry condition: Orin Nano is restored to Ready/L0 and one power-mode protocol
+has proven apply/read-back/restore.
 
-## P6: RTX server execution paths
+- Freeze ORT, TensorRT, CUDA, L4T, driver, artifact, GPU allocation, and exact
+  NVPModel identities.
+- Keep TensorRT separate from CPU ORT, retain requested and registered provider
+  chains, and leave graph fallback or effective precision Unknown when they
+  cannot be observed.
+- Separate engine build from admitted measurement and define cache creation,
+  reuse, invalidation, and identity.
 
-- [ ] Keep ORT CPU, ORT CUDA, and ORT TensorRT as three paths.
-- [ ] Add exact GPU, device-plugin, and runtime declarations per path.
-- [ ] Separate Kubernetes GPU allocation from Node-wide exclusivity.
-- [ ] Implement GPU-clock apply/read-back/restore.
-- [ ] Connect the exact server wall source and workload-contamination observer.
-- [ ] Run active and model-loaded-idle admission independently per path.
+Completion: one exact Orin Nano TensorRT row and power mode reaches L3.
 
-## P7: Model and batch expansion
+### P5: Remaining Jetson modes and classes
 
-- [ ] Add a model only after its execution path has reached L3 with
-  `mobilenet-v2-050`.
-- [ ] Bind every new logical model to exact immutable artifacts and per-runtime
-  execution paths.
-- [ ] Record runtime-specific batch capability rather than assuming ONNX shape
-  flexibility applies to RKNN or TensorRT engines.
-- [ ] Run active and model-loaded-idle admission before any batch campaign.
-- [ ] Use Plan 5a for candidate discovery and Plan 5 for confirmation when an
-  L4 statistical claim is required.
-- [ ] Update the support matrix row-by-row; never promote an entire class,
-  runtime family, or model family from one successful row.
+Entry condition: P4 reaches L3.
+
+- Verify each mode independently, including actuator read-back and a separate
+  model-loaded-idle baseline.
+- Do not reduce transition pairs before target-state independence is measured.
+- Do not generalize one Jetson family's result to another.
+
+### P6: RTX server execution paths
+
+Entry condition: Node-wide GPU clock ownership and restoration are proven.
+
+- Keep ORT CPU, ORT CUDA, and ORT TensorRT as separate paths with exact GPU,
+  device-plugin, runtime, wall-source, and contamination-observer facts.
+- Keep Kubernetes GPU allocation distinct from Node-wide exclusivity.
+- Admit active and model-loaded-idle evidence independently per path.
+
+### P7: Model and batch expansion
+
+Entry condition: the owning execution path reaches L3 for
+`mobilenet-v2-050`.
+
+- Bind each logical model to immutable per-runtime artifacts and capabilities.
+- Do not infer RKNN or TensorRT batch flexibility from ONNX shape flexibility.
+- Admit active and idle evidence before a batch campaign; use Plan 5a for
+  discovery and Plan 5 for confirmatory L4 claims.
+- Update rows individually; never promote a class, runtime, or model family
+  from one successful row.
 
 ## Common completion gate
 
@@ -395,7 +209,7 @@ Every L3 vertical slice must prove all applicable items:
 - the selected Node matches the exact DeviceClass snapshot;
 - desired and observed power mode match and remain stable;
 - execution re-verifies artifact bytes and runtime/backend facts;
-- active and model-loaded-idle evidence are reloaded from the durable store;
+- active and model-loaded-idle evidence are reloaded from durable storage;
 - missing thermal/throttle evidence does not fail open;
 - architecture, backend, mode, artifact, and host-ABI negative tests exist;
 - the exact intent admits three sequential trials per mode;
@@ -407,8 +221,12 @@ uses explicitly captured snapshots and focused `ProfilingRun` objects.
 
 ## Progress discipline
 
-A checkbox closes only when the plan or matrix cites its authoritative
-evidence: source and tests for behavior, a digest and rendered manifest for an
-image/configuration fact, or a captured live object/evidence record for L2-L4.
-Work proceeds in the delivery order above. A later slice may be investigated in
-parallel, but it does not inherit a previous slice's support level.
+- A checkbox closes only when the support matrix and validation ledger point
+  to the applicable authoritative proof.
+- Keep completed checkbox text short. Put dated measurements, commands,
+  digests, sample counts, and deployment revisions in the validation ledger.
+- Do not promote a row from repository configuration or package tests alone.
+- Do not copy live evidence back into this plan after it is recorded in the
+  ledger.
+- A new production package or dependency updates `.go-arch-lint.yml` and its
+  owning component/design record in the same commit.

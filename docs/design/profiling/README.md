@@ -167,9 +167,10 @@ Answers only:
 > row to measurement-ready?
 
 P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
-ORT at fixed power mode is the current implementation slice. Runtime-specific
-adapters and mutable power-mode ownership remain explicit; catalog presence and
-historical standalone smoke are not treated as production execution evidence.
+ORT remains paused at L2 on a physical electrical blocker; Orange Pi CPU ORT
+is the current independent slice. Runtime-specific adapters and mutable
+power-mode ownership remain explicit; catalog presence and historical
+standalone smoke are not treated as production execution evidence.
 
 ## Component contracts
 
@@ -197,6 +198,7 @@ plans or competing architecture authorities:
 - [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)
 - [Step 4: compatibility and execution boundary](foundations/runtime-execution/04-compatibility-execution-boundary.md)
 - [Step 5: execution support matrix](foundations/runtime-execution/05-support-matrix.csv)
+- [Execution-support validation ledger](foundations/runtime-execution/validation-ledger.md)
 
 ## Stable ownership rules
 
