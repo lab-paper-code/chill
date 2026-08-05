@@ -14,8 +14,9 @@ versioned Welch--Satterthwaite point interval and retains the previous interval
 under its own version. The post-selection error allocation is also fixed and
 regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
-estimator, confirmatory sizing, policy decoding, and confirmatory result remain
-unimplemented. This plan fixes the quantity that
+estimator and confirmatory result remain unimplemented; the projected
+point/contrast variance path and global-`H` confirmatory sizing are implemented.
+Policy decoding also remains unimplemented. This plan fixes the quantity that
 decides `b_sat` — the largest remaining energy improvement any larger measured
 batch still offers — gives curve derivation ownership of the exact idle
 baseline set, rebuilds the point-confidence construction, and separates
@@ -454,6 +455,19 @@ no `n` through the cap satisfies the inequalities, the typed budget-insufficient
 outcome is returned. No normal critical value replaces Student-t, and no
 unimplemented extrapolation beyond the declared cap is reported.
 
+```text
+DeriveBSatConfirmatorySizing(discoveryCurve Curve, candidate int,
+                             policy BSatPolicy) (BSatSizingResult, error)
+```
+
+The implemented function re-derives and checks the discovery candidate, computes
+every budget-feasible `N_c` and the global `H` with checked integer arithmetic,
+and selects the first `n` satisfying both inequalities. Its result records the
+sizing-method version, `H`, quantile, confirmatory batch allocation, projected
+precision, and exact total active-Run count. A baseline floor or either cap
+returns `Unavailable: ConfirmatoryBudgetInsufficient`; a statement family beyond
+the supported floating-point range is an error, not an approximation.
+
 ### The campaign record
 
 This file identifies the campaign and makes its evidence checkable by reading.
@@ -800,7 +814,7 @@ Plan 5 is complete when:
 5. Implement discovery screening, fixed confirmatory sizing, and the
    confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
-   Discovery screening is implemented; sizing and confirmation remain.
+   Discovery screening and sizing are implemented; confirmation remains.
 6. Decode the policy file and record its digests. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add

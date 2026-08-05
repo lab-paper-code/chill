@@ -11,6 +11,8 @@ const (
 	PreviousPointEstimatorVersion = "incremental-point-rss-half-width-v1"
 	PreviousPointConfidenceMethod = "student-t"
 	PointConfidenceLevel          = 0.95
+	BSatConfirmatorySizingMethod  = "bonferroni-welch-relative-precision-v1"
+	bsatFamilyWiseAlpha           = 0.05
 )
 
 func validAdmissionPolicy(policy AdmissionPolicy) bool {

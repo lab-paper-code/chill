@@ -196,9 +196,11 @@ const (
 	BSatAmbiguous     BSatStatus = "Ambiguous"
 	BSatUnavailable   BSatStatus = "Unavailable"
 
-	BSatCodeDiscoveryCandidateSelected = "DiscoveryCandidateSelected"
-	BSatCodeCapabilityBoundary         = "CapabilityBoundary"
-	BSatCodeNoSaturationObserved       = "NoSaturationObserved"
+	BSatCodeDiscoveryCandidateSelected     = "DiscoveryCandidateSelected"
+	BSatCodeCapabilityBoundary             = "CapabilityBoundary"
+	BSatCodeNoSaturationObserved           = "NoSaturationObserved"
+	BSatCodeConfirmatoryTrialsSized        = "ConfirmatoryTrialsSized"
+	BSatCodeConfirmatoryBudgetInsufficient = "ConfirmatoryBudgetInsufficient"
 )
 
 type LegacyBSatPolicy struct {
@@ -241,4 +243,22 @@ type BSatDiscoveryResult struct {
 	CurveFamilyContractDigest            string     `json:"curveFamilyContractDigest"`
 	CurveFamilyIdentity                  string     `json:"curveFamilyIdentity"`
 	BoundaryBatch                        *int       `json:"boundaryBatch,omitempty"`
+}
+
+type BSatSizingResult struct {
+	Status                            BSatStatus `json:"status"`
+	Code                              string     `json:"code"`
+	CandidateBatch                    int        `json:"candidateBatch"`
+	ConfirmatoryTrials                *int       `json:"confirmatoryTrials,omitempty"`
+	ConfirmatoryBatches               []int      `json:"confirmatoryBatches"`
+	MaximumFeasibleConfirmatoryTrials int        `json:"maximumFeasibleConfirmatoryTrials"`
+	GlobalStatementCount              int        `json:"globalStatementCount"`
+	OneSidedQuantile                  float64    `json:"oneSidedQuantile"`
+	ProjectedReferenceLowerBound      *float64   `json:"projectedReferenceLowerBound,omitempty"`
+	ProjectedMaximumRelativeHalfWidth *float64   `json:"projectedMaximumRelativeHalfWidth,omitempty"`
+	ProjectedTotalActiveRuns          *int       `json:"projectedTotalActiveRuns,omitempty"`
+	SizingMethod                      string     `json:"sizingMethod"`
+	PolicyVersion                     string     `json:"policyVersion"`
+	CurveFamilyContractDigest         string     `json:"curveFamilyContractDigest"`
+	CurveFamilyIdentity               string     `json:"curveFamilyIdentity"`
 }
