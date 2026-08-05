@@ -95,6 +95,7 @@ vet: ## Run go vet against code.
 .PHONY: test-runtime
 test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/ortcpu -p 'test_*.py'
+	python3 -m unittest discover -s runtime/rknnlite -p 'test_*.py'
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-runtime ## Run tests.

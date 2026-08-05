@@ -318,6 +318,49 @@ func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
 	}
 }
 
+func TestRKNNLiteRequestMatchesPythonContract(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		name := "active"
+		if idle {
+			name = "idle"
+		}
+		t.Run(name, func(t *testing.T) {
+			runtime := newTestRKNNLiteRuntime(
+				t,
+				filepath.Join(t.TempDir(), "runtime-result.json"),
+				testRKNNDelivery(),
+			)
+			payload, err := runtime.encodeRequest(runtimeRequest(testRKNNIntent(t, idle)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			python, err := exec.LookPath("python3")
+			if err != nil {
+				t.Fatal("python3 is required for the Go-to-Python RKNNLite contract test")
+			}
+			runtimeDirectory, err := filepath.Abs("../../../runtime/rknnlite")
+			if err != nil {
+				t.Fatal(err)
+			}
+			const validator = `
+import sys
+sys.path.insert(0, sys.argv[1])
+import runner
+request = runner.decode_request(sys.stdin.buffer)
+runner.validate_request(request)
+`
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, python, "-c", validator, runtimeDirectory)
+			command.Stdin = bytes.NewReader(payload)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Python rejected the Go RKNNLite request: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
 func TestRKNNLiteRuntimeRejectsObservedHostDrift(t *testing.T) {
 	t.Setenv("CHILL_RKNN_LITE_HELPER", "host-drift")
 	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())

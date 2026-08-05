@@ -184,13 +184,18 @@ observation containing package, host-library digest, driver, platform token,
 exact character devices, core mask, input layout, initialization/load outcome,
 and selected batch. Active raw v1alpha4 and idle raw v1alpha2 require those
 current nested results, while the immediately retained CPU raw/runtime pairs
-remain readable. No RKNN producer emits this contract yet.
+remain readable. The RKNNLite Python producer now strictly decodes the current
+intent and verified candidate projection, verifies the artifact and mutable
+host contract, runs only `NPU_CORE_0`, and emits active or inference-free
+model-loaded-idle results under the same bounded handoff protocol. Image
+packaging and live admission are still pending.
 
 Preparation and the frozen execution-policy selector now accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT
-thread settings. Job materialization and the Go adapter are implemented, but no
-RKNNLite evidence producer executes the protocol yet, so the row remains L0.
+thread settings. Job materialization, the Go adapter, and the Python producer
+are implemented, but no declared production image has executed the protocol
+yet, so the row remains L0.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

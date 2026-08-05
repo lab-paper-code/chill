@@ -126,6 +126,13 @@ extended resource is requested only when the report declares one. Kubernetes
 supplemental groups are necessarily Pod-level, but observers receive no device
 mount or privilege.
 
+The Go worker verifies the projected candidate report once before constructing
+the runtime adapter. `runtime/rknnlite/runner.py` then owns RKNNLite-specific
+artifact, image-package, host-library, driver, platform, character-device,
+core-mask, initialization, and inference checks; it does not reuse ONNX Runtime
+provider vocabulary. The Go adapter compares the emitted mutable observations
+with the sealed candidate projection before raw evidence construction.
+
 Active and idle Runs use internal intent schema `v1alpha8`. The retained
 `v1alpha7` schema added the optional physical host-contract digest needed by
 accelerator paths; CPU ORT omits that field. The current schema additionally
