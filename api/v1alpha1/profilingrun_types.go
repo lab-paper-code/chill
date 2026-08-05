@@ -137,6 +137,11 @@ type ProfilingRunStatus struct {
 	// +optional
 	Job *ProfilingRunObjectReference `json:"job,omitempty"`
 
+	// Actuation identifies the one owned durable Node actuation handoff for a
+	// non-fixed Run. Fixed Runs leave it absent.
+	// +optional
+	Actuation *ProfilingRunObjectReference `json:"actuation,omitempty"`
+
 	// ActualExecution records the Pod and Node identities observed after scheduling.
 	// +optional
 	ActualExecution *ProfilingRunActualExecutionStatus `json:"actualExecution,omitempty"`

@@ -251,6 +251,23 @@ spec:
                 - node
                 - pod
                 type: object
+              actuation:
+                description: |-
+                  Actuation identifies the one owned durable Node actuation handoff for a
+                  non-fixed Run. Fixed Runs leave it absent.
+                properties:
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  uid:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               admission:
                 description: Admission records the evaluated scientific verdict without
                   raw evidence.

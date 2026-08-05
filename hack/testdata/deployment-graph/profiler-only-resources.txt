@@ -1,7 +1,10 @@
 ClusterRole/chill-profiler
+ClusterRole/chill-profiler-workload-observer
 ClusterRoleBinding/chill-profiler
+ClusterRoleBinding/chill-profiler-workload-observer
 ConfigMap/chill-profiler-config
 ConfigMap/chill-profiler-facts
 Role/chill-profiler
 RoleBinding/chill-profiler
 ServiceAccount/chill-profiler
+ServiceAccount/chill-profiler-workload-observer

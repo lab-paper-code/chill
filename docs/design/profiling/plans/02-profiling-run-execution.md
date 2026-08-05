@@ -53,7 +53,10 @@ the canonical selected actuation policy and its ConfigMap source; the intent
 binds only the policy's semantic digest. Fixed records retain the existing
 four payloads, while actuated records require the fifth policy payload. This
 freezes inputs only: Plan 6 still withholds the Job until a durable handoff has
-converged and settled the Node.
+converged and settled the Node. The handoff is a separate owned
+`NodeActuation`: its frozen identity/target/policy/deadline stay in `spec`, the
+Profiler may advance only `desiredStage` from `Apply` to `Restore`, and the
+dedicated actuator owns observed phase and restoration in `status`.
 
 Intent validation is mode-aware. The active mode retains a positive batch,
 declared warm-up, input generation, output validation, and measured inference

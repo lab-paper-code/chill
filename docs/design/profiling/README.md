@@ -201,8 +201,12 @@ promotes only the two exact RKNN rows to L4; it is not a statistical `b_sat`
 claim.
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
 assigns mutable power-mode ownership to a dedicated per-Node actuator operand,
-but that operand and its durable handoff are not implemented; catalog presence
-and historical standalone smoke are not treated as production execution
+The Profiler now creates the durable `NodeActuation` handoff from frozen Run
+inputs, and the future actuator boundary strictly projects only an exact local
+Node name/UID match. The actuator operand, Lease, status reconciler, host
+adapter, and apply/read-back/restore proof remain unimplemented, so the
+Profiler still creates no measurement Job for a non-fixed Run. Catalog
+presence and historical standalone smoke are not production execution
 evidence.
 
 ## Campaign records

@@ -22,7 +22,9 @@ Runs. A read-only NVPModel audit now matches every mode on the three Ready
 Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
 `MAXN`; the unreachable `orin-nano` row remains unverified. ADR 0015 selects a
 dedicated per-Node actuator as the sole host-state writer while retaining the
-Profiler as Run orchestrator. No actuator implementation is enabled. Later
+Profiler as Run orchestrator. The durable `NodeActuation` API, Profiler
+producer, and strict local-Node consumer projection are implemented; no
+actuator operand, Lease, status controller, or host mutation is enabled. Later
 slices remain deferred until their stated entry condition is met or this plan
 is explicitly revised.
 
@@ -140,6 +142,8 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   immutable Run intent.
 - [x] Fix intent v1alpha9 and simultaneous Go/Python decoder compatibility
   before wiring any selectable-mode producer.
+- [x] Materialize one owned durable handoff and verify its exact local-Node
+  consumer projection without enabling a measurement Job or host mutation.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
 - [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
@@ -159,9 +163,15 @@ exact selected target. The Profiler selects a configured policy by exact
 DeviceClass, mode, and actuator kind, binds its semantic digest into the
 intent, and retains its canonical bytes and ConfigMap source in the immutable
 record. Its first policy fields bind settling and maximum handoff duration.
-Before the remaining handoff steps exist, the reconciler reports
-`ActuationHandoffPending` and creates no measurement Job; freezing therefore
-does not enable host mutation or selectable-mode profiling.
+The Profiler now creates one owned `NodeActuation`, records its exact UID in
+Run status, reports `NodeActuatorPending`, and creates no measurement Job. The
+handoff keeps Run/Node UID, selected class/mode/target, policy digest, policy
+timing, absolute deadline, and Profiler-owned desired stage in immutable or
+monotonic `spec`; the future actuator alone owns
+previous/target/restored observations, phase, timestamps, and terminal failure
+in `status`. Its consumer projection rejects a foreign Node name or UID before
+any Lease or host adapter can receive the request. This closes the durable API
+boundary without enabling host mutation or selectable-mode profiling.
 
 ### Jetson NVPModel
 

@@ -101,6 +101,10 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct intent freezer: %w", err)
 	}
+	handoffs, err := profilercontroller.NewActuationHandoffs(mgr.GetClient(), mgr.GetScheme())
+	if err != nil {
+		return fmt.Errorf("construct actuation handoffs: %w", err)
+	}
 	stores, err := profilercontroller.NewKubernetesEvidenceStoreResolver(
 		reader,
 		profilercontroller.EvidenceStoreResolverOptions{
@@ -133,7 +137,9 @@ func setupRunController(mgr ctrl.Manager, opts options) error {
 	if err != nil {
 		return fmt.Errorf("construct execution evidence admitter: %w", err)
 	}
-	reconciler, err := profilercontroller.NewRunReconciler(mgr.GetClient(), freezer, jobs, finalizer, admitter)
+	reconciler, err := profilercontroller.NewRunReconciler(
+		mgr.GetClient(), freezer, handoffs, jobs, finalizer, admitter,
+	)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
 	}

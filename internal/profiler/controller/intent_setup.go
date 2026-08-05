@@ -14,6 +14,7 @@ func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("profilingrun").
 		For(&edgev1alpha1.ProfilingRun{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
 }

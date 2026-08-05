@@ -78,7 +78,8 @@ ChillSystem desired state
 ProfilingRun desired state
   -> CHILL Profiler controller
   -> exact intent frozen
-  -> owned Kubernetes Job
+  -> fixed: owned Kubernetes Job
+  -> non-fixed: owned NodeActuation handoff; Job withheld until convergence
   -> measurement Job executes runtime worker + MetricObserver helper
   -> immutable raw measurement object
   -> Profiler finalizes execution evidence from terminal Kubernetes facts

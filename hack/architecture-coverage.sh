@@ -23,6 +23,8 @@ components=(
   workload-core
   workload-kube
   model-compat
+  node-actuator-core
+  node-actuator-controller
   profile-derivation
   profiling-run
   profiler-app
@@ -53,6 +55,8 @@ component_for() {
     internal/workloadobserver) echo workload-core ;;
     internal/workloadobserver/kube) echo workload-kube ;;
     internal/modelcompat) echo model-compat ;;
+    internal/nodeactuator) echo node-actuator-core ;;
+    internal/nodeactuator/controller) echo node-actuator-controller ;;
     internal/profilederivation) echo profile-derivation ;;
     internal/profilingrun) echo profiling-run ;;
     internal/profiler) echo profiler-app ;;

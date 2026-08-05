@@ -45,6 +45,35 @@ type recordingExecutionJobs struct {
 	err    error
 }
 
+type recordingActuationHandoffs struct {
+	calls   int
+	frozen  FrozenRun
+	handoff *edgev1alpha1.NodeActuation
+	err     error
+}
+
+func (h *recordingActuationHandoffs) Ensure(
+	_ context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	frozen FrozenRun,
+) (*edgev1alpha1.NodeActuation, bool, error) {
+	h.calls++
+	h.frozen = frozen
+	if h.err != nil {
+		return nil, false, h.err
+	}
+	if h.handoff != nil {
+		return h.handoff.DeepCopy(), false, nil
+	}
+	return &edgev1alpha1.NodeActuation{ObjectMeta: metav1.ObjectMeta{
+		Namespace: run.Namespace, Name: "node-actuation", UID: "actuation-uid",
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "ProfilingRun",
+			Name: run.Name, UID: run.UID, Controller: ptr.To(true),
+		}},
+	}}, true, nil
+}
+
 type recordingRunEvidenceFinalizer struct {
 	calls  int
 	result FinalizedRunEvidence
@@ -112,7 +141,8 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	freezer := &recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -140,9 +170,11 @@ func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
 	run.Status.IntentDigest = frozen.Prepared.IntentDigest
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
+	handoffs := &recordingActuationHandoffs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
+		handoffs,
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -154,16 +186,17 @@ func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if jobs.calls != 0 {
-		t.Fatalf("actuated Run created %d measurement Jobs before handoff", jobs.calls)
+	if handoffs.calls != 1 || jobs.calls != 0 {
+		t.Fatalf("actuated Run transitions: handoffs=%d jobs=%d", handoffs.calls, jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if condition == nil || condition.Status != metav1.ConditionUnknown ||
-		condition.Reason != "ActuationHandoffPending" {
+	if actual.Status.Actuation == nil || actual.Status.Actuation.UID != "actuation-uid" ||
+		condition == nil || condition.Status != metav1.ConditionUnknown ||
+		condition.Reason != "NodeActuatorPending" {
 		t.Fatalf("actuation handoff condition = %#v", condition)
 	}
 }
@@ -178,7 +211,8 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +249,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
+		&recordingActuationHandoffs{},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -283,6 +318,7 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			reconciler, err := NewRunReconciler(
 				kubeClient,
 				&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
+				&recordingActuationHandoffs{},
 				jobs,
 				finalizer,
 				admitter,
@@ -320,7 +356,8 @@ func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, jobs, &recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -343,6 +380,7 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{err: want},
+		&recordingActuationHandoffs{},
 		&recordingExecutionJobs{},
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -376,6 +414,7 @@ func TestRunReconcilerPublishesTerminalFreezeFailureWithoutRequeue(t *testing.T)
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		freezer,
+		&recordingActuationHandoffs{},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},

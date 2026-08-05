@@ -41,6 +41,8 @@ components:
   workload-core: { in: internal/workloadobserver }
   workload-kube: { in: internal/workloadobserver/kube }
   model-compat: { in: internal/modelcompat }
+  node-actuator-core: { in: internal/nodeactuator }
+  node-actuator-controller: { in: internal/nodeactuator/controller }
   profile-derivation: { in: internal/profilederivation }
   profiling-run: { in: internal/profilingrun }
   profiler-app: { in: internal/profiler }
@@ -109,6 +111,12 @@ deps:
 
   model-compat:
     anyVendorDeps: true
+  node-actuator-core:
+    anyVendorDeps: true
+  node-actuator-controller:
+    mayDependOn:
+      - api
+      - node-actuator-core
   profile-derivation:
     anyVendorDeps: true
   profiling-run:

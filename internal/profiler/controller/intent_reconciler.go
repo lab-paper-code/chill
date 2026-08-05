@@ -28,11 +28,16 @@ type RunExecutionJobs interface {
 	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*batchv1.Job, bool, error)
 }
 
+type RunActuationHandoffs interface {
+	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*edgev1alpha1.NodeActuation, bool, error)
+}
+
 // RunReconciler advances one ProfilingRun through short, durable transitions.
 // Runtime measurement remains entirely inside the owned Job.
 type RunReconciler struct {
 	client.Client
 	freezer  RunIntentFreezer
+	handoffs RunActuationHandoffs
 	jobs     RunExecutionJobs
 	finalize RunEvidenceFinalizer
 	admit    RunEvidenceAdmitter
@@ -41,14 +46,18 @@ type RunReconciler struct {
 func NewRunReconciler(
 	kubeClient client.Client,
 	freezer RunIntentFreezer,
+	handoffs RunActuationHandoffs,
 	jobs RunExecutionJobs,
 	finalize RunEvidenceFinalizer,
 	admit RunEvidenceAdmitter,
 ) (*RunReconciler, error) {
-	if kubeClient == nil || freezer == nil || jobs == nil || finalize == nil || admit == nil {
-		return nil, errors.New("Kubernetes client, Run intent freezer, execution Jobs, evidence finalizer, and evidence admitter are required")
+	if kubeClient == nil || freezer == nil || handoffs == nil || jobs == nil || finalize == nil || admit == nil {
+		return nil, errors.New("Kubernetes client, Run intent freezer, actuation handoffs, execution Jobs, evidence finalizer, and evidence admitter are required")
 	}
-	return &RunReconciler{Client: kubeClient, freezer: freezer, jobs: jobs, finalize: finalize, admit: admit}, nil
+	return &RunReconciler{
+		Client: kubeClient, freezer: freezer, handoffs: handoffs,
+		jobs: jobs, finalize: finalize, admit: admit,
+	}, nil
 }
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -70,12 +79,19 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	if frozen.Run.Prepared.Intent.Actuation != nil {
+		handoff, _, err := r.handoffs.Ensure(ctx, run, frozen.Run)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("materialize ProfilingRun %s actuation handoff: %w", req.NamespacedName, err)
+		}
+		if err := r.publishActuationReference(ctx, run, handoff); err != nil {
+			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s actuation reference: %w", req.NamespacedName, err)
+		}
 		return ctrl.Result{}, r.publishExecutionOutcome(
 			ctx,
 			run,
 			metav1.ConditionUnknown,
-			"ActuationHandoffPending",
-			"selected Node power target is frozen; measurement waits for the durable actuation handoff",
+			"NodeActuatorPending",
+			"durable Node actuation handoff is recorded; measurement waits for the NodeActuator consumer",
 		)
 	}
 	if run.Status.Job == nil {
@@ -144,6 +160,29 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	default:
 		return ctrl.Result{}, fmt.Errorf("unexpected ProfilingRun lifecycle action %q", decision.Action)
 	}
+}
+
+func (r *RunReconciler) publishActuationReference(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	handoff *edgev1alpha1.NodeActuation,
+) error {
+	if handoff == nil || handoff.Name == "" || handoff.UID == "" || !metav1.IsControlledBy(handoff, run) {
+		return errors.New("created NodeActuation has incomplete identity or ownership")
+	}
+	desiredReference := edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
+	if run.Status.Actuation != nil {
+		if *run.Status.Actuation != desiredReference {
+			return errors.New("refusing to replace recorded NodeActuation identity")
+		}
+		return nil
+	}
+	if run.Status.IntentDigest == "" {
+		return errors.New("cannot publish NodeActuation before frozen intent")
+	}
+	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
+		desired.Actuation = &desiredReference
+	})
 }
 
 func (r *RunReconciler) publishAdmissionFailure(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
