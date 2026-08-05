@@ -118,8 +118,12 @@ source evidence proves a shared change is required.
   verification on 2026-08-05 produced runnable child digest
   `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`;
   this is build evidence only, not a published installation fact.
-- [ ] Verify linux/arm64 child digests for MetricObserver and
-  WorkloadObserver.
+- [x] Verify linux/arm64 child digests for MetricObserver and
+  WorkloadObserver. Local OCI builds on 2026-08-05 produced MetricObserver
+  `sha256:12bb583bee67761d3089ead9f6296be40aff1159e161cf35261f4ce949eb261d`
+  and WorkloadObserver
+  `sha256:94053b7789e79332e0e0efd9e927909718a5399e65467d0ce8897c79773dbd28`;
+  these are build evidence only, not published installation facts.
 - [ ] Record the selected child image digest, not only a manifest-list digest,
   in the trusted runtime and observer declarations.
 - [ ] Produce and verify an arm64 declaration containing ONNX Runtime,
