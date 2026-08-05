@@ -38,25 +38,3 @@ with hooks disabled. The chart hook remains only as a safety net for direct
 
 `make helm-purge-crds` is intentionally guarded and requires
 `CONFIRM_PURGE_CRDS=chill`.
-
-## CPU ORT runtime declarations
-
-The runtime declaration producer selects one runnable child from a captured OCI
-index and then executes that exact `repository@sha256` image. It does not accept
-caller-supplied probe output. Capture the published index and run the producer
-on a host that can execute the selected platform:
-
-```sh
-docker manifest inspect REPOSITORY@INDEX_DIGEST > /tmp/runtime-index.json
-python3 hack/profiling/runtime_declaration.py \
-  --repository REPOSITORY \
-  --index /tmp/runtime-index.json \
-  --architecture arm64 \
-  --expected-runtime-version 1.23.2 \
-  --output-dir /tmp/runtime-declarations
-```
-
-Use `docker manifest inspect --insecure` only for an explicitly trusted
-plain-HTTP development registry. The digest-named declaration and retained raw
-probe are immutable as a pair. The producer fails on an ambiguous child,
-architecture drift, ORT version drift, or missing `CPUExecutionProvider`.
