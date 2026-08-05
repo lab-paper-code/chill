@@ -253,7 +253,19 @@ support.
   `shellyplugsg3-d0cf13d81a88`. That hardware identifier corroborates the
   current topology but is not separately carried in the current Prometheus
   sample or frozen intent identity.
-- [ ] Verify CPU thermal/throttle metric completeness.
+- [x] Verify CPU thermal/throttle metric completeness. The live 5.10 Rockchip
+  kernel exposed seven thermal zones plus three `thermal-cpufreq` and one
+  `thermal-devfreq` cooling device. A 31-second simultaneous trace matched all
+  31 raw cooling states to `observation_available=1` and `active=0`; the
+  producer's focused test also maps a nonzero cooling state to `active=1`.
+  Latched and cumulative counters are unavailable on this host, but CHILL's
+  fail-closed admission contract accepts a complete direct-active channel.
+  Maximum temperature is diagnostic rather than a throttle threshold: 26/31
+  sequential raw/gauge pairs matched exactly and five differed by 0.924 C
+  across the exporter's asynchronous refresh boundary. The separate
+  device-specific `OrangePiCollector` remains an unimplemented, noisy source;
+  wall power and typed thermal facts come from the independent Shelly and
+  `ThermalCollector` paths and do not rely on it.
 - [ ] Bind CPU request and ORT threads to observed allocatable CPU.
 - [ ] Run and admit three active and three model-loaded-idle Runs.
 - [ ] Review whether Raspberry Pi and Orange Pi differ only by declarations
