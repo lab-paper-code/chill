@@ -13,10 +13,13 @@ physical power-supply correction. Orange Pi CPU ORT and the batch-one and
 batch-two RKNNLite rows have reached L3. RKNNLite batch expansion is now
 at the L4 campaign boundary: ADR 0014 preserves those distinct execution states
 and composes them through a frozen curve family with one exact idle baseline per
-member state. The retained batch-one row predates the current conversion recipe,
-catalog snapshot, and image set, so it must be regenerated and remeasured before
-the first family can be derived. Later slices remain deferred until their stated
-entry condition is met or this plan is explicitly revised.
+member state. Batch one has now been regenerated, and both members have aligned
+three-active plus three-idle L3 evidence under one conversion recipe, catalog
+snapshot, runtime, and helper-image set. The next gate is the pure Plan 5a
+family/stop implementation and a pre-registered campaign record; the aligned
+diagnostic Runs are not retroactively promoted to L4. Later slices remain
+deferred until their stated entry condition is met or this plan is explicitly
+revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -37,7 +40,7 @@ blocking reason belong in the support matrix.
 | `L1 Compatible` | The exact artifact and trusted runtime-image declaration evaluate `Compatible` for the class. |
 | `L2 Executable` | A production `ProfilingRun` Job succeeds on the exact Node, runtime path, and power mode. |
 | `L3 Measurement-ready` | Both active and model-loaded-idle evidence are durably reloaded, verified, and admitted. |
-| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one stable execution state under Plan 5 or 5a. |
+| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one verified curve family under Plan 5 or 5a, while each member retains its exact execution state. |
 
 Levels are cumulative. Catalog presence, standalone smoke tests, and successful
 Jobs without admitted active and idle evidence do not promote a row beyond the
@@ -51,7 +54,7 @@ corresponding level.
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed | L3 | Three active and three model-loaded-idle Runs are retained, reloaded, and admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | RKNNLite model and batch expansion | two artifact-backed rows at L3 | Decide the fixed-artifact curve identity and idle-baseline rule before implementing or executing Plan 5a. |
+| current | RKNNLite model and batch expansion | aligned batch-one and batch-two rows at L3 | Implement the ADR 0014 family boundary, then freeze a Plan 5a campaign record before L4 measurement. |
 
 ## Stable decisions
 
@@ -262,7 +265,7 @@ Entry condition: the owning execution path reaches L3 for
   `CurveFamilyContractDigest`, a Loader-verified `CurveFamilyIdentity`, and idle
   baselines keyed by member state. ADR 0014 owns the cross-plan contract; Plans
   5 and 5a own its consumers.
-- [ ] Reconvert batch one with the current repository recipe, freeze batch one
+- [x] Reconvert batch one with the current repository recipe, freeze batch one
   and batch two under one catalog/image generation, and admit three active plus
   three model-loaded-idle Runs for each member state.
 - [ ] Implement Plan 5a discovery over the verified family and use Plan 5 only

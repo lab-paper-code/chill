@@ -4,11 +4,12 @@
 
 ## Status
 
-Approved implementation plan. No part of this plan is implemented. It answers the
-same question as [Plan 5](05-batch-saturation-campaign.md) at a lower evidence
-strength and a much lower measurement cost, by walking batch sizes upward and
-stopping when they stop paying off. It produces a decision, not a statistical
-claim. It authorizes no API, controller, intent schema, or policy-catalog change.
+Approved implementation plan. No part of this plan is implemented. It answers
+the same question as [Plan 5](05-batch-saturation-campaign.md) at a lower
+evidence strength and a much lower measurement cost, by walking batch sizes
+upward and stopping when they stop paying off. It produces a decision, not a
+statistical claim. It authorizes no API, controller, intent schema, or
+policy-catalog change.
 
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.
@@ -17,8 +18,11 @@ output is exactly the candidate Plan 5 would confirm.
 identity decision for a runtime that uses one immutable artifact per fixed
 batch. Exact point identities remain unchanged; the sweep consumes one frozen
 curve family and one admitted idle baseline per distinct member state. The
-first RKNN family still awaits a batch-one rebuild and remeasurement under the
-same catalog, recipe, and image generation as batch two.
+RKNN batch-one and batch-two members now have aligned retained L3 evidence under
+the same catalog, recipe, runtime, and helper-image generation. Those diagnostic
+Runs preceded a committed `CurveFamilyContractDigest`, so they validate the
+input boundary but are not retroactive Plan 5a campaign evidence. Implementation
+and a pre-registered campaign record remain required before any L4 claim.
 
 ## Question
 

@@ -407,7 +407,7 @@ Both modes share execution-state identity
 and owner-bound environment identity
 `external-environment-identity.v1alpha1@sha256:1e462e5d2549ac2be0a98c2e74e8a8d07f9365766280cf052cc840227cb2ff31`.
 
-### Diagnostic point and L4 blocker
+### Diagnostic point and then-current L4 blocker
 
 A read-only diagnostic call used the existing `DeriveIdleBaseline`,
 `IncrementalTrial`, and `Aggregate` functions with three independent trials per
@@ -429,6 +429,99 @@ The live audit also confirmed that the batch-one state identity is
 which differs from batch two. Current source binds the full execution state,
 including artifact digest and path, into state identity; it separately binds
 the artifact and observer images into protocol identity. Consequently the two
-fixed-artifact rows cannot share the one execution state and one idle baseline
-required by Plans 5 and 5a. Resolving that contract, without erasing physical
-artifact identity or assuming equal idle power, is the remaining P7-to-L4 gate.
+fixed-artifact rows could not share the one execution state and one idle
+baseline then required by Plans 5 and 5a. This was the P7-to-L4 gate at that
+snapshot; ADR 0014 subsequently resolved it without erasing physical artifact
+identity or assuming equal idle power.
+
+## Aligned RKNN fixed-artifact family inputs (2026-08-05)
+
+ADR 0014 closed the curve-composition contract without weakening exact
+single-Run identities. Commit `a1ddd91` then replaced the retained batch-one
+artifact with a conversion produced by the same repository recipe as batch
+two. The conversion inputs were:
+
+- canonical ONNX source digest
+  `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`;
+- RKNN Toolkit2 2.3.2 wheel digest
+  `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`;
+- target `rk3588` and repository recipe digest
+  `sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed`;
+- batch-one artifact digest
+  `sha256:6de31d66b487431ae4b46a7a4a8d2aa0f4d1b98fef3ca1f439f4a1c216f5ef22`
+  and direct arm64 artifact-image manifest
+  `sha256:9ae0055465f024c9ae1c7264c0d5311b8dfc2141458414350a555fa9e62223ce`;
+  and
+- unchanged batch-two artifact digest
+  `sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d`
+  and direct arm64 artifact-image manifest
+  `sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed`.
+
+Registry read-back reproduced the batch-one artifact byte digest exactly.
+Helm revision 10 and ModelSpec generation 4 installed both members through one
+ModelSpec content digest
+`sha256:7b9d267a0008d0d510d35fc0f52364edda28188137f6804a6874445c191a8880`,
+one DeviceClass content digest
+`sha256:43ddafb414530892f2a932f88d941dbf90a6e2ed331344dcf97379a4c2b6ea17`,
+and one runtime declaration digest
+`sha256:109ece351af0188fd416ee7c32dfea61d217b1367ff27ddd81003c859d2236d7`.
+The runtime, MetricObserver, and WorkloadObserver direct arm64 manifests were,
+respectively, `sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3`,
+`sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe`,
+and `sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7`.
+All 12 final Pods reported the applicable artifact manifest and those three
+exact declarations as Kubernetes `imageID` values.
+
+### Sequential retained evidence
+
+The Runs were submitted one at a time and execution stopped on any verdict
+other than `Accepted`. All 12 reached `ExecutionComplete=True`,
+`EvidenceVerified=True`, and `EvidenceAdmitted=True`:
+
+| Mode/member | Run | Run UID | Pod-derived Trial ID | Final evidence digest |
+|---|---|---|---|---|
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a1` | `5c4b73bd-87fc-4223-9ebd-168caa7b466b` | `0d60864f-11ec-410b-8e55-86dcc7b3678d` | `sha256:937aef9c7ea4a856fa4edbd1eaac852570296f0ef835db359a55a36dfd49805b` |
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a2` | `0f2ffe02-1f95-40bc-97d5-b05dbedfaaca` | `f6dc3405-c357-40b9-9562-fb0c58639c1f` | `sha256:64f2d3dc4ab93c6ce738cd1df345010d5aaaea211cb2ca060428c84b64bee5cd` |
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a3` | `556d46e5-ae1a-478e-8835-6f8a8d002f37` | `cd5b8deb-d8de-4608-ba1b-c0d86c7d7428` | `sha256:8400193574623d7aa30eee9e00df24489b41780d642f0bc7d4ce5e9089bac7fd` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i1` | `7ba76330-1d54-4a29-9283-10681e130560` | `8d708a86-62c5-4233-b019-4d02218042d4` | `sha256:0232a5cfc1c634ec1b8f353ac81d7c67a94aa099c6f8b7f2cf3c261b8ddc45e3` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i2` | `663fac98-687f-4bc6-9ab1-0dc0690112ab` | `491dd071-07a5-4a16-98d9-e28cfd8b6e2a` | `sha256:f429b779da2b10b62836f1eaab5af9d8afa6c1999733197786d381e7605cb46d` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i3` | `cf7cbf3e-96f3-47ff-81ca-d11499820fe5` | `5db49577-b1ae-430b-a74a-8afabde5346c` | `sha256:a5785ec155772c2222ebbc79242e18a0bcf9c4996ae6e4d22321583898456169` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a1` | `7450f68d-7447-414b-9d1b-def0ba5d9c03` | `d90e1018-014f-4e68-af5e-c908eca2a407` | `sha256:9319c42f58b7c77f8e6a41f8be3e54610aeb1ccf25567e51ba668a48d20afb48` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a2` | `997c5bb0-8b55-4d3c-aaaa-1dc3406c19aa` | `e452de0f-db24-43e4-b50e-a5396ce205c6` | `sha256:aa5b9c6c1eae3d9ba89160f10fa2c0d8f0dafcab39cc59456d60a0af7b81f5a2` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a3` | `381029ed-0a3e-414b-9250-6fa7f4e7011b` | `d9a7de3e-9971-439a-b539-43d772a9eeb6` | `sha256:f79f8c1af676aebf9771cee8e7358db2bcd1ec024180aba162b93fbc95ffa512` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i1` | `0d2bca80-31e2-472d-a021-b2c2365310fa` | `015a6078-3bef-4e97-9e3c-066d0830cfbf` | `sha256:d4103edeafe6b0a4d16cc889050ee56cbef4d60c7e0ebc177cbedc7ead609b48` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i2` | `0408449d-b248-4881-ad4e-b0a7889178b6` | `8a7909dd-ad9d-499f-8e10-d552033e9a8f` | `sha256:ab7ad58b39ef3eef82b839745ec51f41269151718823fbf285e168edc54a34e6` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i3` | `ad33f779-3eea-4aa2-bde9-c10939f4f845` | `45d3c354-4ada-4b36-b1ec-1122095f9266` | `sha256:c9d1f379acb4cb4f71145ed94255a8a5be3206c5f0e6007b32bcae771de1f25e` |
+
+### Loader-verified identities and diagnostic points
+
+All retained objects were independently reloaded through the recorded Job
+binding, credential Secret, S3 reader, digest verifier, and production
+active/idle projectors. Both members ran on Node UID
+`3cbe367f-2511-47fc-9b34-67c98fac69fd` and share owner-bound environment
+identity
+`chill.dacs.io/external-environment-identity.v1alpha1@sha256:1e462e5d2549ac2be0a98c2e74e8a8d07f9365766280cf052cc840227cb2ff31`.
+As required by ADR 0014, their exact state and mode-specific protocol identities
+remain distinct:
+
+| Member | Execution-state identity | Active protocol identity | Idle protocol identity |
+|---|---|---|---|
+| batch 1 | `chill.dacs.io/execution-state-identity.v1alpha2@sha256:0d0171da01907443a7aeef07380036291aa971e7c10abf4e522c8f89544977fe` | `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:26f42452a853dafb7debb58e801e205d50b7358c17e09a27e484c147bb8b3576` | `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:d39decf40316d3bb0df17c228303a81c4cc0fd8575080d3bd372e50e157508ad` |
+| batch 2 | `chill.dacs.io/execution-state-identity.v1alpha2@sha256:941106399af8e860fd16b766f24166284172584442034d29e565e69419800501` | `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:5812007de5098d3f393f109b0e1006d4a0173ba70d5e54f26c7eef22710d41ad` | `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:edec97456323f32fb3367821a88d7b2692c2a0f77fd4ef1d57775dd3569c35a3` |
+
+A read-only call to the existing `DeriveIdleBaseline`, `IncrementalTrial`, and
+`Aggregate` functions used the exact state-specific baseline for each point:
+
+| Member | Model-loaded idle power | Incremental energy | Active p99 |
+|---|---:|---:|---:|
+| batch 1 | `2.7510822 +/- 0.0246627 W` | `0.00907354 +/- 0.00030512 J/item` | `4.173992 ms` |
+| batch 2 | `2.7644238 +/- 0.0266529 W` | `0.00876339 +/- 0.00052378 J/item` | `7.939952 ms` |
+
+The intervals use the current 95% Student-t construction and diagnostic point
+policy `live-diagnostic-min3-v1`. The batch-two mean is 3.42% below batch one,
+but no early-stop conclusion is made: no `CurveFamilyContractDigest`, eligible
+member map, `minDelta`, or patience record was committed before these Runs.
+This evidence closes the P7 reconversion/aligned-remeasurement item and proves
+that state-keyed baselines work on retained live evidence. It leaves both rows
+at L3 until the Plan 5a family constructor is implemented and a new campaign is
+pre-registered before measurement.

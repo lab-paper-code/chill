@@ -169,9 +169,11 @@ Answers only:
 P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
 ORT remains paused at L2 on a physical electrical blocker. Orange Pi CPU ORT
 and two immutable RKNN fixed-batch rows are L3. ADR 0014 closes the
-fixed-artifact curve-composition decision; the current boundary is rebuilding
-batch one under the same recipe, catalog, and image generation as batch two
-before Plan 5a can consume the family.
+fixed-artifact curve-composition decision. Batch one was rebuilt and both
+members were remeasured under the same recipe, catalog, and image generation,
+so aligned L3 evidence now exists. The current boundary is implementing the
+pure Plan 5a family/stop constructor and freezing a campaign record before
+collecting any evidence claimed as L4.
 Runtime-specific adapters and mutable power-mode ownership remain explicit;
 catalog presence and historical standalone smoke are not treated as production
 execution evidence.
