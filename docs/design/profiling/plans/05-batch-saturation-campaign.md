@@ -18,8 +18,9 @@ estimator, global-`H` confirmatory sizing, and typed confirmatory result are
 implemented. Both policy files have strict canonical decoders and content
 digests; the confirmatory file is checked against the discovery artifact and
 realized sizing allocation, and the final result binds both digests. A concrete
-Plan 5 campaign record and a live confirmatory result remain unimplemented. This
-plan fixes the quantity that decides `b_sat` — the largest remaining energy
+two-member RKNN discovery policy and campaign record are frozen; its Runs,
+post-discovery confirmatory policy, and live result do not exist yet. This plan
+fixes the quantity that decides `b_sat` — the largest remaining energy
 improvement any larger measured batch still offers — gives curve derivation
 ownership of the exact idle baseline set, rebuilds the point-confidence
 construction, and separates candidate discovery from confirmation. It does not
@@ -854,7 +855,9 @@ Plan 5 is complete when:
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, eligible member map, and `CurveFamilyContractDigest` in the
    discovery policy version. The realized `CurveFamilyIdentity` follows Loader
-   verification.
+   verification. Implemented for
+   [the first two-member RKNN campaign](../campaigns/rknn-mobilenet-v2-050-bsat-v1/README.md);
+   no Run has been submitted under it yet.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
    allocation inside the caps set at item 7, before any confirmatory Run.
 

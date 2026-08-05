@@ -150,7 +150,7 @@ Answers only:
 > Under what predeclared rule does a set of Runs establish batch saturation for
 > one frozen curve family?
 
-Approved scope, partially shared foundation only. Plan 5a supplies the frozen
+Approved scope with pure derivation and discovery freeze implemented. Plan 5a supplies the frozen
 family, verified family, exact-state curve container, and a live discovery
 candidate. The Plan 5 point estimator and retained previous interval are
 implemented, and the global post-selection error allocation is derived and
@@ -159,11 +159,13 @@ implemented, as is the global-`H` confirmatory sizing rule. The final joint
 contrast/covariance estimator and typed confirmatory result are implemented.
 The discovery and confirmatory policies have strict canonical decoders and
 content digests, the second artifact is checked against the realized sizing
-allocation, and the final result binds both digests. A concrete Plan 5 campaign
-record and a live confirmatory result are not implemented. Campaign provenance
-is pre-registered in a committed record rather than machine-enforced; that
-boundary is stated in the plan. It does not authorize a `DeviceProfile` API, a
-campaign controller, an intent schema change, or scheduler consumption.
+allocation, and the final result binds both digests. The first concrete Plan 5
+discovery policy and campaign record are frozen for the two-member RKNN family.
+Its Runs, post-discovery confirmatory policy, and live result do not exist yet.
+Campaign provenance is pre-registered in a committed record rather than
+machine-enforced; that boundary is stated in the plan. It does not authorize a
+`DeviceProfile` API, a campaign controller, an intent schema change, or scheduler
+consumption.
 
 ### 6. Execution-support expansion — active
 
