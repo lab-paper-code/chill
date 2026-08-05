@@ -189,6 +189,9 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`.
   The derived target is `rk3588`, batch 1, non-quantized, with input shape
   `[1,3,224,224]` and output shape `[1,1000]`.
+  That is the source-framework NCHW contract. The retained restricted runtime
+  Pod invoked RKNNLite with float32 NHWC `[1,224,224,3]`; the two layouts are
+  recorded separately rather than inferred from one another.
 - The converter is the official x86-64 CPython 3.8 RKNN Toolkit2 v2.3.2 wheel
   from tag `v2.3.2` (`42aa1d426c0a9e0869b6374edba009f7208a1926`), wheel digest
   `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`.

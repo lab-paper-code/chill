@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -94,6 +95,24 @@ func selectModelPath(
 				"derived artifact %q references missing source artifact %q",
 				artifact.Name, artifact.Derivation.SourceArtifact,
 			)
+		}
+	}
+	if selected.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily {
+		if artifact.Derivation == nil || artifact.Derivation.Input == nil ||
+			len(artifact.Derivation.Input.Shape) == 0 ||
+			artifact.Derivation.Input.Shape[0] != artifact.Derivation.FixedBatch ||
+			artifact.Derivation.Input.Layout != profilingrun.RKNNLiteInputLayout ||
+			artifact.Derivation.Input.DataType != profilingrun.RKNNLiteInputDataType {
+			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
+				"RKNNLite artifact requires a matching fixed input tensor contract",
+			)
+		}
+		for _, dimension := range artifact.Derivation.Input.Shape {
+			if dimension < 1 {
+				return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
+					"RKNNLite artifact input dimensions must be positive",
+				)
+			}
 		}
 	}
 	return *selected, artifact, nil

@@ -56,8 +56,25 @@ type ModelArtifactDerivation struct {
 	// +kubebuilder:validation:Minimum=1
 	FixedBatch int32 `json:"fixedBatch"`
 
+	// Input freezes the tensor contract consumed by a runtime that cannot
+	// discover it safely from the derived executable.
+	// +optional
+	Input *ModelArtifactInputContract `json:"input,omitempty"`
+
 	// Conversion binds the converter and recipe used to produce this artifact.
 	Conversion ModelArtifactConversion `json:"conversion"`
+}
+
+type ModelArtifactInputContract struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Minimum=1
+	Shape []int32 `json:"shape"`
+
+	// +kubebuilder:validation:MinLength=1
+	Layout string `json:"layout"`
+
+	// +kubebuilder:validation:MinLength=1
+	DataType string `json:"dataType"`
 }
 
 // ModelArtifactConversion identifies the executable converter and conversion recipe.

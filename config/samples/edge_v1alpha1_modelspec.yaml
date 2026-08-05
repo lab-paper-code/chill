@@ -14,6 +14,10 @@ spec:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
       fixedBatch: 1
+      input:
+        shape: [1, 224, 224, 3]
+        layout: NHWC
+        dataType: float32
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2

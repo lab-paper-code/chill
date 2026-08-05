@@ -17,7 +17,8 @@ import (
 const (
 	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
 	candidateReportSchemaVersionV1Alpha3 = "chill.dacs.io/modelcompat-report.v1alpha3"
-	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha4"
+	candidateReportSchemaVersionV1Alpha4 = "chill.dacs.io/modelcompat-report.v1alpha4"
+	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha5"
 	candidateReportScope                 = "StaticCompatibility"
 	candidateHostContractSchemaVersion   = "chill.dacs.io/accelerator-host-contract.v1alpha1"
 )
@@ -87,8 +88,11 @@ type CandidateReportArtifactSupply struct {
 // CandidateArtifactCapability carries only runtime-consumed facts of one
 // derived artifact. Full conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
-	TargetPlatform string `json:"targetPlatform"`
-	FixedBatch     int32  `json:"fixedBatch"`
+	TargetPlatform string  `json:"targetPlatform"`
+	FixedBatch     int32   `json:"fixedBatch"`
+	InputShape     []int32 `json:"inputShape,omitempty"`
+	InputLayout    string  `json:"inputLayout,omitempty"`
+	InputDataType  string  `json:"inputDataType,omitempty"`
 }
 
 // CandidateReportRuntimePackage is one image-owned package fact from the
@@ -154,17 +158,20 @@ type VerifiedCandidateReport struct {
 }
 
 type CandidateRuntimeDelivery struct {
-	ArtifactCapability *CandidateArtifactCapability
-	HostContract       *CandidateReportHostContract
-	RuntimeAccess      *CandidateReportRuntimeAccess
+	ArtifactCapability *CandidateArtifactCapability    `json:"artifactCapability,omitempty"`
+	RuntimePackages    []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
+	HostContract       *CandidateReportHostContract    `json:"hostContract,omitempty"`
+	RuntimeAccess      *CandidateReportRuntimeAccess   `json:"runtimeAccess,omitempty"`
 }
 
 func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	delivery := CandidateRuntimeDelivery{}
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
+		capability.InputShape = append([]int32(nil), capability.InputShape...)
 		delivery.ArtifactCapability = &capability
 	}
+	delivery.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
 	if r.report.HostContract != nil {
 		contract := *r.report.HostContract
 		contract.Libraries = append([]CandidateReportHostLibrary(nil), contract.Libraries...)
@@ -250,6 +257,7 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		return CandidateReport{}, fmt.Errorf("decode candidate report trailing content: %w", err)
 	}
 	if report.SchemaVersion != CandidateReportSchemaVersion &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha4 &&
 		report.SchemaVersion != candidateReportSchemaVersionV1Alpha3 &&
 		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
@@ -263,6 +271,11 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		(report.ArtifactCapability != nil || report.RuntimeAccess != nil ||
 			(report.HostContract != nil && report.HostContract.Platform != nil)) {
 		return CandidateReport{}, errors.New("v1alpha3 candidate report cannot contain artifact capability, host platform, or runtime access")
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha4 && report.ArtifactCapability != nil &&
+		(len(report.ArtifactCapability.InputShape) != 0 || report.ArtifactCapability.InputLayout != "" ||
+			report.ArtifactCapability.InputDataType != "") {
+		return CandidateReport{}, errors.New("v1alpha4 candidate report cannot contain an artifact input contract")
 	}
 	if report.Scope != candidateReportScope {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report scope %q", report.Scope)
@@ -326,6 +339,11 @@ func validateInternalCandidateReport(report CandidateReport) error {
 			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
 			report.ArtifactCapability.FixedBatch < 1 {
 			return errors.New("candidate report artifact target platform and fixed batch are required")
+		}
+		for _, dimension := range report.ArtifactCapability.InputShape {
+			if dimension < 1 {
+				return errors.New("candidate report artifact input shape dimensions must be positive")
+			}
 		}
 	}
 	if report.SchemaVersion == CandidateReportSchemaVersion &&
@@ -435,7 +453,12 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 		return VerifiedCandidateReport{}, err
 	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if report.ArtifactCapability == nil || report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) {
+		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
+			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
+			len(report.ArtifactCapability.InputShape) == 0 ||
+			report.ArtifactCapability.InputShape[0] != report.ArtifactCapability.FixedBatch ||
+			report.ArtifactCapability.InputLayout != RKNNLiteInputLayout ||
+			report.ArtifactCapability.InputDataType != RKNNLiteInputDataType {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability does not match the measurement batch")
 		}
 		if report.HostContract == nil || report.RuntimeAccess == nil {

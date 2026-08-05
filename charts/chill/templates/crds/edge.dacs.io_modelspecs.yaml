@@ -88,6 +88,29 @@ spec:
                           format: int32
                           minimum: 1
                           type: integer
+                        input:
+                          description: |-
+                            Input freezes the tensor contract consumed by a runtime that cannot
+                            discover it safely from the derived executable.
+                          properties:
+                            dataType:
+                              minLength: 1
+                              type: string
+                            layout:
+                              minLength: 1
+                              type: string
+                            shape:
+                              items:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              minItems: 1
+                              type: array
+                          required:
+                          - dataType
+                          - layout
+                          - shape
+                          type: object
                         sourceArtifact:
                           description: |-
                             SourceArtifact references the source ModelArtifact name in this ModelSpec.

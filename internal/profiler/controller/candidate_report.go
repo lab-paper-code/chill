@@ -122,10 +122,16 @@ func reportArtifactCapability(
 	if derivation == nil {
 		return nil
 	}
-	return &profilingrun.CandidateArtifactCapability{
+	capability := &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: derivation.TargetPlatform,
 		FixedBatch:     derivation.FixedBatch,
 	}
+	if derivation.Input != nil {
+		capability.InputShape = append([]int32(nil), derivation.Input.Shape...)
+		capability.InputLayout = derivation.Input.Layout
+		capability.InputDataType = derivation.Input.DataType
+	}
+	return capability
 }
 
 func reportRuntimePackages(source []runtimePackage) []profilingrun.CandidateReportRuntimePackage {

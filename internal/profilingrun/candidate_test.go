@@ -97,7 +97,7 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
-	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
 	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
-	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
 	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
 	hostDigest, err := CandidateHostContractDigest(report.HostContract)
 	if err != nil {
@@ -257,6 +257,13 @@ func rknnHostContractForTest() CandidateReportHostContract {
 	}
 }
 
+func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
+	return &CandidateArtifactCapability{
+		TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
+	}
+}
+
 func TestDecodeCandidateReportRetainsV1Alpha2EvidenceCompatibility(t *testing.T) {
 	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
@@ -307,6 +314,33 @@ func TestDecodeCandidateReportRetainsV1Alpha3EvidenceCompatibility(t *testing.T)
 	}
 	if _, err := DecodeCandidateReport(payload); err == nil {
 		t.Fatal("expected v1alpha3 report with v1alpha4 host platform rejection")
+	}
+}
+
+func TestDecodeCandidateReportRetainsV1Alpha4EvidenceCompatibility(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.SchemaVersion = candidateReportSchemaVersionV1Alpha4
+	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
+	contract := rknnHostContractForTest()
+	report.HostContract = &contract
+	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err != nil {
+		t.Fatal(err)
+	}
+	report.ArtifactCapability.InputShape = []int32{1, 224, 224, 3}
+	report.ArtifactCapability.InputLayout = RKNNLiteInputLayout
+	report.ArtifactCapability.InputDataType = RKNNLiteInputDataType
+	payload, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err == nil {
+		t.Fatal("v1alpha4 candidate report accepted a v1alpha5 artifact input contract")
 	}
 }
 

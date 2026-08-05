@@ -14,9 +14,10 @@ const (
 	RuntimeResultSchemaVersionV1Alpha1 = "chill.dacs.io/batch-characterization.v1alpha1"
 	RuntimeResultSchemaVersion         = "chill.dacs.io/batch-characterization.v1alpha2"
 
-	RKNNLiteCoreMask    = "NPU_CORE_0"
-	RKNNLiteInputLayout = "NHWC"
-	runtimeAArch64      = "aarch64"
+	RKNNLiteCoreMask      = "NPU_CORE_0"
+	RKNNLiteInputLayout   = "NHWC"
+	RKNNLiteInputDataType = "float32"
+	runtimeAArch64        = "aarch64"
 )
 
 type RuntimeResult struct {

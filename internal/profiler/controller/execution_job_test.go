@@ -465,7 +465,10 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 		Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
 		Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
 	}
-	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
+		TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+		InputLayout: profilingrun.RKNNLiteInputLayout, InputDataType: profilingrun.RKNNLiteInputDataType,
+	}
 	report.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
 	report.HostContract = &host
 	report.RuntimeAccess = &profilingrun.CandidateReportRuntimeAccess{

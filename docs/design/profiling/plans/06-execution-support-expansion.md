@@ -156,12 +156,13 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [ ] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha4 and candidate-report v1alpha4 now keep image-owned
+Execution-facts v1alpha4 and candidate-report v1alpha5 now keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
-and the report also retains target platform plus fixed batch. Their decoders
-retain strict v1alpha2/v1alpha3 compatibility for already frozen evidence.
+and the report also retains target platform, fixed batch, and the explicit
+runtime input tensor. Its decoder retains strict v1alpha2-v1alpha4
+compatibility for already frozen evidence.
 Intent v1alpha8 binds only an order-normalized digest of the physical host
 contract into state and omits ORT-only thread settings from RKNNLite's common
 CPU quota; v1alpha7/v1alpha6 CPU bytes remain readable by both Go and Python.

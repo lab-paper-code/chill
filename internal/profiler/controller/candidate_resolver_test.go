@@ -71,7 +71,10 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
 	}
 	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
-		report.ArtifactCapability.FixedBatch != 1 || report.RuntimeAccess == nil ||
+		report.ArtifactCapability.FixedBatch != 1 ||
+		!slices.Equal(report.ArtifactCapability.InputShape, []int32{1, 224, 224, 3}) ||
+		report.ArtifactCapability.InputLayout != profilingrun.RKNNLiteInputLayout ||
+		report.ArtifactCapability.InputDataType != profilingrun.RKNNLiteInputDataType || report.RuntimeAccess == nil ||
 		!report.RuntimeAccess.Privileged || !slices.Equal(report.RuntimeAccess.SupplementalGroups, []int64{44, 110}) {
 		t.Fatalf("artifact capability or runtime access was not retained: %#v %#v",
 			report.ArtifactCapability, report.RuntimeAccess)
@@ -82,6 +85,20 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 	}
 	if resolved.State.HostContractDigest != wantHostDigest {
 		t.Fatalf("frozen host contract digest = %q, want %q", resolved.State.HostContractDigest, wantHostDigest)
+	}
+}
+
+func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *testing.T) {
+	objects := validRKNNCandidateObjects()
+	model := objects[0].(*edgev1alpha1.ModelSpec)
+	model.Spec.Artifacts[1].Derivation.Input = nil
+	resolver := newCandidateResolver(t, objects...)
+	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
+		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: fixedPowerMode,
+	})
+	if err == nil || !strings.Contains(err.Error(), "input tensor contract") {
+		t.Fatalf("RKNN artifact without input tensor contract was accepted: %v", err)
 	}
 }
 
@@ -455,6 +472,10 @@ func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivatio
 		SourceArtifact: source,
 		TargetPlatform: "rk3588",
 		FixedBatch:     1,
+		Input: &edgev1alpha1.ModelArtifactInputContract{
+			Shape: []int32{1, 224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
+			DataType: profilingrun.RKNNLiteInputDataType,
+		},
 		Conversion: edgev1alpha1.ModelArtifactConversion{
 			Tool:         "rknn-toolkit2",
 			Version:      "2.3.2",
