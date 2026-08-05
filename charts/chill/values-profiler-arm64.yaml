@@ -1,6 +1,6 @@
-# Opt-in Profiler facts for the Raspberry Pi 5 CPU ORT path on the current
-# CHILL testbed. The observer images are runnable arm64 child manifests, so
-# this profile intentionally contains only arm64 execution declarations.
+# Opt-in Profiler facts for the current CHILL testbed arm64 CPU ORT paths.
+# The runtime, artifact, and observer images are runnable arm64 child manifests;
+# Node-specific metric sources remain explicit entries in the same frozen facts.
 evidenceStore:
   enabled: true
   configRef:
@@ -14,6 +14,18 @@ profiler:
     executionDeclarations:
       - modelSpec: mobilenet-v2-050
         deviceClass: raspberry-pi-5-8g
+        executionPath: ort-cpu
+        runtime:
+          contentDigest: sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+        artifact:
+          schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
+          image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
+          architecture: arm64
+          path: /artifact/mobilenet-v2-050.onnx
+          digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
+      - modelSpec: mobilenet-v2-050
+        deviceClass: orangepi-5-plus-16g
         executionPath: ort-cpu
         runtime:
           contentDigest: sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3

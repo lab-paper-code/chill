@@ -5,10 +5,11 @@
 ## Status
 
 Active implementation plan. P0, the support vocabulary and initial matrix, was
-recorded on 2026-08-05. P1, Raspberry Pi 5 CPU ORT at fixed power mode, is the
-current implementation slice. Later slices remain unauthorized until their
-preceding completion condition is met or this plan is revised with stronger
-evidence.
+recorded on 2026-08-05. P1, Raspberry Pi 5 CPU ORT at fixed power mode, remains
+at L2 pending a physical power-supply correction. P2 Orange Pi CPU ORT fact
+expansion proceeds independently while that testbed condition remains open.
+Later slices remain unauthorized until their preceding completion condition is
+met or this plan is revised with stronger evidence.
 
 This plan expands the set of Nodes, power modes, runtime paths, and models that
 the production `ProfilingRun` path can measure. It does not treat catalog
@@ -127,7 +128,7 @@ source evidence proves a shared change is required.
   both children are published under `sha-fb80fa3`.
 - [x] Record the selected child image digest, not only a manifest-list digest,
   in the trusted runtime and observer declarations. The opt-in chart profile is
-  `charts/chill/values-profiler-rasp5.yaml`.
+  `charts/chill/values-profiler-arm64.yaml`.
 - [x] Produce and verify an arm64 declaration containing ONNX Runtime,
   `CPUExecutionProvider`, and normalized architecture. The exact runtime child
   reported `aarch64`, ONNX Runtime `1.23.2`, and the CPU provider on `rasp5`;
@@ -238,7 +239,12 @@ support.
 
 ## P2: Orange Pi CPU ORT / fixed
 
-- [ ] Add exact Orange Pi runtime and artifact declarations.
+- [x] Add exact Orange Pi runtime and artifact declarations. The arm64 profile
+  reuses the already verified child images without adding a device-specific
+  runtime path: measurement worker
+  `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`
+  and artifact
+  `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721`.
 - [ ] Add its Node-specific metric source and wall-meter identity.
 - [ ] Verify CPU thermal/throttle metric completeness.
 - [ ] Bind CPU request and ORT threads to observed allocatable CPU.
