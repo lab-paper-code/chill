@@ -155,6 +155,44 @@ source evidence proves a shared change is required.
 - [ ] Verify all six Runs report execution complete, evidence verified, and
   evidence admitted.
 
+### P1 current-HEAD live result
+
+The opt-in Raspberry Pi profile was installed on 2026-08-05 with the Operator,
+Profiler, and Console aligned to repository commit `333457e`. The existing
+class-neutral CPU ORT implementation required no Raspberry Pi-specific
+controller, worker, or `hack/` producer:
+
+- active Run `rasp5-active-bs1-a1` completed on `rasp5`, durably reloaded and
+  verified evidence `sha256:b5bff1c4284e56077b67eb0c2492fe67353aa79ee914ea535274a8cf6c6ec3fe`,
+  and executed 2,304 batch-one calls in 30.001 seconds with ONNX Runtime
+  `1.23.2` and `CPUExecutionProvider`;
+- its wall-power window contained 31 successful samples with 8.668 W mean,
+  but 17 samples reported current throttling, so `wall-power-v2` correctly
+  rejected the Run with `ThermalOrRuntimeThrottling`;
+- a separate diagnostic Run reproduced 16 active samples. A read-only host
+  trace observed Raspberry Pi firmware values alternating between `50005` and
+  `50000` during load. These are hexadecimal values: `0x50005` asserts current
+  undervoltage and current throttling as well as their history bits. This is a
+  testbed power-supply blocker, not a CHILL admission defect; and
+- idle Run `rasp5-idle-model-loaded-i1` used the same retained candidate after
+  a 60-second observer-independent settling period. It completed, durably
+  reloaded, and was admitted with evidence
+  `sha256:30c6870681ebbffac300b3ab959a2767e7be16909045de57db38717246cd8f38`.
+  All 31 thermal samples were observable and none was active.
+
+The active diagnostic also exposed a metric-source defect outside this
+repository: the deployed edge-metrics exporter parses the prefix-free
+hexadecimal `get_throttled` text as decimal. It therefore reports no latched
+samples for `50000`/`50005`. That reporting defect must be fixed at the metric
+producer, but it does not make the active rejection a false positive because
+`0x50005` really does assert the current-throttled bit.
+
+This raises the Raspberry Pi slice to L2 and proves the idle admission path.
+It does not satisfy L3 until the electrical throttling is removed and both
+active and idle evidence are admitted. The diagnostic Run had an additional
+ownerless trace Pod in its environment identity and is not a repeated campaign
+trial.
+
 Completion: `raspberry-pi-5-8g / mobilenet-v2-050 / ort-cpu / fixed` is L3 for
 both workload modes on current HEAD.
 
