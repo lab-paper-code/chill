@@ -125,7 +125,7 @@ are live-verified. The scope does not orchestrate a batch
 campaign, derive `b_sat`, publish a `DeviceProfile`, or connect to the
 scheduler.
 
-### 5a. Sequential batch sweep with early stopping — approved, not implemented
+### 5a. Sequential batch sweep with early stopping — implemented and live-verified
 
 [plans/05a-sequential-batch-stop.md](plans/05a-sequential-batch-stop.md)
 
@@ -134,12 +134,12 @@ Answers only:
 > Walking batch sizes upward, when has energy per item stopped improving enough
 > to keep going?
 
-Approved scope, not implemented. It takes the early-stopping rule as implemented
-in Keras, PyTorch Lightning, scikit-learn, Hugging Face, and Optuna, adapts its
-margin to a relative form, and walks batch sizes until they stop paying off. The
-batch domain is discovered rather than declared, and the cost is a fraction of
-Plan 5's. It produces a decision with no confidence statement attached, and its
-selected batch is the candidate Plan 5's confirmation pass takes as input.
+The pure family-contract, Loader-verified family, exact-state curve, and
+sequential-stop boundaries are implemented. A pre-registered two-member RKNN
+campaign retained, verified, admitted, and composed all 12 post-freeze Runs,
+selected batch one, and stopped at the batch-three capability boundary. The
+result is a decision without a confidence statement; its selected batch is the
+candidate Plan 5's confirmation pass takes as input.
 
 ### 5. Batch-saturation campaign — approved, not implemented
 
@@ -150,12 +150,14 @@ Answers only:
 > Under what predeclared rule does a set of Runs establish batch saturation for
 > one frozen curve family?
 
-Approved scope, not implemented. It fixes a domain-wide relative saturation
-estimand with simultaneous calibration, rebuilds the point-confidence
-construction, and separates candidate discovery from confirmation. Campaign
-provenance is pre-registered in a committed record rather than machine-enforced;
-that boundary is stated in the plan. It does not authorize a `DeviceProfile`
-API, a campaign controller, an intent schema change, or scheduler consumption.
+Approved scope, partially shared foundation only. Plan 5a supplies the frozen
+family, verified family, exact-state curve container, and a live discovery
+candidate. The Plan 5-specific joint estimator, complete two-pass confidence
+calibration, confirmatory sizing, policy decoding, and confirmatory result are
+not implemented. Campaign provenance is pre-registered in a committed record
+rather than machine-enforced; that boundary is stated in the plan. It does not
+authorize a `DeviceProfile` API, a campaign controller, an intent schema change,
+or scheduler consumption.
 
 ### 6. Execution-support expansion — active
 

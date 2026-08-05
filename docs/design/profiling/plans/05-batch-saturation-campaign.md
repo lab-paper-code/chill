@@ -4,13 +4,18 @@
 
 ## Status
 
-Approved implementation plan. No part of this plan is implemented. It fixes the
-quantity that decides `b_sat` — the largest remaining energy improvement any
-larger measured batch still offers — gives curve derivation ownership of the
-exact idle baseline set, rebuilds the point-confidence construction, and separates
-candidate discovery from confirmation. It does not authorize a `DeviceProfile`
-API, a campaign CRD or controller, an intent schema change, cross-model pooling,
-or scheduler consumption.
+Approved implementation plan. The reusable frozen-family, verified-family, and
+opaque exact-state curve boundaries are implemented under Plan 5a, and its live
+sequential result supplies one discovery candidate. They do not implement Plan
+5's joint estimator or statistical claim. The complete two-pass calibration,
+confirmatory sizing, policy decoding, and confirmatory result remain
+unimplemented. This plan fixes the quantity that decides `b_sat` — the largest
+remaining energy improvement any larger measured batch still offers — gives
+curve derivation ownership of the exact idle baseline set, rebuilds the
+point-confidence construction, and separates candidate discovery from
+confirmation. It does not authorize a `DeviceProfile` API, a campaign CRD or
+controller, an intent schema change, cross-model pooling, or scheduler
+consumption.
 
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
 original one-state assumption for runtimes with one immutable artifact per
