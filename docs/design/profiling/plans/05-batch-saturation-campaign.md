@@ -15,14 +15,16 @@ under its own version. The post-selection error allocation is also fixed and
 regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
 estimator, global-`H` confirmatory sizing, and typed confirmatory result are
-implemented. Policy-file decoding and both policy digests, a concrete Plan 5
-campaign record, and a live confirmatory result remain unimplemented. This plan
-fixes the quantity that decides `b_sat` — the largest remaining energy
-improvement any larger measured batch still offers — gives curve derivation
-ownership of the exact idle baseline set, rebuilds the point-confidence
-construction, and separates candidate discovery from confirmation. It does not
-authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
-change, cross-model pooling, or scheduler consumption.
+implemented. The discovery-policy file has a strict canonical decoder and
+content digest. Confirmatory-policy decoding and binding both policy digests, a
+concrete Plan 5 campaign record, and a live confirmatory result remain
+unimplemented. This plan fixes the quantity that decides `b_sat` — the largest
+remaining energy improvement any larger measured batch still offers — gives
+curve derivation ownership of the exact idle baseline set, rebuilds the
+point-confidence construction, and separates candidate discovery from
+confirmation. It does not authorize a `DeviceProfile` API, a campaign CRD or
+controller, an intent schema change, cross-model pooling, or scheduler
+consumption.
 
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
 original one-state assumption for runtimes with one immutable artifact per
@@ -831,7 +833,9 @@ Plan 5 is complete when:
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
    `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
    persisted to the evidence store, since these are a JSON field name and a
-   reason-code value. Add golden tests.
+   reason-code value. Add golden tests. Discovery-policy canonical decoding and
+   its content digest are implemented; the confirmatory version and final
+   two-digest binding remain.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, eligible member map, and `CurveFamilyContractDigest` in the
    discovery policy version. The realized `CurveFamilyIdentity` follows Loader

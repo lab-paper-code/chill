@@ -157,11 +157,13 @@ implemented, and the global post-selection error allocation is derived and
 regression-tested. The deterministic domain-wide discovery screen is also
 implemented, as is the global-`H` confirmatory sizing rule. The final joint
 contrast/covariance estimator and typed confirmatory result are implemented.
-Policy-file decoding and both policy digests, a concrete Plan 5 campaign record,
-and a live confirmatory result are not implemented. Campaign provenance is
-pre-registered in a committed record rather than machine-enforced; that boundary
-is stated in the plan. It does not authorize a `DeviceProfile` API, a campaign
-controller, an intent schema change, or scheduler consumption.
+The discovery policy has a strict canonical decoder and content digest.
+Confirmatory-policy decoding and binding both policy digests into the final
+result, a concrete Plan 5 campaign record, and a live confirmatory result are not
+implemented. Campaign provenance is pre-registered in a committed record rather
+than machine-enforced; that boundary is stated in the plan. It does not authorize
+a `DeviceProfile` API, a campaign controller, an intent schema change, or
+scheduler consumption.
 
 ### 6. Execution-support expansion — active
 
