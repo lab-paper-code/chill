@@ -345,3 +345,90 @@ intent diffs found no other within-mode drift. Node `resourceVersion` is an
 audit field deliberately excluded from all three derivation identities, while
 the Node UID remained fixed. The two support rows therefore satisfy Plan 6 L3;
 multiple fixed-batch artifacts remain P7/L4 work.
+
+## Orange Pi RKNNLite batch two / fixed
+
+### Artifact and installed execution facts
+
+- The repository-owned conversion recipe used canonical ONNX bytes
+  `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`,
+  RKNN Toolkit2 2.3.2 wheel
+  `sha256:135085a8f19fe4126811920ac42ad7391499ec9b0d7373aa154775864a4e7736`,
+  target `rk3588`, batch 2, and recipe identity
+  `sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed`.
+- The result is 4,943,089 bytes with digest
+  `sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d`
+  at `/artifact/mobilenet-v2-050-rk3588-bs2.rknn`. Artifact image manifest
+  `sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed`
+  was read back on `orangepi` before installation.
+- The final installed images are direct arm64 manifests: RKNNLite worker
+  `sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3`,
+  MetricObserver
+  `sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe`,
+  and WorkloadObserver
+  `sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7`.
+  All six final Pods reported those exact declarations as Kubernetes
+  `imageID` values.
+
+### Admission corrections and final identity family
+
+- The first batch-two active Run was admitted. The first idle request then
+  exposed a stale API CEL rule that globally required idle batch one; commit
+  `4295440` left artifact/batch matching to the frozen runtime boundary and
+  retained only the mode-specific idle protocol validation in the API.
+- `orangepi-rknnlite-idle-model-loaded-bs2-i1` subsequently failed because the
+  already installed observer images still carried the old shared intent
+  validator. The failed immutable Run remains diagnostic evidence and has no
+  finalized evidence object.
+- After rebuilding the observers, active `a2..a4` and idle `i2..i4` were all
+  admitted. They used multi-architecture observer indexes, so they are valid
+  pre-finalization measurements but not members of the Plan 6 L3 identity
+  family, which requires direct runnable child manifests.
+- Helm revision 9 installed the three direct arm64 runtime/helper manifests.
+  The final retained family is:
+
+| Mode | Run | Run UID | Pod-derived Trial ID | Final evidence digest |
+|---|---|---|---|---|
+| active | `orangepi-rknnlite-active-bs2-a5` | `aba5c5ad-6ea3-43d1-94dc-ddd9e5011212` | `3afa297f-c465-4c19-9a35-c03d475124d8` | `sha256:6dab9d576b6140c1a2638ac45507a2d6c4d931aba24207188f8e0e77f753a16a` |
+| active | `orangepi-rknnlite-active-bs2-a6` | `364c6d42-8388-4399-8731-5edc2975a0be` | `cfd697cc-5748-47e6-b160-bcd73557a72a` | `sha256:0c6b075f019be2aef8acc599746b10b6a96517866237ba2d4e1abb65b9bf3b18` |
+| active | `orangepi-rknnlite-active-bs2-a7` | `3a1252a3-f1af-4e5f-b723-f815aa2ec4c8` | `d41fc4fb-c56b-4b5d-87b4-c99c266b1097` | `sha256:188786598f8943a952e888b97d45c296118693a11b642aedd61ee53eb8f27d1c` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i5` | `d7c270df-917f-42d0-9b30-c6c9f9f24f8a` | `112906a2-d8d3-4acf-93b4-922210a37f7d` | `sha256:53baca364527e8773183bf8318a4c7b242e8fbf00abb84d6ba4ad468e43c0b51` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i6` | `0ca298be-ffed-44c8-a1c9-b52d80b9afe3` | `348e104e-b50e-4207-95a2-1993cf033936` | `sha256:7f842798cb95df5270c87c81a663c67dafc9675cb46e317e231f631e3312e92f` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i7` | `74fa476c-561e-4f8a-a149-9981446a8fac` | `25a63803-416e-4308-a1d1-eda728f70ab4` | `sha256:6c4aa542b9bf2d850e87b7ccf098869e457d88988d222fdaedc4d39e7fd1a8a2` |
+
+All six evidence objects were independently reloaded through the retained Job
+binding, credentials, S3 reader, digest verifier, and production active/idle
+projectors. The three active Runs share protocol identity
+`measurement-protocol-identity.v1alpha1@sha256:5812007de5098d3f393f109b0e1006d4a0173ba70d5e54f26c7eef22710d41ad`;
+the three idle Runs share the distinct protocol identity
+`measurement-protocol-identity.v1alpha1@sha256:edec97456323f32fb3367821a88d7b2692c2a0f77fd4ef1d57775dd3569c35a3`.
+Both modes share execution-state identity
+`execution-state-identity.v1alpha2@sha256:941106399af8e860fd16b766f24166284172584442034d29e565e69419800501`
+and owner-bound environment identity
+`external-environment-identity.v1alpha1@sha256:1e462e5d2549ac2be0a98c2e74e8a8d07f9365766280cf052cc840227cb2ff31`.
+
+### Diagnostic point and L4 blocker
+
+A read-only diagnostic call used the existing `DeriveIdleBaseline`,
+`IncrementalTrial`, and `Aggregate` functions with three independent trials per
+mode. It produced:
+
+| Quantity | Result |
+|---|---:|
+| model-loaded idle power | `2.7477521 +/- 0.0256116 W` |
+| incremental energy at batch 2 | `0.00871756 +/- 0.00017566 J/item` |
+| active latency p99 | `10.218714 ms` |
+
+The intervals are the current 95% Student-t construction. The active Runs
+completed 8,234, 8,288, and 8,264 items. The diagnostic point policy was
+`live-diagnostic-min3-v1`; no production caller or persistence was added, so
+this proves the L3 row and current derivation path, not a Plan 5/5a L4 claim.
+
+The live audit also confirmed that the batch-one state identity is
+`execution-state-identity.v1alpha2@sha256:dec774c084f4da8fef51feb78208bc402f7aa5068dfa164d9185f88b01cf6905`,
+which differs from batch two. Current source binds the full execution state,
+including artifact digest and path, into state identity; it separately binds
+the artifact and observer images into protocol identity. Consequently the two
+fixed-artifact rows cannot share the one execution state and one idle baseline
+required by Plans 5 and 5a. Resolving that contract, without erasing physical
+artifact identity or assuming equal idle power, is the remaining P7-to-L4 gate.

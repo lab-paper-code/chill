@@ -13,6 +13,13 @@ claim. It authorizes no API, controller, intent schema, or policy-catalog change
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.
 
+Implementation against a runtime that uses one immutable artifact per fixed
+batch is blocked on the same identity decision as Plan 5. Current RKNN
+batch-one and batch-two evidence has different execution-state identities, so
+it cannot satisfy the rule below that every point shares one idle baseline.
+Plan 6 must first define and justify the fixed-artifact curve and baseline
+contract; this plan does not authorize weakening identity checks.
+
 ## Question
 
 > Walking batch sizes upward, when has energy per item stopped improving enough

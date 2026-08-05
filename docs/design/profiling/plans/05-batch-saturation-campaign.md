@@ -12,6 +12,14 @@ candidate discovery from confirmation. It does not
 authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
 change, cross-model pooling, or scheduler consumption.
 
+Implementation against a runtime that uses one immutable artifact per fixed
+batch is blocked on an earlier identity decision. Current execution-state
+identity binds the artifact digest and path, so retained RKNN batch-one and
+batch-two evidence are different states and cannot enter this plan's one-state,
+one-baseline `Curve`. Do not exclude artifact identity or reuse one baseline by
+convenience; Plan 6 must first define and justify the fixed-artifact curve and
+idle-baseline contract.
+
 Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
 4 leaves batch selection and repeated trials to a later campaign planner. This
 plan closes both by pre-registration and a published Run list. The

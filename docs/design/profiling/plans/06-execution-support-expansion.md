@@ -9,10 +9,12 @@
 ## Status
 
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
-physical power-supply correction. Orange Pi CPU ORT and RKNNLite have reached
-L3. RKNNLite model and batch expansion is now the current independent slice;
-later slices remain deferred until their stated entry condition is met or this
-plan is explicitly revised.
+physical power-supply correction. Orange Pi CPU ORT and the batch-one and
+batch-two RKNNLite rows have reached L3. RKNNLite batch expansion is now
+blocked at the L4 boundary: fixed-batch artifacts produce distinct execution
+states, while Plans 5 and 5a currently require one state and one idle baseline
+for a curve. Later slices remain deferred until their stated entry condition is
+met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -47,7 +49,7 @@ corresponding level.
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed | L3 | Three active and three model-loaded-idle Runs are retained, reloaded, and admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | RKNNLite model and batch expansion | L3 to L4 | Add only artifact-backed fixed batches, then execute discovery under Plan 5a. |
+| current | RKNNLite model and batch expansion | two artifact-backed rows at L3 | Decide the fixed-artifact curve identity and idle-baseline rule before implementing or executing Plan 5a. |
 
 ## Stable decisions
 
@@ -248,12 +250,19 @@ Entry condition: Node-wide GPU clock ownership and restoration are proven.
 Entry condition: the owning execution path reaches L3 for
 `mobilenet-v2-050`.
 
-- [ ] Bind each logical model to immutable per-runtime artifacts and capabilities.
-- [ ] Do not infer RKNN or TensorRT batch flexibility from ONNX shape flexibility.
-- [ ] Admit active and idle evidence before a batch campaign; use Plan 5a for
-  discovery and Plan 5 for confirmatory L4 claims.
-- [ ] Update rows individually; never promote a class, runtime, or model family
-  from one successful row.
+- [x] Bind the RKNN batch-two capability to a separately converted immutable
+  artifact and execution path; do not infer it from ONNX shape flexibility.
+- [x] Admit three active and three model-loaded-idle batch-two Runs under one
+  stable execution state and record that row independently at L3.
+- [x] Keep the batch-one and batch-two rows separate; do not promote the class,
+  runtime, model family, or a multi-batch curve from either row alone.
+- [ ] Decide how a curve over fixed-batch artifacts owns execution-state
+  identity and idle baselines. Current source binds artifact bytes/path into
+  state, and the retained batch-one and batch-two state identities differ, so
+  the one-state/one-baseline assumptions in Plans 5 and 5a do not currently
+  admit both points.
+- [ ] Only after that decision, implement Plan 5a discovery and use Plan 5 for
+  confirmatory L4 claims.
 
 ## Common completion gate
 

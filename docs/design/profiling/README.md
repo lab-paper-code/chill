@@ -167,10 +167,12 @@ Answers only:
 > row to measurement-ready?
 
 P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
-ORT remains paused at L2 on a physical electrical blocker; Orange Pi CPU ORT
-is the current independent slice. Runtime-specific adapters and mutable
-power-mode ownership remain explicit; catalog presence and historical
-standalone smoke are not treated as production execution evidence.
+ORT remains paused at L2 on a physical electrical blocker. Orange Pi CPU ORT
+and two immutable RKNN fixed-batch rows are L3; the current boundary is the
+fixed-artifact curve-identity and idle-baseline decision required before L4.
+Runtime-specific adapters and mutable power-mode ownership remain explicit;
+catalog presence and historical standalone smoke are not treated as production
+execution evidence.
 
 ## Component contracts
 
