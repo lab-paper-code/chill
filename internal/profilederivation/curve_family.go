@@ -76,7 +76,7 @@ type CurveConversionContract struct {
 }
 
 type CurveTensorContract struct {
-	InputName     string `json:"inputName"`
+	Layout        string `json:"layout"`
 	DataType      string `json:"dataType"`
 	NonBatchShape []int  `json:"nonBatchShape"`
 }
@@ -361,7 +361,7 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 	if err := validateCurveConversion(shared.Conversion); err != nil {
 		return err
 	}
-	if !cleanCurveValue(shared.Tensor.InputName) || !cleanCurveValue(shared.Tensor.DataType) ||
+	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
 		len(shared.Tensor.NonBatchShape) == 0 {
 		return errors.New("curve-family tensor contract is incomplete")
 	}

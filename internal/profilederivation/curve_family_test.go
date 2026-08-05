@@ -240,7 +240,7 @@ func testCurveContract(memberCount int) (CurveFamilySharedContract, []CurveFamil
 			Derived: true, TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
 			ToolDistributionDigest: testDigest("a"), RecipeDigest: testDigest("b"),
 		},
-		Tensor: CurveTensorContract{InputName: "input", DataType: "float32", NonBatchShape: []int{3, 224, 224}},
+		Tensor: CurveTensorContract{Layout: "NHWC", DataType: "float32", NonBatchShape: []int{224, 224, 3}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
 	shared.IdleProtocol.InputGenerator = "none"
@@ -254,7 +254,7 @@ func testCurveContract(memberCount int) (CurveFamilySharedContract, []CurveFamil
 			ArtifactName: "artifact-bs" + string(rune('0'+batch)), ArtifactDigest: testDigest(string(rune('c' + index))),
 			ArtifactPath:  "/artifact/model-bs" + string(rune('0'+batch)) + ".rknn",
 			ArtifactImage: testImage("artifact", string(rune('c'+index))), FixedBatchCapability: batch,
-			InputShape: []int{batch, 3, 224, 224},
+			InputShape: []int{batch, 224, 224, 3},
 		}
 	}
 	return shared, members
