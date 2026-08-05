@@ -22,8 +22,9 @@ This plan does not execute a workload or inspect a live Node.
 - one artifact execution-path requirement
 - one immutable runtime workload declaration with a known producer
 
-The first supported path is CPU ONNX Runtime. Jetson and RKNN comparisons stay
-`Unknown` where an authoritative ABI/component producer does not yet exist.
+The first supported path is CPU ONNX Runtime. Plan 6 later added the narrow
+RKNN artifact relation described below; live RKNN compatibility still stays
+`Unknown` until an authoritative runtime and host-component producer exists.
 
 ## Checkpoint 1 decision: minimum ModelSpec
 
@@ -52,6 +53,30 @@ The demonstrated canonical ONNX artifact is not architecture-specific, and
 the selected campaign batches do not establish a digest-bound artifact batch
 capability. Those fields remain absent rather than being guessed from one CPU
 Run or added for future runtimes.
+
+### Plan 6 extension: one fixed-batch RKNN artifact
+
+The first Orange Pi RKNN slice exercises one optional artifact derivation
+group:
+
+```text
+source artifact reference     canonical ONNX artifact in the same ModelSpec
+target platform               rk3588
+fixed batch                   one positive encoded batch
+conversion identity           tool + version + tool distribution SHA-256
+                              + recipe SHA-256
+```
+
+The derived artifact retains its own output-byte digest. That digest is not
+recomputed from the conversion fields: RKNN Toolkit2 v2.3.2 produced different
+output bytes in two consecutive conversions under the same declared source,
+tool, recipe, target, and batch. The catalog therefore binds an exact selected
+output and separately records how it was produced.
+
+The source reference is resolved semantically by the candidate adapter. The
+OpenAPI schema validates only the structure and digest forms. Runtime image,
+host `librknnrt`, driver, device visibility, initialization, and NPU allocation
+remain outside `ModelSpec` and must come from their owning execution sources.
 
 ## Checkpoint 2 decision: runtime declaration producer
 
@@ -118,10 +143,11 @@ Configuration I/O, strict decoding, structural reference, and identity-
 integrity failures do not produce a candidate. Callers gate explicitly on the
 verdict rather than treating successful evaluation as compatibility.
 
-The pure evaluator, not the CLI adapter, owns the first narrow known relation
-between artifact format `onnx` and required runtime family `onnxruntime`. This
-does not claim that a selected artifact loads or executes; unsupported format
-and runtime relations remain `Unknown` until a concrete rule is implemented.
+The pure evaluator, not the CLI adapter, owns the narrow known relations
+between artifact format `onnx` and runtime family `onnxruntime`, and between
+`rknn` and `rknnlite`. These relations do not claim that a selected artifact
+loads or executes; unsupported format and runtime relations remain `Unknown`
+until a concrete rule is implemented.
 
 ## Output
 

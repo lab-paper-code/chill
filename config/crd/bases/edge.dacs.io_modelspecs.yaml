@@ -47,6 +47,62 @@ spec:
                 items:
                   description: ModelArtifact identifies one immutable executable representation.
                   properties:
+                    derivation:
+                      description: |-
+                        Derivation binds a derived executable to its source artifact and conversion identity.
+                        It is absent for canonical source artifacts.
+                      properties:
+                        conversion:
+                          description: Conversion binds the converter and recipe used
+                            to produce this artifact.
+                          properties:
+                            recipeDigest:
+                              description: RecipeDigest identifies the exact conversion
+                                recipe bytes.
+                              pattern: ^sha256:[0-9a-f]{64}$
+                              type: string
+                            tool:
+                              description: Tool is the converter family, such as rknn-toolkit2.
+                              minLength: 1
+                              type: string
+                            toolDigest:
+                              description: ToolDigest identifies the exact converter
+                                distribution bytes.
+                              pattern: ^sha256:[0-9a-f]{64}$
+                              type: string
+                            version:
+                              description: Version is the converter's reported version.
+                              minLength: 1
+                              type: string
+                          required:
+                          - recipeDigest
+                          - tool
+                          - toolDigest
+                          - version
+                          type: object
+                        fixedBatch:
+                          description: FixedBatch is the only batch size encoded by
+                            this artifact.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        sourceArtifact:
+                          description: |-
+                            SourceArtifact references the source ModelArtifact name in this ModelSpec.
+                            Reference resolution is semantic validation, not OpenAPI structure.
+                          minLength: 1
+                          type: string
+                        targetPlatform:
+                          description: TargetPlatform is the converter target, such
+                            as rk3588.
+                          minLength: 1
+                          type: string
+                      required:
+                      - conversion
+                      - fixedBatch
+                      - sourceArtifact
+                      - targetPlatform
+                      type: object
                     digest:
                       description: Digest identifies the exact artifact bytes. The
                         first schema accepts SHA-256.

@@ -46,7 +46,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | Orange Pi RKNNLite / fixed | L0 | Freeze one RKNN artifact/conversion identity and the host ABI/device contract before adding an adapter. |
+| current | Orange Pi RKNNLite / fixed | L0 | Turn the diagnostic host/runtime facts into trusted execution declarations and Run-time verification before adding an adapter. |
 
 ## Stable decisions
 
@@ -147,7 +147,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
 Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
-- [ ] Bind an immutable RKNN artifact to its source ONNX, target platform,
+- [x] Bind an immutable RKNN artifact to its source ONNX, target platform,
   conversion identity, and fixed-batch capability.
 - [ ] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.

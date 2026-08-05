@@ -276,6 +276,22 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			},
 			match: "references missing artifact",
 		},
+		{
+			name: "derived artifact missing source",
+			mutate: func(objects []client.Object) {
+				artifact := &objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0]
+				artifact.Derivation = validArtifactDerivation("missing")
+			},
+			match: "references missing source artifact",
+		},
+		{
+			name: "derived artifact references itself",
+			mutate: func(objects []client.Object) {
+				artifact := &objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0]
+				artifact.Derivation = validArtifactDerivation(artifact.Name)
+			},
+			match: "references itself as source",
+		},
 	}
 
 	for _, test := range tests {
@@ -288,6 +304,20 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", test.match, err)
 			}
 		})
+	}
+}
+
+func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivation {
+	return &edgev1alpha1.ModelArtifactDerivation{
+		SourceArtifact: source,
+		TargetPlatform: "rk3588",
+		FixedBatch:     1,
+		Conversion: edgev1alpha1.ModelArtifactConversion{
+			Tool:         "rknn-toolkit2",
+			Version:      "2.3.2",
+			ToolDigest:   "sha256:" + strings.Repeat("a", 64),
+			RecipeDigest: "sha256:" + strings.Repeat("b", 64),
+		},
 	}
 }
 

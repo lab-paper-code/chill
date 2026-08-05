@@ -83,6 +83,19 @@ func selectModelPath(
 			"execution path %q references missing artifact %q", selected.Name, selected.Artifact,
 		)
 	}
+	if artifact.Derivation != nil {
+		if artifact.Derivation.SourceArtifact == artifact.Name {
+			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
+				"derived artifact %q references itself as source", artifact.Name,
+			)
+		}
+		if _, exists := artifacts[artifact.Derivation.SourceArtifact]; !exists {
+			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
+				"derived artifact %q references missing source artifact %q",
+				artifact.Name, artifact.Derivation.SourceArtifact,
+			)
+		}
+	}
 	return *selected, artifact, nil
 }
 

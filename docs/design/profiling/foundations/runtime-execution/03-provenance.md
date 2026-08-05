@@ -227,8 +227,10 @@ exists.
 
 - `SUPPORTED_BATCHES`: workload declaration, not artifact-verified capability
 - selected batch with valid output: Run-scoped execution observation
-- toolkit-lite version: image/package declaration when bound to image digest
-- host `librknnrt` and driver identity: currently Unknown
+- toolkit-lite version: a diagnostic image/package observation exists; a
+  trusted runtime declaration bound to the production worker image is pending
+- host `librknnrt` and driver identity: a current diagnostic snapshot exists;
+  a Run-bound verifier and drift comparison are pending
 - `/dev/dri` access and successful initialization: Run-scoped access
   observation, not Kubernetes allocation evidence
 - NPU isolation: Unknown

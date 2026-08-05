@@ -16,6 +16,17 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{name: "compatible", wantVerdict: VerdictCompatible},
 		{
+			name: "compatible RKNNLite relation",
+			mutate: func(input *Input) {
+				input.Artifact.Format = "rknn"
+				input.Path.RuntimeFamily = runtimeFamilyRKNNLite
+				input.Path.Backend = "not-applicable"
+				input.Runtime.Family = runtimeFamilyRKNNLite
+				input.Runtime.Backends = []string{"not-applicable"}
+			},
+			wantVerdict: VerdictCompatible,
+		},
+		{
 			name: "missing declaration",
 			mutate: func(input *Input) {
 				input.Runtime = nil

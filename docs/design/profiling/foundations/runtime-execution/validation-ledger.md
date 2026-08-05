@@ -180,3 +180,51 @@ not by themselves prove execution or admission on every arm64 DeviceClass.
 
 These retained active and idle admissions promote both Orange Pi CPU ORT rows
 to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
+
+## Orange Pi RKNNLite / fixed
+
+### Selected artifact and conversion identity
+
+- The selected source is the canonical `mobilenet-v2-050` ONNX artifact,
+  `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`.
+  The derived target is `rk3588`, batch 1, non-quantized, with input shape
+  `[1,3,224,224]` and output shape `[1,1000]`.
+- The converter is the official x86-64 CPython 3.8 RKNN Toolkit2 v2.3.2 wheel
+  from tag `v2.3.2` (`42aa1d426c0a9e0869b6374edba009f7208a1926`), wheel digest
+  `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`.
+  The exact exporter recipe digest is
+  `sha256:0d4bf28be3c14f1ecc5662a326a273441d9e057e3dfb9102dcdf143c14e2a234`.
+- Two consecutive conversions under that source/tool/recipe/target/batch
+  identity produced output digests
+  `sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550`
+  and
+  `sha256:aa6afc1305754a76f17074a69bbc461cd4ee6487244776620be64efffef3b814`.
+  RKNN output is therefore treated as nondeterministic: conversion identity
+  never substitutes for the selected output-byte digest.
+- The first output is selected and packaged by
+  `build/docker/derived-model-artifact.Dockerfile`. Registry index
+  `sha256:d241fe041c2b32fd25166a2cc6ea20eb88116861b2fed24103c7e66f79ac3856`
+  contains arm64 runnable child
+  `sha256:e33c6874d73c104e12329ab5752d4f6933189c8b4dc42e54986edb711328b50c`.
+  Diagnostic Pod `rknn-artifact-diag-v1` on `orangepi` pulled that exact child
+  and read back the selected 4,559,409-byte RKNN digest and the canonical ONNX
+  digest. This closes the immutable artifact/conversion/fixed-batch catalog
+  boundary, not execution or admission.
+
+### Current host/runtime diagnostic snapshot
+
+- Diagnostic Pod `rknn-host-contract-diag-v1`, UID
+  `7b7fd03b-774e-4e6c-a0cb-2a23463a92dc`, ran on `orangepi` from exact arm64
+  image child
+  `sha256:8c82932ec275cf8557bb27d2a36c6e7282ff42ffdb4a86e0514d32f9e98aa193`.
+  It observed RKNNLite package 2.3.2, driver 0.9.6, and host
+  `/usr/lib/librknnrt.so` digest
+  `sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8`
+  with size 7,726,232 bytes.
+- The same snapshot observed DRM character devices `card0`, `card1`,
+  `renderD128`, and `renderD129`. HostPath visibility does not prove NPU
+  allocation or exclusivity, and the diagnostic did not initialize a session.
+- These two Pods are diagnostic cluster objects, not retained
+  `ProfilingRun` evidence. Until production declarations bind the image-owned
+  package separately from the host library, driver, device visibility, and an
+  explicit allocation/exclusivity claim, both RKNN rows remain L0.
