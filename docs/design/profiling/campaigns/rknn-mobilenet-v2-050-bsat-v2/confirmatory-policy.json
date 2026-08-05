@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "chill.dacs.io/confirmatory-derivation-policy.v1alpha1",
+  "name": "rknn-mobilenet-v2-050-bsat-v2",
+  "curveFamilyContractDigest": "chill.dacs.io/curve-family-contract.v1alpha1@sha256:447c326bbdff27a3e6d750c70af714db739d27138c790c1ee9dbc5ffce4565d2",
+  "pointPolicies": [
+    {
+      "name": "rknn-mobilenet-v2-050-idle-min3-v2",
+      "stage": "idle-baseline",
+      "minimumTrials": 3
+    },
+    {
+      "name": "rknn-mobilenet-v2-050-point-min3-v2",
+      "stage": "incremental-point",
+      "minimumTrials": 3
+    }
+  ],
+  "batchSaturation": {
+    "name": "rknn-mobilenet-v2-050-bsat-v2",
+    "kmax": 2,
+    "relativeImprovementTolerance": 0.05,
+    "discoveryTrials": 3,
+    "maximumConfirmatoryTrials": 6,
+    "maximumActiveRunBudget": 18
+  },
+  "discoveryPolicyDigest": "sha256:965d093a62b3ca2134da859a50c4566e4e0d5a465ea86b48dc626c6863b987f0",
+  "confirmation": {
+    "status": "CandidateOnly",
+    "code": "ConfirmatoryTrialsSized",
+    "candidateBatch": 1,
+    "confirmatoryTrials": 4,
+    "batches": [
+      {
+        "batch": 1,
+        "trials": 4
+      },
+      {
+        "batch": 2,
+        "trials": 4
+      }
+    ]
+  }
+}

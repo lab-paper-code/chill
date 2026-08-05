@@ -168,7 +168,9 @@ second policy and final result therefore record
 `Unavailable: ConfirmatoryBudgetInsufficient` and allocate no confirmatory Runs.
 No statistical `b_sat` claim was made. A disjoint second campaign is frozen
 with a pilot-sized six-trial cap and 18-active-Run budget; none of the first
-campaign's evidence is pooled into it.
+campaign's evidence is pooled into it. Its own live discovery selected batch
+one and froze four confirmatory Runs at each of batches one and two before any
+of those Runs were submitted.
 Campaign provenance is pre-registered in a committed record rather than
 machine-enforced; that boundary is stated in the plan. It does not authorize a
 `DeviceProfile` API, a campaign controller, an intent schema change, or scheduler

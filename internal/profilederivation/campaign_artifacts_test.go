@@ -85,4 +85,24 @@ func TestCommittedPlan5Artifacts(t *testing.T) {
 	if v2BSat.MaximumConfirmatoryTrials != 6 || v2BSat.MaximumActiveRunBudget != 18 {
 		t.Fatalf("v2 pilot-sized caps = %#v", v2BSat)
 	}
+	v2Trials := 4
+	v2Sizing := BSatSizingResult{
+		Status: BSatCandidateOnly, Code: BSatCodeConfirmatoryTrialsSized,
+		CandidateBatch: 1, ConfirmatoryTrials: &v2Trials, ConfirmatoryBatches: []int{1, 2},
+		PolicyVersion: v2.Digest(), CurveFamilyContractDigest: contract.Digest(),
+	}
+	v2ConfirmatoryBytes, err := os.ReadFile(filepath.Join(
+		root, "rknn-mobilenet-v2-050-bsat-v2", "confirmatory-policy.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2Confirmatory, err := DecodeConfirmatoryDerivationPolicy(v2ConfirmatoryBytes, v2, v2Sizing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantV2ConfirmatoryDigest = "sha256:0ce98350240620ed5b4202e30ce499688e28f7d749b9ecc3c2b3e54d04f34ebc"
+	if v2Confirmatory.Digest() != wantV2ConfirmatoryDigest {
+		t.Fatalf("committed v2 confirmatory-policy digest = %q", v2Confirmatory.Digest())
+	}
 }
