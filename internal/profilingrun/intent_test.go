@@ -28,7 +28,7 @@ func TestIntentDigestIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestCurrentIntentCanonicalBytesAndDigestRemainStable(t *testing.T) {
+func TestRetainedV1Alpha6CanonicalBytesAndDigestRemainStable(t *testing.T) {
 	payload, err := os.ReadFile("testdata/intent-v1alpha6.json")
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestCurrentIntentCanonicalBytesAndDigestRemainStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(payload) != string(canonical)+"\n" {
-		t.Fatalf("current intent canonical bytes changed:\nwant %s\n got %s", payload, canonical)
+		t.Fatalf("retained intent canonical bytes changed:\nwant %s\n got %s", payload, canonical)
 	}
 	digest, err := intent.Digest()
 	if err != nil {
@@ -51,6 +51,36 @@ func TestCurrentIntentCanonicalBytesAndDigestRemainStable(t *testing.T) {
 	const wantDigest = "sha256:a45a0a91f397b863fca9eb124419233bc240e5e5eb9395055ffa09640af4523b"
 	if digest != wantDigest {
 		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
+	}
+}
+
+func TestCurrentIntentDigestRemainsStable(t *testing.T) {
+	digest, err := validIntent().Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantDigest = "sha256:fd10ce1e3301a912a667f17fea42d4eb44c7e2b6f9da5244c1c835e6302af8a9"
+	if digest != wantDigest {
+		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
+	}
+}
+
+func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
+	intent := validIntent()
+	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	retained := intent
+	retained.SchemaVersion = previousIntentSchemaVersion
+	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "v1alpha6") {
+		t.Fatalf("retained schema accepted new state material: %v", err)
+	}
+
+	intent.State.HostContractDigest = "sha256:short"
+	if err := intent.Validate(); err == nil {
+		t.Fatal("expected invalid host contract digest rejection")
 	}
 }
 

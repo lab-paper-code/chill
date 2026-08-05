@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha6"
+	previousIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha6"
+	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha7"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -29,7 +30,8 @@ type Intent struct {
 	Workload      WorkloadContract    `json:"workload"`
 }
 
-// UnmarshalJSON strictly decodes the current wire field names.
+// UnmarshalJSON strictly decodes the current wire field names while retaining
+// the immediately previous immutable schema until its live Runs are removed.
 func (i *Intent) UnmarshalJSON(payload []byte) error {
 	type wire Intent
 	var decoded wire
@@ -59,14 +61,15 @@ type CandidateIdentity struct {
 }
 
 type ExecutionState struct {
-	DeviceClass    string `json:"deviceClass"`
-	Model          string `json:"model"`
-	Artifact       string `json:"artifact"`
-	ArtifactDigest string `json:"artifactDigest"`
-	ArtifactPath   string `json:"artifactPath,omitempty"`
-	RuntimeFamily  string `json:"runtimeFamily"`
-	Backend        string `json:"backend"`
-	PowerMode      string `json:"powerMode"`
+	DeviceClass        string `json:"deviceClass"`
+	Model              string `json:"model"`
+	Artifact           string `json:"artifact"`
+	ArtifactDigest     string `json:"artifactDigest"`
+	ArtifactPath       string `json:"artifactPath,omitempty"`
+	RuntimeFamily      string `json:"runtimeFamily"`
+	Backend            string `json:"backend"`
+	PowerMode          string `json:"powerMode"`
+	HostContractDigest string `json:"hostContractDigest,omitempty"`
 }
 
 type Images struct {

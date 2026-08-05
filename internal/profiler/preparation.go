@@ -293,6 +293,10 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 	if err != nil {
 		return err
 	}
+	hostContractDigest, err := profilingrun.CandidateHostContractDigest(report.HostContract)
+	if err != nil {
+		return err
+	}
 	checks := []struct{ name, want, got string }{
 		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
 		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
@@ -301,6 +305,7 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
 		{"metric-observer image", candidate.MetricObserverImage, report.MetricObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
+		{"host contract digest", candidate.State.HostContractDigest, hostContractDigest},
 	}
 	for _, check := range checks {
 		if check.want != check.got {

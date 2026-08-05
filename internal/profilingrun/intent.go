@@ -39,6 +39,9 @@ func (i Intent) Validate() error {
 	if i.Metrics.ConfigurationContentDigest != "" && !digestPattern.MatchString(i.Metrics.ConfigurationContentDigest) {
 		return errors.New("metrics.configurationContentDigest must be a canonical SHA-256 digest")
 	}
+	if i.State.HostContractDigest != "" && !digestPattern.MatchString(i.State.HostContractDigest) {
+		return errors.New("state.hostContractDigest must be a canonical SHA-256 digest")
+	}
 	if i.Candidate.Verdict != "Compatible" {
 		return fmt.Errorf("candidate verdict must be Compatible, got %q", i.Candidate.Verdict)
 	}
@@ -108,8 +111,11 @@ func (i Intent) Validate() error {
 }
 
 func (i Intent) validateSchema() error {
-	if i.SchemaVersion != SchemaVersion {
+	if i.SchemaVersion != SchemaVersion && i.SchemaVersion != previousIntentSchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
+	}
+	if i.SchemaVersion == previousIntentSchemaVersion && i.State.HostContractDigest != "" {
+		return errors.New("v1alpha6 intent cannot contain state.hostContractDigest")
 	}
 	if !validArtifactPath(i.State.ArtifactPath) {
 		return errors.New("state.artifactPath must be a clean absolute container path")
@@ -139,7 +145,7 @@ func (i Intent) validateMeasurementMode() error {
 // IsSupportedActiveIntent reports whether the first CPU ORT active worker
 // family can execute a current intent. Callers must validate the intent separately.
 func IsSupportedActiveIntent(i Intent) bool {
-	return i.SchemaVersion == SchemaVersion &&
+	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousIntentSchemaVersion) &&
 		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode
 }
 
@@ -147,7 +153,8 @@ func IsSupportedActiveIntent(i Intent) bool {
 // implemented by the explicit CPU ORT worker.
 func IsSupportedCPUORTIntent(i Intent) bool {
 	return IsSupportedActiveIntent(i) ||
-		(i.SchemaVersion == SchemaVersion && i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+		((i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousIntentSchemaVersion) &&
+			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
 
 func (i Intent) validateCPUContract() error {

@@ -121,7 +121,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if declaration.Artifact.Digest != artifact.Digest {
 		return profiler.ResolvedCandidate{}, errors.New("artifact supply digest does not match ModelSpec artifact")
 	}
-	reportBytes, err := buildCandidateReport(candidateReportInput{
+	report, err := buildCandidateReport(candidateReportInput{
 		Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
 		ConfigMapKey: r.options.ConfigMapKey, ModelDigest: modelDigest,
 		DeviceDigest: deviceDigest, DeclarationDigest: declaration.RuntimeDeclarationDigest,
@@ -133,7 +133,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	}
 
 	return profiler.ResolvedCandidate{
-		ReportBytes:                     reportBytes,
+		ReportBytes:                     report.Bytes,
 		ModelSpecContentDigest:          modelDigest,
 		DeviceClassContentDigest:        deviceDigest,
 		RuntimeDeclarationContentDigest: declaration.RuntimeDeclarationDigest,
@@ -143,7 +143,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 			Model:       selection.ModelSpec, Artifact: artifact.Name, ArtifactDigest: artifact.Digest,
 			ArtifactPath:  declaration.Artifact.Path,
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
-			PowerMode: selection.PowerMode,
+			PowerMode: selection.PowerMode, HostContractDigest: report.HostContractDigest,
 		},
 		DeviceArchitecture:   deviceClass.Spec.Architecture,
 		DeviceNodeSelector:   deviceFacts.nodeSelector,

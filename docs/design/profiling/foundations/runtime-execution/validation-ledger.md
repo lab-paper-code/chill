@@ -227,7 +227,7 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
 - These two Pods are diagnostic cluster objects, not retained
   `ProfilingRun` evidence. The repository now has strict source and retained-
   report fields that separate the image-owned package from the expected host
-  library, driver, device visibility, and allocation/exclusivity claim. No
-  exact RKNN declaration is installed, no physical state identity binds that
-  host contract, and no production Job verifies it, so both RKNN rows remain
-  L0.
+  library, driver, device visibility, and allocation/exclusivity claim. New
+  intents bind its order-normalized digest into physical state identity. No
+  exact RKNN declaration is installed and no production Job verifies the
+  expected host values, so both RKNN rows remain L0.

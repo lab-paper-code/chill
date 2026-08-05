@@ -221,6 +221,14 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(runner.ContractError, "unknown=\\['unknown'\\]"):
                 runner.validate_request(request)
 
+    def test_validate_request_retains_v1alpha6_cpu_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["schemaVersion"] = runner.RETAINED_INTENT_SCHEMA
+            runner.validate_request(request)
+
     def test_validate_request_requires_job_timing_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"

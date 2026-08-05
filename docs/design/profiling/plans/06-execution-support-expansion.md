@@ -46,7 +46,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| current | Orange Pi RKNNLite / fixed | L0 | Configure the exact RKNN runtime/host declaration, bind the host contract into physical state identity, and add Run-time verification before enabling the adapter. |
+| current | Orange Pi RKNNLite / fixed | L0 | Configure the exact RKNN runtime/host declaration and add Run-time host verification before enabling the adapter. |
 
 ## Stable decisions
 
@@ -160,10 +160,11 @@ Partial implementation of the second item is intentionally not marked complete.
 Execution-facts v1alpha3 and candidate-report v1alpha3 now keep image-owned
 packages separate from the expected host library, driver, device paths, and
 Kubernetes allocation/exclusivity claim. Their decoders retain strict
-v1alpha2 compatibility for already frozen CPU evidence. No exact RKNN
-declaration is installed yet, the host contract is not part of physical state
-identity, and no production Job verifies these expected values at the host
-boundary.
+v1alpha2 compatibility for already frozen CPU evidence. Intent v1alpha7 binds
+only an order-normalized digest of that host contract into physical state;
+host-bound derivation identities use execution-state-identity v1alpha2 while
+CPU identities remain unchanged. No exact RKNN declaration is installed yet
+and no production Job verifies these expected values at the host boundary.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

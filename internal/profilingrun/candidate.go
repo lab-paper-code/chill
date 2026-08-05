@@ -1,12 +1,14 @@
 package profilingrun
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
@@ -16,6 +18,7 @@ const (
 	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
 	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha3"
 	candidateReportScope                 = "StaticCompatibility"
+	candidateHostContractSchemaVersion   = "chill.dacs.io/accelerator-host-contract.v1alpha1"
 )
 
 // CandidateReport is the shared wire contract between candidate resolution
@@ -118,6 +121,52 @@ type CandidateReportHostDevice struct {
 type CandidateReportNPUAllocation struct {
 	ResourceName       string `json:"resourceName"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
+// CanonicalCandidateHostContract returns the order-normalized identity input
+// without deciding whether the contract is admissible.
+func CanonicalCandidateHostContract(contract CandidateReportHostContract) ([]byte, error) {
+	canonical := contract
+	canonical.Libraries = append([]CandidateReportHostLibrary(nil), contract.Libraries...)
+	slices.SortFunc(canonical.Libraries, func(left, right CandidateReportHostLibrary) int {
+		if value := cmp.Compare(left.Name, right.Name); value != 0 {
+			return value
+		}
+		if value := cmp.Compare(left.HostPath, right.HostPath); value != 0 {
+			return value
+		}
+		return cmp.Compare(left.ContainerPath, right.ContainerPath)
+	})
+	canonical.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
+	slices.SortFunc(canonical.Devices, func(left, right CandidateReportHostDevice) int {
+		return cmp.Compare(left.Path, right.Path)
+	})
+	return json.Marshal(struct {
+		SchemaVersion string                      `json:"schemaVersion"`
+		Contract      CandidateReportHostContract `json:"contract"`
+	}{SchemaVersion: candidateHostContractSchemaVersion, Contract: canonical})
+}
+
+// CandidateHostContractDigest identifies only the physical host contract. A
+// nil contract returns an empty digest so CPU-only state retains its existing
+// identity material.
+func CandidateHostContractDigest(contract *CandidateReportHostContract) (string, error) {
+	if contract == nil {
+		return "", nil
+	}
+	if err := validateCandidateHostContract(*contract); err != nil {
+		return "", err
+	}
+	return digestCanonicalCandidateHostContract(*contract)
+}
+
+func digestCanonicalCandidateHostContract(contract CandidateReportHostContract) (string, error) {
+	payload, err := CanonicalCandidateHostContract(contract)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize candidate host contract: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 type CandidateReportReason struct {
@@ -281,6 +330,13 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 	if err != nil {
 		return err
 	}
+	hostContractDigest := ""
+	if report.HostContract != nil {
+		hostContractDigest, err = digestCanonicalCandidateHostContract(*report.HostContract)
+		if err != nil {
+			return err
+		}
+	}
 	checks := []struct{ name, want, got string }{
 		{"verdict", intent.Candidate.Verdict, report.Verdict},
 		{"ModelSpec name", intent.State.Model, report.Inputs.ModelSpec.Name},
@@ -292,6 +348,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 		{"execution path", intent.Candidate.ExecutionPath, report.Selection.ExecutionPath},
 		{"artifact", intent.State.Artifact, report.Selection.Artifact},
 		{"artifact digest", intent.State.ArtifactDigest, report.Selection.ArtifactDigest},
+		{"host contract digest", intent.State.HostContractDigest, hostContractDigest},
 	}
 	checks = append(checks,
 		struct{ name, want, got string }{"power mode", intent.State.PowerMode, report.Selection.PowerMode},

@@ -54,7 +54,7 @@ the separate `inactive`/standby state.
 
 The idle window is runtime-declared and observer-independent. The runtime loads
 the exact artifact, retains the session, waits the positive settling duration
-frozen in the `v1alpha6` intent, and then opens a fixed-duration window using its
+frozen in the current intent, and then opens a fixed-duration window using its
 monotonic clock. It issues no inference during settling or measurement and
 records that the model remained resident through the end. Metric and workload
 observers only establish coverage and contamination facts for those immutable
@@ -82,7 +82,7 @@ The derivation boundary uses three independently versioned identities:
 
 | Identity | Bound fields | Deliberately excluded |
 |---|---|---|
-| `StateIdentity` | execution state including model/artifact digest and path, runtime image, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
+| `StateIdentity` | execution state including model/artifact digest and path, runtime image, optional normalized host-contract digest, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
 | `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
 
@@ -106,8 +106,10 @@ both identities and both admission policies are retained in the estimator
 identity. Idle trials may aggregate only when their three identities match.
 Active trials and batch points likewise require matching identities, with batch
 validated separately. Identity strings include their projection schema version
-and digest. This changes no retained intent bytes, intent schema, or intent
-digest.
+and digest. CPU-only state keeps the existing v1alpha1 projection and retained
+v1alpha6 intent bytes. A new v1alpha7 intent carrying a host-contract digest
+uses execution-state-identity v1alpha2, so host library, driver, device
+visibility, or allocation drift cannot pool with another physical state.
 
 Observer timestamps are receipt timestamps. The first implementation uses a
 declared nearest-boundary, piecewise-linear integration rule and rejects windows
@@ -197,7 +199,7 @@ intermediate batches cannot yield an accepted result.
 Active and idle admission now share one power-window quality core for sample
 count, failures, receipt-timestamp policy, boundaries, gaps, coverage, thermal
 state, and workload contamination. Idle admission separately requires the
-`v1alpha6` canonical idle protocol, exact model load before the full settling
+canonical idle protocol, exact model load before the full settling
 interval, zero inference after model load, retained end residency, and a
 runtime-declared window. Only an Accepted result projects to `IdleTrial`.
 Each projected trial retains the verified raw object's logical store, opaque

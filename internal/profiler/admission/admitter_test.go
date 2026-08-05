@@ -237,6 +237,16 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	if nodeIdentities.StateIdentity == base.StateIdentity {
 		t.Fatal("actual Node UID must change execution-state identity")
 	}
+	hostBound := intent
+	hostBound.State.HostContractDigest = "sha256:" + strings.Repeat("d", 64)
+	hostBoundIdentities, err := ProjectRunIdentities(hostBound, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostBoundIdentities.StateIdentity == base.StateIdentity ||
+		!strings.HasPrefix(hostBoundIdentities.StateIdentity, hostBoundStateIdentitySchemaVersion+"@sha256:") {
+		t.Fatalf("host contract was not bound to physical state identity: %#v", hostBoundIdentities)
+	}
 	if !strings.HasPrefix(base.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
 		!strings.HasPrefix(base.MeasurementProtocolIdentity, measurementProtocolIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("unversioned identities: %#v", base)

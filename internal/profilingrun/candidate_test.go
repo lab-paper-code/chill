@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -94,18 +95,8 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	report := completeCandidateReportForTest()
 	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
-	report.HostContract = &CandidateReportHostContract{
-		Libraries: []CandidateReportHostLibrary{{
-			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		}},
-		Driver: CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
-		Devices: []CandidateReportHostDevice{
-			{Path: "/dev/dri/renderD128"},
-			{Path: "/dev/dri/renderD129"},
-		},
-		Allocation: CandidateReportNPUAllocation{ResourceName: "", ExclusivityClaimed: false},
-	}
+	contract := rknnHostContractForTest()
+	report.HostContract = &contract
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
@@ -115,15 +106,106 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 
 	invalid := report
-	contract := *report.HostContract
-	contract.Allocation.ExclusivityClaimed = true
-	invalid.HostContract = &contract
+	invalidContract := *report.HostContract
+	invalidContract.Allocation.ExclusivityClaimed = true
+	invalid.HostContract = &invalidContract
 	payload, err = json.Marshal(invalid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := DecodeCandidateReport(payload); err == nil {
 		t.Fatal("expected exclusivity claim without Kubernetes resource rejection")
+	}
+}
+
+func TestCandidateHostContractDigestIsOrderIndependentAndMaterial(t *testing.T) {
+	contract := rknnHostContractForTest()
+	contract.Libraries = append(contract.Libraries, CandidateReportHostLibrary{
+		Name: "libother", HostPath: "/usr/lib/libother.so", ContainerPath: "/usr/lib/libother.so",
+		Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	})
+	first, err := CandidateHostContractDigest(&contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered := contract
+	reordered.Libraries = []CandidateReportHostLibrary{contract.Libraries[1], contract.Libraries[0]}
+	reordered.Devices = []CandidateReportHostDevice{contract.Devices[1], contract.Devices[0]}
+	second, err := CandidateHostContractDigest(&reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("equivalent host contract order changed digest: %s != %s", first, second)
+	}
+
+	changed := contract
+	changed.Driver.Version = "0.9.7"
+	third, err := CandidateHostContractDigest(&changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("driver version did not change host contract digest")
+	}
+	if none, err := CandidateHostContractDigest(nil); err != nil || none != "" {
+		t.Fatalf("nil host contract digest = %q, %v", none, err)
+	}
+}
+
+func TestCandidateReportBindsHostContractDigest(t *testing.T) {
+	report := completeCandidateReportForTest()
+	contract := rknnHostContractForTest()
+	report.HostContract = &contract
+	hostDigest, err := CandidateHostContractDigest(report.HostContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportSum := sha256.Sum256(payload)
+	intent := Intent{
+		Candidate: CandidateIdentity{
+			ReportDigest:             "sha256:" + hex.EncodeToString(reportSum[:]),
+			ModelSpecContentDigest:   report.Inputs.ModelSpec.ContentDigest,
+			DeviceClassContentDigest: report.Inputs.DeviceClass.ContentDigest,
+			RuntimeDeclarationDigest: report.Inputs.RuntimeDeclaration.ContentDigest,
+			ExecutionPath:            report.Selection.ExecutionPath, Verdict: report.Verdict,
+		},
+		State: ExecutionState{
+			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
+			Artifact: report.Selection.Artifact, ArtifactDigest: report.Selection.ArtifactDigest,
+			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
+			HostContractDigest: hostDigest,
+		},
+		Images: Images{
+			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,
+			MetricObserver: report.MetricObserverImage,
+		},
+		TargetNode: NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
+	}
+	if err := ValidateCandidateReport(payload, intent); err != nil {
+		t.Fatal(err)
+	}
+	intent.State.HostContractDigest = "sha256:" + strings.Repeat("f", 64)
+	if err := ValidateCandidateReport(payload, intent); err == nil {
+		t.Fatal("expected candidate host contract digest mismatch")
+	}
+}
+
+func rknnHostContractForTest() CandidateReportHostContract {
+	return CandidateReportHostContract{
+		Libraries: []CandidateReportHostLibrary{{
+			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+			Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+		Driver: CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
+		Devices: []CandidateReportHostDevice{
+			{Path: "/dev/dri/renderD128"},
+			{Path: "/dev/dri/renderD129"},
+		},
 	}
 }
 

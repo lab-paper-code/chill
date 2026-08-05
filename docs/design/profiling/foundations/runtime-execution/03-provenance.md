@@ -231,8 +231,9 @@ exists.
   image-owned package declaration field exist; one exact declaration bound to
   the production RKNN worker image is pending
 - host `librknnrt` and driver identity: a current diagnostic snapshot and a
-  separate expected host-contract field exist; physical-state binding, a
-  Run-bound verifier, and drift comparison are pending
+  separate expected host-contract field exist; its normalized digest is bound
+  into new physical state identities, while a Run-bound verifier and observed
+  drift comparison are pending
 - `/dev/dri` access and successful initialization: Run-scoped access
   observation, not Kubernetes allocation evidence
 - NPU isolation: Unknown

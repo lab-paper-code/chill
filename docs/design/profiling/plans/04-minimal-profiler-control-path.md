@@ -18,7 +18,8 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha6`. Each immutable intent record contains the
+The internal intent is `v1alpha7`; retained v1alpha6 CPU records remain
+readable. Each immutable intent record contains the
 canonical intent, candidate report, admission policy, and execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
@@ -88,7 +89,7 @@ accepted as Run evidence.
 
 The follow-on model-loaded-idle path is another measurement mode of the same
 CPU ORT Run, not another runtime and not a separate frozen request type. It uses
-`profilingrun.Intent v1alpha6`, so the existing preparation, one-Job ownership,
+the same `profilingrun.Intent` family, so the existing preparation, one-Job ownership,
 terminal finalization, and immutable evidence chain remain common. The runtime
 result and raw-measurement schemas are mode-specific because active inference
 and zero-inference idle have different completeness facts.

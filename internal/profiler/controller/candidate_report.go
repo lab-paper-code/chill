@@ -55,10 +55,20 @@ type candidateReportInput struct {
 	Result            modelcompat.Result
 }
 
-func buildCandidateReport(input candidateReportInput) ([]byte, error) {
+type builtCandidateReport struct {
+	Bytes              []byte
+	HostContractDigest string
+}
+
+func buildCandidateReport(input candidateReportInput) (builtCandidateReport, error) {
 	reasons := make([]profilingrun.CandidateReportReason, len(input.Result.Reasons))
 	for index, reason := range input.Result.Reasons {
 		reasons[index] = profilingrun.CandidateReportReason{Kind: string(reason.Kind), Code: string(reason.Code)}
+	}
+	hostContract := reportHostContract(input.Declaration.Host)
+	hostContractDigest, err := profilingrun.CandidateHostContractDigest(hostContract)
+	if err != nil {
+		return builtCandidateReport{}, fmt.Errorf("identify candidate host contract: %w", err)
 	}
 	report := profilingrun.CandidateReport{
 		SchemaVersion: profilingrun.CandidateReportSchemaVersion,
@@ -92,15 +102,15 @@ func buildCandidateReport(input candidateReportInput) ([]byte, error) {
 			Path: input.Declaration.Artifact.Path, Digest: input.Declaration.Artifact.Digest,
 		},
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
-		HostContract:        reportHostContract(input.Declaration.Host),
+		HostContract:        hostContract,
 		MetricObserverImage: input.Declaration.MetricObserverImage,
 		Verdict:             string(input.Result.Verdict), Reasons: reasons,
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {
-		return nil, fmt.Errorf("encode static candidate report: %w", err)
+		return builtCandidateReport{}, fmt.Errorf("encode static candidate report: %w", err)
 	}
-	return payload, nil
+	return builtCandidateReport{Bytes: payload, HostContractDigest: hostContractDigest}, nil
 }
 
 func reportRuntimePackages(source []runtimePackage) []profilingrun.CandidateReportRuntimePackage {

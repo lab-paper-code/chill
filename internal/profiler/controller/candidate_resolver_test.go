@@ -67,6 +67,13 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		report.HostContract.Allocation.ResourceName != "" || report.HostContract.Allocation.ExclusivityClaimed {
 		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
 	}
+	wantHostDigest, err := profilingrun.CandidateHostContractDigest(report.HostContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State.HostContractDigest != wantHostDigest {
+		t.Fatalf("frozen host contract digest = %q, want %q", resolved.State.HostContractDigest, wantHostDigest)
+	}
 }
 
 func TestDecodeRuntimeDeclarationValidatesImageOwnedPackages(t *testing.T) {
@@ -152,6 +159,7 @@ func TestSelectExecutionDeclarationRetainsV1Alpha2Compatibility(t *testing.T) {
 func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
 	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != fixedPowerMode ||
+		resolved.State.HostContractDigest != "" ||
 		resolved.State.ArtifactPath != testArtifactPath ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
 		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||

@@ -9,7 +9,7 @@ metric/workload end-fence success path was live-verified with three sequential,
 same-intent Runs admitted by `wall-power-v2`. This document does not authorize
 batch campaigns, `b_sat` derivation, another runtime, or serving.
 
-The `v1alpha6` intent, public idle request, CPU ORT runner branch, separate idle
+The `v1alpha7` intent, public idle request, CPU ORT runner branch, separate idle
 runtime/raw schemas, shared immutable finalization/loading, and idle admission
 dispatch are implemented and live-verified.
 
@@ -117,11 +117,13 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-Active and idle Runs use internal intent schema `v1alpha6`. The frozen
+Active and idle Runs use internal intent schema `v1alpha7`. It adds only the
+optional physical host-contract digest needed by accelerator paths; CPU ORT
+omits that field. The frozen
 measurement protocol includes settling duration and reuses the same intent
 type and common execution provenance rather than creating a parallel frozen
-type. The Go intent codec and Python CPU ORT adapter both accept `v1alpha6`
-exactly.
+type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha7`
+and retained `v1alpha6` CPU intents; v1alpha6 cannot carry the new state field.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that

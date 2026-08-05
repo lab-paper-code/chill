@@ -11,6 +11,7 @@ import (
 
 const (
 	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha1"
+	hostBoundStateIdentitySchemaVersion      = "chill.dacs.io/execution-state-identity.v1alpha2"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
 	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha1"
 )
@@ -39,7 +40,11 @@ type metricSamplingProtocol struct {
 // ProjectRunIdentities derives versioned identities from one frozen intent
 // and the actual Node UID recorded in finalized evidence.
 func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdentities, error) {
-	state, err := digestIdentity(stateIdentitySchemaVersion, struct {
+	stateSchemaVersion := stateIdentitySchemaVersion
+	if intent.State.HostContractDigest != "" {
+		stateSchemaVersion = hostBoundStateIdentitySchemaVersion
+	}
+	state, err := digestIdentity(stateSchemaVersion, struct {
 		State        profilingrun.ExecutionState `json:"state"`
 		RuntimeImage string                      `json:"runtimeImage"`
 		NodeUID      string                      `json:"nodeUID"`
