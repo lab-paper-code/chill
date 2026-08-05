@@ -28,3 +28,12 @@ func TestFrozenRunRejectsMixedConfiguredPolicySnapshots(t *testing.T) {
 		t.Fatalf("mixed policy snapshot error = %v", err)
 	}
 }
+
+func TestFrozenRunRejectsActuationPolicyFromAnotherSnapshot(t *testing.T) {
+	_, frozen := testActuatedRunAndFrozen(t)
+	frozen.Prepared.ActuationPolicy.Source.ResourceVersion = "43"
+	err := frozen.Validate()
+	if err == nil || !strings.Contains(err.Error(), "actuation and scientific policies") {
+		t.Fatalf("mixed actuation policy snapshot error = %v", err)
+	}
+}

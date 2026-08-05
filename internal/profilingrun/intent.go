@@ -271,16 +271,25 @@ func (i Intent) validateActuationContract() error {
 	if !digestPattern.MatchString(i.Actuation.PolicyDigest) {
 		return errors.New("actuation.policyDigest must be a canonical SHA-256 digest")
 	}
-	switch i.Actuation.Actuator.Kind {
+	if err := i.Actuation.Actuator.Validate(); err != nil {
+		return fmt.Errorf("validate actuation target: %w", err)
+	}
+	return nil
+}
+
+// Validate checks the strict typed target independently of any mutable host
+// observation. Fixed mode deliberately has no ActuatorTarget value.
+func (a ActuatorTarget) Validate() error {
+	switch a.Kind {
 	case ActuatorKindJetsonNVPModel:
-		if i.Actuation.Actuator.JetsonNVPModel == nil ||
-			i.Actuation.Actuator.NvidiaLockedGPUClock != nil ||
-			i.Actuation.Actuator.JetsonNVPModel.ID < 0 {
+		if a.JetsonNVPModel == nil ||
+			a.NvidiaLockedGPUClock != nil ||
+			a.JetsonNVPModel.ID < 0 {
 			return errors.New("JetsonNVPModel actuation requires only a non-negative ID")
 		}
 	case ActuatorKindNvidiaLockedGPUClock:
-		target := i.Actuation.Actuator.NvidiaLockedGPUClock
-		if target == nil || i.Actuation.Actuator.JetsonNVPModel != nil ||
+		target := a.NvidiaLockedGPUClock
+		if target == nil || a.JetsonNVPModel != nil ||
 			target.MinMHz < 1 || target.MaxMHz < target.MinMHz {
 			return errors.New("NvidiaLockedGPUClock actuation requires a valid clock range")
 		}
@@ -288,7 +297,7 @@ func (i Intent) validateActuationContract() error {
 			return errors.New("NvidiaLockedGPUClock actuation mode must be 0 or 1")
 		}
 	default:
-		return fmt.Errorf("unsupported actuation kind %q", i.Actuation.Actuator.Kind)
+		return fmt.Errorf("unsupported actuation kind %q", a.Kind)
 	}
 	return nil
 }

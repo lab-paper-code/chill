@@ -29,4 +29,8 @@ data:
     schemaVersion: chill.dacs.io/profiler-execution-policies.v1alpha1
     policies:
 {{- toYaml .Values.profiler.factSource.executionPolicies | nindent 6 }}
+  {{ .Values.profiler.factSource.actuationPoliciesKey | quote }}: |
+    schemaVersion: chill.dacs.io/profiler-actuation-policies.v1alpha1
+    policies:
+{{- toYaml .Values.profiler.factSource.actuationPolicies | nindent 6 }}
 {{- end }}

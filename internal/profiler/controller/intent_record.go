@@ -31,9 +31,11 @@ const (
 	intentRecordCandidateKey        = "candidate-report.json"
 	intentRecordAdmissionPolicyKey  = "admission-policy.json"
 	intentRecordExecutionPolicyKey  = "execution-policy.json"
+	intentRecordActuationPolicyKey  = "actuation-policy.json"
 	intentDigestAnnotation          = "edge.dacs.io/profiling-run-intent-digest"
 	admissionPolicyAnnotation       = "edge.dacs.io/profiling-run-admission-policy-digest"
 	executionPolicyRecordAnnotation = "edge.dacs.io/profiling-run-execution-policy-digest"
+	actuationPolicyRecordAnnotation = "edge.dacs.io/profiling-run-actuation-policy-digest"
 	intentRecordNameHashCharacters  = 32
 )
 
@@ -149,6 +151,17 @@ func buildIntentRecord(
 			intentRecordExecutionPolicyKey: append([]byte(nil), validated.ExecutionPolicyBytes...),
 		},
 	}
+	if frozen.Prepared.ActuationPolicy != nil {
+		actuationPolicyDigest, err := frozen.Prepared.ActuationPolicy.Policy.Digest()
+		if err != nil {
+			return nil, fmt.Errorf("digest frozen actuation policy: %w", err)
+		}
+		record.Annotations[actuationPolicyRecordAnnotation] = actuationPolicyDigest
+		record.BinaryData[intentRecordActuationPolicyKey] = append(
+			[]byte(nil),
+			validated.ActuationPolicyBytes...,
+		)
+	}
 	if err := controllerutil.SetControllerReference(run, record, scheme); err != nil {
 		return nil, fmt.Errorf("set frozen intent ConfigMap owner: %w", err)
 	}
@@ -159,6 +172,7 @@ type validatedFrozenRunMaterial struct {
 	IntentBytes          []byte
 	AdmissionPolicyBytes []byte
 	ExecutionPolicyBytes []byte
+	ActuationPolicyBytes []byte
 	CandidateReport      profilingrun.VerifiedCandidateReport
 }
 
@@ -184,9 +198,17 @@ func validateFrozenRunForRun(
 	if err != nil {
 		return validatedFrozenRunMaterial{}, fmt.Errorf("encode frozen execution policy: %w", err)
 	}
+	var actuationPolicyBytes []byte
+	if frozen.Prepared.ActuationPolicy != nil {
+		actuationPolicyBytes, err = frozen.Prepared.ActuationPolicy.CanonicalJSON()
+		if err != nil {
+			return validatedFrozenRunMaterial{}, fmt.Errorf("encode frozen actuation policy: %w", err)
+		}
+	}
 	return validatedFrozenRunMaterial{
 		IntentBytes: intentBytes, AdmissionPolicyBytes: admissionPolicyBytes,
-		ExecutionPolicyBytes: executionPolicyBytes, CandidateReport: candidateReport,
+		ExecutionPolicyBytes: executionPolicyBytes, ActuationPolicyBytes: actuationPolicyBytes,
+		CandidateReport: candidateReport,
 	}, nil
 }
 
@@ -254,22 +276,35 @@ func verifyExpectedIntentRecord(
 	expectedPolicy, expectedPolicyErr := expected.AdmissionPolicy.CanonicalJSON()
 	retainedExecution, retainedExecutionErr := retained.ExecutionPolicy.CanonicalJSON()
 	expectedExecution, expectedExecutionErr := expected.ExecutionPolicy.CanonicalJSON()
+	retainedActuation, retainedActuationErr := canonicalActuationPolicy(retained.Prepared.ActuationPolicy)
+	expectedActuation, expectedActuationErr := canonicalActuationPolicy(expected.Prepared.ActuationPolicy)
 	if retainedPolicyErr != nil || expectedPolicyErr != nil ||
-		retainedExecutionErr != nil || expectedExecutionErr != nil {
+		retainedExecutionErr != nil || expectedExecutionErr != nil ||
+		retainedActuationErr != nil || expectedActuationErr != nil {
 		return errors.Join(
 			retainedPolicyErr,
 			expectedPolicyErr,
 			retainedExecutionErr,
 			expectedExecutionErr,
+			retainedActuationErr,
+			expectedActuationErr,
 		)
 	}
 	if retained.Prepared.IntentDigest != expected.Prepared.IntentDigest ||
 		!bytes.Equal(retained.Prepared.CandidateReportBytes, expected.Prepared.CandidateReportBytes) ||
 		!bytes.Equal(retainedPolicy, expectedPolicy) ||
-		!bytes.Equal(retainedExecution, expectedExecution) {
+		!bytes.Equal(retainedExecution, expectedExecution) ||
+		!bytes.Equal(retainedActuation, expectedActuation) {
 		return errors.New("existing frozen intent ConfigMap contains different Run inputs")
 	}
 	return nil
+}
+
+func canonicalActuationPolicy(policy *profiler.FrozenActuationPolicy) ([]byte, error) {
+	if policy == nil {
+		return nil, nil
+	}
+	return policy.CanonicalJSON()
 }
 
 func decodeIntentRecord(
@@ -289,8 +324,8 @@ func decodeIntentRecord(
 	if record.Immutable == nil || !*record.Immutable {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap is not immutable")
 	}
-	if len(record.Data) != 0 || len(record.BinaryData) != 4 {
-		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected data keys")
+	if len(record.Data) != 0 {
+		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected text data")
 	}
 	intentBytes, intentOK := record.BinaryData[intentRecordIntentKey]
 	candidateBytes, candidateOK := record.BinaryData[intentRecordCandidateKey]
@@ -305,10 +340,22 @@ func decodeIntentRecord(
 	if record.Annotations[intentDigestAnnotation] != digest {
 		return FrozenRun{}, errors.New("frozen intent ConfigMap annotation digest mismatch")
 	}
+	expectedDataKeys := 4
+	if intent.Actuation != nil {
+		expectedDataKeys++
+	}
+	if len(record.BinaryData) != expectedDataKeys {
+		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected data keys")
+	}
 	prepared := profiler.PreparedRun{
 		Intent: intent, IntentDigest: digest,
 		CandidateReportBytes: append([]byte(nil), candidateBytes...),
 	}
+	actuationPolicy, err := decodeStoredActuationPolicy(record, intent.Actuation != nil)
+	if err != nil {
+		return FrozenRun{}, err
+	}
+	prepared.ActuationPolicy = actuationPolicy
 	policy, err := decodeStoredAdmissionPolicy(record)
 	if err != nil {
 		return FrozenRun{}, err
@@ -389,4 +436,33 @@ func decodeStoredExecutionPolicy(record *corev1.ConfigMap) (profiler.FrozenExecu
 		return profiler.FrozenExecutionPolicy{}, errors.New("frozen execution-policy annotation digest mismatch")
 	}
 	return policy, nil
+}
+
+func decodeStoredActuationPolicy(
+	record *corev1.ConfigMap,
+	required bool,
+) (*profiler.FrozenActuationPolicy, error) {
+	policyBytes, present := record.BinaryData[intentRecordActuationPolicyKey]
+	annotation, annotated := record.Annotations[actuationPolicyRecordAnnotation]
+	if !required {
+		if present || annotated {
+			return nil, errors.New("fixed Run record cannot contain an actuation policy")
+		}
+		return nil, nil
+	}
+	if !present || len(policyBytes) == 0 || !annotated {
+		return nil, errors.New("frozen actuation-policy payload is incomplete")
+	}
+	policy, err := profiler.DecodeFrozenActuationPolicy(policyBytes)
+	if err != nil {
+		return nil, err
+	}
+	policyDigest, err := policy.Policy.Digest()
+	if err != nil {
+		return nil, err
+	}
+	if annotation != policyDigest {
+		return nil, errors.New("frozen actuation-policy annotation digest mismatch")
+	}
+	return &policy, nil
 }

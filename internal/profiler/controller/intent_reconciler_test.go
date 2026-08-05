@@ -134,6 +134,40 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	}
 }
 
+func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
+	scheme := runReconcilerTestScheme(t)
+	run, frozen := testActuatedRunAndFrozen(t)
+	run.Status.IntentDigest = frozen.Prepared.IntentDigest
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
+	jobs := &recordingExecutionJobs{}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
+		jobs,
+		&recordingRunEvidenceFinalizer{},
+		&recordingRunEvidenceAdmitter{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if jobs.calls != 0 {
+		t.Fatalf("actuated Run created %d measurement Jobs before handoff", jobs.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if condition == nil || condition.Status != metav1.ConditionUnknown ||
+		condition.Reason != "ActuationHandoffPending" {
+		t.Fatalf("actuation handoff condition = %#v", condition)
+	}
+}
+
 func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)

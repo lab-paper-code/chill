@@ -20,6 +20,7 @@ type options struct {
 	workloadObservationKey         string
 	admissionPoliciesKey           string
 	executionPoliciesKey           string
+	actuationPoliciesKey           string
 	workloadObserverServiceAccount string
 	workloadObserverKubeAPIServer  string
 }
@@ -64,6 +65,12 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"ConfigMap key containing versioned worker execution envelopes.",
 	)
 	flags.StringVar(
+		&o.actuationPoliciesKey,
+		"actuation-policies-key",
+		"",
+		"ConfigMap key containing versioned Node actuation policies.",
+	)
+	flags.StringVar(
 		&o.workloadObservationKey,
 		"workload-observation-key",
 		"",
@@ -84,6 +91,7 @@ func (o options) validate() error {
 		{name: "workload-observation key", value: o.workloadObservationKey},
 		{name: "admission-policies key", value: o.admissionPoliciesKey},
 		{name: "execution-policies key", value: o.executionPoliciesKey},
+		{name: "actuation-policies key", value: o.actuationPoliciesKey},
 		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
 	}
 	if strings.TrimSpace(o.workloadObserverKubeAPIServer) != o.workloadObserverKubeAPIServer {
@@ -98,10 +106,11 @@ func (o options) validate() error {
 	for _, key := range []string{
 		o.executionFactsKey, o.metricSourcesKey, o.workloadObservationKey,
 		o.admissionPoliciesKey, o.executionPoliciesKey,
+		o.actuationPoliciesKey,
 	} {
 		keys[key] = struct{}{}
 	}
-	if len(keys) != 5 {
+	if len(keys) != 6 {
 		return errors.New("Profiler fact-source keys must be different")
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -63,6 +64,7 @@ type ResolvedCandidate struct {
 	DeviceArchitecture              string
 	DeviceNodeSelector              map[string]string
 	DevicePowerModes                []string
+	SelectedActuator                *profilingrun.ActuatorTarget
 	RuntimeImage                    string
 	ArtifactImage                   string
 	ArtifactArchitecture            string
@@ -106,10 +108,45 @@ type WorkloadObservationResolver interface {
 	ResolveWorkloadObservation(context.Context) (ResolvedWorkloadObservation, error)
 }
 
+type ActuationPolicyResolver interface {
+	ResolveActuationPolicy(context.Context, ActuationSelection) (FrozenActuationPolicy, error)
+}
+
 type PreparedRun struct {
 	Intent               profilingrun.Intent
 	IntentDigest         string
 	CandidateReportBytes []byte
+	ActuationPolicy      *FrozenActuationPolicy
+}
+
+// ValidateActuationBinding verifies the configured policy once at the frozen
+// input boundary. Downstream execution consumes the bound intent and policy
+// without reselecting either from mutable configuration.
+func (r PreparedRun) ValidateActuationBinding() error {
+	if r.Intent.Actuation == nil {
+		if r.ActuationPolicy != nil {
+			return errors.New("fixed prepared Run cannot contain an actuation policy")
+		}
+		return nil
+	}
+	if r.ActuationPolicy == nil {
+		return errors.New("actuated prepared Run requires a frozen actuation policy")
+	}
+	if err := r.ActuationPolicy.Validate(); err != nil {
+		return err
+	}
+	digest, err := r.ActuationPolicy.Policy.Digest()
+	if err != nil {
+		return err
+	}
+	if digest != r.Intent.Actuation.PolicyDigest {
+		return errors.New("frozen actuation-policy digest does not match Run intent")
+	}
+	return validateActuationPolicySelection(r.ActuationPolicy.Policy, ActuationSelection{
+		DeviceClass: r.Intent.State.DeviceClass,
+		PowerMode:   r.Intent.State.PowerMode,
+		Actuator:    r.Intent.Actuation.Actuator,
+	})
 }
 
 // Preparer resolves current facts through narrow ports and freezes one Run
@@ -119,6 +156,7 @@ type Preparer struct {
 	nodes      NodeResolver
 	metrics    MetricSourceResolver
 	workloads  WorkloadObservationResolver
+	actuation  ActuationPolicyResolver
 }
 
 func NewPreparer(
@@ -126,11 +164,14 @@ func NewPreparer(
 	nodes NodeResolver,
 	metrics MetricSourceResolver,
 	workloads WorkloadObservationResolver,
+	actuation ActuationPolicyResolver,
 ) (*Preparer, error) {
-	if candidates == nil || nodes == nil || metrics == nil || workloads == nil {
-		return nil, errors.New("candidate, Node, metric-source, and workload-observation resolvers are required")
+	if candidates == nil || nodes == nil || metrics == nil || workloads == nil || actuation == nil {
+		return nil, errors.New("candidate, Node, metric-source, workload-observation, and actuation-policy resolvers are required")
 	}
-	return &Preparer{candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads}, nil
+	return &Preparer{
+		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation,
+	}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
@@ -171,7 +212,11 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		return PreparedRun{}, fmt.Errorf("resolve workload observation: %w", err)
 	}
 
-	intent, err := p.freeze(request, candidate, node, metrics, workload)
+	actuation, policy, err := p.resolveActuation(ctx, candidate)
+	if err != nil {
+		return PreparedRun{}, err
+	}
+	intent, err := p.freeze(request, candidate, node, metrics, workload, actuation)
 	if err != nil {
 		return PreparedRun{}, err
 	}
@@ -182,11 +227,66 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("digest frozen Run intent: %w", err)
 	}
-	return PreparedRun{
+	prepared := PreparedRun{
 		Intent:               intent,
 		IntentDigest:         digest,
 		CandidateReportBytes: append([]byte(nil), candidate.ReportBytes...),
-	}, nil
+		ActuationPolicy:      policy,
+	}
+	if err := prepared.ValidateActuationBinding(); err != nil {
+		return PreparedRun{}, fmt.Errorf("validate frozen actuation binding: %w", err)
+	}
+	return prepared, nil
+}
+
+func (p *Preparer) resolveActuation(
+	ctx context.Context,
+	candidate ResolvedCandidate,
+) (*profilingrun.ActuationContract, *FrozenActuationPolicy, error) {
+	if candidate.SelectedActuator == nil {
+		return nil, nil, nil
+	}
+	selection := ActuationSelection{
+		DeviceClass: candidate.State.DeviceClass,
+		PowerMode:   candidate.State.PowerMode,
+		Actuator:    *cloneResolvedActuatorTarget(candidate.SelectedActuator),
+	}
+	policy, err := p.actuation.ResolveActuationPolicy(ctx, selection)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve actuation policy: %w", err)
+	}
+	if err := validateActuationPolicySelection(policy.Policy, selection); err != nil {
+		return nil, nil, fmt.Errorf("validate selected actuation policy: %w", err)
+	}
+	digest, err := policy.Policy.Digest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("digest selected actuation policy: %w", err)
+	}
+	return &profilingrun.ActuationContract{
+		PowerMode:    candidate.State.PowerMode,
+		Actuator:     selection.Actuator,
+		PolicyDigest: digest,
+	}, &policy, nil
+}
+
+func cloneResolvedActuatorTarget(source *profilingrun.ActuatorTarget) *profilingrun.ActuatorTarget {
+	if source == nil {
+		return nil
+	}
+	clone := *source
+	if source.JetsonNVPModel != nil {
+		target := *source.JetsonNVPModel
+		clone.JetsonNVPModel = &target
+	}
+	if source.NvidiaLockedGPUClock != nil {
+		target := *source.NvidiaLockedGPUClock
+		if source.NvidiaLockedGPUClock.Mode != nil {
+			mode := *source.NvidiaLockedGPUClock.Mode
+			target.Mode = &mode
+		}
+		clone.NvidiaLockedGPUClock = &target
+	}
+	return &clone
 }
 
 func validateCPURequestFitsNode(request, allocatable string) error {
@@ -210,6 +310,7 @@ func (p *Preparer) freeze(
 	node profilingrun.NodeSnapshot,
 	metrics ResolvedMetricSource,
 	workload ResolvedWorkloadObservation,
+	actuation *profilingrun.ActuationContract,
 ) (profilingrun.Intent, error) {
 	if node.Name != request.TargetNode {
 		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
@@ -257,7 +358,8 @@ func (p *Preparer) freeze(
 			TimeoutMilliseconds:        request.Metrics.TimeoutMilliseconds,
 			DurationSeconds:            request.Metrics.DurationSeconds,
 		},
-		Workload: profilingrun.CurrentWorkloadContract(),
+		Workload:  profilingrun.CurrentWorkloadContract(),
+		Actuation: actuation,
 	}
 	if err := intent.Validate(); err != nil {
 		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
@@ -284,8 +386,20 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
 		return errors.New("resolved DeviceClass architecture and Node selector are required")
 	}
-	if len(candidate.DevicePowerModes) != 1 || candidate.DevicePowerModes[0] != firstPowerMode {
-		return errors.New("resolved DeviceClass is not the first-path Fixed actuator class")
+	if len(candidate.DevicePowerModes) == 0 || !slices.Contains(candidate.DevicePowerModes, candidate.State.PowerMode) {
+		return errors.New("resolved DeviceClass does not retain the selected power mode")
+	}
+	if candidate.State.PowerMode == firstPowerMode {
+		if candidate.SelectedActuator != nil {
+			return errors.New("resolved fixed power mode cannot contain an actuator target")
+		}
+	} else {
+		if candidate.SelectedActuator == nil {
+			return errors.New("resolved actuated power mode requires an actuator target")
+		}
+		if err := candidate.SelectedActuator.Validate(); err != nil {
+			return fmt.Errorf("validate resolved actuator target: %w", err)
+		}
 	}
 	return nil
 }
@@ -323,7 +437,19 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 	if !slices.Equal(candidate.DevicePowerModes, report.DeviceClassFacts.PowerModes) {
 		return errors.New("candidate report DeviceClass powerModes mismatch")
 	}
+	if !actuatorTargetsMatch(candidate.SelectedActuator, report.Selection.Actuator) {
+		return errors.New("candidate report selected actuator mismatch")
+	}
 	return nil
+}
+
+func actuatorTargetsMatch(left, right *profilingrun.ActuatorTarget) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	leftPayload, leftErr := json.Marshal(left)
+	rightPayload, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftPayload) == string(rightPayload)
 }
 
 func (r PreparationRequest) Validate() error {
@@ -338,9 +464,6 @@ func (r PreparationRequest) Validate() error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
-	}
-	if r.Candidate.PowerMode != firstPowerMode {
-		return fmt.Errorf("first path supports only powerMode %q", firstPowerMode)
 	}
 	cpuRequest, err := resource.ParseQuantity(r.CPURequest)
 	if err != nil || cpuRequest.Sign() <= 0 {

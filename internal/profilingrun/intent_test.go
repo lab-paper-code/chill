@@ -174,7 +174,7 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("b", 64)
 	intent := validIntent()
-	intent.State.PowerMode = "MODE_15W_6CORE"
+	intent.State.PowerMode = testActuatedNVPMode
 	intent.Actuation = &ActuationContract{
 		PowerMode: intent.State.PowerMode, PolicyDigest: digest,
 		Actuator: ActuatorTarget{
@@ -186,7 +186,7 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, err := intent.CanonicalJSON()
-	if err != nil || !strings.Contains(string(payload), `"actuation":{"powerMode":"MODE_15W_6CORE"`) {
+	if err != nil || !strings.Contains(string(payload), `"actuation":{"powerMode":"`+testActuatedNVPMode+`"`) {
 		t.Fatalf("canonical actuation = %s, error = %v", payload, err)
 	}
 

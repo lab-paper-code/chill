@@ -47,6 +47,14 @@ readable and are protected by their original golden digests. V1alpha6 cannot
 carry host-contract or model-loaded-idle fields. RKNNLite retains v1alpha8 in
 addition to current v1alpha9.
 
+Candidate-report v1alpha6 is the upstream authority for an exact selected
+actuator target. For an actuated Run, the immutable record additionally stores
+the canonical selected actuation policy and its ConfigMap source; the intent
+binds only the policy's semantic digest. Fixed records retain the existing
+four payloads, while actuated records require the fifth policy payload. This
+freezes inputs only: Plan 6 still withholds the Job until a durable handoff has
+converged and settled the Node.
+
 Intent validation is mode-aware. The active mode retains a positive batch,
 declared warm-up, input generation, output validation, and measured inference
 calls. Model-loaded idle uses `warmupIterations=0`,

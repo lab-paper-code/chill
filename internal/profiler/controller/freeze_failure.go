@@ -9,6 +9,7 @@ const (
 	freezeReasonInvalidRunSpec         = "InvalidRunSpec"
 	freezeReasonAdmissionPolicyInvalid = "AdmissionPolicyInvalid"
 	freezeReasonExecutionPolicyInvalid = "ExecutionPolicyInvalid"
+	freezeReasonActuationPolicyInvalid = "ActuationPolicyInvalid"
 )
 
 // terminalFreezeError marks an immutable Run or installation-policy error
@@ -48,4 +49,8 @@ func invalidAdmissionPolicy(format string, args ...any) error {
 
 func invalidExecutionPolicy(format string, args ...any) error {
 	return newTerminalFreezeError(freezeReasonExecutionPolicyInvalid, fmt.Errorf(format, args...))
+}
+
+func invalidActuationPolicy(format string, args ...any) error {
+	return newTerminalFreezeError(freezeReasonActuationPolicyInvalid, fmt.Errorf(format, args...))
 }

@@ -27,6 +27,9 @@ func (r FrozenRun) Validate() error {
 	if err := r.ExecutionPolicy.Validate(); err != nil {
 		return err
 	}
+	if err := r.Prepared.ValidateActuationBinding(); err != nil {
+		return err
+	}
 	if r.AdmissionPolicy.Source.Kind == profileradmission.ConfigMapPolicySourceKind &&
 		r.ExecutionPolicy.Source.Kind == profiler.ConfigMapExecutionPolicySourceKind &&
 		(r.AdmissionPolicy.Source.Namespace != r.ExecutionPolicy.Source.Namespace ||
@@ -34,6 +37,17 @@ func (r FrozenRun) Validate() error {
 			r.AdmissionPolicy.Source.UID != r.ExecutionPolicy.Source.UID ||
 			r.AdmissionPolicy.Source.ResourceVersion != r.ExecutionPolicy.Source.ResourceVersion) {
 		return errors.New("frozen admission and execution policies came from different ConfigMap snapshots")
+	}
+	if r.Prepared.ActuationPolicy != nil {
+		source := r.Prepared.ActuationPolicy.Source
+		if source.Kind != profiler.ConfigMapActuationPolicySourceKind ||
+			r.AdmissionPolicy.Source.Kind != profileradmission.ConfigMapPolicySourceKind ||
+			source.Namespace != r.AdmissionPolicy.Source.Namespace ||
+			source.Name != r.AdmissionPolicy.Source.Name ||
+			source.UID != r.AdmissionPolicy.Source.UID ||
+			source.ResourceVersion != r.AdmissionPolicy.Source.ResourceVersion {
+			return errors.New("frozen actuation and scientific policies came from different ConfigMap snapshots")
+		}
 	}
 	return nil
 }

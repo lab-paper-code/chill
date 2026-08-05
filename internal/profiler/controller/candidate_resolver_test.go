@@ -26,6 +26,7 @@ const (
 	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
 	testArchitecture        = "amd64"
 	testARM64Architecture   = "arm64"
+	testSelectablePowerMode = "15W"
 	testRuntimeImage        = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
 	testArtifactImage       = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
 	testMetricObserverImage = "registry.example/chill/metric-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
@@ -298,22 +299,9 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 		{
 			name: "power mode absent from DeviceClass",
 			mutate: func(objects []client.Object) {
-				objects[1].(*edgev1alpha1.DeviceClass).Spec.PowerModes[0].Name = "15W"
+				objects[1].(*edgev1alpha1.DeviceClass).Spec.PowerModes[0].Name = testSelectablePowerMode
 			},
 			match: `power mode "fixed" is not declared`,
-		},
-		{
-			name: "selectable mode mixed with fixed",
-			mutate: func(objects []client.Object) {
-				class := objects[1].(*edgev1alpha1.DeviceClass)
-				class.Spec.PowerModes = append(class.Spec.PowerModes, edgev1alpha1.PowerMode{
-					Name: "15W", Actuator: edgev1alpha1.PowerModeActuator{
-						Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
-						JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
-					},
-				})
-			},
-			match: "not the first-path Fixed actuator class",
 		},
 		{
 			name: "fixed mode has actuator identity",
@@ -323,7 +311,7 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 					JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
 				}
 			},
-			match: "not the first-path Fixed actuator class",
+			match: "fixed mode name must use the Fixed actuator",
 		},
 		{
 			name: "runtime architecture incompatible",
@@ -464,6 +452,35 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", test.match, err)
 			}
 		})
+	}
+}
+
+func TestKubernetesCandidateResolverProjectsExactSelectedActuator(t *testing.T) {
+	objects := validCandidateObjects()
+	class := objects[1].(*edgev1alpha1.DeviceClass)
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edgev1alpha1.PowerMode{
+		Name: testSelectablePowerMode, Actuator: edgev1alpha1.PowerModeActuator{
+			Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+			JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 1},
+		},
+	})
+	selection := validCandidateSelection()
+	selection.PowerMode = testSelectablePowerMode
+	resolved, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.SelectedActuator == nil || resolved.SelectedActuator.JetsonNVPModel == nil ||
+		resolved.SelectedActuator.JetsonNVPModel.ID != 1 {
+		t.Fatalf("selected actuator = %#v", resolved.SelectedActuator)
+	}
+	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Selection.Actuator == nil || report.Selection.Actuator.JetsonNVPModel == nil ||
+		report.Selection.Actuator.JetsonNVPModel.ID != 1 {
+		t.Fatalf("candidate report actuator = %#v", report.Selection.Actuator)
 	}
 }
 

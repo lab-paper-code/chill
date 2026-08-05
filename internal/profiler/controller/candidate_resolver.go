@@ -148,6 +148,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		DeviceArchitecture:   deviceClass.Spec.Architecture,
 		DeviceNodeSelector:   deviceFacts.nodeSelector,
 		DevicePowerModes:     deviceFacts.powerModes,
+		SelectedActuator:     cloneActuatorTarget(deviceFacts.selectedActuator),
 		RuntimeImage:         declaration.Runtime.Image,
 		ArtifactImage:        declaration.Artifact.Image,
 		ArtifactArchitecture: declaration.Artifact.Architecture,

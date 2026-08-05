@@ -64,6 +64,67 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 	}
 }
 
+func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	target := profilingrun.ActuatorTarget{
+		Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+		JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 1},
+	}
+	expected.State.PowerMode = "15W"
+	report, err := profilingrun.DecodeCandidateReport(candidateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
+	report.Selection.PowerMode = expected.State.PowerMode
+	report.Selection.Actuator = &target
+	report.DeviceClassFacts.PowerModes = []string{profilingrun.FixedPowerMode, expected.State.PowerMode}
+	candidateBytes, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolvers := fixtureResolvers(expected, candidateBytes)
+	resolvers.candidate.result.SelectedActuator = &target
+	resolvers.candidate.result.DevicePowerModes = append([]string(nil), report.DeviceClassFacts.PowerModes...)
+	selection := ActuationSelection{
+		DeviceClass: expected.State.DeviceClass, PowerMode: expected.State.PowerMode, Actuator: target,
+	}
+	policySpec := ActuationPolicySpec{
+		Name: "lattepanda-15w-v1", DeviceClass: selection.DeviceClass,
+		PowerMode: selection.PowerMode, ActuatorKind: selection.Actuator.Kind,
+		SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
+	}
+	resolvers.actuation.result, err = FreezeConfiguredActuationPolicy(
+		testActuationPolicyCatalog(t, policySpec),
+		selection,
+		testActuationPolicySource("1"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := newFixturePreparer(t, resolvers).Prepare(
+		context.Background(),
+		fixtureRequest(expected),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDigest, err := resolvers.actuation.result.Policy.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Intent.Actuation == nil || prepared.ActuationPolicy == nil ||
+		prepared.Intent.Actuation.PolicyDigest != policyDigest ||
+		prepared.Intent.Actuation.Actuator.JetsonNVPModel.ID != 1 ||
+		resolvers.actuation.calls != 1 || !reflect.DeepEqual(resolvers.actuation.selection, selection) {
+		t.Fatalf("prepared actuation binding = %#v policy=%#v", prepared.Intent.Actuation, prepared.ActuationPolicy)
+	}
+	if err := prepared.ValidateActuationBinding(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
@@ -117,14 +178,14 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DevicePowerModes = []string{"other-mode"}
 			},
-			match: "not the first-path Fixed actuator class",
+			match: "does not retain the selected power mode",
 		},
 		{
-			name: "selectable mode mixed with fixed",
+			name: "DeviceClass power mode report drift",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DevicePowerModes = []string{"fixed", "15W"}
 			},
-			match: "not the first-path Fixed actuator class",
+			match: "candidate report DeviceClass powerModes mismatch",
 		},
 		{
 			name: "missing DeviceClass selector",
@@ -368,9 +429,6 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		{name: "multiple repetitions", mutate: func(request *PreparationRequest) {
 			request.Measurement.Repetitions = 2
 		}},
-		{name: "unsupported power mode", mutate: func(request *PreparationRequest) {
-			request.Candidate.PowerMode = "15W"
-		}},
 		{name: "invalid CPU request", mutate: func(request *PreparationRequest) {
 			request.CPURequest = "not-a-quantity"
 		}},
@@ -384,7 +442,7 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 				t.Fatal("expected invalid measurement rejection")
 			}
 			if resolvers.candidate.calls != 0 || resolvers.node.calls != 0 || resolvers.metrics.calls != 0 ||
-				resolvers.workloads.calls != 0 {
+				resolvers.workloads.calls != 0 || resolvers.actuation.calls != 0 {
 				t.Fatal("invalid caller input reached resolver ports")
 			}
 		})
@@ -398,6 +456,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.node,
 		resolvers.metrics,
 		resolvers.workloads,
+		resolvers.actuation,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -532,6 +591,7 @@ type fakePreparationResolvers struct {
 	node      *fakeNodeResolver
 	metrics   *fakeMetricResolver
 	workloads *fakeWorkloadObservationResolver
+	actuation *fakeActuationPolicyResolver
 }
 
 func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparationResolvers {
@@ -563,6 +623,7 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
 			Image: intent.Images.WorkloadObserver,
 		}},
+		actuation: &fakeActuationPolicyResolver{},
 	}
 }
 
@@ -607,6 +668,22 @@ type fakeWorkloadObservationResolver struct {
 	result ResolvedWorkloadObservation
 	err    error
 	calls  int
+}
+
+type fakeActuationPolicyResolver struct {
+	result    FrozenActuationPolicy
+	err       error
+	calls     int
+	selection ActuationSelection
+}
+
+func (r *fakeActuationPolicyResolver) ResolveActuationPolicy(
+	_ context.Context,
+	selection ActuationSelection,
+) (FrozenActuationPolicy, error) {
+	r.calls++
+	r.selection = selection
+	return r.result, r.err
 }
 
 func (r *fakeWorkloadObservationResolver) ResolveWorkloadObservation(

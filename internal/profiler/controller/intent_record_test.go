@@ -3,16 +3,21 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -63,6 +68,39 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 		!bytes.Equal(loaded.Prepared.CandidateReportBytes, frozen.Prepared.CandidateReportBytes) ||
 		!bytes.Equal(loadedPolicy, frozenPolicy) {
 		t.Fatal("restarted manager did not recover exact frozen inputs")
+	}
+}
+
+func TestIntentRecordsRetainExactActuationPolicy(t *testing.T) {
+	ctx := context.Background()
+	run, frozen := testActuatedRunAndFrozen(t)
+	scheme := intentRecordTestScheme(t)
+	records, err := NewIntentRecords(fake.NewClientBuilder().WithScheme(scheme).Build(), scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, created, err := records.Ensure(ctx, run, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || len(record.BinaryData) != 5 || len(record.BinaryData[intentRecordActuationPolicyKey]) == 0 ||
+		record.Annotations[actuationPolicyRecordAnnotation] == "" {
+		t.Fatalf("actuated frozen record = %#v", record)
+	}
+	loaded, err := records.Load(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Prepared.ActuationPolicy == nil || loaded.Prepared.Intent.Actuation == nil {
+		t.Fatalf("loaded actuation binding = %#v", loaded.Prepared)
+	}
+	if err := loaded.Prepared.ValidateActuationBinding(); err != nil {
+		t.Fatal(err)
+	}
+
+	delete(record.BinaryData, intentRecordActuationPolicyKey)
+	if _, err := decodeIntentRecord(run, record); err == nil || !strings.Contains(err.Error(), "unexpected data keys") {
+		t.Fatalf("actuated record without policy was accepted: %v", err)
 	}
 }
 
@@ -212,6 +250,80 @@ func testPreparedRun(t *testing.T) profiler.PreparedRun {
 	return profiler.PreparedRun{
 		Intent: intent, IntentDigest: digest, CandidateReportBytes: candidate,
 	}
+}
+
+func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, FrozenRun) {
+	t.Helper()
+	run := testRun()
+	run.Spec.Candidate.PowerMode = testSelectablePowerMode
+	prepared := testPreparedRun(t)
+	prepared.Intent.SchemaVersion = profilingrun.SchemaVersion
+	prepared.Intent.State.PowerMode = run.Spec.Candidate.PowerMode
+	target := profilingrun.ActuatorTarget{
+		Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+		JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 1},
+	}
+	selection := profiler.ActuationSelection{
+		DeviceClass: prepared.Intent.State.DeviceClass,
+		PowerMode:   prepared.Intent.State.PowerMode,
+		Actuator:    target,
+	}
+	policySpec := profiler.ActuationPolicySpec{
+		Name: "lattepanda-15w-v1", DeviceClass: selection.DeviceClass,
+		PowerMode: selection.PowerMode, ActuatorKind: selection.Actuator.Kind,
+		SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
+	}
+	policy, err := profiler.FreezeConfiguredActuationPolicy(
+		actuationPolicyCatalogForSpecs(t, policySpec),
+		selection,
+		profiler.ActuationPolicySource{
+			Kind: profiler.ConfigMapActuationPolicySourceKind, Namespace: testSystemNamespace,
+			Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "42",
+			Key: "actuation-policies.yaml",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDigest, err := policy.Policy.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Intent.Actuation = &profilingrun.ActuationContract{
+		PowerMode: selection.PowerMode, Actuator: target, PolicyDigest: policyDigest,
+	}
+	report, err := profilingrun.DecodeCandidateReport(prepared.CandidateReportBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
+	report.Selection.PowerMode = selection.PowerMode
+	report.Selection.Actuator = &target
+	report.DeviceClassFacts.PowerModes = []string{profilingrun.FixedPowerMode, selection.PowerMode}
+	prepared.CandidateReportBytes, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportSum := sha256.Sum256(prepared.CandidateReportBytes)
+	prepared.Intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(reportSum[:])
+	prepared.IntentDigest, err = prepared.Intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.ActuationPolicy = &policy
+	return run, frozenRunForPrepared(t, prepared)
+}
+
+func actuationPolicyCatalogForSpecs(t *testing.T, specs ...profiler.ActuationPolicySpec) []byte {
+	t.Helper()
+	raw, err := yaml.Marshal(profiler.ActuationPolicyCatalog{
+		SchemaVersion: profiler.ActuationPolicyCatalogSchemaVersion,
+		Policies:      specs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func testFrozenRun(t *testing.T) FrozenRun {

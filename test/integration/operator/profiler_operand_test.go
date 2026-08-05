@@ -131,6 +131,7 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 			WorkloadObservationKey: "workload-observation.yaml",
 			AdmissionPoliciesKey:   "admission-policies.yaml",
 			ExecutionPoliciesKey:   "execution-policies.yaml",
+			ActuationPoliciesKey:   "actuation-policies.yaml",
 		},
 		WorkloadObserver: operatorprofiler.WorkloadObserverConfig{
 			ServiceAccountName: "chill-profiler-workload-observer",

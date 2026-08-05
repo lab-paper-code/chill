@@ -69,6 +69,15 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if frozen.Stopped {
 		return ctrl.Result{}, nil
 	}
+	if frozen.Run.Prepared.Intent.Actuation != nil {
+		return ctrl.Result{}, r.publishExecutionOutcome(
+			ctx,
+			run,
+			metav1.ConditionUnknown,
+			"ActuationHandoffPending",
+			"selected Node power target is frozen; measurement waits for the durable actuation handoff",
+		)
+	}
 	if run.Status.Job == nil {
 		job, _, err := r.jobs.Ensure(ctx, run, frozen.Run)
 		if err != nil {

@@ -69,9 +69,10 @@ func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 		t.Fatal("expected admission policy whitespace rejection")
 	}
 	run = testRun()
-	run.Spec.Candidate.PowerMode = "15W"
-	if _, err := ProjectRequest(run.Spec); err == nil {
-		t.Fatal("expected unsupported power mode rejection")
+	run.Spec.Candidate.PowerMode = testSelectablePowerMode
+	request, err := ProjectRequest(run.Spec)
+	if err != nil || request.Preparation.Candidate.PowerMode != testSelectablePowerMode {
+		t.Fatalf("catalog-selected power mode projection = %#v, %v", request, err)
 	}
 }
 

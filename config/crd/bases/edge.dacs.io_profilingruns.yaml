@@ -83,8 +83,9 @@ spec:
                     type: string
                   powerMode:
                     description: |-
-                      PowerMode selects one mode declared by DeviceClass. The first supported
-                      CPU path accepts only the non-actuated "fixed" mode.
+                      PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
+                      directly; a non-fixed selection requires a frozen configured actuation
+                      policy and cannot create a measurement Job before its durable handoff.
                     maxLength: 128
                     minLength: 1
                     type: string

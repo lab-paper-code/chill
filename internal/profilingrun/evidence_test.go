@@ -185,7 +185,7 @@ func TestValidateRuntimeRetainsV1Alpha1CPUResult(t *testing.T) {
 }
 
 func TestNormalizeRuntimeArchitecture(t *testing.T) {
-	for runtime, want := range map[string]string{"x86_64": "amd64", "aarch64": "arm64"} {
+	for runtime, want := range map[string]string{"x86_64": "amd64", "aarch64": testARM64Architecture} {
 		if got := normalizeArchitecture(runtime); got != want {
 			t.Fatalf("normalizeArchitecture(%q) = %q, want %q", runtime, got, want)
 		}
@@ -306,7 +306,7 @@ func validRKNNIntent(idle bool) Intent {
 	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	intent.State.Backend = RKNNLiteBackend
 	intent.State.HostContractDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	intent.TargetNode.Architecture = "arm64"
+	intent.TargetNode.Architecture = testARM64Architecture
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
 	if idle {

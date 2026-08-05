@@ -92,6 +92,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		Selection: profilingrun.CandidateReportSelection{
 			ExecutionPath: input.Path.Name, Artifact: input.Artifact.Name,
 			ArtifactDigest: input.Artifact.Digest, PowerMode: input.PowerMode,
+			Actuator: cloneActuatorTarget(input.DeviceFacts.selectedActuator),
 		},
 		DeviceClassFacts: profilingrun.CandidateReportDeviceClassFacts{
 			Architecture: input.DeviceClass.Spec.Architecture,
@@ -114,6 +115,26 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		return builtCandidateReport{}, fmt.Errorf("encode static candidate report: %w", err)
 	}
 	return builtCandidateReport{Bytes: payload, HostContractDigest: hostContractDigest}, nil
+}
+
+func cloneActuatorTarget(source *profilingrun.ActuatorTarget) *profilingrun.ActuatorTarget {
+	if source == nil {
+		return nil
+	}
+	clone := *source
+	if source.JetsonNVPModel != nil {
+		target := *source.JetsonNVPModel
+		clone.JetsonNVPModel = &target
+	}
+	if source.NvidiaLockedGPUClock != nil {
+		target := *source.NvidiaLockedGPUClock
+		if source.NvidiaLockedGPUClock.Mode != nil {
+			mode := *source.NvidiaLockedGPUClock.Mode
+			target.Mode = &mode
+		}
+		clone.NvidiaLockedGPUClock = &target
+	}
+	return &clone
 }
 
 func reportArtifactCapability(

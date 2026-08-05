@@ -136,7 +136,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Separate desired, observed, previous, and restored mode; actuator
   kind/target; policy and Run identity; lifecycle stage; and apply,
   verification, settling, and restoration timestamps in the durable handoff.
-- [ ] Freeze the selected target and configured actuation-policy digest into
+- [x] Freeze the selected target and configured actuation-policy digest into
   immutable Run intent.
 - [x] Fix intent v1alpha9 and simultaneous Go/Python decoder compatibility
   before wiring any selectable-mode producer.
@@ -154,9 +154,14 @@ actuation object while leaving measurement-protocol identity unchanged. Older
 schemas reject the new field. CPU ORT accepts retained v1alpha8/v1alpha7/v1alpha6
 and RKNNLite accepts retained v1alpha8; the current Python request decoders pair
 only with current v1alpha9, while their retained envelopes pair only with the
-corresponding retained intent family. The producer and frozen policy payload
-are still absent, so this schema checkpoint does not close the preceding
-freeze requirement or enable actuation.
+corresponding retained intent family. Candidate-report v1alpha6 carries the
+exact selected target. The Profiler selects a configured policy by exact
+DeviceClass, mode, and actuator kind, binds its semantic digest into the
+intent, and retains its canonical bytes and ConfigMap source in the immutable
+record. Its first policy fields bind settling and maximum handoff duration.
+Before the remaining handoff steps exist, the reconciler reports
+`ActuationHandoffPending` and creates no measurement Job; freezing therefore
+does not enable host mutation or selectable-mode profiling.
 
 ### Jetson NVPModel
 
@@ -195,13 +200,13 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha4 and candidate-report v1alpha5 now keep image-owned
+Execution-facts v1alpha4 and candidate-report v1alpha6 now keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform, fixed batch, and the explicit
 runtime input tensor. Its decoder retains strict v1alpha2-v1alpha4
-compatibility for already frozen evidence.
+compatibility through v1alpha5 for already frozen evidence.
 Intent v1alpha9 retains the order-normalized physical host-contract digest,
 omits ORT-only thread settings from RKNNLite's common CPU quota, and adds the
 optional typed actuation binding. V1alpha8/v1alpha7/v1alpha6 CPU bytes remain

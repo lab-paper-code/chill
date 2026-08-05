@@ -18,6 +18,7 @@ func TestOptionsBindFlags(t *testing.T) {
 		"--workload-observation-key=workload-observation.yaml",
 		"--admission-policies-key=admission-policies.yaml",
 		"--execution-policies-key=execution-policies.yaml",
+		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
 	}); err != nil {
 		t.Fatal(err)
@@ -38,6 +39,7 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 		workloadObservationKey:         "workload-observation.yaml",
 		admissionPoliciesKey:           "admission-policies.yaml",
 		executionPoliciesKey:           "execution-policies.yaml",
+		actuationPoliciesKey:           "actuation-policies.yaml",
 		workloadObserverServiceAccount: "chill-profiler-workload-observer",
 	}
 	if err := valid.validate(); err != nil {

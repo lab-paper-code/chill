@@ -338,20 +338,25 @@ so device-specific envelopes do not require a new binary or a Run-level resource
 override. The Profiler validates the envelope's resource and capacity
 relationships, then retains its
 canonical bytes and exact source provenance beside the intent before creating
-a Job. When both policies are configured, admission and execution selections
-must come from the same ConfigMap UID and resourceVersion; a concurrent catalog
-update therefore fails closed instead of producing a mixed snapshot. The Job
+a Job. Admission, execution, and optional actuation selections must come from
+the same ConfigMap UID and resourceVersion; a concurrent catalog update
+therefore fails closed instead of producing a mixed snapshot. The Job
 annotation uses the selected policy's semantic content digest;
 ConfigMap-only revision changes do not create a new execution identity. Restart
 recovery never consults mutable execution-policy configuration. Intent records
 that predate this payload reconstruct the exact `cpu-ort-worker/v1` or
 `cpu-ort-worker/idle-v1` envelope so an already-created Job remains recoverable.
 
-`ProfilingRun.spec.candidate.powerMode` is required. The candidate resolver
-verifies that it is declared by the selected `DeviceClass`. The first CPU path
-accepts only the non-selectable `fixed` mode. Jetson `nvpmodel`, GPU clock, and
-other selectable modes remain unsupported until a later Node-side observer or
-preflight can prove the effective mode throughout the measurement window.
+`ProfilingRun.spec.candidate.powerMode` is required. Candidate-report v1alpha6
+verifies that it is declared by the selected `DeviceClass` and directly retains
+the exact typed actuator target for a non-fixed mode. The Profiler selects a
+configured actuation policy by DeviceClass, mode, and actuator kind; its
+canonical digest enters intent v1alpha9 and its canonical bytes and ConfigMap
+source enter the immutable intent record. Fixed Runs continue directly. An
+actuated Run records `ActuationHandoffPending` and creates no measurement Job,
+because Lease ownership, read-back, settling, and restoration remain Plan 6
+work. Thus target freezing is implemented without claiming selectable-mode
+execution support.
 
 The concrete adapters remain narrow:
 

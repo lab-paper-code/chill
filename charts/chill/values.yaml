@@ -91,6 +91,7 @@ profiler:
     workloadObservationKey: workload-observation.yaml
     admissionPoliciesKey: admission-policies.yaml
     executionPoliciesKey: execution-policies.yaml
+    actuationPoliciesKey: actuation-policies.yaml
     metricObserverImage: ""
     workloadObserverImage: ""
     executionDeclarations: []
@@ -295,6 +296,13 @@ profiler:
         workloadObserverMemoryLimitBytes: 134217728
         coordinationReserveBytes: 1048576
         workspaceBytes: 134217728
+    actuationPolicies:
+      - name: xavier-nvpmodel-v1
+        deviceClass: jetson-xavier-nx-8g
+        powerMode: MODE_15W_6CORE
+        actuatorKind: JetsonNVPModel
+        settlingDurationSeconds: 60
+        maxActuationDurationSeconds: 900
 
 console:
   enabled: false

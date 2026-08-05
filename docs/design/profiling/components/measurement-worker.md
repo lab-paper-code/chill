@@ -140,8 +140,9 @@ accelerator paths; CPU ORT omits that field. Retained `v1alpha8` additionally
 kept the common CPU quota while omitting the ORT-only intra/inter-op fields
 from RKNNLite intents. Current `v1alpha9` adds an optional typed actuation
 contract containing the non-fixed mode, exact actuator target, and configured
-policy digest. Fixed Runs omit it, and the current producer remains fixed-only.
-The frozen
+policy digest. Fixed Runs omit it. The producer can freeze either form, but an
+actuated Run is withheld before Job creation until the durable actuation
+handoff exists. The frozen
 measurement protocol includes settling duration and reuses the same intent
 type and common execution provenance rather than creating a parallel frozen
 type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha9`

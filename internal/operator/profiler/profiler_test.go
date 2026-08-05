@@ -83,6 +83,7 @@ func TestBuildDeployment(t *testing.T) {
 		"--workload-observation-key=workload-observation.yaml",
 		"--admission-policies-key=admission-policies.yaml",
 		"--execution-policies-key=execution-policies.yaml",
+		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
 		"--workload-observer-kube-api-server=https://kubernetes.example:6443",
 	} {
@@ -265,6 +266,7 @@ func validConfig() Config {
 			MetricSourcesKey: "metric-sources.yaml", WorkloadObservationKey: "workload-observation.yaml",
 			AdmissionPoliciesKey: "admission-policies.yaml",
 			ExecutionPoliciesKey: "execution-policies.yaml",
+			ActuationPoliciesKey: "actuation-policies.yaml",
 		},
 		WorkloadObserver: WorkloadObserverConfig{
 			ServiceAccountName: "chill-profiler-workload-observer",

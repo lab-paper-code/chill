@@ -9,6 +9,11 @@ import (
 	"testing"
 )
 
+const (
+	testActuatedNVPMode   = "MODE_15W_6CORE"
+	testARM64Architecture = "arm64"
+)
+
 func TestCandidateReportBindsEveryMaterialSelection(t *testing.T) {
 	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
@@ -89,6 +94,119 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 	}
 	if _, err := DecodeCandidateReport(append(valid, valid...)); err == nil {
 		t.Fatal("expected multiple JSON values rejection")
+	}
+	var explicitNull map[string]any
+	if err := json.Unmarshal(valid, &explicitNull); err != nil {
+		t.Fatal(err)
+	}
+	explicitNull["selection"].(map[string]any)["actuator"] = nil
+	nullPayload, err := json.Marshal(explicitNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(nullPayload); err == nil || !strings.Contains(err.Error(), "must be an object") {
+		t.Fatalf("explicit null candidate actuator was accepted: %v", err)
+	}
+}
+
+func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
+	intent := validIntent()
+	intent.State.DeviceClass = "jetson-xavier-nx-8g"
+	intent.State.PowerMode = testActuatedNVPMode
+	intent.TargetNode.Architecture = testARM64Architecture
+	intent.Actuation = &ActuationContract{
+		PowerMode:    intent.State.PowerMode,
+		PolicyDigest: "sha256:" + strings.Repeat("b", 64),
+		Actuator: ActuatorTarget{
+			Kind:           ActuatorKindJetsonNVPModel,
+			JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
+		},
+	}
+	report := CandidateReport{
+		SchemaVersion: CandidateReportSchemaVersion,
+		Scope:         "StaticCompatibility",
+		Inputs: CandidateReportInputs{
+			ModelSpec: CandidateReportObjectInput{
+				Name: intent.State.Model, UID: "model-uid", ResourceVersion: "1",
+				ContentDigest: intent.Candidate.ModelSpecContentDigest,
+			},
+			DeviceClass: CandidateReportObjectInput{
+				Name: intent.State.DeviceClass, UID: "class-uid", ResourceVersion: "2",
+				ContentDigest: intent.Candidate.DeviceClassContentDigest,
+			},
+			RuntimeDeclaration: CandidateReportRuntimeInput{
+				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "3",
+				Key: "execution-facts.yaml", ContentDigest: intent.Candidate.RuntimeDeclarationDigest,
+				Image: intent.Images.Runtime,
+			},
+		},
+		Selection: CandidateReportSelection{
+			ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
+			ArtifactDigest: intent.State.ArtifactDigest, PowerMode: intent.State.PowerMode,
+			Actuator: &intent.Actuation.Actuator,
+		},
+		DeviceClassFacts: CandidateReportDeviceClassFacts{
+			Architecture: intent.TargetNode.Architecture,
+			NodeSelector: map[string]string{"edge.dacs.io/device-class": intent.State.DeviceClass},
+			PowerModes:   []string{"MAXN", intent.State.PowerMode},
+		},
+		ArtifactSupply: CandidateReportArtifactSupply{
+			Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
+			Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
+		},
+		MetricObserverImage: intent.Images.MetricObserver,
+		Verdict:             intent.Candidate.Verdict,
+		Reasons:             []CandidateReportReason{},
+	}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
+	if err := ValidateCandidateReport(payload, intent); err != nil {
+		t.Fatal(err)
+	}
+
+	drifted := report
+	driftedTarget := *report.Selection.Actuator
+	driftedNVPModel := *driftedTarget.JetsonNVPModel
+	driftedNVPModel.ID = 3
+	driftedTarget.JetsonNVPModel = &driftedNVPModel
+	drifted.Selection.Actuator = &driftedTarget
+	driftedPayload, err := json.Marshal(drifted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftedSum := sha256.Sum256(driftedPayload)
+	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(driftedSum[:])
+	if err := ValidateCandidateReport(driftedPayload, intent); err == nil ||
+		!strings.Contains(err.Error(), "actuator target") {
+		t.Fatalf("candidate actuator drift was accepted: %v", err)
+	}
+}
+
+func TestDecodeCandidateReportRetainsV1Alpha5WithoutActuation(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.SchemaVersion = candidateReportSchemaVersionV1Alpha5
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err != nil {
+		t.Fatal(err)
+	}
+	report.Selection.PowerMode = testActuatedNVPMode
+	report.Selection.Actuator = &ActuatorTarget{
+		Kind:           ActuatorKindJetsonNVPModel,
+		JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
+	}
+	payload, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err == nil || !strings.Contains(err.Error(), "retained") {
+		t.Fatalf("retained report accepted actuation: %v", err)
 	}
 }
 
@@ -364,10 +482,10 @@ func completeCandidateReportForTest() CandidateReport {
 			ExecutionPath: "rknnlite", Artifact: "model.rknn", ArtifactDigest: "sha256:artifact", PowerMode: "fixed",
 		},
 		DeviceClassFacts: CandidateReportDeviceClassFacts{
-			Architecture: "arm64", NodeSelector: map[string]string{"class": "orangepi"}, PowerModes: []string{"fixed"},
+			Architecture: testARM64Architecture, NodeSelector: map[string]string{"class": "orangepi"}, PowerModes: []string{"fixed"},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: "artifact@sha256:digest", Architecture: "arm64", Path: "/artifact/model.rknn", Digest: "sha256:artifact",
+			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Path: "/artifact/model.rknn", Digest: "sha256:artifact",
 		},
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},

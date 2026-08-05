@@ -1,6 +1,7 @@
 package profilingrun
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,8 @@ const (
 	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
 	candidateReportSchemaVersionV1Alpha3 = "chill.dacs.io/modelcompat-report.v1alpha3"
 	candidateReportSchemaVersionV1Alpha4 = "chill.dacs.io/modelcompat-report.v1alpha4"
-	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha5"
+	candidateReportSchemaVersionV1Alpha5 = "chill.dacs.io/modelcompat-report.v1alpha5"
+	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha6"
 	candidateReportScope                 = "StaticCompatibility"
 	candidateHostContractSchemaVersion   = "chill.dacs.io/accelerator-host-contract.v1alpha1"
 )
@@ -66,10 +68,11 @@ type CandidateReportRuntimeInput struct {
 }
 
 type CandidateReportSelection struct {
-	ExecutionPath  string `json:"executionPath"`
-	Artifact       string `json:"artifact"`
-	ArtifactDigest string `json:"artifactDigest"`
-	PowerMode      string `json:"powerMode,omitempty"`
+	ExecutionPath  string          `json:"executionPath"`
+	Artifact       string          `json:"artifact"`
+	ArtifactDigest string          `json:"artifactDigest"`
+	PowerMode      string          `json:"powerMode,omitempty"`
+	Actuator       *ActuatorTarget `json:"actuator,omitempty"`
 }
 
 type CandidateReportDeviceClassFacts struct {
@@ -256,26 +259,8 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		}
 		return CandidateReport{}, fmt.Errorf("decode candidate report trailing content: %w", err)
 	}
-	if report.SchemaVersion != CandidateReportSchemaVersion &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha4 &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha3 &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
-		return CandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
-	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
-		(len(report.RuntimePackages) != 0 || report.HostContract != nil ||
-			report.ArtifactCapability != nil || report.RuntimeAccess != nil) {
-		return CandidateReport{}, errors.New("v1alpha2 candidate report cannot contain runtime packages or a host contract")
-	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha3 &&
-		(report.ArtifactCapability != nil || report.RuntimeAccess != nil ||
-			(report.HostContract != nil && report.HostContract.Platform != nil)) {
-		return CandidateReport{}, errors.New("v1alpha3 candidate report cannot contain artifact capability, host platform, or runtime access")
-	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha4 && report.ArtifactCapability != nil &&
-		(len(report.ArtifactCapability.InputShape) != 0 || report.ArtifactCapability.InputLayout != "" ||
-			report.ArtifactCapability.InputDataType != "") {
-		return CandidateReport{}, errors.New("v1alpha4 candidate report cannot contain an artifact input contract")
+	if err := validateCandidateReportGeneration(payload, report); err != nil {
+		return CandidateReport{}, err
 	}
 	if report.Scope != candidateReportScope {
 		return CandidateReport{}, fmt.Errorf("unsupported candidate report scope %q", report.Scope)
@@ -284,6 +269,48 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 		return CandidateReport{}, err
 	}
 	return report, nil
+}
+
+func validateCandidateReportGeneration(payload []byte, report CandidateReport) error {
+	if report.SchemaVersion != CandidateReportSchemaVersion &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha5 &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha4 &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha3 &&
+		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
+		return fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
+	}
+	var rawFields struct {
+		Selection map[string]json.RawMessage `json:"selection"`
+	}
+	if err := json.Unmarshal(payload, &rawFields); err != nil {
+		return fmt.Errorf("inspect candidate report fields: %w", err)
+	}
+	rawActuator, actuatorPresent := rawFields.Selection["actuator"]
+	if actuatorPresent && bytes.Equal(bytes.TrimSpace(rawActuator), []byte("null")) {
+		return errors.New("candidate report selection.actuator must be an object when present")
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
+		(len(report.RuntimePackages) != 0 || report.HostContract != nil ||
+			report.ArtifactCapability != nil || report.RuntimeAccess != nil) {
+		return errors.New("v1alpha2 candidate report cannot contain runtime packages or a host contract")
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha3 &&
+		(report.ArtifactCapability != nil || report.RuntimeAccess != nil ||
+			(report.HostContract != nil && report.HostContract.Platform != nil)) {
+		return errors.New("v1alpha3 candidate report cannot contain artifact capability, host platform, or runtime access")
+	}
+	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha4 && report.ArtifactCapability != nil &&
+		(len(report.ArtifactCapability.InputShape) != 0 || report.ArtifactCapability.InputLayout != "" ||
+			report.ArtifactCapability.InputDataType != "") {
+		return errors.New("v1alpha4 candidate report cannot contain an artifact input contract")
+	}
+	if report.SchemaVersion != CandidateReportSchemaVersion && actuatorPresent {
+		return errors.New("retained candidate report cannot contain a selected actuator")
+	}
+	if report.SchemaVersion != CandidateReportSchemaVersion && report.Selection.PowerMode != FixedPowerMode {
+		return errors.New("retained candidate report cannot select an actuated power mode")
+	}
+	return nil
 }
 
 func validateInternalCandidateReport(report CandidateReport) error {
@@ -322,6 +349,18 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	}
 	if len(report.DeviceClassFacts.NodeSelector) == 0 || len(report.DeviceClassFacts.PowerModes) == 0 {
 		return errors.New("candidate report DeviceClass nodeSelector and powerModes are required")
+	}
+	if report.Selection.PowerMode == FixedPowerMode {
+		if report.Selection.Actuator != nil {
+			return errors.New("fixed candidate selection cannot contain an actuator target")
+		}
+	} else {
+		if report.Selection.Actuator == nil {
+			return errors.New("actuated candidate selection requires an actuator target")
+		}
+		if err := report.Selection.Actuator.Validate(); err != nil {
+			return fmt.Errorf("validate candidate actuator target: %w", err)
+		}
 	}
 	if report.Verdict == "Compatible" && len(report.Reasons) != 0 {
 		return errors.New("compatible candidate report must not contain reasons")
@@ -453,7 +492,9 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 		return VerifiedCandidateReport{}, err
 	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
+		if (report.SchemaVersion != CandidateReportSchemaVersion &&
+			report.SchemaVersion != candidateReportSchemaVersionV1Alpha5) ||
+			report.ArtifactCapability == nil ||
 			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
 			len(report.ArtifactCapability.InputShape) == 0 ||
 			report.ArtifactCapability.InputShape[0] != report.ArtifactCapability.FixedBatch ||
@@ -502,7 +543,41 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 			return VerifiedCandidateReport{}, fmt.Errorf("candidate %s mismatch", check.name)
 		}
 	}
+	if intent.Actuation == nil {
+		if report.Selection.Actuator != nil {
+			return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match fixed intent")
+		}
+	} else if report.Selection.Actuator == nil ||
+		!actuatorTargetsEqual(*report.Selection.Actuator, intent.Actuation.Actuator) {
+		return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match Run intent")
+	}
 	return VerifiedCandidateReport{report: report}, nil
+}
+
+func actuatorTargetsEqual(left, right ActuatorTarget) bool {
+	if left.Kind != right.Kind {
+		return false
+	}
+	switch left.Kind {
+	case ActuatorKindJetsonNVPModel:
+		return left.JetsonNVPModel != nil && right.JetsonNVPModel != nil &&
+			left.JetsonNVPModel.ID == right.JetsonNVPModel.ID &&
+			left.NvidiaLockedGPUClock == nil && right.NvidiaLockedGPUClock == nil
+	case ActuatorKindNvidiaLockedGPUClock:
+		if left.NvidiaLockedGPUClock == nil || right.NvidiaLockedGPUClock == nil ||
+			left.JetsonNVPModel != nil || right.JetsonNVPModel != nil {
+			return false
+		}
+		leftClock := left.NvidiaLockedGPUClock
+		rightClock := right.NvidiaLockedGPUClock
+		if leftClock.MinMHz != rightClock.MinMHz || leftClock.MaxMHz != rightClock.MaxMHz ||
+			(leftClock.Mode == nil) != (rightClock.Mode == nil) {
+			return false
+		}
+		return leftClock.Mode == nil || *leftClock.Mode == *rightClock.Mode
+	default:
+		return false
+	}
 }
 
 func ValidateCandidateReport(payload []byte, intent Intent) error {
