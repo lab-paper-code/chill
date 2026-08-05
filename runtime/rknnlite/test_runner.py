@@ -303,6 +303,20 @@ class RunnerTest(unittest.TestCase):
             idle = valid_idle_request(model)
             runner.validate_request(idle)
 
+    def test_validate_request_accepts_artifact_specific_idle_path_and_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_idle_request(model)
+            request["intent"]["candidate"]["executionPath"] = "rknnlite-bs2"
+            request["intent"]["state"]["artifact"] = "mobilenet-v2-050-rk3588-bs2"
+            request["intent"]["measurement"]["batch"] = 2
+            capability = request["candidate"]["artifactCapability"]
+            capability["fixedBatch"] = 2
+            capability["inputShape"][0] = 2
+
+            runner.validate_request(request)
+
     def test_observe_host_contract_fails_on_library_digest_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"

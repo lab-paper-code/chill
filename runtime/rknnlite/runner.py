@@ -218,7 +218,8 @@ def validate_request(request: dict[str, Any]) -> None:
         },
         "intent.candidate",
     )
-    if candidate_identity["executionPath"] != "rknnlite" or candidate_identity["verdict"] != "Compatible":
+    require_string(candidate_identity["executionPath"], "intent.candidate.executionPath")
+    if candidate_identity["verdict"] != "Compatible":
         raise ContractError("intent candidate does not select RKNNLite")
 
     state = require_object(intent["state"], "intent.state")
@@ -290,8 +291,7 @@ def validate_request(request: dict[str, Any]) -> None:
         raise ContractError("RKNNLite requires exactly one repetition")
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         if (
-            measurement["batch"] != 1
-            or measurement["warmupIterations"] != 0
+            measurement["warmupIterations"] != 0
             or require_integer(
                 measurement["settlingDurationSeconds"],
                 "intent.measurement.settlingDurationSeconds",

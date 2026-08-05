@@ -62,6 +62,10 @@ corresponding level.
   observed, and previous mode belong to Run/actuator state.
 - Exact child-image digests, not manifest-list digests, are frozen into
   runtime, artifact, MetricObserver, and WorkloadObserver facts.
+- Execution-path names select catalog entries and configured envelopes; the
+  realized runtime family/backend selects the production adapter. A fixed-batch
+  artifact retains its positive batch capability in active and model-loaded-idle
+  intents, while idle still performs no inference.
 - Installed facts are configuration. A row advances only from retained
   production evidence at the applicable level.
 

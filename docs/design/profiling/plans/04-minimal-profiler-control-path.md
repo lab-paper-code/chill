@@ -343,11 +343,12 @@ Caller-supplied image references, runtime declarations, and metric endpoints are
 not accepted in `ProfilingRun`.
 
 `ProfilingRun.spec.measurement.workloadMode` is the only execution-mode
-discriminator. `idle-model-loaded` requires `batch=1`, zero warm-up, a positive
-settling duration, and `none` input/output protocols; it is accepted only with
-`idle-wall-power-v1`. Active fields and `wall-power-v2` remain unchanged. The
-controller projects these frozen facts but does not implement runtime or raw-
-schema behavior itself.
+discriminator. `idle-model-loaded` requires zero warm-up, a positive settling
+duration, and `none` input/output protocols; CPU ORT keeps `batch=1`, while a
+fixed-batch runtime binds the positive batch capability of the artifact it
+loads. Idle is accepted only with `idle-wall-power-v1`. Active fields and
+`wall-power-v2` remain unchanged. The controller projects these frozen facts
+but does not implement runtime or raw-schema behavior itself.
 
 Status remains compact and reconstructable:
 

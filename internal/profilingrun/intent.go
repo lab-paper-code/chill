@@ -130,7 +130,8 @@ func (i Intent) validateSchema() error {
 
 func (i Intent) validateMeasurementMode() error {
 	if i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
-		if i.Measurement.Batch != 1 || i.Measurement.WarmupIterations != 0 ||
+		if (i.State.RuntimeFamily != RKNNLiteRuntimeFamily && i.Measurement.Batch != 1) ||
+			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
 			i.Measurement.InputGenerator != NoInputGenerator ||
 			i.Measurement.OutputValidation != NoOutputValidation {
@@ -165,7 +166,7 @@ func IsSupportedCPUORTIntent(i Intent) bool {
 // contracts implemented by the explicit host-bound RKNNLite worker.
 func IsSupportedRKNNLiteIntent(i Intent) bool {
 	return i.SchemaVersion == SchemaVersion &&
-		i.Candidate.ExecutionPath == RKNNLiteExecutionPath &&
+		hasExecutionPath(i) &&
 		i.State.RuntimeFamily == RKNNLiteRuntimeFamily &&
 		i.State.Backend == RKNNLiteBackend &&
 		i.State.HostContractDigest != "" &&
@@ -174,9 +175,14 @@ func IsSupportedRKNNLiteIntent(i Intent) bool {
 }
 
 func isCPUORTExecution(i Intent) bool {
-	return i.Candidate.ExecutionPath == "ort-cpu" &&
+	return hasExecutionPath(i) &&
 		i.State.RuntimeFamily == "onnxruntime" &&
 		i.State.Backend == "CPUExecutionProvider"
+}
+
+func hasExecutionPath(i Intent) bool {
+	return i.Candidate.ExecutionPath != "" &&
+		strings.TrimSpace(i.Candidate.ExecutionPath) == i.Candidate.ExecutionPath
 }
 
 func supportedCPUORTIntentSchema(schemaVersion string) bool {

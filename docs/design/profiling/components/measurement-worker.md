@@ -218,9 +218,12 @@ For `idle-model-loaded`, the same signals retain the same ownership but have
 mode-specific preconditions: `measurement-start` means exact model load and the
 full frozen settling interval completed with no inference; `measurement-end`
 means the monotonic duration completed with no inference and the model still
-resident. The runtime creates both signals without reading metric or workload
-results. Observers can therefore prove coverage or fail closed, but cannot
-derive a preferred window from the values they observe.
+resident. CPU ORT keeps the canonical idle batch of one. A runtime whose
+artifact is batch-fixed instead requires the idle intent batch to equal that
+artifact capability; the value identifies what is resident and does not imply
+an idle-window inference. The runtime creates both signals without reading
+metric or workload results. Observers can therefore prove coverage or fail
+closed, but cannot derive a preferred window from the values they observe.
 
 Logs are diagnostic only. They are never parsed as evidence or used as a
 controller handoff. A partial metric-result file is never visible under the

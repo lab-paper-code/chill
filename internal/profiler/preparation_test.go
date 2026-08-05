@@ -59,6 +59,9 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 		!profilingrun.IsSupportedRKNNLiteIntent(prepared.Intent) {
 		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.Intent.CPU)
 	}
+	if prepared.Intent.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.Intent.Measurement.Batch != 2 {
+		t.Fatalf("artifact-specific path or batch drifted: %#v", prepared.Intent)
+	}
 }
 
 func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
@@ -163,7 +166,7 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.State.Backend = "CUDAExecutionProvider"
 			},
-			match: "not the supported CPU ONNX Runtime path",
+			match: "runtime/backend contract is not supported",
 		},
 		{
 			name: "mutable workload observer image",
@@ -450,10 +453,10 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 		t.Fatal(err)
 	}
 
-	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	intent.Candidate.ExecutionPath = "rknnlite-bs2"
 	intent.State.DeviceClass = "orangepi-5-plus-16g"
-	intent.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
+	intent.State.Artifact = "mobilenet-v2-050-rk3588-bs2"
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs2.rknn"
 	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
 	intent.State.Backend = profilingrun.RKNNLiteBackend
 	intent.TargetNode.Name = "orangepi5plus"
@@ -463,6 +466,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
 	intent.Metrics.NodeName = intent.TargetNode.Name
+	intent.Measurement.Batch = 2
 
 	host := profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{
@@ -502,7 +506,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 		Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
-		TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+		TargetPlatform: "rk3588", FixedBatch: 2, InputShape: []int32{2, 224, 224, 3},
 		InputLayout: profilingrun.RKNNLiteInputLayout, InputDataType: profilingrun.RKNNLiteInputDataType,
 	}
 	report.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}

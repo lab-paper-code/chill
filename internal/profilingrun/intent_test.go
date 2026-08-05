@@ -103,7 +103,7 @@ func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
 
 func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 	intent := validIntent()
-	intent.Candidate.ExecutionPath = RKNNLiteExecutionPath
+	intent.Candidate.ExecutionPath = "rknnlite-bs2"
 	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	intent.State.Backend = RKNNLiteBackend
 	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
@@ -136,6 +136,17 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 	retained.SchemaVersion = previousIntentSchemaVersion
 	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "current intent schema") {
 		t.Fatalf("retained intent schema accepted RKNNLite contract: %v", err)
+	}
+}
+
+func TestSupportedCPUORTIntentUsesRuntimeContractNotCatalogPathName(t *testing.T) {
+	intent := validIntent()
+	intent.Candidate.ExecutionPath = "ort-cpu-derived"
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !IsSupportedCPUORTIntent(intent) || IsSupportedRKNNLiteIntent(intent) {
+		t.Fatal("CPU ORT adapter selection did not follow the frozen runtime contract")
 	}
 }
 
@@ -202,6 +213,24 @@ func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
 		if err := candidate.Validate(); err == nil {
 			t.Fatal("invalid model-loaded idle protocol was accepted")
 		}
+	}
+}
+
+func TestCurrentRKNNLiteIntentAllowsArtifactBatchForIdle(t *testing.T) {
+	idle := validIntent()
+	idle.Candidate.ExecutionPath = "rknnlite-bs2"
+	idle.State.RuntimeFamily = RKNNLiteRuntimeFamily
+	idle.State.Backend = RKNNLiteBackend
+	idle.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	idle.CPU.ORTIntraOpThreads = 0
+	idle.CPU.ORTInterOpThreads = 0
+	idle.Measurement = MeasurementContract{
+		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
+		OutputValidation: NoOutputValidation,
+	}
+	if err := idle.Validate(); err != nil {
+		t.Fatalf("fixed-batch RKNNLite idle protocol was rejected: %v", err)
 	}
 }
 

@@ -223,7 +223,7 @@ func (p *Preparer) freeze(
 		Policy: firstCPUPolicy, PolicyVersion: firstCPUPolicyVersion,
 		Request: request.CPURequest, Limit: node.AllocatableCPU,
 	}
-	if request.Candidate.ExecutionPath == firstExecutionPath {
+	if candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend {
 		cpuContract.ORTIntraOpThreads = cpu
 		cpuContract.ORTInterOpThreads = 1
 	}
@@ -272,19 +272,14 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if candidate.State.PowerMode != request.PowerMode {
 		return errors.New("resolved candidate power mode does not match request")
 	}
-	switch request.ExecutionPath {
-	case firstExecutionPath:
-		if candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
-			return errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
-		}
-	case profilingrun.RKNNLiteExecutionPath:
-		if candidate.State.RuntimeFamily != profilingrun.RKNNLiteRuntimeFamily ||
-			candidate.State.Backend != profilingrun.RKNNLiteBackend ||
-			candidate.State.HostContractDigest == "" {
-			return errors.New("resolved candidate is not the supported RKNNLite host-bound path")
-		}
+	switch {
+	case candidate.State.RuntimeFamily == firstRuntimeFamily &&
+		candidate.State.Backend == firstRuntimeBackend:
+	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
+		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
+		candidate.State.HostContractDigest != "":
 	default:
-		return errors.New("resolved candidate execution path is not supported")
+		return errors.New("resolved candidate runtime/backend contract is not supported")
 	}
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
 		return errors.New("resolved DeviceClass architecture and Node selector are required")
@@ -343,10 +338,6 @@ func (r PreparationRequest) Validate() error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
-	}
-	if r.Candidate.ExecutionPath != firstExecutionPath &&
-		r.Candidate.ExecutionPath != profilingrun.RKNNLiteExecutionPath {
-		return fmt.Errorf("unsupported executionPath %q", r.Candidate.ExecutionPath)
 	}
 	if r.Candidate.PowerMode != firstPowerMode {
 		return fmt.Errorf("first path supports only powerMode %q", firstPowerMode)
