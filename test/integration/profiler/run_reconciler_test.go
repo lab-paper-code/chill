@@ -35,6 +35,8 @@ import (
 
 const profilerIntegrationNamespace = "profiler-integration"
 
+const profilerIntegrationDeletionHold = "test.chill.dacs.io/hold-deletion"
+
 type staticIntentFreezer struct {
 	prepared profiler.PreparedRun
 	calls    int
@@ -42,9 +44,12 @@ type staticIntentFreezer struct {
 
 func (f *staticIntentFreezer) Freeze(
 	_ context.Context,
-	_ *edgev1alpha1.ProfilingRun,
+	run *edgev1alpha1.ProfilingRun,
 ) (profilercontroller.FreezeIntentResult, error) {
 	f.calls++
+	if !run.DeletionTimestamp.IsZero() {
+		return profilercontroller.FreezeIntentResult{Stopped: true}, nil
+	}
 	return profilercontroller.FreezeIntentResult{
 		Run: profilercontroller.FrozenRun{Prepared: f.prepared},
 	}, nil
@@ -282,6 +287,34 @@ func TestRunReconcilerRejectsRecordedJobOwnerDrift(t *testing.T) {
 	assertNoExecutionCalls(t, restarted)
 }
 
+func TestRunReconcilerStopsAtDeletionFence(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+
+	initial := newReconcilerHarness(t, kube, prepared)
+	reconcile(t, ctx, initial.reconciler, request)
+	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
+	recordedJob := requireRecordedJob(t, afterCreate)
+	deleting := markRunDeleting(t, ctx, kube, afterCreate)
+
+	restarted := newReconcilerHarness(t, kube, prepared)
+	reconcile(t, ctx, restarted.reconciler, request)
+	afterStop := getRun(t, ctx, kube, request.NamespacedName)
+	if afterStop.ResourceVersion != deleting.ResourceVersion {
+		t.Fatalf(
+			"deletion fence rewrote Run: before=%s after=%s",
+			deleting.ResourceVersion,
+			afterStop.ResourceVersion,
+		)
+	}
+	if restarted.freezer.calls != 1 {
+		t.Fatalf("deletion fence freezer calls = %d, want 1", restarted.freezer.calls)
+	}
+	assertNoExecutionCalls(t, restarted)
+	assertSingleOwnedJob(t, ctx, kube, afterStop.UID, recordedJob)
+}
+
 func startProfilerEnvtest(t *testing.T) (context.Context, client.Client) {
 	t.Helper()
 	testEnv := &envtest.Environment{
@@ -435,6 +468,35 @@ func changeJobControllerUID(
 	if err := kube.Update(ctx, job); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func markRunDeleting(
+	t *testing.T,
+	ctx context.Context,
+	kube client.Client,
+	run *edgev1alpha1.ProfilingRun,
+) *edgev1alpha1.ProfilingRun {
+	t.Helper()
+	run.Finalizers = append(run.Finalizers, profilerIntegrationDeletionHold)
+	if err := kube.Update(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := kube.Delete(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	deleting := getRun(t, ctx, kube, client.ObjectKeyFromObject(run))
+	if deleting.DeletionTimestamp.IsZero() {
+		t.Fatal("ProfilingRun deletion timestamp was not persisted")
+	}
+	t.Cleanup(func() {
+		current := &edgev1alpha1.ProfilingRun{}
+		if err := kube.Get(context.Background(), client.ObjectKeyFromObject(run), current); err != nil {
+			return
+		}
+		controllerutil.RemoveFinalizer(current, profilerIntegrationDeletionHold)
+		_ = kube.Update(context.Background(), current)
+	})
+	return deleting
 }
 
 func reconcile(

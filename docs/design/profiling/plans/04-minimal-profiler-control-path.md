@@ -44,7 +44,11 @@ container-image drift remain covered by their focused unit gates. The Operator
 envtest also reconstructs its Profiler reconciler over the retained
 `ChillSystem`, ConfigMap, and Deployment, then proves that it retains one
 Deployment UID and returns to a stable no-op. Cancellation remains open;
-checkpoint 12 is not reported complete.
+the Profiler envtest now proves that a deletion timestamp is a no-write,
+no-external-call fence while the recorded Job retains its Run owner reference.
+Because envtest has no Kubernetes garbage-collection controller, actual Job
+collection still requires the guarded kind e2e gate; checkpoint 12 is not
+reported complete.
 
 ## Purpose
 
@@ -662,7 +666,9 @@ sentinel values accepted by the active result validator.
     status mutation, as is controller-owner drift on the retained Job UID. The
     focused intent, evidence, and retained-loader drift gates remain green.
     Operator reconciler reconstruction over the retained Deployment is covered.
-    Cancellation remains.
+    The Run deletion fence and Job owner binding are covered in envtest. Native
+    owner garbage collection remains to be verified in the guarded kind e2e
+    suite.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
