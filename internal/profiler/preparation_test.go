@@ -2,6 +2,8 @@ package profiler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -38,6 +40,24 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 		resolvers.node.selection.DeviceArchitecture != expected.TargetNode.Architecture ||
 		resolvers.node.selection.DeviceClassSelector["edge.dacs.io/device-class"] != expected.State.DeviceClass {
 		t.Fatalf("Node selection lost resolved DeviceClass facts: %#v", resolvers.node.selection)
+	}
+}
+
+func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
+	expected, candidateBytes := rknnPreparationFixture(t)
+	resolvers := fixtureResolvers(expected, candidateBytes)
+	preparer := newFixturePreparer(t, resolvers)
+
+	prepared, err := preparer.Prepare(context.Background(), fixtureRequest(expected))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prepared.Intent, expected) {
+		t.Fatalf("prepared RKNNLite intent drifted\nwant: %#v\n got: %#v", expected, prepared.Intent)
+	}
+	if prepared.Intent.CPU.ORTIntraOpThreads != 0 || prepared.Intent.CPU.ORTInterOpThreads != 0 ||
+		!profilingrun.IsSupportedRKNNLiteIntent(prepared.Intent) {
+		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.Intent.CPU)
 	}
 }
 
@@ -417,6 +437,84 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	intent.Workload = profilingrun.CurrentWorkloadContract()
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
+		t.Fatal(err)
+	}
+	return intent, candidateBytes
+}
+
+func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
+	t.Helper()
+	intent, candidateBytes := preparationFixture(t)
+	report, err := profilingrun.DecodeCandidateReport(candidateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	intent.State.DeviceClass = "orangepi-5-plus-16g"
+	intent.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
+	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	intent.State.Backend = profilingrun.RKNNLiteBackend
+	intent.TargetNode.Name = "orangepi5plus"
+	intent.TargetNode.Architecture = "arm64"
+	intent.TargetNode.AllocatableCPU = "8"
+	intent.CPU.Limit = "8"
+	intent.CPU.ORTIntraOpThreads = 0
+	intent.CPU.ORTInterOpThreads = 0
+	intent.Metrics.NodeName = intent.TargetNode.Name
+
+	host := profilingrun.CandidateReportHostContract{
+		Libraries: []profilingrun.CandidateReportHostLibrary{{
+			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
+			Digest: "sha256:" + strings.Repeat("b", 64),
+		}},
+		Driver: profilingrun.CandidateReportHostDriver{
+			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
+		},
+		Devices: []profilingrun.CandidateReportHostDevice{
+			{Path: "/dev/dri/card0"}, {Path: "/dev/dri/card1"},
+			{Path: "/dev/dri/renderD128"}, {Path: "/dev/dri/renderD129"},
+		},
+		Platform: &profilingrun.CandidateReportHostPlatform{
+			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
+		},
+	}
+	intent.State.HostContractDigest, err = profilingrun.CandidateHostContractDigest(&host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
+	report.Inputs.ModelSpec.Name = intent.State.Model
+	report.Inputs.DeviceClass.Name = intent.State.DeviceClass
+	report.Inputs.RuntimeDeclaration.Image = intent.Images.Runtime
+	report.Selection = profilingrun.CandidateReportSelection{
+		ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
+		ArtifactDigest: intent.State.ArtifactDigest, PowerMode: intent.State.PowerMode,
+	}
+	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
+		Architecture: intent.TargetNode.Architecture,
+		NodeSelector: map[string]string{"edge.dacs.io/device-class": intent.State.DeviceClass},
+		PowerModes:   []string{intent.State.PowerMode},
+	}
+	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
+		Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
+		Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
+	}
+	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
+	report.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
+	report.HostContract = &host
+	report.RuntimeAccess = &profilingrun.CandidateReportRuntimeAccess{
+		Privileged: true, SupplementalGroups: []int64{44, 110},
+	}
+	report.MetricObserverImage = intent.Images.MetricObserver
+	candidateBytes, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(candidateBytes)
+	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
+	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	return intent, candidateBytes

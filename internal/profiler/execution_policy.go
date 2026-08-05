@@ -58,11 +58,8 @@ func DeriveExecutionPlan(
 	if err := frozen.Validate(); err != nil {
 		return ExecutionPlan{}, err
 	}
-	if !profilingrun.IsSupportedCPUORTIntent(intent) ||
-		intent.Candidate.ExecutionPath != firstExecutionPath ||
-		intent.State.RuntimeFamily != firstRuntimeFamily ||
-		intent.State.Backend != firstRuntimeBackend {
-		return ExecutionPlan{}, errors.New("cpu-ort-worker requires a supported CPU ONNX Runtime intent")
+	if !profilingrun.IsSupportedCPUORTIntent(intent) && !profilingrun.IsSupportedRKNNLiteIntent(intent) {
+		return ExecutionPlan{}, errors.New("measurement worker requires a supported explicit runtime intent")
 	}
 	policy := frozen.Policy
 	if (policy.DeviceClass != "*" && policy.DeviceClass != intent.State.DeviceClass) ||

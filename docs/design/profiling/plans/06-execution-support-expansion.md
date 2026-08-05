@@ -149,14 +149,13 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
 - [x] Bind an immutable RKNN artifact to its source ONNX, target platform,
   conversion identity, and fixed-batch capability.
-- [ ] Keep host `librknnrt`, driver, image-owned package, device visibility, and
+- [x] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.
 - [ ] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
   contract, and active/idle evidence path.
 - [ ] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Partial implementation of the second item is intentionally not marked complete.
 Execution-facts v1alpha4 and candidate-report v1alpha4 now keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
@@ -170,6 +169,12 @@ Host-bound derivation identities use execution-state-identity v1alpha2 while
 CPU identities remain unchanged. No exact RKNN
 declaration is installed yet and no production Job verifies these expected
 values at the host boundary.
+
+Preparation and the frozen execution-policy selector now accept only the
+explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
+schema. They retain the same bounded worker envelope without fabricating ORT
+thread settings. This does not yet materialize host access or execute RKNNLite,
+so the row remains L0.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

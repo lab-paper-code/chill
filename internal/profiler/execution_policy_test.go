@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"sigs.k8s.io/yaml"
 )
 
 const testArtifactPath = "/artifact/model.onnx"
@@ -48,6 +49,36 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	intent.Candidate.ExecutionPath = "tensorrt"
 	if _, err := deriveConfiguredExecutionPlan(t, intent); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want unsupported path rejection")
+	}
+}
+
+func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
+	intent := currentExecutionPolicyTestIntent(t)
+	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	intent.State.Backend = profilingrun.RKNNLiteBackend
+	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	intent.CPU.ORTIntraOpThreads = 0
+	intent.CPU.ORTInterOpThreads = 0
+	policy := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
+	policy.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	raw, err := yaml.Marshal(ExecutionPolicyCatalog{
+		SchemaVersion: ExecutionPolicyCatalogSchemaVersion,
+		Policies:      []ExecutionPolicySpec{policy},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, validExecutionPolicySource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := DeriveExecutionPlan(intent, frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Policy != policy.Name || plan.MaxLatencySamples != policy.MaxLatencySamples {
+		t.Fatalf("RKNNLite execution plan drifted: %#v", plan)
 	}
 }
 

@@ -122,6 +122,9 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 	if IsSupportedCPUORTIntent(intent) {
 		t.Fatal("RKNNLite intent was classified as CPU ORT")
 	}
+	if !IsSupportedRKNNLiteIntent(intent) {
+		t.Fatal("current host-bound RKNNLite intent was not classified as supported")
+	}
 
 	withORTSettings := intent
 	withORTSettings.CPU.ORTIntraOpThreads = 4

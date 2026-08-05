@@ -161,6 +161,18 @@ func IsSupportedCPUORTIntent(i Intent) bool {
 			isCPUORTExecution(i))
 }
 
+// IsSupportedRKNNLiteIntent covers the current active and model-loaded-idle
+// contracts implemented by the explicit host-bound RKNNLite worker.
+func IsSupportedRKNNLiteIntent(i Intent) bool {
+	return i.SchemaVersion == SchemaVersion &&
+		i.Candidate.ExecutionPath == RKNNLiteExecutionPath &&
+		i.State.RuntimeFamily == RKNNLiteRuntimeFamily &&
+		i.State.Backend == RKNNLiteBackend &&
+		i.State.HostContractDigest != "" &&
+		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
+			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+}
+
 func isCPUORTExecution(i Intent) bool {
 	return i.Candidate.ExecutionPath == "ort-cpu" &&
 		i.State.RuntimeFamily == "onnxruntime" &&

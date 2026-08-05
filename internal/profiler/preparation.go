@@ -219,6 +219,14 @@ func (p *Preparer) freeze(
 		return profilingrun.Intent{}, errors.New("resolved Node allocatable CPU must be a positive integer")
 	}
 	reportSum := sha256.Sum256(candidate.ReportBytes)
+	cpuContract := profilingrun.CPUContract{
+		Policy: firstCPUPolicy, PolicyVersion: firstCPUPolicyVersion,
+		Request: request.CPURequest, Limit: node.AllocatableCPU,
+	}
+	if request.Candidate.ExecutionPath == firstExecutionPath {
+		cpuContract.ORTIntraOpThreads = cpu
+		cpuContract.ORTInterOpThreads = 1
+	}
 	intent := profilingrun.Intent{
 		SchemaVersion: profilingrun.SchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
@@ -236,16 +244,8 @@ func (p *Preparer) freeze(
 			MetricObserver:   candidate.MetricObserverImage,
 			WorkloadObserver: workload.Image,
 		},
-		TargetNode: node,
-		CPU: profilingrun.CPUContract{
-			Policy:             firstCPUPolicy,
-			PolicyVersion:      firstCPUPolicyVersion,
-			Request:            request.CPURequest,
-			Limit:              node.AllocatableCPU,
-			ORTIntraOpThreads:  cpu,
-			ORTInterOpThreads:  1,
-			ExclusivityClaimed: false,
-		},
+		TargetNode:  node,
+		CPU:         cpuContract,
 		Measurement: request.Measurement,
 		Metrics: profilingrun.MetricContract{
 			SourceKind:                 metrics.Kind,
@@ -272,9 +272,19 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if candidate.State.PowerMode != request.PowerMode {
 		return errors.New("resolved candidate power mode does not match request")
 	}
-	if request.ExecutionPath != firstExecutionPath ||
-		candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
-		return errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
+	switch request.ExecutionPath {
+	case firstExecutionPath:
+		if candidate.State.RuntimeFamily != firstRuntimeFamily || candidate.State.Backend != firstRuntimeBackend {
+			return errors.New("resolved candidate is not the supported CPU ONNX Runtime path")
+		}
+	case profilingrun.RKNNLiteExecutionPath:
+		if candidate.State.RuntimeFamily != profilingrun.RKNNLiteRuntimeFamily ||
+			candidate.State.Backend != profilingrun.RKNNLiteBackend ||
+			candidate.State.HostContractDigest == "" {
+			return errors.New("resolved candidate is not the supported RKNNLite host-bound path")
+		}
+	default:
+		return errors.New("resolved candidate execution path is not supported")
 	}
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {
 		return errors.New("resolved DeviceClass architecture and Node selector are required")
@@ -334,8 +344,9 @@ func (r PreparationRequest) Validate() error {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if r.Candidate.ExecutionPath != firstExecutionPath {
-		return fmt.Errorf("first path supports only executionPath %q", firstExecutionPath)
+	if r.Candidate.ExecutionPath != firstExecutionPath &&
+		r.Candidate.ExecutionPath != profilingrun.RKNNLiteExecutionPath {
+		return fmt.Errorf("unsupported executionPath %q", r.Candidate.ExecutionPath)
 	}
 	if r.Candidate.PowerMode != firstPowerMode {
 		return fmt.Errorf("first path supports only powerMode %q", firstPowerMode)
@@ -354,7 +365,7 @@ func (r PreparationRequest) Validate() error {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
 	if r.Measurement.Repetitions != 1 {
-		return errors.New("first profiling path requires exactly one measurement repetition")
+		return errors.New("profiling execution requires exactly one measurement repetition")
 	}
 	for name, value := range map[string]string{
 		"measurement workloadMode":     r.Measurement.WorkloadMode,
