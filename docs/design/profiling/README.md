@@ -124,6 +124,38 @@ are live-verified. The scope does not orchestrate a batch
 campaign, derive `b_sat`, publish a `DeviceProfile`, or connect to the
 scheduler.
 
+### 5a. Sequential batch sweep with early stopping — approved, not implemented
+
+[plans/05a-sequential-batch-stop.md](plans/05a-sequential-batch-stop.md)
+
+Answers only:
+
+> Walking batch sizes upward, when has energy per item stopped improving enough
+> to keep going?
+
+Approved scope, not implemented. It takes the early-stopping rule as implemented
+in Keras, PyTorch Lightning, scikit-learn, Hugging Face, and Optuna, adapts its
+margin to a relative form, and walks batch sizes until they stop paying off. The
+batch domain is discovered rather than declared, and the cost is a fraction of
+Plan 5's. It produces a decision with no confidence statement attached, and its
+selected batch is the candidate Plan 5's confirmation pass takes as input.
+
+### 5. Batch-saturation campaign — approved, not implemented
+
+[plans/05-batch-saturation-campaign.md](plans/05-batch-saturation-campaign.md)
+
+Answers only:
+
+> Under what predeclared rule does a set of Runs establish batch saturation for
+> one execution state?
+
+Approved scope, not implemented. It fixes a domain-wide relative saturation
+estimand with simultaneous calibration, rebuilds the point-confidence
+construction, and separates candidate discovery from confirmation. Campaign
+provenance is pre-registered in a committed record rather than machine-enforced;
+that boundary is stated in the plan. It does not authorize a `DeviceProfile`
+API, a campaign controller, an intent schema change, or scheduler consumption.
+
 ## Component contracts
 
 These documents define reusable internal subsystem boundaries. They support the

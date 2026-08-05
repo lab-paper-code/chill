@@ -1,0 +1,643 @@
+# Plan 5: Batch-Saturation Campaign
+
+> Navigation: [Profiling design index](../README.md)
+
+## Status
+
+Approved implementation plan. No part of this plan is implemented. It fixes the
+quantity that decides `b_sat` — the largest remaining energy improvement any
+larger measured batch still offers — gives curve derivation ownership of one
+idle baseline, rebuilds the point-confidence construction, and separates
+candidate discovery from confirmation. It does not
+authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
+change, cross-model pooling, or scheduler consumption.
+
+Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
+4 leaves batch selection and repeated trials to a later campaign planner. This
+plan closes both by pre-registration and a published Run list. The
+[Verification boundary](#verification-boundary) states exactly what that
+guarantees.
+
+## Question
+
+> Under what predeclared rule does a set of Runs establish batch saturation for
+> one execution state?
+
+## What this plan does
+
+Running inference in larger batches usually costs less energy per item, up to a
+point. Past that point, larger batches stop helping while still costing latency
+and memory. `b_sat` is the batch size at that point. This plan defines how a
+campaign of profiling Runs decides where it is.
+
+The whole procedure runs in two passes over the same execution state.
+
+**Before anything runs**, two files are written and fixed. One is the derivation
+policy: how far up the batch domain we will measure, how much remaining
+improvement we are willing to walk away from, and how many trials each pass gets.
+The other is the campaign record: which Runs belong to this campaign and how the
+second pass is generated from the first. Every choice in them therefore predates
+the evidence it will judge.
+
+**Pass one, discovery.** Measure every batch from 1 up to the declared maximum,
+a few trials each. This is a cheap, low-precision sweep. Its job is to find the
+approximate shape of the curve and propose a candidate batch — the smallest one
+where the remaining improvement looks small enough. Nothing is claimed from this
+pass. It also tells us how noisy the measurement is, which determines how many
+trials the second pass needs.
+
+**Pass two, confirmation.** Measure the candidate batch and everything above it
+again, with fresh Runs and more trials. Then ask one question with a proper
+confidence bound: *starting from the candidate, does any larger batch we
+measured still offer more than the declared improvement?* If the bound says no,
+the candidate is accepted.
+
+The two passes are separated because choosing what to test and then testing it
+with the same numbers makes the confidence statement wrong. Discovery chooses;
+confirmation tests, on evidence discovery never saw.
+
+## Checkpoint 1: the quantity, and when it is accepted
+
+### The batch domain
+
+The campaign measures batches `1` through `Kmax`. `Kmax` is fixed before
+execution, and it is part of what gets claimed: the accepted statement is that
+saturation occurs somewhere within `1..Kmax`. Nothing is claimed about batch
+sizes above `Kmax`.
+
+Choosing `Kmax` is a real trade-off, described under
+[typed outcomes](#typed-outcomes) below.
+
+### The quantity
+
+For a candidate batch `c`, look at every larger batch in the domain and ask how
+much better the best of them is, as a fraction:
+
+```text
+R_c = max over b in {c+1, ..., Kmax} of  (epsilon_c - epsilon_b) / epsilon_c
+```
+
+`epsilon_b` is the incremental energy per completed item at batch `b`, as Plan 3
+defines it. `R_c` is therefore *the largest remaining improvement available above
+`c`, expressed as a fraction of what `c` already costs*.
+
+A worked example. Suppose a campaign with `Kmax = 10` measures:
+
+| batch | 1 | 2 | 3 | 4 | 5 | ... | 10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `epsilon` (J/item) | 0.0666 | 0.0410 | 0.0344 | 0.0331 | 0.0327 | | 0.0325 |
+
+At `c = 3` the best larger batch is 10, which costs `0.0325`. The remaining
+improvement is `(0.0344 - 0.0325) / 0.0344 = 5.5%`. At `c = 4` the best larger
+batch is again 10, and the remaining improvement is
+`(0.0331 - 0.0325) / 0.0331 = 1.8%`.
+
+With a declared tolerance of 5%, batch 3 leaves too much on the table and batch
+4 does not. Batch 4 is the candidate.
+
+### Why the quantity is a fraction
+
+CHILL's output is a catalog of profiles, one per DeviceClass and model. A
+tolerance expressed in joules per item would have to be chosen separately for
+every entry, because a small model and a large one operate at completely
+different energy scales. A tolerance expressed as a fraction means one number in
+one policy file covers every state.
+
+The fraction is a statement about curve shape only. Whether 5% of the energy is
+worth the latency and memory that larger batches cost depends on the arrival
+rate and the SLO, and belongs to a different layer:
+
+| Layer | Owns |
+|---|---|
+| Plan 5 | a state-independent rule for when the energy curve has flattened |
+| L1 / L4 | whether the remaining improvement is worth its latency and memory cost at a given arrival rate and SLO |
+
+### The acceptance rule
+
+Acceptance needs two things to be true together:
+
+```text
+UCB(R_c) <= tau            the remaining improvement is at most the tolerance
+LCB(epsilon_c) > 0         the reference batch's own energy is positive
+```
+
+`UCB` is an upper confidence bound and `LCB` a lower one. Both must come from
+**one construction that covers them together**. Two separately computed 95%
+statements do not hold together at 95%: the chance that at least one of them
+fails is roughly the sum of their individual failure chances.
+
+The second condition exists because `R_c` divides by `epsilon_c`. If the
+plausible range for `epsilon_c` reaches zero, the fraction has no upper bound and
+no tolerance can be met.
+
+The rule bounds improvement in one direction only. It asks whether a larger
+batch can still do meaningfully better, and places no lower bound on the
+difference. A larger batch that turns out *worse* is acceptable evidence that
+nothing more is to be gained — provided no other measured batch in the domain
+contradicts that, which the `max` in `R_c` already accounts for.
+
+### How the bound is calibrated
+
+At a fixed candidate `c`, the rule makes one statement about each larger batch —
+`Kmax - c` of them — plus the one statement that `epsilon_c` is positive. All of
+them have to hold at once, so the confidence has to be spread across all of them.
+
+Plan 5 spreads it the simplest way. With `n` statements and a 5% total error
+allowance, each individual bound is computed at `1 - 0.05/n` instead of
+`1 - 0.05`. This is the Bonferroni correction. It needs no model of how the
+statements are related to each other, and the [sizing table](#illustrative-sizing)
+shows it still reaches the intended tolerance at a practical trial count. Methods
+that model the relationships get the same guarantee from fewer trials; adopting
+one is a new estimator version rather than a configured option.
+
+That correction covers the confirmatory decision at a candidate that is already
+fixed. It does not cover the fact that discovery picked the candidate, nor that
+discovery and confirmation share one idle-power estimate. Plan 5 therefore also
+requires showing — by derivation or by simulation — that the complete two-pass
+procedure still holds its stated confidence. If it does not, the plan is
+incomplete; the sizing table does not override this.
+
+Fieller's method gives a confidence interval for a single ratio. Applying it to
+several larger batches still needs the correction above.
+
+### What an accepted result claims
+
+An accepted result says: *at batch `c`, no larger batch within `1..Kmax` improves
+energy per item by more than `tau`, at the declared confidence.*
+
+It does not say that `c` is the smallest batch for which that is true. The
+candidate came from discovery's point estimates, which carry no confidence
+statement. Proving minimality would mean separately showing that `c-1` fails the
+rule — a second test with its own error allowance, which this plan does not
+include.
+
+The result keeps those two facts in separate fields, so the distinction survives
+if the value is later promoted into a published profile:
+
+```text
+DiscoverySelectedBatch        = 4       the candidate discovery proposed
+DomainNoImprovementConfirmed  = true    the acceptance rule held at that batch
+MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
+```
+
+### Typed outcomes
+
+| Situation | Outcome |
+|---|---|
+| the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
+| the point estimate plateaus but the bound is too wide | `CandidateOnly` |
+| some batch produced no admissible evidence, or the runtime could not run it | `Censored: CapabilityBoundary` |
+| no candidate in the domain satisfies the rule | `Censored: NoSaturationObserved` |
+| `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
+| the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
+
+`Censored` means the campaign ran correctly but cannot produce an answer, and the
+reason is itself worth reporting. `Unavailable` means the inputs never allowed
+the question to be asked.
+
+`CapabilityBoundary` has a consequence worth planning around. `R_c` is a maximum
+over every batch above `c`, so if any one of them has no usable measurement, `R_c`
+cannot be computed. That missing batch also sits inside the range of every
+smaller candidate, so a single gap censors every candidate below it.
+
+This is what makes `Kmax` a trade-off. A larger `Kmax` supports a stronger claim,
+because the campaign has looked further before declaring the curve flat. It also
+gives more opportunities for one unmeasurable batch to censor the entire result.
+
+### Low throughput is a measurement, not a defect
+
+At some batch size a runtime may deliver fewer items per second than at a
+smaller one, because of memory pressure, kernel selection, or a changed execution
+path. That is a real property of the configuration and one of the things a
+saturation campaign exists to find.
+
+Such a batch is admitted normally and stays in the energy domain. There is no
+minimum-throughput gate anywhere in this plan, in admission or in derivation.
+
+Low throughput is not assumed to persist at larger batches either. Throughput can
+drop at one batch and recover at the next when the runtime picks a different
+kernel. Ending the domain at the first drop would assume that throughput only
+moves one way, which this plan does not assume anywhere else.
+
+Low throughput does affect the numbers, through the ordinary path. Each trial
+carries a coefficient
+
+```text
+a_i = window seconds / completed items
+```
+
+which is simply how many seconds of wall-clock each completed item occupied. The
+node draws idle power for the whole window whether or not it is serving, so each
+item is charged `a_i` seconds' worth of idle power, and subtracting that is what
+makes `epsilon` incremental. A trial that completed 5,417 items in a 30.0-second
+window has `a_i = 0.00554` seconds per item. A slower batch has a larger `a_i`,
+so more of its measurement depends on the idle-power estimate, and its interval
+comes out wider. Evidence is never discarded to make an interval narrower.
+
+Finally, `b_sat` answers an energy question and `b*(lambda, q)` answers a
+capacity-and-SLO question. Throughput curves, latency curves, and the
+SLO-feasible batch range are separate profile outputs, consumed by L1 and L4.
+
+## Checkpoint 2: what is fixed before measuring
+
+Two files are written and fixed before the first Run.
+
+### The derivation policy file
+
+This file holds every value that decides what the campaign accepts. Its content
+digest is recorded in the derived result, so a published number always identifies
+the rule that produced it.
+
+```text
+PointPolicy
+    name
+    stage                          idle-baseline | incremental-point
+    minimumTrials
+
+BSatPolicy
+    name
+    kmax
+    relativeImprovementTolerance   tau
+    discoveryTrials                n_disc
+    confirmatoryTrialSizingRule    how discovery variance determines n_conf
+    maximumConfirmatoryTrials      cap on n_conf
+    maximumActiveRunBudget         cap on total active Runs
+```
+
+`stage` scopes a point policy the way `workloadMode` scopes an admission policy,
+and the selected policy's stage is checked against its use.
+
+The estimator, the confidence level, and the way confidence is spread across
+several statements are package constants rather than policy fields, because the
+implementation supports exactly one of each.
+
+**`tau` is fixed in this file, before any measurement.** It expresses how much
+remaining improvement is small enough to walk away from — a judgment about what
+matters operationally, which the data cannot supply. It is also the threshold
+discovery screens against, so it has to exist before discovery runs.
+
+Discovery variance determines exactly one thing: how many confirmatory trials are
+needed, through the sizing rule already written in this file, and only up to the
+cap already written in this file. If the sizing rule asks for more trials than
+the cap allows, the campaign ends as `Unavailable: ConfirmatoryBudgetInsufficient`.
+The tolerance is never widened to fit the budget.
+
+A second version of this file is written after discovery and before the first
+confirmatory Run. It records the discovery version's digest, the realized
+`n_conf`, and the realized Run allocation. It changes nothing else. Both digests
+appear in the result.
+
+### The campaign record
+
+This file identifies the campaign and makes its evidence checkable by reading.
+Before measurement it fixes:
+
+- the execution state under measurement;
+- the derivation policy file it uses, by content digest;
+- the evidence-inclusion rule, in prose: every identity-compatible admitted trial
+  produced under this campaign is included, and none is excluded;
+- the rule that generates confirmatory batches `c..Kmax` from whatever candidate
+  discovery proposes; and
+- whether idle-baseline Runs count against the policy file's Run budget.
+
+After the campaign it records every Run name and its retained intent digest, with
+discovery and confirmatory Runs listed separately.
+
+Fixing the *generating rule* rather than the confirmatory batch list is what lets
+the campaign start without knowing the candidate, while keeping the range from
+being narrowed after the results are in.
+
+### How many Runs a campaign costs
+
+```text
+R_active = Kmax * n_disc + (Kmax - c + 1) * n_conf
+R_max    = Kmax * (n_disc + n_conf)              when c = 1
+```
+
+The cost depends on where the candidate lands, and the worst case is `c = 1`:
+if batching turns out to help nothing at all, confirmation has to re-measure the
+entire domain. The physically simplest outcome is the most expensive to confirm.
+The budget cap in the policy file is set against this worst case.
+
+## Checkpoint 3: one idle baseline per curve
+
+### Why it matters
+
+`epsilon` is energy above idle, so every point on a curve is computed by
+subtracting an idle-power estimate. If two points on the same curve used
+different idle baselines, their difference would carry two different estimation
+errors instead of one shared one, and the confidence bound built from that
+difference would be wrong — not merely hard to trace.
+
+### How it is guaranteed
+
+The curve is an opaque type with one constructor:
+
+```text
+type Curve struct { /* unexported fields */ }
+
+type Pass struct {
+    Role    discovery | confirmatory
+    Batches admitted trials of that pass, grouped by batch
+}
+
+DeriveCurve(passes []Pass, baseline IdleBaseline, policy PointPolicy) (Curve, error)
+Curve.Points() []Point                      // copies, for reporting
+DeriveBSatConfirmatory(curve Curve, candidate int, policy BSatPolicy) BSatResult
+```
+
+`DeriveCurve` takes one `baseline` argument and performs the per-trial
+incremental step and the per-batch aggregation internally with it. Since `Curve`
+has no exported fields and no other constructor, every point that reaches the
+decision boundary came from that one baseline. `Points()` hands out copies for
+reporting, and those copies cannot re-enter the decision.
+
+Both passes go into the same call:
+
+```text
+discoveryCurve = DeriveCurve([discovery], baseline, pointPolicy)
+candidate      = screen(discoveryCurve, bsatPolicy)
+
+campaignCurve  = DeriveCurve([discovery, confirmatory], baseline, pointPolicy)
+result         = DeriveBSatConfirmatory(campaignCurve, candidate, bsatPolicy)
+```
+
+The confirmatory decision needs all three at once: the confirmatory points to
+compute `R_c`, the discovery points to establish that lower batches were
+measured, and one baseline to relate them. A single-pass curve cannot hold them
+together.
+
+The screening curve may be built from any baseline without affecting validity,
+since screening asserts nothing. Only `campaignCurve` reaches the decision.
+
+`DeriveCurve` rejects a `TrialID` that appears in more than one pass. This makes
+the discovery/confirmatory separation mechanical, reusing the trial-uniqueness
+check that aggregation already applies within a batch.
+
+Because a curve has exactly one baseline, splitting the baseline between passes
+would produce two curves, and this plan defines no way to compare across curves.
+One shared baseline is settled here.
+
+### The estimator
+
+With `a_b` the mean seconds-per-item coefficient at batch `b`:
+
+```text
+epsilon_bar_b      = mean_i( E_i / N_i ) - a_bar_b * P_idle_hat
+
+Var(epsilon_bar_b) = Var( mean_i( E_i / N_i ) ) + a_bar_b^2 * Var(P_idle_hat)
+```
+
+The point estimate is algebraically the same as subtracting the baseline from
+each trial and then averaging, so published point values do not move. The
+interval does. Combining two estimated variances means the interval's shape is
+governed by an effective sample size derived from both of them — the
+Welch--Satterthwaite formula, or whatever the chosen joint model supplies. It is
+not taken from either component alone.
+
+For any pair of batches, the shared baseline partially cancels but does not
+disappear:
+
+```text
+D_j,k      = epsilon_j - epsilon_k
+           = ( mean E/N at j - mean E/N at k ) - ( a_j - a_k ) * P_idle_hat
+
+Var(D_j,k) = Var(A_j) + Var(A_k) + (a_j - a_k)^2 * Var(P_idle_hat)
+```
+
+Full cancellation would need `a_j = a_k`. Under fixed-duration measurement the
+two batches complete different numbers of items, so their `a` values differ and a
+residual baseline term survives. It is computed from the observed `a_i` values,
+with no assumption about how throughput moves with batch size.
+
+One shared baseline across the whole curve also links every pair of these
+differences to each other:
+
+```text
+Cov( D_j,k , D_c,b ) = (a_j - a_k) * (a_c - a_b) * Var(P_idle_hat)
+```
+
+This links the differences inside one acceptance decision, the differences
+discovery uses to pick the candidate, and the pairs that span the two passes.
+Showing that the procedure holds its stated confidence across that whole set is
+what the two-pass requirement in Checkpoint 1 asks for.
+
+So the design is best described as **discovery and confirmation measured on
+separate Runs, sharing one idle-power estimate**. The active evidence is
+disjoint; the idle estimate is not.
+
+### What each trial must retain
+
+The estimator needs the following preserved, per trial and per baseline:
+
+- `BaselineCoefficientSecondsPerItem = T_i / N_i`;
+- active energy per item; and
+- the baseline's variance or standard error together with its degrees of freedom.
+
+A half-width that has already been multiplied by a coefficient cannot be taken
+apart again to recover the covariance structure, and cannot be taken apart at all
+when it is zero.
+
+### The already-published point
+
+The live batch-one figure recorded in Plan 3 was produced by the previous
+interval construction. Its point estimate is unaffected by this plan; its
+interval is recomputed. Both results are retained under distinct estimator
+versions so each remains reproducible.
+
+## Checkpoint 4: discovery and confirmation
+
+### Discovery
+
+Discovery measures batches `1..Kmax` at `n_disc` trials each and proposes the
+smallest `c` whose point estimate satisfies `R_c_hat <= tau`, using the `tau`
+already fixed in the discovery policy version.
+
+This is a screen. It makes no confidence statement, and it is the sole basis for
+the minimality noted in Checkpoint 1. Its one requirement is determinism, so that
+the confirmatory batch list follows from the campaign record rather than from a
+judgment call.
+
+Discovery also produces the per-batch variance that the sizing rule turns into
+`n_conf`.
+
+### Confirmation
+
+```text
+DeriveBSatConfirmatory(campaignCurve Curve, candidate int, policy BSatPolicy) BSatResult
+```
+
+Confirmation receives the candidate and evaluates the acceptance rule there. It
+does not search for a candidate of its own; searching and testing on the same
+evidence is what the two-pass split exists to prevent.
+
+Confirmation still validates that the domain runs from batch 1. Accepting
+saturation at `c` without evidence that batches below `c` were measured would not
+establish that a smaller batch is not equally good. Those lower batches do not
+need re-measuring in the confirmatory pass unless the candidate search is
+repeated.
+
+### Illustrative sizing
+
+The table below shows roughly how many confirmatory trials a given tolerance
+needs. It rests on four assumptions this plan does not establish: that every
+batch has the same trial-to-trial spread, that a first-order approximation of the
+ratio's standard error is good enough, that the approximation is evaluated where
+the true remaining improvement is zero, and that the confidence is spread by the
+Bonferroni correction. It is an illustration, not the budget itself.
+
+The live batch-one trials had a standard deviation of 2.85% of their mean. Taking
+that spread, and the worst case `c = 1` with `Kmax = 10`, which puts 10
+statements under one confidence budget:
+
+| `n_conf` | smallest declarable `tau` |
+|---:|---:|
+| 5 | 8.3% |
+| 6 | 6.6% |
+| 8 | 5.0% |
+| 10 | 4.1% |
+| 12 | 3.6% |
+
+Eight confirmatory trials support a 5% tolerance even in the worst case. Where
+the true remaining improvement is not near zero the table does not apply, because
+the ratio's standard error depends on the value being bounded.
+
+The 2.85% spread above comes from batch one only. Each batch's own spread is
+measured during discovery, and `n_conf` is set from that.
+
+## Verification boundary
+
+Plan 5 does not add machine-enforced provenance for the campaign as a whole. The
+freezing machinery in Plans 3 and 4 exists because a controller creates Runs
+unattended and an operator can edit a policy ConfigMap between them. Plan 5 has
+no controller: derivation is offline and read-only, and the campaign is run once
+by hand.
+
+What the code guarantees, and what a reader has to check:
+
+| Guarantee | Mechanism |
+|---|---|
+| every point on a curve shares one idle baseline | opaque `Curve`, populated only by `DeriveCurve`, which takes one baseline |
+| a hand-assembled `Point` cannot reach the decision | `DeriveBSatConfirmatory` accepts `Curve`, not `[]Point` |
+| discovery and confirmatory evidence do not overlap | `DeriveCurve` rejects a `TrialID` present in more than one pass |
+| the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
+| a published number identifies the rule behind it | both policy digests recorded in the result |
+| the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
+| every eligible trial was included | **the campaign record's stated rule and its published Run list — read, not enforced** |
+
+The last two rows are checked by reading rather than by code. The digests prove
+*which* policy produced a result; nothing in the design proves *when* it was
+written. The two published Run lists must have no Run in common, and together
+must account for exactly the trials that entered the result. This is the standard
+of pre-registration used in empirical work. It is not proof against an operator
+who runs extra Runs and leaves them out of the record.
+
+Machine-enforced equivalents — an assignment field inside the immutable intent, a
+selection-scope identity, a closed eligible population checked against what was
+selected, and a cryptographic baseline-evidence identity — belong to the plan
+that introduces a campaign controller, where unattended Run creation is the
+condition they exist for. An assignment field inside the intent would also force
+an intent schema version bump across the Go codec, the Python worker's strict
+version check, and the retained wire shapes, with no consumer for it yet.
+
+## Code boundary
+
+```text
+internal/profilederivation/   the acceptance quantity and rule, curve derivation
+                              owning one baseline, the joint estimator, the
+                              confirmatory boundary, policy file decoding
+```
+
+Nothing changes in `api/v1alpha1`, the intent schema, the Profiler controller,
+the measurement worker, or single-Run admission. The pure package continues to
+import no Kubernetes, CHILL API, controller-runtime, or transport package.
+
+## Explicitly out of scope
+
+- `DeviceProfile` or `ClusterEnergyModel` schema, persistence, or status
+- a campaign CRD, controller, or orchestrator
+- any intent schema change
+- machine-enforced selection scope, eligible-population closure, or cryptographic
+  derivation identities
+- a per-pass or otherwise split idle baseline, and any way of comparing points
+  that belong to two different curves
+- confirming at confidence that the accepted batch is the smallest one
+- batch selection outside the campaign record's generating rule
+- a doubling or otherwise non-consecutive batch sweep
+- changing `tau` during a campaign
+- cross-node or cross-model pooling
+- transition-cost measurement, standby-versus-model-loaded idle separation, and
+  per-engine idle equivalence
+- throughput, latency, or SLO feasibility derivation
+- scheduler or enumerator consumption
+
+## Acceptance boundary
+
+Plan 5 is complete when:
+
+- `Kmax`, `tau`, the acceptance quantity, and the acceptance rule live in the
+  discovery policy version, and both policy digests version the result;
+- the complete two-pass procedure, including candidate selection and the shared
+  idle-power estimate, is shown by derivation or simulation to hold its stated
+  confidence;
+- synthetic golden curves close the accepted, candidate-only, capability-boundary,
+  no-saturation, non-positive-reference, and budget-insufficient cases, and a
+  later batch that improves too much fails acceptance through `R_c` rather than
+  through a separate outcome;
+- `Curve` has no exported field and no constructor besides `DeriveCurve`, so a
+  hand-assembled `Point` cannot reach `DeriveBSatConfirmatory` and no curve mixes
+  baselines;
+- `DeriveCurve` rejects a `TrialID` appearing in more than one pass;
+- `DeriveBSatConfirmatory` rejects a candidate its curve does not span;
+- the rebuilt estimator reproduces the live batch-one point estimate and produces
+  a separately versioned interval, with the earlier interval retained;
+- a trial with low observed throughput is admitted, retained, and kept in the
+  domain; and
+- the campaign record lists every Run, separated by pass, with retained intent
+  digests.
+
+## Implementation sequence
+
+1. Fix `Kmax`, `tau`, the `R_c` quantity, the Bonferroni spread of confidence,
+   the positivity condition, the minimality boundary, and the rule that observed
+   throughput never removes evidence.
+2. Fix the discovery policy version, including the `n_conf` sizing rule and both
+   caps, together with the campaign record. Both precede any measurement.
+3. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
+   freedom reachable from the derivation path.
+4. Introduce the opaque `Curve` and `DeriveCurve` owning one baseline across both
+   passes. Rebuild aggregation and the point-confidence construction; the current
+   construction combines Student-t half-widths at differing degrees of freedom,
+   so the live batch-one interval is recomputed and the earlier one retained
+   under its own estimator version.
+5. Show, by derivation or simulation, that the two-pass procedure holds its
+   stated confidence across every batch-to-batch difference the screen and the
+   rule touch.
+6. Implement discovery screening and the confirmatory boundary. Remove the
+   `Ambiguous` outcome, which the domain-wide maximum subsumes.
+7. Decode the policy file and record its digests. Rename
+   `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
+   `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
+   `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
+   persisted to the evidence store, since these are a JSON field name and a
+   reason-code value. Add golden tests.
+8. Fix the confirmatory policy version recording the realized `n_conf` and Run
+   allocation inside the caps set at item 2, before any confirmatory Run.
+
+Items 1 and 2 are decisions and close before code. Item 8 records an allocation
+inside limits already set at item 2 and introduces no new scientific parameter.
+
+## Follow-on boundary
+
+A later plan owns publishing the derived curve, `b_sat`, and the idle baseline as
+a `DeviceProfile`, and the controller that runs a campaign. That plan is where
+the machine-enforced provenance described under
+[Verification boundary](#verification-boundary) becomes load-bearing, because a
+controller creating Runs unattended is the condition those mechanisms exist for.
+
+The standby-versus-model-loaded idle distinction, per-engine idle equivalence,
+and transition-cost decomposition belong to a transition plan. They do not gate
+this campaign. Batch is excluded from `StateIdentity` and from
+`MeasurementProtocolIdentity`, so every batch in a single-state sweep is
+compatible with the same idle baseline, and `DeriveCurve` makes that one baseline
+the curve's only source. The per-state idle question does not arise here.
