@@ -25,6 +25,11 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const wantDigest = "sha256:bb63e89b48684979718baf94a89610e536c5658fe99072846b908dbe2349fefd"
+	const wantCanonical = `{"schemaVersion":"chill.dacs.io/discovery-derivation-policy.v1alpha1","name":"e1-batch-saturation","curveFamilyContractDigest":"chill.dacs.io/curve-family-contract.v1alpha1@sha256:08db9e76e50ecb6a20b588afc00dbfee4eec73780dd9d3e7345787ef23c10b0b","pointPolicies":[{"name":"idle-baseline","stage":"idle-baseline","minimumTrials":3},{"name":"incremental-point","stage":"incremental-point","minimumTrials":3}],"batchSaturation":{"name":"batch-saturation","kmax":4,"relativeImprovementTolerance":0.05,"discoveryTrials":3,"maximumConfirmatoryTrials":6,"maximumActiveRunBudget":36}}`
+	if policy.Digest() != wantDigest || string(canonical) != wantCanonical {
+		t.Fatalf("discovery policy golden drifted: %s\n%s", policy.Digest(), canonical)
+	}
 	decoded, err := DecodeDiscoveryDerivationPolicy(append([]byte(" \n"), canonical...))
 	if err != nil {
 		t.Fatal(err)
@@ -47,8 +52,9 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if idle.Version != policy.Digest() || idle.MinimumTrials != 3 ||
-		active.Version != policy.Digest() || active.MinimumTrials != 4 ||
+		active.Version != policy.Digest() || active.MinimumTrials != 3 ||
 		bsat.Version != policy.Digest() || bsat.KMax != 4 ||
+		bsat.MinimumPointTrials != 3 ||
 		decoded.Name() != "e1-batch-saturation" ||
 		decoded.CurveFamilyContractDigest() != spec.CurveFamilyContractDigest {
 		t.Fatalf("decoded policy lost configured semantics: %+v %+v %+v", idle, active, bsat)
@@ -98,6 +104,9 @@ func TestFreezeDiscoveryDerivationPolicyRejectsInvalidSemantics(t *testing.T) {
 		"too few trials": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.PointPolicies[0].MinimumTrials = 2
 		},
+		"discovery below point minimum": func(spec *DiscoveryDerivationPolicySpec) {
+			spec.PointPolicies[1].MinimumTrials = 4
+		},
 		"invalid curve digest": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.CurveFamilyContractDigest = "sha256:" + strings.Repeat("a", 64)
 		},
@@ -145,7 +154,7 @@ func testDiscoveryDerivationPolicySpecForDigest(contractDigest string) Discovery
 		CurveFamilyContractDigest: contractDigest,
 		PointPolicies: []PointPolicyEntry{
 			{Name: "idle-baseline", Stage: PointPolicyStageIdleBaseline, MinimumTrials: 3},
-			{Name: "incremental-point", Stage: PointPolicyStageIncrementalPoint, MinimumTrials: 4},
+			{Name: "incremental-point", Stage: PointPolicyStageIncrementalPoint, MinimumTrials: 3},
 		},
 		BatchSaturation: BSatPolicyEntry{
 			Name: "batch-saturation", KMax: 4, RelativeImprovementTolerance: .05,

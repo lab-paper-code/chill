@@ -11,9 +11,21 @@ import (
 func DeriveBSatConfirmatorySizing(
 	curve Curve,
 	candidate int,
+	policy DiscoveryDerivationPolicy,
+) (BSatSizingResult, error) {
+	bsat, err := validateDiscoveryPolicyCurve(curve, policy)
+	if err != nil {
+		return BSatSizingResult{}, err
+	}
+	return deriveBSatConfirmatorySizing(curve, candidate, bsat)
+}
+
+func deriveBSatConfirmatorySizing(
+	curve Curve,
+	candidate int,
 	policy BSatPolicy,
 ) (BSatSizingResult, error) {
-	discoveryResult, err := DeriveBSatDiscovery(curve, policy)
+	discoveryResult, err := deriveBSatDiscovery(curve, policy)
 	if err != nil {
 		return BSatSizingResult{}, err
 	}
@@ -47,7 +59,7 @@ func DeriveBSatConfirmatorySizing(
 		return BSatSizingResult{}, errors.New("global statement family exceeds the supported numeric range")
 	}
 	result.OneSidedQuantile = quantile
-	for trials := 3; trials <= maximumTrials; trials++ {
+	for trials := policy.MinimumPointTrials; trials <= maximumTrials; trials++ {
 		lowerBound, maximumRelativeHalfWidth, err := projectedBSatPrecision(
 			discovery.points, curve.baselines, candidate, trials, quantile,
 		)
@@ -77,10 +89,10 @@ func bsatGlobalStatementCount(policy BSatPolicy) (int, error) {
 	var total int
 	for candidate := 1; candidate < policy.KMax; candidate++ {
 		maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate)
-		if maximumTrials < 3 {
+		if maximumTrials < policy.MinimumPointTrials {
 			continue
 		}
-		trialChoices := maximumTrials - 2
+		trialChoices := maximumTrials - policy.MinimumPointTrials + 1
 		statements := policy.KMax - candidate + 1
 		if trialChoices > math.MaxInt/statements {
 			return 0, errors.New("global statement count overflows int")

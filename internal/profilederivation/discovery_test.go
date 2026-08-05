@@ -7,7 +7,7 @@ import (
 
 func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	result, err := DeriveBSatDiscovery(curve, testBSatPolicy())
+	result, err := deriveBSatDiscovery(curve, testBSatPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 }
 
 func TestBSatDiscoveryReturnsTypedCensoring(t *testing.T) {
-	noCandidate, err := DeriveBSatDiscovery(
+	noCandidate, err := deriveBSatDiscovery(
 		testDiscoveryCurve(t, []float64{1, .8, .6, .4}),
 		testBSatPolicy(),
 	)
@@ -43,7 +43,7 @@ func TestBSatDiscoveryReturnsTypedCensoring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary, err := DeriveBSatDiscovery(curve, testBSatPolicy())
+	boundary, err := deriveBSatDiscovery(curve, testBSatPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,18 +60,18 @@ func TestBSatDiscoveryRejectsUnfrozenOrMixedScope(t *testing.T) {
 
 	invalid := policy
 	invalid.KMax = 1
-	if _, err := DeriveBSatDiscovery(curve, invalid); err == nil {
+	if _, err := deriveBSatDiscovery(curve, invalid); err == nil {
 		t.Fatal("expected invalid kmax rejection")
 	}
 	mismatchedFamily := policy
 	mismatchedFamily.KMax = 3
 	mismatchedFamily.MaximumActiveRunBudget = 30
-	if _, err := DeriveBSatDiscovery(curve, mismatchedFamily); err == nil {
+	if _, err := deriveBSatDiscovery(curve, mismatchedFamily); err == nil {
 		t.Fatal("expected curve-family domain mismatch rejection")
 	}
 	mismatchedTrials := policy
 	mismatchedTrials.DiscoveryTrials = 4
-	if _, err := DeriveBSatDiscovery(curve, mismatchedTrials); err == nil {
+	if _, err := deriveBSatDiscovery(curve, mismatchedTrials); err == nil {
 		t.Fatal("expected discovery trial-count mismatch rejection")
 	}
 
@@ -85,7 +85,7 @@ func TestBSatDiscoveryRejectsUnfrozenOrMixedScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DeriveBSatDiscovery(twoPass, policy); err == nil {
+	if _, err := deriveBSatDiscovery(twoPass, policy); err == nil {
 		t.Fatal("expected confirmatory pass rejection at discovery boundary")
 	}
 }
@@ -108,7 +108,7 @@ func testDiscoveryCurve(t *testing.T, means []float64) Curve {
 func testBSatPolicy() BSatPolicy {
 	return BSatPolicy{
 		Version: "bsat-discovery-v1", KMax: 4,
-		RelativeImprovementTolerance: .05, DiscoveryTrials: 3,
+		RelativeImprovementTolerance: .05, MinimumPointTrials: 3, DiscoveryTrials: 3,
 		MaximumConfirmatoryTrials: 10, MaximumActiveRunBudget: 100,
 	}
 }

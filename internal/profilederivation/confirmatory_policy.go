@@ -17,9 +17,11 @@ type ConfirmatoryBatchAllocation struct {
 }
 
 type ConfirmatoryAllocation struct {
+	Status             BSatStatus                    `json:"status"`
+	Code               string                        `json:"code"`
 	CandidateBatch     int                           `json:"candidateBatch"`
-	ConfirmatoryTrials int                           `json:"confirmatoryTrials"`
-	Batches            []ConfirmatoryBatchAllocation `json:"batches"`
+	ConfirmatoryTrials *int                          `json:"confirmatoryTrials,omitempty"`
+	Batches            []ConfirmatoryBatchAllocation `json:"batches,omitempty"`
 }
 
 type confirmatoryDerivationPolicyRecord struct {
@@ -44,18 +46,25 @@ func FreezeConfirmatoryDerivationPolicy(
 	if err := discovery.validate(); err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
-	if sizing.Status != BSatCandidateOnly || sizing.Code != BSatCodeConfirmatoryTrialsSized ||
-		sizing.ConfirmatoryTrials == nil || sizing.PolicyVersion != discovery.Digest() ||
+	if sizing.PolicyVersion != discovery.Digest() ||
 		sizing.CurveFamilyContractDigest != discovery.CurveFamilyContractDigest() {
 		return ConfirmatoryDerivationPolicy{}, errors.New("confirmatory policy requires sizing from its discovery policy and curve family")
 	}
 	allocation := ConfirmatoryAllocation{
-		CandidateBatch: sizing.CandidateBatch, ConfirmatoryTrials: *sizing.ConfirmatoryTrials,
+		Status: sizing.Status, Code: sizing.Code, CandidateBatch: sizing.CandidateBatch,
 	}
-	for _, batch := range sizing.ConfirmatoryBatches {
-		allocation.Batches = append(allocation.Batches, ConfirmatoryBatchAllocation{
-			Batch: batch, Trials: *sizing.ConfirmatoryTrials,
-		})
+	if sizing.Status == BSatCandidateOnly && sizing.Code == BSatCodeConfirmatoryTrialsSized &&
+		sizing.ConfirmatoryTrials != nil {
+		trials := *sizing.ConfirmatoryTrials
+		allocation.ConfirmatoryTrials = &trials
+		for _, batch := range sizing.ConfirmatoryBatches {
+			allocation.Batches = append(allocation.Batches, ConfirmatoryBatchAllocation{
+				Batch: batch, Trials: trials,
+			})
+		}
+	} else if sizing.Status != BSatUnavailable ||
+		sizing.Code != BSatCodeConfirmatoryBudgetInsufficient || sizing.ConfirmatoryTrials != nil {
+		return ConfirmatoryDerivationPolicy{}, errors.New("confirmatory policy requires a sized or budget-insufficient outcome")
 	}
 	record := confirmatoryDerivationPolicyRecord{
 		SchemaVersion:                 ConfirmatoryDerivationPolicySchemaVersion,
@@ -132,8 +141,12 @@ func (p ConfirmatoryDerivationPolicy) CandidateBatch() int {
 	return p.record.Confirmation.CandidateBatch
 }
 
-func (p ConfirmatoryDerivationPolicy) ConfirmatoryTrials() int {
-	return p.record.Confirmation.ConfirmatoryTrials
+func (p ConfirmatoryDerivationPolicy) ConfirmatoryTrials() *int {
+	if p.record.Confirmation.ConfirmatoryTrials == nil {
+		return nil
+	}
+	trials := *p.record.Confirmation.ConfirmatoryTrials
+	return &trials
 }
 
 func (p ConfirmatoryDerivationPolicy) ConfirmatoryBatches() []int {
@@ -155,6 +168,28 @@ func (p ConfirmatoryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
 	return discovery.BSatPolicy()
 }
 
+func (p ConfirmatoryDerivationPolicy) discoveryPolicy() (DiscoveryDerivationPolicy, error) {
+	if err := p.validate(); err != nil {
+		return DiscoveryDerivationPolicy{}, err
+	}
+	return FreezeDiscoveryDerivationPolicy(p.record.DiscoveryDerivationPolicySpec)
+}
+
+func validateConfirmatoryPolicyCurve(
+	curve Curve,
+	policy ConfirmatoryDerivationPolicy,
+) (DiscoveryDerivationPolicy, BSatPolicy, error) {
+	discovery, err := policy.discoveryPolicy()
+	if err != nil {
+		return DiscoveryDerivationPolicy{}, BSatPolicy{}, err
+	}
+	bsat, err := validateDiscoveryPolicyCurve(curve, discovery)
+	if err != nil {
+		return DiscoveryDerivationPolicy{}, BSatPolicy{}, err
+	}
+	return discovery, bsat, nil
+}
+
 func freezeConfirmatoryDerivationPolicyRecord(
 	record confirmatoryDerivationPolicyRecord,
 ) (ConfirmatoryDerivationPolicy, error) {
@@ -166,6 +201,10 @@ func freezeConfirmatoryDerivationPolicyRecord(
 	record.Confirmation.Batches = append(
 		[]ConfirmatoryBatchAllocation(nil), record.Confirmation.Batches...,
 	)
+	if record.Confirmation.ConfirmatoryTrials != nil {
+		trials := *record.Confirmation.ConfirmatoryTrials
+		record.Confirmation.ConfirmatoryTrials = &trials
+	}
 	sort.Slice(record.Confirmation.Batches, func(i, j int) bool {
 		return record.Confirmation.Batches[i].Batch < record.Confirmation.Batches[j].Batch
 	})
@@ -194,19 +233,31 @@ func validateConfirmatoryDerivationPolicyRecord(
 		return err
 	}
 	allocation := record.Confirmation
-	if allocation.CandidateBatch < 1 || allocation.CandidateBatch >= bsat.KMax ||
-		allocation.ConfirmatoryTrials < 3 ||
-		allocation.ConfirmatoryTrials > bsat.MaximumConfirmatoryTrials ||
+	if allocation.CandidateBatch < 1 || allocation.CandidateBatch >= bsat.KMax {
+		return errors.New("confirmatory derivation policy has an invalid allocation")
+	}
+	if allocation.Status == BSatUnavailable && allocation.Code == BSatCodeConfirmatoryBudgetInsufficient {
+		if allocation.ConfirmatoryTrials != nil || len(allocation.Batches) != 0 {
+			return errors.New("budget-insufficient confirmatory policy cannot contain a Run allocation")
+		}
+		return nil
+	}
+	if allocation.Status != BSatCandidateOnly || allocation.Code != BSatCodeConfirmatoryTrialsSized ||
+		allocation.ConfirmatoryTrials == nil ||
+		*allocation.ConfirmatoryTrials < bsat.MinimumPointTrials ||
+		*allocation.ConfirmatoryTrials > bsat.MaximumConfirmatoryTrials ||
 		len(allocation.Batches) != bsat.KMax-allocation.CandidateBatch+1 {
 		return errors.New("confirmatory derivation policy has an invalid allocation")
 	}
 	for index, batch := range allocation.Batches {
 		if batch.Batch != allocation.CandidateBatch+index ||
-			batch.Trials != allocation.ConfirmatoryTrials {
+			batch.Trials != *allocation.ConfirmatoryTrials {
 			return errors.New("confirmatory derivation policy allocation is not the complete frozen domain")
 		}
 	}
-	totalRuns := bsat.KMax*bsat.DiscoveryTrials + len(allocation.Batches)*allocation.ConfirmatoryTrials
+	confirmatoryTrials := *allocation.ConfirmatoryTrials
+	confirmatoryRuns := len(allocation.Batches) * confirmatoryTrials
+	totalRuns := bsat.KMax*bsat.DiscoveryTrials + confirmatoryRuns
 	if totalRuns > bsat.MaximumActiveRunBudget {
 		return errors.New("confirmatory derivation policy allocation exceeds the active-Run budget")
 	}

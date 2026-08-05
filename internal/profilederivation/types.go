@@ -228,6 +228,7 @@ type BSatPolicy struct {
 	Version                      string  `json:"version"`
 	KMax                         int     `json:"kmax"`
 	RelativeImprovementTolerance float64 `json:"relativeImprovementTolerance"`
+	MinimumPointTrials           int     `json:"minimumPointTrials"`
 	DiscoveryTrials              int     `json:"discoveryTrials"`
 	MaximumConfirmatoryTrials    int     `json:"maximumConfirmatoryTrials"`
 	MaximumActiveRunBudget       int     `json:"maximumActiveRunBudget"`
@@ -304,7 +305,8 @@ type BSatResult struct {
 	ConfirmatoryEstimatorVersion          string                   `json:"confirmatoryEstimatorVersion"`
 	ConfidenceLevel                       float64                  `json:"confidenceLevel"`
 	SizingMethod                          string                   `json:"sizingMethod"`
-	PolicyVersion                         string                   `json:"policyVersion"`
+	DiscoveryPolicyDigest                 string                   `json:"discoveryPolicyDigest"`
+	ConfirmatoryPolicyDigest              string                   `json:"confirmatoryPolicyDigest"`
 	CurveFamilyContractDigest             string                   `json:"curveFamilyContractDigest"`
 	CurveFamilyIdentity                   string                   `json:"curveFamilyIdentity"`
 }

@@ -46,7 +46,8 @@ func validateBSatPolicy(policy BSatPolicy) error {
 		policy.RelativeImprovementTolerance < 0 || policy.RelativeImprovementTolerance >= 1 ||
 		math.IsNaN(policy.RelativeImprovementTolerance) ||
 		math.IsInf(policy.RelativeImprovementTolerance, 0) ||
-		policy.DiscoveryTrials < 3 || policy.MaximumConfirmatoryTrials < 3 ||
+		policy.MinimumPointTrials < 3 || policy.DiscoveryTrials < policy.MinimumPointTrials ||
+		policy.MaximumConfirmatoryTrials < policy.MinimumPointTrials ||
 		policy.KMax > math.MaxInt/policy.DiscoveryTrials ||
 		policy.MaximumActiveRunBudget < policy.KMax*policy.DiscoveryTrials {
 		return errors.New("batch-saturation policy is invalid")

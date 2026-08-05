@@ -36,7 +36,7 @@ func TestBSatConfirmatoryGoldenOutcomes(t *testing.T) {
 			curve := testTwoPassCurve(
 				t, test.discoveryMeans, test.confirmationMeans, 3, test.deviation,
 			)
-			result, err := DeriveBSatConfirmatory(curve, 3, policy)
+			result, err := deriveBSatConfirmatory(curve, 3, policy)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestBSatConfirmatoryReturnsBudgetInsufficientWithoutSecondPass(t *testing.T
 	policy := testBSatPolicy()
 	policy.MaximumConfirmatoryTrials = 3
 	curve := testVariableDiscoveryCurve(t, []float64{1, .97, .94, .90}, .5)
-	result, err := DeriveBSatConfirmatory(curve, 3, policy)
+	result, err := deriveBSatConfirmatory(curve, 3, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestBSatConfirmatoryReturnsCapabilityBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := DeriveBSatConfirmatory(curve, 3, testBSatPolicy())
+	result, err := deriveBSatConfirmatory(curve, 3, testBSatPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,15 +130,15 @@ func TestBSatConfirmatoryReturnsCapabilityBoundary(t *testing.T) {
 
 func TestBSatConfirmatoryRejectsAllocationDrift(t *testing.T) {
 	curve := testTwoPassCurve(t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, 0)
-	if _, err := DeriveBSatConfirmatory(curve, 2, testBSatPolicy()); err == nil {
+	if _, err := deriveBSatConfirmatory(curve, 2, testBSatPolicy()); err == nil {
 		t.Fatal("expected candidate mismatch rejection")
 	}
 	wrongTrials := testTwoPassCurve(t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 4, 0)
-	if _, err := DeriveBSatConfirmatory(wrongTrials, 3, testBSatPolicy()); err == nil {
+	if _, err := deriveBSatConfirmatory(wrongTrials, 3, testBSatPolicy()); err == nil {
 		t.Fatal("expected confirmatory trial-count mismatch rejection")
 	}
 	discoveryOnly := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	if _, err := DeriveBSatConfirmatory(discoveryOnly, 3, testBSatPolicy()); err == nil {
+	if _, err := deriveBSatConfirmatory(discoveryOnly, 3, testBSatPolicy()); err == nil {
 		t.Fatal("expected missing confirmatory pass rejection")
 	}
 }

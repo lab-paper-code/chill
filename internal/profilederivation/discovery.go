@@ -7,7 +7,18 @@ import (
 
 // DeriveBSatDiscovery deterministically screens the discovery pass of one
 // exact-family Curve. It proposes a candidate but makes no confidence claim.
-func DeriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, error) {
+func DeriveBSatDiscovery(
+	curve Curve,
+	policy DiscoveryDerivationPolicy,
+) (BSatDiscoveryResult, error) {
+	bsat, err := validateDiscoveryPolicyCurve(curve, policy)
+	if err != nil {
+		return BSatDiscoveryResult{}, err
+	}
+	return deriveBSatDiscovery(curve, bsat)
+}
+
+func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, error) {
 	if err := curve.family.validate(); err != nil {
 		return BSatDiscoveryResult{}, err
 	}

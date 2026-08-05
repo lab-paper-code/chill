@@ -145,13 +145,53 @@ func (p DiscoveryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
 		return BSatPolicy{}, err
 	}
 	entry := p.record.BatchSaturation
+	minimumPointTrials := pointPolicyMinimumTrials(
+		p.record.PointPolicies, PointPolicyStageIncrementalPoint,
+	)
 	return BSatPolicy{
 		Version: p.digest, KMax: entry.KMax,
 		RelativeImprovementTolerance: entry.RelativeImprovementTolerance,
+		MinimumPointTrials:           minimumPointTrials,
 		DiscoveryTrials:              entry.DiscoveryTrials,
 		MaximumConfirmatoryTrials:    entry.MaximumConfirmatoryTrials,
 		MaximumActiveRunBudget:       entry.MaximumActiveRunBudget,
 	}, nil
+}
+
+func validateDiscoveryPolicyCurve(
+	curve Curve,
+	policy DiscoveryDerivationPolicy,
+) (BSatPolicy, error) {
+	if err := curve.family.validate(); err != nil {
+		return BSatPolicy{}, err
+	}
+	if err := policy.validate(); err != nil {
+		return BSatPolicy{}, err
+	}
+	if curve.ContractDigest() != policy.CurveFamilyContractDigest() {
+		return BSatPolicy{}, errors.New("curve does not match the discovery policy's family contract")
+	}
+	idlePolicy, err := policy.PointPolicy(PointPolicyStageIdleBaseline)
+	if err != nil {
+		return BSatPolicy{}, err
+	}
+	activePolicy, err := policy.PointPolicy(PointPolicyStageIncrementalPoint)
+	if err != nil {
+		return BSatPolicy{}, err
+	}
+	for _, baseline := range curve.baselines {
+		if baseline.PolicyVersion != idlePolicy.Version || len(baseline.Trials) < idlePolicy.MinimumTrials {
+			return BSatPolicy{}, errors.New("curve idle baseline does not match the discovery point policy")
+		}
+	}
+	for _, pass := range curve.passes {
+		for _, point := range pass.points {
+			if point.PointPolicyVersion != activePolicy.Version || len(point.Trials) < activePolicy.MinimumTrials {
+				return BSatPolicy{}, errors.New("curve point does not match the discovery point policy")
+			}
+		}
+	}
+	return policy.BSatPolicy()
 }
 
 func (p DiscoveryDerivationPolicy) validate() error {
@@ -206,9 +246,13 @@ func validateDiscoveryDerivationPolicySpec(spec DiscoveryDerivationPolicySpec) e
 		return errors.New("batch-saturation policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
 	entry := spec.BatchSaturation
+	minimumPointTrials := pointPolicyMinimumTrials(
+		spec.PointPolicies, PointPolicyStageIncrementalPoint,
+	)
 	if err := validateBSatPolicy(BSatPolicy{
 		Version: "pending-policy-digest", KMax: entry.KMax,
 		RelativeImprovementTolerance: entry.RelativeImprovementTolerance,
+		MinimumPointTrials:           minimumPointTrials,
 		DiscoveryTrials:              entry.DiscoveryTrials,
 		MaximumConfirmatoryTrials:    entry.MaximumConfirmatoryTrials,
 		MaximumActiveRunBudget:       entry.MaximumActiveRunBudget,
@@ -216,6 +260,15 @@ func validateDiscoveryDerivationPolicySpec(spec DiscoveryDerivationPolicySpec) e
 		return err
 	}
 	return nil
+}
+
+func pointPolicyMinimumTrials(entries []PointPolicyEntry, stage PointPolicyStage) int {
+	for _, entry := range entries {
+		if entry.Stage == stage {
+			return entry.MinimumTrials
+		}
+	}
+	return 0
 }
 
 func validDerivationPolicyName(name string) bool {

@@ -158,12 +158,12 @@ regression-tested. The deterministic domain-wide discovery screen is also
 implemented, as is the global-`H` confirmatory sizing rule. The final joint
 contrast/covariance estimator and typed confirmatory result are implemented.
 The discovery and confirmatory policies have strict canonical decoders and
-content digests, and the second artifact is checked against the realized sizing
-allocation. Binding both policy digests into the final result, a concrete Plan 5
-campaign record, and a live confirmatory result are not implemented. Campaign
-provenance is pre-registered in a committed record rather than machine-enforced;
-that boundary is stated in the plan. It does not authorize a `DeviceProfile`
-API, a campaign controller, an intent schema change, or scheduler consumption.
+content digests, the second artifact is checked against the realized sizing
+allocation, and the final result binds both digests. A concrete Plan 5 campaign
+record and a live confirmatory result are not implemented. Campaign provenance
+is pre-registered in a committed record rather than machine-enforced; that
+boundary is stated in the plan. It does not authorize a `DeviceProfile` API, a
+campaign controller, an intent schema change, or scheduler consumption.
 
 ### 6. Execution-support expansion — active
 

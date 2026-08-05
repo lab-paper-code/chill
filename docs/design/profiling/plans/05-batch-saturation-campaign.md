@@ -16,16 +16,15 @@ regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
 estimator, global-`H` confirmatory sizing, and typed confirmatory result are
 implemented. Both policy files have strict canonical decoders and content
-digests; the confirmatory file is also checked against the discovery artifact
-and realized sizing allocation. Binding both digests into the final result, a
-concrete Plan 5 campaign record, and a live confirmatory result remain
-unimplemented. This plan fixes the quantity that decides `b_sat` — the largest
-remaining energy improvement any larger measured batch still offers — gives
-curve derivation ownership of the exact idle baseline set, rebuilds the
-point-confidence construction, and separates candidate discovery from
-confirmation. It does not authorize a `DeviceProfile` API, a campaign CRD or
-controller, an intent schema change, cross-model pooling, or scheduler
-consumption.
+digests; the confirmatory file is checked against the discovery artifact and
+realized sizing allocation, and the final result binds both digests. A concrete
+Plan 5 campaign record and a live confirmatory result remain unimplemented. This
+plan fixes the quantity that decides `b_sat` — the largest remaining energy
+improvement any larger measured batch still offers — gives curve derivation
+ownership of the exact idle baseline set, rebuilds the point-confidence
+construction, and separates candidate discovery from confirmation. It does not
+authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
+change, cross-model pooling, or scheduler consumption.
 
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
 original one-state assumption for runtimes with one immutable artifact per
@@ -191,11 +190,14 @@ confirmatory trials per batch. For each candidate, the feasible trial counts are
 ```text
 nmax(c) = min(cap,
               floor((B_active - Kmax * n_disc) / (Kmax - c + 1)))
-N_c     = {3, ..., nmax(c)}
+n_min   = incremental-point.minimumTrials
+N_c     = {n_min, ..., nmax(c)}
 ```
 
-with an empty set when `nmax(c) < 3`. The full number of selectable marginal
-statements is fixed before measurement as
+with `n_min >= 3` and an empty set when `nmax(c) < n_min`. The policy decoder
+also requires `n_disc >= n_min` and `cap >= n_min`, so neither pass can ask the
+point estimator to aggregate fewer Runs than its stage-scoped policy permits.
+The full number of selectable marginal statements is fixed before measurement as
 
 ```text
 H = sum_c |N_c| * (Kmax - c + 1)
@@ -400,10 +402,11 @@ appear in the result.
 
 The only sizing method is
 `bonferroni-welch-relative-precision-v1`. It chooses the smallest common
-confirmatory trial count `n >= 3` that makes the projected simultaneous bound
-precise enough at the zero-remaining-improvement planning point. This is a
-precision target, not a forecast that confirmation will accept; a real curve
-near `tau` may still return `CandidateOnly`.
+confirmatory trial count `n >= incremental-point.minimumTrials` that makes the
+projected simultaneous bound precise enough at the
+zero-remaining-improvement planning point. The configured minimum is itself at
+least three. This is a precision target, not a forecast that confirmation will
+accept; a real curve near `tau` may still return `CandidateOnly`.
 
 For discovery trial `i` at batch `b`, retain
 
@@ -460,7 +463,8 @@ unimplemented extrapolation beyond the declared cap is reported.
 
 ```text
 DeriveBSatConfirmatorySizing(discoveryCurve Curve, candidate int,
-                             policy BSatPolicy) (BSatSizingResult, error)
+                             policy DiscoveryDerivationPolicy)
+    (BSatSizingResult, error)
 ```
 
 The implemented function re-derives and checks the discovery candidate, computes
@@ -533,7 +537,8 @@ DeriveCurve(passes []Pass, family CurveFamily,
             baselinesByState map[string]IdleBaseline,
             policy PointPolicy) (Curve, error)
 Curve.Points() []Point                      // copies, for reporting
-DeriveBSatConfirmatory(curve Curve, candidate int, policy BSatPolicy) BSatResult
+DeriveBSatConfirmatory(curve Curve, candidate int,
+                       policy ConfirmatoryDerivationPolicy) BSatResult
 ```
 
 `FreezeCurveFamilyContract` fixes ADR 0014's shared anchor and exact
@@ -550,12 +555,17 @@ decision.
 Both passes go into the same call:
 
 ```text
-discoveryCurve = DeriveCurve([discovery], family, baselinesByState, pointPolicy)
-candidate      = screen(discoveryCurve, bsatPolicy)
+discoveryCurve = DeriveCurve([discovery], family, baselinesByState,
+                             discoveryPolicy.PointPolicy(incremental-point))
+candidate      = DeriveBSatDiscovery(discoveryCurve, discoveryPolicy)
+sizing         = DeriveBSatConfirmatorySizing(discoveryCurve, candidate,
+                                               discoveryPolicy)
+confirmPolicy  = FreezeConfirmatoryDerivationPolicy(discoveryPolicy, sizing)
 
 campaignCurve  = DeriveCurve([discovery, confirmatory], family,
-                             baselinesByState, pointPolicy)
-result         = DeriveBSatConfirmatory(campaignCurve, candidate, bsatPolicy)
+                             baselinesByState,
+                             discoveryPolicy.PointPolicy(incremental-point))
+result         = DeriveBSatConfirmatory(campaignCurve, candidate, confirmPolicy)
 ```
 
 The confirmatory decision needs all three at once: the confirmatory points to
@@ -656,7 +666,7 @@ version. `Kmax` remains in every eligible candidate's comparison set but can
 never be returned as the candidate.
 
 ```text
-DeriveBSatDiscovery(discoveryCurve Curve, policy BSatPolicy)
+DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
     (BSatDiscoveryResult, error)
 ```
 
@@ -676,7 +686,8 @@ Discovery also produces the per-batch variance that the sizing rule turns into
 ### Confirmation
 
 ```text
-DeriveBSatConfirmatory(campaignCurve Curve, candidate int, policy BSatPolicy) BSatResult
+DeriveBSatConfirmatory(campaignCurve Curve, candidate int,
+                       policy ConfirmatoryDerivationPolicy) BSatResult
 ```
 
 Confirmation receives the candidate and evaluates the acceptance rule there. It
@@ -684,14 +695,17 @@ does not search for a candidate of its own; searching and testing on the same
 evidence is what the two-pass split exists to prevent.
 
 The implemented boundary internally reconstructs a discovery-only view of the
-opaque two-pass `Curve`, rechecks the candidate and sizing allocation, requires
+opaque two-pass `Curve`, rechecks the candidate and sizing allocation, verifies
+the curve-family contract and both stage-scoped point-policy versions, requires
 exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
 lower bound and every contrast upper bound at the frozen global-`H` quantile.
 Its result retains both pass point sets, all exact-state idle baselines, bounds
-for every later batch, estimator and sizing versions, and the family contract
-and realized identities. A later measured improvement above tolerance returns
-`CandidateOnly: DomainNoImprovementNotConfirmed`; there is no `Ambiguous`
-outcome in the Plan 5 boundary.
+for every later batch, estimator and sizing versions, both policy digests, and
+the family contract and realized identities. A later measured improvement above
+tolerance returns `CandidateOnly: DomainNoImprovementNotConfirmed`; there is no
+`Ambiguous` outcome in the Plan 5 boundary. A budget-insufficient sizing outcome
+is frozen as a confirmatory policy without a Run allocation, so its typed final
+result also retains both policy digests without pretending confirmation ran.
 
 Confirmation still validates that the domain runs from batch 1. Accepting
 saturation at `c` without evidence that batches below `c` were measured would not
@@ -834,9 +848,9 @@ Plan 5 is complete when:
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
    `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
    persisted to the evidence store, since these are a JSON field name and a
-   reason-code value. Add golden tests. Both policy artifacts now have canonical
-   decoding and content digests, and the confirmatory allocation is checked
-   against sizing; final two-digest result binding remains.
+   reason-code value. Add golden tests. Implemented: both policy artifacts have
+   canonical decoding and content digests, the confirmatory allocation is
+   checked against sizing, and the final result records both digests.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, eligible member map, and `CurveFamilyContractDigest` in the
    discovery policy version. The realized `CurveFamilyIdentity` follows Loader

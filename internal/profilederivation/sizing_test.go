@@ -7,7 +7,7 @@ import (
 
 func TestBSatConfirmatorySizingSelectsSmallestCount(t *testing.T) {
 	zeroVariance := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	zeroResult, err := DeriveBSatConfirmatorySizing(zeroVariance, 3, testBSatPolicy())
+	zeroResult, err := deriveBSatConfirmatorySizing(zeroVariance, 3, testBSatPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestBSatConfirmatorySizingSelectsSmallestCount(t *testing.T) {
 	}
 
 	variable := testVariableDiscoveryCurve(t, []float64{1, .97, .94, .90}, .01)
-	variableResult, err := DeriveBSatConfirmatorySizing(variable, 3, testBSatPolicy())
+	variableResult, err := deriveBSatConfirmatorySizing(variable, 3, testBSatPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestBSatConfirmatorySizingReturnsBudgetInsufficient(t *testing.T) {
 	policy := testBSatPolicy()
 	policy.MaximumConfirmatoryTrials = 3
 	curve := testVariableDiscoveryCurve(t, []float64{1, .97, .94, .90}, .5)
-	result, err := DeriveBSatConfirmatorySizing(curve, 3, policy)
+	result, err := deriveBSatConfirmatorySizing(curve, 3, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +47,27 @@ func TestBSatConfirmatorySizingReturnsBudgetInsufficient(t *testing.T) {
 
 func TestBSatConfirmatorySizingRejectsCandidateAndNumericDrift(t *testing.T) {
 	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	if _, err := DeriveBSatConfirmatorySizing(curve, 2, testBSatPolicy()); err == nil {
+	if _, err := deriveBSatConfirmatorySizing(curve, 2, testBSatPolicy()); err == nil {
 		t.Fatal("expected non-discovery candidate rejection")
 	}
 	overflow := testBSatPolicy()
 	overflow.MaximumConfirmatoryTrials = math.MaxInt
 	overflow.MaximumActiveRunBudget = math.MaxInt
-	if _, err := DeriveBSatConfirmatorySizing(curve, 3, overflow); err == nil {
+	if _, err := deriveBSatConfirmatorySizing(curve, 3, overflow); err == nil {
 		t.Fatal("expected global statement overflow rejection")
+	}
+}
+
+func TestBSatGlobalStatementCountStartsAtPointPolicyMinimum(t *testing.T) {
+	policy := testBSatPolicy()
+	policy.MinimumPointTrials = 4
+	policy.DiscoveryTrials = 4
+	count, err := bsatGlobalStatementCount(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 63 {
+		t.Fatalf("global statement count = %d, want 63", count)
 	}
 }
 

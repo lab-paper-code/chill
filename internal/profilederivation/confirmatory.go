@@ -10,6 +10,42 @@ import (
 func DeriveBSatConfirmatory(
 	curve Curve,
 	candidate int,
+	policy ConfirmatoryDerivationPolicy,
+) (BSatResult, error) {
+	discoveryPolicy, bsat, err := validateConfirmatoryPolicyCurve(curve, policy)
+	if err != nil {
+		return BSatResult{}, err
+	}
+	if candidate != policy.CandidateBatch() {
+		return BSatResult{}, errors.New("confirmatory candidate does not match the frozen policy")
+	}
+	discoveryCurve, err := curve.discoveryOnly()
+	if err != nil {
+		return BSatResult{}, err
+	}
+	sizing, err := deriveBSatConfirmatorySizing(discoveryCurve, candidate, bsat)
+	if err != nil {
+		return BSatResult{}, err
+	}
+	expectedPolicy, err := FreezeConfirmatoryDerivationPolicy(discoveryPolicy, sizing)
+	if err != nil {
+		return BSatResult{}, err
+	}
+	if expectedPolicy.Digest() != policy.Digest() {
+		return BSatResult{}, errors.New("confirmatory policy does not match the curve's realized sizing")
+	}
+	result, err := deriveBSatConfirmatory(curve, candidate, bsat)
+	if err != nil {
+		return BSatResult{}, err
+	}
+	result.DiscoveryPolicyDigest = policy.DiscoveryPolicyDigest()
+	result.ConfirmatoryPolicyDigest = policy.Digest()
+	return result, nil
+}
+
+func deriveBSatConfirmatory(
+	curve Curve,
+	candidate int,
 	policy BSatPolicy,
 ) (BSatResult, error) {
 	if err := curve.family.validate(); err != nil {
@@ -19,11 +55,11 @@ func DeriveBSatConfirmatory(
 	if err != nil {
 		return BSatResult{}, err
 	}
-	discoveryResult, err := DeriveBSatDiscovery(discoveryCurve, policy)
+	discoveryResult, err := deriveBSatDiscovery(discoveryCurve, policy)
 	if err != nil {
 		return BSatResult{}, err
 	}
-	sizing, err := DeriveBSatConfirmatorySizing(discoveryCurve, candidate, policy)
+	sizing, err := deriveBSatConfirmatorySizing(discoveryCurve, candidate, policy)
 	if err != nil {
 		return BSatResult{}, err
 	}
@@ -178,7 +214,6 @@ func newBSatResult(
 		ConfirmatoryEstimatorVersion:  BSatConfirmatoryEstimatorVersion,
 		ConfidenceLevel:               1 - bsatFamilyWiseAlpha,
 		SizingMethod:                  sizing.SizingMethod,
-		PolicyVersion:                 policy.Version,
 		CurveFamilyContractDigest:     curve.ContractDigest(),
 		CurveFamilyIdentity:           curve.FamilyIdentity(),
 	}
