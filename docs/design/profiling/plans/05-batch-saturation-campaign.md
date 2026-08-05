@@ -18,10 +18,13 @@ estimator, global-`H` confirmatory sizing, and typed confirmatory result are
 implemented. Both policy files have strict canonical decoders and content
 digests; the confirmatory file is checked against the discovery artifact and
 realized sizing allocation, and the final result binds both digests. A concrete
-two-member RKNN discovery policy and campaign record are frozen; its Runs,
-post-discovery confirmatory policy, and live result do not exist yet. This plan
-fixes the quantity that decides `b_sat` — the largest remaining energy
-improvement any larger measured batch still offers — gives curve derivation
+two-member RKNN campaign is also closed. All 12 idle and discovery Runs were
+retained, Loader-verified, admitted, and included. Discovery selected batch one,
+but the frozen three-trial cap could not meet the 5% confirmatory precision rule.
+The committed second policy and typed final result therefore record
+`Unavailable: ConfirmatoryBudgetInsufficient` with no confirmatory Run
+allocation. This plan fixes the quantity that decides `b_sat` — the largest
+remaining energy improvement any larger measured batch still offers — gives curve derivation
 ownership of the exact idle baseline set, rebuilds the point-confidence
 construction, and separates candidate discovery from confirmation. It does not
 authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
@@ -856,10 +859,13 @@ Plan 5 is complete when:
    campaign record, eligible member map, and `CurveFamilyContractDigest` in the
    discovery policy version. The realized `CurveFamilyIdentity` follows Loader
    verification. Implemented for
-   [the first two-member RKNN campaign](../campaigns/rknn-mobilenet-v2-050-bsat-v1/README.md);
-   no Run has been submitted under it yet.
+   [the first two-member RKNN campaign](../campaigns/rknn-mobilenet-v2-050-bsat-v1/README.md),
+   which subsequently included all 12 matching idle and discovery Runs.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
    allocation inside the caps set at item 7, before any confirmatory Run.
+   Implemented for the first campaign: sizing was budget-insufficient, so the
+   canonical policy records that typed outcome and an empty allocation. No
+   confirmatory Run was submitted.
 
 Item 1 is the estimator decision and closes before code. Item 7 is the
 campaign-specific freeze and closes before measurement. Item 8 records an

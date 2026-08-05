@@ -6,8 +6,9 @@ Roadmap with the `ProfilingRun` path through durable execution-evidence
 verification and single-Run admission implemented. Repeated active and idle
 trials, exact-state curve derivation, and the first pre-frozen Plan 5a decision
 are also implemented and live-verified for one two-member RKNN family.
-Statistical Plan 5 confirmation and profile publication remain incomplete. This
-document itself does not authorize later API or internal changes.
+The first frozen Plan 5 campaign closed with a typed budget-insufficient result;
+an accepted statistical confirmation and profile publication remain incomplete.
+This document itself does not authorize later API or internal changes.
 
 ## How to use this directory
 
@@ -150,9 +151,9 @@ Answers only:
 > Under what predeclared rule does a set of Runs establish batch saturation for
 > one frozen curve family?
 
-Approved scope with pure derivation and discovery freeze implemented. Plan 5a supplies the frozen
-family, verified family, exact-state curve container, and a live discovery
-candidate. The Plan 5 point estimator and retained previous interval are
+Approved scope with pure derivation and the first frozen campaign completed.
+Plan 5a supplies the frozen family, verified family, and exact-state curve
+container. The Plan 5 point estimator and retained previous interval are
 implemented, and the global post-selection error allocation is derived and
 regression-tested. The deterministic domain-wide discovery screen is also
 implemented, as is the global-`H` confirmatory sizing rule. The final joint
@@ -160,8 +161,12 @@ contrast/covariance estimator and typed confirmatory result are implemented.
 The discovery and confirmatory policies have strict canonical decoders and
 content digests, the second artifact is checked against the realized sizing
 allocation, and the final result binds both digests. The first concrete Plan 5
-discovery policy and campaign record are frozen for the two-member RKNN family.
-Its Runs, post-discovery confirmatory policy, and live result do not exist yet.
+campaign retained and re-verified all 12 idle and discovery Runs for the
+two-member RKNN family. Discovery selected batch one, but the pre-frozen
+three-trial cap could not meet the simultaneous 5% precision rule. Its committed
+second policy and final result therefore record
+`Unavailable: ConfirmatoryBudgetInsufficient` and allocate no confirmatory Runs.
+No statistical `b_sat` claim was made.
 Campaign provenance is pre-registered in a committed record rather than
 machine-enforced; that boundary is stated in the plan. It does not authorize a
 `DeviceProfile` API, a campaign controller, an intent schema change, or scheduler

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "chill.dacs.io/confirmatory-derivation-policy.v1alpha1",
+  "name": "rknn-mobilenet-v2-050-bsat-v1",
+  "curveFamilyContractDigest": "chill.dacs.io/curve-family-contract.v1alpha1@sha256:447c326bbdff27a3e6d750c70af714db739d27138c790c1ee9dbc5ffce4565d2",
+  "pointPolicies": [
+    {
+      "name": "rknn-mobilenet-v2-050-idle-min3-v1",
+      "stage": "idle-baseline",
+      "minimumTrials": 3
+    },
+    {
+      "name": "rknn-mobilenet-v2-050-point-min3-v1",
+      "stage": "incremental-point",
+      "minimumTrials": 3
+    }
+  ],
+  "batchSaturation": {
+    "name": "rknn-mobilenet-v2-050-bsat-v1",
+    "kmax": 2,
+    "relativeImprovementTolerance": 0.05,
+    "discoveryTrials": 3,
+    "maximumConfirmatoryTrials": 3,
+    "maximumActiveRunBudget": 12
+  },
+  "discoveryPolicyDigest": "sha256:548bd2b91da51bdb22b5a5a126b2df13e0fc7b150535d572ab19d01d13248631",
+  "confirmation": {
+    "status": "Unavailable",
+    "code": "ConfirmatoryBudgetInsufficient",
+    "candidateBatch": 1
+  }
+}
