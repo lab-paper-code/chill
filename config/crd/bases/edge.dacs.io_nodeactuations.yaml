@@ -635,6 +635,7 @@ spec:
                       that failed terminally.
                     enum:
                     - Lease
+                    - Policy
                     - Safety
                     - ObservePrevious
                     - Apply

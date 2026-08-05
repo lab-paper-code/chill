@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 type recordingLeaseController struct {
 	held         bool
+	observeCalls int
 	acquireCalls int
 	releaseCalls int
 }
@@ -27,6 +29,7 @@ func (l *recordingLeaseController) Observe(
 	nodeactuator.Request,
 	time.Time,
 ) (LeaseBinding, error) {
+	l.observeCalls++
 	state := nodeactuator.LeaseNotHeld
 	retry := time.Duration(0)
 	uid := ""
@@ -214,6 +217,65 @@ func TestHandoffReconcilerIgnoresHandoffForAnotherNode(t *testing.T) {
 	}
 }
 
+func TestHandoffReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	handoff := testNodeActuation()
+	scheme := handoffReconcilerScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+		WithObjects(handoff).
+		Build()
+	lease := &recordingLeaseController{}
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	safety := &staticSafetyChecker{allowed: true, now: now}
+	host := &memoryHostActuator{target: nvpTarget(1)}
+	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler.options.AllowedPolicyDigests = []string{"sha256:" + strings.Repeat("b", 64)}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
+
+	reconcileTimes(t, ctx, reconciler, request, 2)
+	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
+		current.Status.TerminalFailure == nil ||
+		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStagePolicy ||
+		lease.observeCalls != 0 || lease.acquireCalls != 0 || safety.calls != 0 ||
+		host.observeCalls != 0 || len(host.applyCalls) != 0 {
+		t.Fatalf("policy rejection crossed a port: lease=%#v safety=%d host=%#v status=%#v",
+			lease, safety.calls, host, current.Status)
+	}
+}
+
+func TestHandoffReconcilerRestoresRetainedStateAfterPolicyDrift(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 6, 12, 2, 0, 0, time.UTC)
+	handoff := readyNodeActuation(now)
+	handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageApply
+	handoff.Spec.StageRequestedAt = metav1.NewTime(now.Add(-2 * time.Minute))
+	scheme := handoffReconcilerScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+		WithObjects(handoff).
+		Build()
+	lease := &recordingLeaseController{held: true}
+	safety := &staticSafetyChecker{allowed: true, now: now}
+	host := &memoryHostActuator{target: nvpTarget(2)}
+	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+	reconciler.options.AllowedPolicyDigests = []string{"sha256:" + strings.Repeat("b", 64)}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
+
+	reconcileTimes(t, ctx, reconciler, request, 1)
+	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestoring ||
+		current.Status.TerminalFailure == nil ||
+		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStagePolicy ||
+		lease.observeCalls != 0 || host.observeCalls != 0 || len(host.applyCalls) != 0 {
+		t.Fatalf("policy drift did not enter fenced restoration: lease=%#v host=%#v status=%#v",
+			lease, host, current.Status)
+	}
+}
+
 func TestHandoffReconcilerRestoresAfterPartialApplyError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -239,6 +301,35 @@ func TestHandoffReconcilerRestoresAfterPartialApplyError(t *testing.T) {
 	}
 }
 
+func TestHandoffReconcilerOptionsRequireExplicitPolicyAuthorization(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	base := HandoffReconcilerOptions{
+		AssignedNode:         nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
+		AllowedPolicyDigests: []string{digest},
+		SafetyValidFor:       time.Minute,
+	}
+	for name, mutate := range map[string]func(*HandoffReconcilerOptions){
+		"missing policy": func(options *HandoffReconcilerOptions) {
+			options.AllowedPolicyDigests = nil
+		},
+		"invalid policy": func(options *HandoffReconcilerOptions) {
+			options.AllowedPolicyDigests = []string{"sha256:bad"}
+		},
+		"duplicate policy": func(options *HandoffReconcilerOptions) {
+			options.AllowedPolicyDigests = []string{digest, digest}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			options := base
+			mutate(&options)
+			if err := options.Validate(); err == nil {
+				t.Fatalf("invalid options accepted: %#v", options)
+			}
+		})
+	}
+}
+
 func newTestHandoffReconciler(
 	t *testing.T,
 	kubeClient client.Client,
@@ -251,7 +342,10 @@ func newTestHandoffReconciler(
 	reconciler, err := NewHandoffReconciler(
 		kubeClient, lease, safety, host,
 		HandoffReconcilerOptions{
-			AssignedNode:   nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
+			AssignedNode: nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
+			AllowedPolicyDigests: []string{
+				"sha256:" + strings.Repeat("a", 64),
+			},
 			SafetyValidFor: 5 * time.Minute,
 		},
 	)

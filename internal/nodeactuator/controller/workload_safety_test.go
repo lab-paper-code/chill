@@ -21,6 +21,7 @@ func TestKubernetesWorkloadSafetyCheckerAllowsOnlyConfiguredNamespaces(t *testin
 	checker := workloadSafetyChecker(t,
 		workloadPod("kube-system", "kube-proxy", "system-uid", request.Node.Name, corev1.PodRunning),
 		workloadPod("chill-system", "node-actuator", "actuator-uid", request.Node.Name, corev1.PodRunning),
+		workloadPod("chill-system", "other", "other-chill-uid", request.Node.Name, corev1.PodRunning),
 		workloadPod("tenant-b", "finished", "finished-uid", request.Node.Name, corev1.PodSucceeded),
 		workloadPod("tenant-a", "serving", "serving-uid", request.Node.Name, corev1.PodRunning),
 		workloadPod("tenant-a", "other-node", "other-uid", "jetsony", corev1.PodRunning),
@@ -28,8 +29,9 @@ func TestKubernetesWorkloadSafetyCheckerAllowsOnlyConfiguredNamespaces(t *testin
 	wantTime := time.Date(2026, 8, 6, 12, 0, 5, 0, time.UTC)
 	checker.now = func() time.Time { return wantTime }
 	result, err := checker.Check(context.Background(), request)
-	if err != nil || result.Allowed || !result.ObservedAt.Equal(wantTime) || len(result.BlockingPods) != 1 ||
-		result.BlockingPods[0].Namespace != "tenant-a" || result.BlockingPods[0].Name != "serving" {
+	if err != nil || result.Allowed || !result.ObservedAt.Equal(wantTime) || len(result.BlockingPods) != 2 ||
+		result.BlockingPods[0].Namespace != "chill-system" || result.BlockingPods[0].Name != "other" ||
+		result.BlockingPods[1].Namespace != "tenant-a" || result.BlockingPods[1].Name != "serving" {
 		t.Fatalf("workload safety result = %#v, error=%v", result, err)
 	}
 }
@@ -70,6 +72,7 @@ func TestWorkloadSafetyOptionsRequiresExplicitUniqueNamespaces(t *testing.T) {
 		{},
 		{AllowedNamespaces: []string{"Invalid Namespace"}},
 		{AllowedNamespaces: []string{"chill-system", "chill-system"}},
+		{AllowedNamespaces: []string{"kube-system"}, AllowedPodUIDs: []string{"pod", "pod"}},
 	} {
 		if err := options.Validate(); err == nil {
 			t.Fatalf("invalid safety options accepted: %#v", options)
@@ -91,7 +94,7 @@ func workloadSafetyChecker(t *testing.T, objects ...client.Object) *KubernetesWo
 		},
 	).Build()
 	checker, err := NewKubernetesWorkloadSafetyChecker(reader, WorkloadSafetyOptions{
-		AllowedNamespaces: []string{"kube-system", "chill-system"},
+		AllowedNamespaces: []string{"kube-system"}, AllowedPodUIDs: []string{"actuator-uid"},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -46,6 +46,7 @@ type FailureStage string
 
 const (
 	FailureStageLease           FailureStage = "Lease"
+	FailureStagePolicy          FailureStage = "Policy"
 	FailureStageSafety          FailureStage = "Safety"
 	FailureStageObservePrevious FailureStage = "ObservePrevious"
 	FailureStageApply           FailureStage = "Apply"
@@ -372,7 +373,7 @@ func validLeaseObservation(observation LeaseObservation) bool {
 
 func validFailureStage(stage FailureStage) bool {
 	switch stage {
-	case FailureStageLease, FailureStageSafety, FailureStageObservePrevious, FailureStageApply,
+	case FailureStageLease, FailureStagePolicy, FailureStageSafety, FailureStageObservePrevious, FailureStageApply,
 		FailureStageVerify, FailureStageSettle, FailureStageHold, FailureStageRestore:
 		return true
 	default:

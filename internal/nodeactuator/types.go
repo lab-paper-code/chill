@@ -19,6 +19,13 @@ const (
 
 var canonicalDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+func ValidatePolicyDigest(digest string) error {
+	if !canonicalDigestPattern.MatchString(digest) {
+		return errors.New("policy digest must be a canonical SHA-256 digest")
+	}
+	return nil
+}
+
 type ObjectIdentity struct {
 	Name string
 	UID  string
@@ -82,8 +89,8 @@ func (r Request) ValidateForNode(assigned ObjectIdentity) error {
 	if err := r.Target.Validate(); err != nil {
 		return fmt.Errorf("validate handoff target: %w", err)
 	}
-	if !canonicalDigestPattern.MatchString(r.PolicyDigest) {
-		return errors.New("handoff policy digest must be a canonical SHA-256 digest")
+	if err := ValidatePolicyDigest(r.PolicyDigest); err != nil {
+		return fmt.Errorf("validate handoff policy digest: %w", err)
 	}
 	if r.SettlingDurationSeconds < 1 || r.SettlingDurationSeconds > 86_400 {
 		return errors.New("handoff settling duration must be between 1 second and 24 hours")

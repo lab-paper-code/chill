@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,8 +40,9 @@ type HostActuator interface {
 }
 
 type HandoffReconcilerOptions struct {
-	AssignedNode   nodeactuator.ObjectIdentity
-	SafetyValidFor time.Duration
+	AssignedNode         nodeactuator.ObjectIdentity
+	AllowedPolicyDigests []string
+	SafetyValidFor       time.Duration
 }
 
 func (o HandoffReconcilerOptions) Validate() error {
@@ -49,6 +51,19 @@ func (o HandoffReconcilerOptions) Validate() error {
 	}
 	if o.SafetyValidFor < time.Second || o.SafetyValidFor > 5*time.Minute {
 		return errors.New("workload safety validity must be between 1 second and 5 minutes")
+	}
+	if len(o.AllowedPolicyDigests) == 0 {
+		return errors.New("at least one allowed actuation-policy digest is required")
+	}
+	seen := make(map[string]struct{}, len(o.AllowedPolicyDigests))
+	for _, digest := range o.AllowedPolicyDigests {
+		if err := nodeactuator.ValidatePolicyDigest(digest); err != nil {
+			return fmt.Errorf("validate allowed actuation-policy digest: %w", err)
+		}
+		if _, duplicate := seen[digest]; duplicate {
+			return fmt.Errorf("duplicate allowed actuation-policy digest %q", digest)
+		}
+		seen[digest] = struct{}{}
 	}
 	return nil
 }
@@ -79,7 +94,14 @@ func NewHandoffReconciler(
 	}
 	return &HandoffReconciler{
 		Client: kubeClient, lease: lease, safety: safety, actuator: actuator,
-		options: options, now: time.Now,
+		options: HandoffReconcilerOptions{
+			AssignedNode: options.AssignedNode,
+			AllowedPolicyDigests: append(
+				[]string(nil), options.AllowedPolicyDigests...,
+			),
+			SafetyValidFor: options.SafetyValidFor,
+		},
+		now: time.Now,
 	}, nil
 }
 
@@ -121,6 +143,17 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	now := r.now().UTC()
+	if !slices.Contains(r.options.AllowedPolicyDigests, actuationRequest.PolicyDigest) &&
+		handoff.Status.TerminalFailure == nil {
+		failure := nodeactuator.Failure{
+			Stage: nodeactuator.FailureStagePolicy, Reason: "PolicyDigestRejected",
+			Message: "frozen actuation-policy digest is not authorized by this NodeActuator",
+		}
+		if mayHaveMutated(handoff.Status) || handoff.Status.PreviousObservation != nil {
+			return ctrl.Result{}, r.beginRestore(ctx, handoff, now, &failure)
+		}
+		return r.markFailed(ctx, handoff, now, failure)
+	}
 	binding, err := r.lease.Observe(ctx, actuationRequest, now)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("observe Node actuation Lease: %w", err)

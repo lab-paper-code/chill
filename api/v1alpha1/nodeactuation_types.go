@@ -31,11 +31,12 @@ const (
 )
 
 // NodeActuationFailureStage identifies the operation that failed terminally.
-// +kubebuilder:validation:Enum=Lease;Safety;ObservePrevious;Apply;Verify;Settle;Hold;Restore
+// +kubebuilder:validation:Enum=Lease;Policy;Safety;ObservePrevious;Apply;Verify;Settle;Hold;Restore
 type NodeActuationFailureStage string
 
 const (
 	NodeActuationFailureStageLease           NodeActuationFailureStage = "Lease"
+	NodeActuationFailureStagePolicy          NodeActuationFailureStage = "Policy"
 	NodeActuationFailureStageSafety          NodeActuationFailureStage = "Safety"
 	NodeActuationFailureStageObservePrevious NodeActuationFailureStage = "ObservePrevious"
 	NodeActuationFailureStageApply           NodeActuationFailureStage = "Apply"

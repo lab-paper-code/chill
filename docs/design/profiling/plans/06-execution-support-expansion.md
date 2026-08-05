@@ -154,8 +154,11 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   a durable pre-mutation fence, independent read-back, and restoration-aware
   finalization; keep its production gate open until an operand wires it.
 - [x] Implement a fail-closed Kubernetes workload-safety observation that
-  retains every active blocking Pod identity outside an explicit namespace
-  allowlist; install no implicit default policy.
+  retains every active blocking Pod identity outside explicit namespace and
+  exact Pod-UID allowances; install no implicit default policy.
+- [x] Reject any handoff whose canonical actuation-policy digest is absent from
+  the actuator's explicit authorization set before crossing a Lease, safety,
+  or host port; policy drift after retained state enters restoration.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
 - [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
@@ -201,10 +204,16 @@ apply phase before invoking the host port, separates command completion from
 target and restoration read-back, retains the Lease and finalizer when
 restoration cannot be proven, and reconciles Lease status after restart. Its
 workload-safety adapter lists active Pods on the exact target Node and allows
-only explicitly configured namespaces; an unapproved Pod or an incomplete
-blocker set fails closed. These internal paths do not close the unchecked
-production gates: no runnable operand selects the allowlist, Lease policy, or
-host adapter, and no host mutation or live restoration proof exists.
+only explicitly configured namespaces or exact Pod UIDs; this permits the
+future DaemonSet to exclude only its own Pod without trusting every workload in
+the release namespace. An unapproved Pod or an incomplete blocker set fails
+closed. The reconciler independently requires the handoff's canonical policy
+digest to be in its installed authorization set before crossing any port; if
+that authorization drifts after a previous state was retained, it durably
+starts restoration instead of abandoning the Node. These internal paths do not
+close the unchecked production gates: no runnable operand selects the
+allowances, Lease policy, or host adapter, and no host mutation or live
+restoration proof exists.
 
 ### Jetson NVPModel
 

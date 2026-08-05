@@ -19,6 +19,7 @@ const maximumRecordedBlockingPods = 32
 
 type WorkloadSafetyOptions struct {
 	AllowedNamespaces []string
+	AllowedPodUIDs    []string
 }
 
 func (o WorkloadSafetyOptions) Validate() error {
@@ -34,6 +35,16 @@ func (o WorkloadSafetyOptions) Validate() error {
 			return fmt.Errorf("duplicate allowed workload namespace %q", namespace)
 		}
 		seen[namespace] = struct{}{}
+	}
+	seenUIDs := make(map[string]struct{}, len(o.AllowedPodUIDs))
+	for _, uid := range o.AllowedPodUIDs {
+		if strings.TrimSpace(uid) == "" || strings.TrimSpace(uid) != uid {
+			return errors.New("allowed workload Pod UID is required without surrounding whitespace")
+		}
+		if _, duplicate := seenUIDs[uid]; duplicate {
+			return fmt.Errorf("duplicate allowed workload Pod UID %q", uid)
+		}
+		seenUIDs[uid] = struct{}{}
 	}
 	return nil
 }
@@ -76,6 +87,7 @@ func (r WorkloadSafetyResult) Validate() error {
 type KubernetesWorkloadSafetyChecker struct {
 	reader            client.Reader
 	allowedNamespaces []string
+	allowedPodUIDs    []string
 	now               func() time.Time
 }
 
@@ -91,8 +103,10 @@ func NewKubernetesWorkloadSafetyChecker(
 	}
 	allowed := append([]string(nil), options.AllowedNamespaces...)
 	slices.Sort(allowed)
+	allowedPodUIDs := append([]string(nil), options.AllowedPodUIDs...)
+	slices.Sort(allowedPodUIDs)
 	return &KubernetesWorkloadSafetyChecker{
-		reader: reader, allowedNamespaces: allowed, now: time.Now,
+		reader: reader, allowedNamespaces: allowed, allowedPodUIDs: allowedPodUIDs, now: time.Now,
 	}, nil
 }
 
@@ -114,7 +128,8 @@ func (c *KubernetesWorkloadSafetyChecker) Check(
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.Spec.NodeName != request.Node.Name || pod.Status.Phase == corev1.PodSucceeded ||
-			pod.Status.Phase == corev1.PodFailed || slices.Contains(c.allowedNamespaces, pod.Namespace) {
+			pod.Status.Phase == corev1.PodFailed || slices.Contains(c.allowedNamespaces, pod.Namespace) ||
+			slices.Contains(c.allowedPodUIDs, string(pod.UID)) {
 			continue
 		}
 		if pod.Namespace == "" || pod.Name == "" || pod.UID == "" {
