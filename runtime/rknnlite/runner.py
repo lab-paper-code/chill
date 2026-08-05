@@ -479,9 +479,31 @@ def encode_result(result: dict[str, Any], max_bytes: int) -> bytes:
     return payload
 
 
+def current_cgroup_v2_directory(
+    membership_path: Path = Path("/proc/self/cgroup"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> Path:
+    membership = read_required_text(membership_path, "process cgroup membership")
+    unified_paths = []
+    for line in membership.splitlines():
+        fields = line.split(":", 2)
+        if len(fields) == 3 and fields[0] == "0" and fields[1] == "":
+            unified_paths.append(fields[2])
+    if len(unified_paths) != 1:
+        raise ContractError("process does not have exactly one cgroup v2 membership")
+    raw_path = unified_paths[0]
+    if not raw_path.startswith("/"):
+        raise ContractError("cgroup v2 membership path is not absolute")
+    relative = Path(raw_path[1:])
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        raise ContractError("cgroup v2 membership path is not clean")
+    return cgroup_root / relative
+
+
 def cpu_stat() -> dict[str, int]:
     values: dict[str, int] = {}
-    for line in read_required_text(Path("/sys/fs/cgroup/cpu.stat"), "cgroup CPU stat").splitlines():
+    stat_path = current_cgroup_v2_directory() / "cpu.stat"
+    for line in read_required_text(stat_path, "cgroup CPU stat").splitlines():
         fields = line.split()
         if len(fields) != 2:
             raise ContractError("cgroup CPU stat is malformed")
@@ -494,7 +516,8 @@ def cpu_stat() -> dict[str, int]:
 
 def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
     cpu = intent["cpu"]
-    cpu_max = read_required_text(Path("/sys/fs/cgroup/cpu.max"), "cgroup CPU max")
+    cgroup = current_cgroup_v2_directory()
+    cpu_max = read_required_text(cgroup / "cpu.max", "cgroup CPU max")
     fields = cpu_max.split()
     if len(fields) != 2 or fields[0] == "max":
         raise ContractError("cgroup CPU quota is missing or unlimited")
@@ -509,7 +532,7 @@ def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
     affinity = sorted(os.sched_getaffinity(0))
     if not affinity:
         raise ContractError("process CPU affinity is empty")
-    cpuset = read_required_text(Path("/sys/fs/cgroup/cpuset.cpus.effective"), "effective CPU set")
+    cpuset = read_required_text(cgroup / "cpuset.cpus.effective", "effective CPU set")
     return cpu_max, affinity, cpuset
 
 

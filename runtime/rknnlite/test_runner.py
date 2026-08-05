@@ -256,6 +256,28 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_current_cgroup_v2_directory_resolves_host_visible_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "cgroup"
+            membership = Path(directory) / "self-cgroup"
+            membership.write_text(
+                "0::/kubepods.slice/kubepods-burstable.slice/pod.scope\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                runner.current_cgroup_v2_directory(membership, root),
+                root / "kubepods.slice/kubepods-burstable.slice/pod.scope",
+            )
+            membership.write_text("0::/\n", encoding="utf-8")
+            self.assertEqual(runner.current_cgroup_v2_directory(membership, root), root)
+
+    def test_current_cgroup_v2_directory_rejects_ambiguous_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            membership = Path(directory) / "self-cgroup"
+            membership.write_text("2:cpu:/pod\n", encoding="utf-8")
+            with self.assertRaisesRegex(runner.ContractError, "exactly one"):
+                runner.current_cgroup_v2_directory(membership, Path(directory) / "cgroup")
+
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
             runner.decode_request(io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}'))
