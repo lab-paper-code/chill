@@ -353,7 +353,7 @@ multiple fixed-batch artifacts remain P7/L4 work.
 - The repository-owned conversion recipe used canonical ONNX bytes
   `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`,
   RKNN Toolkit2 2.3.2 wheel
-  `sha256:135085a8f19fe4126811920ac42ad7391499ec9b0d7373aa154775864a4e7736`,
+  `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`,
   target `rk3588`, batch 2, and recipe identity
   `sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed`.
 - The result is 4,943,089 bytes with digest
