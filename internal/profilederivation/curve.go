@@ -3,7 +3,6 @@ package profilederivation
 import (
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 )
 
@@ -241,7 +240,7 @@ func validateCurveBaselines(
 			baseline.MeasurementProtocolIdentity != expectedProtocol {
 			return nil, fmt.Errorf("idle baseline key %q does not match the verified curve family", key)
 		}
-		if err := validateCurveBaseline(baseline); err != nil {
+		if err := validateIdleBaseline(baseline); err != nil {
 			return nil, fmt.Errorf("idle baseline key %q is incomplete", key)
 		}
 		for _, trial := range baseline.Trials {
@@ -254,39 +253,6 @@ func validateCurveBaselines(
 		result[key] = cloneIdleBaseline(baseline)
 	}
 	return result, nil
-}
-
-func validateCurveBaseline(baseline IdleBaseline) error {
-	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
-		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
-		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 ||
-		baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
-		math.IsInf(baseline.MeanWallWatts, 0) || baseline.ConfidenceHalfWidth < 0 ||
-		math.IsNaN(baseline.ConfidenceHalfWidth) || math.IsInf(baseline.ConfidenceHalfWidth, 0) {
-		return errors.New("idle baseline value or identity is invalid")
-	}
-	seenTrials := make(map[string]struct{}, len(baseline.Trials))
-	seenEvidence := make(map[string]struct{}, len(baseline.Trials))
-	for _, trial := range baseline.Trials {
-		if trial.StateIdentity != baseline.StateIdentity ||
-			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
-			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
-			trial.AdmissionPolicyVersion != baseline.AdmissionPolicyVersion || trial.TrialID == "" ||
-			!validRawEvidenceIdentity(trial.RawEvidence) || trial.MeanWallWatts < 0 ||
-			math.IsNaN(trial.MeanWallWatts) || math.IsInf(trial.MeanWallWatts, 0) {
-			return errors.New("idle baseline trial is invalid")
-		}
-		if _, exists := seenTrials[trial.TrialID]; exists {
-			return errors.New("idle baseline contains a duplicate trial")
-		}
-		seenTrials[trial.TrialID] = struct{}{}
-		evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
-		if _, exists := seenEvidence[evidenceKey]; exists {
-			return errors.New("idle baseline contains duplicate raw evidence")
-		}
-		seenEvidence[evidenceKey] = struct{}{}
-	}
-	return nil
 }
 
 func curvePassOrder(role PassRole) int {

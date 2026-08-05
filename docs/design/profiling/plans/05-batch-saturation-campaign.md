@@ -7,15 +7,17 @@
 Approved implementation plan. The reusable frozen-family, verified-family, and
 opaque exact-state curve boundaries are implemented under Plan 5a, and its live
 sequential result supplies one discovery candidate. They do not implement Plan
-5's joint estimator or statistical claim. The complete two-pass calibration,
-confirmatory sizing, policy decoding, and confirmatory result remain
-unimplemented. This plan fixes the quantity that decides `b_sat` — the largest
-remaining energy improvement any larger measured batch still offers — gives
-curve derivation ownership of the exact idle baseline set, rebuilds the
-point-confidence construction, and separates candidate discovery from
-confirmation. It does not authorize a `DeviceProfile` API, a campaign CRD or
-controller, an intent schema change, cross-model pooling, or scheduler
-consumption.
+5's joint estimator or statistical claim. The derivation path now retains each
+active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
+baseline's mean variance and degrees of freedom. The complete two-pass
+calibration, rebuilt estimator, confirmatory sizing, policy decoding, and
+confirmatory result remain unimplemented. This plan fixes the quantity that
+decides `b_sat` — the largest remaining energy improvement any larger measured
+batch still offers — gives curve derivation ownership of the exact idle
+baseline set, rebuilds the point-confidence construction, and separates
+candidate discovery from confirmation. It does not authorize a `DeviceProfile`
+API, a campaign CRD or controller, an intent schema change, cross-model pooling,
+or scheduler consumption.
 
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
 original one-state assumption for runtimes with one immutable artifact per
@@ -705,7 +707,7 @@ Plan 5 is complete when:
    sizing method, minimality boundary, and the rule that observed throughput
    never removes evidence. Implemented in this plan.
 2. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
-   freedom reachable from the derivation path.
+   freedom reachable from the derivation path. Implemented.
 3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`
    boundary to retain one exact-state baseline set across both passes. Rebuild
    aggregation and the point-confidence construction; the current construction

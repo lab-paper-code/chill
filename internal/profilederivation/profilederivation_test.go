@@ -61,6 +61,11 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if baseline.DegreesOfFreedom != 2 ||
+		math.Abs(baseline.MeanWallWattsVariance-(.01/3)) > 1e-12 ||
+		math.Abs(baseline.ConfidenceHalfWidth-studentT95(2)*math.Sqrt(.01/3)) > 1e-12 {
+		t.Fatalf("idle sufficient statistics are incomplete: %#v", baseline)
+	}
 	mixedIdle := append([]IdleTrial(nil), baseline.Trials...)
 	mixedIdle[2].AdmissionPolicyVersion = otherPolicy
 	if _, err := DeriveIdleBaseline(mixedIdle, pointPolicy("idle-v1")); err == nil {
@@ -80,8 +85,10 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(admitted.IncrementalJoulesPerItem-.5) > 1e-9 {
-		t.Fatal(admitted.IncrementalJoulesPerItem)
+	if math.Abs(admitted.IncrementalJoulesPerItem-.5) > 1e-9 ||
+		math.Abs(admitted.ActiveWallJoulesPerItem-1) > 1e-9 ||
+		math.Abs(admitted.BaselineCoefficientSecondsPerItem-.1) > 1e-9 {
+		t.Fatalf("active sufficient statistics are incomplete: %#v", admitted)
 	}
 	if admitted.MeasurementProtocolIdentity != "active-protocol" ||
 		!strings.Contains(admitted.EstimatorIdentity, "idleProtocol=idle-protocol") {
@@ -97,10 +104,20 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if _, err := IncrementalTrial(trial, mismatchedAdmission, baseline); err == nil {
 		t.Fatal("expected active admission protocol mismatch rejection")
 	}
+	mismatchedCount := result
+	mismatchedCount.CompletedItems--
+	if _, err := IncrementalTrial(trial, mismatchedCount, baseline); err == nil {
+		t.Fatal("expected completed-item count mismatch rejection")
+	}
 	invalidBaseline := baseline
 	invalidBaseline.ConfidenceHalfWidth = math.NaN()
 	if _, err := IncrementalTrial(trial, result, invalidBaseline); err == nil {
 		t.Fatal("expected invalid baseline uncertainty rejection")
+	}
+	invalidBaseline = baseline
+	invalidBaseline.MeanWallWattsVariance = math.NaN()
+	if _, err := IncrementalTrial(trial, result, invalidBaseline); err == nil {
+		t.Fatal("expected invalid baseline mean variance rejection")
 	}
 	trial.ConcurrentCHILLWorkloads = []string{"other-run"}
 	result = Admit(trial, policy)
@@ -178,16 +195,19 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "1", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			ActiveWallJoulesPerItem: 2, BaselineCoefficientSecondsPerItem: 1,
 			IncrementalJoulesPerItem: 1, LatencyP99Milliseconds: 2,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "2", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			ActiveWallJoulesPerItem: 2.1, BaselineCoefficientSecondsPerItem: 1,
 			IncrementalJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "3", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
+			ActiveWallJoulesPerItem: 1.9, BaselineCoefficientSecondsPerItem: 1,
 			IncrementalJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
 		},
 	}

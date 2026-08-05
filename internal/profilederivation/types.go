@@ -67,16 +67,18 @@ type AdmissionResult struct {
 }
 
 type AdmittedTrial struct {
-	StateIdentity                    string  `json:"stateIdentity"`
-	EnvironmentIdentity              string  `json:"environmentIdentity"`
-	MeasurementProtocolIdentity      string  `json:"measurementProtocolIdentity"`
-	TrialID                          string  `json:"trialID"`
-	AdmissionPolicyVersion           string  `json:"admissionPolicyVersion"`
-	EstimatorIdentity                string  `json:"estimatorIdentity"`
-	BaselineUncertaintyJoulesPerItem float64 `json:"baselineUncertaintyJoulesPerItem"`
-	Batch                            int     `json:"batch"`
-	IncrementalJoulesPerItem         float64 `json:"incrementalJoulesPerItem"`
-	LatencyP99Milliseconds           float64 `json:"latencyP99Milliseconds"`
+	StateIdentity                     string  `json:"stateIdentity"`
+	EnvironmentIdentity               string  `json:"environmentIdentity"`
+	MeasurementProtocolIdentity       string  `json:"measurementProtocolIdentity"`
+	TrialID                           string  `json:"trialID"`
+	AdmissionPolicyVersion            string  `json:"admissionPolicyVersion"`
+	EstimatorIdentity                 string  `json:"estimatorIdentity"`
+	BaselineUncertaintyJoulesPerItem  float64 `json:"baselineUncertaintyJoulesPerItem"`
+	ActiveWallJoulesPerItem           float64 `json:"activeWallJoulesPerItem"`
+	BaselineCoefficientSecondsPerItem float64 `json:"baselineCoefficientSecondsPerItem"`
+	Batch                             int     `json:"batch"`
+	IncrementalJoulesPerItem          float64 `json:"incrementalJoulesPerItem"`
+	LatencyP99Milliseconds            float64 `json:"latencyP99Milliseconds"`
 }
 type RawEvidenceIdentity struct {
 	Store  string `json:"store"`
@@ -133,9 +135,12 @@ type IdleBaseline struct {
 	MeasurementProtocolIdentity string      `json:"measurementProtocolIdentity"`
 	Trials                      []IdleTrial `json:"trials"`
 	MeanWallWatts               float64     `json:"meanWallWatts"`
-	ConfidenceHalfWidth         float64     `json:"confidenceHalfWidth"`
-	PolicyVersion               string      `json:"policyVersion"`
-	AdmissionPolicyVersion      string      `json:"admissionPolicyVersion"`
+	// MeanWallWattsVariance is the sample variance divided by the idle trial count.
+	MeanWallWattsVariance  float64 `json:"meanWallWattsVariance"`
+	DegreesOfFreedom       int     `json:"degreesOfFreedom"`
+	ConfidenceHalfWidth    float64 `json:"confidenceHalfWidth"`
+	PolicyVersion          string  `json:"policyVersion"`
+	AdmissionPolicyVersion string  `json:"admissionPolicyVersion"`
 }
 
 // PointPolicy selects a versioned minimum-trial rule. The first scientific

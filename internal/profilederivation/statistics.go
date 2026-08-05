@@ -26,14 +26,8 @@ func studentTHalfWidth(values []float64) float64 {
 	if len(values) < 3 {
 		return math.Inf(1)
 	}
-	m := mean(values)
-	var sum float64
-	for _, value := range values {
-		delta := value - m
-		sum += delta * delta
-	}
-	critical := studentT95(len(values) - 1)
-	return critical * math.Sqrt(sum/float64(len(values)-1)) / math.Sqrt(float64(len(values)))
+	_, sampleVariance := stat.MeanVariance(values, nil)
+	return studentT95(len(values)-1) * math.Sqrt(sampleVariance/float64(len(values)))
 }
 
 func studentT95(df int) float64 {

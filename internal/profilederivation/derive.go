@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math"
 	"sort"
+
+	"gonum.org/v1/gonum/stat"
 )
 
 func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, error) {
@@ -46,9 +48,52 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 		seenEvidence[evidenceKey] = struct{}{}
 		values[index] = trial.MeanWallWatts
 	}
-	baseline.MeanWallWatts = mean(values)
-	baseline.ConfidenceHalfWidth = studentTHalfWidth(values)
+	baseline.MeanWallWatts, baseline.MeanWallWattsVariance = stat.MeanVariance(values, nil)
+	baseline.MeanWallWattsVariance /= float64(len(values))
+	baseline.DegreesOfFreedom = len(values) - 1
+	baseline.ConfidenceHalfWidth = studentT95(baseline.DegreesOfFreedom) *
+		math.Sqrt(baseline.MeanWallWattsVariance)
 	return baseline, nil
+}
+
+func validateIdleBaseline(baseline IdleBaseline) error {
+	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
+		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
+		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 ||
+		baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
+		math.IsInf(baseline.MeanWallWatts, 0) || baseline.MeanWallWattsVariance < 0 ||
+		math.IsNaN(baseline.MeanWallWattsVariance) || math.IsInf(baseline.MeanWallWattsVariance, 0) ||
+		baseline.DegreesOfFreedom != len(baseline.Trials)-1 || baseline.ConfidenceHalfWidth < 0 ||
+		math.IsNaN(baseline.ConfidenceHalfWidth) || math.IsInf(baseline.ConfidenceHalfWidth, 0) {
+		return errors.New("idle baseline value or identity is invalid")
+	}
+	expectedHalfWidth := studentT95(baseline.DegreesOfFreedom) * math.Sqrt(baseline.MeanWallWattsVariance)
+	if math.Abs(baseline.ConfidenceHalfWidth-expectedHalfWidth) >
+		1e-12*math.Max(1, expectedHalfWidth) {
+		return errors.New("idle baseline uncertainty fields are inconsistent")
+	}
+	seenTrials := make(map[string]struct{}, len(baseline.Trials))
+	seenEvidence := make(map[string]struct{}, len(baseline.Trials))
+	for _, trial := range baseline.Trials {
+		if trial.StateIdentity != baseline.StateIdentity ||
+			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
+			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
+			trial.AdmissionPolicyVersion != baseline.AdmissionPolicyVersion || trial.TrialID == "" ||
+			!validRawEvidenceIdentity(trial.RawEvidence) || trial.MeanWallWatts < 0 ||
+			math.IsNaN(trial.MeanWallWatts) || math.IsInf(trial.MeanWallWatts, 0) {
+			return errors.New("idle baseline trial is invalid")
+		}
+		if _, exists := seenTrials[trial.TrialID]; exists {
+			return errors.New("idle baseline contains a duplicate trial")
+		}
+		seenTrials[trial.TrialID] = struct{}{}
+		evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
+		if _, exists := seenEvidence[evidenceKey]; exists {
+			return errors.New("idle baseline contains duplicate raw evidence")
+		}
+		seenEvidence[evidenceKey] = struct{}{}
+	}
+	return nil
 }
 
 func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBaseline) (AdmittedTrial, error) {
@@ -60,42 +105,48 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 		admission.MeasurementProtocolIdentity != trial.MeasurementProtocolIdentity ||
 		admission.TrialID != trial.TrialID ||
 		admission.PolicyVersion == "" ||
+		admission.CompletedItems != trial.CompletedItems ||
+		trial.CompletedItems <= 0 ||
+		admission.WindowSeconds <= 0 ||
+		math.IsNaN(admission.WindowSeconds) ||
+		math.IsInf(admission.WindowSeconds, 0) ||
+		*admission.TotalWallJoules < 0 ||
+		math.IsNaN(*admission.TotalWallJoules) ||
+		math.IsInf(*admission.TotalWallJoules, 0) ||
 		baseline.StateIdentity != trial.StateIdentity ||
 		baseline.EnvironmentIdentity != trial.EnvironmentIdentity ||
-		baseline.MeasurementProtocolIdentity == "" ||
-		baseline.PolicyVersion == "" ||
-		baseline.AdmissionPolicyVersion == "" ||
-		len(baseline.Trials) < 3 ||
-		baseline.MeanWallWatts < 0 ||
-		math.IsNaN(baseline.MeanWallWatts) ||
-		math.IsInf(baseline.MeanWallWatts, 0) {
+		baseline.MeasurementProtocolIdentity == "" {
 		return AdmittedTrial{}, errors.New("admitted idle baseline identity is invalid")
 	}
-	if baseline.ConfidenceHalfWidth < 0 || math.IsNaN(baseline.ConfidenceHalfWidth) ||
-		math.IsInf(baseline.ConfidenceHalfWidth, 0) {
-		return AdmittedTrial{}, errors.New("idle baseline uncertainty is invalid")
+	if err := validateIdleBaseline(baseline); err != nil {
+		return AdmittedTrial{}, errors.New("admitted idle baseline is invalid")
 	}
 	incremental := *admission.TotalWallJoules - baseline.MeanWallWatts*admission.WindowSeconds
-	if incremental < 0 {
-		return AdmittedTrial{}, errors.New("incremental energy is negative")
+	if incremental < 0 || math.IsNaN(incremental) || math.IsInf(incremental, 0) {
+		return AdmittedTrial{}, errors.New("incremental energy is invalid")
 	}
-	baselineUncertainty := baseline.ConfidenceHalfWidth * admission.WindowSeconds / float64(trial.CompletedItems)
+	completedItems := float64(trial.CompletedItems)
+	activeWallJoulesPerItem := *admission.TotalWallJoules / completedItems
+	baselineCoefficient := admission.WindowSeconds / completedItems
+	baselineUncertainty := baseline.ConfidenceHalfWidth * baselineCoefficient
 	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
 		"|idleProtocol=" + baseline.MeasurementProtocolIdentity +
 		"|activeAdmission=" + admission.PolicyVersion +
 		"|idleAdmission=" + baseline.AdmissionPolicyVersion + "|idlePoint=" + baseline.PolicyVersion
 	return AdmittedTrial{
-		StateIdentity:                    trial.StateIdentity,
-		EnvironmentIdentity:              trial.EnvironmentIdentity,
-		MeasurementProtocolIdentity:      trial.MeasurementProtocolIdentity,
-		TrialID:                          trial.TrialID,
-		AdmissionPolicyVersion:           admission.PolicyVersion,
-		EstimatorIdentity:                estimatorIdentity,
-		BaselineUncertaintyJoulesPerItem: baselineUncertainty,
-		Batch:                            trial.Batch,
-		IncrementalJoulesPerItem:         incremental / float64(trial.CompletedItems),
-		LatencyP99Milliseconds:           percentile(trial.LatencyMilliseconds, 0.99),
+		StateIdentity:                     trial.StateIdentity,
+		EnvironmentIdentity:               trial.EnvironmentIdentity,
+		MeasurementProtocolIdentity:       trial.MeasurementProtocolIdentity,
+		TrialID:                           trial.TrialID,
+		AdmissionPolicyVersion:            admission.PolicyVersion,
+		EstimatorIdentity:                 estimatorIdentity,
+		BaselineUncertaintyJoulesPerItem:  baselineUncertainty,
+		ActiveWallJoulesPerItem:           activeWallJoulesPerItem,
+		BaselineCoefficientSecondsPerItem: baselineCoefficient,
+		Batch:                             trial.Batch,
+		IncrementalJoulesPerItem:          incremental / completedItems,
+		LatencyP99Milliseconds:            percentile(trial.LatencyMilliseconds, 0.99),
 	}, nil
 }
 
@@ -144,6 +195,14 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 			math.IsNaN(trial.BaselineUncertaintyJoulesPerItem) ||
 			math.IsInf(trial.BaselineUncertaintyJoulesPerItem, 0) {
 			return Point{}, errors.New("baseline uncertainty contribution is invalid")
+		}
+		if trial.ActiveWallJoulesPerItem <= 0 || math.IsNaN(trial.ActiveWallJoulesPerItem) ||
+			math.IsInf(trial.ActiveWallJoulesPerItem, 0) ||
+			trial.BaselineCoefficientSecondsPerItem <= 0 ||
+			math.IsNaN(trial.BaselineCoefficientSecondsPerItem) ||
+			math.IsInf(trial.BaselineCoefficientSecondsPerItem, 0) ||
+			trial.IncrementalJoulesPerItem > trial.ActiveWallJoulesPerItem {
+			return Point{}, errors.New("trial sufficient statistics are invalid")
 		}
 		seen[trial.TrialID] = struct{}{}
 		values[index] = trial.IncrementalJoulesPerItem

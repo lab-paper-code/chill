@@ -1,7 +1,9 @@
 package operatorconsole
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
@@ -24,6 +26,7 @@ func TestLatencyP99MatchesProfileDerivationNearestRank(t *testing.T) {
 			ordered := append([]float64(nil), latencies...)
 			sort.Float64s(ordered)
 			consoleP99 := nearestRank(ordered, 0.99)
+			baseline := zeroIdleBaseline(t)
 
 			trial, err := profilederivation.IncrementalTrial(
 				profilederivation.Trial{
@@ -35,13 +38,9 @@ func TestLatencyP99MatchesProfileDerivationNearestRank(t *testing.T) {
 					Verdict: profilederivation.VerdictAccepted, PolicyVersion: "active-admission",
 					StateIdentity: "state", EnvironmentIdentity: "environment",
 					MeasurementProtocolIdentity: "active-protocol", TrialID: "trial",
-					WindowSeconds: 1, TotalWallJoules: float64Pointer(1),
+					WindowSeconds: 1, CompletedItems: 1, TotalWallJoules: float64Pointer(1),
 				},
-				profilederivation.IdleBaseline{
-					StateIdentity: "state", EnvironmentIdentity: "environment",
-					MeasurementProtocolIdentity: "idle-protocol", PolicyVersion: "idle-point",
-					AdmissionPolicyVersion: "idle-admission", Trials: make([]profilederivation.IdleTrial, 3),
-				},
+				baseline,
 			)
 			if err != nil {
 				t.Fatalf("derive active trial: %v", err)
@@ -51,6 +50,31 @@ func TestLatencyP99MatchesProfileDerivationNearestRank(t *testing.T) {
 			}
 		})
 	}
+}
+
+func zeroIdleBaseline(t *testing.T) profilederivation.IdleBaseline {
+	t.Helper()
+	trials := make([]profilederivation.IdleTrial, 3)
+	for index := range trials {
+		trials[index] = profilederivation.IdleTrial{
+			StateIdentity: "state", EnvironmentIdentity: "environment",
+			MeasurementProtocolIdentity: "idle-protocol",
+			TrialID:                     fmt.Sprintf("idle-%d", index),
+			RawEvidence: profilederivation.RawEvidenceIdentity{
+				Store: "store", Key: fmt.Sprintf("idle/%d", index),
+				Digest: "sha256:" + strings.Repeat("a", 64), Size: 1,
+			},
+			AdmissionPolicyVersion: "idle-admission",
+		}
+	}
+	baseline, err := profilederivation.DeriveIdleBaseline(
+		trials,
+		profilederivation.PointPolicy{Version: "idle-point", MinimumTrials: 3},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return baseline
 }
 
 func descendingLatencies(count int) []float64 {
