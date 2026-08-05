@@ -9,7 +9,8 @@
 ## Status
 
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
-physical power-supply correction. Orange Pi CPU ORT is the current independent
+physical power-supply correction. Orange Pi CPU ORT has reached L3, making the
+Orange Pi RKNNLite artifact and host-contract boundary the current independent
 slice. Later slices remain deferred until their stated entry condition is met
 or this plan is explicitly revised.
 
@@ -43,9 +44,9 @@ corresponding level.
 | Order | Slice | State | Next gate |
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
-| current | Orange Pi CPU ORT / fixed | L0 | Run and admit three active and three model-loaded-idle trials under the frozen CPU contract. |
+| completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
-| deferred | Orange Pi RKNNLite onward | not active | Complete the preceding vertical-slice entry condition. |
+| current | Orange Pi RKNNLite / fixed | L0 | Freeze one RKNN artifact/conversion identity and the host ABI/device contract before adding an adapter. |
 
 ## Stable decisions
 
@@ -82,7 +83,7 @@ ledger. Do not weaken admission or pool pre-repair evidence.
 Completion: `raspberry-pi-5-8g / mobilenet-v2-050 / ort-cpu / fixed` is L3 for
 both workload modes on current HEAD.
 
-## P2: Orange Pi CPU ORT / fixed — current
+## P2: Orange Pi CPU ORT / fixed — completed
 
 Reuse the explicit arm64 CPU ORT path. Device-specific work remains limited to
 installation facts and a justified execution policy until source evidence
@@ -95,10 +96,12 @@ proves a shared implementation change is necessary.
   the fail-closed admission contract.
 - [x] Bind CPU request, ORT thread count, runtime memory, and workspace to the
   live Node's allocatable resources without claiming CPU exclusivity.
-- [ ] Run and admit three active and three model-loaded-idle Runs.
-- [ ] Review whether Raspberry Pi and Orange Pi differ only by declarations
-  and configured execution policy.
-- [ ] Extract only behavior demonstrated on both production arm64 paths.
+- [x] Run and admit three active and three model-loaded-idle Runs.
+- [x] Confirm that Raspberry Pi and Orange Pi use the same CPU ORT production
+  path, with device differences confined to installed facts and Run resource
+  configuration.
+- [x] Keep the demonstrated shared behavior in the existing CPU ORT adapter;
+  no device-specific Go behavior required extraction.
 
 Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 
@@ -138,19 +141,19 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [ ] Add no composite actuator until an experiment proves NVPModel and clock
   must be one combined knob.
 
-## Deferred vertical slices
+## Remaining vertical slices
 
-### P3: Orange Pi RKNNLite / fixed
+### P3: Orange Pi RKNNLite / fixed — current
 
-Entry condition: Orange Pi CPU ORT reaches L3.
+Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
-- Bind an immutable RKNN artifact to its source ONNX, target platform,
+- [ ] Bind an immutable RKNN artifact to its source ONNX, target platform,
   conversion identity, and fixed-batch capability.
-- Keep host `librknnrt`, driver, image-owned package, device visibility, and
+- [ ] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.
-- Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
+- [ ] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
   contract, and active/idle evidence path.
-- Retain core mask, input layout, init/load result, selected batch, and output
+- [ ] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
@@ -212,7 +215,10 @@ Every L3 vertical slice must prove all applicable items:
 - active and model-loaded-idle evidence are reloaded from durable storage;
 - missing thermal/throttle evidence does not fail open;
 - architecture, backend, mode, artifact, and host-ABI negative tests exist;
-- the exact intent admits three sequential trials per mode;
+- the exact execution-state and external-environment identities, plus the
+  mode-specific measurement-protocol identity, admit three sequential trials
+  per mode; full intent-only audit fields may differ only when the delta is
+  recorded and deliberately excluded from all three derivation identities;
 - changed Node state is restored and read back; and
 - package/kind evidence and testbed live evidence are reported separately.
 

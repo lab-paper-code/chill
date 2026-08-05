@@ -125,5 +125,58 @@ not by themselves prove execution or admission on every arm64 DeviceClass.
   Orange-Pi-specific execution-policy copy is required.
 - The exact `cpuRequest` remains immutable Run configuration rather than a Go
   constant. Server-side CRD dry-run accepted 7 cores, and the focused Go and
-  Python CPU-contract tests passed. Actual cgroup, affinity, and memory behavior
-  remain evidence gates for the first production Run.
+  Python CPU-contract tests passed.
+
+### Production admission and L3 promotion
+
+- `orangepi-active-bs1-a1` was a fail-fast diagnostic under a 500 ms source
+  timeout. Its retained evidence
+  `sha256:ac53c550e6e1209dbb9810352feebacfc0f902ddc185b0a17f17bbba3ef390d9`
+  remained `Insufficient`: all six failed reads were retained as
+  `context deadline exceeded` at 0.503--0.510 seconds, producing
+  `PowerReadFailures` and `PowerWindowCoverage`. It is not part of the admitted
+  repeated set.
+- The Run-level source timeout was raised to 900 ms while retaining the
+  one-second interval and unchanged admission policies. Active Runs
+  `orangepi-active-bs1-a2`, `a3`, and `a4` then retained distinct evidence
+  objects with digests
+  `sha256:b8955645f2c6f18b144fad63d50a82288d78be0469a9a00483877c4aa491a6b1`,
+  `sha256:0a1e60544ccb0e98c15b1ac52b322e9aefc7a34486175818c2d72236f1aa35f5`,
+  and `sha256:4090d88233c54d10838447b2b392023035000f6e6c221c43bd86a11df44badfb`.
+  Each had 31 successful power/thermal samples, no failed reads, no active
+  thermal sample, and an `Accepted` `wall-power-v2` verdict.
+- Model-loaded-idle Runs `orangepi-idle-model-loaded-i1`, `i2`, and `i3` used
+  the same 7-core CPU contract, 60-second observer-independent settling, and
+  900 ms source timeout. Their retained evidence digests were
+  `sha256:ea14ceb262c0ad7447e70c7d39316d7f566577952d4d122c08f96821b568f96b`,
+  `sha256:785ab5a48ec135715b99d5e24c71ac4b2b4e5dcebec08924fe023cc3f327a6eb`,
+  and `sha256:d6bc5844d38aa5009c726b28bd66bb48c9cfe3c36a8ab5b299bcea9ea4d50c95`.
+  Each had 31 successful power/thermal samples, no failed reads, no active
+  thermal sample, and an `Accepted` `idle-wall-power-v1` verdict.
+- All six finalized and raw objects were re-read from the retained Evidence
+  Store and matched their recorded size and SHA-256 identity. A read-only
+  diagnostic replay of the source-defined projection produced one
+  `execution-state-identity.v1alpha1` digest
+  `sha256:76af5e787e39b6d3b75b99f2cf68d0fdad98955edeb78d472b587fcc7a81a509`
+  and one owner-bound `external-environment-identity.v1alpha1` digest
+  `sha256:5cf2ea9b25f2fe839b9a73833cb11f79046aa4b70954910c038d2748536c886a`
+  across all six. The `measurement-protocol-identity.v1alpha1` digests
+  `sha256:6a529e0937982d30d0148cda363fae6a3df41e1d1c6e69b833773b5e69bae42a`
+  for active and
+  `sha256:ed345c51d0d3d00f10848fb0fa5a960b13cac1e2f455a0a1432734b4d544172b`
+  for idle were each stable within their mode.
+- The first idle full intent digest differed from the latter two only because
+  the frozen Node `resourceVersion` advanced from `277617801` to `277621852`.
+  That value remains an exact audit snapshot but is deliberately absent from
+  state, environment, and measurement-protocol identities; it is therefore
+  not a pooling key. Plan 6's common gate now states the actual derivation
+  boundary instead of requiring byte-identical full intents.
+- `gopls` references and current source confirmed that both production arm64
+  classes enter the same `ort-cpu` candidate, preparation, execution-policy,
+  and worker adapter path. The chart uses the same digest-pinned runtime and
+  artifact declarations plus wildcard active/idle execution policies; only
+  installed DeviceClass/metric facts and immutable Run resource values differ.
+  No Orange-Pi-specific Go path was added or extracted.
+
+These retained active and idle admissions promote both Orange Pi CPU ORT rows
+to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
