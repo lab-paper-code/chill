@@ -47,8 +47,8 @@ Deployment UID and returns to a stable no-op. Cancellation remains open;
 the Profiler envtest now proves that a deletion timestamp is a no-write,
 no-external-call fence while the recorded Job retains its Run owner reference.
 Because envtest has no Kubernetes garbage-collection controller, actual Job
-collection still requires the guarded kind e2e gate; checkpoint 12 is not
-reported complete.
+collection is covered by a guarded Kubernetes 1.31 kind e2e. Together these
+tests complete checkpoint 12 without treating envtest as runtime-GC evidence.
 
 ## Purpose
 
@@ -658,7 +658,7 @@ sentinel values accepted by the active result validator.
     permissions, configuration rollout, and upgrade behavior. Implemented for
     the execution/evidence path.
 12. Verify failure, cancellation, identity drift, duplicate events, and both
-    controller restarts with envtest and unit tests. Partially implemented:
+    controller restarts with envtest and unit tests. Implemented and verified:
     duplicate reconcile, Profiler reconciler reconstruction, and recorded-Job
     loss now cross a real API server and status subresource. Restart between
     finalization and admission, plus the completed-admission no-op, are also
@@ -666,9 +666,9 @@ sentinel values accepted by the active result validator.
     status mutation, as is controller-owner drift on the retained Job UID. The
     focused intent, evidence, and retained-loader drift gates remain green.
     Operator reconciler reconstruction over the retained Deployment is covered.
-    The Run deletion fence and Job owner binding are covered in envtest. Native
-    owner garbage collection remains to be verified in the guarded kind e2e
-    suite.
+    The Run deletion fence and Job owner binding are covered in envtest, and
+    native owner garbage collection is verified in the guarded Kubernetes 1.31
+    kind e2e suite.
 13. Run live Lattepanda active and model-loaded-idle measurements through the
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow

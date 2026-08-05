@@ -13,3 +13,6 @@ one central directory.
 
 `make test` runs package and integration tests while excluding `e2e/`.
 `make test-e2e` runs the live-cluster suite separately.
+`hack/kind-up.sh` pins the kind Node image to the repository's Kubernetes 1.31
+baseline; `CHILL_KIND_NODE_IMAGE` is the explicit override for a deliberate
+compatibility run.
