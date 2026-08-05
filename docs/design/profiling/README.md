@@ -156,6 +156,21 @@ provenance is pre-registered in a committed record rather than machine-enforced;
 that boundary is stated in the plan. It does not authorize a `DeviceProfile`
 API, a campaign controller, an intent schema change, or scheduler consumption.
 
+### 6. Execution-support expansion — active
+
+[plans/06-execution-support-expansion.md](plans/06-execution-support-expansion.md)
+
+Answers only:
+
+> Which exact Node, model, runtime/backend, power-mode, and workload-mode rows
+> does production support, and which smallest vertical slice raises the next
+> row to measurement-ready?
+
+P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
+ORT at fixed power mode is the current implementation slice. Runtime-specific
+adapters and mutable power-mode ownership remain explicit; catalog presence and
+historical standalone smoke are not treated as production execution evidence.
+
 ## Component contracts
 
 These documents define reusable internal subsystem boundaries. They support the
@@ -181,6 +196,7 @@ plans or competing architecture authorities:
 - [Step 2: runtime execution commonality](foundations/runtime-execution/02-commonality.md)
 - [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)
 - [Step 4: compatibility and execution boundary](foundations/runtime-execution/04-compatibility-execution-boundary.md)
+- [Step 5: execution support matrix](foundations/runtime-execution/05-support-matrix.csv)
 
 ## Stable ownership rules
 
