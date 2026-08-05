@@ -12,6 +12,16 @@ METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
+RKNN_CONVERTER_PYTHON ?= python3
+RKNN_SOURCE_ONNX ?=
+RKNN_SOURCE_DIGEST ?=
+RKNN_TOOL_WHEEL ?=
+RKNN_TOOL_DIGEST ?=
+RKNN_TOOL_VERSION ?= 2.3.2
+RKNN_TARGET_PLATFORM ?= rk3588
+RKNN_FIXED_BATCH ?=
+RKNN_OUTPUT ?=
+RKNN_CONVERSION_RECORD ?=
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -98,8 +108,12 @@ test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/ortcpu -p 'test_*.py'
 	python3 -m unittest discover -s runtime/rknnlite -p 'test_*.py'
 
+.PHONY: test-artifact-tools
+test-artifact-tools: ## Run model-artifact build-tool tests.
+	python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
+
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -256,6 +270,26 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 	@$(HELM_FLOW_ENV) CONFIRM_PURGE_CRDS="$(CONFIRM_PURGE_CRDS)" $(HELM_FLOW) purge-crds
 
 ##@ Build
+
+.PHONY: rknn-convert-artifact
+rknn-convert-artifact: ## Build one digest-bound, batch-fixed RKNN artifact and conversion record.
+	test -n "$(RKNN_SOURCE_ONNX)"
+	test -n "$(RKNN_SOURCE_DIGEST)"
+	test -n "$(RKNN_TOOL_WHEEL)"
+	test -n "$(RKNN_TOOL_DIGEST)"
+	test -n "$(RKNN_FIXED_BATCH)"
+	test -n "$(RKNN_OUTPUT)"
+	test -n "$(RKNN_CONVERSION_RECORD)"
+	$(RKNN_CONVERTER_PYTHON) build/model-artifacts/rknn/export_rknn.py \
+		--source-onnx "$(RKNN_SOURCE_ONNX)" \
+		--source-digest "$(RKNN_SOURCE_DIGEST)" \
+		--tool-wheel "$(RKNN_TOOL_WHEEL)" \
+		--tool-digest "$(RKNN_TOOL_DIGEST)" \
+		--tool-version "$(RKNN_TOOL_VERSION)" \
+		--target-platform "$(RKNN_TARGET_PLATFORM)" \
+		--batch-size "$(RKNN_FIXED_BATCH)" \
+		--output "$(RKNN_OUTPUT)" \
+		--record "$(RKNN_CONVERSION_RECORD)"
 
 .PHONY: build
 build: manifests generate fmt vet ## Build CHILL component binaries.
