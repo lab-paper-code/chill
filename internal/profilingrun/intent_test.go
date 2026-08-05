@@ -59,15 +59,39 @@ func TestCurrentIntentDigestRemainsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantDigest = "sha256:d56d3771367f6f5fccd5745bd861da8d1f7a3549d3fe9878ceeb95a9d6d2239d"
+	const wantDigest = "sha256:41eeda39b3d97d0f62c2c222120c1e701e67c03f0daf80fca87e38420609acb3"
 	if digest != wantDigest {
 		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
 	}
 }
 
+func TestIntentDecoderRejectsExplicitNullActuation(t *testing.T) {
+	payload, err := json.Marshal(validIntent())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = []byte(strings.TrimSuffix(string(payload), "}") + `,"actuation":null}`)
+	if _, err := decodeTestIntent(payload); err == nil || !strings.Contains(err.Error(), "must be an object") {
+		t.Fatalf("explicit null actuation was not rejected: %v", err)
+	}
+}
+
+func TestRetainedV1Alpha8IntentDigestRemainsStable(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = intentSchemaVersionV1Alpha8
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantDigest = "sha256:d56d3771367f6f5fccd5745bd861da8d1f7a3549d3fe9878ceeb95a9d6d2239d"
+	if digest != wantDigest {
+		t.Fatalf("retained v1alpha8 intent digest changed: want %s, got %s", wantDigest, digest)
+	}
+}
+
 func TestRetainedV1Alpha7IntentDigestRemainsStable(t *testing.T) {
 	intent := validIntent()
-	intent.SchemaVersion = previousIntentSchemaVersion
+	intent.SchemaVersion = intentSchemaVersionV1Alpha7
 	digest, err := intent.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +110,11 @@ func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
 	}
 
 	retained := intent
-	retained.SchemaVersion = previousIntentSchemaVersion
+	retained.SchemaVersion = intentSchemaVersionV1Alpha8
+	if err := retained.Validate(); err != nil {
+		t.Fatalf("retained v1alpha8 schema rejected host state material: %v", err)
+	}
+	retained.SchemaVersion = intentSchemaVersionV1Alpha7
 	if err := retained.Validate(); err != nil {
 		t.Fatalf("retained v1alpha7 schema rejected host state material: %v", err)
 	}
@@ -133,9 +161,83 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 		t.Fatalf("RKNNLite intent accepted ORT-only settings: %v", err)
 	}
 	retained := intent
-	retained.SchemaVersion = previousIntentSchemaVersion
-	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "current intent schema") {
-		t.Fatalf("retained intent schema accepted RKNNLite contract: %v", err)
+	retained.SchemaVersion = intentSchemaVersionV1Alpha8
+	if err := retained.Validate(); err != nil || !IsSupportedRKNNLiteIntent(retained) {
+		t.Fatalf("retained v1alpha8 RKNNLite contract was rejected: %v", err)
+	}
+	retained.SchemaVersion = intentSchemaVersionV1Alpha7
+	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "current or retained v1alpha8") {
+		t.Fatalf("v1alpha7 intent schema accepted RKNNLite contract: %v", err)
+	}
+}
+
+func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("b", 64)
+	intent := validIntent()
+	intent.State.PowerMode = "MODE_15W_6CORE"
+	intent.Actuation = &ActuationContract{
+		PowerMode: intent.State.PowerMode, PolicyDigest: digest,
+		Actuator: ActuatorTarget{
+			Kind:           ActuatorKindJetsonNVPModel,
+			JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
+		},
+	}
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := intent.CanonicalJSON()
+	if err != nil || !strings.Contains(string(payload), `"actuation":{"powerMode":"MODE_15W_6CORE"`) {
+		t.Fatalf("canonical actuation = %s, error = %v", payload, err)
+	}
+
+	clockMode := int32(1)
+	clock := validIntent()
+	clock.State.PowerMode = "gpu-1200"
+	clock.Actuation = &ActuationContract{
+		PowerMode: clock.State.PowerMode, PolicyDigest: digest,
+		Actuator: ActuatorTarget{
+			Kind:                 ActuatorKindNvidiaLockedGPUClock,
+			NvidiaLockedGPUClock: &NvidiaLockedGPUClockTarget{MinMHz: 1200, MaxMHz: 1200, Mode: &clockMode},
+		},
+	}
+	if err := clock.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*Intent)
+	}{
+		{name: "missing contract", mutate: func(candidate *Intent) { candidate.Actuation = nil }},
+		{name: "mode mismatch", mutate: func(candidate *Intent) { candidate.Actuation.PowerMode = "different-mode" }},
+		{name: "bad policy digest", mutate: func(candidate *Intent) { candidate.Actuation.PolicyDigest = "sha256:short" }},
+		{name: "negative NVPModel ID", mutate: func(candidate *Intent) { candidate.Actuation.Actuator.JetsonNVPModel.ID = -1 }},
+		{name: "mixed actuator union", mutate: func(candidate *Intent) {
+			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
+		}},
+		{name: "retained schema", mutate: func(candidate *Intent) { candidate.SchemaVersion = intentSchemaVersionV1Alpha8 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := intent
+			actuation := *intent.Actuation
+			candidate.Actuation = &actuation
+			actuator := intent.Actuation.Actuator
+			candidate.Actuation.Actuator = actuator
+			if actuator.JetsonNVPModel != nil {
+				target := *actuator.JetsonNVPModel
+				candidate.Actuation.Actuator.JetsonNVPModel = &target
+			}
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("invalid actuation contract was accepted")
+			}
+		})
+	}
+
+	fixed := validIntent()
+	fixed.Actuation = intent.Actuation
+	if err := fixed.Validate(); err == nil || !strings.Contains(err.Error(), "fixed power mode") {
+		t.Fatalf("fixed intent accepted actuation: %v", err)
 	}
 }
 

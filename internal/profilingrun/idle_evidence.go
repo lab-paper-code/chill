@@ -62,8 +62,9 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 	if err := intent.Validate(); err != nil {
 		return fmt.Errorf("validate idle Run intent: %w", err)
 	}
-	if intent.SchemaVersion != SchemaVersion || intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode {
-		return errors.New("idle runtime requires the current model-loaded idle intent")
+	if intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
+		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
+		return errors.New("idle runtime requires a supported model-loaded idle intent")
 	}
 	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
 		return errors.New("v1alpha1 idle runtime result is CPU ONNX Runtime only")

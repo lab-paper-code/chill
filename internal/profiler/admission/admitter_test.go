@@ -247,6 +247,25 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		!strings.HasPrefix(hostBoundIdentities.StateIdentity, hostBoundStateIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("host contract was not bound to physical state identity: %#v", hostBoundIdentities)
 	}
+	actuated := intent
+	actuated.State.PowerMode = "MODE_15W_6CORE"
+	actuated.Actuation = &profilingrun.ActuationContract{
+		PowerMode:    actuated.State.PowerMode,
+		PolicyDigest: "sha256:" + strings.Repeat("e", 64),
+		Actuator: profilingrun.ActuatorTarget{
+			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 2},
+		},
+	}
+	actuatedIdentities, err := ProjectRunIdentities(actuated, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actuatedIdentities.StateIdentity == base.StateIdentity ||
+		!strings.HasPrefix(actuatedIdentities.StateIdentity, actuatedStateIdentitySchemaVersion+"@sha256:") ||
+		actuatedIdentities.MeasurementProtocolIdentity != base.MeasurementProtocolIdentity {
+		t.Fatalf("actuation was not isolated to physical state identity: %#v", actuatedIdentities)
+	}
 	if !strings.HasPrefix(base.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
 		!strings.HasPrefix(base.MeasurementProtocolIdentity, measurementProtocolIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("unversioned identities: %#v", base)

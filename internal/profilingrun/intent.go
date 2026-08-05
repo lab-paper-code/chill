@@ -42,6 +42,9 @@ func (i Intent) Validate() error {
 	if i.State.HostContractDigest != "" && !digestPattern.MatchString(i.State.HostContractDigest) {
 		return errors.New("state.hostContractDigest must be a canonical SHA-256 digest")
 	}
+	if err := i.validateActuationContract(); err != nil {
+		return err
+	}
 	if i.Candidate.Verdict != "Compatible" {
 		return fmt.Errorf("candidate verdict must be Compatible, got %q", i.Candidate.Verdict)
 	}
@@ -112,12 +115,23 @@ func (i Intent) Validate() error {
 
 func (i Intent) validateSchema() error {
 	if i.SchemaVersion != SchemaVersion &&
-		i.SchemaVersion != previousIntentSchemaVersion &&
+		i.SchemaVersion != intentSchemaVersionV1Alpha8 &&
+		i.SchemaVersion != intentSchemaVersionV1Alpha7 &&
 		i.SchemaVersion != intentSchemaVersionV1Alpha6 {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
 	if i.SchemaVersion == intentSchemaVersionV1Alpha6 && i.State.HostContractDigest != "" {
 		return errors.New("v1alpha6 intent cannot contain state.hostContractDigest")
+	}
+	if i.SchemaVersion == intentSchemaVersionV1Alpha6 &&
+		i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
+		return errors.New("v1alpha6 intent cannot contain model-loaded idle measurement")
+	}
+	if i.SchemaVersion != SchemaVersion && i.Actuation != nil {
+		return errors.New("retained intent schema cannot contain actuation")
+	}
+	if i.SchemaVersion != SchemaVersion && i.State.PowerMode != FixedPowerMode {
+		return errors.New("retained intent schema cannot select an actuated power mode")
 	}
 	if !validArtifactPath(i.State.ArtifactPath) {
 		return errors.New("state.artifactPath must be a clean absolute container path")
@@ -146,7 +160,8 @@ func (i Intent) validateMeasurementMode() error {
 }
 
 // IsSupportedActiveIntent reports whether the first CPU ORT active worker
-// family can execute a current intent. Callers must validate the intent separately.
+// family can execute a current or retained intent. Callers must validate the
+// intent separately.
 func IsSupportedActiveIntent(i Intent) bool {
 	return supportedCPUORTIntentSchema(i.SchemaVersion) &&
 		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode &&
@@ -157,7 +172,7 @@ func IsSupportedActiveIntent(i Intent) bool {
 // implemented by the explicit CPU ORT worker.
 func IsSupportedCPUORTIntent(i Intent) bool {
 	return IsSupportedActiveIntent(i) ||
-		(supportedCPUORTIntentSchema(i.SchemaVersion) &&
+		(supportedCPUORTIdleIntentSchema(i.SchemaVersion) &&
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode &&
 			isCPUORTExecution(i))
 }
@@ -165,7 +180,7 @@ func IsSupportedCPUORTIntent(i Intent) bool {
 // IsSupportedRKNNLiteIntent covers the current active and model-loaded-idle
 // contracts implemented by the explicit host-bound RKNNLite worker.
 func IsSupportedRKNNLiteIntent(i Intent) bool {
-	return i.SchemaVersion == SchemaVersion &&
+	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == intentSchemaVersionV1Alpha8) &&
 		hasExecutionPath(i) &&
 		i.State.RuntimeFamily == RKNNLiteRuntimeFamily &&
 		i.State.Backend == RKNNLiteBackend &&
@@ -187,8 +202,15 @@ func hasExecutionPath(i Intent) bool {
 
 func supportedCPUORTIntentSchema(schemaVersion string) bool {
 	return schemaVersion == SchemaVersion ||
-		schemaVersion == previousIntentSchemaVersion ||
+		schemaVersion == intentSchemaVersionV1Alpha8 ||
+		schemaVersion == intentSchemaVersionV1Alpha7 ||
 		schemaVersion == intentSchemaVersionV1Alpha6
+}
+
+func supportedCPUORTIdleIntentSchema(schemaVersion string) bool {
+	return schemaVersion == SchemaVersion ||
+		schemaVersion == intentSchemaVersionV1Alpha8 ||
+		schemaVersion == intentSchemaVersionV1Alpha7
 }
 
 func (i Intent) validateCPUContract() error {
@@ -214,8 +236,8 @@ func (i Intent) validateCPUContract() error {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
 	}
 	if i.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if i.SchemaVersion != SchemaVersion {
-			return errors.New("RKNNLite requires the current intent schema")
+		if i.SchemaVersion != SchemaVersion && i.SchemaVersion != intentSchemaVersionV1Alpha8 {
+			return errors.New("RKNNLite requires current or retained v1alpha8 intent schema")
 		}
 		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
 			return errors.New("RKNNLite CPU contract cannot contain ONNX Runtime thread settings")
@@ -224,6 +246,49 @@ func (i Intent) validateCPUContract() error {
 	}
 	if i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+	}
+	return nil
+}
+
+func (i Intent) validateActuationContract() error {
+	if i.State.PowerMode == FixedPowerMode {
+		if i.Actuation != nil {
+			return errors.New("fixed power mode cannot contain actuation")
+		}
+		return nil
+	}
+	if i.SchemaVersion != SchemaVersion {
+		return errors.New("actuated power mode requires the current intent schema")
+	}
+	if i.Actuation == nil {
+		return errors.New("non-fixed power mode requires actuation")
+	}
+	if strings.TrimSpace(i.Actuation.PowerMode) == "" ||
+		i.Actuation.PowerMode != strings.TrimSpace(i.Actuation.PowerMode) ||
+		i.Actuation.PowerMode != i.State.PowerMode {
+		return errors.New("actuation powerMode must match execution state")
+	}
+	if !digestPattern.MatchString(i.Actuation.PolicyDigest) {
+		return errors.New("actuation.policyDigest must be a canonical SHA-256 digest")
+	}
+	switch i.Actuation.Actuator.Kind {
+	case ActuatorKindJetsonNVPModel:
+		if i.Actuation.Actuator.JetsonNVPModel == nil ||
+			i.Actuation.Actuator.NvidiaLockedGPUClock != nil ||
+			i.Actuation.Actuator.JetsonNVPModel.ID < 0 {
+			return errors.New("JetsonNVPModel actuation requires only a non-negative ID")
+		}
+	case ActuatorKindNvidiaLockedGPUClock:
+		target := i.Actuation.Actuator.NvidiaLockedGPUClock
+		if target == nil || i.Actuation.Actuator.JetsonNVPModel != nil ||
+			target.MinMHz < 1 || target.MaxMHz < target.MinMHz {
+			return errors.New("NvidiaLockedGPUClock actuation requires a valid clock range")
+		}
+		if target.Mode != nil && *target.Mode != 0 && *target.Mode != 1 {
+			return errors.New("NvidiaLockedGPUClock actuation mode must be 0 or 1")
+		}
+	default:
+		return fmt.Errorf("unsupported actuation kind %q", i.Actuation.Actuator.Kind)
 	}
 	return nil
 }

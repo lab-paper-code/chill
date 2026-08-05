@@ -11,8 +11,9 @@ batch campaigns, `b_sat` derivation, another runtime, or serving.
 
 The `v1alpha7` CPU intent, public idle request, CPU ORT runner branch, separate
 idle runtime/raw schemas, shared immutable finalization/loading, and idle
-admission dispatch are live-verified. The `v1alpha8` codec and matching CPU ORT
-decoder are implemented for runtime expansion but are not yet live-verified.
+admission dispatch are live-verified. The `v1alpha8` RKNNLite generation is
+also live-verified. The `v1alpha9` codec and matching CPU ORT/RKNNLite decoders
+are implemented locally for the actuation contract but are not live-verified.
 
 ## Model-loaded-idle live verification
 
@@ -133,16 +134,21 @@ core-mask, initialization, and inference checks; it does not reuse ONNX Runtime
 provider vocabulary. The Go adapter compares the emitted mutable observations
 with the sealed candidate projection before raw evidence construction.
 
-Active and idle Runs use internal intent schema `v1alpha8`. The retained
+Active and idle Runs use internal intent schema `v1alpha9`. The retained
 `v1alpha7` schema added the optional physical host-contract digest needed by
-accelerator paths; CPU ORT omits that field. The current schema additionally
-keeps the common CPU quota while omitting the ORT-only intra/inter-op fields
-from RKNNLite intents. The frozen
+accelerator paths; CPU ORT omits that field. Retained `v1alpha8` additionally
+kept the common CPU quota while omitting the ORT-only intra/inter-op fields
+from RKNNLite intents. Current `v1alpha9` adds an optional typed actuation
+contract containing the non-fixed mode, exact actuator target, and configured
+policy digest. Fixed Runs omit it, and the current producer remains fixed-only.
+The frozen
 measurement protocol includes settling duration and reuses the same intent
 type and common execution provenance rather than creating a parallel frozen
-type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha8`
-and retained `v1alpha7`/`v1alpha6` CPU intents; v1alpha6 cannot carry the host
-state field. RKNNLite is current-schema-only.
+type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha9`
+and retained `v1alpha8`/`v1alpha7`/`v1alpha6` CPU intents; v1alpha6 cannot carry
+the host state or idle fields. RKNNLite accepts current `v1alpha9` and retained
+`v1alpha8`. Current and retained request envelopes are paired explicitly, so a
+new request cannot silently carry older intent bytes.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that

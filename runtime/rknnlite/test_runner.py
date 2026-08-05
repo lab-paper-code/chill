@@ -282,6 +282,56 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
             runner.decode_request(io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}'))
 
+    def test_validate_request_retains_v1alpha8_intent_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
+            request["intent"]["schemaVersion"] = runner.RETAINED_INTENT_SCHEMA
+            runner.validate_request(request)
+
+    def test_validate_request_binds_current_actuation_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["intent"]["actuation"] = {
+                "powerMode": "MODE_15W_6CORE",
+                "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
+                "policyDigest": "sha256:" + "b" * 64,
+            }
+            runner.validate_request(request)
+
+            request["intent"]["actuation"]["policyDigest"] = "sha256:short"
+            with self.assertRaisesRegex(runner.ContractError, "policyDigest"):
+                runner.validate_request(request)
+
+    def test_validate_request_rejects_null_actuation_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["intent"]["actuation"] = None
+            with self.assertRaisesRegex(runner.ContractError, "actuation must be an object"):
+                runner.validate_request(request)
+
+    def test_validate_request_requires_matching_request_and_intent_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            current = valid_request(model)
+            current["intent"]["schemaVersion"] = runner.RETAINED_INTENT_SCHEMA
+            with self.assertRaisesRegex(runner.ContractError, "current runtime request"):
+                runner.validate_request(current)
+
+            retained = valid_request(model)
+            retained["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
+            with self.assertRaisesRegex(runner.ContractError, "retained runtime request"):
+                runner.validate_request(retained)
+
     def test_validate_request_rejects_candidate_tensor_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"

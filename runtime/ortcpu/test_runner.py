@@ -228,8 +228,50 @@ class RunnerTest(unittest.TestCase):
             for schema_version in runner.RETAINED_INTENT_SCHEMAS:
                 with self.subTest(schema_version=schema_version):
                     request = valid_request(model)
+                    request["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
                     request["intent"]["schemaVersion"] = schema_version
                     runner.validate_request(request)
+
+    def test_validate_request_binds_current_actuation_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["intent"]["actuation"] = {
+                "powerMode": "MODE_15W_6CORE",
+                "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
+                "policyDigest": "sha256:" + "b" * 64,
+            }
+            runner.validate_request(request)
+
+            request["intent"]["actuation"]["actuator"]["jetsonNVPModel"]["id"] = -1
+            with self.assertRaisesRegex(runner.ContractError, "jetsonNVPModel.id"):
+                runner.validate_request(request)
+
+    def test_validate_request_rejects_null_actuation_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["intent"]["actuation"] = None
+            with self.assertRaisesRegex(runner.ContractError, "actuation must be an object"):
+                runner.validate_request(request)
+
+    def test_validate_request_requires_matching_request_and_intent_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            current = valid_request(model)
+            current["intent"]["schemaVersion"] = next(iter(runner.RETAINED_INTENT_SCHEMAS))
+            with self.assertRaisesRegex(runner.ContractError, "current runtime request"):
+                runner.validate_request(current)
+
+            retained = valid_request(model)
+            retained["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
+            with self.assertRaisesRegex(runner.ContractError, "retained runtime request"):
+                runner.validate_request(retained)
 
     def test_validate_request_requires_job_timing_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -273,6 +315,12 @@ class RunnerTest(unittest.TestCase):
             del idle["intent"]["measurement"]["settlingDurationSeconds"]
             with self.assertRaisesRegex(runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"):
                 runner.validate_request(idle)
+
+            retained_idle = valid_idle_request(model)
+            retained_idle["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
+            retained_idle["intent"]["schemaVersion"] = runner.ACTIVE_ONLY_RETAINED_INTENT_SCHEMA
+            with self.assertRaisesRegex(runner.ContractError, "v1alpha6"):
+                runner.validate_request(retained_idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "input tensor"):

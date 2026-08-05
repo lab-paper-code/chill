@@ -10,8 +10,9 @@ import (
 
 const (
 	intentSchemaVersionV1Alpha6 = "chill.dacs.io/profiling-run-intent.v1alpha6"
-	previousIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha7"
-	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha8"
+	intentSchemaVersionV1Alpha7 = "chill.dacs.io/profiling-run-intent.v1alpha7"
+	intentSchemaVersionV1Alpha8 = "chill.dacs.io/profiling-run-intent.v1alpha8"
+	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha9"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -20,6 +21,9 @@ const (
 	RKNNLiteExecutionPath                 = "rknnlite"
 	RKNNLiteRuntimeFamily                 = "rknnlite"
 	RKNNLiteBackend                       = "not-applicable"
+	FixedPowerMode                        = "fixed"
+	ActuatorKindJetsonNVPModel            = "JetsonNVPModel"
+	ActuatorKindNvidiaLockedGPUClock      = "NvidiaLockedGPUClock"
 )
 
 type Intent struct {
@@ -32,10 +36,11 @@ type Intent struct {
 	Measurement   MeasurementContract `json:"measurement"`
 	Metrics       MetricContract      `json:"metrics"`
 	Workload      WorkloadContract    `json:"workload"`
+	Actuation     *ActuationContract  `json:"actuation,omitempty"`
 }
 
 // UnmarshalJSON strictly decodes the current wire field names while retaining
-// immutable CPU schemas that still have live Run records.
+// immutable CPU and RKNNLite schemas that still have live Run records.
 func (i *Intent) UnmarshalJSON(payload []byte) error {
 	type wire Intent
 	var decoded wire
@@ -50,6 +55,14 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 			return errors.New("intent contains multiple JSON values")
 		}
 		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	if actuation, present := fields["actuation"]; present &&
+		bytes.Equal(bytes.TrimSpace(actuation), []byte("null")) {
+		return errors.New("intent.actuation must be an object when present")
 	}
 	*i = Intent(decoded)
 	return nil
@@ -99,6 +112,33 @@ type CPUContract struct {
 	ORTIntraOpThreads  int    `json:"ortIntraOpThreads,omitempty"`
 	ORTInterOpThreads  int    `json:"ortInterOpThreads,omitempty"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
+// ActuationContract binds a non-fixed selected power mode to the exact typed
+// target and configured policy identity that must converge before execution.
+// Mutable observations and restoration state remain outside the intent.
+type ActuationContract struct {
+	PowerMode    string         `json:"powerMode"`
+	Actuator     ActuatorTarget `json:"actuator"`
+	PolicyDigest string         `json:"policyDigest"`
+}
+
+// ActuatorTarget is a strict discriminated union matching the catalogued
+// Node-wide actuator selected for this Run.
+type ActuatorTarget struct {
+	Kind                 string                      `json:"kind"`
+	JetsonNVPModel       *JetsonNVPModelTarget       `json:"jetsonNVPModel,omitempty"`
+	NvidiaLockedGPUClock *NvidiaLockedGPUClockTarget `json:"nvidiaLockedGPUClock,omitempty"`
+}
+
+type JetsonNVPModelTarget struct {
+	ID int32 `json:"id"`
+}
+
+type NvidiaLockedGPUClockTarget struct {
+	MinMHz int32  `json:"minMHz"`
+	MaxMHz int32  `json:"maxMHz"`
+	Mode   *int32 `json:"mode,omitempty"`
 }
 
 type MeasurementContract struct {

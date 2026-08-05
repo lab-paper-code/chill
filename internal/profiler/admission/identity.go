@@ -12,6 +12,7 @@ import (
 const (
 	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha1"
 	hostBoundStateIdentitySchemaVersion      = "chill.dacs.io/execution-state-identity.v1alpha2"
+	actuatedStateIdentitySchemaVersion       = "chill.dacs.io/execution-state-identity.v1alpha3"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
 	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha1"
 )
@@ -44,14 +45,19 @@ func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdenti
 	if intent.State.HostContractDigest != "" {
 		stateSchemaVersion = hostBoundStateIdentitySchemaVersion
 	}
+	if intent.Actuation != nil {
+		stateSchemaVersion = actuatedStateIdentitySchemaVersion
+	}
 	state, err := digestIdentity(stateSchemaVersion, struct {
-		State        profilingrun.ExecutionState `json:"state"`
-		RuntimeImage string                      `json:"runtimeImage"`
-		NodeUID      string                      `json:"nodeUID"`
-		CPU          profilingrun.CPUContract    `json:"cpu"`
-		MetricSource metricSourceIdentity        `json:"metricSource"`
+		State        profilingrun.ExecutionState     `json:"state"`
+		RuntimeImage string                          `json:"runtimeImage"`
+		NodeUID      string                          `json:"nodeUID"`
+		CPU          profilingrun.CPUContract        `json:"cpu"`
+		MetricSource metricSourceIdentity            `json:"metricSource"`
+		Actuation    *profilingrun.ActuationContract `json:"actuation,omitempty"`
 	}{
 		State: intent.State, RuntimeImage: intent.Images.Runtime, NodeUID: nodeUID, CPU: intent.CPU,
+		Actuation: intent.Actuation,
 		MetricSource: metricSourceIdentity{
 			SourceKind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 			Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,

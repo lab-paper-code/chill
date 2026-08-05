@@ -19,12 +19,15 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha8"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha8"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha9"
+RETAINED_REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha8"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha9"
 RETAINED_INTENT_SCHEMAS = {
+    "chill.dacs.io/profiling-run-intent.v1alpha8",
     "chill.dacs.io/profiling-run-intent.v1alpha7",
     "chill.dacs.io/profiling-run-intent.v1alpha6",
 }
+ACTIVE_ONLY_RETAINED_INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha6"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha2"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -118,6 +121,58 @@ def require_absolute_file_path(value: Any, name: str) -> Path:
     return path
 
 
+def validate_actuation(intent: dict[str, Any], state: dict[str, Any]) -> None:
+    power_mode = require_string(state["powerMode"], "intent.state.powerMode")
+    if "actuation" not in intent:
+        if power_mode != "fixed":
+            raise ContractError("non-fixed power mode requires actuation")
+        return
+    if intent["schemaVersion"] != INTENT_SCHEMA:
+        raise ContractError("retained intent cannot contain actuation")
+    if power_mode == "fixed":
+        raise ContractError("fixed power mode cannot contain actuation")
+    actuation = require_object(intent["actuation"], "intent.actuation")
+    require_fields(actuation, {"powerMode", "actuator", "policyDigest"}, "intent.actuation")
+    if require_string(actuation["powerMode"], "intent.actuation.powerMode") != power_mode:
+        raise ContractError("intent.actuation.powerMode does not match intent.state.powerMode")
+    if not DIGEST_PATTERN.fullmatch(
+        require_string(actuation["policyDigest"], "intent.actuation.policyDigest")
+    ):
+        raise ContractError("intent.actuation.policyDigest must be a canonical SHA-256 digest")
+    actuator = require_object(actuation["actuator"], "intent.actuation.actuator")
+    kind = require_string(actuator.get("kind"), "intent.actuation.actuator.kind")
+    if kind == "JetsonNVPModel":
+        require_fields(actuator, {"kind", "jetsonNVPModel"}, "intent.actuation.actuator")
+        target = require_object(actuator["jetsonNVPModel"], "intent.actuation.actuator.jetsonNVPModel")
+        require_fields(target, {"id"}, "intent.actuation.actuator.jetsonNVPModel")
+        require_integer(target["id"], "intent.actuation.actuator.jetsonNVPModel.id")
+        return
+    if kind == "NvidiaLockedGPUClock":
+        require_fields(actuator, {"kind", "nvidiaLockedGPUClock"}, "intent.actuation.actuator")
+        target = require_object(
+            actuator["nvidiaLockedGPUClock"],
+            "intent.actuation.actuator.nvidiaLockedGPUClock",
+        )
+        fields = {"minMHz", "maxMHz"}
+        if "mode" in target:
+            fields.add("mode")
+        require_fields(target, fields, "intent.actuation.actuator.nvidiaLockedGPUClock")
+        minimum = require_integer(
+            target["minMHz"], "intent.actuation.actuator.nvidiaLockedGPUClock.minMHz", 1
+        )
+        maximum = require_integer(
+            target["maxMHz"], "intent.actuation.actuator.nvidiaLockedGPUClock.maxMHz", 1
+        )
+        if maximum < minimum:
+            raise ContractError("intent actuation GPU clock range is invalid")
+        if "mode" in target and require_integer(
+            target["mode"], "intent.actuation.actuator.nvidiaLockedGPUClock.mode"
+        ) not in {0, 1}:
+            raise ContractError("intent actuation GPU clock mode must be 0 or 1")
+        return
+    raise ContractError("unsupported intent actuation kind")
+
+
 def validate_request(request: dict[str, Any]) -> None:
     require_fields(
         request,
@@ -129,7 +184,7 @@ def validate_request(request: dict[str, Any]) -> None:
         },
         "runtime request",
     )
-    if request["schemaVersion"] != REQUEST_SCHEMA:
+    if request["schemaVersion"] not in {REQUEST_SCHEMA, RETAINED_REQUEST_SCHEMA}:
         raise ContractError("unsupported runtime request schemaVersion")
     digest = require_string(request["intentDigest"], "intentDigest")
     if not DIGEST_PATTERN.fullmatch(digest):
@@ -153,13 +208,19 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
     intent = require_object(request["intent"], "intent")
-    require_fields(
-        intent,
-        {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "metrics", "workload"},
-        "intent",
-    )
+    intent_fields = {
+        "schemaVersion", "candidate", "state", "images", "targetNode", "cpu",
+        "measurement", "metrics", "workload",
+    }
+    if "actuation" in intent:
+        intent_fields.add("actuation")
+    require_fields(intent, intent_fields, "intent")
     if intent["schemaVersion"] not in {INTENT_SCHEMA, *RETAINED_INTENT_SCHEMAS}:
         raise ContractError("CPU ORT runtime requires a supported CPU intent schema")
+    if request["schemaVersion"] == REQUEST_SCHEMA and intent["schemaVersion"] != INTENT_SCHEMA:
+        raise ContractError("current runtime request requires the current intent schema")
+    if request["schemaVersion"] == RETAINED_REQUEST_SCHEMA and intent["schemaVersion"] not in RETAINED_INTENT_SCHEMAS:
+        raise ContractError("retained runtime request requires a retained intent schema")
 
     state = require_object(intent["state"], "intent.state")
     require_fields(
@@ -172,6 +233,7 @@ def validate_request(request: dict[str, Any]) -> None:
     if not DIGEST_PATTERN.fullmatch(require_string(state["artifactDigest"], "intent.state.artifactDigest")):
         raise ContractError("artifactDigest must be a canonical SHA-256 digest")
     require_string(state["model"], "intent.state.model")
+    validate_actuation(intent, state)
 
     target = require_object(intent["targetNode"], "intent.targetNode")
     require_fields(target, {"name", "uid", "resourceVersion", "architecture", "allocatableCPU"}, "intent.targetNode")
@@ -209,6 +271,8 @@ def validate_request(request: dict[str, Any]) -> None:
     if measurement["repetitions"] != 1:
         raise ContractError("CPU ORT runtime requires exactly one repetition")
     if measurement["workloadMode"] == IDLE_WORKLOAD:
+        if intent["schemaVersion"] == ACTIVE_ONLY_RETAINED_INTENT_SCHEMA:
+            raise ContractError("v1alpha6 intent cannot contain model-loaded idle measurement")
         if (
             measurement["batch"] != 1
             or measurement["warmupIterations"] != 0

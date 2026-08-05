@@ -114,10 +114,13 @@ both identities and both admission policies are retained in the estimator
 identity. Idle trials may aggregate only when their three identities match.
 Active trials and batch points likewise require matching identities, with batch
 validated separately. Identity strings include their projection schema version
-and digest. CPU-only state keeps the existing v1alpha1 projection and retained
-v1alpha6/v1alpha7 intent bytes. A v1alpha7 or v1alpha8 intent carrying a
-host-contract digest uses execution-state-identity v1alpha2, so host library, driver, device
-visibility, or allocation drift cannot pool with another physical state.
+and digest. CPU-only fixed state keeps the existing v1alpha1 projection and
+retained intent bytes. An intent carrying a host-contract digest uses
+execution-state-identity v1alpha2, so host library, driver, device visibility,
+or allocation drift cannot pool with another physical state. Current v1alpha9
+actuated state uses execution-state-identity v1alpha3 and additionally binds
+the typed target and actuation-policy digest; those facts do not enter the
+measurement-protocol identity.
 
 Consequently, a model-loaded-idle baseline is reusable only by active trials
 with its exact state identity. Curves over one dynamic-batch artifact may have

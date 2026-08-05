@@ -1,6 +1,7 @@
 package profilingrun
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,6 +223,25 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
+	for _, schemaVersion := range []string{intentSchemaVersionV1Alpha8, intentSchemaVersionV1Alpha7} {
+		retainedIntent := intent
+		retainedIntent.SchemaVersion = schemaVersion
+		retainedDigest, err := retainedIntent.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		retainedResult := result
+		retainedResult.IntentDigest = retainedDigest
+		retainedResult.DerivedContract.RunIntentDigest = retainedDigest
+		if err := ValidateIdleRuntime(retainedIntent, "pod-uid", retainedResult); err != nil {
+			t.Fatalf("retained %s idle evidence was rejected: %v", schemaVersion, err)
+		}
+	}
+	v1alpha6 := intent
+	v1alpha6.SchemaVersion = intentSchemaVersionV1Alpha6
+	if err := v1alpha6.Validate(); err == nil || !strings.Contains(err.Error(), "model-loaded idle") {
+		t.Fatalf("v1alpha6 accepted model-loaded idle: %v", err)
+	}
 	for _, mutate := range []func(*IdleRuntimeResult){
 		func(r *IdleRuntimeResult) { r.SettlingCompletedAt = "2026-01-01T00:00:30Z" },
 		func(r *IdleRuntimeResult) { r.InferenceCountAfterModelLoad = 1 },
@@ -259,6 +279,18 @@ func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 	}
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
 		t.Fatal(err)
+	}
+	retainedIntent := intent
+	retainedIntent.SchemaVersion = intentSchemaVersionV1Alpha8
+	retainedDigest, err := retainedIntent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	retainedResult := result
+	retainedResult.IntentDigest = retainedDigest
+	retainedResult.DerivedContract.RunIntentDigest = retainedDigest
+	if err := ValidateIdleRuntime(retainedIntent, "pod-uid", retainedResult); err != nil {
+		t.Fatalf("retained v1alpha8 RKNNLite idle evidence was rejected: %v", err)
 	}
 	result.RKNN.LoadSucceeded = false
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err == nil {

@@ -125,9 +125,10 @@ platform-compatible token, device-path, and Kubernetes allocation contract.
 It also keeps privileged mode and supplemental groups in a distinct runtime-
 access contract because those are delivery requirements, not physical state.
 Candidate-report v1alpha5 freezes these groups plus the selected derived
-artifact's target platform, fixed batch, and runtime input tensor contract into the immutable Run input, and
-intent v1alpha8 binds only the order-normalized physical host-contract digest
-into state. Existing v1alpha1 runtime declarations, v1alpha2/v1alpha3 execution
+artifact's target platform, fixed batch, and runtime input tensor contract into
+the immutable Run input. Intent v1alpha9 retains the order-normalized physical
+host-contract digest in state and defines the optional typed actuation binding
+consumed by Plan 6. Existing v1alpha1 runtime declarations, v1alpha2/v1alpha3 execution
 facts, and v1alpha2-v1alpha4 candidate reports remain readable but cannot carry
 the later fields. These are expected contracts, not proof that a particular
 Job observed or satisfied them.

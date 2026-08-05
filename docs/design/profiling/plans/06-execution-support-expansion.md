@@ -138,13 +138,25 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   verification, settling, and restoration timestamps in the durable handoff.
 - [ ] Freeze the selected target and configured actuation-policy digest into
   immutable Run intent.
-- [ ] Plan the intent schema revision and simultaneous Go/Python decoder
-  deployment.
+- [x] Fix intent v1alpha9 and simultaneous Go/Python decoder compatibility
+  before wiring any selectable-mode producer.
 - [ ] Serialize Node-wide changes with a Lease or equivalent lock.
 - [ ] Define actuation safety in the presence of other workloads.
 - [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
 - [ ] Restore after Run failure, controller restart, and worker timeout.
 - [ ] Surface restoration failure as a terminal condition and operator alert.
+
+Intent v1alpha9 adds one optional `actuation` object with the selected power
+mode, exact typed actuator target, and canonical configured-policy digest.
+Fixed Runs omit the object and retain their existing execution-state identity.
+An actuated Run uses execution-state-identity v1alpha3, which binds the whole
+actuation object while leaving measurement-protocol identity unchanged. Older
+schemas reject the new field. CPU ORT accepts retained v1alpha8/v1alpha7/v1alpha6
+and RKNNLite accepts retained v1alpha8; the current Python request decoders pair
+only with current v1alpha9, while their retained envelopes pair only with the
+corresponding retained intent family. The producer and frozen policy payload
+are still absent, so this schema checkpoint does not close the preceding
+freeze requirement or enable actuation.
 
 ### Jetson NVPModel
 
@@ -190,9 +202,10 @@ Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform, fixed batch, and the explicit
 runtime input tensor. Its decoder retains strict v1alpha2-v1alpha4
 compatibility for already frozen evidence.
-Intent v1alpha8 binds only an order-normalized digest of the physical host
-contract into state and omits ORT-only thread settings from RKNNLite's common
-CPU quota; v1alpha7/v1alpha6 CPU bytes remain readable by both Go and Python.
+Intent v1alpha9 retains the order-normalized physical host-contract digest,
+omits ORT-only thread settings from RKNNLite's common CPU quota, and adds the
+optional typed actuation binding. V1alpha8/v1alpha7/v1alpha6 CPU bytes remain
+readable by both Go and Python, and v1alpha8 RKNNLite remains readable.
 Host-bound derivation identities use execution-state-identity v1alpha2 while
 CPU identities remain unchanged. The installed RKNN declaration pins the
 arm64-only runtime manifest, fixed-batch artifact manifest and bytes, exact
