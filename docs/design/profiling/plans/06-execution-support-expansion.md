@@ -43,7 +43,7 @@ corresponding level.
 | Order | Slice | State | Next gate |
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
-| current | Orange Pi CPU ORT / fixed | L0 | Freeze the CPU request and ORT-thread contract against the live Node. |
+| current | Orange Pi CPU ORT / fixed | L0 | Run and admit three active and three model-loaded-idle trials under the frozen CPU contract. |
 | parallel | Node power-mode actuation | design only | Select one Node-wide owner and prove apply/read-back/restore on one mode. |
 | deferred | Orange Pi RKNNLite onward | not active | Complete the preceding vertical-slice entry condition. |
 
@@ -93,8 +93,8 @@ proves a shared implementation change is necessary.
   physical wall-meter association as live corroboration, not a frozen serial.
 - [x] Verify the direct CPU thermal/throttle channel against live raw sysfs and
   the fail-closed admission contract.
-- [ ] Bind CPU request, ORT thread count, runtime memory, and workspace to the
-  live Node's allocatable resources.
+- [x] Bind CPU request, ORT thread count, runtime memory, and workspace to the
+  live Node's allocatable resources without claiming CPU exclusivity.
 - [ ] Run and admit three active and three model-loaded-idle Runs.
 - [ ] Review whether Raspberry Pi and Orange Pi differ only by declarations
   and configured execution policy.

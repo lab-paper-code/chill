@@ -104,3 +104,26 @@ not by themselves prove execution or admission on every arm64 DeviceClass.
 - The device-specific `OrangePiCollector` remains an unrelated noisy stub.
   Wall power and typed thermal facts are produced independently by the Shelly
   and `ThermalCollector` paths.
+
+### CPU and worker envelope
+
+- The live Node exposed 8 allocatable CPUs, `16234812Ki` allocatable memory,
+  and 227017156233 bytes of allocatable ephemeral storage. CPUs 0--3 reported
+  capacity 422 and CPUs 4--7 capacity 1024; the contract therefore freezes a
+  thread count, not homogeneous cores or per-core placement.
+- Running Pods requested 605m CPU at the captured snapshot. The selected Run
+  `cpuRequest` is 7 cores; including the two 5m observer requests, the Node
+  total becomes 7.615 cores and leaves 385m of scheduling headroom. The same
+  request is used for active and model-loaded-idle trials.
+- `AllocatableCPUQuota/v1` freezes runtime CPU limit 8, ORT intra-op threads 8,
+  inter-op threads 1, and `exclusivityClaimed=false`. The runtime checks the
+  cgroup quota and requires an effective affinity of at least eight CPUs before
+  constructing the ORT session.
+- The shared CPU ORT policy requests 128Mi and limits runtime memory to 1Gi;
+  observer requests are 16Mi and 32Mi with 64Mi and 128Mi limits. The 128Mi
+  workspace and 1Mi coordination volume fit the live Node envelope. No
+  Orange-Pi-specific execution-policy copy is required.
+- The exact `cpuRequest` remains immutable Run configuration rather than a Go
+  constant. Server-side CRD dry-run accepted 7 cores, and the focused Go and
+  Python CPU-contract tests passed. Actual cgroup, affinity, and memory behavior
+  remain evidence gates for the first production Run.
