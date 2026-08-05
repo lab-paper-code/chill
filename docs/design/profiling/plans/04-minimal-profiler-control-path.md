@@ -18,9 +18,11 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha7`; retained v1alpha6 CPU records remain
-readable. Each immutable intent record contains the
-canonical intent, candidate report, admission policy, and execution policy.
+The internal intent is `v1alpha8`; retained v1alpha7 and v1alpha6 CPU records
+remain readable. The current schema separates the common worker CPU quota from
+ORT-only thread settings, which RKNNLite omits. Each immutable intent record
+contains the canonical intent, candidate report, admission policy, and
+execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
 idle admission dispatch are implemented and live-verified. The accepted idle

@@ -59,9 +59,22 @@ func TestCurrentIntentDigestRemainsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantDigest = "sha256:fd10ce1e3301a912a667f17fea42d4eb44c7e2b6f9da5244c1c835e6302af8a9"
+	const wantDigest = "sha256:d56d3771367f6f5fccd5745bd861da8d1f7a3549d3fe9878ceeb95a9d6d2239d"
 	if digest != wantDigest {
 		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
+	}
+}
+
+func TestRetainedV1Alpha7IntentDigestRemainsStable(t *testing.T) {
+	intent := validIntent()
+	intent.SchemaVersion = previousIntentSchemaVersion
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantDigest = "sha256:fd10ce1e3301a912a667f17fea42d4eb44c7e2b6f9da5244c1c835e6302af8a9"
+	if digest != wantDigest {
+		t.Fatalf("retained v1alpha7 intent digest changed: want %s, got %s", wantDigest, digest)
 	}
 }
 
@@ -74,13 +87,52 @@ func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
 
 	retained := intent
 	retained.SchemaVersion = previousIntentSchemaVersion
+	if err := retained.Validate(); err != nil {
+		t.Fatalf("retained v1alpha7 schema rejected host state material: %v", err)
+	}
+	retained.SchemaVersion = intentSchemaVersionV1Alpha6
 	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "v1alpha6") {
-		t.Fatalf("retained schema accepted new state material: %v", err)
+		t.Fatalf("retained v1alpha6 schema accepted new state material: %v", err)
 	}
 
 	intent.State.HostContractDigest = "sha256:short"
 	if err := intent.Validate(); err == nil {
 		t.Fatal("expected invalid host contract digest rejection")
+	}
+}
+
+func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
+	intent := validIntent()
+	intent.Candidate.ExecutionPath = RKNNLiteExecutionPath
+	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
+	intent.State.Backend = RKNNLiteBackend
+	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	intent.CPU.ORTIntraOpThreads = 0
+	intent.CPU.ORTInterOpThreads = 0
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "ortIntraOpThreads") || strings.Contains(string(payload), "ortInterOpThreads") {
+		t.Fatalf("RKNNLite intent retained ORT-only CPU settings: %s", payload)
+	}
+	if IsSupportedCPUORTIntent(intent) {
+		t.Fatal("RKNNLite intent was classified as CPU ORT")
+	}
+
+	withORTSettings := intent
+	withORTSettings.CPU.ORTIntraOpThreads = 4
+	withORTSettings.CPU.ORTInterOpThreads = 1
+	if err := withORTSettings.Validate(); err == nil || !strings.Contains(err.Error(), "ONNX Runtime thread") {
+		t.Fatalf("RKNNLite intent accepted ORT-only settings: %v", err)
+	}
+	retained := intent
+	retained.SchemaVersion = previousIntentSchemaVersion
+	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "current intent schema") {
+		t.Fatalf("retained intent schema accepted RKNNLite contract: %v", err)
 	}
 }
 

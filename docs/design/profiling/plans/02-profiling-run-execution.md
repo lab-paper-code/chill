@@ -36,11 +36,13 @@ The model-loaded-idle extension remains one `profilingrun.Intent`; it does not
 introduce a second frozen-intent type. Candidate, execution state, images, Node,
 CPU, metric source, and workload-observation provenance are common execution
 facts, and duplicating them would create two validation and finalization paths.
-The intent schema is `v1alpha7`. It retains the measurement-protocol
-`settlingDurationSeconds` field and adds an optional digest of only the
-order-normalized physical host contract. CPU ORT omits that field. Retained
-v1alpha6 CPU intent bytes remain readable and are protected by their original
-golden digest; v1alpha6 cannot carry the new field.
+The intent schema is `v1alpha8`. It retains the measurement-protocol
+`settlingDurationSeconds` field and the optional digest of only the
+order-normalized physical host contract. CPU ORT omits that state field.
+The common CPU quota remains frozen for all workers, while RKNNLite omits the
+ORT-only intra/inter-op settings. Retained v1alpha7 and v1alpha6 CPU intent
+bytes remain readable and are protected by their original golden digests;
+v1alpha6 cannot carry the host-contract field and RKNNLite is current-only.
 
 Intent validation is mode-aware. The active mode retains a positive batch,
 declared warm-up, input generation, output validation, and measured inference

@@ -20,8 +20,11 @@ from typing import Any, BinaryIO
 
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha8"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha7"
-RETAINED_INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha6"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha8"
+RETAINED_INTENT_SCHEMAS = {
+    "chill.dacs.io/profiling-run-intent.v1alpha7",
+    "chill.dacs.io/profiling-run-intent.v1alpha6",
+}
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha1"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -155,8 +158,8 @@ def validate_request(request: dict[str, Any]) -> None:
         {"schemaVersion", "candidate", "state", "images", "targetNode", "cpu", "measurement", "metrics", "workload"},
         "intent",
     )
-    if intent["schemaVersion"] not in {INTENT_SCHEMA, RETAINED_INTENT_SCHEMA}:
-        raise ContractError("CPU ORT runtime requires the current or immediately previous intent schema")
+    if intent["schemaVersion"] not in {INTENT_SCHEMA, *RETAINED_INTENT_SCHEMAS}:
+        raise ContractError("CPU ORT runtime requires a supported CPU intent schema")
 
     state = require_object(intent["state"], "intent.state")
     require_fields(

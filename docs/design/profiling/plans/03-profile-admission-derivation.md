@@ -107,8 +107,8 @@ identity. Idle trials may aggregate only when their three identities match.
 Active trials and batch points likewise require matching identities, with batch
 validated separately. Identity strings include their projection schema version
 and digest. CPU-only state keeps the existing v1alpha1 projection and retained
-v1alpha6 intent bytes. A new v1alpha7 intent carrying a host-contract digest
-uses execution-state-identity v1alpha2, so host library, driver, device
+v1alpha6/v1alpha7 intent bytes. A v1alpha7 or v1alpha8 intent carrying a
+host-contract digest uses execution-state-identity v1alpha2, so host library, driver, device
 visibility, or allocation drift cannot pool with another physical state.
 
 Observer timestamps are receipt timestamps. The first implementation uses a

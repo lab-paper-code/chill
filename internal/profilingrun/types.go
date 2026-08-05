@@ -9,13 +9,17 @@ import (
 )
 
 const (
-	previousIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha6"
-	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha7"
+	intentSchemaVersionV1Alpha6 = "chill.dacs.io/profiling-run-intent.v1alpha6"
+	previousIntentSchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha7"
+	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha8"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
 	NoInputGenerator                      = "none"
 	NoOutputValidation                    = "none"
+	RKNNLiteExecutionPath                 = "rknnlite"
+	RKNNLiteRuntimeFamily                 = "rknnlite"
+	RKNNLiteBackend                       = "not-applicable"
 )
 
 type Intent struct {
@@ -31,7 +35,7 @@ type Intent struct {
 }
 
 // UnmarshalJSON strictly decodes the current wire field names while retaining
-// the immediately previous immutable schema until its live Runs are removed.
+// immutable CPU schemas that still have live Run records.
 func (i *Intent) UnmarshalJSON(payload []byte) error {
 	type wire Intent
 	var decoded wire
@@ -92,8 +96,8 @@ type CPUContract struct {
 	PolicyVersion      string `json:"policyVersion"`
 	Request            string `json:"request"`
 	Limit              string `json:"limit"`
-	ORTIntraOpThreads  int    `json:"ortIntraOpThreads"`
-	ORTInterOpThreads  int    `json:"ortInterOpThreads"`
+	ORTIntraOpThreads  int    `json:"ortIntraOpThreads,omitempty"`
+	ORTInterOpThreads  int    `json:"ortInterOpThreads,omitempty"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
 }
 

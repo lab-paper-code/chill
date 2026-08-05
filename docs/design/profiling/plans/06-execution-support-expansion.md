@@ -163,9 +163,11 @@ token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform plus fixed batch. Their decoders
 retain strict v1alpha2/v1alpha3 compatibility for already frozen evidence.
-Intent v1alpha7 binds only an order-normalized digest of the physical host
-contract into state; host-bound derivation identities use execution-state-
-identity v1alpha2 while CPU identities remain unchanged. No exact RKNN
+Intent v1alpha8 binds only an order-normalized digest of the physical host
+contract into state and omits ORT-only thread settings from RKNNLite's common
+CPU quota; v1alpha7/v1alpha6 CPU bytes remain readable by both Go and Python.
+Host-bound derivation identities use execution-state-identity v1alpha2 while
+CPU identities remain unchanged. No exact RKNN
 declaration is installed yet and no production Job verifies these expected
 values at the host boundary.
 

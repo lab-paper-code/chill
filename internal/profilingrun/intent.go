@@ -111,10 +111,12 @@ func (i Intent) Validate() error {
 }
 
 func (i Intent) validateSchema() error {
-	if i.SchemaVersion != SchemaVersion && i.SchemaVersion != previousIntentSchemaVersion {
+	if i.SchemaVersion != SchemaVersion &&
+		i.SchemaVersion != previousIntentSchemaVersion &&
+		i.SchemaVersion != intentSchemaVersionV1Alpha6 {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
 	}
-	if i.SchemaVersion == previousIntentSchemaVersion && i.State.HostContractDigest != "" {
+	if i.SchemaVersion == intentSchemaVersionV1Alpha6 && i.State.HostContractDigest != "" {
 		return errors.New("v1alpha6 intent cannot contain state.hostContractDigest")
 	}
 	if !validArtifactPath(i.State.ArtifactPath) {
@@ -145,16 +147,30 @@ func (i Intent) validateMeasurementMode() error {
 // IsSupportedActiveIntent reports whether the first CPU ORT active worker
 // family can execute a current intent. Callers must validate the intent separately.
 func IsSupportedActiveIntent(i Intent) bool {
-	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousIntentSchemaVersion) &&
-		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode
+	return supportedCPUORTIntentSchema(i.SchemaVersion) &&
+		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode &&
+		isCPUORTExecution(i)
 }
 
 // IsSupportedCPUORTIntent covers the active and model-loaded-idle paths
 // implemented by the explicit CPU ORT worker.
 func IsSupportedCPUORTIntent(i Intent) bool {
 	return IsSupportedActiveIntent(i) ||
-		((i.SchemaVersion == SchemaVersion || i.SchemaVersion == previousIntentSchemaVersion) &&
-			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+		(supportedCPUORTIntentSchema(i.SchemaVersion) &&
+			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode &&
+			isCPUORTExecution(i))
+}
+
+func isCPUORTExecution(i Intent) bool {
+	return i.Candidate.ExecutionPath == "ort-cpu" &&
+		i.State.RuntimeFamily == "onnxruntime" &&
+		i.State.Backend == "CPUExecutionProvider"
+}
+
+func supportedCPUORTIntentSchema(schemaVersion string) bool {
+	return schemaVersion == SchemaVersion ||
+		schemaVersion == previousIntentSchemaVersion ||
+		schemaVersion == intentSchemaVersionV1Alpha6
 }
 
 func (i Intent) validateCPUContract() error {
@@ -176,7 +192,19 @@ func (i Intent) validateCPUContract() error {
 	if err != nil || cpu < 1 {
 		return errors.New("target allocatableCPU must be a positive integer")
 	}
-	if i.CPU.Limit != i.TargetNode.AllocatableCPU || i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
+	if i.CPU.Limit != i.TargetNode.AllocatableCPU {
+		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+	}
+	if i.State.RuntimeFamily == RKNNLiteRuntimeFamily {
+		if i.SchemaVersion != SchemaVersion {
+			return errors.New("RKNNLite requires the current intent schema")
+		}
+		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
+			return errors.New("RKNNLite CPU contract cannot contain ONNX Runtime thread settings")
+		}
+		return nil
+	}
+	if i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
 	}
 	return nil

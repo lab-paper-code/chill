@@ -397,7 +397,7 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 	if err != nil {
 		return err
 	}
-	if intent.State.RuntimeFamily == "rknnlite" {
+	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if report.ArtifactCapability == nil || report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) {
 			return errors.New("candidate RKNN artifact capability does not match the measurement batch")
 		}

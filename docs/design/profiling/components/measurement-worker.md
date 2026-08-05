@@ -9,9 +9,10 @@ metric/workload end-fence success path was live-verified with three sequential,
 same-intent Runs admitted by `wall-power-v2`. This document does not authorize
 batch campaigns, `b_sat` derivation, another runtime, or serving.
 
-The `v1alpha7` intent, public idle request, CPU ORT runner branch, separate idle
-runtime/raw schemas, shared immutable finalization/loading, and idle admission
-dispatch are implemented and live-verified.
+The `v1alpha7` CPU intent, public idle request, CPU ORT runner branch, separate
+idle runtime/raw schemas, shared immutable finalization/loading, and idle
+admission dispatch are live-verified. The `v1alpha8` codec and matching CPU ORT
+decoder are implemented for runtime expansion but are not yet live-verified.
 
 ## Model-loaded-idle live verification
 
@@ -117,13 +118,16 @@ It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
 versioned CPU ORT worker contract and is not caller-selectable.
 
-Active and idle Runs use internal intent schema `v1alpha7`. It adds only the
-optional physical host-contract digest needed by accelerator paths; CPU ORT
-omits that field. The frozen
+Active and idle Runs use internal intent schema `v1alpha8`. The retained
+`v1alpha7` schema added the optional physical host-contract digest needed by
+accelerator paths; CPU ORT omits that field. The current schema additionally
+keeps the common CPU quota while omitting the ORT-only intra/inter-op fields
+from RKNNLite intents. The frozen
 measurement protocol includes settling duration and reuses the same intent
 type and common execution provenance rather than creating a parallel frozen
-type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha7`
-and retained `v1alpha6` CPU intents; v1alpha6 cannot carry the new state field.
+type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha8`
+and retained `v1alpha7`/`v1alpha6` CPU intents; v1alpha6 cannot carry the host
+state field. RKNNLite is current-schema-only.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that
