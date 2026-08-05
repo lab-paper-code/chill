@@ -54,13 +54,18 @@ func buildExecutionJob(
 	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" {
 		return nil, errors.New("WorkloadObserver ServiceAccount name is required")
 	}
-	if _, _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
+	validated, err := validateFrozenRunForRun(run, frozen)
+	if err != nil {
 		return nil, err
 	}
 	prepared := frozen.Prepared
 	plan, err := profiler.DeriveExecutionPlan(prepared.Intent, frozen.ExecutionPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("derive measurement Job policy: %w", err)
+	}
+	runtimeProjection, err := projectRuntimeJob(prepared.Intent, validated.CandidateReport)
+	if err != nil {
+		return nil, fmt.Errorf("project runtime Job contract: %w", err)
 	}
 	intentName, err := intentRecordName(run)
 	if err != nil {
@@ -113,14 +118,16 @@ func buildExecutionJob(
 					Tolerations: []corev1.Toleration{{
 						Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
 					}},
-					SecurityContext: restrictedPodSecurityContext(),
-					InitContainers:  []corev1.Container{artifactContainer(prepared.Intent)},
+					SecurityContext: runtimePodSecurityContext(runtimeProjection.SupplementalGroups),
+					InitContainers: []corev1.Container{
+						artifactContainer(prepared.Intent, runtimeProjection.ArtifactDestination),
+					},
 					Containers: []corev1.Container{
-						runtimeContainer(prepared, binding, rawKey, plan),
+						runtimeContainer(prepared, binding, rawKey, plan, runtimeProjection),
 						metricObserverContainer(prepared, plan),
 						workloadObserverContainer(prepared, policyDigest, selectorLabelKeys, options, plan),
 					},
-					Volumes: executionVolumes(intentName, plan),
+					Volumes: append(executionVolumes(intentName, plan), runtimeProjection.Volumes...),
 				},
 			},
 		},
@@ -131,14 +138,14 @@ func buildExecutionJob(
 	return job, nil
 }
 
-func artifactContainer(intent profilingrun.Intent) corev1.Container {
+func artifactContainer(intent profilingrun.Intent, destination string) corev1.Container {
 	digest := strings.TrimPrefix(intent.State.ArtifactDigest, "sha256:")
 	return corev1.Container{
 		Name: "artifact", Image: intent.Images.Artifact, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: []string{"sh", "-ec"},
 		Args: []string{
-			`cp "$1" /model/model.onnx && echo "$2  /model/model.onnx" | sha256sum -c -`,
-			"artifact-copy", intent.State.ArtifactPath, digest,
+			`cp "$1" "$3" && echo "$2  $3" | sha256sum -c -`,
+			"artifact-copy", intent.State.ArtifactPath, digest, destination,
 		},
 		SecurityContext: restrictedContainerSecurityContext(),
 		VolumeMounts:    []corev1.VolumeMount{{Name: modelVolumeName, MountPath: modelMountPath}},
@@ -150,8 +157,30 @@ func runtimeContainer(
 	binding EvidenceStoreBinding,
 	rawKey string,
 	plan profiler.ExecutionPlan,
+	projection runtimeJobProjection,
 ) corev1.Container {
 	intent := prepared.Intent
+	resources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(intent.CPU.Request),
+			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(intent.CPU.Limit),
+			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI),
+		},
+	}
+	if projection.AcceleratorResource != "" {
+		resources.Requests[projection.AcceleratorResource] = resource.MustParse("1")
+		resources.Limits[projection.AcceleratorResource] = resource.MustParse("1")
+	}
+	volumeMounts := []corev1.VolumeMount{
+		{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
+		{Name: modelVolumeName, MountPath: modelMountPath, ReadOnly: true},
+		{Name: coordinationVolumeName, MountPath: coordinationMountPath},
+		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
+	}
+	volumeMounts = append(volumeMounts, projection.VolumeMounts...)
 	return corev1.Container{
 		Name: "runtime", Image: intent.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
@@ -176,23 +205,9 @@ func runtimeContainer(
 			secretEnv("AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey),
 			secretEnv("AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey),
 		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(intent.CPU.Request),
-				corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(intent.CPU.Limit),
-				corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI),
-			},
-		},
-		SecurityContext: restrictedContainerSecurityContext(),
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
-			{Name: modelVolumeName, MountPath: modelMountPath, ReadOnly: true},
-			{Name: coordinationVolumeName, MountPath: coordinationMountPath},
-			{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-		},
+		Resources:                resources,
+		SecurityContext:          projection.SecurityContext,
+		VolumeMounts:             volumeMounts,
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
 }
@@ -278,7 +293,10 @@ func executionVolumes(intentName string, plan profiler.ExecutionPlan) []corev1.V
 			Name: intentVolumeName,
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: intentName},
-				Items:                []corev1.KeyToPath{{Key: intentRecordIntentKey, Path: "intent.json"}},
+				Items: []corev1.KeyToPath{
+					{Key: intentRecordIntentKey, Path: "intent.json"},
+					{Key: intentRecordCandidateKey, Path: "candidate-report.json"},
+				},
 			}},
 		},
 		{Name: modelVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -307,6 +325,12 @@ func restrictedPodSecurityContext() *corev1.PodSecurityContext {
 		RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To[int64](65532), RunAsGroup: ptr.To[int64](65532),
 		FSGroup: ptr.To[int64](65532), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
+}
+
+func runtimePodSecurityContext(supplementalGroups []int64) *corev1.PodSecurityContext {
+	security := restrictedPodSecurityContext()
+	security.SupplementalGroups = append([]int64(nil), supplementalGroups...)
+	return security
 }
 
 func restrictedContainerSecurityContext() *corev1.SecurityContext {

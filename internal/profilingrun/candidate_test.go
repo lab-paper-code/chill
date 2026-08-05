@@ -194,9 +194,39 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
 		Measurement: MeasurementContract{Batch: 1},
 	}
-	if err := ValidateCandidateReport(payload, intent); err != nil {
+	verified, err := VerifyCandidateReport(payload, intent)
+	if err != nil {
 		t.Fatal(err)
 	}
+	firstDelivery := verified.RuntimeDelivery()
+	firstDelivery.HostContract.Devices[0].Path = "/mutated"
+	firstDelivery.RuntimeAccess.SupplementalGroups[0] = 999
+	secondDelivery := verified.RuntimeDelivery()
+	if secondDelivery.HostContract.Devices[0].Path == "/mutated" ||
+		secondDelivery.RuntimeAccess.SupplementalGroups[0] == 999 {
+		t.Fatal("verified candidate report exposed mutable internal delivery state")
+	}
+
+	withoutPlatform := report
+	withoutPlatformContract := *report.HostContract
+	withoutPlatformContract.Platform = nil
+	withoutPlatform.HostContract = &withoutPlatformContract
+	withoutPlatformPayload, err := json.Marshal(withoutPlatform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutPlatformSum := sha256.Sum256(withoutPlatformPayload)
+	withoutPlatformIntent := intent
+	withoutPlatformIntent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(withoutPlatformSum[:])
+	withoutPlatformIntent.State.HostContractDigest, err = CandidateHostContractDigest(withoutPlatform.HostContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyCandidateReport(withoutPlatformPayload, withoutPlatformIntent); err == nil ||
+		!strings.Contains(err.Error(), "host platform") {
+		t.Fatalf("RKNN candidate without host platform was accepted: %v", err)
+	}
+
 	intent.State.HostContractDigest = "sha256:" + strings.Repeat("f", 64)
 	if err := ValidateCandidateReport(payload, intent); err == nil {
 		t.Fatal("expected candidate host contract digest mismatch")

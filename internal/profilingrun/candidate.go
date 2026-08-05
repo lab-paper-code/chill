@@ -146,6 +146,43 @@ type CandidateReportRuntimeAccess struct {
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
 }
 
+// VerifiedCandidateReport is constructed only after exact report bytes have
+// been matched to one frozen intent. Downstream delivery code consumes its
+// copied projection instead of decoding or re-validating the same bytes.
+type VerifiedCandidateReport struct {
+	report CandidateReport
+}
+
+type CandidateRuntimeDelivery struct {
+	ArtifactCapability *CandidateArtifactCapability
+	HostContract       *CandidateReportHostContract
+	RuntimeAccess      *CandidateReportRuntimeAccess
+}
+
+func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
+	delivery := CandidateRuntimeDelivery{}
+	if r.report.ArtifactCapability != nil {
+		capability := *r.report.ArtifactCapability
+		delivery.ArtifactCapability = &capability
+	}
+	if r.report.HostContract != nil {
+		contract := *r.report.HostContract
+		contract.Libraries = append([]CandidateReportHostLibrary(nil), contract.Libraries...)
+		contract.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
+		if contract.Platform != nil {
+			platform := *contract.Platform
+			contract.Platform = &platform
+		}
+		delivery.HostContract = &contract
+	}
+	if r.report.RuntimeAccess != nil {
+		access := *r.report.RuntimeAccess
+		access.SupplementalGroups = append([]int64(nil), access.SupplementalGroups...)
+		delivery.RuntimeAccess = &access
+	}
+	return delivery
+}
+
 // CanonicalCandidateHostContract returns the order-normalized identity input
 // without deciding whether the contract is admissible.
 func CanonicalCandidateHostContract(contract CandidateReportHostContract) ([]byte, error) {
@@ -387,29 +424,32 @@ func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error
 	return nil
 }
 
-func ValidateCandidateReport(payload []byte, intent Intent) error {
+func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateReport, error) {
 	sum := sha256.Sum256(payload)
 	actual := "sha256:" + hex.EncodeToString(sum[:])
 	if actual != intent.Candidate.ReportDigest {
-		return fmt.Errorf("candidate report digest mismatch: %s", actual)
+		return VerifiedCandidateReport{}, fmt.Errorf("candidate report digest mismatch: %s", actual)
 	}
 	report, err := DecodeCandidateReport(payload)
 	if err != nil {
-		return err
+		return VerifiedCandidateReport{}, err
 	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if report.ArtifactCapability == nil || report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) {
-			return errors.New("candidate RKNN artifact capability does not match the measurement batch")
+			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability does not match the measurement batch")
 		}
 		if report.HostContract == nil || report.RuntimeAccess == nil {
-			return errors.New("candidate RKNN host and runtime access contracts are required")
+			return VerifiedCandidateReport{}, errors.New("candidate RKNN host and runtime access contracts are required")
+		}
+		if report.HostContract.Platform == nil {
+			return VerifiedCandidateReport{}, errors.New("candidate RKNN host platform contract is required")
 		}
 	}
 	hostContractDigest := ""
 	if report.HostContract != nil {
 		hostContractDigest, err = digestCanonicalCandidateHostContract(*report.HostContract)
 		if err != nil {
-			return err
+			return VerifiedCandidateReport{}, err
 		}
 	}
 	checks := []struct{ name, want, got string }{
@@ -436,8 +476,13 @@ func ValidateCandidateReport(payload []byte, intent Intent) error {
 	)
 	for _, check := range checks {
 		if check.want != check.got {
-			return fmt.Errorf("candidate %s mismatch", check.name)
+			return VerifiedCandidateReport{}, fmt.Errorf("candidate %s mismatch", check.name)
 		}
 	}
-	return nil
+	return VerifiedCandidateReport{report: report}, nil
+}
+
+func ValidateCandidateReport(payload []byte, intent Intent) error {
+	_, err := VerifyCandidateReport(payload, intent)
+	return err
 }

@@ -115,7 +115,7 @@ func buildIntentRecord(
 	if err != nil {
 		return nil, err
 	}
-	intentBytes, admissionPolicyBytes, executionPolicyBytes, err := validateFrozenRunForRun(run, frozen)
+	validated, err := validateFrozenRunForRun(run, frozen)
 	if err != nil {
 		return nil, err
 	}
@@ -143,10 +143,10 @@ func buildIntentRecord(
 		},
 		Immutable: ptr.To(true),
 		BinaryData: map[string][]byte{
-			intentRecordIntentKey:          append([]byte(nil), intentBytes...),
+			intentRecordIntentKey:          append([]byte(nil), validated.IntentBytes...),
 			intentRecordCandidateKey:       append([]byte(nil), frozen.Prepared.CandidateReportBytes...),
-			intentRecordAdmissionPolicyKey: append([]byte(nil), admissionPolicyBytes...),
-			intentRecordExecutionPolicyKey: append([]byte(nil), executionPolicyBytes...),
+			intentRecordAdmissionPolicyKey: append([]byte(nil), validated.AdmissionPolicyBytes...),
+			intentRecordExecutionPolicyKey: append([]byte(nil), validated.ExecutionPolicyBytes...),
 		},
 	}
 	if err := controllerutil.SetControllerReference(run, record, scheme); err != nil {
@@ -155,29 +155,39 @@ func buildIntentRecord(
 	return record, nil
 }
 
+type validatedFrozenRunMaterial struct {
+	IntentBytes          []byte
+	AdmissionPolicyBytes []byte
+	ExecutionPolicyBytes []byte
+	CandidateReport      profilingrun.VerifiedCandidateReport
+}
+
 func validateFrozenRunForRun(
 	run *edgev1alpha1.ProfilingRun,
 	frozen FrozenRun,
-) ([]byte, []byte, []byte, error) {
+) (validatedFrozenRunMaterial, error) {
 	if err := frozen.Validate(); err != nil {
-		return nil, nil, nil, err
+		return validatedFrozenRunMaterial{}, err
 	}
-	intentBytes, err := validatePreparedForRun(run, frozen.Prepared)
+	intentBytes, candidateReport, err := validatePreparedForRun(run, frozen.Prepared)
 	if err != nil {
-		return nil, nil, nil, err
+		return validatedFrozenRunMaterial{}, err
 	}
 	if err := validateSelectedPolicies(run, frozen); err != nil {
-		return nil, nil, nil, err
+		return validatedFrozenRunMaterial{}, err
 	}
 	admissionPolicyBytes, err := frozen.AdmissionPolicy.CanonicalJSON()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("encode frozen admission policy: %w", err)
+		return validatedFrozenRunMaterial{}, fmt.Errorf("encode frozen admission policy: %w", err)
 	}
 	executionPolicyBytes, err := frozen.ExecutionPolicy.CanonicalJSON()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("encode frozen execution policy: %w", err)
+		return validatedFrozenRunMaterial{}, fmt.Errorf("encode frozen execution policy: %w", err)
 	}
-	return intentBytes, admissionPolicyBytes, executionPolicyBytes, nil
+	return validatedFrozenRunMaterial{
+		IntentBytes: intentBytes, AdmissionPolicyBytes: admissionPolicyBytes,
+		ExecutionPolicyBytes: executionPolicyBytes, CandidateReport: candidateReport,
+	}, nil
 }
 
 func intentRecordName(run *edgev1alpha1.ProfilingRun) (string, error) {
@@ -192,23 +202,24 @@ func intentRecordName(run *edgev1alpha1.ProfilingRun) (string, error) {
 func validatePreparedForRun(
 	run *edgev1alpha1.ProfilingRun,
 	prepared profiler.PreparedRun,
-) ([]byte, error) {
+) ([]byte, profilingrun.VerifiedCandidateReport, error) {
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
-		return nil, err
+		return nil, profilingrun.VerifiedCandidateReport{}, err
 	}
 	actualRequest := preparationFromIntent(prepared.Intent)
 	if !reflect.DeepEqual(request.Preparation, actualRequest) {
-		return nil, errors.New("prepared intent does not match immutable ProfilingRun spec")
+		return nil, profilingrun.VerifiedCandidateReport{}, errors.New("prepared intent does not match immutable ProfilingRun spec")
 	}
 	intentBytes, err := prepared.Intent.CanonicalJSON()
 	if err != nil {
-		return nil, fmt.Errorf("encode prepared Run intent: %w", err)
+		return nil, profilingrun.VerifiedCandidateReport{}, fmt.Errorf("encode prepared Run intent: %w", err)
 	}
-	if err := profilingrun.ValidateCandidateReport(prepared.CandidateReportBytes, prepared.Intent); err != nil {
-		return nil, fmt.Errorf("validate prepared candidate report: %w", err)
+	verified, err := profilingrun.VerifyCandidateReport(prepared.CandidateReportBytes, prepared.Intent)
+	if err != nil {
+		return nil, profilingrun.VerifiedCandidateReport{}, fmt.Errorf("validate prepared candidate report: %w", err)
 	}
-	return intentBytes, nil
+	return intentBytes, verified, nil
 }
 
 func preparationFromIntent(intent profilingrun.Intent) profiler.PreparationRequest {
@@ -311,7 +322,7 @@ func decodeIntentRecord(
 		AdmissionPolicy: policy,
 		ExecutionPolicy: executionPolicy,
 	}
-	if _, _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
+	if _, err := validateFrozenRunForRun(run, frozen); err != nil {
 		return FrozenRun{}, err
 	}
 	return frozen, nil

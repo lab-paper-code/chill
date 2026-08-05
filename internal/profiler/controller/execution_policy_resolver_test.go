@@ -107,9 +107,15 @@ func controllerExecutionPolicyCatalog(t *testing.T) []byte {
 	idle := active
 	idle.Name = testConfiguredIdleExecutionPolicy
 	idle.WorkloadMode = "idle-model-loaded"
+	rknnActive := active
+	rknnActive.Name = "test-rknn-active"
+	rknnActive.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	rknnIdle := idle
+	rknnIdle.Name = "test-rknn-idle"
+	rknnIdle.ExecutionPath = profilingrun.RKNNLiteExecutionPath
 	raw, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
 		SchemaVersion: profiler.ExecutionPolicyCatalogSchemaVersion,
-		Policies:      []profiler.ExecutionPolicySpec{active, idle},
+		Policies:      []profiler.ExecutionPolicySpec{active, idle, rknnActive, rknnIdle},
 	})
 	if err != nil {
 		t.Fatal(err)

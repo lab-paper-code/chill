@@ -61,7 +61,7 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 	if run == nil || job == nil {
 		return profileradmission.Result{}, errors.New("ProfilingRun and measurement Job are required")
 	}
-	if _, _, _, err := validateFrozenRunForRun(run, frozen); err != nil {
+	if _, err := validateFrozenRunForRun(run, frozen); err != nil {
 		return profileradmission.Result{}, err
 	}
 	prepared := frozen.Prepared

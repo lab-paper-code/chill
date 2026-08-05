@@ -66,7 +66,7 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	if run == nil || job == nil {
 		return FinalizedRunEvidence{}, errors.New("ProfilingRun and measurement Job are required")
 	}
-	if _, err := validatePreparedForRun(run, prepared); err != nil {
+	if _, _, err := validatePreparedForRun(run, prepared); err != nil {
 		return FinalizedRunEvidence{}, err
 	}
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||

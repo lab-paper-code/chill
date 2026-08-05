@@ -166,15 +166,18 @@ Intent v1alpha8 binds only an order-normalized digest of the physical host
 contract into state and omits ORT-only thread settings from RKNNLite's common
 CPU quota; v1alpha7/v1alpha6 CPU bytes remain readable by both Go and Python.
 Host-bound derivation identities use execution-state-identity v1alpha2 while
-CPU identities remain unchanged. No exact RKNN
-declaration is installed yet and no production Job verifies these expected
-values at the host boundary.
+CPU identities remain unchanged. No exact RKNN declaration is installed yet.
+The production Job now consumes the verified report once and projects the
+runtime-specific artifact destination, exact file/device hostPaths,
+Pod-level supplemental groups, runtime-only privilege, and an optional extended
+resource. Observer containers receive neither host mounts nor privilege. The
+runtime adapter does not yet verify those expected values at the host boundary.
 
 Preparation and the frozen execution-policy selector now accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
 schema. They retain the same bounded worker envelope without fabricating ORT
-thread settings. This does not yet materialize host access or execute RKNNLite,
-so the row remains L0.
+thread settings. Job materialization is implemented, but no RKNNLite adapter or
+evidence producer executes it yet, so the row remains L0.
 
 Completion: one exact Orange Pi RKNN row reaches L3.
 

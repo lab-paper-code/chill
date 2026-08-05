@@ -105,18 +105,26 @@ image remains an init-container supply image.
 The immutable intent record remains the scientific execution authority. It
 also retains the exact admission and worker-execution policies selected before
 Job creation. All regular containers mount only its canonical `intent.json`
-read-only and verify the expected digest before doing work. The candidate
-report and frozen policy payloads remain controller-side provenance and are not
-worker inputs.
+plus `candidate-report.json` read-only. Every process verifies the intent
+digest; the runtime path alone consumes the already controller-verified
+candidate report for runtime-specific delivery and host checks. Frozen policy
+payloads remain controller-side provenance and are not worker inputs.
 
-One missing execution fact must be added before Job materialization:
+The Job materializer consumes this frozen execution fact:
 
 - `profilingrun.ExecutionState.ArtifactPath`, the artifact source path inside
   the artifact supply image.
 
 It is resolved from the already trusted artifact declaration and frozen in the
 intent. The destination path inside the shared model volume belongs to the
-versioned CPU ORT worker contract and is not caller-selectable.
+explicit runtime adapter (`model.onnx` for CPU ORT and `model.rknn` for
+RKNNLite) and is not caller-selectable. RKNNLite additionally projects only the
+verified report's exact host library, driver-version, platform-compatible, and
+device paths. File facts are read-only, device nodes remain writable, runtime
+container privilege and host mounts apply only to that container, and an
+extended resource is requested only when the report declares one. Kubernetes
+supplemental groups are necessarily Pod-level, but observers receive no device
+mount or privilege.
 
 Active and idle Runs use internal intent schema `v1alpha8`. The retained
 `v1alpha7` schema added the optional physical host-contract digest needed by
@@ -172,13 +180,17 @@ scientific intent is otherwise identical.
 
 ## Job-local handoff
 
-The Job uses five volumes:
+The Job uses five base volumes:
 
 - a read-only intent ConfigMap volume;
 - an `emptyDir` model volume populated by the artifact init container;
 - an `emptyDir` coordination volume shared by the three regular containers;
 - a bounded runtime-workspace `emptyDir` mounted only by the runtime worker; and
 - a projected Kubernetes token and CA volume mounted only by WorkloadObserver.
+
+An accelerator path appends one exact `hostPath` volume per verified host fact;
+it never mounts a whole device directory or exposes those volumes to either
+observer.
 
 The runtime workspace holds the private CPU ORT result and bounded temporary
 file used to verify evidence before upload. It is not a cross-container

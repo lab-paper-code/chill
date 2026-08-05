@@ -25,6 +25,7 @@ const (
 	testRKNNArtifactDigest  = "sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550"
 	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
 	testArchitecture        = "amd64"
+	testARM64Architecture   = "arm64"
 	testRuntimeImage        = "registry.example/chill/runtime@sha256:1aa023ab6fb43fd8f8a978036878849b7a5a0a2f0621e510b534fc767ea5774b"
 	testArtifactImage       = "registry.example/chill/artifact@sha256:8cf7dea5f1b9cb00fcb1511c0f63c187e3d1cceaa44038e1c705d61f0714b2aa"
 	testMetricObserverImage = "registry.example/chill/metric-observer@sha256:522325aaeb2ce2e2fea91372ebd8d931c1507c73687e4d20d70add6714c5077c"
@@ -570,7 +571,7 @@ func validRKNNCandidateObjects() []client.Object {
 	})
 	class := objects[1].(*edgev1alpha1.DeviceClass)
 	class.Name = "orangepi-5-plus-16g"
-	class.Spec.Architecture = "arm64"
+	class.Spec.Architecture = testARM64Architecture
 	class.Spec.NodeSelector = map[string]string{"edge.dacs.io/device-class": class.Name}
 	objects[2].(*corev1.ConfigMap).Data["execution-facts.yaml"] = validRKNNExecutionFacts()
 	return objects
@@ -651,7 +652,7 @@ func validRuntimeDeclaration() string {
 }
 
 func validRKNNRuntimeDeclaration() string {
-	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"arm64","runtime":{"family":"rknnlite","backends":["not-applicable"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}`
+	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"` + testARM64Architecture + `","runtime":{"family":"rknnlite","backends":["not-applicable"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}`
 }
 
 func replaceRuntimeDeclaration(config *corev1.ConfigMap, old, replacement string) {

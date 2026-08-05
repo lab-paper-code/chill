@@ -50,7 +50,7 @@ func TestKubernetesNodeResolverFailsClosed(t *testing.T) {
 		},
 		{
 			name: "architecture mismatch", mutate: func(node *corev1.Node) {
-				node.Labels[corev1.LabelArchStable] = "arm64"
+				node.Labels[corev1.LabelArchStable] = testARM64Architecture
 			}, match: "does not match resolved DeviceClass architecture",
 		},
 		{
