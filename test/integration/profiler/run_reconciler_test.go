@@ -88,21 +88,29 @@ func (j *apiExecutionJobs) Ensure(
 	return job, true, nil
 }
 
-type rejectingFinalizer struct{ calls int }
+type recordingFinalizer struct {
+	calls  int
+	result profilercontroller.FinalizedRunEvidence
+	err    error
+}
 
-func (f *rejectingFinalizer) Finalize(
+func (f *recordingFinalizer) Finalize(
 	context.Context,
 	*edgev1alpha1.ProfilingRun,
 	profiler.PreparedRun,
 	*batchv1.Job,
 ) (profilercontroller.FinalizedRunEvidence, error) {
 	f.calls++
-	return profilercontroller.FinalizedRunEvidence{}, errors.New("unexpected finalization")
+	return f.result, f.err
 }
 
-type rejectingAdmitter struct{ calls int }
+type recordingAdmitter struct {
+	calls  int
+	result profileradmission.Result
+	err    error
+}
 
-func (a *rejectingAdmitter) Admit(
+func (a *recordingAdmitter) Admit(
 	context.Context,
 	*edgev1alpha1.ProfilingRun,
 	profilercontroller.FrozenRun,
@@ -110,15 +118,15 @@ func (a *rejectingAdmitter) Admit(
 	evidencestore.ObjectIdentity,
 ) (profileradmission.Result, error) {
 	a.calls++
-	return profileradmission.Result{}, errors.New("unexpected admission")
+	return a.result, a.err
 }
 
 type reconcilerHarness struct {
 	reconciler *profilercontroller.RunReconciler
 	freezer    *staticIntentFreezer
 	jobs       *apiExecutionJobs
-	finalizer  *rejectingFinalizer
-	admitter   *rejectingAdmitter
+	finalizer  *recordingFinalizer
+	admitter   *recordingAdmitter
 }
 
 func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testing.T) {
@@ -158,6 +166,72 @@ func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testi
 		)
 	}
 	assertNoExecutionCalls(t, restarted)
+}
+
+func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+
+	finalizing := newReconcilerHarness(t, kube, prepared)
+	reconcile(t, ctx, finalizing.reconciler, request)
+	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
+	recordedJob := requireRecordedJob(t, afterCreate)
+	markJobSucceeded(t, ctx, kube, run.Namespace, recordedJob.Name)
+	finalizing.finalizer.err = nil
+	finalizing.finalizer.result = profilercontroller.FinalizedRunEvidence{
+		Reference: evidencestore.ObjectIdentity{
+			Store: "chill-evidence-store", Key: "runs/durable-job-identity/execution.json",
+			Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: 1024,
+		},
+		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "measurement-pod", UID: "pod-uid"},
+		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
+	}
+
+	reconcile(t, ctx, finalizing.reconciler, request)
+	afterFinalization := getRun(t, ctx, kube, request.NamespacedName)
+	assertFinalizedEvidence(t, afterFinalization, finalizing.finalizer.result)
+	if finalizing.finalizer.calls != 1 || finalizing.admitter.calls != 0 {
+		t.Fatalf(
+			"finalization transition calls: finalize=%d admit=%d",
+			finalizing.finalizer.calls,
+			finalizing.admitter.calls,
+		)
+	}
+
+	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted.admitter.err = nil
+	restarted.admitter.result = profileradmission.Result{
+		Verdict: profileradmission.VerdictAccepted, PolicyVersion: "sha256:policy",
+	}
+	reconcile(t, ctx, restarted.reconciler, request)
+	afterAdmission := getRun(t, ctx, kube, request.NamespacedName)
+	assertAcceptedAdmission(t, afterAdmission, restarted.admitter.result.PolicyVersion)
+	if restarted.finalizer.calls != 0 || restarted.admitter.calls != 1 {
+		t.Fatalf(
+			"restart transition calls: finalize=%d admit=%d",
+			restarted.finalizer.calls,
+			restarted.admitter.calls,
+		)
+	}
+
+	resourceVersion := afterAdmission.ResourceVersion
+	reconcile(t, ctx, restarted.reconciler, request)
+	afterDuplicate := getRun(t, ctx, kube, request.NamespacedName)
+	if afterDuplicate.ResourceVersion != resourceVersion {
+		t.Fatalf(
+			"completed duplicate event rewrote status: before=%s after=%s",
+			resourceVersion,
+			afterDuplicate.ResourceVersion,
+		)
+	}
+	if restarted.finalizer.calls != 0 || restarted.admitter.calls != 1 {
+		t.Fatalf(
+			"completed duplicate crossed boundaries: finalize=%d admit=%d",
+			restarted.finalizer.calls,
+			restarted.admitter.calls,
+		)
+	}
 }
 
 func startProfilerEnvtest(t *testing.T) (context.Context, client.Client) {
@@ -229,8 +303,8 @@ func newReconcilerHarness(
 	t.Helper()
 	freezer := &staticIntentFreezer{prepared: prepared}
 	jobs := &apiExecutionJobs{kube: kube}
-	finalizer := &rejectingFinalizer{}
-	admitter := &rejectingAdmitter{}
+	finalizer := &recordingFinalizer{err: errors.New("unexpected finalization")}
+	admitter := &recordingAdmitter{err: errors.New("unexpected admission")}
 	reconciler := newRunReconciler(t, kube, freezer, jobs, finalizer, admitter)
 	return &reconcilerHarness{
 		reconciler: reconciler, freezer: freezer, jobs: jobs,
@@ -330,8 +404,8 @@ func newRunReconciler(
 	kube client.Client,
 	freezer *staticIntentFreezer,
 	jobs *apiExecutionJobs,
-	finalizer *rejectingFinalizer,
-	admitter *rejectingAdmitter,
+	finalizer *recordingFinalizer,
+	admitter *recordingAdmitter,
 ) *profilercontroller.RunReconciler {
 	t.Helper()
 	reconciler, err := profilercontroller.NewRunReconciler(kube, freezer, jobs, finalizer, admitter)
@@ -339,6 +413,56 @@ func newRunReconciler(
 		t.Fatal(err)
 	}
 	return reconciler
+}
+
+func markJobSucceeded(
+	t *testing.T,
+	ctx context.Context,
+	kube client.Client,
+	namespace, name string,
+) {
+	t.Helper()
+	job := &batchv1.Job{}
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, job); err != nil {
+		t.Fatal(err)
+	}
+	job.Status.Succeeded = 1
+	job.Status.Conditions = []batchv1.JobCondition{{
+		Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+		Reason: "Completed", LastTransitionTime: metav1.Now(),
+	}}
+	if err := kube.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertFinalizedEvidence(
+	t *testing.T,
+	run *edgev1alpha1.ProfilingRun,
+	finalized profilercontroller.FinalizedRunEvidence,
+) {
+	t.Helper()
+	if run.Status.Evidence == nil || run.Status.Evidence.Digest != finalized.Reference.Digest ||
+		run.Status.ActualExecution == nil || run.Status.ActualExecution.Pod != finalized.Pod ||
+		run.Status.ActualExecution.Node != finalized.Node {
+		t.Fatalf("finalized evidence status is incomplete: %#v", run.Status)
+	}
+	evidence := findCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
+	if evidence == nil || evidence.Status != metav1.ConditionTrue || evidence.Reason != "EvidenceVerified" {
+		t.Fatalf("finalized evidence condition is incomplete: %#v", run.Status.Conditions)
+	}
+}
+
+func assertAcceptedAdmission(t *testing.T, run *edgev1alpha1.ProfilingRun, policyVersion string) {
+	t.Helper()
+	if run.Status.Admission == nil || run.Status.Admission.Verdict != "Accepted" ||
+		run.Status.Admission.PolicyVersion != policyVersion {
+		t.Fatalf("accepted admission status is incomplete: %#v", run.Status.Admission)
+	}
+	admitted := findCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
+	if admitted == nil || admitted.Status != metav1.ConditionTrue || admitted.Reason != "EvidenceAccepted" {
+		t.Fatalf("accepted admission condition is incomplete: %#v", run.Status.Conditions)
+	}
 }
 
 func loadRetainedIntent(t *testing.T) profilingrun.Intent {
