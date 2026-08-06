@@ -29,10 +29,13 @@ workload-safety observer are implemented. The opt-in command and Operator/Helm
 DaemonSet lifecycle and first Jetson NVPModel host adapter are also implemented.
 The Profiler now gates measurement-Job creation on independently verified and
 settled target state, requests restoration after a terminal Job, and withholds
-evidence finalization until restoration and its causal ordering are proven. The
-chart is disabled by default, and no live mutation or apply/read-back/restore
-proof has occurred. Later slices remain deferred until their stated entry
-condition is met or this plan is explicitly revised.
+evidence finalization until restoration and its causal ordering are proven.
+Finalized actuated execution evidence v1alpha2 retains the exact Run and
+handoff identities, previous/target/restored typed observations, and lifecycle
+timestamps; fixed Runs retain execution evidence v1alpha1. The chart is
+disabled by default, and no live mutation or apply/read-back/restore proof has
+occurred. Later slices remain deferred until their stated entry condition is
+met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -263,7 +266,8 @@ and render proof only, not live actuation support.
 - [x] Implement explicit bounded `Apply(ID)` and `Observe()` operations.
 - [x] Judge success in the controller by a separate parsed name/ID read-back,
   never command exit alone; live proof remains open.
-- [ ] Retain start/end mode observations in execution evidence.
+- [x] Retain exact Run/handoff identities and previous, target, and restored
+  mode observations in finalized execution evidence.
 - [ ] Configure settling time and thermal stability in installation policy.
 - [ ] Test mode drift, unsupported ID, lock conflict, and restore failure.
 

@@ -337,6 +337,9 @@ func (r *RunReconciler) publishFinalizedEvidence(
 	if err := finalized.Reference.Validate(); err != nil {
 		return fmt.Errorf("validate finalized evidence reference: %w", err)
 	}
+	if !profilerevidence.IsSupportedExecutionEvidenceSchemaVersion(finalized.SchemaVersion) {
+		return fmt.Errorf("unsupported finalized evidence schemaVersion %q", finalized.SchemaVersion)
+	}
 	if finalized.Pod.Name == "" || finalized.Pod.UID == "" || finalized.Node.Name == "" || finalized.Node.UID == "" {
 		return errors.New("finalized execution identities are incomplete")
 	}
@@ -348,7 +351,7 @@ func (r *RunReconciler) publishFinalizedEvidence(
 			Store:         finalized.Reference.Store,
 			Key:           finalized.Reference.Key,
 			Digest:        finalized.Reference.Digest,
-			SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+			SchemaVersion: finalized.SchemaVersion,
 			Size:          finalized.Reference.Size,
 		}
 		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{

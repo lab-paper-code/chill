@@ -10,6 +10,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,6 +102,90 @@ func TestNewRetainedLoaderRequiresDependencies(t *testing.T) {
 	}
 	if _, err := NewRetainedLoader(reader, nil); err == nil {
 		t.Fatal("nil store factory was accepted")
+	}
+}
+
+func TestValidateRunEvidenceBindingBindsExactActuationHandoff(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	run := &edgev1alpha1.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
+		Status: edgev1alpha1.ProfilingRunStatus{
+			IntentDigest: digest,
+			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
+			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
+				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
+			},
+			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
+				SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
+			},
+		},
+	}
+	execution := profilerevidence.ExecutionEvidence{
+		SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
+		IntentDigest:  digest,
+		Intent: profilingrun.Intent{
+			Actuation: &profilingrun.ActuationContract{},
+		},
+		Terminal: profilerevidence.TerminalFacts{
+			Job:  profilerevidence.JobTerminalFacts{Namespace: run.Namespace, Name: "job", UID: "job-uid"},
+			Pod:  profilerevidence.PodTerminalFacts{Namespace: run.Namespace, Name: "pod", UID: "pod-uid"},
+			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
+		},
+		Actuation: &profilerevidence.ActuationFacts{
+			Run: profilerevidence.NamespacedObjectFacts{
+				Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
+			},
+			Handoff: profilerevidence.NamespacedObjectFacts{
+				Namespace: run.Namespace, Name: "handoff", UID: "handoff-uid",
+			},
+		},
+	}
+
+	if err := validateRunEvidenceBinding(run, execution); err != nil {
+		t.Fatalf("validateRunEvidenceBinding() error = %v", err)
+	}
+
+	execution.Actuation.Handoff.UID = "replacement-uid"
+	if err := validateRunEvidenceBinding(run, execution); err == nil ||
+		!strings.Contains(err.Error(), "recorded Run handoff") {
+		t.Fatalf("validateRunEvidenceBinding() error = %v, want handoff mismatch", err)
+	}
+}
+
+func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	run := &edgev1alpha1.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
+		Status: edgev1alpha1.ProfilingRunStatus{
+			IntentDigest: digest,
+			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
+			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
+				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
+			},
+			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
+				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+			},
+		},
+	}
+	execution := profilerevidence.ExecutionEvidence{
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+		IntentDigest:  digest,
+		Terminal: profilerevidence.TerminalFacts{
+			Job:  profilerevidence.JobTerminalFacts{Namespace: run.Namespace, Name: "job", UID: "job-uid"},
+			Pod:  profilerevidence.PodTerminalFacts{Namespace: run.Namespace, Name: "pod", UID: "pod-uid"},
+			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
+		},
+	}
+
+	if err := validateRunEvidenceBinding(run, execution); err == nil ||
+		!strings.Contains(err.Error(), "unexpected actuation identity") {
+		t.Fatalf("validateRunEvidenceBinding() error = %v, want fixed Run rejection", err)
 	}
 }
 

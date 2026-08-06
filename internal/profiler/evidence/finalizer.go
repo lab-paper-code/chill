@@ -22,12 +22,14 @@ type FinalizeRequest struct {
 	RawReceipt           evidencestore.Receipt
 	FinalLocation        evidencestore.ObjectLocation
 	Terminal             TerminalFacts
+	Actuation            *ActuationFacts
 	FinalizedAt          time.Time
 }
 
 type FinalizeResult struct {
-	Reference evidencestore.ObjectIdentity
-	Reused    bool
+	Reference     evidencestore.ObjectIdentity
+	SchemaVersion string
+	Reused        bool
 }
 
 // Finalizer coordinates durable evidence handoff. It performs no measurement
@@ -84,13 +86,18 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		return FinalizeResult{}, errors.New("stored raw measurement is not canonical")
 	}
 
+	schemaVersion := ExecutionEvidenceSchemaVersion
+	if request.Intent.Actuation != nil {
+		schemaVersion = ActuatedExecutionEvidenceSchemaVersion
+	}
 	candidate := ExecutionEvidence{
-		SchemaVersion:        ExecutionEvidenceSchemaVersion,
+		SchemaVersion:        schemaVersion,
 		IntentDigest:         intentDigest,
 		Intent:               request.Intent,
 		CandidateReportBytes: append([]byte(nil), request.CandidateReportBytes...),
 		RawMeasurement:       request.RawReceipt.Object,
 		Terminal:             request.Terminal,
+		Actuation:            cloneActuationFacts(request.Actuation),
 		FinalizedAt:          request.FinalizedAt,
 	}
 	if err := raw.validateExecution(candidate, intentDigest); err != nil {
@@ -125,8 +132,8 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		return FinalizeResult{}, fmt.Errorf("verify finalized evidence after create: %w", err)
 	}
 	return FinalizeResult{
-		Reference: identity,
-		Reused:    receipt.Outcome == evidencestore.CreateOutcomeExistingExactMatch,
+		Reference: identity, SchemaVersion: candidate.SchemaVersion,
+		Reused: receipt.Outcome == evidencestore.CreateOutcomeExistingExactMatch,
 	}, nil
 }
 
@@ -158,5 +165,33 @@ func (f *Finalizer) reuseExisting(
 		existing.Terminal.Node.UID != request.Terminal.Node.UID {
 		return FinalizeResult{}, errors.New("existing execution evidence does not belong to this Run")
 	}
-	return FinalizeResult{Reference: identity, Reused: true}, nil
+	return FinalizeResult{Reference: identity, SchemaVersion: existing.SchemaVersion, Reused: true}, nil
+}
+
+func cloneActuationFacts(input *ActuationFacts) *ActuationFacts {
+	if input == nil {
+		return nil
+	}
+	copy := *input
+	copy.Previous.Actuator = cloneActuatorTarget(copy.Previous.Actuator)
+	copy.Target.Actuator = cloneActuatorTarget(copy.Target.Actuator)
+	copy.Restored.Actuator = cloneActuatorTarget(copy.Restored.Actuator)
+	return &copy
+}
+
+func cloneActuatorTarget(input profilingrun.ActuatorTarget) profilingrun.ActuatorTarget {
+	copy := input
+	if input.JetsonNVPModel != nil {
+		target := *input.JetsonNVPModel
+		copy.JetsonNVPModel = &target
+	}
+	if input.NvidiaLockedGPUClock != nil {
+		target := *input.NvidiaLockedGPUClock
+		if target.Mode != nil {
+			mode := *target.Mode
+			target.Mode = &mode
+		}
+		copy.NvidiaLockedGPUClock = &target
+	}
+	return copy
 }

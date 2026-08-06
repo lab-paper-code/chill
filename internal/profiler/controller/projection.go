@@ -174,7 +174,7 @@ func projectEvidence(reference *edgev1alpha1.ProfilingRunEvidenceReference, snap
 	if reference == nil {
 		return nil
 	}
-	if reference.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion {
+	if !profilerevidence.IsSupportedExecutionEvidenceSchemaVersion(reference.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", reference.SchemaVersion)
 	}
 	identity := evidencestore.ObjectIdentity{

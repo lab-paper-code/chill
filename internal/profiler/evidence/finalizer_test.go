@@ -96,6 +96,43 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 	}
 }
 
+func TestFinalizerAndLoaderPreserveActuatedEvidenceSchema(t *testing.T) {
+	t.Parallel()
+	_, raw, record := validActuatedExecutionEvidence(t)
+	rawBytes, err := raw.CanonicalJSON(record.Intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeObjectStore()
+	store.objects[record.RawMeasurement.Location()] = rawBytes
+	finalizer, err := NewFinalizer(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := finalizer.Finalize(context.Background(), requestFrom(record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != ActuatedExecutionEvidenceSchemaVersion {
+		t.Fatalf("finalized schemaVersion = %q", result.SchemaVersion)
+	}
+	loader, err := NewLoader(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := loader.Load(context.Background(), result.Reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, _, err := verified.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.Actuation == nil || !execution.Actuation.RestoredAt.Equal(record.Actuation.RestoredAt) {
+		t.Fatalf("loaded actuation facts = %#v", execution.Actuation)
+	}
+}
+
 func TestFinalizerFailsClosed(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
@@ -177,6 +214,7 @@ func requestFrom(record ExecutionEvidence) FinalizeRequest {
 			Key:   "runs/run-uid/execution.json",
 		},
 		Terminal:    record.Terminal,
+		Actuation:   record.Actuation,
 		FinalizedAt: record.FinalizedAt,
 	}
 }

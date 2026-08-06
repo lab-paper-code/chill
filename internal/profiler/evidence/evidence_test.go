@@ -64,6 +64,74 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
+func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T) {
+	t.Parallel()
+	intent, raw, execution := validActuatedExecutionEvidence(t)
+	payload, err := execution.CanonicalJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ExecutionEvidence
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != ActuatedExecutionEvidenceSchemaVersion || decoded.Actuation == nil ||
+		decoded.Actuation.Handoff.UID != execution.Actuation.Handoff.UID ||
+		decoded.Actuation.Target.PowerMode != intent.Actuation.PowerMode {
+		t.Fatalf("actuated evidence round trip = %#v", decoded.Actuation)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*ExecutionEvidence)
+	}{
+		{name: "retained schema", mutate: func(candidate *ExecutionEvidence) {
+			candidate.SchemaVersion = ExecutionEvidenceSchemaVersion
+		}},
+		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }},
+		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
+		}},
+		{name: "restore drift", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.Restored.Actuator.JetsonNVPModel.ID++
+		}},
+		{name: "early restore request", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.RestoreRequestedAt = candidate.Terminal.Job.CompletionTime.Add(-time.Second)
+		}},
+		{name: "container before ready", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.ReadyAt = candidate.Terminal.Containers[0].StartedAt.Add(time.Second)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := execution
+			candidate.Actuation = cloneActuationFactsForTest(execution.Actuation)
+			test.mutate(&candidate)
+			if err := candidate.Validate(raw); err == nil {
+				t.Fatalf("%s drift was accepted", test.name)
+			}
+		})
+	}
+}
+
+func TestFixedExecutionEvidenceRejectsActuatedSchemaOrFacts(t *testing.T) {
+	t.Parallel()
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	execution := validExecutionEvidence(t, intent, raw)
+	execution.SchemaVersion = ActuatedExecutionEvidenceSchemaVersion
+	if err := execution.Validate(raw); err == nil {
+		t.Fatal("fixed evidence accepted actuated schema")
+	}
+	execution.SchemaVersion = ExecutionEvidenceSchemaVersion
+	_, _, facts := validActuatedExecutionEvidence(t)
+	execution.Actuation = facts.Actuation
+	if err := execution.Validate(raw); err == nil {
+		t.Fatal("fixed evidence accepted actuation facts")
+	}
+}
+
 func TestRawMeasurementRetainsV1Alpha3CPUBytesContract(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
@@ -642,6 +710,107 @@ func validExecutionEvidenceBytes(
 		},
 		FinalizedAt: completed.Add(2 * time.Second),
 	}
+}
+
+func validActuatedExecutionEvidence(
+	t *testing.T,
+) (profilingrun.Intent, RawMeasurement, ExecutionEvidence) {
+	t.Helper()
+	intent := loadIntent(t)
+	intent.State.PowerMode = "MAXN"
+	intent.Actuation = &profilingrun.ActuationContract{
+		PowerMode: "MAXN",
+		Actuator: profilingrun.ActuatorTarget{
+			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 0},
+		},
+		PolicyDigest: "sha256:" + strings.Repeat("e", 64),
+	}
+	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := profilingrun.DecodeCandidateReport(candidateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
+	report.Selection.PowerMode = intent.Actuation.PowerMode
+	report.Selection.Actuator = &intent.Actuation.Actuator
+	report.DeviceClassFacts.PowerModes = []string{intent.Actuation.PowerMode}
+	candidateBytes, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateDigest := sha256.Sum256(candidateBytes)
+	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(candidateDigest[:])
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	raw := validRaw(t, intent)
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := validExecutionEvidenceBytes(t, intent, raw.PodUID, rawBytes)
+	execution.SchemaVersion = ActuatedExecutionEvidenceSchemaVersion
+	execution.CandidateReportBytes = candidateBytes
+	completed := execution.Terminal.Job.CompletionTime
+	execution.FinalizedAt = completed.Add(4 * time.Second)
+	target := func() profilingrun.ActuatorTarget {
+		return profilingrun.ActuatorTarget{
+			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 0},
+		}
+	}
+	execution.Actuation = &ActuationFacts{
+		Run: NamespacedObjectFacts{
+			Namespace: execution.Terminal.Job.Namespace, Name: "run", UID: "run-uid",
+		},
+		Handoff: NamespacedObjectFacts{
+			Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
+		},
+		Previous: ActuationObservation{
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(-2 * time.Minute),
+		},
+		Target: ActuationObservation{
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(-90 * time.Second),
+		},
+		Restored: ActuationObservation{
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(2 * time.Second),
+		},
+		ReadyAt:            completed.Add(-70 * time.Second),
+		RestoreRequestedAt: completed.Add(time.Second),
+		RestoredAt:         completed.Add(3 * time.Second),
+	}
+	return intent, raw, execution
+}
+
+func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
+	if input == nil {
+		return nil
+	}
+	copy := *input
+	cloneTarget := func(target profilingrun.ActuatorTarget) profilingrun.ActuatorTarget {
+		cloned := target
+		if target.JetsonNVPModel != nil {
+			value := *target.JetsonNVPModel
+			cloned.JetsonNVPModel = &value
+		}
+		if target.NvidiaLockedGPUClock != nil {
+			value := *target.NvidiaLockedGPUClock
+			if value.Mode != nil {
+				mode := *value.Mode
+				value.Mode = &mode
+			}
+			cloned.NvidiaLockedGPUClock = &value
+		}
+		return cloned
+	}
+	copy.Previous.Actuator = cloneTarget(copy.Previous.Actuator)
+	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
+	copy.Restored.Actuator = cloneTarget(copy.Restored.Actuator)
+	return &copy
 }
 
 func reverseContainers(input []ContainerTerminal) []ContainerTerminal {

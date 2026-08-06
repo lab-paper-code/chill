@@ -193,7 +193,8 @@ func passportFixture() (
 		},
 	}
 	execution := profilerevidence.ExecutionEvidence{
-		IntentDigest: digest,
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+		IntentDigest:  digest,
 		Terminal: profilerevidence.TerminalFacts{
 			Job:  profilerevidence.JobTerminalFacts{Namespace: "chill-system", Name: "job", UID: "job-uid"},
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: "chill-system", Name: "pod", UID: "pod-uid"},

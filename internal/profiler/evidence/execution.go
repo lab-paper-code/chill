@@ -60,7 +60,7 @@ func (e ExecutionEvidence) validateLinkedRaw(
 	workload *workloadobserver.Result,
 	intentDigest string,
 ) error {
-	if e.SchemaVersion != ExecutionEvidenceSchemaVersion {
+	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
 	if e.IntentDigest != intentDigest {
@@ -71,6 +71,9 @@ func (e ExecutionEvidence) validateLinkedRaw(
 	}
 	if err := e.Terminal.validate(e.Intent, rawPodUID); err != nil {
 		return err
+	}
+	if err := e.validateActuation(); err != nil {
+		return fmt.Errorf("validate execution actuation: %w", err)
 	}
 	if workload != nil && (workload.Run.Namespace != e.Terminal.Pod.Namespace ||
 		workload.Run.JobUID != e.Terminal.Job.UID || workload.Run.PodName != e.Terminal.Pod.Name ||
@@ -102,6 +105,16 @@ func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 	canonical.FinalizedAt = canonical.FinalizedAt.UTC()
 	canonical.Terminal.Job.CompletionTime = canonical.Terminal.Job.CompletionTime.UTC()
 	canonical.Terminal.NodeWorkload.ObservedAt = canonical.Terminal.NodeWorkload.ObservedAt.UTC()
+	if canonical.Actuation != nil {
+		actuation := *canonical.Actuation
+		actuation.Previous.ObservedAt = actuation.Previous.ObservedAt.UTC()
+		actuation.Target.ObservedAt = actuation.Target.ObservedAt.UTC()
+		actuation.Restored.ObservedAt = actuation.Restored.ObservedAt.UTC()
+		actuation.ReadyAt = actuation.ReadyAt.UTC()
+		actuation.RestoreRequestedAt = actuation.RestoreRequestedAt.UTC()
+		actuation.RestoredAt = actuation.RestoredAt.UTC()
+		canonical.Actuation = &actuation
+	}
 	canonical.Terminal.Containers = append([]ContainerTerminal(nil), e.Terminal.Containers...)
 	for i := range canonical.Terminal.Containers {
 		canonical.Terminal.Containers[i].StartedAt = canonical.Terminal.Containers[i].StartedAt.UTC()

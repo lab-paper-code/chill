@@ -7,7 +7,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha1"
+const (
+	ExecutionEvidenceSchemaVersion         = "chill.dacs.io/profiling-execution-evidence.v1alpha1"
+	ActuatedExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha2"
+)
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
 // than duplicates the immutable raw measurement object.
@@ -20,7 +23,39 @@ type ExecutionEvidence struct {
 	CandidateReportBytes []byte                       `json:"candidateReportBytes"`
 	RawMeasurement       evidencestore.ObjectIdentity `json:"rawMeasurement"`
 	Terminal             TerminalFacts                `json:"terminal"`
+	Actuation            *ActuationFacts              `json:"actuation,omitempty"`
 	FinalizedAt          time.Time                    `json:"finalizedAt"`
+}
+
+// ActuationFacts are Profiler-observed Kubernetes facts finalized only after
+// the NodeActuator independently proves restoration. Worker-owned raw evidence
+// deliberately cannot assert these external host-state transitions.
+type ActuationFacts struct {
+	Run                NamespacedObjectFacts `json:"run"`
+	Handoff            NamespacedObjectFacts `json:"handoff"`
+	Previous           ActuationObservation  `json:"previous"`
+	Target             ActuationObservation  `json:"target"`
+	Restored           ActuationObservation  `json:"restored"`
+	ReadyAt            time.Time             `json:"readyAt"`
+	RestoreRequestedAt time.Time             `json:"restoreRequestedAt"`
+	RestoredAt         time.Time             `json:"restoredAt"`
+}
+
+type NamespacedObjectFacts struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
+}
+
+type ActuationObservation struct {
+	PowerMode  string                      `json:"powerMode"`
+	Actuator   profilingrun.ActuatorTarget `json:"actuator"`
+	ObservedAt time.Time                   `json:"observedAt"`
+}
+
+func IsSupportedExecutionEvidenceSchemaVersion(version string) bool {
+	return version == ExecutionEvidenceSchemaVersion ||
+		version == ActuatedExecutionEvidenceSchemaVersion
 }
 
 type TerminalFacts struct {

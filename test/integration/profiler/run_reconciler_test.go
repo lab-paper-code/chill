@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -186,6 +187,7 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 	markJobSucceeded(t, ctx, kube, run.Namespace, recordedJob.Name)
 	finalizing.finalizer.err = nil
 	finalizing.finalizer.result = profilercontroller.FinalizedRunEvidence{
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/durable-job-identity/execution.json",
 			Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: 1024,

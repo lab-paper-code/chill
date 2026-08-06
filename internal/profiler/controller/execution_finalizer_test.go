@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
@@ -92,6 +93,67 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 	}
 	if credentials.AccessKeyID != "access" || credentials.SecretAccessKey != "secret" {
 		t.Fatalf("credentials = %#v", credentials)
+	}
+}
+
+func TestKubernetesExecutionFinalizerProjectsOnlyRestoredOwnedActuation(t *testing.T) {
+	t.Parallel()
+	run, frozen := testActuatedRunAndFrozen(t)
+	scheme := runtime.NewScheme()
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	handoff, err := buildActuationHandoff(run, frozen, scheme, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff.UID = "actuation-uid"
+	handoff.Generation = 2
+	handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
+	handoff.Spec.StageRequestedAt = metav1.NewTime(base.Add(time.Minute))
+	observation := func(at time.Time) *edgev1alpha1.NodeActuationObservation {
+		return &edgev1alpha1.NodeActuationObservation{
+			PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: metav1.NewTime(at),
+		}
+	}
+	readyAt := metav1.NewTime(base.Add(30 * time.Second))
+	restoredAt := metav1.NewTime(base.Add(70 * time.Second))
+	handoff.Status = edgev1alpha1.NodeActuationStatus{
+		ObservedGeneration:  handoff.Generation,
+		Phase:               edgev1alpha1.NodeActuationPhaseRestored,
+		PreviousObservation: observation(base),
+		TargetObservation:   observation(base.Add(20 * time.Second)),
+		RestoredObservation: observation(base.Add(65 * time.Second)),
+		ReadyAt:             &readyAt,
+		RestoredAt:          &restoredAt,
+	}
+	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{
+		Name: handoff.Name, UID: string(handoff.UID),
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, handoff).Build()
+	finalizer, err := NewKubernetesExecutionFinalizer(reader, unusedStoreFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := finalizer.observeActuation(context.Background(), run, frozen.Prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts == nil || facts.Run.UID != string(run.UID) || facts.Handoff.UID != string(handoff.UID) ||
+		facts.Target.PowerMode != handoff.Spec.PowerMode || !facts.RestoredAt.Equal(restoredAt.Time) {
+		t.Fatalf("actuation facts = %#v", facts)
+	}
+
+	drifted := handoff.DeepCopy()
+	drifted.Status.Phase = edgev1alpha1.NodeActuationPhaseReady
+	driftReader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, drifted).Build()
+	driftFinalizer, err := NewKubernetesExecutionFinalizer(driftReader, unusedStoreFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := driftFinalizer.observeActuation(context.Background(), run, frozen.Prepared); err == nil {
+		t.Fatal("non-restored handoff was accepted for finalization")
 	}
 }
 

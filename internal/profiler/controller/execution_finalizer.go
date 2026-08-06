@@ -25,9 +25,10 @@ const (
 )
 
 type FinalizedRunEvidence struct {
-	Reference evidencestore.ObjectIdentity
-	Pod       edgev1alpha1.ProfilingRunObjectReference
-	Node      edgev1alpha1.ProfilingRunObjectReference
+	Reference     evidencestore.ObjectIdentity
+	SchemaVersion string
+	Pod           edgev1alpha1.ProfilingRunObjectReference
+	Node          edgev1alpha1.ProfilingRunObjectReference
 }
 
 type RunEvidenceFinalizer interface {
@@ -99,6 +100,10 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
+	actuation, err := f.observeActuation(ctx, run, prepared)
+	if err != nil {
+		return FinalizedRunEvidence{}, err
+	}
 	result, err := coordinator.Finalize(ctx, evidencekube.FinalizeObservationRequest{
 		Observation:          observation,
 		Intent:               prepared.Intent,
@@ -108,13 +113,14 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 			Store: binding.Store,
 			Key:   finalizedEvidenceObjectKey(run.UID, prepared.IntentDigest),
 		},
+		Actuation:   actuation,
 		FinalizedAt: f.now().UTC(),
 	})
 	if err != nil {
 		return FinalizedRunEvidence{}, err
 	}
 	return FinalizedRunEvidence{
-		Reference: result.Reference,
+		Reference: result.Reference, SchemaVersion: result.SchemaVersion,
 		Pod: edgev1alpha1.ProfilingRunObjectReference{
 			Name: observation.Pod.Name, UID: string(observation.Pod.UID),
 		},

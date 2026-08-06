@@ -94,7 +94,7 @@ func evidenceIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) (ev
 	if err := identity.Validate(); err != nil {
 		return evidencestore.ObjectIdentity{}, err
 	}
-	if reference.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion {
+	if !profilerevidence.IsSupportedExecutionEvidenceSchemaVersion(reference.SchemaVersion) {
 		return evidencestore.ObjectIdentity{}, fmt.Errorf("unsupported evidence schemaVersion %q", reference.SchemaVersion)
 	}
 	return identity, nil
@@ -104,7 +104,8 @@ func validatePassportBinding(
 	run *edgev1alpha1.ProfilingRun,
 	execution profilerevidence.ExecutionEvidence,
 ) error {
-	if run.Status.IntentDigest == "" || execution.IntentDigest != run.Status.IntentDigest {
+	if run.Status.Evidence == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
+		run.Status.IntentDigest == "" || execution.IntentDigest != run.Status.IntentDigest {
 		return errors.New("evidence intent does not match the frozen Run intent")
 	}
 	if run.Status.Job == nil ||
@@ -120,6 +121,21 @@ func validatePassportBinding(
 		execution.Terminal.Node.Name != run.Status.ActualExecution.Node.Name ||
 		execution.Terminal.Node.UID != run.Status.ActualExecution.Node.UID {
 		return errors.New("evidence Pod or Node does not match the recorded Run execution")
+	}
+	if execution.Intent.Actuation == nil {
+		if run.Status.Actuation != nil || execution.Actuation != nil {
+			return errors.New("fixed evidence has unexpected actuation identity")
+		}
+		return nil
+	}
+	if run.Status.Actuation == nil || execution.Actuation == nil ||
+		execution.Actuation.Run.Namespace != run.Namespace ||
+		execution.Actuation.Run.Name != run.Name ||
+		execution.Actuation.Run.UID != string(run.UID) ||
+		execution.Actuation.Handoff.Namespace != run.Namespace ||
+		execution.Actuation.Handoff.Name != run.Status.Actuation.Name ||
+		execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
+		return errors.New("evidence actuation does not match the recorded Run handoff")
 	}
 	return nil
 }

@@ -328,6 +328,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	handoff.Spec.StageRequestedAt = metav1.NewTime(completedAt.Add(time.Second))
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalized := FinalizedRunEvidence{
+		SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
 			Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,
@@ -358,7 +359,8 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Evidence == nil || actual.Status.Evidence.Digest != finalized.Reference.Digest {
+	if actual.Status.Evidence == nil || actual.Status.Evidence.Digest != finalized.Reference.Digest ||
+		actual.Status.Evidence.SchemaVersion != profilerevidence.ActuatedExecutionEvidenceSchemaVersion {
 		t.Fatalf("finalized actuated status = %#v", actual.Status)
 	}
 }
@@ -436,6 +438,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
 	})
 	finalized := FinalizedRunEvidence{
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
 			Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,

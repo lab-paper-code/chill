@@ -35,6 +35,7 @@ type FinalizeObservationRequest struct {
 	CandidateReportBytes []byte
 	ReceiptContainerName string
 	FinalLocation        evidencestore.ObjectLocation
+	Actuation            *evidence.ActuationFacts
 	FinalizedAt          time.Time
 }
 
@@ -76,6 +77,7 @@ func (c *Coordinator) Finalize(
 		RawReceipt:           receipt,
 		FinalLocation:        request.FinalLocation,
 		Terminal:             terminal,
+		Actuation:            request.Actuation,
 		FinalizedAt:          request.FinalizedAt,
 	})
 	if err != nil {

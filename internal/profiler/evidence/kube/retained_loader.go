@@ -148,7 +148,8 @@ func validateRunEvidenceBinding(
 	run *edgev1alpha1.ProfilingRun,
 	execution profilerevidence.ExecutionEvidence,
 ) error {
-	if execution.IntentDigest != run.Status.IntentDigest ||
+	if run.Status.Evidence == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
+		execution.IntentDigest != run.Status.IntentDigest ||
 		execution.Terminal.Job.Namespace != run.Namespace ||
 		execution.Terminal.Job.Name != run.Status.Job.Name ||
 		execution.Terminal.Job.UID != run.Status.Job.UID {
@@ -161,6 +162,21 @@ func validateRunEvidenceBinding(
 		execution.Terminal.Node.Name != run.Status.ActualExecution.Node.Name ||
 		execution.Terminal.Node.UID != run.Status.ActualExecution.Node.UID {
 		return errors.New("retained evidence contradicts recorded execution identities")
+	}
+	if execution.Intent.Actuation == nil {
+		if run.Status.Actuation != nil || execution.Actuation != nil {
+			return errors.New("fixed retained evidence has unexpected actuation identity")
+		}
+		return nil
+	}
+	if run.Status.Actuation == nil || execution.Actuation == nil ||
+		execution.Actuation.Run.Namespace != run.Namespace ||
+		execution.Actuation.Run.Name != run.Name ||
+		execution.Actuation.Run.UID != string(run.UID) ||
+		execution.Actuation.Handoff.Namespace != run.Namespace ||
+		execution.Actuation.Handoff.Name != run.Status.Actuation.Name ||
+		execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
+		return errors.New("retained actuation evidence does not match the recorded Run handoff")
 	}
 	return nil
 }

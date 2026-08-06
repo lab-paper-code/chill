@@ -220,10 +220,13 @@ controller read-back. Helm declares the exact binary, library, configuration,
 state, and sysfs mounts without privileged mode or added capabilities. The
 Profiler now creates a non-fixed Run's measurement Job only after verified and
 settled target state, advances the handoff to restoration after a terminal Job,
-and withholds evidence finalization until ordered restoration is proven. The
-chart remains disabled by default, and no live apply/read-back/restore proof has
-been run. Catalog presence and historical standalone smoke are not production
-execution evidence.
+and withholds evidence finalization until ordered restoration is proven.
+Actuated finalization retains the exact Run/handoff identities, typed
+previous/target/restored observations, and lifecycle timestamps in execution
+evidence v1alpha2 while fixed Runs remain on v1alpha1. The chart remains
+disabled by default, and no live apply/read-back/restore proof has been run.
+Catalog presence and historical standalone smoke are not production execution
+evidence.
 
 ## Campaign records
 
