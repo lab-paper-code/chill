@@ -41,6 +41,7 @@ MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 
 class ContractError(Exception):
@@ -370,9 +371,29 @@ def encode_result(result: dict[str, Any], max_bytes: int) -> bytes:
     return payload
 
 
-def cpu_stat() -> dict[str, int]:
+def cgroup_cpu_files(root: Path = CGROUP_ROOT) -> tuple[Path, Path, Path | None, Path]:
+    v2_quota = root / "cpu.max"
+    if v2_quota.is_file():
+        return root / "cpu.stat", v2_quota, None, root / "cpuset.cpus.effective"
+
+    v1_cpu = root / "cpu,cpuacct"
+    v1_cpuset = root / "cpuset"
+    v1_quota = v1_cpu / "cpu.cfs_quota_us"
+    if v1_quota.is_file():
+        return (
+            v1_cpu / "cpu.stat",
+            v1_quota,
+            v1_cpu / "cpu.cfs_period_us",
+            v1_cpuset / "cpuset.cpus",
+        )
+
+    raise ContractError("supported cgroup CPU controller is unavailable")
+
+
+def cpu_stat(root: Path = CGROUP_ROOT) -> dict[str, int]:
+    stat_path, _, _, _ = cgroup_cpu_files(root)
     values: dict[str, int] = {}
-    for line in read_required_text(Path("/sys/fs/cgroup/cpu.stat"), "cgroup CPU stat").splitlines():
+    for line in read_required_text(stat_path, "cgroup CPU stat").splitlines():
         fields = line.split()
         if len(fields) != 2:
             raise ContractError("cgroup CPU stat is malformed")
@@ -383,9 +404,17 @@ def cpu_stat() -> dict[str, int]:
     return values
 
 
-def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
+def validate_cpu_contract(
+    intent: dict[str, Any], root: Path = CGROUP_ROOT
+) -> tuple[str, list[int], str]:
     cpu = intent["cpu"]
-    cpu_max = read_required_text(Path("/sys/fs/cgroup/cpu.max"), "cgroup CPU max")
+    _, quota_path, period_path, cpuset_path = cgroup_cpu_files(root)
+    quota_value = read_required_text(quota_path, "cgroup CPU quota")
+    if period_path is None:
+        cpu_max = quota_value
+    else:
+        period_value = read_required_text(period_path, "cgroup CPU period")
+        cpu_max = f"{quota_value} {period_value}"
     fields = cpu_max.split()
     if len(fields) != 2 or fields[0] == "max":
         raise ContractError("cgroup CPU quota is missing or unlimited")
@@ -400,7 +429,7 @@ def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
     affinity = sorted(os.sched_getaffinity(0))
     if len(affinity) < cpu["ortIntraOpThreads"]:
         raise ContractError("process CPU affinity is smaller than the ORT thread contract")
-    cpuset = read_required_text(Path("/sys/fs/cgroup/cpuset.cpus.effective"), "effective CPU set")
+    cpuset = read_required_text(cpuset_path, "effective CPU set")
     return cpu_max, affinity, cpuset
 
 

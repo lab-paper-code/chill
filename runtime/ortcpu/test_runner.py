@@ -331,6 +331,53 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
+    def test_cpu_contract_reads_cgroup_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cpu.max").write_text("400000 100000\n", encoding="utf-8")
+            (root / "cpu.stat").write_text("usage_usec 20\n", encoding="utf-8")
+            (root / "cpuset.cpus.effective").write_text("0-3\n", encoding="utf-8")
+            intent = {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}
+            with mock.patch.object(runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}):
+                cpu_max, affinity, cpuset = runner.validate_cpu_contract(intent, root)
+
+            self.assertEqual(cpu_max, "400000 100000")
+            self.assertEqual(affinity, [0, 1, 2, 3])
+            self.assertEqual(cpuset, "0-3")
+            self.assertEqual(runner.cpu_stat(root), {"usage_usec": 20})
+
+    def test_cpu_contract_normalizes_cgroup_v1(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cpu = root / "cpu,cpuacct"
+            cpuset = root / "cpuset"
+            cpu.mkdir()
+            cpuset.mkdir()
+            (cpu / "cpu.cfs_quota_us").write_text("1200000\n", encoding="utf-8")
+            (cpu / "cpu.cfs_period_us").write_text("100000\n", encoding="utf-8")
+            (cpu / "cpu.stat").write_text(
+                "nr_periods 7\nnr_throttled 2\nthrottled_time 30\n", encoding="utf-8"
+            )
+            (cpuset / "cpuset.cpus").write_text("0-11\n", encoding="utf-8")
+            intent = {"cpu": {"limit": "12", "ortIntraOpThreads": 12}}
+            with mock.patch.object(runner.os, "sched_getaffinity", return_value=set(range(12))):
+                cpu_max, affinity, cpuset_value = runner.validate_cpu_contract(intent, root)
+
+            self.assertEqual(cpu_max, "1200000 100000")
+            self.assertEqual(affinity, list(range(12)))
+            self.assertEqual(cpuset_value, "0-11")
+            self.assertEqual(
+                runner.cpu_stat(root),
+                {"nr_periods": 7, "nr_throttled": 2, "throttled_time": 30},
+            )
+
+    def test_cpu_contract_rejects_unknown_cgroup_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(runner.ContractError, "supported cgroup CPU controller"):
+                runner.validate_cpu_contract(
+                    {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}, Path(directory)
+                )
+
     def test_publish_immutable_refuses_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = Path(directory) / "result.json"
