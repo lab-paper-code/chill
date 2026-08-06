@@ -198,6 +198,42 @@ func TestExecuteLeaseActionSchedulesNextRenewal(t *testing.T) {
 	}
 }
 
+func TestExecuteLeaseActionReacquiresWithoutDiscardingDurableProgress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	handoff := testNodeActuation()
+	previous := &edgev1alpha1.NodeActuationObservation{
+		PowerMode: "MAXN", Actuator: edgev1alpha1.PowerModeActuator{
+			Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+			JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0},
+		},
+	}
+	handoff.Status.Phase = edgev1alpha1.NodeActuationPhaseSettling
+	handoff.Status.PreviousObservation = previous.DeepCopy()
+	scheme := handoffReconcilerScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+		WithObjects(handoff).
+		Build()
+	lease := &recordingLeaseController{}
+	reconciler := newTestHandoffReconciler(
+		t, kubeClient, lease, &staticSafetyChecker{allowed: true},
+		&memoryHostActuator{}, nil,
+	)
+
+	if _, err := reconciler.executeLeaseAction(
+		ctx, handoff, nodeactuator.Snapshot{},
+		nodeactuator.Decision{Action: nodeactuator.ActionAcquireLease},
+	); err != nil {
+		t.Fatal(err)
+	}
+	current := getNodeActuation(t, ctx, kubeClient, client.ObjectKeyFromObject(handoff))
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseSettling ||
+		!reflect.DeepEqual(current.Status.PreviousObservation, previous) {
+		t.Fatalf("reacquired status discarded progress: %#v", current.Status)
+	}
+}
+
 func TestHandoffReconcilerRetainsLeaseAndFinalizerOnRestoreReadBackMismatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

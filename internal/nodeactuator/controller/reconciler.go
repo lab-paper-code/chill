@@ -276,7 +276,7 @@ func (r *HandoffReconciler) executeLeaseAction(
 	}
 	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Lease = &edgev1alpha1.ProfilingRunObjectReference{Name: binding.Name, UID: binding.UID}
-		if decision.Action == nodeactuator.ActionAcquireLease {
+		if decision.Action == nodeactuator.ActionAcquireLease && status.PreviousObservation == nil {
 			status.Phase = edgev1alpha1.NodeActuationPhaseAcquiringLease
 			status.Reason, status.Message = "LeaseHeld", "exact Node UID Lease is held by this handoff"
 		}
