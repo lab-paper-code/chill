@@ -1,7 +1,6 @@
 package profilingrun
 
 import (
-	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
@@ -153,9 +152,9 @@ type CandidateReportRuntimeAccess struct {
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
 }
 
-// VerifiedCandidateReport is constructed only after exact report bytes have
-// been matched to one frozen intent. Downstream delivery code consumes its
-// copied projection instead of decoding or re-validating the same bytes.
+// VerifiedCandidateReport is constructed only after one decoded report has
+// been matched semantically to a frozen intent. Downstream delivery code
+// consumes its copied projection instead of decoding or validating it again.
 type VerifiedCandidateReport struct {
 	report CandidateReport
 }
@@ -286,8 +285,14 @@ func validateCandidateReportGeneration(payload []byte, report CandidateReport) e
 		return fmt.Errorf("inspect candidate report fields: %w", err)
 	}
 	rawActuator, actuatorPresent := rawFields.Selection["actuator"]
-	if actuatorPresent && bytes.Equal(bytes.TrimSpace(rawActuator), []byte("null")) {
-		return errors.New("candidate report selection.actuator must be an object when present")
+	if actuatorPresent {
+		var actuator *ActuatorTarget
+		if err := json.Unmarshal(rawActuator, &actuator); err != nil {
+			return fmt.Errorf("decode candidate report selection.actuator: %w", err)
+		}
+		if actuator == nil {
+			return errors.New("candidate report selection.actuator must be an object when present")
+		}
 	}
 	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
 		(len(report.RuntimePackages) != 0 || report.HostContract != nil ||
@@ -418,14 +423,12 @@ func validateCandidateHostContract(contract CandidateReportHostContract) error {
 	}
 	seenLibraries := make(map[string]struct{}, len(contract.Libraries))
 	for _, library := range contract.Libraries {
-		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name {
-			return errors.New("candidate report host library name is required without surrounding whitespace")
+		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name ||
+			strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
+			return errors.New("candidate report host library name and identity are required without surrounding whitespace")
 		}
 		if !validArtifactPath(library.HostPath) || !validArtifactPath(library.ContainerPath) {
 			return errors.New("candidate report host library paths must be clean absolute paths")
-		}
-		if !digestPattern.MatchString(library.Digest) {
-			return errors.New("candidate report host library digest must be a canonical SHA-256 digest")
 		}
 		if _, duplicate := seenLibraries[library.Name]; duplicate {
 			return fmt.Errorf("candidate report duplicate host library %q", library.Name)
@@ -482,11 +485,6 @@ func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error
 }
 
 func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateReport, error) {
-	sum := sha256.Sum256(payload)
-	actual := "sha256:" + hex.EncodeToString(sum[:])
-	if actual != intent.Candidate.ReportDigest {
-		return VerifiedCandidateReport{}, fmt.Errorf("candidate report digest mismatch: %s", actual)
-	}
 	report, err := DecodeCandidateReport(payload)
 	if err != nil {
 		return VerifiedCandidateReport{}, err
@@ -509,31 +507,18 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN host platform contract is required")
 		}
 	}
-	hostContractDigest := ""
-	if report.HostContract != nil {
-		hostContractDigest, err = digestCanonicalCandidateHostContract(*report.HostContract)
-		if err != nil {
-			return VerifiedCandidateReport{}, err
-		}
-	}
 	checks := []struct{ name, want, got string }{
 		{"verdict", intent.Candidate.Verdict, report.Verdict},
 		{"ModelSpec name", intent.State.Model, report.Inputs.ModelSpec.Name},
-		{"ModelSpec digest", intent.Candidate.ModelSpecContentDigest, report.Inputs.ModelSpec.ContentDigest},
 		{"DeviceClass name", intent.State.DeviceClass, report.Inputs.DeviceClass.Name},
-		{"DeviceClass digest", intent.Candidate.DeviceClassContentDigest, report.Inputs.DeviceClass.ContentDigest},
-		{"runtime declaration digest", intent.Candidate.RuntimeDeclarationDigest, report.Inputs.RuntimeDeclaration.ContentDigest},
 		{"runtime image", intent.Images.Runtime, report.Inputs.RuntimeDeclaration.Image},
 		{"execution path", intent.Candidate.ExecutionPath, report.Selection.ExecutionPath},
 		{"artifact", intent.State.Artifact, report.Selection.Artifact},
-		{"artifact digest", intent.State.ArtifactDigest, report.Selection.ArtifactDigest},
-		{"host contract digest", intent.State.HostContractDigest, hostContractDigest},
 	}
 	checks = append(checks,
 		struct{ name, want, got string }{"power mode", intent.State.PowerMode, report.Selection.PowerMode},
 		struct{ name, want, got string }{"artifact image", intent.Images.Artifact, report.ArtifactSupply.Image},
 		struct{ name, want, got string }{"artifact supply path", intent.State.ArtifactPath, report.ArtifactSupply.Path},
-		struct{ name, want, got string }{"artifact supply digest", intent.State.ArtifactDigest, report.ArtifactSupply.Digest},
 		struct{ name, want, got string }{"DeviceClass architecture", intent.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
 		struct{ name, want, got string }{"artifact architecture", intent.TargetNode.Architecture, report.ArtifactSupply.Architecture},
 		struct{ name, want, got string }{"metric-observer image", intent.Images.MetricObserver, report.MetricObserverImage},

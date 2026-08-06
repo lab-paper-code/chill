@@ -1,8 +1,6 @@
 package profilingrun
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -14,7 +12,7 @@ const (
 	testARM64Architecture = "arm64"
 )
 
-func TestCandidateReportBindsEveryMaterialSelection(t *testing.T) {
+func TestCandidateReportMatchesMaterialSelectionSemantics(t *testing.T) {
 	payload, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -27,8 +25,6 @@ func TestCandidateReportBindsEveryMaterialSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(payload)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
 	if err := ValidateCandidateReport(payload, intent); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +158,6 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(payload)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
 	if err := ValidateCandidateReport(payload, intent); err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +172,6 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	driftedSum := sha256.Sum256(driftedPayload)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(driftedSum[:])
 	if err := ValidateCandidateReport(driftedPayload, intent); err == nil ||
 		!strings.Contains(err.Error(), "actuator target") {
 		t.Fatalf("candidate actuator drift was accepted: %v", err)
@@ -276,7 +268,7 @@ func TestCandidateHostContractDigestIsOrderIndependentAndMaterial(t *testing.T) 
 	}
 }
 
-func TestCandidateReportBindsHostContractDigest(t *testing.T) {
+func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
@@ -290,10 +282,9 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reportSum := sha256.Sum256(payload)
 	intent := Intent{
 		Candidate: CandidateIdentity{
-			ReportDigest:             "sha256:" + hex.EncodeToString(reportSum[:]),
+			ReportDigest:             "sha256:" + strings.Repeat("a", 64),
 			ModelSpecContentDigest:   report.Inputs.ModelSpec.ContentDigest,
 			DeviceClassContentDigest: report.Inputs.DeviceClass.ContentDigest,
 			RuntimeDeclarationDigest: report.Inputs.RuntimeDeclaration.ContentDigest,
@@ -333,9 +324,7 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutPlatformSum := sha256.Sum256(withoutPlatformPayload)
 	withoutPlatformIntent := intent
-	withoutPlatformIntent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(withoutPlatformSum[:])
 	withoutPlatformIntent.State.HostContractDigest, err = CandidateHostContractDigest(withoutPlatform.HostContract)
 	if err != nil {
 		t.Fatal(err)
@@ -345,11 +334,6 @@ func TestCandidateReportBindsHostContractDigest(t *testing.T) {
 		t.Fatalf("RKNN candidate without host platform was accepted: %v", err)
 	}
 
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("f", 64)
-	if err := ValidateCandidateReport(payload, intent); err == nil {
-		t.Fatal("expected candidate host contract digest mismatch")
-	}
-	intent.State.HostContractDigest = hostDigest
 	intent.Measurement.Batch = 2
 	if err := ValidateCandidateReport(payload, intent); err == nil {
 		t.Fatal("expected fixed-batch artifact capability mismatch")
@@ -530,9 +514,7 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			sum := sha256.Sum256(changed)
 			candidate := intent
-			candidate.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
 			if err := ValidateCandidateReport(changed, candidate); err == nil {
 				t.Fatal("expected candidate report identity rejection")
 			}

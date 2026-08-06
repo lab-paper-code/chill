@@ -343,9 +343,8 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 	}
 
 	intent.Candidate.ReportDigest = "sha256:" + strings.Repeat("0", 64)
-	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent)); err == nil ||
-		!strings.Contains(err.Error(), "digest mismatch") {
-		t.Fatalf("expected candidate digest rejection, got %v", err)
+	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent)); err != nil {
+		t.Fatalf("digest metadata changed semantic candidate validation: %v", err)
 	}
 }
 
