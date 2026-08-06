@@ -171,6 +171,33 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	}
 }
 
+func TestExecuteLeaseActionSchedulesNextRenewal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	handoff := testNodeActuation()
+	scheme := handoffReconcilerScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+		WithObjects(handoff).
+		Build()
+	lease := &recordingLeaseController{}
+	reconciler := newTestHandoffReconciler(
+		t, kubeClient, lease, &staticSafetyChecker{allowed: true},
+		&memoryHostActuator{}, nil,
+	)
+
+	result, err := reconciler.executeLeaseAction(
+		ctx, handoff, nodeactuator.Snapshot{},
+		nodeactuator.Decision{Action: nodeactuator.ActionRenewLease},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequeueAfter != 10*time.Second || lease.acquireCalls != 1 {
+		t.Fatalf("renew result = %#v, calls = %d", result, lease.acquireCalls)
+	}
+}
+
 func TestHandoffReconcilerRetainsLeaseAndFinalizerOnRestoreReadBackMismatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

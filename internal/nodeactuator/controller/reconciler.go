@@ -281,7 +281,10 @@ func (r *HandoffReconciler) executeLeaseAction(
 			status.Reason, status.Message = "LeaseHeld", "exact Node UID Lease is held by this handoff"
 		}
 	})
-	return ctrl.Result{}, err
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: binding.RetryAfter}, nil
 }
 
 func (r *HandoffReconciler) executeSafetyAction(
