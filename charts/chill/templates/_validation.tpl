@@ -84,9 +84,6 @@
 {{- if empty .Values.nodeActuator.nodeSelector -}}
 {{- fail "nodeActuator.nodeSelector must explicitly select eligible Nodes" -}}
 {{- end -}}
-{{- if empty .Values.powerActuation.policies -}}
-{{- fail "powerActuation.policies must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.nodeActuator.jetsonNVPModel.command -}}
 {{- fail "nodeActuator.jetsonNVPModel.command must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}
@@ -131,44 +128,8 @@
 {{- if has .Values.profiler.factSource.actuationPoliciesKey (list .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.admissionPoliciesKey .Values.profiler.factSource.executionPoliciesKey) -}}
 {{- fail "profiler.factSource keys must be different" -}}
 {{- end -}}
-{{- if not (kindIs "slice" .Values.profiling.admissionPolicies) -}}
-{{- fail "profiling.admissionPolicies must be a list" -}}
-{{- end -}}
-{{- if empty .Values.profiling.admissionPolicies -}}
-{{- fail "profiling.admissionPolicies must not be empty" -}}
-{{- end -}}
-{{- if not (kindIs "slice" .Values.profiling.executionPolicies) -}}
-{{- fail "profiling.executionPolicies must be a list" -}}
-{{- end -}}
-{{- if empty .Values.profiling.executionPolicies -}}
-{{- fail "profiling.executionPolicies must not be empty" -}}
-{{- end -}}
-{{- if not (kindIs "slice" .Values.powerActuation.policies) -}}
-{{- fail "powerActuation.policies must be a list" -}}
-{{- end -}}
-{{- if empty .Values.powerActuation.policies -}}
-{{- fail "powerActuation.policies must not be empty" -}}
-{{- end -}}
-{{- if not (kindIs "slice" .Values.profiling.executionDeclarations) -}}
-{{- fail "profiling.executionDeclarations must be a list" -}}
-{{- end -}}
-{{- if and .Values.profiling.executionDeclarations (empty .Values.profiling.metricObserverImage) -}}
-{{- fail "profiling.metricObserverImage is required when execution declarations are configured" -}}
-{{- end -}}
-{{- if and .Values.profiling.metricObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiling.metricObserverImage)) -}}
-{{- fail "profiling.metricObserverImage must be digest-pinned" -}}
-{{- end -}}
-{{- if and .Values.profiling.executionDeclarations (empty .Values.profiling.workloadObserverImage) -}}
-{{- fail "profiling.workloadObserverImage is required when execution declarations are configured" -}}
-{{- end -}}
-{{- if and .Values.profiling.workloadObserverImage (not (regexMatch "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" .Values.profiling.workloadObserverImage)) -}}
-{{- fail "profiling.workloadObserverImage must be digest-pinned" -}}
-{{- end -}}
 {{- if and (not .Values.profiler.workloadObserver.serviceAccount.create) (empty .Values.profiler.workloadObserver.serviceAccount.name) -}}
 {{- fail "profiler.workloadObserver.serviceAccount.name is required when create=false" -}}
-{{- end -}}
-{{- if not (kindIs "slice" .Values.profiling.metricSources) -}}
-{{- fail "profiling.metricSources must be a list" -}}
 {{- end -}}
 {{- if empty .Values.profiler.image.repository -}}
 {{- fail "profiler.image.repository must not be empty when profiler.enabled=true" -}}
