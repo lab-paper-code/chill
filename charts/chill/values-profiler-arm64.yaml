@@ -9,15 +9,15 @@ evidenceStore:
 profiler:
   enabled: true
   factSource:
-    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe"
-    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7"
+    metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:8fce6ecd849c3a85f145cd59c65666addbed75acde022a2bc97d8df09c9881a8"
+    workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:b7d74f51159b6c41fb09d957890ac6dd13504364691313ae9466c66448bb1d94"
     executionDeclarations:
       - modelSpec: mobilenet-v2-050
         deviceClass: raspberry-pi-5-8g
         executionPath: ort-cpu
         runtime:
-          contentDigest: sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:8e0a07e6180ba79defe59b86bba82060e45407a203a35d9b11d18b366c352827
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -28,8 +28,8 @@ profiler:
         deviceClass: orangepi-5-plus-16g
         executionPath: ort-cpu
         runtime:
-          contentDigest: sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:8e0a07e6180ba79defe59b86bba82060e45407a203a35d9b11d18b366c352827
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -40,8 +40,8 @@ profiler:
         deviceClass: jetson-agx-orin-64g
         executionPath: ort-cpu
         runtime:
-          contentDigest: sha256:2094a677bafeafaaaf07ce5eef1734ae03a7b8c10725f1f78ce629cb93a27ee3
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:8e0a07e6180ba79defe59b86bba82060e45407a203a35d9b11d18b366c352827
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
