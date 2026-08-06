@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "chill.dacs.io/discovery-derivation-policy.v1alpha2",
+  "name": "agx-ortcpu-mode50w-bsat-v1",
+  "curveFamilyContractDigest": "chill.dacs.io/curve-family-contract.v1alpha1@sha256:891268f5a816897090178f7401bf49ea06110bbc4100d158d9ba1ffd43ee0002",
+  "pointConfidenceLevel": 0.95,
+  "pointPolicies": [
+    {
+      "name": "agx-ortcpu-mode50w-idle-min3-v1",
+      "stage": "idle-baseline",
+      "minimumTrials": 3
+    },
+    {
+      "name": "agx-ortcpu-mode50w-point-min3-v1",
+      "stage": "incremental-point",
+      "minimumTrials": 3
+    }
+  ],
+  "batchSaturation": {
+    "name": "agx-ortcpu-mode50w-bsat-v1",
+    "kmax": 2,
+    "relativeImprovementTolerance": 0.05,
+    "discoveryTrials": 3,
+    "maximumConfirmatoryTrials": 6,
+    "maximumActiveRunBudget": 18,
+    "familyWiseAlpha": 0.05
+  }
+}

@@ -78,10 +78,18 @@ func validateCurveMemberIntents(
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
-	if err := validateCurveMemberIntent(active, activeNodeUID, shared, member, shared.ActiveProtocol); err != nil {
+	if err := validateCurveMemberIntent(
+		active, activeNodeUID, shared, member, shared.ActiveProtocol, member.Batch,
+	); err != nil {
 		return fmt.Errorf("active curve-family member: %w", err)
 	}
-	if err := validateCurveMemberIntent(idle, idleNodeUID, shared, member, shared.IdleProtocol); err != nil {
+	idleBatch := member.Batch
+	if member.FixedBatchCapability == 0 {
+		idleBatch = 1
+	}
+	if err := validateCurveMemberIntent(
+		idle, idleNodeUID, shared, member, shared.IdleProtocol, idleBatch,
+	); err != nil {
 		return fmt.Errorf("idle curve-family member: %w", err)
 	}
 	return nil
@@ -93,6 +101,7 @@ func validateCurveMemberIntent(
 	shared profilederivation.CurveFamilySharedContract,
 	member profilederivation.CurveFamilyMemberContract,
 	protocol profilederivation.CurveProtocolContract,
+	expectedBatch int,
 ) error {
 	if intent.Candidate.ModelSpecContentDigest != shared.ModelSpecContentDigest ||
 		intent.Candidate.DeviceClassContentDigest != shared.DeviceClassContentDigest ||
@@ -104,7 +113,7 @@ func validateCurveMemberIntent(
 		intent.State.Backend != shared.Backend || intent.State.PowerMode != shared.PowerMode ||
 		intent.State.HostContractDigest != shared.HostContractDigest || intent.Images.Runtime != shared.RuntimeImage ||
 		intent.Images.Artifact != member.ArtifactImage || intent.TargetNode.UID != shared.NodeUID ||
-		actualNodeUID != shared.NodeUID || intent.Measurement.Batch != member.Batch {
+		actualNodeUID != shared.NodeUID || intent.Measurement.Batch != expectedBatch {
 		return errors.New("frozen intent contradicts curve-family state or member facts")
 	}
 	if projectCurveCPU(intent.CPU) != shared.CPU || projectCurveMetricSource(intent.Metrics) != shared.MetricSource {

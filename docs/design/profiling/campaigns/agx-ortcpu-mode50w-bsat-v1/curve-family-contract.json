@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "chill.dacs.io/curve-family-contract.v1alpha1",
+  "shared": {
+    "logicalModel": "mobilenet-v2-050",
+    "sourceArtifactDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
+    "modelSpecContentDigest": "sha256:7b9d267a0008d0d510d35fc0f52364edda28188137f6804a6874445c191a8880",
+    "deviceClassContentDigest": "sha256:011e93ae31b1cd4f1e261fc8aa6ccd37d8afdc46a53114c0c1958773d54eeb9a",
+    "runtimeDeclarationDigest": "sha256:c67f851d26bef8fb4159ac8c2d15d4109ae4718ae03844ff765c6337e2b203d1",
+    "deviceClass": "jetson-agx-orin-64g",
+    "nodeUID": "52b04c16-4f4a-4b4c-938c-eac35e679f09",
+    "runtimeFamily": "onnxruntime",
+    "backend": "CPUExecutionProvider",
+    "runtimeImage": "155.230.35.213:5000/chill/chill-measurement-worker@sha256:be8fabcde2f0074ad1f1da1a734d3a4d62dbd1308ebe3726a1be17ec2742fa3f",
+    "powerMode": "MODE_50W",
+    "cpu": {
+      "policy": "AllocatableCPUQuota",
+      "policyVersion": "v1",
+      "request": "100m",
+      "limit": "12",
+      "ortIntraOpThreads": 12,
+      "ortInterOpThreads": 1,
+      "exclusivityClaimed": false
+    },
+    "metricSource": {
+      "sourceKind": "edge-metrics",
+      "nodeName": "jetsono",
+      "endpoint": "http://155.230.34.203:9102/metrics",
+      "powerMetric": "shelly_power_total_watts",
+      "configurationContentDigest": "sha256:09146a8cc43038bef92c37a231e654ab358e5c5098b7b4e5e2fb04b017756acc"
+    },
+    "activeProtocol": {
+      "workloadMode": "saturated-serial-fixed-batch",
+      "inputGenerator": "numpy-default-rng-seed-0-fp32-v1",
+      "outputValidation": "nonempty-shape-batch-v1",
+      "warmupIterations": 20,
+      "settlingDurationSeconds": 0,
+      "durationSeconds": 75,
+      "repetitions": 1,
+      "metricIntervalMilliseconds": 2500,
+      "metricTimeoutMilliseconds": 2400,
+      "metricDurationSeconds": 78,
+      "metricObserverImage": "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:397b1abb7061a48973d707796e4bff61dfa2449bdc593110a9d6a3f07c24be14",
+      "workloadObserverImage": "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:7f2617ebfbba16c4619f738f5b5a86803d0f24578bf2f32af48b43025d859a4e",
+      "workloadContractDigest": "sha256:ecc5d2be7207c2e59d04424339f7c5baf535843db7aa1d222f62a665721ee0da"
+    },
+    "idleProtocol": {
+      "workloadMode": "idle-model-loaded",
+      "inputGenerator": "none",
+      "outputValidation": "none",
+      "warmupIterations": 0,
+      "settlingDurationSeconds": 60,
+      "durationSeconds": 30,
+      "repetitions": 1,
+      "metricIntervalMilliseconds": 1000,
+      "metricTimeoutMilliseconds": 900,
+      "metricDurationSeconds": 31,
+      "metricObserverImage": "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:397b1abb7061a48973d707796e4bff61dfa2449bdc593110a9d6a3f07c24be14",
+      "workloadObserverImage": "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:7f2617ebfbba16c4619f738f5b5a86803d0f24578bf2f32af48b43025d859a4e",
+      "workloadContractDigest": "sha256:ecc5d2be7207c2e59d04424339f7c5baf535843db7aa1d222f62a665721ee0da"
+    },
+    "conversion": {
+      "derived": false
+    },
+    "tensor": {
+      "layout": "NCHW",
+      "dataType": "float32",
+      "nonBatchShape": [
+        3,
+        224,
+        224
+      ]
+    }
+  },
+  "members": [
+    {
+      "batch": 1,
+      "executionPath": "ort-cpu",
+      "artifactName": "canonical-onnx",
+      "artifactDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
+      "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+      "artifactImage": "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721",
+      "fixedBatchCapability": 0,
+      "inputShape": [
+        1,
+        3,
+        224,
+        224
+      ]
+    },
+    {
+      "batch": 2,
+      "executionPath": "ort-cpu",
+      "artifactName": "canonical-onnx",
+      "artifactDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
+      "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+      "artifactImage": "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721",
+      "fixedBatchCapability": 0,
+      "inputShape": [
+        2,
+        3,
+        224,
+        224
+      ]
+    }
+  ]
+}

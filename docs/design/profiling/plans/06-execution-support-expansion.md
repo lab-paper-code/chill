@@ -75,7 +75,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| completed | AGX Orin CPU ORT / MODE_50W | L3 | Six current-image Runs are admitted under stable state, environment, and per-mode protocol identities. |
+| active | AGX Orin CPU ORT / MODE_50W | L3 | Execute the pre-frozen Plan 5 `1..2` campaign without treating batch 3 as a capability boundary. |
 | completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions

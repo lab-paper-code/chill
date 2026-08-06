@@ -70,6 +70,61 @@ func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
 	}
 }
 
+func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
+	active := curveMemberIntent()
+	active.Candidate.ExecutionPath = "ort-cpu"
+	active.State.Artifact = "canonical-onnx"
+	active.State.ArtifactPath = "/artifact/model.onnx"
+	active.State.RuntimeFamily = "onnxruntime"
+	active.State.Backend = "CPUExecutionProvider"
+	active.State.HostContractDigest = ""
+	active.Measurement.Batch = 2
+	idle := active
+	idle.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	activeProtocol, err := projectCurveProtocol(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idleProtocol, err := projectCurveProtocol(idle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := profilederivation.CurveFamilySharedContract{
+		LogicalModel: active.State.Model, ModelSpecContentDigest: active.Candidate.ModelSpecContentDigest,
+		DeviceClassContentDigest: active.Candidate.DeviceClassContentDigest,
+		RuntimeDeclarationDigest: active.Candidate.RuntimeDeclarationDigest,
+		DeviceClass:              active.State.DeviceClass, NodeUID: active.TargetNode.UID,
+		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
+		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
+		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
+		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
+	}
+	member := profilederivation.CurveFamilyMemberContract{
+		Batch: 2, ExecutionPath: active.Candidate.ExecutionPath,
+		ArtifactName: active.State.Artifact, ArtifactDigest: active.State.ArtifactDigest,
+		ArtifactPath: active.State.ArtifactPath, ArtifactImage: active.Images.Artifact,
+		FixedBatchCapability: 0,
+	}
+	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err != nil {
+		t.Fatal(err)
+	}
+
+	idle.Measurement.Batch = 2
+	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err == nil {
+		t.Fatal("dynamic member accepted a non-canonical idle batch")
+	}
+	member.FixedBatchCapability = 2
+	shared.Conversion.Derived = true
+	idle.Measurement.Batch = 1
+	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err == nil {
+		t.Fatal("fixed-batch member accepted a different idle batch")
+	}
+}
+
 func curveMemberIntent() profilingrun.Intent {
 	intent := admissionIntentWithWorkloadContract()
 	intent.Candidate = profilingrun.CandidateIdentity{
