@@ -284,7 +284,7 @@ func (r *HandoffReconciler) executeLeaseAction(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: binding.RetryAfter}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *HandoffReconciler) executeSafetyAction(

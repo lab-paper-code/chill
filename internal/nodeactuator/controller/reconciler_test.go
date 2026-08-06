@@ -171,7 +171,7 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	}
 }
 
-func TestExecuteLeaseActionSchedulesNextRenewal(t *testing.T) {
+func TestExecuteLeaseActionSchedulesLifecycleProgressAfterRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	handoff := testNodeActuation()
@@ -193,7 +193,7 @@ func TestExecuteLeaseActionSchedulesNextRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RequeueAfter != 10*time.Second || lease.acquireCalls != 1 {
+	if !result.Requeue || result.RequeueAfter != 0 || lease.acquireCalls != 1 {
 		t.Fatalf("renew result = %#v, calls = %d", result, lease.acquireCalls)
 	}
 }
