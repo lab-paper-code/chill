@@ -187,8 +187,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   exact self-Pod allowances before any host operation.
 - [x] Fix `apply -> read-back -> settling -> measurement -> restore` in the
   Profiler lifecycle and prove that ordering in one retained live Run.
-- [ ] Restore after Run failure, controller restart, and worker timeout.
-- [ ] Surface restoration failure as a terminal condition and operator alert.
+- [x] Reconstruct the durable handoff after controller restart and request
+  restoration after a recorded Job failure or loss; an active-deadline worker
+  timeout follows the same `JobFailed` path.
+- [x] Surface restoration failure as a terminal `ProfilingRun` execution
+  condition without finalizing evidence.
+- [ ] Connect that terminal condition to an operator alert sink.
 
 Intent v1alpha9 adds one optional `actuation` object with the selected power
 mode, exact typed actuator target, and canonical configured-policy digest.
@@ -242,7 +246,8 @@ that authorization drifts after a previous state was retained, it durably
 starts restoration instead of abandoning the Node. The runnable operand
 now selects these allowances and consumes the Lease and lifecycle paths. The
 first opt-in AGX Orin Run closed the target apply/read-back and restoration
-gate; admission-quality and failure-injection gates remain open.
+gate; admission-quality, live host-failure injection, and an operator alert
+sink remain open.
 
 The runnable layer composes the controller with installation-owned host access.
 Helm renders a disabled-by-default ConfigMap, ServiceAccount,
@@ -277,8 +282,14 @@ that result.
   target and restored read-backs.
 - [x] Retain exact Run/handoff identities and previous, target, and restored
   mode observations in finalized execution evidence.
-- [ ] Configure settling time and thermal stability in installation policy.
-- [ ] Test mode drift, unsupported ID, lock conflict, and restore failure.
+- [x] Configure the post-read-back settling duration in installation policy.
+- [ ] Define a thermal-stability criterion only if non-throttled admission and
+  the configured settling duration are insufficient; elapsed settling time does
+  not itself prove thermodynamic equilibrium.
+- [x] Test read-back mode drift, Lease conflict, partial apply failure, and
+  restore mismatch in the pure and controller paths.
+- [ ] Run bounded live failure injection for an unsupported NVPModel ID and a
+  restoration failure; local error-path tests do not prove host behavior.
 
 ### GPU clock
 
