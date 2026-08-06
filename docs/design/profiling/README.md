@@ -224,7 +224,10 @@ and withholds evidence finalization until ordered restoration is proven.
 Actuated finalization retains the exact Run/handoff identities, typed
 previous/target/restored observations, and lifecycle timestamps in execution
 evidence v1alpha2 while fixed Runs remain on v1alpha1. The chart remains
-disabled by default, and no live apply/read-back/restore proof has been run.
+disabled by default. An opt-in AGX Orin CPU ORT Run has now live-proved
+`MAXN -> MODE_50W -> MAXN`, durable evidence reload, and accepted active
+admission under the configured slow-source policy. Model-loaded-idle and the
+remaining repetitions are still open, so the exact slice remains below L3.
 Catalog presence and historical standalone smoke are not production execution
 evidence.
 

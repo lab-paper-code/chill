@@ -69,7 +69,7 @@ not an apply/read-back/restore result.
 The runtime and artifact declarations are architecture-scoped facts. They do
 not by themselves prove execution or admission on every arm64 DeviceClass.
 
-## AGX Orin CPU ORT MODE_50W actuation diagnostic (2026-08-06)
+## AGX Orin CPU ORT MODE_50W actuation and active admission (2026-08-06)
 
 The opt-in installation selected only `jetsono` for the NodeActuator. Run
 `jetsono-ort-cpu-mode50w-actuation-a4` and its exact owned handoff proved this
@@ -89,13 +89,33 @@ diagnostic child
 `sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e`.
 Admission remained `Insufficient` with `InsufficientSamples`,
 `PowerReadFailures`, `PowerWindowCoverage`, and `ThermalStateUnavailable`.
-Accordingly this is an L2 active execution and lifecycle proof, not admitted
-power evidence; no model-loaded-idle Run was made.
+That retained Run remains the initial L2 lifecycle proof, not admitted power
+evidence.
+
+The installed chart then selected `wall-power-3s-source-v1` for this metric
+source instead of weakening the shared `wall-power-v2` policy. Run
+`jetsono-ort-cpu-mode50w-source3-a3` froze a 3-second interval, 2.8-second
+request timeout, 75-second active window, and 78-second observer window. Its
+raw object digest `sha256:a59cf475cc0cc6b230205286bf0913f144b18d172d6d57efe4bd56112311c994`
+matched the retained execution reference. It recorded 26 successful power and
+thermal samples, no failed reads, no active thermal-throttle samples, a maximum
+temperature of 53.031 C, and a maximum sample gap of 3.628 seconds. The worker
+completed 14,870 batch-one inferences in 75.002 seconds.
+
+The final Run independently observed `MAXN / ID 0` at `05:28:07Z`, read back
+`MODE_50W / ID 3` at `05:28:08Z`, became ready after the configured settling
+interval at `05:29:08Z`, and read back restored `MAXN / ID 0` at `05:30:34Z`.
+The Profiler reloaded execution evidence
+`sha256:58fd7778b2c3c21f7544c117812891f7ba3d144d16f176cc78cb1ee095f32405`
+and admitted it under frozen policy
+`sha256:3b041e96ded2acb00b414a3fc46d5384af527d7afd1c431c789c87cad64d5fe1`.
+This proves one exact active admission but does not promote the slice to L3:
+no model-loaded-idle Run or three-trial identity audit has been completed.
 
 The post-run live snapshot had `ChillSystem Ready=True`, the NodeActuator
-DaemonSet at `1/1`, no remaining NodeActuation Lease, and a read-only host query
-reported `MAXN / ID 0`. Failed and insufficient diagnostic Runs remain retained
-as evidence and do not promote any support row.
+DaemonSet at `1/1`, and the final handoff at `Restore / Restored`. Failed and
+insufficient diagnostic Runs remain retained as evidence and do not promote
+any support row.
 
 ## Raspberry Pi 5 CPU ORT / fixed
 
