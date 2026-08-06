@@ -110,5 +110,6 @@ func testBSatPolicy() BSatPolicy {
 		Version: "bsat-discovery-v1", KMax: 4,
 		RelativeImprovementTolerance: .05, MinimumPointTrials: 3, DiscoveryTrials: 3,
 		MaximumConfirmatoryTrials: 10, MaximumActiveRunBudget: 100,
+		FamilyWiseAlpha: 0.05,
 	}
 }

@@ -54,7 +54,7 @@ func deriveBSatConfirmatorySizing(
 	if statementCount == 0 || maximumTrials < 3 {
 		return result, nil
 	}
-	quantile := 1 - bsatFamilyWiseAlpha/float64(statementCount)
+	quantile := 1 - policy.FamilyWiseAlpha/float64(statementCount)
 	if quantile <= 0 || quantile >= 1 || math.IsNaN(quantile) {
 		return BSatSizingResult{}, errors.New("global statement family exceeds the supported numeric range")
 	}

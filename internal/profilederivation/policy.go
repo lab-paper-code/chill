@@ -10,10 +10,8 @@ const (
 	PointConfidenceMethod            = "student-t-welch-satterthwaite"
 	PreviousPointEstimatorVersion    = "incremental-point-rss-half-width-v1"
 	PreviousPointConfidenceMethod    = "student-t"
-	PointConfidenceLevel             = 0.95
 	BSatConfirmatorySizingMethod     = "bonferroni-welch-relative-precision-v1"
 	BSatConfirmatoryEstimatorVersion = "bonferroni-welch-domain-v1"
-	bsatFamilyWiseAlpha              = 0.05
 )
 
 func validAdmissionPolicy(policy AdmissionPolicy) bool {
@@ -35,8 +33,8 @@ func verdictFromReasons(reasons []Reason) Verdict {
 }
 
 func validatePointPolicy(policy PointPolicy) error {
-	if policy.Version == "" || policy.MinimumTrials < 3 {
-		return errors.New("point policy must use 95% Student-t with at least three trials")
+	if policy.Version == "" || policy.MinimumTrials < 3 || !validProbability(policy.ConfidenceLevel) {
+		return errors.New("point policy must use a valid confidence level with at least three trials")
 	}
 	return nil
 }
@@ -48,9 +46,15 @@ func validateBSatPolicy(policy BSatPolicy) error {
 		math.IsInf(policy.RelativeImprovementTolerance, 0) ||
 		policy.MinimumPointTrials < 3 || policy.DiscoveryTrials < policy.MinimumPointTrials ||
 		policy.MaximumConfirmatoryTrials < policy.MinimumPointTrials ||
+		policy.FamilyWiseAlpha <= 0 || policy.FamilyWiseAlpha >= 0.5 ||
+		math.IsNaN(policy.FamilyWiseAlpha) || math.IsInf(policy.FamilyWiseAlpha, 0) ||
 		policy.KMax > math.MaxInt/policy.DiscoveryTrials ||
 		policy.MaximumActiveRunBudget < policy.KMax*policy.DiscoveryTrials {
 		return errors.New("batch-saturation policy is invalid")
 	}
 	return nil
+}
+
+func validProbability(value float64) bool {
+	return value > 0 && value < 1 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }

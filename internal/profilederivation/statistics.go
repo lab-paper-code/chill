@@ -15,16 +15,17 @@ func percentile(values []float64, quantile float64) float64 {
 	return stat.Quantile(quantile, stat.Empirical, ordered, nil)
 }
 
-func studentTHalfWidth(values []float64) float64 {
+func studentTHalfWidth(values []float64, confidenceLevel float64) float64 {
 	if len(values) < 3 {
 		return math.Inf(1)
 	}
 	_, sampleVariance := stat.MeanVariance(values, nil)
-	return studentT95(len(values)-1) * math.Sqrt(sampleVariance/float64(len(values)))
+	return studentTCritical(confidenceLevel, float64(len(values)-1)) *
+		math.Sqrt(sampleVariance/float64(len(values)))
 }
 
-func studentT95(df int) float64 {
-	return studentTQuantile(0.975, float64(df))
+func studentTCritical(confidenceLevel, degreesOfFreedom float64) float64 {
+	return studentTQuantile(1-(1-confidenceLevel)/2, degreesOfFreedom)
 }
 
 func studentTQuantile(probability, degreesOfFreedom float64) float64 {
@@ -50,6 +51,7 @@ func derivePointStatistics(
 	baselineVariance float64,
 	baselineDegreesOfFreedom int,
 	previousBaselineUncertainty float64,
+	confidenceLevel float64,
 ) (pointStatistics, error) {
 	result := pointStatistics{}
 	result.meanIncrementalJoulesPerItem, result.incrementalSampleVariance = stat.MeanVariance(values, nil)
@@ -67,20 +69,20 @@ func derivePointStatistics(
 	varianceCopy := variance
 	result.confidence = PointConfidence{
 		EstimatorVersion: PointEstimatorVersion, Method: PointConfidenceMethod,
-		Level: PointConfidenceLevel, VarianceOfMean: &varianceCopy,
+		Level: confidenceLevel, VarianceOfMean: &varianceCopy,
 		EffectiveDegreesOfFreedom: degreesOfFreedom,
 	}
 	if degreesOfFreedom != nil {
 		result.confidence.HalfWidth = studentTQuantile(
-			1-(1-PointConfidenceLevel)/2, *degreesOfFreedom,
+			1-(1-confidenceLevel)/2, *degreesOfFreedom,
 		) * math.Sqrt(variance)
 	}
 	result.previousConfidence = PointConfidence{
 		EstimatorVersion: PreviousPointEstimatorVersion,
 		Method:           PreviousPointConfidenceMethod,
-		Level:            PointConfidenceLevel,
+		Level:            confidenceLevel,
 		HalfWidth: math.Hypot(
-			studentTHalfWidth(values),
+			studentTHalfWidth(values, confidenceLevel),
 			previousBaselineUncertainty,
 		),
 	}

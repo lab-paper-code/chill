@@ -45,6 +45,29 @@ func TestBSatConfirmatorySizingReturnsBudgetInsufficient(t *testing.T) {
 	}
 }
 
+func TestBSatConfirmatorySizingUsesConfiguredFamilyWiseAlpha(t *testing.T) {
+	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
+	strictPolicy := testBSatPolicy()
+	strict, err := deriveBSatConfirmatorySizing(curve, 3, strictPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaxedPolicy := strictPolicy
+	relaxedPolicy.FamilyWiseAlpha = 0.1
+	relaxed, err := deriveBSatConfirmatorySizing(curve, 3, relaxedPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.GlobalStatementCount != relaxed.GlobalStatementCount ||
+		strict.OneSidedQuantile <= relaxed.OneSidedQuantile ||
+		!equalWithinTolerance(
+			relaxed.OneSidedQuantile,
+			1-relaxedPolicy.FamilyWiseAlpha/float64(relaxed.GlobalStatementCount),
+		) {
+		t.Fatalf("configured family-wise alpha was not applied: strict=%+v relaxed=%+v", strict, relaxed)
+	}
+}
+
 func TestBSatConfirmatorySizingRejectsCandidateAndNumericDrift(t *testing.T) {
 	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
 	if _, err := deriveBSatConfirmatorySizing(curve, 2, testBSatPolicy()); err == nil {

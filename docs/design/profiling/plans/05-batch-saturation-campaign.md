@@ -369,6 +369,9 @@ digest is recorded in the derived result, so a published number always identifie
 the rule that produced it.
 
 ```text
+DiscoveryDerivationPolicy
+    pointConfidenceLevel           two-sided point and idle-baseline level
+
 PointPolicy
     name
     stage                          idle-baseline | incremental-point
@@ -381,16 +384,20 @@ BSatPolicy
     discoveryTrials                n_disc
     maximumConfirmatoryTrials      cap on n_conf
     maximumActiveRunBudget         cap on total active Runs
+    familyWiseAlpha                alpha for the global one-sided family
 ```
 
 `stage` scopes a point policy the way `workloadMode` scopes an admission policy,
 and the selected policy's stage is checked against its use.
 
-The estimator, confidence level, Bonferroni allocation, and confirmatory sizing
-method are versioned package constants rather than policy fields, because the
-implementation supports exactly one of each. Their versioned estimator identity
-is recorded in the result. A policy field accepting only that one method would
-pretend to offer configuration that does not exist.
+The estimator, Bonferroni allocation, and confirmatory sizing methods are
+versioned package constants because the implementation supports exactly one of
+each. Their identities are recorded in the result. The point confidence level
+and family-wise alpha accept their implemented numeric ranges and are frozen in
+the current `v1alpha2` policy digest; neither value has a compiled default. The
+committed `v1alpha1` campaign files remain historical records of the earlier
+fixed-method runs and are not accepted as current policy input. New policies
+cannot omit either value.
 
 **`tau` is fixed in this file, before any measurement.** It expresses how much
 remaining improvement is small enough to walk away from — a judgment about what
@@ -452,7 +459,8 @@ sets and distinct idle-baseline sets are independent. Each projected variance
 uses Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
 components: prospective active components use `n-1`, and retained baseline
 components use their admitted baseline degrees of freedom. With the global
-post-selection count `H` fixed from both policy caps and `alpha = 0.05`, let
+post-selection count `H` fixed from both policy caps and the configured
+`familyWiseAlpha = alpha`, let
 `h_c(n)` and `h_D(c,b,n)` be their Student-t half-widths at quantile
 `1 - alpha/H`. Let `epsilon_hat_c` be the discovery point estimate and
 

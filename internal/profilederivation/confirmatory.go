@@ -212,7 +212,7 @@ func newBSatResult(
 		RelativeImprovementTolerance:  policy.RelativeImprovementTolerance,
 		PointEstimatorVersion:         PointEstimatorVersion,
 		ConfirmatoryEstimatorVersion:  BSatConfirmatoryEstimatorVersion,
-		ConfidenceLevel:               1 - bsatFamilyWiseAlpha,
+		ConfidenceLevel:               1 - policy.FamilyWiseAlpha,
 		SizingMethod:                  sizing.SizingMethod,
 		CurveFamilyContractDigest:     curve.ContractDigest(),
 		CurveFamilyIdentity:           curve.FamilyIdentity(),

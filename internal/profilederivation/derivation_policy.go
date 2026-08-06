@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha1"
+const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha2"
 
 type PointPolicyStage string
 
@@ -41,11 +41,13 @@ type BSatPolicyEntry struct {
 	DiscoveryTrials              int     `json:"discoveryTrials"`
 	MaximumConfirmatoryTrials    int     `json:"maximumConfirmatoryTrials"`
 	MaximumActiveRunBudget       int     `json:"maximumActiveRunBudget"`
+	FamilyWiseAlpha              float64 `json:"familyWiseAlpha"`
 }
 
 type DiscoveryDerivationPolicySpec struct {
 	Name                      string             `json:"name"`
 	CurveFamilyContractDigest string             `json:"curveFamilyContractDigest"`
+	PointConfidenceLevel      float64            `json:"pointConfidenceLevel"`
 	PointPolicies             []PointPolicyEntry `json:"pointPolicies"`
 	BatchSaturation           BSatPolicyEntry    `json:"batchSaturation"`
 }
@@ -65,19 +67,25 @@ type DiscoveryDerivationPolicy struct {
 func FreezeDiscoveryDerivationPolicy(
 	spec DiscoveryDerivationPolicySpec,
 ) (DiscoveryDerivationPolicy, error) {
-	spec.PointPolicies = append([]PointPolicyEntry(nil), spec.PointPolicies...)
-	sort.Slice(spec.PointPolicies, func(i, j int) bool {
-		if spec.PointPolicies[i].Stage != spec.PointPolicies[j].Stage {
-			return spec.PointPolicies[i].Stage < spec.PointPolicies[j].Stage
-		}
-		return spec.PointPolicies[i].Name < spec.PointPolicies[j].Name
-	})
-	if err := validateDiscoveryDerivationPolicySpec(spec); err != nil {
-		return DiscoveryDerivationPolicy{}, err
-	}
 	record := discoveryDerivationPolicyRecord{
 		SchemaVersion:                 DiscoveryDerivationPolicySchemaVersion,
 		DiscoveryDerivationPolicySpec: spec,
+	}
+	return freezeDiscoveryDerivationPolicyRecord(record)
+}
+
+func freezeDiscoveryDerivationPolicyRecord(
+	record discoveryDerivationPolicyRecord,
+) (DiscoveryDerivationPolicy, error) {
+	record.PointPolicies = append([]PointPolicyEntry(nil), record.PointPolicies...)
+	sort.Slice(record.PointPolicies, func(i, j int) bool {
+		if record.PointPolicies[i].Stage != record.PointPolicies[j].Stage {
+			return record.PointPolicies[i].Stage < record.PointPolicies[j].Stage
+		}
+		return record.PointPolicies[i].Name < record.PointPolicies[j].Name
+	})
+	if err := validateDiscoveryDerivationPolicyRecord(record); err != nil {
+		return DiscoveryDerivationPolicy{}, err
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -104,7 +112,7 @@ func DecodeDiscoveryDerivationPolicy(raw []byte) (DiscoveryDerivationPolicy, err
 			"unsupported discovery derivation-policy schema %q", record.SchemaVersion,
 		)
 	}
-	return FreezeDiscoveryDerivationPolicy(record.DiscoveryDerivationPolicySpec)
+	return freezeDiscoveryDerivationPolicyRecord(record)
 }
 
 func (p DiscoveryDerivationPolicy) CanonicalJSON() ([]byte, error) {
@@ -134,7 +142,10 @@ func (p DiscoveryDerivationPolicy) PointPolicy(stage PointPolicyStage) (PointPol
 	}
 	for _, entry := range p.record.PointPolicies {
 		if entry.Stage == stage {
-			return PointPolicy{Version: p.digest, MinimumTrials: entry.MinimumTrials}, nil
+			return PointPolicy{
+				Version: p.digest, MinimumTrials: entry.MinimumTrials,
+				ConfidenceLevel: p.record.PointConfidenceLevel,
+			}, nil
 		}
 	}
 	return PointPolicy{}, fmt.Errorf("discovery derivation policy has no point policy for stage %q", stage)
@@ -155,6 +166,7 @@ func (p DiscoveryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
 		DiscoveryTrials:              entry.DiscoveryTrials,
 		MaximumConfirmatoryTrials:    entry.MaximumConfirmatoryTrials,
 		MaximumActiveRunBudget:       entry.MaximumActiveRunBudget,
+		FamilyWiseAlpha:              entry.FamilyWiseAlpha,
 	}, nil
 }
 
@@ -180,13 +192,16 @@ func validateDiscoveryPolicyCurve(
 		return BSatPolicy{}, err
 	}
 	for _, baseline := range curve.baselines {
-		if baseline.PolicyVersion != idlePolicy.Version || len(baseline.Trials) < idlePolicy.MinimumTrials {
+		if baseline.PolicyVersion != idlePolicy.Version || len(baseline.Trials) < idlePolicy.MinimumTrials ||
+			baseline.ConfidenceLevel != idlePolicy.ConfidenceLevel {
 			return BSatPolicy{}, errors.New("curve idle baseline does not match the discovery point policy")
 		}
 	}
 	for _, pass := range curve.passes {
 		for _, point := range pass.points {
-			if point.PointPolicyVersion != activePolicy.Version || len(point.Trials) < activePolicy.MinimumTrials {
+			if point.PointPolicyVersion != activePolicy.Version || len(point.Trials) < activePolicy.MinimumTrials ||
+				point.Confidence.Level != activePolicy.ConfidenceLevel ||
+				point.PreviousConfidence.Level != activePolicy.ConfidenceLevel {
 				return BSatPolicy{}, errors.New("curve point does not match the discovery point policy")
 			}
 		}
@@ -203,7 +218,14 @@ func (p DiscoveryDerivationPolicy) requireFrozen() error {
 	return nil
 }
 
-func validateDiscoveryDerivationPolicySpec(spec DiscoveryDerivationPolicySpec) error {
+func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRecord) error {
+	if record.SchemaVersion != DiscoveryDerivationPolicySchemaVersion {
+		return fmt.Errorf("unsupported discovery derivation-policy schema %q", record.SchemaVersion)
+	}
+	spec := record.DiscoveryDerivationPolicySpec
+	if !validProbability(spec.PointConfidenceLevel) {
+		return errors.New("discovery derivation policy has an invalid point confidence level")
+	}
 	if !validDerivationPolicyName(spec.Name) {
 		return errors.New("discovery derivation-policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
@@ -248,6 +270,7 @@ func validateDiscoveryDerivationPolicySpec(spec DiscoveryDerivationPolicySpec) e
 		DiscoveryTrials:              entry.DiscoveryTrials,
 		MaximumConfirmatoryTrials:    entry.MaximumConfirmatoryTrials,
 		MaximumActiveRunBudget:       entry.MaximumActiveRunBudget,
+		FamilyWiseAlpha:              entry.FamilyWiseAlpha,
 	}); err != nil {
 		return err
 	}

@@ -25,8 +25,8 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantDigest = "sha256:bb63e89b48684979718baf94a89610e536c5658fe99072846b908dbe2349fefd"
-	const wantCanonical = `{"schemaVersion":"chill.dacs.io/discovery-derivation-policy.v1alpha1","name":"e1-batch-saturation","curveFamilyContractDigest":"chill.dacs.io/curve-family-contract.v1alpha1@sha256:08db9e76e50ecb6a20b588afc00dbfee4eec73780dd9d3e7345787ef23c10b0b","pointPolicies":[{"name":"idle-baseline","stage":"idle-baseline","minimumTrials":3},{"name":"incremental-point","stage":"incremental-point","minimumTrials":3}],"batchSaturation":{"name":"batch-saturation","kmax":4,"relativeImprovementTolerance":0.05,"discoveryTrials":3,"maximumConfirmatoryTrials":6,"maximumActiveRunBudget":36}}`
+	const wantDigest = "sha256:3b602899a8276671012455c123c3ef741f4defdcb36fd63ff45df7eca3eef1e0"
+	const wantCanonical = `{"schemaVersion":"chill.dacs.io/discovery-derivation-policy.v1alpha2","name":"e1-batch-saturation","curveFamilyContractDigest":"chill.dacs.io/curve-family-contract.v1alpha1@sha256:08db9e76e50ecb6a20b588afc00dbfee4eec73780dd9d3e7345787ef23c10b0b","pointConfidenceLevel":0.95,"pointPolicies":[{"name":"idle-baseline","stage":"idle-baseline","minimumTrials":3},{"name":"incremental-point","stage":"incremental-point","minimumTrials":3}],"batchSaturation":{"name":"batch-saturation","kmax":4,"relativeImprovementTolerance":0.05,"discoveryTrials":3,"maximumConfirmatoryTrials":6,"maximumActiveRunBudget":36,"familyWiseAlpha":0.05}}`
 	if policy.Digest() != wantDigest || string(canonical) != wantCanonical {
 		t.Fatalf("discovery policy golden drifted: %s\n%s", policy.Digest(), canonical)
 	}
@@ -52,9 +52,11 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if idle.Version != policy.Digest() || idle.MinimumTrials != 3 ||
+		idle.ConfidenceLevel != 0.95 ||
 		active.Version != policy.Digest() || active.MinimumTrials != 3 ||
+		active.ConfidenceLevel != 0.95 ||
 		bsat.Version != policy.Digest() || bsat.KMax != 4 ||
-		bsat.MinimumPointTrials != 3 ||
+		bsat.MinimumPointTrials != 3 || bsat.FamilyWiseAlpha != 0.05 ||
 		decoded.Name() != "e1-batch-saturation" ||
 		decoded.CurveFamilyContractDigest() != spec.CurveFamilyContractDigest {
 		t.Fatalf("decoded policy lost configured semantics: %+v %+v %+v", idle, active, bsat)
@@ -113,6 +115,12 @@ func TestFreezeDiscoveryDerivationPolicyRejectsInvalidSemantics(t *testing.T) {
 		"invalid bsat": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.BatchSaturation.KMax = 1
 		},
+		"invalid point confidence": func(spec *DiscoveryDerivationPolicySpec) {
+			spec.PointConfidenceLevel = 1
+		},
+		"invalid family-wise alpha": func(spec *DiscoveryDerivationPolicySpec) {
+			spec.BatchSaturation.FamilyWiseAlpha = 0.5
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -164,6 +172,7 @@ func testDiscoveryDerivationPolicySpecForDigest(contractDigest string) Discovery
 	return DiscoveryDerivationPolicySpec{
 		Name:                      "e1-batch-saturation",
 		CurveFamilyContractDigest: contractDigest,
+		PointConfidenceLevel:      0.95,
 		PointPolicies: []PointPolicyEntry{
 			{Name: "idle-baseline", Stage: PointPolicyStageIdleBaseline, MinimumTrials: 3},
 			{Name: "incremental-point", Stage: PointPolicyStageIncrementalPoint, MinimumTrials: 3},
@@ -171,6 +180,7 @@ func testDiscoveryDerivationPolicySpecForDigest(contractDigest string) Discovery
 		BatchSaturation: BSatPolicyEntry{
 			Name: "batch-saturation", KMax: 4, RelativeImprovementTolerance: .05,
 			DiscoveryTrials: 3, MaximumConfirmatoryTrials: 6, MaximumActiveRunBudget: 36,
+			FamilyWiseAlpha: 0.05,
 		},
 	}
 }

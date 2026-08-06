@@ -9,7 +9,7 @@ import (
 	"sort"
 )
 
-const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha1"
+const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha2"
 
 type ConfirmatoryBatchAllocation struct {
 	Batch  int `json:"batch"`
@@ -195,7 +195,16 @@ func validateConfirmatoryPolicyCurve(
 func freezeConfirmatoryDerivationPolicyRecord(
 	record confirmatoryDerivationPolicyRecord,
 ) (ConfirmatoryDerivationPolicy, error) {
-	discovery, err := FreezeDiscoveryDerivationPolicy(record.DiscoveryDerivationPolicySpec)
+	if record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
+		return ConfirmatoryDerivationPolicy{}, fmt.Errorf(
+			"unsupported confirmatory derivation-policy schema %q", record.SchemaVersion,
+		)
+	}
+	discoveryRecord := discoveryDerivationPolicyRecord{
+		SchemaVersion:                 DiscoveryDerivationPolicySchemaVersion,
+		DiscoveryDerivationPolicySpec: record.DiscoveryDerivationPolicySpec,
+	}
+	discovery, err := freezeDiscoveryDerivationPolicyRecord(discoveryRecord)
 	if err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}

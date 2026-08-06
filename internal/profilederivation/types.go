@@ -79,6 +79,7 @@ type AdmittedTrial struct {
 	// owns cross-point covariance.
 	BaselineMeanWallWattsVariance     float64 `json:"baselineMeanWallWattsVariance"`
 	BaselineDegreesOfFreedom          int     `json:"baselineDegreesOfFreedom"`
+	BaselineConfidenceLevel           float64 `json:"baselineConfidenceLevel"`
 	ActiveWallJoulesPerItem           float64 `json:"activeWallJoulesPerItem"`
 	BaselineCoefficientSecondsPerItem float64 `json:"baselineCoefficientSecondsPerItem"`
 	Batch                             int     `json:"batch"`
@@ -144,17 +145,17 @@ type IdleBaseline struct {
 	MeanWallWattsVariance  float64 `json:"meanWallWattsVariance"`
 	DegreesOfFreedom       int     `json:"degreesOfFreedom"`
 	ConfidenceHalfWidth    float64 `json:"confidenceHalfWidth"`
+	ConfidenceLevel        float64 `json:"confidenceLevel"`
 	PolicyVersion          string  `json:"policyVersion"`
 	AdmissionPolicyVersion string  `json:"admissionPolicyVersion"`
 }
 
-// PointPolicy selects a versioned minimum-trial rule. The first scientific
-// path fixes the estimator itself at PointConfidenceMethod and
-// PointConfidenceLevel instead of exposing method-shaped fields that cannot
-// vary.
+// PointPolicy selects a versioned minimum-trial and confidence rule. The
+// estimator method remains a package constant because only one is supported.
 type PointPolicy struct {
-	Version       string `json:"version"`
-	MinimumTrials int    `json:"minimumTrials"`
+	Version         string  `json:"version"`
+	MinimumTrials   int     `json:"minimumTrials"`
+	ConfidenceLevel float64 `json:"confidenceLevel"`
 }
 
 // PointConfidence versions one interval construction around the shared point
@@ -232,6 +233,7 @@ type BSatPolicy struct {
 	DiscoveryTrials              int     `json:"discoveryTrials"`
 	MaximumConfirmatoryTrials    int     `json:"maximumConfirmatoryTrials"`
 	MaximumActiveRunBudget       int     `json:"maximumActiveRunBudget"`
+	FamilyWiseAlpha              float64 `json:"familyWiseAlpha"`
 }
 
 type BSatDiscoveryResult struct {

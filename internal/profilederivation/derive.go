@@ -51,7 +51,8 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 	baseline.MeanWallWatts, baseline.MeanWallWattsVariance = stat.MeanVariance(values, nil)
 	baseline.MeanWallWattsVariance /= float64(len(values))
 	baseline.DegreesOfFreedom = len(values) - 1
-	baseline.ConfidenceHalfWidth = studentT95(baseline.DegreesOfFreedom) *
+	baseline.ConfidenceLevel = policy.ConfidenceLevel
+	baseline.ConfidenceHalfWidth = studentTCritical(policy.ConfidenceLevel, float64(baseline.DegreesOfFreedom)) *
 		math.Sqrt(baseline.MeanWallWattsVariance)
 	return baseline, nil
 }
@@ -59,18 +60,11 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 func validateIdleBaseline(baseline IdleBaseline) error {
 	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
 		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
-		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 ||
-		baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
-		math.IsInf(baseline.MeanWallWatts, 0) || baseline.MeanWallWattsVariance < 0 ||
-		math.IsNaN(baseline.MeanWallWattsVariance) || math.IsInf(baseline.MeanWallWattsVariance, 0) ||
-		baseline.DegreesOfFreedom != len(baseline.Trials)-1 || baseline.ConfidenceHalfWidth < 0 ||
-		math.IsNaN(baseline.ConfidenceHalfWidth) || math.IsInf(baseline.ConfidenceHalfWidth, 0) {
+		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 {
 		return errors.New("idle baseline value or identity is invalid")
 	}
-	expectedHalfWidth := studentT95(baseline.DegreesOfFreedom) * math.Sqrt(baseline.MeanWallWattsVariance)
-	if math.Abs(baseline.ConfidenceHalfWidth-expectedHalfWidth) >
-		1e-12*math.Max(1, expectedHalfWidth) {
-		return errors.New("idle baseline uncertainty fields are inconsistent")
+	if err := validateIdleBaselineSummary(baseline); err != nil {
+		return err
 	}
 	seenTrials := make(map[string]struct{}, len(baseline.Trials))
 	seenEvidence := make(map[string]struct{}, len(baseline.Trials))
@@ -92,6 +86,24 @@ func validateIdleBaseline(baseline IdleBaseline) error {
 			return errors.New("idle baseline contains duplicate raw evidence")
 		}
 		seenEvidence[evidenceKey] = struct{}{}
+	}
+	return nil
+}
+
+func validateIdleBaselineSummary(baseline IdleBaseline) error {
+	if baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
+		math.IsInf(baseline.MeanWallWatts, 0) || baseline.MeanWallWattsVariance < 0 ||
+		math.IsNaN(baseline.MeanWallWattsVariance) || math.IsInf(baseline.MeanWallWattsVariance, 0) ||
+		baseline.DegreesOfFreedom != len(baseline.Trials)-1 || baseline.ConfidenceHalfWidth < 0 ||
+		!validProbability(baseline.ConfidenceLevel) ||
+		math.IsNaN(baseline.ConfidenceHalfWidth) || math.IsInf(baseline.ConfidenceHalfWidth, 0) {
+		return errors.New("idle baseline value or identity is invalid")
+	}
+	expectedHalfWidth := studentTCritical(baseline.ConfidenceLevel, float64(baseline.DegreesOfFreedom)) *
+		math.Sqrt(baseline.MeanWallWattsVariance)
+	if math.Abs(baseline.ConfidenceHalfWidth-expectedHalfWidth) >
+		1e-12*math.Max(1, expectedHalfWidth) {
+		return errors.New("idle baseline uncertainty fields are inconsistent")
 	}
 	return nil
 }
@@ -144,6 +156,7 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 		BaselineUncertaintyJoulesPerItem:  baselineUncertainty,
 		BaselineMeanWallWattsVariance:     baseline.MeanWallWattsVariance,
 		BaselineDegreesOfFreedom:          baseline.DegreesOfFreedom,
+		BaselineConfidenceLevel:           baseline.ConfidenceLevel,
 		ActiveWallJoulesPerItem:           activeWallJoulesPerItem,
 		BaselineCoefficientSecondsPerItem: baselineCoefficient,
 		Batch:                             trial.Batch,
@@ -183,7 +196,9 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		if _, exists := seen[trial.TrialID]; exists {
 			return Point{}, errors.New("duplicate active trial ID")
 		}
-		if err := validateAdmittedTrialStatistics(trial, baselineVariance, baselineDegreesOfFreedom); err != nil {
+		if err := validateAdmittedTrialStatistics(
+			trial, baselineVariance, baselineDegreesOfFreedom, policy.ConfidenceLevel,
+		); err != nil {
 			return Point{}, err
 		}
 		seen[trial.TrialID] = struct{}{}
@@ -198,6 +213,7 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 	}
 	statistics, err := derivePointStatistics(
 		values, coefficients, baselineVariance, baselineDegreesOfFreedom, baselineUncertainty,
+		policy.ConfidenceLevel,
 	)
 	if err != nil {
 		return Point{}, err
@@ -228,6 +244,7 @@ func validateAdmittedTrialStatistics(
 	trial AdmittedTrial,
 	baselineVariance float64,
 	baselineDegreesOfFreedom int,
+	confidenceLevel float64,
 ) error {
 	if trial.BaselineUncertaintyJoulesPerItem < 0 ||
 		math.IsNaN(trial.BaselineUncertaintyJoulesPerItem) ||
@@ -236,7 +253,8 @@ func validateAdmittedTrialStatistics(
 		math.IsNaN(trial.BaselineMeanWallWattsVariance) ||
 		math.IsInf(trial.BaselineMeanWallWattsVariance, 0) ||
 		trial.BaselineMeanWallWattsVariance != baselineVariance ||
-		trial.BaselineDegreesOfFreedom < 2 || trial.BaselineDegreesOfFreedom != baselineDegreesOfFreedom {
+		trial.BaselineDegreesOfFreedom < 2 || trial.BaselineDegreesOfFreedom != baselineDegreesOfFreedom ||
+		trial.BaselineConfidenceLevel != confidenceLevel {
 		return errors.New("baseline uncertainty contribution is invalid")
 	}
 	if trial.ActiveWallJoulesPerItem <= 0 || math.IsNaN(trial.ActiveWallJoulesPerItem) ||
@@ -247,7 +265,9 @@ func validateAdmittedTrialStatistics(
 		trial.IncrementalJoulesPerItem > trial.ActiveWallJoulesPerItem {
 		return errors.New("trial sufficient statistics are invalid")
 	}
-	expectedBaselineUncertainty := studentT95(trial.BaselineDegreesOfFreedom) *
+	expectedBaselineUncertainty := studentTCritical(
+		trial.BaselineConfidenceLevel, float64(trial.BaselineDegreesOfFreedom),
+	) *
 		math.Sqrt(trial.BaselineMeanWallWattsVariance) * trial.BaselineCoefficientSecondsPerItem
 	if !equalWithinTolerance(trial.BaselineUncertaintyJoulesPerItem, expectedBaselineUncertainty) {
 		return errors.New("baseline uncertainty contribution is inconsistent")

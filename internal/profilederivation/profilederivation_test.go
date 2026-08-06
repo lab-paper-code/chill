@@ -63,7 +63,7 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	if baseline.DegreesOfFreedom != 2 ||
 		math.Abs(baseline.MeanWallWattsVariance-(.01/3)) > 1e-12 ||
-		math.Abs(baseline.ConfidenceHalfWidth-studentT95(2)*math.Sqrt(.01/3)) > 1e-12 {
+		math.Abs(baseline.ConfidenceHalfWidth-studentTCritical(0.95, 2)*math.Sqrt(.01/3)) > 1e-12 {
 		t.Fatalf("idle sufficient statistics are incomplete: %#v", baseline)
 	}
 	mixedIdle := append([]IdleTrial(nil), baseline.Trials...)
@@ -198,18 +198,21 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "1", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
 			ActiveWallJoulesPerItem: 2, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:  0.95,
 			IncrementalJoulesPerItem: 1, LatencyP99Milliseconds: 2,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "2", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
 			ActiveWallJoulesPerItem: 2.1, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:  0.95,
 			IncrementalJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "3", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
 			ActiveWallJoulesPerItem: 1.9, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:  0.95,
 			IncrementalJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
 		},
 	}
@@ -220,6 +223,21 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	if point.MeanIncrementalJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
 		point.PreviousConfidence.HalfWidth <= 0 || point.LatencyP99Milliseconds != 3 {
 		t.Fatalf("unexpected point: %+v", point)
+	}
+	lowerConfidenceTrials := append([]AdmittedTrial(nil), trials...)
+	for index := range lowerConfidenceTrials {
+		lowerConfidenceTrials[index].BaselineConfidenceLevel = 0.8
+	}
+	lowerConfidencePolicy := pointPolicy("v2")
+	lowerConfidencePolicy.ConfidenceLevel = 0.8
+	lowerConfidencePoint, err := Aggregate(lowerConfidenceTrials, lowerConfidencePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lowerConfidencePoint.Confidence.Level != 0.8 ||
+		lowerConfidencePoint.PreviousConfidence.Level != 0.8 ||
+		lowerConfidencePoint.Confidence.HalfWidth >= point.Confidence.HalfWidth {
+		t.Fatalf("configured point confidence was not applied: %+v", lowerConfidencePoint)
 	}
 	if _, err := Aggregate(trials[:1], pointPolicy("v1")); err == nil {
 		t.Fatal("expected repetition rejection")
@@ -250,7 +268,7 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		t.Fatal("expected mixed baseline sufficient-statistics rejection")
 	}
 	uncertain := append([]AdmittedTrial(nil), trials...)
-	baselineVariance := math.Pow(.5/studentT95(2), 2)
+	baselineVariance := math.Pow(.5/studentTCritical(0.95, 2), 2)
 	for index := range uncertain {
 		uncertain[index].BaselineUncertaintyJoulesPerItem = .5
 		uncertain[index].BaselineMeanWallWattsVariance = baselineVariance
@@ -355,11 +373,11 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 			MeanIncrementalJoulesPerItem: mean,
 			Confidence: PointConfidence{
 				EstimatorVersion: PointEstimatorVersion,
-				Method:           PointConfidenceMethod, Level: PointConfidenceLevel, HalfWidth: half,
+				Method:           PointConfidenceMethod, Level: 0.95, HalfWidth: half,
 			},
 			PreviousConfidence: PointConfidence{
 				EstimatorVersion: PreviousPointEstimatorVersion,
-				Method:           PreviousPointConfidenceMethod, Level: PointConfidenceLevel, HalfWidth: half,
+				Method:           PreviousPointConfidenceMethod, Level: 0.95, HalfWidth: half,
 			},
 		}
 	}
@@ -407,7 +425,7 @@ func TestBSatGoldenOutcomes(t *testing.T) {
 }
 
 func pointPolicy(version string) PointPolicy {
-	return PointPolicy{Version: version, MinimumTrials: 3}
+	return PointPolicy{Version: version, MinimumTrials: 3, ConfidenceLevel: 0.95}
 }
 
 func rawEvidence(key string) RawEvidenceIdentity {

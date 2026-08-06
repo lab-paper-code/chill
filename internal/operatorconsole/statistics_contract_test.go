@@ -69,7 +69,7 @@ func zeroIdleBaseline(t *testing.T) profilederivation.IdleBaseline {
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(
 		trials,
-		profilederivation.PointPolicy{Version: "idle-point", MinimumTrials: 3},
+		profilederivation.PointPolicy{Version: "idle-point", MinimumTrials: 3, ConfidenceLevel: 0.95},
 	)
 	if err != nil {
 		t.Fatal(err)
