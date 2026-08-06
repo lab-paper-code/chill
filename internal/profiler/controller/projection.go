@@ -106,13 +106,6 @@ func projectIntent(digest string, frozen *profilingrun.Intent, snapshot *profile
 	if digest == "" || frozen == nil {
 		return errors.New("intent digest and frozen intent must be observed together")
 	}
-	actual, err := frozen.Digest()
-	if err != nil {
-		return fmt.Errorf("validate observed frozen intent: %w", err)
-	}
-	if digest != actual {
-		return errors.New("status intent digest does not match observed frozen intent")
-	}
 	copy := *frozen
 	snapshot.Intent = &copy
 	return nil

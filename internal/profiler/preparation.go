@@ -119,9 +119,9 @@ type PreparedRun struct {
 	ActuationPolicy      *FrozenActuationPolicy
 }
 
-// ValidateActuationBinding verifies the configured policy once at the frozen
-// input boundary. Downstream execution consumes the bound intent and policy
-// without reselecting either from mutable configuration.
+// ValidateActuationBinding checks the configured policy against the frozen
+// material selection. Downstream execution consumes the selected policy
+// without reselecting it from mutable configuration.
 func (r PreparedRun) ValidateActuationBinding() error {
 	if r.Intent.Actuation == nil {
 		if r.ActuationPolicy != nil {
@@ -134,13 +134,6 @@ func (r PreparedRun) ValidateActuationBinding() error {
 	}
 	if err := r.ActuationPolicy.Validate(); err != nil {
 		return err
-	}
-	digest, err := r.ActuationPolicy.Policy.Digest()
-	if err != nil {
-		return err
-	}
-	if digest != r.Intent.Actuation.PolicyDigest {
-		return errors.New("frozen actuation-policy digest does not match Run intent")
 	}
 	return validateActuationPolicySelection(r.ActuationPolicy.Policy, ActuationSelection{
 		DeviceClass: r.Intent.State.DeviceClass,

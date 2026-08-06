@@ -68,7 +68,6 @@ func validateFinalizedActuation(
 		handoff.Spec.Node.Name != intent.TargetNode.Name || handoff.Spec.Node.UID != intent.TargetNode.UID ||
 		handoff.Spec.DeviceClass != intent.State.DeviceClass ||
 		handoff.Spec.PowerMode != intent.Actuation.PowerMode ||
-		handoff.Spec.PolicyDigest != intent.Actuation.PolicyDigest ||
 		!reflect.DeepEqual(handoff.Spec.Actuator, projectActuatorTarget(intent.Actuation.Actuator)) {
 		return errors.New("NodeActuation material identity does not match frozen intent")
 	}

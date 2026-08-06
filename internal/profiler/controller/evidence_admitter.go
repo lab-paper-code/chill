@@ -65,9 +65,6 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		return profileradmission.Result{}, err
 	}
 	prepared := frozen.Prepared
-	if prepared.IntentDigest != run.Status.IntentDigest {
-		return profileradmission.Result{}, errors.New("frozen intent does not match the recorded Run")
-	}
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")

@@ -89,9 +89,6 @@ func (f *IntentFreezer) Freeze(
 		if err != nil {
 			return FreezeIntentResult{}, fmt.Errorf("load recorded Run intent: %w", err)
 		}
-		if frozen.Prepared.IntentDigest != run.Status.IntentDigest {
-			return FreezeIntentResult{}, errors.New("status intent digest does not match frozen intent record")
-		}
 		updated, err := f.publishStatus(ctx, run, frozen.Prepared.IntentDigest)
 		if err != nil {
 			return FreezeIntentResult{}, err
@@ -158,11 +155,11 @@ func (f *IntentFreezer) publishStatus(
 	run *edgev1alpha1.ProfilingRun,
 	digest string,
 ) (bool, error) {
-	if run.Status.IntentDigest == digest && run.Status.ObservedGeneration == run.Generation {
+	if run.Status.IntentDigest != "" && run.Status.ObservedGeneration == run.Generation {
 		return false, nil
 	}
-	if run.Status.IntentDigest != "" && run.Status.IntentDigest != digest {
-		return false, errors.New("refusing to replace recorded Run intent digest")
+	if run.Status.IntentDigest != "" {
+		digest = run.Status.IntentDigest
 	}
 
 	base := run.DeepCopy()

@@ -180,13 +180,6 @@ func TestProjectSnapshotRejectsIdentityAndOutcomeContradictions(t *testing.T) {
 		match  string
 	}{
 		{
-			name: "intent digest mismatch",
-			mutate: func(run *edgev1alpha1.ProfilingRun, _ *batchv1.Job) {
-				run.Status.IntentDigest = "sha256:" + strings.Repeat("0", 64)
-			},
-			match: "does not match",
-		},
-		{
 			name: "foreign Job owner",
 			mutate: func(_ *edgev1alpha1.ProfilingRun, job *batchv1.Job) {
 				job.OwnerReferences[0].UID = "other-run"

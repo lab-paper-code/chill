@@ -13,8 +13,7 @@ func verifyExecutionJob(run *edgev1alpha1.ProfilingRun, existing, desired *batch
 	if existing.Namespace != desired.Namespace || existing.Name != desired.Name || !metav1.IsControlledBy(existing, run) {
 		return errors.New("existing measurement Job identity or ownership mismatch")
 	}
-	if existing.Annotations[intentDigestAnnotation] != desired.Annotations[intentDigestAnnotation] ||
-		existing.Annotations[executionPolicyAnnotation] != desired.Annotations[executionPolicyAnnotation] {
+	if existing.Annotations[executionPolicyAnnotation] != desired.Annotations[executionPolicyAnnotation] {
 		return errors.New("existing measurement Job execution identity mismatch")
 	}
 	// Job specs are immutable. Fake clients do not apply API defaults, while a

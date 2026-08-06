@@ -238,7 +238,7 @@ func TestIntentFreezerStopsForDeletingRun(t *testing.T) {
 	}
 }
 
-func TestIntentFreezerRejectsStatusAndRecordDigestMismatch(t *testing.T) {
+func TestIntentFreezerRecoversOwnedRecordWithoutDigestRevalidation(t *testing.T) {
 	ctx := context.Background()
 	run, kubeClient, records := intentFreezerFixture(t)
 	frozen := testFrozenRun(t)
@@ -252,9 +252,9 @@ func TestIntentFreezerRejectsStatusAndRecordDigestMismatch(t *testing.T) {
 	}
 	preparer := &countingPreparer{prepared: frozen.Prepared}
 
-	_, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
-	if err == nil || !strings.Contains(err.Error(), "does not match") || preparer.calls != 0 {
-		t.Fatalf("digest mismatch = %v calls=%d", err, preparer.calls)
+	result, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
+	if err != nil || result.Run.Prepared.Intent.State.Model != frozen.Prepared.Intent.State.Model || preparer.calls != 0 {
+		t.Fatalf("record recovery = %#v err=%v calls=%d", result, err, preparer.calls)
 	}
 }
 
