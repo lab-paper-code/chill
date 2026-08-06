@@ -28,7 +28,11 @@ data:
   {{ .Values.profiler.factSource.executionPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-execution-policies.v1alpha1
     policies:
-{{- toYaml .Values.profiling.executionPolicies | nindent 6 }}
+{{- $executionPolicies := list }}
+{{- range $policy := .Values.profiling.executionPolicies }}
+{{- $executionPolicies = append $executionPolicies (mergeOverwrite (deepCopy $.Values.profiling.executionPolicyDefaults) $policy) }}
+{{- end }}
+{{- toYaml $executionPolicies | nindent 6 }}
   {{ .Values.profiler.factSource.actuationPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-actuation-policies.v1alpha1
     policies:
