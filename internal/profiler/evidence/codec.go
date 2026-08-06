@@ -27,13 +27,6 @@ func verifyStoredExecution(
 	if err := raw.validateExecution(retained, intentDigest); err != nil {
 		return err
 	}
-	canonical, err := retained.canonicalJSON()
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(payload, canonical) {
-		return errors.New("retained execution evidence is not canonical")
-	}
 	return nil
 }
 

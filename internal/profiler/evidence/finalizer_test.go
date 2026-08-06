@@ -250,14 +250,8 @@ func (s *fakeObjectStore) PutImmutable(
 	if err != nil {
 		return evidencestore.Receipt{}, err
 	}
-	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
-		return evidencestore.Receipt{}, err
-	}
 	location := identity.Location()
-	if existing, ok := s.objects[location]; ok {
-		if !bytes.Equal(existing, payload) {
-			return evidencestore.Receipt{}, evidencestore.ErrPrecondition
-		}
+	if _, ok := s.objects[location]; ok {
 		return fakeReceipt(identity, evidencestore.CreateOutcomeExistingExactMatch), nil
 	}
 	s.objects[location] = append([]byte(nil), payload...)

@@ -11,7 +11,6 @@ import (
 // only schema-neutral orchestration depends on this interface.
 type rawRecord interface {
 	validate(profilingrun.Intent, string) error
-	canonicalRawJSON() ([]byte, error)
 	validateExecution(ExecutionEvidence, string) error
 }
 
@@ -30,16 +29,8 @@ func decodeRawRecord(payload []byte, intent profilingrun.Intent) (rawRecord, err
 	return raw, nil
 }
 
-func (m RawMeasurement) canonicalRawJSON() ([]byte, error) {
-	return m.canonicalJSON()
-}
-
 func (m RawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {
 	return execution.validateLinkedRaw(m.PodUID, m.Workload, intentDigest)
-}
-
-func (m IdleRawMeasurement) canonicalRawJSON() ([]byte, error) {
-	return m.canonicalJSON()
 }
 
 func (m IdleRawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {

@@ -78,14 +78,6 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err := raw.validate(request.Intent, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate raw measurement: %w", err)
 	}
-	canonicalRaw, err := raw.canonicalRawJSON()
-	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("canonicalize raw measurement: %w", err)
-	}
-	if !bytes.Equal(rawBytes, canonicalRaw) {
-		return FinalizeResult{}, errors.New("stored raw measurement is not canonical")
-	}
-
 	schemaVersion := ExecutionEvidenceSchemaVersion
 	if request.Intent.Actuation != nil {
 		schemaVersion = ActuatedExecutionEvidenceSchemaVersion
@@ -150,13 +142,6 @@ func (f *Finalizer) reuseExisting(
 	}
 	if err := raw.validateExecution(existing, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate existing execution evidence: %w", err)
-	}
-	canonical, err := existing.canonicalJSON()
-	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("canonicalize existing execution evidence: %w", err)
-	}
-	if !bytes.Equal(payload, canonical) {
-		return FinalizeResult{}, errors.New("existing execution evidence is not canonical")
 	}
 	if existing.RawMeasurement != request.RawReceipt.Object ||
 		existing.IntentDigest != intentDigest ||

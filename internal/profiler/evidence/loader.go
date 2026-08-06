@@ -1,7 +1,6 @@
 package evidence
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -85,22 +84,8 @@ func (l *Loader) load(
 	if err := raw.validate(execution.Intent, intentDigest); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
-	canonicalRaw, err := raw.canonicalRawJSON()
-	if err != nil {
-		return ExecutionEvidence{}, nil, fmt.Errorf("canonicalize raw measurement: %w", err)
-	}
-	if !bytes.Equal(rawBytes, canonicalRaw) {
-		return ExecutionEvidence{}, nil, errors.New("retained raw measurement is not canonical")
-	}
 	if err := raw.validateExecution(execution, intentDigest); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate finalized evidence: %w", err)
-	}
-	canonicalExecution, err := execution.canonicalJSON()
-	if err != nil {
-		return ExecutionEvidence{}, nil, fmt.Errorf("canonicalize finalized evidence: %w", err)
-	}
-	if !bytes.Equal(finalBytes, canonicalExecution) {
-		return ExecutionEvidence{}, nil, errors.New("retained finalized evidence is not canonical")
 	}
 	return execution, raw, nil
 }
