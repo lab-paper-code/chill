@@ -76,7 +76,7 @@ not replaced by code-intelligence checks.
 
 - Values that decide what a Run measures, or how its evidence is judged, belong
   in configuration, not in Go constants. Reproducibility comes from freezing the
-  selected entry and its digest into the immutable Run record, not from
+  selected entry and source identity into the immutable Run record, not from
   compiling the value in.
 - Do not give a policy struct fields that accept only one value. Either accept
   the range or make it a constant.
@@ -86,9 +86,10 @@ not replaced by code-intelligence checks.
 
 ## Verification boundaries
 
-- Verify what crosses a boundary (object store, ConfigMap, another process), not
-  what you already hold. Re-hashing or re-encoding a value to compare it with
-  itself is not a check.
+- Do not add digest recomputation or comparison as a validation gate.
+- Do not add byte-for-byte equality or canonical re-encoding comparisons as a
+  validation gate.
+- Validate boundary inputs structurally and semantically, not by their encoding.
 - Verify once at that boundary, return a type only that boundary can construct,
   and do not re-validate it downstream.
 - Keep canonicalization separate from validation so a caller can take one without

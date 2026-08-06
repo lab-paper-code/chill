@@ -1,7 +1,6 @@
 package profiler
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -44,12 +43,12 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := DecodeFrozenExecutionPolicy(canonical)
+	decoded, err := DecodeFrozenExecutionPolicy(append([]byte(" \n"), canonical...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(canonical, mustFrozenExecutionPolicyJSON(t, decoded)) {
-		t.Fatal("frozen execution policy did not round-trip canonically")
+	if decoded.Policy.Name != frozen.Policy.Name || decoded.Source != frozen.Source {
+		t.Fatalf("decoded execution policy = %#v", decoded)
 	}
 }
 
@@ -78,7 +77,7 @@ func TestExecutionPolicyIdentityDependsOnSemanticsNotConfigMapRevision(t *testin
 	if firstIdentity != secondIdentity {
 		t.Fatalf("source-only revision changed semantic identity: %q != %q", firstIdentity, secondIdentity)
 	}
-	if bytes.Equal(mustFrozenExecutionPolicyJSON(t, first), mustFrozenExecutionPolicyJSON(t, second)) {
+	if first.Source.ResourceVersion == second.Source.ResourceVersion {
 		t.Fatal("source revision was not retained in the frozen record")
 	}
 }
@@ -202,13 +201,4 @@ func validExecutionPolicySource() ExecutionPolicySource {
 		ResourceVersion: "1",
 		Key:             "execution-policies.yaml",
 	}
-}
-
-func mustFrozenExecutionPolicyJSON(t *testing.T, frozen FrozenExecutionPolicy) []byte {
-	t.Helper()
-	payload, err := frozen.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
 }

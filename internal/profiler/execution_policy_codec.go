@@ -108,13 +108,6 @@ func DecodeFrozenExecutionPolicy(raw []byte) (FrozenExecutionPolicy, error) {
 	if err := frozen.Validate(); err != nil {
 		return FrozenExecutionPolicy{}, err
 	}
-	canonical, err := frozen.CanonicalJSON()
-	if err != nil {
-		return FrozenExecutionPolicy{}, err
-	}
-	if !bytes.Equal(raw, canonical) {
-		return FrozenExecutionPolicy{}, errors.New("stored execution policy is not canonical")
-	}
 	return frozen, nil
 }
 

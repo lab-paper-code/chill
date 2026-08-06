@@ -1,7 +1,6 @@
 package admission
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -68,25 +67,16 @@ func TestFreezeConfiguredPolicySelectsAndCanonicalizesExactPolicy(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload[0] = 'x'
-	sealedPayload, err := frozen.CanonicalJSON()
+	decoded, err := DecodeFrozenPolicy(append([]byte(" \n"), payload...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sealedPayload[0] != '{' {
-		t.Fatalf("frozen policy changed through canonical byte projection: %q", sealedPayload)
-	}
-	payload = sealedPayload
-	decoded, err := DecodeFrozenPolicy(payload)
+	decodedSource, decodedRecord, err := decoded.Records()
 	if err != nil {
 		t.Fatal(err)
 	}
-	reencoded, err := decoded.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(payload, reencoded) {
-		t.Fatal("frozen admission policy did not round-trip canonically")
+	if decodedRecord.Name != sealedRecord.Name || decodedSource != sealedSource {
+		t.Fatalf("decoded admission policy: source=%#v policy=%#v", decodedSource, decodedRecord)
 	}
 }
 

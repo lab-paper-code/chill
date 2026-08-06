@@ -97,13 +97,6 @@ func DecodeFrozenActuationPolicy(raw []byte) (FrozenActuationPolicy, error) {
 	if err := frozen.Validate(); err != nil {
 		return FrozenActuationPolicy{}, err
 	}
-	canonical, err := frozen.CanonicalJSON()
-	if err != nil {
-		return FrozenActuationPolicy{}, err
-	}
-	if !bytes.Equal(raw, canonical) {
-		return FrozenActuationPolicy{}, errors.New("stored actuation policy is not canonical")
-	}
 	return frozen, nil
 }
 

@@ -149,9 +149,6 @@ func DecodeFrozenPolicy(raw []byte) (FrozenPolicy, error) {
 	if err != nil {
 		return FrozenPolicy{}, err
 	}
-	if !bytes.Equal(raw, canonical) {
-		return FrozenPolicy{}, errors.New("stored admission policy is not canonical")
-	}
 	return newFrozenPolicy(record, canonical)
 }
 

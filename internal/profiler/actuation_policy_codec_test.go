@@ -1,7 +1,6 @@
 package profiler
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -28,13 +27,12 @@ func TestFreezeConfiguredActuationPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := DecodeFrozenActuationPolicy(canonical)
+	decoded, err := DecodeFrozenActuationPolicy(append([]byte(" \n"), canonical...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	roundTrip, err := decoded.CanonicalJSON()
-	if err != nil || !bytes.Equal(canonical, roundTrip) {
-		t.Fatalf("frozen actuation policy did not round-trip: %v", err)
+	if decoded.Policy.Name != frozen.Policy.Name || decoded.Source != frozen.Source {
+		t.Fatalf("decoded actuation policy = %#v", decoded)
 	}
 }
 
@@ -59,9 +57,7 @@ func TestActuationPolicyIdentityDependsOnSelectedSemanticsNotConfigMapRevision(t
 	if firstDigest != secondDigest {
 		t.Fatalf("source revision changed selected policy identity: %q != %q", firstDigest, secondDigest)
 	}
-	firstBytes, _ := first.CanonicalJSON()
-	secondBytes, _ := second.CanonicalJSON()
-	if bytes.Equal(firstBytes, secondBytes) {
+	if first.Source.ResourceVersion == second.Source.ResourceVersion {
 		t.Fatal("source revision was not retained in the frozen policy")
 	}
 }

@@ -300,8 +300,8 @@ or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 | trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration content digest plus digest-pinned runtime and artifact workload images |
 | selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
 | Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration content digest |
-| single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics, policy content digest, and exact ConfigMap namespace, name, UID, resourceVersion, key, and entry digest |
-| worker execution envelope | DeviceClass, execution-path, and workload-mode entry in the fact-source ConfigMap | timeout margins, producer capacities, container resources, policy content digest, and exact ConfigMap namespace, name, UID, resourceVersion, key, and catalog digest |
+| single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics and exact ConfigMap namespace, name, UID, resourceVersion, and key |
+| worker execution envelope | DeviceClass, execution-path, and workload-mode entry in the fact-source ConfigMap | timeout margins, producer capacities, container resources, and exact ConfigMap namespace, name, UID, resourceVersion, and key |
 
 The Profiler Deployment configuration contains only a local ConfigMap key
 reference to these facts. The Operator passes that reference to the Deployment
@@ -310,24 +310,21 @@ default ConfigMap; an administrator may replace it only through installation
 configuration, never through a Run request.
 
 Changing fact-source content may affect new Runs but never rewrites an already
-frozen Run. The Profiler hashes the exact entries used for a candidate and
-retains that digest, the ConfigMap namespace, name, UID, resourceVersion, and
-all selected image digests in the immutable intent record.
+frozen Run. The Profiler retains the selected entries, ConfigMap namespace,
+name, UID, resourceVersion, key, and all selected immutable image references in
+the intent record.
 
 Admission policy names are Run inputs, but thresholds are not. An administrator
 defines the named policies in the installation-time fact-source ConfigMap. The
 Profiler strict-decodes the catalog, selects the requested entry, verifies its
-workload mode, and retains canonical selected-policy bytes plus exact source
-provenance in the immutable intent record before creating a Job. Policy content
-digest, rather than a compiled label, is the admission version published in
-status and carried into derivation. ConfigMap changes therefore affect only new
-Runs. Restart recovery reads the retained bytes and never re-resolves mutable
-policy configuration.
+workload mode, and retains the selected policy plus exact source provenance in
+the immutable intent record before creating a Job. ConfigMap changes therefore
+affect only new Runs. Restart recovery reads the retained policy and never
+re-resolves mutable policy configuration.
 
 The admission-policy catalog selector and retained-record decoder return a
 sealed policy value. Downstream admission and controller code receive detached
-source/policy projections and the already computed semantic digest; they do not
-re-validate or re-hash the same retained policy.
+source/policy projections; they do not re-validate the same retained policy.
 
 Before an intent record exists, a successfully read but malformed policy
 catalog, an unconfigured selected name, or a selected policy whose workload
@@ -343,22 +340,20 @@ An exact DeviceClass selector takes precedence over the explicit `*` fallback,
 so device-specific envelopes do not require a new binary or a Run-level resource
 override. The Profiler validates the envelope's resource and capacity
 relationships, then retains its
-canonical bytes and exact source provenance beside the intent before creating
+selected policy and exact source provenance beside the intent before creating
 a Job. Admission, execution, and optional actuation selections must come from
 the same ConfigMap UID and resourceVersion; a concurrent catalog update
 therefore fails closed instead of producing a mixed snapshot. The Job
-annotation uses the selected policy's semantic content digest;
-ConfigMap-only revision changes do not create a new execution identity. Restart
-recovery never consults mutable execution-policy configuration. Intent records
-that predate this payload reconstruct the exact `cpu-ort-worker/v1` or
-`cpu-ort-worker/idle-v1` envelope so an already-created Job remains recoverable.
+annotation uses the selected policy's semantic identity; ConfigMap-only
+revision changes do not create a new execution identity. Restart recovery never
+consults mutable execution-policy configuration.
 
 `ProfilingRun.spec.candidate.powerMode` is required. Candidate-report v1alpha6
 verifies that it is declared by the selected `DeviceClass` and directly retains
 the exact typed actuator target for a non-fixed mode. The Profiler selects a
 configured actuation policy by DeviceClass, mode, and actuator kind; its
-canonical digest enters intent v1alpha9 and its canonical bytes and ConfigMap
-source enter the immutable intent record. Fixed Runs continue directly. An
+selected semantics and ConfigMap source enter the immutable intent record.
+Fixed Runs continue directly. An
 actuated Run records `ActuationHandoffPending` and creates no measurement Job,
 because Lease ownership, read-back, settling, and restoration remain Plan 6
 work. Thus target freezing is implemented without claiming selectable-mode
