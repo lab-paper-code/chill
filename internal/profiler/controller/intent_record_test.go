@@ -1,12 +1,12 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,12 +60,19 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedPolicy, _ := loaded.AdmissionPolicy.CanonicalJSON()
-	frozenPolicy, _ := frozen.AdmissionPolicy.CanonicalJSON()
-	if loaded.Prepared.IntentDigest != frozen.Prepared.IntentDigest ||
-		!bytes.Equal(loaded.Prepared.CandidateReportBytes, frozen.Prepared.CandidateReportBytes) ||
-		!bytes.Equal(loadedPolicy, frozenPolicy) {
+	loadedSource, loadedPolicy, _ := loaded.AdmissionPolicy.Records()
+	frozenSource, frozenPolicy, _ := frozen.AdmissionPolicy.Records()
+	if !reflect.DeepEqual(loaded.Prepared.Intent, frozen.Prepared.Intent) ||
+		!reflect.DeepEqual(loadedSource, frozenSource) ||
+		!reflect.DeepEqual(loadedPolicy, frozenPolicy) {
 		t.Fatal("restarted manager did not recover exact frozen inputs")
+	}
+	nonCanonical := record.DeepCopy()
+	nonCanonical.BinaryData[intentRecordIntentKey] = append(
+		[]byte(" \n"), nonCanonical.BinaryData[intentRecordIntentKey]...,
+	)
+	if _, err := decodeIntentRecord(run, nonCanonical); err != nil {
+		t.Fatalf("structurally valid intent encoding was rejected: %v", err)
 	}
 }
 
@@ -133,8 +140,10 @@ func TestIntentRecordsNeverOverwriteConflictingRecord(t *testing.T) {
 	if err := kubeClient.Get(ctx, key, after); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after.BinaryData[intentRecordCandidateKey], retained.BinaryData[intentRecordCandidateKey]) {
-		t.Fatal("conflicting frozen intent record was overwritten")
+	var afterCandidate map[string]any
+	if err := json.Unmarshal(after.BinaryData[intentRecordCandidateKey], &afterCandidate); err != nil ||
+		afterCandidate["scope"] != "foreign" {
+		t.Fatalf("conflicting frozen intent record was overwritten: %#v, %v", afterCandidate, err)
 	}
 }
 

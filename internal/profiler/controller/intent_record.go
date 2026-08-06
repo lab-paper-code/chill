@@ -251,39 +251,22 @@ func verifyExpectedIntentRecord(
 	if err != nil {
 		return err
 	}
-	retainedPolicy, retainedPolicyErr := retained.AdmissionPolicy.CanonicalJSON()
-	expectedPolicy, expectedPolicyErr := expected.AdmissionPolicy.CanonicalJSON()
-	retainedExecution, retainedExecutionErr := retained.ExecutionPolicy.CanonicalJSON()
-	expectedExecution, expectedExecutionErr := expected.ExecutionPolicy.CanonicalJSON()
-	retainedActuation, retainedActuationErr := canonicalActuationPolicy(retained.Prepared.ActuationPolicy)
-	expectedActuation, expectedActuationErr := canonicalActuationPolicy(expected.Prepared.ActuationPolicy)
-	if retainedPolicyErr != nil || expectedPolicyErr != nil ||
-		retainedExecutionErr != nil || expectedExecutionErr != nil ||
-		retainedActuationErr != nil || expectedActuationErr != nil {
-		return errors.Join(
-			retainedPolicyErr,
-			expectedPolicyErr,
-			retainedExecutionErr,
-			expectedExecutionErr,
-			retainedActuationErr,
-			expectedActuationErr,
-		)
+	retainedSource, retainedPolicy, err := retained.AdmissionPolicy.Records()
+	if err != nil {
+		return err
 	}
-	if retained.Prepared.IntentDigest != expected.Prepared.IntentDigest ||
-		!bytes.Equal(retained.Prepared.CandidateReportBytes, expected.Prepared.CandidateReportBytes) ||
-		!bytes.Equal(retainedPolicy, expectedPolicy) ||
-		!bytes.Equal(retainedExecution, expectedExecution) ||
-		!bytes.Equal(retainedActuation, expectedActuation) {
+	expectedSource, expectedPolicy, err := expected.AdmissionPolicy.Records()
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(retained.Prepared.Intent, expected.Prepared.Intent) ||
+		!reflect.DeepEqual(retainedSource, expectedSource) ||
+		!reflect.DeepEqual(retainedPolicy, expectedPolicy) ||
+		!reflect.DeepEqual(retained.ExecutionPolicy, expected.ExecutionPolicy) ||
+		!reflect.DeepEqual(retained.Prepared.ActuationPolicy, expected.Prepared.ActuationPolicy) {
 		return errors.New("existing frozen intent ConfigMap contains different Run inputs")
 	}
 	return nil
-}
-
-func canonicalActuationPolicy(policy *profiler.FrozenActuationPolicy) ([]byte, error) {
-	if policy == nil {
-		return nil, nil
-	}
-	return policy.CanonicalJSON()
 }
 
 func decodeIntentRecord(
@@ -365,13 +348,6 @@ func decodeStoredIntent(raw []byte) (profilingrun.Intent, string, error) {
 	digest, err := intent.Digest()
 	if err != nil {
 		return profilingrun.Intent{}, "", fmt.Errorf("validate frozen Run intent: %w", err)
-	}
-	canonical, err := intent.CanonicalJSON()
-	if err != nil {
-		return profilingrun.Intent{}, "", fmt.Errorf("encode validated frozen Run intent: %w", err)
-	}
-	if !bytes.Equal(raw, canonical) {
-		return profilingrun.Intent{}, "", errors.New("stored Run intent is not canonical")
 	}
 	return intent, digest, nil
 }

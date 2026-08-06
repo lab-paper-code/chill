@@ -22,7 +22,7 @@ The internal intent is `v1alpha9`; retained v1alpha8, v1alpha7, and v1alpha6 CPU
 records remain readable, as does retained v1alpha8 RKNNLite. The current schema
 adds an optional typed actuation binding while preserving the common worker CPU
 quota and RKNNLite's omission of ORT-only thread settings. Each immutable intent record
-contains the canonical intent, candidate report, admission policy, and
+contains the structured intent, candidate report, admission policy, and
 execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
