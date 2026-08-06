@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 )
 
@@ -106,15 +107,7 @@ func DecodeConfirmatoryDerivationPolicy(
 	if err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
-	parsedCanonical, err := parsed.CanonicalJSON()
-	if err != nil {
-		return ConfirmatoryDerivationPolicy{}, err
-	}
-	expectedCanonical, err := expected.CanonicalJSON()
-	if err != nil {
-		return ConfirmatoryDerivationPolicy{}, err
-	}
-	if !bytes.Equal(parsedCanonical, expectedCanonical) {
+	if !reflect.DeepEqual(parsed.record, expected.record) {
 		return ConfirmatoryDerivationPolicy{}, errors.New("confirmatory derivation policy does not match frozen discovery sizing")
 	}
 	return parsed, nil

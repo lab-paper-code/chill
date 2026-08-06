@@ -60,9 +60,14 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return err
 	}
-	if actuation, present := fields["actuation"]; present &&
-		bytes.Equal(bytes.TrimSpace(actuation), []byte("null")) {
-		return errors.New("intent.actuation must be an object when present")
+	if actuationPayload, present := fields["actuation"]; present {
+		var actuation *ActuationContract
+		if err := json.Unmarshal(actuationPayload, &actuation); err != nil {
+			return err
+		}
+		if actuation == nil {
+			return errors.New("intent.actuation must be an object when present")
+		}
 	}
 	*i = Intent(decoded)
 	return nil
