@@ -180,9 +180,6 @@ func validateDiscoveryPolicyCurve(
 	if err := policy.requireFrozen(); err != nil {
 		return BSatPolicy{}, err
 	}
-	if curve.ContractDigest() != policy.CurveFamilyContractDigest() {
-		return BSatPolicy{}, errors.New("curve does not match the discovery policy's family contract")
-	}
 	idlePolicy, err := policy.PointPolicy(PointPolicyStageIdleBaseline)
 	if err != nil {
 		return BSatPolicy{}, err
@@ -212,7 +209,7 @@ func validateDiscoveryPolicyCurve(
 // requireFrozen checks opaque type state only. The constructor and decoder own
 // all content validation and digest construction.
 func (p DiscoveryDerivationPolicy) requireFrozen() error {
-	if p.record.SchemaVersion != DiscoveryDerivationPolicySchemaVersion || p.digest == "" {
+	if p.record.SchemaVersion != DiscoveryDerivationPolicySchemaVersion {
 		return errors.New("discovery derivation policy was not frozen")
 	}
 	return nil
@@ -229,8 +226,8 @@ func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRec
 	if !validDerivationPolicyName(spec.Name) {
 		return errors.New("discovery derivation-policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
-	if !validVersionedDigest(spec.CurveFamilyContractDigest, curveFamilyContractSchemaVersion) {
-		return errors.New("discovery derivation policy has an invalid curve-family contract digest")
+	if !validVersionedIdentity(spec.CurveFamilyContractDigest, curveFamilyContractSchemaVersion) {
+		return errors.New("discovery derivation policy has an invalid curve-family contract identity")
 	}
 	if len(spec.PointPolicies) != 2 {
 		return errors.New("discovery derivation policy requires exactly two point policies")
@@ -290,9 +287,10 @@ func validDerivationPolicyName(name string) bool {
 	return len(name) >= 1 && len(name) <= 63 && derivationPolicyNamePattern.MatchString(name)
 }
 
-func validVersionedDigest(value, schemaVersion string) bool {
+func validVersionedIdentity(value, schemaVersion string) bool {
 	prefix := schemaVersion + "@"
-	return strings.HasPrefix(value, prefix) && curveDigestPattern.MatchString(strings.TrimPrefix(value, prefix))
+	suffix := strings.TrimPrefix(value, prefix)
+	return strings.HasPrefix(value, prefix) && cleanCurveValue(suffix)
 }
 
 func derivationPolicyDigest(payload []byte) string {

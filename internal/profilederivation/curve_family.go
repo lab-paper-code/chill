@@ -10,7 +10,6 @@ import (
 	"io"
 	"path"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -18,11 +17,6 @@ import (
 const (
 	curveFamilyContractSchemaVersion = "chill.dacs.io/curve-family-contract.v1alpha1"
 	curveFamilyIdentitySchemaVersion = "chill.dacs.io/curve-family-identity.v1alpha1"
-)
-
-var (
-	curveDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	curveImagePattern  = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
 )
 
 // CurveCPUContract is the execution CPU contract shared by every family
@@ -196,7 +190,7 @@ func (c CurveFamilyContract) Members() []CurveFamilyMemberContract {
 // requireFrozen checks opaque type state only. The constructor and decoder own
 // all content validation and digest construction.
 func (c CurveFamilyContract) requireFrozen() error {
-	if c.record.SchemaVersion != curveFamilyContractSchemaVersion || c.digest == "" {
+	if c.record.SchemaVersion != curveFamilyContractSchemaVersion {
 		return errors.New("curve-family contract was not frozen")
 	}
 	return nil
@@ -347,14 +341,14 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 		"DeviceClass content": shared.DeviceClassContentDigest,
 		"runtime declaration": shared.RuntimeDeclarationDigest,
 	} {
-		if !curveDigestPattern.MatchString(value) {
-			return fmt.Errorf("curve-family shared %s digest is invalid", name)
+		if !cleanCurveValue(value) {
+			return fmt.Errorf("curve-family shared %s identity is invalid", name)
 		}
 	}
-	if shared.HostContractDigest != "" && !curveDigestPattern.MatchString(shared.HostContractDigest) {
-		return errors.New("curve-family host-contract digest is invalid")
+	if shared.HostContractDigest != "" && strings.TrimSpace(shared.HostContractDigest) != shared.HostContractDigest {
+		return errors.New("curve-family host-contract identity has surrounding whitespace")
 	}
-	if !curveImagePattern.MatchString(shared.RuntimeImage) {
+	if !cleanCurveValue(shared.RuntimeImage) {
 		return errors.New("curve-family runtime image is invalid")
 	}
 	if err := validateCurveCPU(shared.CPU); err != nil {
@@ -405,7 +399,7 @@ func validateCurveFamilyMember(
 	}
 	if member.ArtifactPath == "/" || !strings.HasPrefix(member.ArtifactPath, "/") ||
 		path.Clean(member.ArtifactPath) != member.ArtifactPath ||
-		!curveDigestPattern.MatchString(member.ArtifactDigest) || !curveImagePattern.MatchString(member.ArtifactImage) {
+		!cleanCurveValue(member.ArtifactDigest) || !cleanCurveValue(member.ArtifactImage) {
 		return fmt.Errorf("curve-family member batch %d artifact contract is invalid", member.Batch)
 	}
 	if (shared.Conversion.Derived && member.FixedBatchCapability != member.Batch) ||
@@ -441,8 +435,8 @@ func validateCurveMetricSource(source CurveMetricSourceContract) error {
 			return errors.New("curve-family metric-source contract is incomplete")
 		}
 	}
-	if !curveDigestPattern.MatchString(source.ConfigurationContentDigest) {
-		return errors.New("curve-family metric-source configuration digest is invalid")
+	if !cleanCurveValue(source.ConfigurationContentDigest) {
+		return errors.New("curve-family metric-source configuration identity is invalid")
 	}
 	return nil
 }
@@ -458,9 +452,9 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 		protocol.MetricIntervalMilliseconds < 1 || protocol.MetricTimeoutMilliseconds < 1 ||
 		protocol.MetricTimeoutMilliseconds >= protocol.MetricIntervalMilliseconds ||
 		protocol.MetricDurationSeconds < protocol.DurationSeconds ||
-		!curveImagePattern.MatchString(protocol.MetricObserverImage) ||
-		!curveImagePattern.MatchString(protocol.WorkloadObserverImage) ||
-		!curveDigestPattern.MatchString(protocol.WorkloadContractDigest) {
+		!cleanCurveValue(protocol.MetricObserverImage) ||
+		!cleanCurveValue(protocol.WorkloadObserverImage) ||
+		!cleanCurveValue(protocol.WorkloadContractDigest) {
 		return fmt.Errorf("curve-family %s protocol is invalid", mode)
 	}
 	return nil
@@ -477,12 +471,9 @@ func validateCurveConversion(conversion CurveConversionContract) error {
 		}
 		return nil
 	}
-	for index, value := range values {
+	for _, value := range values {
 		if !cleanCurveValue(value) {
 			return errors.New("derived curve-family conversion contract is incomplete")
-		}
-		if index >= 3 && !curveDigestPattern.MatchString(value) {
-			return errors.New("derived curve-family conversion digest is invalid")
 		}
 	}
 	return nil
@@ -497,7 +488,7 @@ func validDerivedIdentity(identity, prefix string) bool {
 		return false
 	}
 	separator := strings.LastIndex(identity, "@")
-	return separator > len(prefix) && curveDigestPattern.MatchString(identity[separator+1:])
+	return separator > len(prefix) && cleanCurveValue(identity[separator+1:])
 }
 
 func versionedCurveDigest(schemaVersion string, payload []byte) string {

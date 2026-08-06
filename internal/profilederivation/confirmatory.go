@@ -3,6 +3,7 @@ package profilederivation
 import (
 	"errors"
 	"math"
+	"reflect"
 )
 
 // DeriveBSatConfirmatory evaluates the frozen domain-wide acceptance rule on
@@ -31,7 +32,7 @@ func DeriveBSatConfirmatory(
 	if err != nil {
 		return BSatResult{}, err
 	}
-	if expectedPolicy.Digest() != policy.Digest() {
+	if !reflect.DeepEqual(expectedPolicy.record, policy.record) {
 		return BSatResult{}, errors.New("confirmatory policy does not match the curve's realized sizing")
 	}
 	result, err := deriveBSatConfirmatory(curve, candidate, bsat)

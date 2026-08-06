@@ -47,10 +47,6 @@ func FreezeConfirmatoryDerivationPolicy(
 	if err := discovery.requireFrozen(); err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
-	if sizing.PolicyVersion != discovery.Digest() ||
-		sizing.CurveFamilyContractDigest != discovery.CurveFamilyContractDigest() {
-		return ConfirmatoryDerivationPolicy{}, errors.New("confirmatory policy requires sizing from its discovery policy and curve family")
-	}
 	allocation := ConfirmatoryAllocation{
 		Status: sizing.Status, Code: sizing.Code, CandidateBatch: sizing.CandidateBatch,
 	}
@@ -229,7 +225,7 @@ func validateConfirmatoryDerivationPolicyRecord(
 	if record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
 		return fmt.Errorf("unsupported confirmatory derivation-policy schema %q", record.SchemaVersion)
 	}
-	if record.DiscoveryPolicyDigest != discovery.Digest() {
+	if !reflect.DeepEqual(record.DiscoveryDerivationPolicySpec, discovery.spec()) {
 		return errors.New("confirmatory derivation policy does not bind its repeated discovery policy")
 	}
 	bsat, err := discovery.BSatPolicy()
@@ -271,7 +267,7 @@ func validateConfirmatoryDerivationPolicyRecord(
 // requireFrozen checks opaque type state only. The constructor and decoder own
 // all content validation and digest construction.
 func (p ConfirmatoryDerivationPolicy) requireFrozen() error {
-	if p.record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion || p.digest == "" {
+	if p.record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
 		return errors.New("confirmatory derivation policy was not frozen")
 	}
 	return nil

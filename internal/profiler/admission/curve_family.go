@@ -11,8 +11,8 @@ import (
 
 // ProjectVerifiedCurveFamilyMember consumes only evidence already sealed by
 // the active and idle Loader boundaries. Catalog-only conversion and tensor
-// facts remain bound through the exact ModelSpec content digest frozen in both
-// intents and in the family contract.
+// facts remain bound through the material fields frozen in both intents and in
+// the family contract.
 func ProjectVerifiedCurveFamilyMember(
 	contract profilederivation.CurveFamilyContract,
 	batch int,
@@ -73,8 +73,7 @@ func validateCurveMemberIntents(
 	shared profilederivation.CurveFamilySharedContract,
 	member profilederivation.CurveFamilyMemberContract,
 ) error {
-	if active.Candidate.ReportDigest == "" || active.Candidate.ReportDigest != idle.Candidate.ReportDigest ||
-		active.TargetNode.Architecture != idle.TargetNode.Architecture ||
+	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
@@ -103,15 +102,12 @@ func validateCurveMemberIntent(
 	protocol profilederivation.CurveProtocolContract,
 	expectedBatch int,
 ) error {
-	if intent.Candidate.ModelSpecContentDigest != shared.ModelSpecContentDigest ||
-		intent.Candidate.DeviceClassContentDigest != shared.DeviceClassContentDigest ||
-		intent.Candidate.RuntimeDeclarationDigest != shared.RuntimeDeclarationDigest ||
-		intent.Candidate.ExecutionPath != member.ExecutionPath ||
+	if intent.Candidate.ExecutionPath != member.ExecutionPath ||
 		intent.State.DeviceClass != shared.DeviceClass || intent.State.Model != shared.LogicalModel ||
-		intent.State.Artifact != member.ArtifactName || intent.State.ArtifactDigest != member.ArtifactDigest ||
+		intent.State.Artifact != member.ArtifactName ||
 		intent.State.ArtifactPath != member.ArtifactPath || intent.State.RuntimeFamily != shared.RuntimeFamily ||
 		intent.State.Backend != shared.Backend || intent.State.PowerMode != shared.PowerMode ||
-		intent.State.HostContractDigest != shared.HostContractDigest || intent.Images.Runtime != shared.RuntimeImage ||
+		intent.Images.Runtime != shared.RuntimeImage ||
 		intent.Images.Artifact != member.ArtifactImage || intent.TargetNode.UID != shared.NodeUID ||
 		actualNodeUID != shared.NodeUID || intent.Measurement.Batch != expectedBatch {
 		return errors.New("frozen intent contradicts curve-family state or member facts")

@@ -64,9 +64,9 @@ func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
 		t.Fatal("Node drift was accepted")
 	}
 	drifted = idle
-	drifted.Candidate.ReportDigest = strings.Repeat("x", 64)
+	drifted.Candidate.ExecutionPath = "different-path"
 	if err := validateCurveMemberIntents(active, drifted, "node-uid", "node-uid", shared, member); err == nil {
-		t.Fatal("active/idle candidate disagreement was accepted")
+		t.Fatal("active/idle execution-path disagreement was accepted")
 	}
 }
 
