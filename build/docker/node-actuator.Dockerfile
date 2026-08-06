@@ -9,6 +9,7 @@ RUN go mod download
 
 COPY cmd/node-actuator/ cmd/node-actuator/
 COPY api/ api/
+COPY internal/kubeconfig/ internal/kubeconfig/
 COPY internal/nodeactuator/ internal/nodeactuator/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/node-actuator ./cmd/node-actuator
 
