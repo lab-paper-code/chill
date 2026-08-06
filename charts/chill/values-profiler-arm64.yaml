@@ -138,30 +138,12 @@ profiling:
       kind: edge-metrics
       endpoint: http://155.230.34.203:9102/metrics
       powerMetric: shelly_power_total_watts
-  admissionPolicies:
-    - name: wall-power-v2
-      workloadMode: saturated-serial-fixed-batch
-      minimumSamples: 20
-      maximumGapSeconds: 1.5
-      maximumBoundaryDistanceSeconds: 1.0
-      minimumCoverage: 0.95
-      allowReceiptTimestamps: true
-      rejectConcurrentCHILLWorkloads: true
-      rejectExternalWorkloadChanges: true
+  additionalAdmissionPolicies:
     - name: wall-power-2p5s-source-v1
       workloadMode: saturated-serial-fixed-batch
       minimumSamples: 20
       maximumGapSeconds: 4.0
       maximumBoundaryDistanceSeconds: 2.5
-      minimumCoverage: 0.95
-      allowReceiptTimestamps: true
-      rejectConcurrentCHILLWorkloads: true
-      rejectExternalWorkloadChanges: true
-    - name: idle-wall-power-v1
-      workloadMode: idle-model-loaded
-      minimumSamples: 20
-      maximumGapSeconds: 1.5
-      maximumBoundaryDistanceSeconds: 1.0
       minimumCoverage: 0.95
       allowReceiptTimestamps: true
       rejectConcurrentCHILLWorkloads: true

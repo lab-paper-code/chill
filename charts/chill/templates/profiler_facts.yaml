@@ -24,7 +24,7 @@ data:
   {{ .Values.profiler.factSource.admissionPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
     policies:
-{{- toYaml .Values.profiling.admissionPolicies | nindent 6 }}
+{{- toYaml (concat .Values.profiling.admissionPolicies .Values.profiling.additionalAdmissionPolicies) | nindent 6 }}
   {{ .Values.profiler.factSource.executionPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-execution-policies.v1alpha1
     policies:

@@ -117,6 +117,7 @@ profiling:
       allowReceiptTimestamps: true
       rejectConcurrentCHILLWorkloads: true
       rejectExternalWorkloadChanges: true
+  additionalAdmissionPolicies: []
   executionPolicyDefaults:
     activeDeadlineOverheadSeconds: 180
     attemptTimeoutOverheadSeconds: 150
