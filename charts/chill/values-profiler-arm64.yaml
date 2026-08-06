@@ -16,8 +16,8 @@ profiler:
         deviceClass: raspberry-pi-5-8g
         executionPath: ort-cpu
         runtime:
-          contentDigest: sha256:512fc0695c2eb72151521df8ddd12e494e954ea6f2d7d0dffd222dafb76edd4b
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:8e0a07e6180ba79defe59b86bba82060e45407a203a35d9b11d18b366c352827
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -28,8 +28,8 @@ profiler:
         deviceClass: orangepi-5-plus-16g
         executionPath: ort-cpu
         runtime:
-          contentDigest: sha256:512fc0695c2eb72151521df8ddd12e494e954ea6f2d7d0dffd222dafb76edd4b
-          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
+          contentDigest: sha256:8e0a07e6180ba79defe59b86bba82060e45407a203a35d9b11d18b366c352827
+          payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
         artifact:
           schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
           image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
