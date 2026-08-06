@@ -211,7 +211,8 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		if snapshot.TargetObservation == nil {
 			return Decision{Action: ActionObserveTarget}, nil
 		}
-		if !targetsEqual(snapshot.TargetObservation.Target, snapshot.Request.Target) {
+		if !targetsEqual(snapshot.TargetObservation.Target, snapshot.Request.Target) ||
+			snapshot.TargetObservation.PowerMode != snapshot.Request.PowerMode {
 			return Decision{Action: ActionBeginRestore, Failure: &Failure{
 				Stage: FailureStageVerify, Reason: "TargetReadBackMismatch",
 				Message: "independent target observation does not match the requested state",
@@ -241,7 +242,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		if snapshot.RestoredObservation == nil {
 			return Decision{Action: ActionObserveRestored, Failure: snapshot.Failure}, nil
 		}
-		if !targetsEqual(snapshot.RestoredObservation.Target, snapshot.PreviousObservation.Target) {
+		if !observationsEqualState(snapshot.RestoredObservation, snapshot.PreviousObservation) {
 			return Decision{Action: ActionMarkFailed, Failure: &Failure{
 				Stage: FailureStageRestore, Reason: "RestoreReadBackMismatch",
 				Message: "independent restoration observation does not match the retained previous state",
@@ -342,6 +343,10 @@ func shouldBeginRestore(snapshot Snapshot) bool {
 
 func targetsEqual(left, right Target) bool {
 	return reflect.DeepEqual(left, right)
+}
+
+func observationsEqualState(left, right *Observation) bool {
+	return left != nil && right != nil && left.PowerMode == right.PowerMode && targetsEqual(left.Target, right.Target)
 }
 
 func safetyExpired(snapshot Snapshot) bool {

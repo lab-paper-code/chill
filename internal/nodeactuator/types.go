@@ -47,7 +47,7 @@ type NvidiaLockedGPUClockTarget struct {
 	Mode   *int32
 }
 
-// Request is the verified durable handoff presented to the future Lease and
+// Request is the verified durable handoff presented to the Lease and
 // host-adapter state machine. It is not evidence that mutation has occurred.
 type Request struct {
 	Handoff                     ObjectIdentity

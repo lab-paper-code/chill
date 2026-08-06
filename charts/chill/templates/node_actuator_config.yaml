@@ -20,6 +20,12 @@ data:
 {{- toYaml .Values.nodeActuator.allowedNamespaces | nindent 6 }}
     actuationPolicies:
 {{- toYaml .Values.profiler.factSource.actuationPolicies | nindent 6 }}
+    jetsonNVPModel:
+      command:
+{{- toYaml .Values.nodeActuator.jetsonNVPModel.command | nindent 8 }}
+      commandTimeout: {{ .Values.nodeActuator.jetsonNVPModel.commandTimeout | quote }}
+      hostPaths:
+{{- toYaml .Values.nodeActuator.jetsonNVPModel.hostPaths | nindent 8 }}
     nodeSelector:
 {{- toYaml .Values.nodeActuator.nodeSelector | nindent 6 }}
     {{- with .Values.nodeActuator.affinity }}

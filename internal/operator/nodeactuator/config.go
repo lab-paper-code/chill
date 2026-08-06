@@ -3,6 +3,8 @@ package nodeactuator
 import (
 	"errors"
 	"fmt"
+	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 )
 
 type Config struct {
@@ -22,12 +25,27 @@ type Config struct {
 	SafetyValidFor       string                             `json:"safetyValidFor"`
 	AllowedNamespaces    []string                           `json:"allowedNamespaces"`
 	ActuationPolicies    []actuatorcore.ActuationPolicySpec `json:"actuationPolicies"`
+	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
 	NodeSelector         map[string]string                  `json:"nodeSelector"`
 	Affinity             *corev1.Affinity                   `json:"affinity,omitempty"`
 	Tolerations          []corev1.Toleration                `json:"tolerations,omitempty"`
 	Resources            corev1.ResourceRequirements        `json:"resources,omitempty"`
 	PodSecurityContext   *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
 	SecurityContext      *corev1.SecurityContext            `json:"securityContext,omitempty"`
+}
+
+type JetsonNVPModelConfig struct {
+	Command        []string        `json:"command"`
+	CommandTimeout string          `json:"commandTimeout"`
+	HostPaths      []HostPathMount `json:"hostPaths"`
+}
+
+type HostPathMount struct {
+	Name      string              `json:"name"`
+	HostPath  string              `json:"hostPath"`
+	MountPath string              `json:"mountPath"`
+	Type      corev1.HostPathType `json:"type"`
+	ReadOnly  bool                `json:"readOnly"`
 }
 
 func (c Config) Validate() error {
@@ -59,8 +77,76 @@ func (c Config) Validate() error {
 	if _, err := configuredPolicyDigests(c.ActuationPolicies); err != nil {
 		problems = append(problems, err.Error())
 	}
+	if err := c.validateHostAdapters(); err != nil {
+		problems = append(problems, err.Error())
+	}
 	if len(problems) != 0 {
 		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func (c Config) validateHostAdapters() error {
+	for _, policy := range c.ActuationPolicies {
+		if policy.ActuatorKind != actuatorcore.ActuatorKindJetsonNVPModel {
+			return fmt.Errorf("no installed host adapter supports actuation-policy kind %q", policy.ActuatorKind)
+		}
+	}
+	if c.JetsonNVPModel == nil {
+		return errors.New("jetsonNVPModel config is required by the installed actuation policies")
+	}
+	duration, err := time.ParseDuration(c.JetsonNVPModel.CommandTimeout)
+	if err != nil {
+		return errors.New("jetsonNVPModel.commandTimeout must be a duration")
+	}
+	if err := (jetson.NVPModelOptions{Command: c.JetsonNVPModel.Command, Timeout: duration}).Validate(); err != nil {
+		return fmt.Errorf("validate jetsonNVPModel command: %w", err)
+	}
+	if err := validateHostPaths(c.JetsonNVPModel.HostPaths); err != nil {
+		return fmt.Errorf("validate jetsonNVPModel host paths: %w", err)
+	}
+	if c.PodSecurityContext == nil || c.PodSecurityContext.RunAsUser == nil || *c.PodSecurityContext.RunAsUser != 0 ||
+		c.PodSecurityContext.RunAsNonRoot == nil || *c.PodSecurityContext.RunAsNonRoot {
+		return errors.New("jetsonNVPModel requires an explicit root Pod security identity")
+	}
+	security := c.SecurityContext
+	if security == nil || security.Privileged == nil || *security.Privileged ||
+		security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+		security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem || security.Capabilities == nil ||
+		len(security.Capabilities.Add) != 0 || !slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
+		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, read-only-rootfs security with all capabilities dropped")
+	}
+	return nil
+}
+
+func validateHostPaths(hostPaths []HostPathMount) error {
+	if len(hostPaths) == 0 {
+		return errors.New("at least one explicit host path is required")
+	}
+	seenNames := make(map[string]struct{}, len(hostPaths))
+	seenHostPaths := make(map[string]struct{}, len(hostPaths))
+	seenMountPaths := make(map[string]struct{}, len(hostPaths))
+	for _, hostPath := range hostPaths {
+		if len(validation.IsDNS1123Label(hostPath.Name)) != 0 {
+			return fmt.Errorf("invalid host-path volume name %q", hostPath.Name)
+		}
+		if !path.IsAbs(hostPath.HostPath) || path.Clean(hostPath.HostPath) != hostPath.HostPath || hostPath.HostPath == "/" {
+			return fmt.Errorf("host path %q must be a clean absolute path narrower than root", hostPath.HostPath)
+		}
+		if !path.IsAbs(hostPath.MountPath) || path.Clean(hostPath.MountPath) != hostPath.MountPath || hostPath.MountPath == "/" {
+			return fmt.Errorf("mount path %q must be a clean absolute path narrower than root", hostPath.MountPath)
+		}
+		if hostPath.Type != corev1.HostPathFile && hostPath.Type != corev1.HostPathDirectory {
+			return fmt.Errorf("host path %q must require an existing File or Directory", hostPath.HostPath)
+		}
+		for value, seen := range map[string]map[string]struct{}{
+			hostPath.Name: seenNames, hostPath.HostPath: seenHostPaths, hostPath.MountPath: seenMountPaths,
+		} {
+			if _, duplicate := seen[value]; duplicate {
+				return fmt.Errorf("duplicate host-access identity %q", value)
+			}
+			seen[value] = struct{}{}
+		}
 	}
 	return nil
 }

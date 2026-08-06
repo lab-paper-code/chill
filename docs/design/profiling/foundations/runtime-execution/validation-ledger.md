@@ -45,6 +45,15 @@ recovered. The installed Jetson Nano `DeviceClass` still carried the old `10W`
 name at capture time; this repository correction is not a live rollout or an
 actuation proof.
 
+The host-adapter preflight re-queried the same three reachable machines without
+applying a mode. All retained the name/ID pairs above. Each exposed
+`/usr/sbin/nvpmodel`; Xavier NX and AGX Orin linked NVIDIA libraries under
+`/usr/lib/aarch64-linux-gnu/tegra`, while Jetson Nano used only the standard
+runtime. The installation contract therefore declares that binary, the host
+runtime libraries, NVPModel configuration and state, and sysfs separately. It
+does not mount the host root. This remains read-only compatibility evidence,
+not an apply/read-back/restore result.
+
 ## Shared arm64 CPU ORT facts
 
 | Fact | Verified identity |

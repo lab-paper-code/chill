@@ -317,6 +317,49 @@ nodeActuator:
   safetyValidFor: 1m
   allowedNamespaces:
     - kube-system
+  jetsonNVPModel:
+    command:
+      - /host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1
+      - --library-path
+      - /host/lib/aarch64-linux-gnu:/host/usr/lib/aarch64-linux-gnu/tegra
+      - /host/usr/sbin/nvpmodel
+    commandTimeout: 30s
+    hostPaths:
+      - name: host-nvpmodel
+        hostPath: /usr/sbin/nvpmodel
+        mountPath: /host/usr/sbin/nvpmodel
+        type: File
+        readOnly: true
+      - name: host-lib
+        hostPath: /lib/aarch64-linux-gnu
+        mountPath: /host/lib/aarch64-linux-gnu
+        type: Directory
+        readOnly: true
+      - name: host-tegra-lib
+        hostPath: /usr/lib/aarch64-linux-gnu/tegra
+        mountPath: /host/usr/lib/aarch64-linux-gnu/tegra
+        type: Directory
+        readOnly: true
+      - name: host-nvpmodel-config-dir
+        hostPath: /etc/nvpmodel
+        mountPath: /etc/nvpmodel
+        type: Directory
+        readOnly: true
+      - name: host-nvpmodel-config
+        hostPath: /etc/nvpmodel.conf
+        mountPath: /etc/nvpmodel.conf
+        type: File
+        readOnly: true
+      - name: host-nvpmodel-state
+        hostPath: /var/lib/nvpmodel
+        mountPath: /var/lib/nvpmodel
+        type: Directory
+        readOnly: false
+      - name: host-sys
+        hostPath: /sys
+        mountPath: /sys
+        type: Directory
+        readOnly: false
   nodeSelector:
     edge.dacs.io/node-actuation: enabled
   affinity: {}
@@ -329,8 +372,10 @@ nodeActuator:
       cpu: 10m
       memory: 32Mi
   podSecurityContext:
-    runAsNonRoot: true
+    runAsUser: 0
+    runAsNonRoot: false
   securityContext:
+    privileged: false
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:

@@ -7,6 +7,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	actuatorcontroller "github.com/lab-paper-code/chill/internal/nodeactuator/controller"
+	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,8 +38,14 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 	if err != nil {
 		return fmt.Errorf("construct workload safety checker: %w", err)
 	}
+	hostActuator, err := jetson.NewNVPModel(jetson.NVPModelOptions{
+		Command: append([]string(nil), opts.jetsonCommand...), Timeout: opts.jetsonTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("construct Jetson NVPModel adapter: %w", err)
+	}
 	reconciler, err := actuatorcontroller.NewHandoffReconciler(
-		manager.GetClient(), leases, safety, unavailableHostActuator{},
+		manager.GetClient(), leases, safety, hostActuator,
 		actuatorcontroller.HandoffReconcilerOptions{
 			AssignedNode: assigned,
 			AllowedPolicyDigests: append(
@@ -54,24 +61,4 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 		return fmt.Errorf("set up NodeActuation reconciler: %w", err)
 	}
 	return nil
-}
-
-// unavailableHostActuator keeps the first operand slice runnable and
-// fail-closed. The Jetson adapter replaces this port in the next reviewed
-// slice; this implementation cannot mutate host state.
-type unavailableHostActuator struct{}
-
-func (unavailableHostActuator) Observe(
-	context.Context,
-	nodeactuator.Request,
-) (nodeactuator.Observation, error) {
-	return nodeactuator.Observation{}, errors.New("host actuator adapter is not installed")
-}
-
-func (unavailableHostActuator) Apply(
-	context.Context,
-	nodeactuator.Request,
-	nodeactuator.Target,
-) error {
-	return errors.New("host actuator adapter is not installed")
 }

@@ -101,6 +101,9 @@ func newNodeActuatorIntegrationReconciler(systemName, namespace string) *operato
 }
 
 func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
+	runAsUser := int64(0)
+	runAsNonRoot, privileged := false, false
+	noEscalation, readOnlyRoot := false, true
 	return operatornodeactuator.Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
@@ -110,6 +113,21 @@ func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
 			PowerMode: "MODE_15W_6CORE", ActuatorKind: actuatorcore.ActuatorKindJetsonNVPModel,
 			SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
 		}},
+		JetsonNVPModel: &operatornodeactuator.JetsonNVPModelConfig{
+			Command: []string{"/host/nvpmodel"}, CommandTimeout: "30s",
+			HostPaths: []operatornodeactuator.HostPathMount{{
+				Name: "host-nvpmodel", HostPath: "/usr/sbin/nvpmodel",
+				MountPath: "/host/nvpmodel", Type: corev1.HostPathFile, ReadOnly: true,
+			}},
+		},
 		NodeSelector: map[string]string{"edge.dacs.io/node-actuation": "enabled"},
+		PodSecurityContext: &corev1.PodSecurityContext{
+			RunAsUser: &runAsUser, RunAsNonRoot: &runAsNonRoot,
+		},
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: &privileged, AllowPrivilegeEscalation: &noEscalation,
+			ReadOnlyRootFilesystem: &readOnlyRoot,
+			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
 	}
 }

@@ -81,6 +81,15 @@
 {{- if empty .Values.profiler.factSource.actuationPolicies -}}
 {{- fail "profiler.factSource.actuationPolicies must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}
+{{- if empty .Values.nodeActuator.jetsonNVPModel.command -}}
+{{- fail "nodeActuator.jetsonNVPModel.command must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.jetsonNVPModel.commandTimeout -}}
+{{- fail "nodeActuator.jetsonNVPModel.commandTimeout must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.jetsonNVPModel.hostPaths -}}
+{{- fail "nodeActuator.jetsonNVPModel.hostPaths must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
 {{- if and (not .Values.nodeActuator.serviceAccount.create) (empty .Values.nodeActuator.serviceAccount.name) -}}
 {{- fail "nodeActuator.serviceAccount.name must be set when nodeActuator.serviceAccount.create=false" -}}
 {{- end -}}

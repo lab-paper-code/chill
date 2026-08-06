@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -87,12 +88,16 @@ type memoryHostActuator struct {
 }
 
 func (a *memoryHostActuator) Observe(
-	context.Context,
-	nodeactuator.Request,
+	_ context.Context,
+	request nodeactuator.Request,
 ) (nodeactuator.Observation, error) {
 	a.observeCalls++
+	powerMode := fmt.Sprintf("mode-%d", a.target.JetsonNVPModel.ID)
+	if reflect.DeepEqual(a.target, request.Target) {
+		powerMode = request.PowerMode
+	}
 	return nodeactuator.Observation{
-		PowerMode: fmt.Sprintf("mode-%d", a.target.JetsonNVPModel.ID),
+		PowerMode: powerMode,
 		Target:    a.target, ObservedAt: time.Date(2026, 8, 6, 12, 0, a.observeCalls, 0, time.UTC),
 	}, nil
 }

@@ -20,6 +20,8 @@ type options struct {
 	safetyValidFor       time.Duration
 	allowedNamespaces    stringListFlag
 	allowedPolicyDigests stringListFlag
+	jetsonCommand        stringListFlag
+	jetsonTimeout        time.Duration
 	metricsAddr          string
 	probeAddr            string
 }
@@ -38,6 +40,14 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.Var(
 		&o.allowedPolicyDigests, "allowed-policy-digest",
 		"Authorized canonical actuation-policy digest; repeatable.",
+	)
+	flags.Var(
+		&o.jetsonCommand, "jetson-nvpmodel-command",
+		"One ordered Jetson NVPModel command token; repeatable.",
+	)
+	flags.DurationVar(
+		&o.jetsonTimeout, "jetson-nvpmodel-timeout", 30*time.Second,
+		"Maximum duration of one Jetson NVPModel host command.",
 	)
 	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "Metrics endpoint bind address, or 0 to disable.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address.")
@@ -70,6 +80,9 @@ func (o options) validate() error {
 	if len(o.allowedNamespaces) == 0 || len(o.allowedPolicyDigests) == 0 {
 		return errors.New("at least one allowed namespace and policy digest are required")
 	}
+	if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
+		return errors.New("Jetson NVPModel command and a timeout between 1 second and 5 minutes are required")
+	}
 	if err := validateUniqueStrings(o.allowedNamespaces, "namespace", func(value string) error {
 		if len(validation.IsDNS1123Label(value)) != 0 {
 			return fmt.Errorf("invalid namespace %q", value)
@@ -78,7 +91,17 @@ func (o options) validate() error {
 	}); err != nil {
 		return err
 	}
-	return validateUniqueStrings(o.allowedPolicyDigests, "policy digest", nodeactuator.ValidatePolicyDigest)
+	if err := validateUniqueStrings(
+		o.allowedPolicyDigests, "policy digest", nodeactuator.ValidatePolicyDigest,
+	); err != nil {
+		return err
+	}
+	for _, argument := range o.jetsonCommand {
+		if strings.TrimSpace(argument) == "" || strings.TrimSpace(argument) != argument || strings.ContainsRune(argument, 0) {
+			return errors.New("Jetson NVPModel command tokens must be non-empty without surrounding whitespace or NUL")
+		}
+	}
+	return nil
 }
 
 type stringListFlag []string

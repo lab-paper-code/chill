@@ -26,10 +26,10 @@ Profiler as Run orchestrator. The durable `NodeActuation` API, Profiler
 producer, strict local-Node consumer projection, pure lifecycle decision core,
 exact Node-UID Lease primitive, internal status reconciler, and fail-closed
 workload-safety observer are implemented. The opt-in command and Operator/Helm
-DaemonSet lifecycle are also implemented, but the chart is disabled by default
-and the command deliberately installs an unavailable host port. No host access,
-host adapter, mutation, or live proof is enabled. Later slices remain deferred
-until their stated entry condition is met or this plan is explicitly revised.
+DaemonSet lifecycle and first Jetson NVPModel host adapter are also implemented.
+The chart is disabled by default, and no live mutation or apply/read-back/restore
+proof has occurred. Later slices remain deferred until their stated entry
+condition is met or this plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -164,8 +164,10 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
   lifecycle with exact Node/self-Pod identity, shared Go policy digesting,
   scoped API permissions, and a stop gate that retains the operand for every
-  unfinished or unrestored handoff. Keep the host port unavailable in this
-  slice.
+  unfinished or unrestored handoff.
+- [x] Wire the first Jetson NVPModel adapter with a bounded configured argv and
+  explicit narrow host mounts; keep the chart disabled until live restoration
+  proof closes the mutation gate.
 - [x] Serialize every runnable-operand handoff with the exact Node-UID Lease;
   live host-mutation proof remains open.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
@@ -191,13 +193,13 @@ The Profiler now creates one owned `NodeActuation`, records its exact UID in
 Run status, reports `NodeActuatorPending`, and creates no measurement Job. The
 handoff keeps Run/Node UID, selected class/mode/target, policy digest, policy
 timing, absolute deadline, and Profiler-owned desired stage in immutable or
-monotonic `spec`; the future actuator alone owns
+monotonic `spec`; the actuator alone owns
 previous/target/restored observations, phase, timestamps, and terminal failure
 in `status`. Its consumer projection rejects a foreign Node name or UID before
 any Lease or host adapter can receive the request. This closes the durable API
 boundary without enabling host mutation or selectable-mode profiling.
 
-The next internal layer keeps Node locking and lifecycle decisions separate
+The internal layer keeps Node locking and lifecycle decisions separate
 from host tooling. Its Lease name is derived from exact Node UID, holder
 identity from exact handoff UID, and takeover is allowed only after a trusted
 renew/acquire timestamp plus configured duration expires. Release uses object
@@ -214,18 +216,18 @@ target and restoration read-back, retains the Lease and finalizer when
 restoration cannot be proven, and reconciles Lease status after restart. Its
 workload-safety adapter lists active Pods on the exact target Node and allows
 only explicitly configured namespaces or exact Pod UIDs; this permits the
-future DaemonSet to exclude only its own Pod without trusting every workload in
+per-Node DaemonSet to exclude only its own Pod without trusting every workload in
 the release namespace. An unapproved Pod or an incomplete blocker set fails
 closed. The reconciler independently requires the handoff's canonical policy
 digest to be in its installed authorization set before crossing any port; if
 that authorization drifts after a previous state was retained, it durably
-starts restoration instead of abandoning the Node. The runnable operand below
+starts restoration instead of abandoning the Node. The runnable operand
 now selects these allowances and consumes the Lease and lifecycle paths. That
-composition does not close the host-actuation gates: no host adapter, mutation,
-or live restoration proof exists.
+composition does not close the live host-actuation gates: no live mutation or
+restoration proof exists.
 
-The next layer makes the controller runnable without pretending the host
-operation exists. Helm renders a disabled-by-default ConfigMap, ServiceAccount,
+The runnable layer composes the controller with installation-owned host access.
+Helm renders a disabled-by-default ConfigMap, ServiceAccount,
 namespaced handoff/Lease Role, cluster-scoped Node/Pod read permissions, and the
 `ChillSystem` opt-in reference. The Operator owns the per-eligible-Node
 DaemonSet, reports its availability, and refuses disable or system finalization
@@ -233,10 +235,12 @@ while any handoff is non-terminal or lacks proven restoration. The command
 resolves exact Node UID from the API, excludes only its own downward-API Pod UID
 in addition to explicitly configured infrastructure namespaces, and derives
 authorized policy digests through the same `internal/nodeactuator` canonical
-type used by the Profiler. Its current host port returns
-`host actuator adapter is not installed`; the unprivileged image declares no
-host mount or mutation capability. Therefore this slice proves composition and
-safe lifecycle only, not actuation support.
+type used by the Profiler. The Jetson adapter invokes the configured host
+`nvpmodel` argv with a bounded deadline, parses the query's exact name and ID,
+and never treats an apply exit as convergence. The chart mounts only the
+declared binary, runtime libraries, NVPModel configuration/state, and sysfs;
+it does not request privileged mode or added capabilities. This is local code
+and render proof only, not live actuation support.
 
 ### Jetson NVPModel
 
@@ -246,8 +250,9 @@ safe lifecycle only, not actuation support.
 - [ ] Recover `orin-nano`, then probe and compare its complete NVPModel set;
   neither Kubernetes nor the configured SSH path could reach it during the
   2026-08-06 audit.
-- [ ] Implement explicit `Apply(ID)` and `Observe()` operations.
-- [ ] Judge success by read-back identity, never command exit alone.
+- [x] Implement explicit bounded `Apply(ID)` and `Observe()` operations.
+- [x] Judge success in the controller by a separate parsed name/ID read-back,
+  never command exit alone; live proof remains open.
 - [ ] Retain start/end mode observations in execution evidence.
 - [ ] Configure settling time and thermal stability in installation policy.
 - [ ] Test mode drift, unsupported ID, lock conflict, and restore failure.

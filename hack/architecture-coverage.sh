@@ -25,6 +25,7 @@ components=(
   model-compat
   node-actuator-core
   node-actuator-controller
+  node-actuator-jetson
   profile-derivation
   profiling-run
   profiler-app
@@ -57,6 +58,7 @@ component_for() {
     internal/modelcompat) echo model-compat ;;
     internal/nodeactuator) echo node-actuator-core ;;
     internal/nodeactuator/controller) echo node-actuator-controller ;;
+    internal/nodeactuator/jetson) echo node-actuator-jetson ;;
     internal/profilederivation) echo profile-derivation ;;
     internal/profilingrun) echo profiling-run ;;
     internal/profiler) echo profiler-app ;;

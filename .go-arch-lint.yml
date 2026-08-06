@@ -43,6 +43,7 @@ components:
   model-compat: { in: internal/modelcompat }
   node-actuator-core: { in: internal/nodeactuator }
   node-actuator-controller: { in: internal/nodeactuator/controller }
+  node-actuator-jetson: { in: internal/nodeactuator/jetson }
   profile-derivation: { in: internal/profilederivation }
   profiling-run: { in: internal/profilingrun }
   profiler-app: { in: internal/profiler }
@@ -88,6 +89,7 @@ deps:
       - platform-core
       - device-class
       - node-actuator-core
+      - node-actuator-jetson
       - operator
 
   evidence-core:
@@ -117,6 +119,9 @@ deps:
   node-actuator-controller:
     mayDependOn:
       - api
+      - node-actuator-core
+  node-actuator-jetson:
+    mayDependOn:
       - node-actuator-core
   profile-derivation:
     anyVendorDeps: true

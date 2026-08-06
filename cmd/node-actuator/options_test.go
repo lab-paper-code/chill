@@ -13,6 +13,8 @@ func TestOptionsRequireExactNodePodAndPolicyInputs(t *testing.T) {
 		leaseNamespace: "chill-system", leaseDuration: 30, safetyValidFor: time.Minute,
 		allowedNamespaces:    []string{"kube-system"},
 		allowedPolicyDigests: []string{"sha256:" + strings.Repeat("a", 64)},
+		jetsonCommand:        []string{"/host/usr/sbin/nvpmodel"},
+		jetsonTimeout:        30 * time.Second,
 		metricsAddr:          "0", probeAddr: ":8081",
 	}
 	if err := valid.validate(); err != nil {
@@ -22,6 +24,7 @@ func TestOptionsRequireExactNodePodAndPolicyInputs(t *testing.T) {
 		"missing Pod UID":   func(candidate *options) { candidate.podUID = "" },
 		"missing namespace": func(candidate *options) { candidate.allowedNamespaces = nil },
 		"bad policy":        func(candidate *options) { candidate.allowedPolicyDigests = []string{"bad"} },
+		"missing adapter":   func(candidate *options) { candidate.jetsonCommand = nil },
 		"duplicate policy": func(candidate *options) {
 			candidate.allowedPolicyDigests = append(candidate.allowedPolicyDigests, candidate.allowedPolicyDigests[0])
 		},

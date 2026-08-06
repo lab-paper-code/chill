@@ -1,6 +1,7 @@
 package nodeactuator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,8 @@ func TestDecideFailsClosedOnSafetyReadBackDeadlineAndRestoreMismatch(t *testing.
 	base := validSnapshot()
 	previous := observation(1, base.Now.Add(-time.Second))
 	wrong := observation(3, base.Now)
+	wrongName := observation(2, base.Now)
+	wrongName.PowerMode = "MODE_15W_6CORE_DRIFTED"
 
 	tests := []struct {
 		name       string
@@ -125,6 +128,11 @@ func TestDecideFailsClosedOnSafetyReadBackDeadlineAndRestoreMismatch(t *testing.
 			s.Phase = PhaseVerifying
 			s.PreviousObservation = &previous
 			s.TargetObservation = &wrong
+		}, want: ActionBeginRestore, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
+		{name: "target name mismatch restores", mutate: func(s *Snapshot) {
+			s.Phase = PhaseVerifying
+			s.PreviousObservation = &previous
+			s.TargetObservation = &wrongName
 		}, want: ActionBeginRestore, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
 		{name: "deadline restores", mutate: func(s *Snapshot) {
 			s.Phase = PhaseReady
@@ -264,7 +272,12 @@ func validSnapshot() Snapshot {
 }
 
 func observation(id int32, observedAt time.Time) Observation {
+	powerMode := fmt.Sprintf("mode-%d", id)
+	if id == 2 {
+		powerMode = "MODE_15W_6CORE"
+	}
 	return Observation{
+		PowerMode:  powerMode,
 		Target:     Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: id}},
 		ObservedAt: observedAt,
 	}

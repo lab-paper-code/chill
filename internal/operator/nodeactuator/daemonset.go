@@ -14,6 +14,9 @@ import (
 const containerName = component.NodeActuator
 
 func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	policyDigests, err := configuredPolicyDigests(config.ActuationPolicies)
 	if err != nil {
 		return nil, err
@@ -40,10 +43,12 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 					ServiceAccountName: config.ServiceAccountName,
 					NodeSelector:       config.NodeSelector, Affinity: config.Affinity,
 					Tolerations: config.Tolerations, SecurityContext: config.PodSecurityContext,
+					Volumes: hostVolumes(config),
 					Containers: []corev1.Container{{
 						Name: containerName, Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
 						Command: []string{"/node-actuator"}, Args: nodeActuatorArgs(options, config, policyDigests),
 						Env: nodeIdentityEnvironment(), SecurityContext: config.SecurityContext,
+						VolumeMounts:   hostVolumeMounts(config),
 						Resources:      config.Resources,
 						LivenessProbe:  httpProbe("healthz", config.HealthProbePort),
 						ReadinessProbe: httpProbe("readyz", config.HealthProbePort),
@@ -69,7 +74,35 @@ func nodeActuatorArgs(options Options, config Config, policyDigests []string) []
 	for _, digest := range policyDigests {
 		args = append(args, "--allowed-policy-digest="+digest)
 	}
+	for _, argument := range config.JetsonNVPModel.Command {
+		args = append(args, "--jetson-nvpmodel-command="+argument)
+	}
+	args = append(args, "--jetson-nvpmodel-timeout="+config.JetsonNVPModel.CommandTimeout)
 	return args
+}
+
+func hostVolumes(config Config) []corev1.Volume {
+	volumes := make([]corev1.Volume, 0, len(config.JetsonNVPModel.HostPaths))
+	for _, hostPath := range config.JetsonNVPModel.HostPaths {
+		pathType := hostPath.Type
+		volumes = append(volumes, corev1.Volume{
+			Name: hostPath.Name,
+			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
+				Path: hostPath.HostPath, Type: &pathType,
+			}},
+		})
+	}
+	return volumes
+}
+
+func hostVolumeMounts(config Config) []corev1.VolumeMount {
+	mounts := make([]corev1.VolumeMount, 0, len(config.JetsonNVPModel.HostPaths))
+	for _, hostPath := range config.JetsonNVPModel.HostPaths {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: hostPath.Name, MountPath: hostPath.MountPath, ReadOnly: hostPath.ReadOnly,
+		})
+	}
+	return mounts
 }
 
 func nodeIdentityEnvironment() []corev1.EnvVar {

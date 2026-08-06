@@ -202,7 +202,7 @@ claim.
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
 assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
 The Profiler now creates the durable `NodeActuation` handoff from frozen Run
-inputs, and the future actuator boundary strictly projects only an exact local
+inputs, and the actuator boundary strictly projects only an exact local
 Node name/UID match. The pure apply/read-back/settle/restore decision core and
 exact Node-UID Lease primitive are implemented. An internal status reconciler
 now drives those primitives against the durable handoff, and a fail-closed
@@ -214,11 +214,14 @@ The opt-in command and Operator/Helm DaemonSet lifecycle are now implemented,
 with exact Node and self-Pod identity supplied through the downward API, shared
 Go policy canonicalization, namespaced Lease/handoff RBAC, and a deletion gate
 that retains the operand while any handoff remains unfinished or unrestored.
-The command still installs an explicit unavailable host port. The chart remains
-disabled by default, the host adapter and live apply/read-back/restore proof
-remain unimplemented, no host access or mutation is enabled, and the Profiler
-still creates no measurement Job for a non-fixed Run. Catalog presence and
-historical standalone smoke are not production execution evidence.
+The first Jetson NVPModel host adapter now executes only a configured argv,
+parses an independent name/ID query, and keeps command completion distinct from
+controller read-back. Helm declares the exact binary, library, configuration,
+state, and sysfs mounts without privileged mode or added capabilities. The
+chart remains disabled by default; no live apply/read-back/restore proof has
+been run, and the Profiler still creates no measurement Job for a non-fixed
+Run. Catalog presence and historical standalone smoke are not production
+execution evidence.
 
 ## Campaign records
 
