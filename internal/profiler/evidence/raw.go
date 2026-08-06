@@ -119,10 +119,7 @@ func (m RawMeasurement) canonicalJSON() ([]byte, error) {
 		canonical.Metrics.Failures[i].ObservedAt = canonical.Metrics.Failures[i].ObservedAt.UTC()
 	}
 	if m.Workload != nil {
-		workload, err := m.Workload.Canonical()
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize workload observation: %w", err)
-		}
+		workload := m.Workload.CanonicalCopy()
 		canonical.Workload = &workload
 	}
 	return json.Marshal(canonical)

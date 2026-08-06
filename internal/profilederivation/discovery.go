@@ -19,7 +19,7 @@ func DeriveBSatDiscovery(
 }
 
 func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, error) {
-	if err := curve.family.validate(); err != nil {
+	if err := curve.family.requireVerified(); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
 	if err := validateBSatPolicy(policy); err != nil {

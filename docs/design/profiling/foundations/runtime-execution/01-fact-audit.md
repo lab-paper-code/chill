@@ -9,9 +9,12 @@ It does not define a current schema or authorize an implementation.
 
 ## Audit rule
 
-The audit does not treat a value as trusted merely because a runner prints it
-under `CHILL DERIVED EXECUTION CONTRACT`. Each value is classified here only
-by what the current code and retained execution evidence establish:
+The audit did not treat a value as trusted merely because a runner printed it
+under `CHILL DERIVED EXECUTION CONTRACT`. Each value was classified by the
+source snapshot and retained execution evidence examined at Step 1. The source
+labels below are historical paths from that snapshot; later implementation
+facts are owned by the runtime-execution index and validation ledger, not this
+audit:
 
 - verified declaration: immutable or versioned input checked before execution
 - run observation: read or validated from the running process, Pod, or Node
@@ -39,7 +42,7 @@ unmeasured batches.
 
 ### What is established
 
-| Value | Audit classification | Current evidence |
+| Value | Audit classification | Step 1 evidence |
 |---|---|---|
 | ONNX artifact bytes and digest | verified declaration and run observation | init container checks the digest; runner recomputes it before load (`manifests/batch-sweep-job.yaml:35-42,62-67`, `runner.py:162-167`) |
 | selected Node name and allocatable CPU | Node snapshot observation before Job creation | derivation reads `metadata.name` and `status.allocatable.cpu` (`derive-execution-contract.py:27-32`) |
@@ -73,7 +76,7 @@ without either enforcement evidence or a narrower claim.
 
 ### What is established
 
-| Value | Audit classification | Current evidence |
+| Value | Audit classification | Step 1 evidence |
 |---|---|---|
 | selected RKNN artifact bytes and digest | verified declaration and run observation | runner recomputes the digest (`rknn_runner.py:68-83`) |
 | selected batch belongs to the supplied batch declaration | declaration validation | runner checks `BATCH_SIZE`, shape mode, and `SUPPORTED_BATCHES` (`rknn_runner.py:68-80`) |
@@ -104,7 +107,7 @@ identifiable producer and the NPU has a Kubernetes resource contract.
 
 ### What is established
 
-| Value | Audit classification | Current evidence |
+| Value | Audit classification | Step 1 evidence |
 |---|---|---|
 | EfficientNet-B4 ONNX bytes and digest | verified declaration and run observation | runner recomputes the digest before session creation (`jetson_runner.py:60-73`) |
 | TensorRT provider is available and first in the registered chain | run observation | availability and `session.get_providers()` are checked (`jetson_runner.py:72-90`) |

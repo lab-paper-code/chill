@@ -170,10 +170,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	throughputItems := float64(runtime.BatchSize) * 1000 / latency.Mean
 	watts := summarizeWatts(snapshot.Measurement.Metrics.Samples)
 	thermal := summarizeThermal(snapshot.Measurement.Metrics)
-	workload, err := summarizeWorkload(snapshot.Execution.Intent, snapshot.Measurement.Workload)
-	if err != nil {
-		return EvidencePassport{}, err
-	}
+	workload := summarizeWorkload(snapshot.Measurement.Workload)
 	final := evidencestore.ObjectIdentity{
 		Store:  snapshot.Run.Status.Evidence.Store,
 		Key:    snapshot.Run.Status.Evidence.Key,

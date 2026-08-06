@@ -108,7 +108,7 @@ func DecodeDiscoveryDerivationPolicy(raw []byte) (DiscoveryDerivationPolicy, err
 }
 
 func (p DiscoveryDerivationPolicy) CanonicalJSON() ([]byte, error) {
-	if err := p.validate(); err != nil {
+	if err := p.requireFrozen(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(p.record)
@@ -129,7 +129,7 @@ func (p DiscoveryDerivationPolicy) spec() DiscoveryDerivationPolicySpec {
 }
 
 func (p DiscoveryDerivationPolicy) PointPolicy(stage PointPolicyStage) (PointPolicy, error) {
-	if err := p.validate(); err != nil {
+	if err := p.requireFrozen(); err != nil {
 		return PointPolicy{}, err
 	}
 	for _, entry := range p.record.PointPolicies {
@@ -141,7 +141,7 @@ func (p DiscoveryDerivationPolicy) PointPolicy(stage PointPolicyStage) (PointPol
 }
 
 func (p DiscoveryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
-	if err := p.validate(); err != nil {
+	if err := p.requireFrozen(); err != nil {
 		return BSatPolicy{}, err
 	}
 	entry := p.record.BatchSaturation
@@ -162,10 +162,10 @@ func validateDiscoveryPolicyCurve(
 	curve Curve,
 	policy DiscoveryDerivationPolicy,
 ) (BSatPolicy, error) {
-	if err := curve.family.validate(); err != nil {
+	if err := curve.family.requireVerified(); err != nil {
 		return BSatPolicy{}, err
 	}
-	if err := policy.validate(); err != nil {
+	if err := policy.requireFrozen(); err != nil {
 		return BSatPolicy{}, err
 	}
 	if curve.ContractDigest() != policy.CurveFamilyContractDigest() {
@@ -194,19 +194,11 @@ func validateDiscoveryPolicyCurve(
 	return policy.BSatPolicy()
 }
 
-func (p DiscoveryDerivationPolicy) validate() error {
+// requireFrozen checks opaque type state only. The constructor and decoder own
+// all content validation and digest construction.
+func (p DiscoveryDerivationPolicy) requireFrozen() error {
 	if p.record.SchemaVersion != DiscoveryDerivationPolicySchemaVersion || p.digest == "" {
 		return errors.New("discovery derivation policy was not frozen")
-	}
-	if err := validateDiscoveryDerivationPolicySpec(p.record.DiscoveryDerivationPolicySpec); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(p.record)
-	if err != nil {
-		return err
-	}
-	if p.digest != derivationPolicyDigest(payload) {
-		return errors.New("discovery derivation-policy digest is invalid")
 	}
 	return nil
 }

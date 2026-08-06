@@ -1,7 +1,6 @@
 package operatorconsole
 
 import (
-	"fmt"
 	"sort"
 	"time"
 
@@ -49,21 +48,10 @@ type workloadAccumulator struct {
 }
 
 func summarizeWorkload(
-	intent profilingrun.Intent,
 	result *workloadobserver.Result,
-) (*EvidencePassportWorkload, error) {
+) *EvidencePassportWorkload {
 	if result == nil {
-		return nil, nil
-	}
-	if err := result.Validate(); err != nil {
-		return nil, fmt.Errorf("validate workload evidence for passport: %w", err)
-	}
-	digest, err := intent.Workload.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("validate workload contract for passport: %w", err)
-	}
-	if digest != result.PolicyDigest {
-		return nil, fmt.Errorf("workload contract digest does not match evidence")
+		return nil
 	}
 
 	observed := make(map[string]*workloadAccumulator)
@@ -128,7 +116,7 @@ func summarizeWorkload(
 	if result.Failure != nil {
 		view.FailureReason = string(result.Failure.Reason)
 	}
-	return view, nil
+	return view
 }
 
 func workloadOwner(owner *workloadobserver.OwnerIdentity) *EvidencePassportWorkloadOwner {

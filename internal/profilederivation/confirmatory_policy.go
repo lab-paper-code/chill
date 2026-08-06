@@ -43,7 +43,7 @@ func FreezeConfirmatoryDerivationPolicy(
 	discovery DiscoveryDerivationPolicy,
 	sizing BSatSizingResult,
 ) (ConfirmatoryDerivationPolicy, error) {
-	if err := discovery.validate(); err != nil {
+	if err := discovery.requireFrozen(); err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
 	if sizing.PolicyVersion != discovery.Digest() ||
@@ -121,7 +121,7 @@ func DecodeConfirmatoryDerivationPolicy(
 }
 
 func (p ConfirmatoryDerivationPolicy) CanonicalJSON() ([]byte, error) {
-	if err := p.validate(); err != nil {
+	if err := p.requireFrozen(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(p.record)
@@ -158,10 +158,7 @@ func (p ConfirmatoryDerivationPolicy) ConfirmatoryBatches() []int {
 }
 
 func (p ConfirmatoryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
-	if err := p.validate(); err != nil {
-		return BSatPolicy{}, err
-	}
-	discovery, err := FreezeDiscoveryDerivationPolicy(p.record.DiscoveryDerivationPolicySpec)
+	discovery, err := p.discoveryPolicy()
 	if err != nil {
 		return BSatPolicy{}, err
 	}
@@ -169,10 +166,15 @@ func (p ConfirmatoryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
 }
 
 func (p ConfirmatoryDerivationPolicy) discoveryPolicy() (DiscoveryDerivationPolicy, error) {
-	if err := p.validate(); err != nil {
+	if err := p.requireFrozen(); err != nil {
 		return DiscoveryDerivationPolicy{}, err
 	}
-	return FreezeDiscoveryDerivationPolicy(p.record.DiscoveryDerivationPolicySpec)
+	record := discoveryDerivationPolicyRecord{
+		SchemaVersion:                 DiscoveryDerivationPolicySchemaVersion,
+		DiscoveryDerivationPolicySpec: p.record.DiscoveryDerivationPolicySpec,
+	}
+	record.PointPolicies = append([]PointPolicyEntry(nil), record.PointPolicies...)
+	return DiscoveryDerivationPolicy{record: record, digest: p.record.DiscoveryPolicyDigest}, nil
 }
 
 func validateConfirmatoryPolicyCurve(
@@ -264,23 +266,11 @@ func validateConfirmatoryDerivationPolicyRecord(
 	return nil
 }
 
-func (p ConfirmatoryDerivationPolicy) validate() error {
-	if p.digest == "" {
+// requireFrozen checks opaque type state only. The constructor and decoder own
+// all content validation and digest construction.
+func (p ConfirmatoryDerivationPolicy) requireFrozen() error {
+	if p.record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion || p.digest == "" {
 		return errors.New("confirmatory derivation policy was not frozen")
-	}
-	discovery, err := FreezeDiscoveryDerivationPolicy(p.record.DiscoveryDerivationPolicySpec)
-	if err != nil {
-		return err
-	}
-	if err := validateConfirmatoryDerivationPolicyRecord(p.record, discovery); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(p.record)
-	if err != nil {
-		return err
-	}
-	if p.digest != derivationPolicyDigest(payload) {
-		return errors.New("confirmatory derivation-policy digest is invalid")
 	}
 	return nil
 }

@@ -117,10 +117,7 @@ func (m IdleRawMeasurement) canonicalJSON() ([]byte, error) {
 	for index := range canonical.Metrics.Failures {
 		canonical.Metrics.Failures[index].ObservedAt = canonical.Metrics.Failures[index].ObservedAt.UTC()
 	}
-	workload, err := m.Workload.Canonical()
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize idle workload observation: %w", err)
-	}
+	workload := m.Workload.CanonicalCopy()
 	canonical.Workload = &workload
 	return json.Marshal(canonical)
 }

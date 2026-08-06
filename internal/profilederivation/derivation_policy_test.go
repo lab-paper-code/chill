@@ -142,6 +142,18 @@ func TestDiscoveryDerivationPolicyOwnsInputCopies(t *testing.T) {
 	}
 }
 
+func TestFrozenDerivationTypesRejectZeroValues(t *testing.T) {
+	if _, err := (CurveFamilyContract{}).CanonicalJSON(); err == nil {
+		t.Fatal("expected zero curve-family contract rejection")
+	}
+	if _, err := (DiscoveryDerivationPolicy{}).BSatPolicy(); err == nil {
+		t.Fatal("expected zero discovery policy rejection")
+	}
+	if _, err := (ConfirmatoryDerivationPolicy{}).BSatPolicy(); err == nil {
+		t.Fatal("expected zero confirmatory policy rejection")
+	}
+}
+
 func testDiscoveryDerivationPolicySpec(t *testing.T) DiscoveryDerivationPolicySpec {
 	t.Helper()
 	contract, _ := testVerifiedFamily(t, 4)

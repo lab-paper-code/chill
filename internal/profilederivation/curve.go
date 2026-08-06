@@ -53,7 +53,7 @@ func DeriveCurve(
 	baselinesByState map[string]IdleBaseline,
 	policy PointPolicy,
 ) (Curve, error) {
-	if err := family.validate(); err != nil {
+	if err := family.requireVerified(); err != nil {
 		return Curve{}, err
 	}
 	if err := validatePointPolicy(policy); err != nil {
@@ -225,8 +225,8 @@ func (c Curve) discoveryOnly() (Curve, error) {
 	return Curve{family: c.family, passes: []curvePass{discovery}, baselines: baselines}, nil
 }
 
-func (f CurveFamily) validate() error {
-	if err := f.contract.validate(); err != nil {
+func (f CurveFamily) requireVerified() error {
+	if err := f.contract.requireFrozen(); err != nil {
 		return err
 	}
 	if f.identity == "" || f.environmentIdentity == "" || len(f.members) != len(f.contract.record.Members) {

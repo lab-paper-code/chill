@@ -48,7 +48,7 @@ func deriveBSatConfirmatory(
 	candidate int,
 	policy BSatPolicy,
 ) (BSatResult, error) {
-	if err := curve.family.validate(); err != nil {
+	if err := curve.family.requireVerified(); err != nil {
 		return BSatResult{}, err
 	}
 	discoveryCurve, err := curve.discoveryOnly()

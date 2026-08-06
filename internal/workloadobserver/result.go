@@ -64,6 +64,12 @@ func (r Result) Canonical() (Result, error) {
 	if err := r.Validate(); err != nil {
 		return Result{}, err
 	}
+	return r.CanonicalCopy(), nil
+}
+
+// CanonicalCopy canonicalizes an already validated Result without repeating
+// validation. Boundary owners must call Validate before using this projection.
+func (r Result) CanonicalCopy() Result {
 	canonical := r
 	canonical.CoverageStartedAt = r.CoverageStartedAt.UTC()
 	canonical.CoverageEndedAt = r.CoverageEndedAt.UTC()
@@ -79,7 +85,7 @@ func (r Result) Canonical() (Result, error) {
 		failure.ObservedAt = failure.ObservedAt.UTC()
 		canonical.Failure = &failure
 	}
-	return canonical, nil
+	return canonical
 }
 
 func canonicalPods(source []Pod) []Pod {

@@ -19,9 +19,6 @@ func ProjectVerifiedCurveFamilyMember(
 	active profilerevidence.VerifiedEvidence,
 	idle profilerevidence.VerifiedIdleEvidence,
 ) (profilederivation.VerifiedCurveFamilyMember, error) {
-	if _, err := contract.CanonicalJSON(); err != nil {
-		return profilederivation.VerifiedCurveFamilyMember{}, err
-	}
 	var expected *profilederivation.CurveFamilyMemberContract
 	for _, member := range contract.Members() {
 		if member.Batch == batch {

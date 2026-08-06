@@ -57,7 +57,7 @@ type SequentialResult struct {
 // to the discovery pass of an exact-family Curve. A prefix without a stop
 // condition returns Continue so an offline driver can request the next member.
 func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (SequentialResult, error) {
-	if err := curve.family.validate(); err != nil {
+	if err := curve.family.requireVerified(); err != nil {
 		return SequentialResult{}, err
 	}
 	if err := validateSequentialPolicy(policy); err != nil {

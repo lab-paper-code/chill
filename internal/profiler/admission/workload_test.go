@@ -14,7 +14,7 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 	intent := admissionIntentWithWorkloadContract()
 	result := admissionWorkloadResult(t, intent)
 
-	window, err := projectDefaultWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
 		sort.Slice(pods, func(i, j int) bool { return workloadIdentity(pods[i]) < workloadIdentity(pods[j]) })
 	}
 
-	firstWindow, err := projectDefaultWorkloadWindow(intent, &first)
+	firstWindow, err := projectDefaultWorkloadWindow(&first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondWindow, err := projectDefaultWorkloadWindow(intent, &second)
+	secondWindow, err := projectDefaultWorkloadWindow(&second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
 	}
 	result.LastResourceVersion = "12"
 
-	window, err := projectDefaultWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
 		})
 	}
 
-	window, err := projectDefaultWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
 		Reason:     workloadobserver.FailureReasonEndFenceFailed,
 		Message:    "causal Pod-status end fence failed",
 	}
-	window, err := projectDefaultWorkloadWindow(intent, &result)
+	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
 	}
 	result.LastResourceVersion = "14"
 
-	window, err := projectWorkloadWindow(intent, &result, runtimeStarted, runtimeEnded)
+	window, err := projectWorkloadWindow(&result, runtimeStarted, runtimeEnded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *tes
 	}}
 	result.LastResourceVersion = "11"
 
-	window, err := projectWorkloadWindow(intent, &result, runtimeStarted, runtimeEnded)
+	window, err := projectWorkloadWindow(&result, runtimeStarted, runtimeEnded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,11 +283,9 @@ func admissionIntentWithWorkloadContract() profilingrun.Intent {
 }
 
 func projectDefaultWorkloadWindow(
-	intent profilingrun.Intent,
 	result *workloadobserver.Result,
 ) (workloadWindow, error) {
 	return projectWorkloadWindow(
-		intent,
 		result,
 		result.CoverageStartedAt.Add(time.Second),
 		result.CoverageEndedAt.Add(-time.Second),

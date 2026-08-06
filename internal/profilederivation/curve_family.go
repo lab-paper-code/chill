@@ -179,7 +179,7 @@ func (c CurveFamilyContract) Digest() string {
 }
 
 func (c CurveFamilyContract) CanonicalJSON() ([]byte, error) {
-	if err := c.validate(); err != nil {
+	if err := c.requireFrozen(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(c.record)
@@ -193,19 +193,11 @@ func (c CurveFamilyContract) Members() []CurveFamilyMemberContract {
 	return cloneCurveFamilyMembers(c.record.Members)
 }
 
-func (c CurveFamilyContract) validate() error {
+// requireFrozen checks opaque type state only. The constructor and decoder own
+// all content validation and digest construction.
+func (c CurveFamilyContract) requireFrozen() error {
 	if c.record.SchemaVersion != curveFamilyContractSchemaVersion || c.digest == "" {
 		return errors.New("curve-family contract was not frozen")
-	}
-	if err := validateCurveFamilyContract(c.record.Shared, c.record.Members); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(c.record)
-	if err != nil {
-		return err
-	}
-	if c.digest != versionedCurveDigest(curveFamilyContractSchemaVersion, payload) {
-		return errors.New("curve-family contract digest is invalid")
 	}
 	return nil
 }
@@ -248,7 +240,7 @@ func VerifyCurveFamily(
 	contract CurveFamilyContract,
 	verified []VerifiedCurveFamilyMember,
 ) (CurveFamily, error) {
-	if err := contract.validate(); err != nil {
+	if err := contract.requireFrozen(); err != nil {
 		return CurveFamily{}, err
 	}
 	if len(verified) != len(contract.record.Members) {

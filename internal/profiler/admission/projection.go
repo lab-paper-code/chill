@@ -32,7 +32,7 @@ func projectIdleObservation(
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
-	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload, windowStart, windowEnd)
+	workload, err := projectWorkloadWindow(raw.Workload, windowStart, windowEnd)
 	if err != nil {
 		return profilederivation.IdleObservation{}, err
 	}
@@ -80,7 +80,7 @@ func projectTrial(
 		samples[index] = profilederivation.Sample{ObservedAt: sample.ObservedAt, Watts: sample.Watts}
 	}
 	thermalKnown, thermallyThrottled := thermalState(raw.Metrics.Samples, windowStart, windowEnd)
-	workload, err := projectWorkloadWindow(execution.Intent, raw.Workload, windowStart, windowEnd)
+	workload, err := projectWorkloadWindow(raw.Workload, windowStart, windowEnd)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}

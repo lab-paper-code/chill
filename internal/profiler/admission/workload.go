@@ -3,7 +3,6 @@ package admission
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -20,7 +19,6 @@ type workloadWindow struct {
 }
 
 func projectWorkloadWindow(
-	intent profilingrun.Intent,
 	result *workloadobserver.Result,
 	runtimeStarted time.Time,
 	runtimeEnded time.Time,
@@ -32,22 +30,6 @@ func projectWorkloadWindow(
 		}
 		return workloadWindow{EnvironmentIdentity: identity}, nil
 	}
-	if err := result.Validate(); err != nil {
-		return workloadWindow{}, fmt.Errorf("validate workload observation: %w", err)
-	}
-	digest, err := intent.Workload.Digest()
-	if err != nil {
-		return workloadWindow{}, fmt.Errorf("digest workload observation contract: %w", err)
-	}
-	if result.PolicyDigest != digest || result.Target.NodeName != intent.TargetNode.Name ||
-		result.Target.NodeUID != intent.TargetNode.UID {
-		return workloadWindow{}, errors.New("workload observation contract or target identity mismatch")
-	}
-	if runtimeStarted.IsZero() || !runtimeEnded.After(runtimeStarted) ||
-		result.CoverageStartedAt.After(runtimeStarted) || result.CoverageEndedAt.Before(runtimeEnded) {
-		return workloadWindow{}, errors.New("runtime measurement window is outside workload observation coverage")
-	}
-
 	concurrent := map[string]string{}
 	externalChanges := map[string]string{}
 	active := make(map[string]workloadobserver.Pod, len(result.InitialActivePods))
