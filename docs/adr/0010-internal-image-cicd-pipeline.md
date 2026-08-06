@@ -7,7 +7,7 @@ Accepted
 ## Context
 
 CHILL has component image workflows for `chill-operator`,
-`chill-node-discovery`, and `chill-profiler`. The public path remains the
+`chill-node-discovery`, `chill-node-actuator`, and `chill-profiler`. The public path remains the
 external release and distribution path.
 
 For day-to-day development, however, Docker Hub is not the fastest feedback
@@ -131,11 +131,12 @@ The wrapper builds the same component matrix:
 
 - `chill-operator` from `build/docker/operator.Dockerfile`
 - `chill-node-discovery` from `build/docker/node-discovery.Dockerfile`
+- `chill-node-actuator` from `build/docker/node-actuator.Dockerfile`
 
-The default remains `all`, but an explicit component selection may rebuild
-only `operator` or `node-discovery`. The wrapper must resolve and reuse the
-currently deployed image for the component it does not rebuild; it must fail
-before uninstall if that image cannot be resolved.
+The default remains `all`, but an explicit component selection may rebuild a
+single component, including `operator`, `node-discovery`, or `node-actuator`.
+The wrapper must resolve and reuse required deployed images that it does not
+rebuild; it must fail before uninstall if one cannot be resolved.
 
 Recommended trigger policy for the fast loop:
 

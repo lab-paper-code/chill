@@ -10,6 +10,7 @@ image_tag="${IMAGE_TAG:-}"
 auto_dirty_tag="false"
 operator_image="${OPERATOR_IMG:-}"
 node_discovery_image="${NODE_DISCOVERY_IMG:-}"
+node_actuator_image="${NODE_ACTUATOR_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
 metric_observer_image="${METRIC_OBSERVER_IMG:-}"
@@ -54,8 +55,9 @@ Options:
   --image-namespace NAME       Registry repository prefix. Default: ${image_namespace}
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
-  --components NAME            all, operator, node-discovery, profiler, console,
-                               metric-observer, workload-observer, or measurement-worker.
+  --components NAME            all, operator, node-discovery, node-actuator,
+                               profiler, console, metric-observer,
+                               workload-observer, or measurement-worker.
                                Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
@@ -72,6 +74,7 @@ Options:
 Environment:
   OPERATOR_IMG                 Full operator image ref. Overrides registry/tag defaults.
   NODE_DISCOVERY_IMG           Full node-discovery image ref. Overrides registry/tag defaults.
+  NODE_ACTUATOR_IMG            Full NodeActuator image ref. Overrides registry/tag defaults.
   PROFILER_IMG                 Full Profiler image ref. Overrides registry/tag defaults.
   CONSOLE_IMG                  Full Console API image ref. Overrides registry/tag defaults.
   METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
@@ -227,7 +230,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|profiler|console|metric-observer|workload-observer|measurement-worker) ;;
+all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -263,6 +266,7 @@ fi
 
 operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator"
 node_discovery_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-discovery"
+node_actuator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-actuator"
 profiler_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=profiler"
 console_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator-console"
 
@@ -270,7 +274,7 @@ component_selected() {
 	local component="$1"
 	if [[ "${components}" == "all" ]]; then
 		case "${component}" in
-		operator|node-discovery|profiler|console) return 0 ;;
+		operator|node-discovery|node-actuator|profiler|console) return 0 ;;
 		*) return 1 ;;
 		esac
 	fi
@@ -289,6 +293,11 @@ deployed_image() {
 	node-discovery)
 		image="$("${kubectl_bin}" -n "${release_namespace}" get daemonset \
 			-l "${node_discovery_selector}" \
+			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+		;;
+	node-actuator)
+		image="$("${kubectl_bin}" -n "${release_namespace}" get daemonset \
+			-l "${node_actuator_selector}" \
 			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 		;;
 	profiler)
@@ -328,6 +337,9 @@ if [[ -z "${node_discovery_image}" ]]; then
 		node_discovery_image="$(deployed_image node-discovery)"
 	fi
 fi
+if [[ -z "${node_actuator_image}" ]] && component_selected node-actuator; then
+	node_actuator_image="${registry}/${image_namespace}/chill-node-actuator:${image_tag}"
+fi
 if [[ -z "${profiler_image}" ]] && component_selected profiler; then
 	profiler_image="${registry}/${image_namespace}/chill-profiler:${image_tag}"
 fi
@@ -347,6 +359,9 @@ push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
 split_image_ref "${node_discovery_image}" "node-discovery"
+if [[ -n "${node_actuator_image}" ]]; then
+	split_image_ref "${node_actuator_image}" "node-actuator"
+fi
 if [[ -n "${profiler_image}" ]]; then
 	split_image_ref "${profiler_image}" "profiler"
 fi
@@ -364,9 +379,9 @@ if [[ -n "${measurement_worker_image}" ]]; then
 fi
 
 if [[ -n "${extra_helm_set}" ]]; then
-	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
+	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set nodeActuator.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
 else
-	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
+	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set nodeActuator.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
 fi
 if [[ -n "${console_image}" ]]; then
 	helm_set="${helm_set} --set console.enabled=true"
@@ -397,6 +412,7 @@ echo "namespace: ${release_namespace}"
 echo "chart: ${chart}"
 echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
+echo "node-actuator image: ${node_actuator_image:-chart default}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
@@ -546,6 +562,11 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("node-discovery")
 	fi
+	if component_selected node-actuator; then
+		"${function_name}" "build/docker/node-actuator.Dockerfile" "${node_actuator_image}" &
+		pids+=("$!")
+		names+=("node-actuator")
+	fi
 	if component_selected profiler; then
 		"${function_name}" "build/docker/profiler.Dockerfile" "${profiler_image}" &
 		pids+=("$!")
@@ -598,6 +619,12 @@ run_ctr_plain_http_components() {
 			"build/docker/node-discovery.Dockerfile" "${node_discovery_image}" &
 		pids+=("$!")
 		names+=("node-discovery")
+	fi
+	if component_selected node-actuator; then
+		ctr_plain_http_build_push_one node-actuator \
+			"build/docker/node-actuator.Dockerfile" "${node_actuator_image}" &
+		pids+=("$!")
+		names+=("node-actuator")
 	fi
 	if component_selected profiler; then
 		ctr_plain_http_build_push_one profiler \
@@ -712,6 +739,7 @@ if ! is_true "${skip_deploy}"; then
 		"HELM_SET=${helm_set}"
 		"OPERATOR_IMG=${operator_image}"
 		"NODE_DISCOVERY_IMG=${node_discovery_image}"
+		"NODE_ACTUATOR_IMG=${node_actuator_image}"
 		"PROFILER_IMG=${profiler_image}"
 		"CONSOLE_IMG=${console_image}"
 	)
@@ -731,6 +759,10 @@ if ! is_true "${skip_deploy}"; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
 			-l "${profiler_selector}" "--timeout=${timeout}"
 	fi
+	if "${kubectl_bin}" -n "${release_namespace}" get daemonset -l "${node_actuator_selector}" -o name 2>/dev/null | grep -q .; then
+		run "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset \
+			-l "${node_actuator_selector}" "--timeout=${timeout}"
+	fi
 	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${console_selector}" -o name 2>/dev/null | grep -q .; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
 			-l "${console_selector}" "--timeout=${timeout}"
@@ -741,6 +773,7 @@ echo "==> observation"
 echo "commit: $(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
 echo "operator image: ${operator_image}"
 echo "node-discovery image: ${node_discovery_image}"
+echo "node-actuator image: ${node_actuator_image:-chart default}"
 echo "profiler image: ${profiler_image:-chart default}"
 echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
@@ -753,6 +786,7 @@ try "${kubectl_bin}" -n "${release_namespace}" get pods \
 	-o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,IMAGE:.spec.containers[*].image,IMAGE_ID:.status.containerStatuses[*].imageID'
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${operator_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_discovery_selector}" "--timeout=${timeout}"
+try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_actuator_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${profiler_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${console_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" get events \
@@ -761,6 +795,7 @@ if [[ "${observe_mode}" == "full" ]]; then
 	try "${kubectl_bin}" -n "${release_namespace}" get events --sort-by=.lastTimestamp
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${operator_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_discovery_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_actuator_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${profiler_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${console_selector}" --all-containers=true --tail=120 --prefix
 fi
