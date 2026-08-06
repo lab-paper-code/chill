@@ -47,48 +47,27 @@ func TestEvidencePassportQueryFollowsRunReferenceAndPreservesSources(t *testing.
 	}
 }
 
-func TestEvidencePassportQueryRejectsUnavailableOrContradictoryEvidence(t *testing.T) {
+func TestEvidencePassportQueryRejectsUnavailableEvidenceReference(t *testing.T) {
 	t.Parallel()
-	validRun, _, validExecution := passportFixture()
+	validRun, _, _ := passportFixture()
 	tests := []struct {
 		name   string
-		mutate func(*edgev1alpha1.ProfilingRun, *profilerevidence.ExecutionEvidence)
+		mutate func(*edgev1alpha1.ProfilingRun)
 		match  string
 	}{
 		{
 			name: "missing evidence reference",
-			mutate: func(run *edgev1alpha1.ProfilingRun, _ *profilerevidence.ExecutionEvidence) {
+			mutate: func(run *edgev1alpha1.ProfilingRun) {
 				run.Status.Evidence = nil
 			},
 			match: "verified evidence is not available",
 		},
 		{
 			name: "unsupported schema",
-			mutate: func(run *edgev1alpha1.ProfilingRun, _ *profilerevidence.ExecutionEvidence) {
+			mutate: func(run *edgev1alpha1.ProfilingRun) {
 				run.Status.Evidence.SchemaVersion = "future"
 			},
 			match: "unsupported evidence schemaVersion",
-		},
-		{
-			name: "intent mismatch",
-			mutate: func(_ *edgev1alpha1.ProfilingRun, execution *profilerevidence.ExecutionEvidence) {
-				execution.IntentDigest = "sha256:" + strings.Repeat("c", 64)
-			},
-			match: "evidence intent does not match",
-		},
-		{
-			name: "Job mismatch",
-			mutate: func(_ *edgev1alpha1.ProfilingRun, execution *profilerevidence.ExecutionEvidence) {
-				execution.Terminal.Job.UID = "other"
-			},
-			match: "evidence Job does not match",
-		},
-		{
-			name: "Pod mismatch",
-			mutate: func(_ *edgev1alpha1.ProfilingRun, execution *profilerevidence.ExecutionEvidence) {
-				execution.Terminal.Pod.UID = "other"
-			},
-			match: "evidence Pod or Node does not match",
 		},
 	}
 	for _, test := range tests {
@@ -96,11 +75,10 @@ func TestEvidencePassportQueryRejectsUnavailableOrContradictoryEvidence(t *testi
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			run := validRun.DeepCopy()
-			execution := validExecution
-			test.mutate(run, &execution)
+			test.mutate(run)
 			query, err := NewKubernetesEvidencePassportQuery(
 				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(run).Build(),
-				&recordingEvidenceLoader{execution: execution},
+				&recordingEvidenceLoader{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -161,10 +139,26 @@ func (l *recordingEvidenceLoader) Load(
 	_ context.Context,
 	_ *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
-) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error) {
+) (VerifiedEvidenceView, error) {
 	l.calls++
 	l.reference = reference
-	return l.execution, l.measurement, l.err
+	if l.err != nil {
+		return nil, l.err
+	}
+	return recordingEvidenceView{execution: l.execution, measurement: l.measurement}, nil
+}
+
+type recordingEvidenceView struct {
+	execution   profilerevidence.ExecutionEvidence
+	measurement profilerevidence.RawMeasurement
+}
+
+func (v recordingEvidenceView) Records() (
+	profilerevidence.ExecutionEvidence,
+	profilerevidence.RawMeasurement,
+	error,
+) {
+	return v.execution, v.measurement, nil
 }
 
 func passportFixture() (

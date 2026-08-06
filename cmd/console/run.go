@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
@@ -14,6 +15,18 @@ import (
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type consoleEvidenceLoader struct {
+	retained *evidencekube.RetainedLoader
+}
+
+func (l consoleEvidenceLoader) Load(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reference evidencestore.ObjectIdentity,
+) (operatorconsole.VerifiedEvidenceView, error) {
+	return l.retained.Load(ctx, run, reference)
+}
 
 func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	loader, err := evidencekube.NewRetainedLoader(
@@ -33,7 +46,10 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
 	}
-	query, err := operatorconsole.NewKubernetesEvidencePassportQuery(reader, loader)
+	query, err := operatorconsole.NewKubernetesEvidencePassportQuery(
+		reader,
+		consoleEvidenceLoader{retained: loader},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Passport query: %w", err)
 	}

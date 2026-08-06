@@ -14,14 +14,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// VerifiedEvidenceLoader retrieves and independently verifies the finalized
-// evidence and raw measurement named by an immutable object identity.
+// VerifiedEvidenceView exposes records only after the production loader has
+// verified both immutable objects and their recorded ProfilingRun binding.
+type VerifiedEvidenceView interface {
+	Records() (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error)
+}
+
+// VerifiedEvidenceLoader retrieves the boundary-sealed view named by an
+// immutable object identity.
 type VerifiedEvidenceLoader interface {
 	Load(
 		context.Context,
 		*edgev1alpha1.ProfilingRun,
 		evidencestore.ObjectIdentity,
-	) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error)
+	) (VerifiedEvidenceView, error)
 }
 
 // EvidencePassportSnapshot joins one ProfilingRun control-plane record with
@@ -34,9 +40,9 @@ type EvidencePassportSnapshot struct {
 	Measurement profilerevidence.RawMeasurement
 }
 
-// KubernetesEvidencePassportQuery exact-reads a ProfilingRun, follows only its
-// status evidence reference, and rejects evidence that contradicts the Run's
-// recorded execution identities.
+// KubernetesEvidencePassportQuery exact-reads a ProfilingRun and follows only
+// its status evidence reference. The loader owns all evidence and Run-binding
+// verification; this query only projects its sealed result.
 type KubernetesEvidencePassportQuery struct {
 	reader client.Reader
 	loader VerifiedEvidenceLoader
@@ -71,12 +77,13 @@ func (q *KubernetesEvidencePassportQuery) Read(
 	if err != nil {
 		return EvidencePassportSnapshot{}, fmt.Errorf("read ProfilingRun %s evidence reference: %w", key, err)
 	}
-	execution, measurement, err := q.loader.Load(ctx, run, reference)
+	verified, err := q.loader.Load(ctx, run, reference)
 	if err != nil {
 		return EvidencePassportSnapshot{}, fmt.Errorf("load ProfilingRun %s evidence: %w", key, err)
 	}
-	if err := validatePassportBinding(run, execution); err != nil {
-		return EvidencePassportSnapshot{}, fmt.Errorf("validate ProfilingRun %s evidence binding: %w", key, err)
+	execution, measurement, err := verified.Records()
+	if err != nil {
+		return EvidencePassportSnapshot{}, fmt.Errorf("project ProfilingRun %s verified evidence: %w", key, err)
 	}
 
 	return EvidencePassportSnapshot{
@@ -98,44 +105,4 @@ func evidenceIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) (ev
 		return evidencestore.ObjectIdentity{}, fmt.Errorf("unsupported evidence schemaVersion %q", reference.SchemaVersion)
 	}
 	return identity, nil
-}
-
-func validatePassportBinding(
-	run *edgev1alpha1.ProfilingRun,
-	execution profilerevidence.ExecutionEvidence,
-) error {
-	if run.Status.Evidence == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
-		run.Status.IntentDigest == "" || execution.IntentDigest != run.Status.IntentDigest {
-		return errors.New("evidence intent does not match the frozen Run intent")
-	}
-	if run.Status.Job == nil ||
-		execution.Terminal.Job.Namespace != run.Namespace ||
-		execution.Terminal.Job.Name != run.Status.Job.Name ||
-		execution.Terminal.Job.UID != run.Status.Job.UID {
-		return errors.New("evidence Job does not match the recorded Run Job")
-	}
-	if run.Status.ActualExecution == nil ||
-		execution.Terminal.Pod.Namespace != run.Namespace ||
-		execution.Terminal.Pod.Name != run.Status.ActualExecution.Pod.Name ||
-		execution.Terminal.Pod.UID != run.Status.ActualExecution.Pod.UID ||
-		execution.Terminal.Node.Name != run.Status.ActualExecution.Node.Name ||
-		execution.Terminal.Node.UID != run.Status.ActualExecution.Node.UID {
-		return errors.New("evidence Pod or Node does not match the recorded Run execution")
-	}
-	if execution.Intent.Actuation == nil {
-		if run.Status.Actuation != nil || execution.Actuation != nil {
-			return errors.New("fixed evidence has unexpected actuation identity")
-		}
-		return nil
-	}
-	if run.Status.Actuation == nil || execution.Actuation == nil ||
-		execution.Actuation.Run.Namespace != run.Namespace ||
-		execution.Actuation.Run.Name != run.Name ||
-		execution.Actuation.Run.UID != string(run.UID) ||
-		execution.Actuation.Handoff.Namespace != run.Namespace ||
-		execution.Actuation.Handoff.Name != run.Status.Actuation.Name ||
-		execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
-		return errors.New("evidence actuation does not match the recorded Run handoff")
-	}
-	return nil
 }

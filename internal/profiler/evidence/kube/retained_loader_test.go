@@ -36,7 +36,7 @@ func TestRetainedLoaderUsesRecordedJobBindingAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = loader.Load(context.Background(), run, reference)
+	_, err = loader.Load(context.Background(), run, reference)
 	if !errors.Is(err, want) {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRetainedLoaderRejectsJobOrStoreIdentityMismatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = loader.Load(context.Background(), run, reference)
+			_, err = loader.Load(context.Background(), run, reference)
 			if err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("Load() error = %v, want %q", err, test.match)
 			}

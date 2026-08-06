@@ -65,6 +65,9 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		return profileradmission.Result{}, err
 	}
 	prepared := frozen.Prepared
+	if prepared.IntentDigest != run.Status.IntentDigest {
+		return profileradmission.Result{}, errors.New("frozen intent does not match the recorded Run")
+	}
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
@@ -74,18 +77,12 @@ func (a *KubernetesEvidenceAdmitter) Admit(
 		if err != nil {
 			return profileradmission.Result{}, err
 		}
-		if verified.IntentDigest() != prepared.IntentDigest {
-			return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
-		}
-		result, _, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
+		result, _, err := profileradmission.EvaluateIdle(verified.ForAdmission(), frozen.AdmissionPolicy)
 		return result, err
 	}
-	verified, err := a.loader.LoadForAdmission(ctx, run, reference)
+	verified, err := a.loader.Load(ctx, run, reference)
 	if err != nil {
 		return profileradmission.Result{}, err
 	}
-	if verified.IntentDigest() != prepared.IntentDigest {
-		return profileradmission.Result{}, errors.New("retained evidence does not belong to the recorded Run")
-	}
-	return profileradmission.Evaluate(verified, frozen.AdmissionPolicy)
+	return profileradmission.Evaluate(verified.ForAdmission(), frozen.AdmissionPolicy)
 }

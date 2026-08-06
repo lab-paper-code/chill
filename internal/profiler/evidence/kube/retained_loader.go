@@ -31,6 +31,34 @@ type RetainedLoader struct {
 	maxObjectBytes int64
 }
 
+// RetainedActiveEvidence proves that the Evidence Store objects and their
+// recorded ProfilingRun binding crossed the RetainedLoader boundary together.
+// Its zero value is invalid; only RetainedLoader can construct a usable value.
+type RetainedActiveEvidence struct {
+	verified profilerevidence.VerifiedEvidence
+}
+
+func (e RetainedActiveEvidence) Records() (
+	profilerevidence.ExecutionEvidence,
+	profilerevidence.RawMeasurement,
+	error,
+) {
+	return e.verified.Records()
+}
+
+func (e RetainedActiveEvidence) ForAdmission() profilerevidence.VerifiedEvidence {
+	return e.verified
+}
+
+// RetainedIdleEvidence is the idle counterpart to RetainedActiveEvidence.
+type RetainedIdleEvidence struct {
+	verified profilerevidence.VerifiedIdleEvidence
+}
+
+func (e RetainedIdleEvidence) ForAdmission() profilerevidence.VerifiedIdleEvidence {
+	return e.verified
+}
+
 func NewRetainedLoader(reader client.Reader, stores RetainedStoreFactory) (*RetainedLoader, error) {
 	if reader == nil || stores == nil {
 		return nil, errors.New("Kubernetes API reader and retained Evidence Store factory are required")
@@ -42,68 +70,46 @@ func (l *RetainedLoader) Load(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
-) (profilerevidence.ExecutionEvidence, profilerevidence.RawMeasurement, error) {
-	verified, err := l.loadActive(ctx, run, reference)
-	if err != nil {
-		return profilerevidence.ExecutionEvidence{}, profilerevidence.RawMeasurement{}, err
-	}
-	return verified.Records()
-}
-
-// LoadForAdmission returns the sealed active evidence consumed by admission.
-// Load remains the plain read projection used by the operator console.
-func (l *RetainedLoader) LoadForAdmission(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	reference evidencestore.ObjectIdentity,
-) (profilerevidence.VerifiedEvidence, error) {
-	return l.loadActive(ctx, run, reference)
-}
-
-func (l *RetainedLoader) loadActive(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	reference evidencestore.ObjectIdentity,
-) (profilerevidence.VerifiedEvidence, error) {
+) (RetainedActiveEvidence, error) {
 	loader, err := l.loaderFor(ctx, run, reference)
 	if err != nil {
-		return profilerevidence.VerifiedEvidence{}, err
+		return RetainedActiveEvidence{}, err
 	}
 	verified, err := loader.Load(ctx, reference)
 	if err != nil {
-		return profilerevidence.VerifiedEvidence{}, err
+		return RetainedActiveEvidence{}, err
 	}
 	execution, _, err := verified.Records()
 	if err != nil {
-		return profilerevidence.VerifiedEvidence{}, err
+		return RetainedActiveEvidence{}, err
 	}
 	if err := validateRunEvidenceBinding(run, execution); err != nil {
-		return profilerevidence.VerifiedEvidence{}, err
+		return RetainedActiveEvidence{}, err
 	}
-	return verified, nil
+	return RetainedActiveEvidence{verified: verified}, nil
 }
 
 func (l *RetainedLoader) LoadIdle(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
-) (profilerevidence.VerifiedIdleEvidence, error) {
+) (RetainedIdleEvidence, error) {
 	loader, err := l.loaderFor(ctx, run, reference)
 	if err != nil {
-		return profilerevidence.VerifiedIdleEvidence{}, err
+		return RetainedIdleEvidence{}, err
 	}
 	verified, err := loader.LoadIdle(ctx, reference)
 	if err != nil {
-		return profilerevidence.VerifiedIdleEvidence{}, err
+		return RetainedIdleEvidence{}, err
 	}
 	execution, _, err := verified.Records()
 	if err != nil {
-		return profilerevidence.VerifiedIdleEvidence{}, err
+		return RetainedIdleEvidence{}, err
 	}
 	if err := validateRunEvidenceBinding(run, execution); err != nil {
-		return profilerevidence.VerifiedIdleEvidence{}, err
+		return RetainedIdleEvidence{}, err
 	}
-	return verified, nil
+	return RetainedIdleEvidence{verified: verified}, nil
 }
 
 func (l *RetainedLoader) loaderFor(
