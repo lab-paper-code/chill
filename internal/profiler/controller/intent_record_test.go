@@ -180,7 +180,11 @@ func TestIntentRecordsRejectPreparedRunSpecDrift(t *testing.T) {
 func TestIntentRecordsRejectAdmissionPolicyDrift(t *testing.T) {
 	run := testRun()
 	frozen := testFrozenRun(t)
-	frozen.AdmissionPolicy.Policy.Name = "different-policy"
+	frozen.AdmissionPolicy = configuredAdmissionPolicy(
+		t,
+		"different-policy",
+		frozen.Prepared.Intent.Measurement.WorkloadMode,
+	)
 	scheme := intentRecordTestScheme(t)
 	records, err := NewIntentRecords(fake.NewClientBuilder().WithScheme(scheme).Build(), scheme)
 	if err != nil {

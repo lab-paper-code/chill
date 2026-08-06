@@ -38,7 +38,11 @@ func Evaluate(
 	if err != nil {
 		return Result{}, err
 	}
-	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
+	_, frozenRecord, err := frozenPolicy.Records()
+	if err != nil {
+		return Result{}, err
+	}
+	if frozenRecord.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
 		return Result{}, errors.New("admission policy workload mode does not match execution intent")
 	}
 	trial, err := projectTrial(execution, raw)
@@ -63,7 +67,11 @@ func EvaluateIdle(
 	if err != nil {
 		return Result{}, nil, err
 	}
-	if frozenPolicy.Policy.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
+	_, frozenRecord, err := frozenPolicy.Records()
+	if err != nil {
+		return Result{}, nil, err
+	}
+	if frozenRecord.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
 		return Result{}, nil, errors.New("idle admission policy workload mode does not match execution intent")
 	}
 	observation, err := projectIdleObservation(execution, raw)

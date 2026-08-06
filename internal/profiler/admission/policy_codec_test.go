@@ -2,6 +2,7 @@ package admission
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -38,9 +39,22 @@ func TestFreezeConfiguredPolicySelectsAndCanonicalizesExactPolicy(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frozen.Policy.Name != "idle-slow-meter" || frozen.Policy.MinimumSamples != 3 ||
-		frozen.Policy.MaximumGapSeconds != 12 || !strings.HasPrefix(frozen.Source.EntryContentDigest, "sha256:") {
+	frozenSource, frozenRecord, err := frozen.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frozenRecord.Name != "idle-slow-meter" || frozenRecord.MinimumSamples != 3 ||
+		frozenRecord.MaximumGapSeconds != 12 || !strings.HasPrefix(frozenSource.EntryContentDigest, "sha256:") {
 		t.Fatalf("frozen policy = %#v", frozen)
+	}
+	frozenRecord.Name = "mutated-copy"
+	frozenSource.ResourceVersion = "mutated-copy"
+	sealedSource, sealedRecord, err := frozen.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealedRecord.Name != "idle-slow-meter" || sealedSource.ResourceVersion != "42" {
+		t.Fatalf("frozen policy changed through a detached record: source=%#v policy=%#v", sealedSource, sealedRecord)
 	}
 	policy, err := frozen.AdmissionPolicy()
 	if err != nil {
@@ -54,6 +68,15 @@ func TestFreezeConfiguredPolicySelectsAndCanonicalizesExactPolicy(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	payload[0] = 'x'
+	sealedPayload, err := frozen.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealedPayload[0] != '{' {
+		t.Fatalf("frozen policy changed through canonical byte projection: %q", sealedPayload)
+	}
+	payload = sealedPayload
 	decoded, err := DecodeFrozenPolicy(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +109,12 @@ func TestPolicyVersionDependsOnSemanticsNotConfigMapRevision(t *testing.T) {
 	if firstPolicy.Version != secondPolicy.Version {
 		t.Fatalf("source revision changed semantic policy version: %q != %q", firstPolicy.Version, secondPolicy.Version)
 	}
-	if first.Source.ResourceVersion == second.Source.ResourceVersion {
+	firstSource, _, firstErr := first.Records()
+	secondSource, _, secondErr := second.Records()
+	if firstErr != nil || secondErr != nil {
+		t.Fatal(errors.Join(firstErr, secondErr))
+	}
+	if firstSource.ResourceVersion == secondSource.ResourceVersion {
 		t.Fatal("source revision provenance was not retained")
 	}
 }

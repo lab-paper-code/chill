@@ -10,12 +10,15 @@ import (
 
 func TestFrozenRunRejectsMixedConfiguredPolicySnapshots(t *testing.T) {
 	frozen := testFrozenRun(t)
-	frozen.AdmissionPolicy.Source.Kind = profileradmission.ConfigMapPolicySourceKind
-	frozen.AdmissionPolicy.Source.Namespace = testSystemNamespace
-	frozen.AdmissionPolicy.Source.Name = "facts"
-	frozen.AdmissionPolicy.Source.UID = testFactsUID
-	frozen.AdmissionPolicy.Source.ResourceVersion = "1"
-	frozen.AdmissionPolicy.Source.Key = "admission-policies.yaml"
+	frozen.AdmissionPolicy = configuredAdmissionPolicyWithSource(
+		t,
+		profileradmission.WallPowerPolicyV2,
+		frozen.Prepared.Intent.Measurement.WorkloadMode,
+		profileradmission.PolicySource{
+			Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: testSystemNamespace,
+			Name: "facts", UID: testFactsUID, ResourceVersion: "1", Key: "admission-policies.yaml",
+		},
+	)
 	frozen.ExecutionPolicy.Source.Kind = profiler.ConfigMapExecutionPolicySourceKind
 	frozen.ExecutionPolicy.Source.Namespace = testSystemNamespace
 	frozen.ExecutionPolicy.Source.Name = "facts"

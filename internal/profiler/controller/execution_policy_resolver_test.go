@@ -150,6 +150,19 @@ func configuredAdmissionPolicy(
 	name string,
 	workloadMode string,
 ) profileradmission.FrozenPolicy {
+	return configuredAdmissionPolicyWithSource(t, name, workloadMode, profileradmission.PolicySource{
+		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: testSystemNamespace,
+		Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "42",
+		Key: "admission-policies.yaml",
+	})
+}
+
+func configuredAdmissionPolicyWithSource(
+	t *testing.T,
+	name string,
+	workloadMode string,
+	source profileradmission.PolicySource,
+) profileradmission.FrozenPolicy {
 	t.Helper()
 	raw, err := yaml.Marshal(profileradmission.PolicyCatalog{
 		SchemaVersion: profileradmission.PolicyCatalogSchemaVersion,
@@ -163,11 +176,7 @@ func configuredAdmissionPolicy(
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen, err := profileradmission.FreezeConfiguredPolicy(raw, name, profileradmission.PolicySource{
-		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: testSystemNamespace,
-		Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "42",
-		Key: "admission-policies.yaml",
-	})
+	frozen, err := profileradmission.FreezeConfiguredPolicy(raw, name, source)
 	if err != nil {
 		t.Fatal(err)
 	}

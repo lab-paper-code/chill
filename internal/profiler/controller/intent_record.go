@@ -121,7 +121,7 @@ func buildIntentRecord(
 	if err != nil {
 		return nil, err
 	}
-	policyDigest, err := frozen.AdmissionPolicy.Policy.Digest()
+	policyDigest, err := frozen.AdmissionPolicy.Digest()
 	if err != nil {
 		return nil, fmt.Errorf("digest frozen admission policy: %w", err)
 	}
@@ -409,7 +409,7 @@ func decodeStoredAdmissionPolicy(record *corev1.ConfigMap) (profileradmission.Fr
 	if err != nil {
 		return profileradmission.FrozenPolicy{}, err
 	}
-	policyDigest, err := policy.Policy.Digest()
+	policyDigest, err := policy.Digest()
 	if err != nil {
 		return profileradmission.FrozenPolicy{}, err
 	}

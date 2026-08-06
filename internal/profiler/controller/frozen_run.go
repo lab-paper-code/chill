@@ -21,7 +21,8 @@ func (r FrozenRun) Validate() error {
 	if r.Prepared.IntentDigest == "" {
 		return errors.New("frozen Run prepared intent is required")
 	}
-	if err := r.AdmissionPolicy.Validate(); err != nil {
+	admissionSource, _, err := r.AdmissionPolicy.Records()
+	if err != nil {
 		return err
 	}
 	if err := r.ExecutionPolicy.Validate(); err != nil {
@@ -30,22 +31,22 @@ func (r FrozenRun) Validate() error {
 	if err := r.Prepared.ValidateActuationBinding(); err != nil {
 		return err
 	}
-	if r.AdmissionPolicy.Source.Kind == profileradmission.ConfigMapPolicySourceKind &&
+	if admissionSource.Kind == profileradmission.ConfigMapPolicySourceKind &&
 		r.ExecutionPolicy.Source.Kind == profiler.ConfigMapExecutionPolicySourceKind &&
-		(r.AdmissionPolicy.Source.Namespace != r.ExecutionPolicy.Source.Namespace ||
-			r.AdmissionPolicy.Source.Name != r.ExecutionPolicy.Source.Name ||
-			r.AdmissionPolicy.Source.UID != r.ExecutionPolicy.Source.UID ||
-			r.AdmissionPolicy.Source.ResourceVersion != r.ExecutionPolicy.Source.ResourceVersion) {
+		(admissionSource.Namespace != r.ExecutionPolicy.Source.Namespace ||
+			admissionSource.Name != r.ExecutionPolicy.Source.Name ||
+			admissionSource.UID != r.ExecutionPolicy.Source.UID ||
+			admissionSource.ResourceVersion != r.ExecutionPolicy.Source.ResourceVersion) {
 		return errors.New("frozen admission and execution policies came from different ConfigMap snapshots")
 	}
 	if r.Prepared.ActuationPolicy != nil {
 		source := r.Prepared.ActuationPolicy.Source
 		if source.Kind != profiler.ConfigMapActuationPolicySourceKind ||
-			r.AdmissionPolicy.Source.Kind != profileradmission.ConfigMapPolicySourceKind ||
-			source.Namespace != r.AdmissionPolicy.Source.Namespace ||
-			source.Name != r.AdmissionPolicy.Source.Name ||
-			source.UID != r.AdmissionPolicy.Source.UID ||
-			source.ResourceVersion != r.AdmissionPolicy.Source.ResourceVersion {
+			admissionSource.Kind != profileradmission.ConfigMapPolicySourceKind ||
+			source.Namespace != admissionSource.Namespace ||
+			source.Name != admissionSource.Name ||
+			source.UID != admissionSource.UID ||
+			source.ResourceVersion != admissionSource.ResourceVersion {
 			return errors.New("frozen actuation and scientific policies came from different ConfigMap snapshots")
 		}
 	}
@@ -64,10 +65,14 @@ func validateSelectedAdmissionPolicy(
 	prepared profiler.PreparedRun,
 	policy profileradmission.FrozenPolicy,
 ) error {
-	if policy.Policy.Name != run.Spec.AdmissionPolicy {
+	_, selected, err := policy.Records()
+	if err != nil {
+		return err
+	}
+	if selected.Name != run.Spec.AdmissionPolicy {
 		return invalidAdmissionPolicy("frozen admission policy does not match immutable ProfilingRun spec")
 	}
-	if policy.Policy.WorkloadMode != prepared.Intent.Measurement.WorkloadMode {
+	if selected.WorkloadMode != prepared.Intent.Measurement.WorkloadMode {
 		return invalidAdmissionPolicy("frozen admission policy workload mode does not match immutable Run intent")
 	}
 	return nil

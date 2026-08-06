@@ -76,11 +76,20 @@ type PolicySource struct {
 	EntryContentDigest string `json:"entryContentDigest"`
 }
 
-// FrozenPolicy is retained verbatim beside the immutable execution intent.
-type FrozenPolicy struct {
+type frozenPolicyRecord struct {
 	SchemaVersion string       `json:"schemaVersion"`
 	Source        PolicySource `json:"source"`
 	Policy        Policy       `json:"policy"`
+}
+
+// FrozenPolicy is retained verbatim beside the immutable execution intent. A
+// populated value can only be constructed by the catalog-freeze or retained-
+// JSON decode boundaries in this package.
+type FrozenPolicy struct {
+	record       frozenPolicyRecord
+	canonical    []byte
+	policyDigest string
+	verified     bool
 }
 
 // FreezeConfiguredPolicy strict-decodes one catalog and selects a policy by
@@ -121,53 +130,51 @@ func FreezeConfiguredPolicy(raw []byte, selectedName string, source PolicySource
 	}
 
 	source.EntryContentDigest = digestBytes(raw)
-	frozen := FrozenPolicy{SchemaVersion: FrozenPolicySchemaVersion, Source: source, Policy: *selected}
-	if err := frozen.Validate(); err != nil {
-		return FrozenPolicy{}, err
-	}
-	return frozen, nil
+	return sealFrozenPolicy(frozenPolicyRecord{
+		SchemaVersion: FrozenPolicySchemaVersion, Source: source, Policy: *selected,
+	})
 }
 
 func DecodeFrozenPolicy(raw []byte) (FrozenPolicy, error) {
-	var frozen FrozenPolicy
+	var record frozenPolicyRecord
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&frozen); err != nil {
+	if err := decoder.Decode(&record); err != nil {
 		return FrozenPolicy{}, fmt.Errorf("decode frozen admission policy: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return FrozenPolicy{}, errors.New("frozen admission policy contains a trailing JSON value")
 	}
-	if err := frozen.Validate(); err != nil {
+	if err := validateFrozenPolicy(record); err != nil {
 		return FrozenPolicy{}, err
 	}
-	canonical, err := frozen.CanonicalJSON()
+	canonical, err := json.Marshal(record)
 	if err != nil {
 		return FrozenPolicy{}, err
 	}
 	if !bytes.Equal(raw, canonical) {
 		return FrozenPolicy{}, errors.New("stored admission policy is not canonical")
 	}
-	return frozen, nil
+	return newFrozenPolicy(record, canonical)
 }
 
-func (f FrozenPolicy) Validate() error {
-	if f.SchemaVersion != FrozenPolicySchemaVersion {
-		return fmt.Errorf("unsupported frozen admission-policy schema %q", f.SchemaVersion)
+func validateFrozenPolicy(record frozenPolicyRecord) error {
+	if record.SchemaVersion != FrozenPolicySchemaVersion {
+		return fmt.Errorf("unsupported frozen admission-policy schema %q", record.SchemaVersion)
 	}
-	if err := f.Policy.Validate(); err != nil {
+	if err := record.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen admission policy: %w", err)
 	}
-	if !digestPattern.MatchString(f.Source.EntryContentDigest) {
+	if !digestPattern.MatchString(record.Source.EntryContentDigest) {
 		return errors.New("admission-policy source entryContentDigest must be a canonical SHA-256 digest")
 	}
-	if f.Source.Kind != ConfigMapPolicySourceKind {
-		return fmt.Errorf("unsupported admission-policy source kind %q", f.Source.Kind)
+	if record.Source.Kind != ConfigMapPolicySourceKind {
+		return fmt.Errorf("unsupported admission-policy source kind %q", record.Source.Kind)
 	}
 	for name, value := range map[string]string{
-		"namespace": f.Source.Namespace, "name": f.Source.Name, "uid": f.Source.UID,
-		"resourceVersion": f.Source.ResourceVersion, "key": f.Source.Key,
+		"namespace": record.Source.Namespace, "name": record.Source.Name, "uid": record.Source.UID,
+		"resourceVersion": record.Source.ResourceVersion, "key": record.Source.Key,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("admission-policy ConfigMap source %s is required without surrounding whitespace", name)
@@ -176,30 +183,63 @@ func (f FrozenPolicy) Validate() error {
 	return nil
 }
 
-func (f FrozenPolicy) CanonicalJSON() ([]byte, error) {
-	if err := f.Validate(); err != nil {
-		return nil, err
+func sealFrozenPolicy(record frozenPolicyRecord) (FrozenPolicy, error) {
+	if err := validateFrozenPolicy(record); err != nil {
+		return FrozenPolicy{}, err
 	}
-	return json.Marshal(f)
+	canonical, err := json.Marshal(record)
+	if err != nil {
+		return FrozenPolicy{}, fmt.Errorf("encode frozen admission policy: %w", err)
+	}
+	return newFrozenPolicy(record, canonical)
+}
+
+func newFrozenPolicy(record frozenPolicyRecord, canonical []byte) (FrozenPolicy, error) {
+	policyBytes, err := json.Marshal(record.Policy)
+	if err != nil {
+		return FrozenPolicy{}, fmt.Errorf("encode verified admission policy: %w", err)
+	}
+	return FrozenPolicy{
+		record: record, canonical: append([]byte(nil), canonical...),
+		policyDigest: digestBytes(policyBytes), verified: true,
+	}, nil
+}
+
+func (f FrozenPolicy) Records() (PolicySource, Policy, error) {
+	if !f.verified {
+		return PolicySource{}, Policy{}, errors.New("frozen admission policy is empty")
+	}
+	return f.record.Source, f.record.Policy, nil
+}
+
+func (f FrozenPolicy) CanonicalJSON() ([]byte, error) {
+	if !f.verified {
+		return nil, errors.New("frozen admission policy is empty")
+	}
+	return append([]byte(nil), f.canonical...), nil
+}
+
+func (f FrozenPolicy) Digest() (string, error) {
+	if !f.verified {
+		return "", errors.New("frozen admission policy is empty")
+	}
+	return f.policyDigest, nil
 }
 
 func (f FrozenPolicy) AdmissionPolicy() (profilederivation.AdmissionPolicy, error) {
-	if err := f.Validate(); err != nil {
-		return profilederivation.AdmissionPolicy{}, err
-	}
-	digest, err := f.Policy.Digest()
+	_, policy, err := f.Records()
 	if err != nil {
 		return profilederivation.AdmissionPolicy{}, err
 	}
 	return profilederivation.AdmissionPolicy{
-		Version:                        digest,
-		MinimumSamples:                 f.Policy.MinimumSamples,
-		MaximumGapSeconds:              f.Policy.MaximumGapSeconds,
-		MaximumBoundaryDistanceSeconds: f.Policy.MaximumBoundaryDistanceSeconds,
-		MinimumCoverage:                f.Policy.MinimumCoverage,
-		AllowReceiptTimestamps:         f.Policy.AllowReceiptTimestamps,
-		RejectConcurrentCHILLWorkloads: f.Policy.RejectConcurrentCHILLWorkloads,
-		RejectExternalWorkloadChanges:  f.Policy.RejectExternalWorkloadChanges,
+		Version:                        f.policyDigest,
+		MinimumSamples:                 policy.MinimumSamples,
+		MaximumGapSeconds:              policy.MaximumGapSeconds,
+		MaximumBoundaryDistanceSeconds: policy.MaximumBoundaryDistanceSeconds,
+		MinimumCoverage:                policy.MinimumCoverage,
+		AllowReceiptTimestamps:         policy.AllowReceiptTimestamps,
+		RejectConcurrentCHILLWorkloads: policy.RejectConcurrentCHILLWorkloads,
+		RejectExternalWorkloadChanges:  policy.RejectExternalWorkloadChanges,
 	}, nil
 }
 

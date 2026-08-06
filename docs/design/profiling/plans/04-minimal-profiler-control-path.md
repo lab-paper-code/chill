@@ -324,6 +324,11 @@ status and carried into derivation. ConfigMap changes therefore affect only new
 Runs. Restart recovery reads the retained bytes and never re-resolves mutable
 policy configuration.
 
+The admission-policy catalog selector and retained-record decoder return a
+sealed policy value. Downstream admission and controller code receive detached
+source/policy projections and the already computed semantic digest; they do not
+re-validate or re-hash the same retained policy.
+
 Before an intent record exists, a successfully read but malformed policy
 catalog, an unconfigured selected name, or a selected policy whose workload
 mode does not match the immutable Run is terminal for that Run. The controller
