@@ -3,7 +3,7 @@ package profiler
 const (
 	ExecutionPolicyCatalogSchemaVersion = "chill.dacs.io/profiler-execution-policies.v1alpha1"
 	ExecutionPolicySchemaVersion        = "chill.dacs.io/profiler-execution-policy.v1alpha1"
-	FrozenExecutionPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-execution-policy.v1alpha1"
+	FrozenExecutionPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-execution-policy.v1alpha2"
 
 	ConfigMapExecutionPolicySourceKind = "ConfigMap"
 )
@@ -63,13 +63,12 @@ type ExecutionPolicy struct {
 // ExecutionPolicySource identifies the exact mutable catalog snapshot copied
 // into the immutable Run record.
 type ExecutionPolicySource struct {
-	Kind                 string `json:"kind"`
-	Namespace            string `json:"namespace,omitempty"`
-	Name                 string `json:"name"`
-	UID                  string `json:"uid,omitempty"`
-	ResourceVersion      string `json:"resourceVersion,omitempty"`
-	Key                  string `json:"key,omitempty"`
-	CatalogContentDigest string `json:"catalogContentDigest"`
+	Kind            string `json:"kind"`
+	Namespace       string `json:"namespace,omitempty"`
+	Name            string `json:"name"`
+	UID             string `json:"uid,omitempty"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+	Key             string `json:"key,omitempty"`
 }
 
 type FrozenExecutionPolicy struct {

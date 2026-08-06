@@ -2,8 +2,6 @@ package profiler
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,7 +69,6 @@ func FreezeConfiguredActuationPolicy(
 		)
 	}
 
-	source.CatalogContentDigest = actuationPolicyDigestBytes(raw)
 	frozen := FrozenActuationPolicy{
 		SchemaVersion: FrozenActuationPolicySchemaVersion,
 		Source:        source,
@@ -115,9 +112,4 @@ func (f FrozenActuationPolicy) CanonicalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(f)
-}
-
-func actuationPolicyDigestBytes(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

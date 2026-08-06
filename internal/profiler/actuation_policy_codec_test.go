@@ -17,8 +17,7 @@ func TestFreezeConfiguredActuationPolicySelectsAndBindsCatalogSnapshot(t *testin
 		t.Fatal(err)
 	}
 	if frozen.Policy.Name != "xavier-nvpmodel-v1" ||
-		frozen.Policy.PowerMode != selection.PowerMode ||
-		frozen.Source.CatalogContentDigest == "" {
+		frozen.Policy.PowerMode != selection.PowerMode {
 		t.Fatalf("selected actuation policy = %#v", frozen)
 	}
 	digest, err := frozen.Policy.Digest()

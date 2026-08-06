@@ -83,7 +83,6 @@ func FreezeConfiguredExecutionPolicy(
 		)
 	}
 
-	source.CatalogContentDigest = executionPolicyDigestBytes(raw)
 	frozen := FrozenExecutionPolicy{
 		SchemaVersion: FrozenExecutionPolicySchemaVersion,
 		Source:        source,

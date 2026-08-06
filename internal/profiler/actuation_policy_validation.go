@@ -3,14 +3,9 @@ package profiler
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
-)
-
-var (
-	actuationPolicyDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 func (s ActuationSelection) Validate() error {
@@ -34,9 +29,6 @@ func (f FrozenActuationPolicy) Validate() error {
 	}
 	if err := f.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen actuation policy: %w", err)
-	}
-	if !actuationPolicyDigestPattern.MatchString(f.Source.CatalogContentDigest) {
-		return errors.New("actuation-policy source catalogContentDigest must be a canonical SHA-256 digest")
 	}
 	if f.Source.Kind != ConfigMapActuationPolicySourceKind {
 		return fmt.Errorf("unsupported actuation-policy source kind %q", f.Source.Kind)

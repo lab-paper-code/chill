@@ -8,7 +8,7 @@ import (
 const (
 	ActuationPolicyCatalogSchemaVersion = "chill.dacs.io/profiler-actuation-policies.v1alpha1"
 	ActuationPolicySchemaVersion        = nodeactuator.ActuationPolicySchemaVersion
-	FrozenActuationPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-actuation-policy.v1alpha1"
+	FrozenActuationPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-actuation-policy.v1alpha2"
 
 	ConfigMapActuationPolicySourceKind = "ConfigMap"
 )
@@ -30,13 +30,12 @@ type ActuationPolicySpec = nodeactuator.ActuationPolicySpec
 type ActuationPolicy = nodeactuator.ActuationPolicy
 
 type ActuationPolicySource struct {
-	Kind                 string `json:"kind"`
-	Namespace            string `json:"namespace,omitempty"`
-	Name                 string `json:"name"`
-	UID                  string `json:"uid,omitempty"`
-	ResourceVersion      string `json:"resourceVersion,omitempty"`
-	Key                  string `json:"key,omitempty"`
-	CatalogContentDigest string `json:"catalogContentDigest"`
+	Kind            string `json:"kind"`
+	Namespace       string `json:"namespace,omitempty"`
+	Name            string `json:"name"`
+	UID             string `json:"uid,omitempty"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+	Key             string `json:"key,omitempty"`
 }
 
 type FrozenActuationPolicy struct {

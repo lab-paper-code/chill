@@ -30,7 +30,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frozen.Policy.Name != testConfiguredActivePolicy || frozen.Source.CatalogContentDigest == "" {
+	if frozen.Policy.Name != testConfiguredActivePolicy {
 		t.Fatalf("selected execution policy = %#v", frozen)
 	}
 	identity, err := frozen.Identity()

@@ -19,15 +19,12 @@ import (
 const (
 	PolicyCatalogSchemaVersion = "chill.dacs.io/profiler-admission-policies.v1alpha1"
 	PolicySchemaVersion        = "chill.dacs.io/profiler-admission-policy.v1alpha1"
-	FrozenPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-admission-policy.v1alpha1"
+	FrozenPolicySchemaVersion  = "chill.dacs.io/frozen-profiler-admission-policy.v1alpha2"
 
 	ConfigMapPolicySourceKind = "ConfigMap"
 )
 
-var (
-	policyNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
-	digestPattern     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-)
+var policyNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 // PolicyCatalog is installation-time trusted configuration. A Run selects one
 // entry by name; it cannot supply or override scientific thresholds.
@@ -67,13 +64,12 @@ type Policy struct {
 // PolicySource binds configured policy semantics to the exact mutable source
 // snapshot used before the selected policy is copied into an immutable record.
 type PolicySource struct {
-	Kind               string `json:"kind"`
-	Namespace          string `json:"namespace,omitempty"`
-	Name               string `json:"name"`
-	UID                string `json:"uid,omitempty"`
-	ResourceVersion    string `json:"resourceVersion,omitempty"`
-	Key                string `json:"key,omitempty"`
-	EntryContentDigest string `json:"entryContentDigest"`
+	Kind            string `json:"kind"`
+	Namespace       string `json:"namespace,omitempty"`
+	Name            string `json:"name"`
+	UID             string `json:"uid,omitempty"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+	Key             string `json:"key,omitempty"`
 }
 
 type frozenPolicyRecord struct {
@@ -93,7 +89,8 @@ type FrozenPolicy struct {
 }
 
 // FreezeConfiguredPolicy strict-decodes one catalog and selects a policy by
-// name while retaining exact ConfigMap provenance and entry content identity.
+// name while retaining exact ConfigMap provenance. The selected policy is
+// copied into the frozen record and is the input to its semantic digest.
 func FreezeConfiguredPolicy(raw []byte, selectedName string, source PolicySource) (FrozenPolicy, error) {
 	if len(raw) == 0 {
 		return FrozenPolicy{}, errors.New("admission-policy catalog is empty")
@@ -129,7 +126,6 @@ func FreezeConfiguredPolicy(raw []byte, selectedName string, source PolicySource
 		return FrozenPolicy{}, fmt.Errorf("admission policy %q is not configured", selectedName)
 	}
 
-	source.EntryContentDigest = digestBytes(raw)
 	return sealFrozenPolicy(frozenPolicyRecord{
 		SchemaVersion: FrozenPolicySchemaVersion, Source: source, Policy: *selected,
 	})
@@ -165,9 +161,6 @@ func validateFrozenPolicy(record frozenPolicyRecord) error {
 	}
 	if err := record.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen admission policy: %w", err)
-	}
-	if !digestPattern.MatchString(record.Source.EntryContentDigest) {
-		return errors.New("admission-policy source entryContentDigest must be a canonical SHA-256 digest")
 	}
 	if record.Source.Kind != ConfigMapPolicySourceKind {
 		return fmt.Errorf("unsupported admission-policy source kind %q", record.Source.Kind)

@@ -55,7 +55,7 @@ func TestKubernetesAdmissionPolicyResolverFreezesExactConfigMapSource(t *testing
 	}
 	if policy.MinimumSamples != 7 || policy.MaximumGapSeconds != 2.5 ||
 		source.Kind != profileradmission.ConfigMapPolicySourceKind || source.UID != testFactsUID ||
-		source.ResourceVersion != "19" || !strings.HasPrefix(source.EntryContentDigest, "sha256:") {
+		source.ResourceVersion != "19" {
 		t.Fatalf("resolved frozen policy = %#v", frozen)
 	}
 }

@@ -44,7 +44,7 @@ func TestFreezeConfiguredPolicySelectsAndCanonicalizesExactPolicy(t *testing.T) 
 		t.Fatal(err)
 	}
 	if frozenRecord.Name != "idle-slow-meter" || frozenRecord.MinimumSamples != 3 ||
-		frozenRecord.MaximumGapSeconds != 12 || !strings.HasPrefix(frozenSource.EntryContentDigest, "sha256:") {
+		frozenRecord.MaximumGapSeconds != 12 {
 		t.Fatalf("frozen policy = %#v", frozen)
 	}
 	frozenRecord.Name = "mutated-copy"

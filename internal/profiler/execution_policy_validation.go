@@ -11,10 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var (
-	executionPolicyNamePattern   = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
-	executionPolicyDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-)
+var executionPolicyNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 func (f FrozenExecutionPolicy) Validate() error {
 	if f.SchemaVersion != FrozenExecutionPolicySchemaVersion {
@@ -22,9 +19,6 @@ func (f FrozenExecutionPolicy) Validate() error {
 	}
 	if err := f.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen execution policy: %w", err)
-	}
-	if !executionPolicyDigestPattern.MatchString(f.Source.CatalogContentDigest) {
-		return errors.New("execution-policy source catalogContentDigest must be a canonical SHA-256 digest")
 	}
 	if f.Source.Kind != ConfigMapExecutionPolicySourceKind {
 		return fmt.Errorf("unsupported execution-policy source kind %q", f.Source.Kind)
