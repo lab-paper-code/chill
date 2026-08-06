@@ -291,9 +291,9 @@ func TestCurrentRawMeasurementBindsWorkloadObservationToIntentAndRuntime(t *test
 		{name: "missing", mutate: func(candidate *RawMeasurement) {
 			candidate.Workload = nil
 		}, match: "required"},
-		{name: "policy", mutate: func(candidate *RawMeasurement) {
-			candidate.Workload.PolicyDigest = "sha256:" + strings.Repeat("0", 64)
-		}, match: "policy digest"},
+		{name: "pod", mutate: func(candidate *RawMeasurement) {
+			candidate.Workload.Run.PodUID = "other-pod"
+		}, match: "Run Pod"},
 		{name: "node", mutate: func(candidate *RawMeasurement) {
 			candidate.Workload.Target.NodeUID = "other-node"
 		}, match: "identity"},
@@ -422,9 +422,9 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	}
 
 	invalid := evidence
-	invalid.RawMeasurement.Digest = "sha256:" + strings.Repeat("0", 64)
+	invalid.RawMeasurement.Key = ""
 	if err := invalid.Validate(raw); err == nil {
-		t.Fatal("expected raw object identity mismatch rejection")
+		t.Fatal("expected malformed raw object identity rejection")
 	}
 
 	invalid = evidence
@@ -472,9 +472,9 @@ func TestExecutionEvidenceValidatesIdleRawObjectIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalid := execution
-	invalid.RawMeasurement.Size++
+	invalid.RawMeasurement.Key = ""
 	if err := invalid.ValidateIdle(raw); err == nil {
-		t.Fatal("idle execution evidence accepted a drifted raw object identity")
+		t.Fatal("idle execution evidence accepted a malformed raw object identity")
 	}
 }
 

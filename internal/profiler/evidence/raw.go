@@ -51,14 +51,10 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 }
 
 func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	digest, err := intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate Run intent: %w", err)
-	}
-	return m.validate(intent, digest)
+	return m.validate(intent)
 }
 
-func (m RawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
+func (m RawMeasurement) validate(intent profilingrun.Intent) error {
 	if m.SchemaVersion != RawMeasurementSchemaVersion &&
 		m.SchemaVersion != rawMeasurementSchemaVersionV1Alpha3 {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
@@ -70,9 +66,6 @@ func (m RawMeasurement) validate(intent profilingrun.Intent, intentDigest string
 	if m.SchemaVersion == RawMeasurementSchemaVersion &&
 		m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersion {
 		return errors.New("current raw measurement requires the current runtime result")
-	}
-	if m.IntentDigest != intentDigest {
-		return errors.New("raw measurement intent digest mismatch")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
 		return errors.New("raw measurement Pod UID is required")
@@ -134,13 +127,6 @@ func validateWorkloadObservation(
 ) error {
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("validate workload observation: %w", err)
-	}
-	policyDigest, err := intent.Workload.Digest()
-	if err != nil {
-		return fmt.Errorf("digest workload observation contract: %w", err)
-	}
-	if result.PolicyDigest != policyDigest {
-		return errors.New("workload observation policy digest mismatch")
 	}
 	if result.Target.NodeName != intent.TargetNode.Name || result.Target.NodeUID != intent.TargetNode.UID ||
 		result.Run.PodUID != podUID {

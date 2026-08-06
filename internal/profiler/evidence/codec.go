@@ -16,7 +16,6 @@ func validateStoredExecution(
 	payload []byte,
 	identity evidencestore.ObjectIdentity,
 	raw rawRecord,
-	intentDigest string,
 ) error {
 	if int64(len(payload)) != identity.Size {
 		return fmt.Errorf("retained execution evidence size %d does not match declared size %d", len(payload), identity.Size)
@@ -25,7 +24,7 @@ func validateStoredExecution(
 	if err := decodeExact(payload, &retained); err != nil {
 		return err
 	}
-	if err := raw.validateExecution(retained, intentDigest); err != nil {
+	if err := raw.validateExecution(retained); err != nil {
 		return err
 	}
 	return nil

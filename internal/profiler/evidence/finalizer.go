@@ -75,7 +75,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate Run intent: %w", err)
 	}
-	if err := raw.validate(request.Intent, intentDigest); err != nil {
+	if err := raw.validate(request.Intent); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate raw measurement: %w", err)
 	}
 	schemaVersion := ExecutionEvidenceSchemaVersion
@@ -92,7 +92,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		Actuation:            cloneActuationFacts(request.Actuation),
 		FinalizedAt:          request.FinalizedAt,
 	}
-	if err := raw.validateExecution(candidate, intentDigest); err != nil {
+	if err := raw.validateExecution(candidate); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate execution evidence: %w", err)
 	}
 	candidateBytes, err := candidate.canonicalJSON()
@@ -102,7 +102,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 
 	existingBytes, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err == nil {
-		return f.reuseExisting(existingBytes, request, raw, intentDigest)
+		return f.reuseExisting(existingBytes, request, raw)
 	}
 	if !errors.Is(err, evidencestore.ErrNotFound) {
 		return FinalizeResult{}, fmt.Errorf("inspect finalized evidence: %w", err)
@@ -120,7 +120,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read finalized evidence after create: %w", err)
 	}
-	if err := validateStoredExecution(retained, identity, raw, intentDigest); err != nil {
+	if err := validateStoredExecution(retained, identity, raw); err != nil {
 		return FinalizeResult{}, fmt.Errorf("verify finalized evidence after create: %w", err)
 	}
 	return FinalizeResult{
@@ -133,18 +133,16 @@ func (f *Finalizer) reuseExisting(
 	payload []byte,
 	request FinalizeRequest,
 	raw rawRecord,
-	intentDigest string,
 ) (FinalizeResult, error) {
 	identity := identityFor(request.FinalLocation, payload)
 	var existing ExecutionEvidence
 	if err := decodeExact(payload, &existing); err != nil {
 		return FinalizeResult{}, fmt.Errorf("decode existing execution evidence: %w", err)
 	}
-	if err := raw.validateExecution(existing, intentDigest); err != nil {
+	if err := raw.validateExecution(existing); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate existing execution evidence: %w", err)
 	}
 	if existing.RawMeasurement != request.RawReceipt.Object ||
-		existing.IntentDigest != intentDigest ||
 		existing.Terminal.Job.UID != request.Terminal.Job.UID ||
 		existing.Terminal.Pod.UID != request.Terminal.Pod.UID ||
 		existing.Terminal.Node.UID != request.Terminal.Node.UID {

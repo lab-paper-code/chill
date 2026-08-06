@@ -10,8 +10,8 @@ import (
 // evidence. The concrete raw schemas remain distinct and externally visible;
 // only schema-neutral orchestration depends on this interface.
 type rawRecord interface {
-	validate(profilingrun.Intent, string) error
-	validateExecution(ExecutionEvidence, string) error
+	validate(profilingrun.Intent) error
+	validateExecution(ExecutionEvidence) error
 }
 
 func decodeRawRecord(payload []byte, intent profilingrun.Intent) (rawRecord, error) {
@@ -29,10 +29,10 @@ func decodeRawRecord(payload []byte, intent profilingrun.Intent) (rawRecord, err
 	return raw, nil
 }
 
-func (m RawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {
-	return execution.validateLinkedRaw(m.PodUID, m.Workload, intentDigest)
+func (m RawMeasurement) validateExecution(execution ExecutionEvidence) error {
+	return execution.validateLinkedRaw(m.PodUID, m.Workload)
 }
 
-func (m IdleRawMeasurement) validateExecution(execution ExecutionEvidence, intentDigest string) error {
-	return execution.validateLinkedRaw(m.PodUID, m.Workload, intentDigest)
+func (m IdleRawMeasurement) validateExecution(execution ExecutionEvidence) error {
+	return execution.validateLinkedRaw(m.PodUID, m.Workload)
 }

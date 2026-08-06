@@ -155,7 +155,6 @@ func validateRunEvidenceBinding(
 	execution profilerevidence.ExecutionEvidence,
 ) error {
 	if run.Status.Evidence == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
-		execution.IntentDigest != run.Status.IntentDigest ||
 		execution.Terminal.Job.Namespace != run.Namespace ||
 		execution.Terminal.Job.Name != run.Status.Job.Name ||
 		execution.Terminal.Job.UID != run.Status.Job.UID {

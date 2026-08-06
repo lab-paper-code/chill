@@ -69,7 +69,7 @@ func VerifyRuntimeResult(
 	if err != nil {
 		return VerifiedRuntimeResult{}, err
 	}
-	if err := validateRuntime(intentRecord, intent.Digest(), podUID, result); err != nil {
+	if err := ValidateRuntime(intentRecord, podUID, result); err != nil {
 		return VerifiedRuntimeResult{}, err
 	}
 	payload, err := json.Marshal(result)
@@ -106,7 +106,7 @@ func VerifyIdleRuntimeResult(
 	if err != nil {
 		return VerifiedIdleRuntimeResult{}, err
 	}
-	if err := validateIdleRuntime(intentRecord, intent.Digest(), podUID, result); err != nil {
+	if err := ValidateIdleRuntime(intentRecord, podUID, result); err != nil {
 		return VerifiedIdleRuntimeResult{}, err
 	}
 	payload, err := json.Marshal(result)

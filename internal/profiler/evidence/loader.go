@@ -77,14 +77,10 @@ func (l *Loader) load(
 	if err != nil {
 		return ExecutionEvidence{}, nil, err
 	}
-	intentDigest, err := execution.Intent.Digest()
-	if err != nil {
-		return ExecutionEvidence{}, nil, fmt.Errorf("validate retained Run intent: %w", err)
-	}
-	if err := raw.validate(execution.Intent, intentDigest); err != nil {
+	if err := raw.validate(execution.Intent); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
-	if err := raw.validateExecution(execution, intentDigest); err != nil {
+	if err := raw.validateExecution(execution); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate finalized evidence: %w", err)
 	}
 	return execution, raw, nil

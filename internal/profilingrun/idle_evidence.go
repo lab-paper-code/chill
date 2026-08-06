@@ -58,18 +58,7 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 	if err := validateIdleRuntimeSchema(intent, result); err != nil {
 		return err
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate idle Run intent: %w", err)
-	}
-	return validateBoundIdleRuntime(intent, digest, podUID, result)
-}
-
-func validateIdleRuntime(intent Intent, intentDigest, podUID string, result IdleRuntimeResult) error {
-	if err := validateIdleRuntimeSchema(intent, result); err != nil {
-		return err
-	}
-	return validateBoundIdleRuntime(intent, intentDigest, podUID, result)
+	return validateBoundIdleRuntime(intent, podUID, result)
 }
 
 func validateIdleRuntimeSchema(intent Intent, result IdleRuntimeResult) error {
@@ -88,7 +77,7 @@ func validateIdleRuntimeSchema(intent Intent, result IdleRuntimeResult) error {
 }
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
-func validateBoundIdleRuntime(intent Intent, digest, podUID string, result IdleRuntimeResult) error {
+func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
 	if intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
 		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
 		return errors.New("idle runtime requires a supported model-loaded idle intent")
@@ -99,11 +88,9 @@ func validateBoundIdleRuntime(intent Intent, digest, podUID string, result IdleR
 	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
-		{"intent digest", digest, result.IntentDigest},
 		{"Pod UID", podUID, result.PodUID},
 		{"Node", intent.TargetNode.Name, result.NodeName},
 		{"model", intent.State.Model, result.Model},
-		{"artifact digest", intent.State.ArtifactDigest, result.ArtifactDigest},
 		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
 		{"backend", intent.State.Backend, backend},
 	}
@@ -148,8 +135,7 @@ func validateBoundIdleRuntime(intent Intent, digest, podUID string, result IdleR
 	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.RunIntentDigest != digest ||
-		result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
+	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("idle derived contract identity mismatch")
 	}
 	derivedBackend := result.DerivedContract.Backend

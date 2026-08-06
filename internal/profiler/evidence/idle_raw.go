@@ -50,14 +50,10 @@ func (m *IdleRawMeasurement) UnmarshalJSON(payload []byte) error {
 }
 
 func (m IdleRawMeasurement) Validate(intent profilingrun.Intent) error {
-	digest, err := intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate idle Run intent: %w", err)
-	}
-	return m.validate(intent, digest)
+	return m.validate(intent)
 }
 
-func (m IdleRawMeasurement) validate(intent profilingrun.Intent, intentDigest string) error {
+func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
 	if m.SchemaVersion != IdleRawMeasurementSchemaVersion &&
 		m.SchemaVersion != idleRawMeasurementSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
@@ -69,9 +65,6 @@ func (m IdleRawMeasurement) validate(intent profilingrun.Intent, intentDigest st
 	if m.SchemaVersion == IdleRawMeasurementSchemaVersion &&
 		m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersion {
 		return errors.New("current idle raw measurement requires the current idle runtime result")
-	}
-	if m.IntentDigest != intentDigest {
-		return errors.New("idle raw measurement intent digest mismatch")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
 		return errors.New("idle raw measurement Pod UID is required")

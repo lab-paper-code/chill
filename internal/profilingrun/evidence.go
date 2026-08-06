@@ -153,18 +153,7 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	if err := validateRuntimeSchema(intent, result); err != nil {
 		return err
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return err
-	}
-	return validateBoundRuntime(intent, digest, podUID, result)
-}
-
-func validateRuntime(intent Intent, intentDigest, podUID string, result RuntimeResult) error {
-	if err := validateRuntimeSchema(intent, result); err != nil {
-		return err
-	}
-	return validateBoundRuntime(intent, intentDigest, podUID, result)
+	return validateBoundRuntime(intent, podUID, result)
 }
 
 func validateRuntimeSchema(intent Intent, result RuntimeResult) error {
@@ -183,18 +172,16 @@ func validateRuntimeSchema(intent Intent, result RuntimeResult) error {
 }
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
-func validateBoundRuntime(intent Intent, digest, podUID string, result RuntimeResult) error {
+func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) error {
 	backend := result.Backend
 	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
 		backend = result.Provider
 	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
-		{"run intent digest", digest, result.SweepID},
 		{"Pod UID", podUID, result.ExperimentID},
 		{"Node", intent.TargetNode.Name, result.NodeName},
 		{"model", intent.State.Model, result.Model},
-		{"artifact digest", intent.State.ArtifactDigest, result.ArtifactDigest},
 		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
 		{"backend", intent.State.Backend, backend},
 	}
@@ -235,8 +222,7 @@ func validateBoundRuntime(intent Intent, digest, podUID string, result RuntimeRe
 	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.RunIntentDigest != digest ||
-		result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
+	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("derived contract identity mismatch")
 	}
 	derivedBackend := result.DerivedContract.Backend

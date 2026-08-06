@@ -1,70 +1,47 @@
 package evidence
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
-	digest, err := e.Intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate Run intent: %w", err)
-	}
-	if err := raw.validate(e.Intent, digest); err != nil {
+	if err := raw.validate(e.Intent); err != nil {
 		return fmt.Errorf("validate raw measurement: %w", err)
 	}
 	if err := e.RawMeasurement.Validate(); err != nil {
 		return fmt.Errorf("validate raw measurement identity: %w", err)
 	}
-	rawBytes, err := raw.canonicalJSON()
-	if err != nil {
-		return fmt.Errorf("canonicalize raw measurement: %w", err)
-	}
-	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload, digest); err != nil {
+	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload); err != nil {
 		return err
 	}
-	return verifyIdentityBytes(e.RawMeasurement, rawBytes)
+	return nil
 }
 
 func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
-	digest, err := e.Intent.Digest()
-	if err != nil {
-		return fmt.Errorf("validate Run intent: %w", err)
-	}
-	if err := raw.validate(e.Intent, digest); err != nil {
+	if err := raw.validate(e.Intent); err != nil {
 		return fmt.Errorf("validate idle raw measurement: %w", err)
 	}
 	if err := e.RawMeasurement.Validate(); err != nil {
 		return fmt.Errorf("validate raw measurement identity: %w", err)
 	}
-	rawBytes, err := raw.canonicalJSON()
-	if err != nil {
-		return fmt.Errorf("canonicalize idle raw measurement: %w", err)
-	}
-	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload, digest); err != nil {
+	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload); err != nil {
 		return err
 	}
-	return verifyIdentityBytes(e.RawMeasurement, rawBytes)
+	return nil
 }
 
 func (e ExecutionEvidence) validateLinkedRaw(
 	rawPodUID string,
 	workload *workloadobserver.Result,
-	intentDigest string,
 ) error {
 	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
-	}
-	if e.IntentDigest != intentDigest {
-		return errors.New("execution evidence intent digest mismatch")
 	}
 	if err := profilingrun.ValidateCandidateReport(e.CandidateReportBytes, e.Intent); err != nil {
 		return fmt.Errorf("validate candidate report: %w", err)
@@ -134,13 +111,4 @@ func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 		return left.Namespace+"\x00"+left.Name+"\x00"+left.UID < right.Namespace+"\x00"+right.Name+"\x00"+right.UID
 	})
 	return json.Marshal(canonical)
-}
-
-func verifyIdentityBytes(identity evidencestore.ObjectIdentity, payload []byte) error {
-	sum := sha256.Sum256(payload)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
-	if identity.Digest != digest || identity.Size != int64(len(payload)) {
-		return errors.New("raw measurement identity does not match canonical bytes")
-	}
-	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
+func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 	intent := validIntent()
 	valid := validRuntimeResult(intent)
 	if err := ValidateRuntime(intent, "pod-uid", valid); err != nil {
@@ -18,9 +18,9 @@ func TestValidateRuntimeRejectsIdentityAndOutputDrift(t *testing.T) {
 		t.Fatal("expected output drift rejection")
 	}
 	invalid = valid
-	invalid.SweepID = "sha256:bad"
+	invalid.NodeName = "other-node"
 	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
-		t.Fatal("expected identity drift rejection")
+		t.Fatal("expected Node drift rejection")
 	}
 	invalid = valid
 	invalid.MeasurementEndedAt = invalid.MeasurementStartedAt

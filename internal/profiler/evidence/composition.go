@@ -38,7 +38,7 @@ func ComposeRawMeasurement(
 		return nil, fmt.Errorf("read verified runtime measurement window: %w", err)
 	}
 	if err := validateVerifiedComposition(
-		intent, intentRecord, podUID, metricRecord, workloadRecord, started, ended,
+		intentRecord, podUID, metricRecord, workloadRecord, started, ended,
 	); err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func ComposeIdleRawMeasurement(
 		return nil, fmt.Errorf("read verified idle measurement window: %w", err)
 	}
 	if err := validateVerifiedComposition(
-		intent, intentRecord, podUID, metricRecord, workloadRecord, started, ended,
+		intentRecord, podUID, metricRecord, workloadRecord, started, ended,
 	); err != nil {
 		return nil, err
 	}
@@ -136,7 +136,6 @@ func activeCompositionRecords(
 }
 
 func validateVerifiedComposition(
-	intent profilingrun.VerifiedIntent,
 	intentRecord profilingrun.Intent,
 	podUID string,
 	metrics metricobserver.Result,
@@ -158,9 +157,6 @@ func validateVerifiedComposition(
 	}
 	if !metrics.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(metrics.EndedAt) {
 		return errors.New("runtime and metric observation windows do not overlap")
-	}
-	if workload.PolicyDigest != intent.WorkloadDigest() {
-		return errors.New("workload observation policy digest mismatch")
 	}
 	if workload.Target.NodeName != intentRecord.TargetNode.Name ||
 		workload.Target.NodeUID != intentRecord.TargetNode.UID || workload.Run.PodUID != podUID {
