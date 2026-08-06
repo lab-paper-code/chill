@@ -96,7 +96,7 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeMeasurementFunc(func(context.Context, RuntimeRequest) (RuntimeMeasurement, error) {
-			return RuntimeMeasurement{Idle: &idle}, nil
+			return sealIdleRuntimeMeasurement(idle)
 		}),
 		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
 		workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
@@ -272,7 +272,14 @@ func (f runtimeFunc) Measure(
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	return RuntimeMeasurement{Active: &result}, nil
+	intent, err := request.Intent.snapshot()
+	if err != nil {
+		return RuntimeMeasurement{}, err
+	}
+	if err := profilingrun.ValidateRuntime(intent, request.PodUID, result); err != nil {
+		return RuntimeMeasurement{}, err
+	}
+	return sealActiveRuntimeMeasurement(result)
 }
 
 type runtimeMeasurementFunc func(context.Context, RuntimeRequest) (RuntimeMeasurement, error)
@@ -286,11 +293,29 @@ func (f runtimeMeasurementFunc) Measure(
 
 type metricReaderFunc func(context.Context) (metricobserver.Result, error)
 
-func (f metricReaderFunc) Read(ctx context.Context) (metricobserver.Result, error) { return f(ctx) }
+func (f metricReaderFunc) Read(ctx context.Context) (verifiedMetricResult, error) {
+	result, err := f(ctx)
+	if err != nil {
+		return verifiedMetricResult{}, err
+	}
+	if err := result.Validate(); err != nil {
+		return verifiedMetricResult{}, err
+	}
+	return sealMetricResult(result)
+}
 
 type workloadReaderFunc func(context.Context) (workloadobserver.Result, error)
 
-func (f workloadReaderFunc) Read(ctx context.Context) (workloadobserver.Result, error) { return f(ctx) }
+func (f workloadReaderFunc) Read(ctx context.Context) (verifiedWorkloadResult, error) {
+	result, err := f(ctx)
+	if err != nil {
+		return verifiedWorkloadResult{}, err
+	}
+	if err := result.Validate(); err != nil {
+		return verifiedWorkloadResult{}, err
+	}
+	return sealWorkloadResult(result)
+}
 
 type fakeStore struct {
 	calls   int

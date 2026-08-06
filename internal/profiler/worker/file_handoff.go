@@ -43,7 +43,7 @@ func NewMetricResultFile(config MetricResultFileConfig) (*MetricResultFile, erro
 	return &MetricResultFile{config: config}, nil
 }
 
-func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.Result, error) {
+func (f *MetricResultFile) Read(ctx context.Context) (verifiedMetricResult, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, f.config.WaitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(f.config.PollInterval)
@@ -54,17 +54,21 @@ func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.Result, err
 		err := decodeJSONFile(f.config.Path, f.config.MaxBytes, &result)
 		if err == nil {
 			if err := result.Validate(); err != nil {
-				return metricobserver.Result{}, fmt.Errorf("validate metric result file: %w", err)
+				return verifiedMetricResult{}, fmt.Errorf("validate metric result file: %w", err)
 			}
-			return result, nil
+			verified, err := sealMetricResult(result)
+			if err != nil {
+				return verifiedMetricResult{}, err
+			}
+			return verified, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return metricobserver.Result{}, fmt.Errorf("read metric result file: %w", err)
+			return verifiedMetricResult{}, fmt.Errorf("read metric result file: %w", err)
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return metricobserver.Result{}, fmt.Errorf("wait for metric result file: %w", waitCtx.Err())
+			return verifiedMetricResult{}, fmt.Errorf("wait for metric result file: %w", waitCtx.Err())
 		case <-ticker.C:
 		}
 	}

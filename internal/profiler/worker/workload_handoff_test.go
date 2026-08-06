@@ -26,8 +26,20 @@ func TestWorkloadResultFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.LastResourceVersion != result.LastResourceVersion || !got.Continuous {
+	record, err := got.record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.LastResourceVersion != result.LastResourceVersion || !record.Continuous {
 		t.Fatalf("workload result = %#v", got)
+	}
+	record.InitialActivePods[0].Name = mutatedCopyName
+	sealed, err := got.record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.InitialActivePods[0].Name != result.InitialActivePods[0].Name {
+		t.Fatalf("sealed workload result was changed through a detached record: %#v", sealed)
 	}
 }
 

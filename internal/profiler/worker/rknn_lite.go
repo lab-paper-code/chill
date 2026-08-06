@@ -156,7 +156,7 @@ func (r *RKNNLiteRuntime) Measure(
 		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, nil); err != nil {
 			return RuntimeMeasurement{}, err
 		}
-		return RuntimeMeasurement{Idle: &result}, nil
+		return sealIdleRuntimeMeasurement(result)
 	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
@@ -168,7 +168,7 @@ func (r *RKNNLiteRuntime) Measure(
 	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.InputShape); err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	return RuntimeMeasurement{Active: &result}, nil
+	return sealActiveRuntimeMeasurement(result)
 }
 
 func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {

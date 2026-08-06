@@ -1,29 +1,55 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-// RuntimeMeasurement is an in-process sum type. Exactly one result must match
-// the frozen measurement mode; it is not a serialized transport contract.
+// RuntimeMeasurement is a sealed process-boundary result. Only a runtime
+// adapter that has validated one exact active or idle result can populate it.
 type RuntimeMeasurement struct {
-	Active *profilingrun.RuntimeResult
-	Idle   *profilingrun.IdleRuntimeResult
+	payload []byte
+	idle    bool
+	loaded  bool
 }
 
-// Validate owns mode/result compatibility at the runtime boundary. Raw
-// evidence projection may therefore assume it received one verified variant.
-func (m RuntimeMeasurement) Validate(intent profilingrun.Intent, podUID string) error {
-	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
-		if m.Idle == nil || m.Active != nil {
-			return errors.New("idle runtime result is missing or ambiguous")
-		}
-		return profilingrun.ValidateIdleRuntime(intent, podUID, *m.Idle)
+func sealActiveRuntimeMeasurement(result profilingrun.RuntimeResult) (RuntimeMeasurement, error) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return RuntimeMeasurement{}, fmt.Errorf("encode verified active runtime result: %w", err)
 	}
-	if m.Active == nil || m.Idle != nil {
-		return errors.New("active runtime result is missing or ambiguous")
+	return RuntimeMeasurement{payload: payload, loaded: true}, nil
+}
+
+func sealIdleRuntimeMeasurement(result profilingrun.IdleRuntimeResult) (RuntimeMeasurement, error) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return RuntimeMeasurement{}, fmt.Errorf("encode verified idle runtime result: %w", err)
 	}
-	return profilingrun.ValidateRuntime(intent, podUID, *m.Active)
+	return RuntimeMeasurement{payload: payload, idle: true, loaded: true}, nil
+}
+
+func (m RuntimeMeasurement) activeResult() (profilingrun.RuntimeResult, error) {
+	if !m.loaded || m.idle {
+		return profilingrun.RuntimeResult{}, errors.New("verified active runtime result is missing")
+	}
+	var result profilingrun.RuntimeResult
+	if err := json.Unmarshal(m.payload, &result); err != nil {
+		return profilingrun.RuntimeResult{}, fmt.Errorf("decode sealed active runtime result: %w", err)
+	}
+	return result, nil
+}
+
+func (m RuntimeMeasurement) idleResult() (profilingrun.IdleRuntimeResult, error) {
+	if !m.loaded || !m.idle {
+		return profilingrun.IdleRuntimeResult{}, errors.New("verified idle runtime result is missing")
+	}
+	var result profilingrun.IdleRuntimeResult
+	if err := json.Unmarshal(m.payload, &result); err != nil {
+		return profilingrun.IdleRuntimeResult{}, fmt.Errorf("decode sealed idle runtime result: %w", err)
+	}
+	return result, nil
 }

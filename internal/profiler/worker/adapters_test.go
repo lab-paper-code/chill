@@ -19,6 +19,7 @@ import (
 const (
 	testPodUID              = "pod-uid"
 	rknnIdleSuccessTestMode = "idle-success"
+	mutatedCopyName         = "mutated-copy"
 )
 
 func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
@@ -32,9 +33,20 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Active == nil || result.Idle != nil || result.Active.Provider != intent.State.Backend ||
-		result.Active.ExperimentID != testPodUID {
+	active, err := result.activeResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.idle || active.Provider != intent.State.Backend || active.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
+	}
+	active.NodeName = mutatedCopyName
+	sealed, err := result.activeResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.NodeName != intent.TargetNode.Name {
+		t.Fatalf("sealed runtime result was changed through a detached record: %#v", sealed)
 	}
 }
 
@@ -48,8 +60,12 @@ func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Idle == nil || result.Active != nil || result.Idle.PodUID != testPodUID ||
-		result.Idle.InferenceCountAfterModelLoad != 0 || !result.Idle.ModelResidentAtEnd {
+	idle, err := result.idleResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.idle || idle.PodUID != testPodUID ||
+		idle.InferenceCountAfterModelLoad != 0 || !idle.ModelResidentAtEnd {
 		t.Fatalf("unexpected idle runtime result: %#v", result)
 	}
 }
@@ -188,8 +204,20 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Source, result.Source) || got.Summary != result.Summary {
+	record, err := got.record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(record.Source, result.Source) || record.Summary != result.Summary {
 		t.Fatalf("unexpected metric result: %#v", got)
+	}
+	record.Source.NodeName = mutatedCopyName
+	sealed, err := got.record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.Source.NodeName != result.Source.NodeName {
+		t.Fatalf("sealed metric result was changed through a detached record: %#v", sealed)
 	}
 }
 
@@ -218,7 +246,7 @@ func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
 	if loadedIntent.State != intent.State || loaded.Digest() != digest {
 		t.Fatalf("loaded intent drifted: %#v", loaded)
 	}
-	loadedIntent.TargetNode.Name = "mutated-copy"
+	loadedIntent.TargetNode.Name = mutatedCopyName
 	target, err := loaded.TargetNode()
 	if err != nil {
 		t.Fatal(err)
@@ -324,11 +352,15 @@ func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if idle && (result.Idle == nil || result.Active != nil) {
-				t.Fatalf("unexpected idle result: %#v", result)
-			}
-			if !idle && (result.Active == nil || result.Idle != nil || result.Active.RKNN == nil) {
-				t.Fatalf("unexpected active result: %#v", result)
+			if idle {
+				if _, err := result.idleResult(); err != nil || !result.idle {
+					t.Fatalf("unexpected idle result: %#v err=%v", result, err)
+				}
+			} else {
+				active, err := result.activeResult()
+				if err != nil || result.idle || active.RKNN == nil {
+					t.Fatalf("unexpected active result: %#v err=%v", result, err)
+				}
 			}
 		})
 	}

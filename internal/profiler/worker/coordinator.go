@@ -13,8 +13,6 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 // Runtime performs the frozen warm-up and measurement protocol. Concrete
@@ -32,11 +30,11 @@ type RuntimeRequest struct {
 // MetricResultReader returns the complete result produced by the separate
 // MetricObserver process after the runtime measurement.
 type MetricResultReader interface {
-	Read(context.Context) (metricobserver.Result, error)
+	Read(context.Context) (verifiedMetricResult, error)
 }
 
 type WorkloadResultReader interface {
-	Read(context.Context) (workloadobserver.Result, error)
+	Read(context.Context) (verifiedWorkloadResult, error)
 }
 
 type Request struct {
@@ -111,9 +109,6 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	})
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
-	}
-	if err := runtimeMeasurement.Validate(intent, request.PodUID); err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("%w: validate runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
 	metricResult, err := c.metrics.Read(ctx)
 	if err != nil {

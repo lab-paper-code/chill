@@ -21,6 +21,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/profiler/worker"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
@@ -73,14 +74,15 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for WorkloadObserver executable")
 	}
-	reader, err := worker.NewWorkloadResultFile(worker.WorkloadResultFileConfig{
-		Path: opts.resultPath, WaitTimeout: time.Second, PollInterval: time.Millisecond, MaxBytes: opts.maxResultBytes,
-	})
+	payload, err := os.ReadFile(opts.resultPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := reader.Read(context.Background())
-	if err != nil {
+	var result workloadobserver.Result
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if !result.Continuous || result.InitialResourceVersion != "20" || result.LastResourceVersion != "21" ||

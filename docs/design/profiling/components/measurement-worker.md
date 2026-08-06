@@ -41,6 +41,12 @@ therefore deploys runtime-worker, MetricObserver, and WorkloadObserver images
 as one tested schema-compatible set. Their image identities remain
 independently digest-pinned; this rule does not merge their responsibilities.
 
+The metric and workload result-file readers validate their respective records
+once after the atomic file boundary and return sealed values. Runtime adapters
+do the same after strict process-result decoding and runtime-specific contract
+checks. The coordinator can obtain detached records for raw composition, but it
+does not repeat those boundary validations and cannot mutate the sealed values.
+
 The validated image set ran `active-regression-live-ad7b84f` through the active
 protocol. It
 completed 5,434 inference calls, retained 31 successful power samples with no

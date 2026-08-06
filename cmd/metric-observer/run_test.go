@@ -42,15 +42,15 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	if info, err := os.Stat(options.readyPath); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("observer-ready was not published: info=%v err=%v", info, err)
 	}
-	reader, err := worker.NewMetricResultFile(worker.MetricResultFileConfig{
-		Path: options.metricResultPath, WaitTimeout: time.Second,
-		PollInterval: time.Millisecond, MaxBytes: maximumResultBytes,
-	})
+	payload, err := os.ReadFile(options.metricResultPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := reader.Read(context.Background())
-	if err != nil {
+	var result metricobserver.Result
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if result.Source.NodeName != intent.TargetNode.Name || result.Summary.SuccessfulSamples < 1 ||
