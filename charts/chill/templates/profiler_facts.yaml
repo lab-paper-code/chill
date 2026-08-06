@@ -11,26 +11,26 @@ metadata:
 data:
   {{ .Values.profiler.factSource.executionFactsKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha4
-    metricObserverImage: {{ .Values.profiler.factSource.metricObserverImage | quote }}
+    metricObserverImage: {{ .Values.profiling.metricObserverImage | quote }}
     declarations:
-{{- toYaml .Values.profiler.factSource.executionDeclarations | nindent 6 }}
+{{- toYaml .Values.profiling.executionDeclarations | nindent 6 }}
   {{ .Values.profiler.factSource.metricSourcesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha1
     sources:
-{{- toYaml .Values.profiler.factSource.metricSources | nindent 6 }}
+{{- toYaml .Values.profiling.metricSources | nindent 6 }}
   {{ .Values.profiler.factSource.workloadObservationKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-workload-observation.v1alpha2
-    image: {{ .Values.profiler.factSource.workloadObserverImage | quote }}
+    image: {{ .Values.profiling.workloadObserverImage | quote }}
   {{ .Values.profiler.factSource.admissionPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
     policies:
-{{- toYaml .Values.profiler.factSource.admissionPolicies | nindent 6 }}
+{{- toYaml .Values.profiling.admissionPolicies | nindent 6 }}
   {{ .Values.profiler.factSource.executionPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-execution-policies.v1alpha1
     policies:
-{{- toYaml .Values.profiler.factSource.executionPolicies | nindent 6 }}
+{{- toYaml .Values.profiling.executionPolicies | nindent 6 }}
   {{ .Values.profiler.factSource.actuationPoliciesKey | quote }}: |
     schemaVersion: chill.dacs.io/profiler-actuation-policies.v1alpha1
     policies:
-{{- toYaml .Values.profiler.factSource.actuationPolicies | nindent 6 }}
+{{- toYaml .Values.powerActuation.policies | nindent 6 }}
 {{- end }}

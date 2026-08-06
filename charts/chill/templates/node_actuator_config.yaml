@@ -23,7 +23,7 @@ data:
     allowedNamespaces:
 {{- toYaml .Values.nodeActuator.allowedNamespaces | nindent 6 }}
     actuationPolicies:
-{{- toYaml .Values.profiler.factSource.actuationPolicies | nindent 6 }}
+{{- toYaml .Values.powerActuation.policies | nindent 6 }}
     jetsonNVPModel:
       command:
 {{- toYaml .Values.nodeActuator.jetsonNVPModel.command | nindent 8 }}
