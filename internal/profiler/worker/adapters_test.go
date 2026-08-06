@@ -211,8 +211,20 @@ func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.State != intent.State {
+	loadedIntent, err := loaded.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedIntent.State != intent.State || loaded.Digest() != digest {
 		t.Fatalf("loaded intent drifted: %#v", loaded)
+	}
+	loadedIntent.TargetNode.Name = "mutated-copy"
+	target, err := loaded.TargetNode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != intent.TargetNode {
+		t.Fatalf("sealed intent was changed through a detached snapshot: %#v", target)
 	}
 	if _, err := LoadFrozenIntent(path, "sha256:"+strings.Repeat("0", 64), 1<<20); err == nil ||
 		!strings.Contains(err.Error(), "digest mismatch") {
@@ -251,7 +263,11 @@ func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.State != intent.State {
+	loadedIntent, err := loaded.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedIntent.State != intent.State || loaded.Digest() != digest {
 		t.Fatalf("loaded projected intent drifted: %#v", loaded)
 	}
 }
@@ -277,7 +293,7 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 	if err := os.Symlink(filepath.Join("..data", "candidate-report.json"), path); err != nil {
 		t.Fatal(err)
 	}
-	verified, err := LoadVerifiedCandidateReport(path, 1<<20, intent)
+	verified, err := LoadVerifiedCandidateReport(path, 1<<20, testFrozenIntent(t, intent))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +302,7 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 	}
 
 	intent.Candidate.ReportDigest = "sha256:" + strings.Repeat("0", 64)
-	if _, err := LoadVerifiedCandidateReport(path, 1<<20, intent); err == nil ||
+	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testFrozenIntent(t, intent)); err == nil ||
 		!strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("expected candidate digest rejection, got %v", err)
 	}
@@ -720,7 +736,11 @@ func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
 }
 
 func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
-	return RuntimeRequest{Intent: intent, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
+	digest, err := intent.Digest()
+	if err != nil {
+		panic(err)
+	}
+	return RuntimeRequest{Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
 func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {

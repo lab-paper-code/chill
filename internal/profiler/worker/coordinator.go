@@ -14,7 +14,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
@@ -25,7 +24,7 @@ type Runtime interface {
 }
 
 type RuntimeRequest struct {
-	Intent            profilingrun.Intent
+	Intent            FrozenIntent
 	PodUID            string
 	ScheduledNodeName string
 }
@@ -41,11 +40,10 @@ type WorkloadResultReader interface {
 }
 
 type Request struct {
-	Intent               profilingrun.Intent
-	ExpectedIntentDigest string
-	PodUID               string
-	ScheduledNodeName    string
-	RawLocation          evidencestore.ObjectLocation
+	Intent            FrozenIntent
+	PodUID            string
+	ScheduledNodeName string
+	RawLocation       evidencestore.ObjectLocation
 }
 
 // Coordinator assembles and immutably commits one raw measurement. It holds no
@@ -79,15 +77,11 @@ func NewCoordinator(
 }
 
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
-	digest, err := request.Intent.Digest()
+	intent, err := request.Intent.snapshot()
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("%w: validate frozen intent: %w", ErrExecutionContract, err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: read frozen intent: %w", ErrExecutionContract, err)
 	}
-	if request.ExpectedIntentDigest != digest {
-		return evidencestore.Receipt{}, fmt.Errorf(
-			"%w: mounted intent digest does not match the expected digest", ErrExecutionContract,
-		)
-	}
+	digest := request.Intent.Digest()
 	if strings.TrimSpace(request.PodUID) == "" || strings.TrimSpace(request.PodUID) != request.PodUID {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: Pod UID is required without surrounding whitespace", ErrExecutionContract,
@@ -99,7 +93,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 			"%w: scheduled Node name is required without surrounding whitespace", ErrExecutionContract,
 		)
 	}
-	if request.ScheduledNodeName != request.Intent.TargetNode.Name {
+	if request.ScheduledNodeName != intent.TargetNode.Name {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: scheduled Node does not match the frozen target Node", ErrExecutionContract,
 		)
@@ -118,7 +112,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
-	if err := runtimeMeasurement.Validate(request.Intent, request.PodUID); err != nil {
+	if err := runtimeMeasurement.Validate(intent, request.PodUID); err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: validate runtime measurement: %w", ErrRuntimeMeasurement, err)
 	}
 	metricResult, err := c.metrics.Read(ctx)
@@ -130,7 +124,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read workload observation result: %w", ErrWorkloadObservation, err)
 	}
 	payload, err := canonicalRawMeasurement(
-		request.Intent,
+		intent,
 		digest,
 		request.PodUID,
 		runtimeMeasurement,

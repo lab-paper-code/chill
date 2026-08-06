@@ -114,7 +114,10 @@ func (r *ORTCPURuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
-	intent := request.Intent
+	intent, err := request.Intent.snapshot()
+	if err != nil {
+		return RuntimeMeasurement{}, err
+	}
 	if intent.State.RuntimeFamily != "onnxruntime" || intent.State.Backend != "CPUExecutionProvider" {
 		return RuntimeMeasurement{}, errors.New("CPU ORT adapter received an unsupported runtime path")
 	}
@@ -158,14 +161,13 @@ func (r *ORTCPURuntime) Measure(
 }
 
 func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
-	intent := runtimeRequest.Intent
-	intentDigest, err := intent.Digest()
+	intent, err := runtimeRequest.Intent.snapshot()
 	if err != nil {
-		return nil, fmt.Errorf("validate CPU ORT intent: %w", err)
+		return nil, fmt.Errorf("read CPU ORT intent: %w", err)
 	}
 
 	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: intentDigest,
+		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: runtimeRequest.Intent.Digest(),
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,

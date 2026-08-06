@@ -31,16 +31,20 @@ func execute(
 	if err != nil {
 		return err
 	}
+	metrics, err := intent.Metrics()
+	if err != nil {
+		return err
+	}
 	source, err := edgemetrics.New(metricobserver.SourceIdentity{
-		NodeName: intent.Metrics.NodeName,
-		Endpoint: intent.Metrics.Endpoint,
+		NodeName: metrics.NodeName,
+		Endpoint: metrics.Endpoint,
 	}, client)
 	if err != nil {
 		return fmt.Errorf("construct frozen metric source: %w", err)
 	}
 	identity := source.Identity()
-	if identity.Kind != intent.Metrics.SourceKind || identity.NodeName != intent.Metrics.NodeName ||
-		identity.Endpoint != intent.Metrics.Endpoint || identity.Metric != intent.Metrics.PowerMetric ||
+	if identity.Kind != metrics.SourceKind || identity.NodeName != metrics.NodeName ||
+		identity.Endpoint != metrics.Endpoint || identity.Metric != metrics.PowerMetric ||
 		identity.ThermalMetrics == nil {
 		return errors.New("frozen metric source is unsupported by the production observer")
 	}
@@ -56,9 +60,9 @@ func execute(
 	}
 
 	result, err := observer.Observe(ctx, metricobserver.Request{
-		Interval:       time.Duration(intent.Metrics.IntervalMilliseconds) * time.Millisecond,
-		Duration:       time.Duration(intent.Metrics.DurationSeconds) * time.Second,
-		RequestTimeout: time.Duration(intent.Metrics.TimeoutMilliseconds) * time.Millisecond,
+		Interval:       time.Duration(metrics.IntervalMilliseconds) * time.Millisecond,
+		Duration:       time.Duration(metrics.DurationSeconds) * time.Second,
+		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
 		MaxEvents:      opts.maxEvents,
 	})
 	if err != nil {

@@ -18,9 +18,11 @@ import (
 
 func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	opts := validOptions()
+	frozenIntent := validFrozenCPUIntent(t)
+	opts.intentDigest = frozenIntent.Digest()
 	wantReceipt := validReceipt()
 	coordinator := &fakeCoordinator{execute: func(request worker.Request) (evidencestore.Receipt, error) {
-		if request.ExpectedIntentDigest != opts.intentDigest || request.PodUID != opts.podUID ||
+		if request.Intent.Digest() != opts.intentDigest || request.PodUID != opts.podUID ||
 			request.ScheduledNodeName != opts.scheduledNodeName ||
 			request.RawLocation.Store != opts.storeName || request.RawLocation.Key != opts.rawObjectKey {
 			t.Fatalf("request = %#v", request)
@@ -29,16 +31,16 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	}}
 	written := false
 	deps := dependencies{
-		loadIntent: func(path, digest string, maximum int64) (profilingrun.Intent, error) {
+		loadIntent: func(path, digest string, maximum int64) (worker.FrozenIntent, error) {
 			if path != opts.intentPath || digest != opts.intentDigest || maximum != maximumIntentBytes {
 				t.Fatalf("intent load = %q %q %d", path, digest, maximum)
 			}
-			return profilingrun.Intent{}, nil
+			return frozenIntent, nil
 		},
 		loadCandidateReport: func(
 			path string,
 			maximum int64,
-			_ profilingrun.Intent,
+			_ worker.FrozenIntent,
 		) (profilingrun.VerifiedCandidateReport, error) {
 			if path != opts.candidateReportPath || maximum != maximumCandidateReportBytes {
 				t.Fatalf("candidate report load = %q %d", path, maximum)
@@ -47,7 +49,7 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 		},
 		buildCoordinator: func(
 			got options,
-			_ profilingrun.Intent,
+			_ worker.FrozenIntent,
 			_ profilingrun.VerifiedCandidateReport,
 			stdout, stderr io.Writer,
 		) (measurementCoordinator, error) {
@@ -85,17 +87,17 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			deps := successfulDependencies(validReceipt())
 			if name == "intent" {
-				deps.loadIntent = func(string, string, int64) (profilingrun.Intent, error) {
-					return profilingrun.Intent{}, test.failure
+				deps.loadIntent = func(string, string, int64) (worker.FrozenIntent, error) {
+					return worker.FrozenIntent{}, test.failure
 				}
 			} else if name == "candidate" {
-				deps.loadCandidateReport = func(string, int64, profilingrun.Intent) (profilingrun.VerifiedCandidateReport, error) {
+				deps.loadCandidateReport = func(string, int64, worker.FrozenIntent) (profilingrun.VerifiedCandidateReport, error) {
 					return profilingrun.VerifiedCandidateReport{}, test.failure
 				}
 			} else {
 				deps.buildCoordinator = func(
 					options,
-					profilingrun.Intent,
+					worker.FrozenIntent,
 					profilingrun.VerifiedCandidateReport,
 					io.Writer,
 					io.Writer,
@@ -116,7 +118,7 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 func TestBuildCoordinatorAcceptsCompleteOptionsWithoutExternalIO(t *testing.T) {
 	if _, err := buildCoordinator(
 		validOptions(),
-		validCPUIntent(t),
+		validFrozenCPUIntent(t),
 		profilingrun.VerifiedCandidateReport{},
 		io.Discard,
 		io.Discard,
@@ -214,6 +216,28 @@ func validCPUIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
+func validFrozenCPUIntent(t *testing.T) worker.FrozenIntent {
+	t.Helper()
+	intent := validCPUIntent(t)
+	payload, err := intent.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "intent.json")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := worker.LoadFrozenIntent(path, digest, int64(len(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loaded
+}
+
 func validReceipt() evidencestore.Receipt {
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
@@ -227,15 +251,15 @@ func validReceipt() evidencestore.Receipt {
 
 func successfulDependencies(receipt evidencestore.Receipt) dependencies {
 	return dependencies{
-		loadIntent: func(string, string, int64) (profilingrun.Intent, error) {
-			return profilingrun.Intent{}, nil
+		loadIntent: func(string, string, int64) (worker.FrozenIntent, error) {
+			return worker.FrozenIntent{}, nil
 		},
-		loadCandidateReport: func(string, int64, profilingrun.Intent) (profilingrun.VerifiedCandidateReport, error) {
+		loadCandidateReport: func(string, int64, worker.FrozenIntent) (profilingrun.VerifiedCandidateReport, error) {
 			return profilingrun.VerifiedCandidateReport{}, nil
 		},
 		buildCoordinator: func(
 			options,
-			profilingrun.Intent,
+			worker.FrozenIntent,
 			profilingrun.VerifiedCandidateReport,
 			io.Writer,
 			io.Writer,

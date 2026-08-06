@@ -38,11 +38,15 @@ func execute(
 	if err != nil {
 		return err
 	}
+	targetNode, err := intent.TargetNode()
+	if err != nil {
+		return err
+	}
 	pod, err := coreClient.Pods(opts.podNamespace).Get(ctx, opts.podName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get workload-observer Pod: %w", err)
 	}
-	if string(pod.UID) != opts.podUID || pod.Spec.NodeName != intent.TargetNode.Name {
+	if string(pod.UID) != opts.podUID || pod.Spec.NodeName != targetNode.Name {
 		return errors.New("workload-observer Pod identity does not match the frozen Run intent")
 	}
 	owner := metav1.GetControllerOf(pod)
@@ -59,8 +63,8 @@ func execute(
 	}
 	request := workloadkube.Request{
 		Target: workloadobserver.TargetIdentity{
-			NodeName: intent.TargetNode.Name,
-			NodeUID:  intent.TargetNode.UID,
+			NodeName: targetNode.Name,
+			NodeUID:  targetNode.UID,
 		},
 		Run: workloadobserver.RunIdentity{
 			Namespace: opts.podNamespace,

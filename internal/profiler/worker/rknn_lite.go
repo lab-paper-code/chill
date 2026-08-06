@@ -119,7 +119,10 @@ func (r *RKNNLiteRuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
-	intent := request.Intent
+	intent, err := request.Intent.snapshot()
+	if err != nil {
+		return RuntimeMeasurement{}, err
+	}
 	if !profilingrun.IsSupportedRKNNLiteIntent(intent) {
 		return RuntimeMeasurement{}, errors.New("RKNNLite adapter received an unsupported runtime path")
 	}
@@ -169,13 +172,12 @@ func (r *RKNNLiteRuntime) Measure(
 }
 
 func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
-	intent := runtimeRequest.Intent
-	intentDigest, err := intent.Digest()
+	intent, err := runtimeRequest.Intent.snapshot()
 	if err != nil {
-		return nil, fmt.Errorf("validate RKNNLite intent: %w", err)
+		return nil, fmt.Errorf("read RKNNLite intent: %w", err)
 	}
 	request := rknnLiteRequest{
-		SchemaVersion: rknnLiteRequestSchemaVersion, Intent: intent, IntentDigest: intentDigest,
+		SchemaVersion: rknnLiteRequestSchemaVersion, Intent: intent, IntentDigest: runtimeRequest.Intent.Digest(),
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, Candidate: copyRuntimeDelivery(r.config.Delivery),
 		ObserverReadyPaths:               r.config.ObserverReadyPaths,

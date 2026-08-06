@@ -62,7 +62,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	)
 
 	got, err := coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/intent.json"},
 	})
 	if err != nil {
@@ -105,14 +105,14 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 		store,
 	)
 	if _, err := coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "idle/raw.json"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
+func TestCoordinatorRejectsEmptyFrozenIntentBeforeExternalWork(t *testing.T) {
 	intent := testIntent(t)
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
@@ -129,12 +129,12 @@ func TestCoordinatorRejectsDriftBeforeExternalWork(t *testing.T) {
 	)
 
 	_, err := coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: "sha256:" + strings.Repeat("0", 64), PodUID: testPodUID,
+		Intent: FrozenIntent{}, PodUID: testPodUID,
 		ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation:       evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || runtimeCalls != 0 {
-		t.Fatalf("expected pre-execution intent drift rejection, got err=%v calls=%d", err, runtimeCalls)
+		t.Fatalf("expected empty frozen intent rejection, got err=%v calls=%d", err, runtimeCalls)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 	)
 
 	_, err = coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: testPodUID, ScheduledNodeName: "other-node",
+		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: "other-node",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || !strings.Contains(err.Error(), "scheduled Node") || runtimeCalls != 0 {
@@ -174,7 +174,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	}
 
@@ -254,7 +254,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		store,
 	)
 	_, err = coordinator.Execute(context.Background(), Request{
-		Intent: intent, ExpectedIntentDigest: digest, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
@@ -356,6 +356,15 @@ func testIntent(t *testing.T) profilingrun.Intent {
 		t.Fatal(err)
 	}
 	return intent
+}
+
+func testFrozenIntent(t *testing.T, intent profilingrun.Intent) FrozenIntent {
+	t.Helper()
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newFrozenIntent(intent, digest)
 }
 
 func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.RuntimeResult {
