@@ -10,9 +10,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 )
 
-var (
-	testConfigDigest        = component.EvidenceStoreConfigDigest("test Evidence Store config")
-	changedTestConfigDigest = component.EvidenceStoreConfigDigest("changed Evidence Store config")
+const (
+	testConfigResourceVersion        = "7"
+	changedTestConfigResourceVersion = "8"
 )
 
 func TestBuildBootstrapJob(t *testing.T) {
@@ -22,18 +22,15 @@ func TestBuildBootstrapJob(t *testing.T) {
 		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m")},
 	}
 
-	job, err := buildBootstrapJob(instance, config, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job := buildBootstrapJob(instance, config, testConfigResourceVersion)
 	if job.Namespace != instance.Namespace || job.Name != instance.BootstrapJobName {
 		t.Fatalf("Job key = %s/%s", job.Namespace, job.Name)
 	}
 	if len(job.OwnerReferences) != 0 {
 		t.Fatalf("builder ownerReferences = %#v", job.OwnerReferences)
 	}
-	if job.Annotations[component.EvidenceStoreConfigDigestAnnotation] != testConfigDigest {
-		t.Fatalf("config digest annotation = %q", job.Annotations[component.EvidenceStoreConfigDigestAnnotation])
+	if job.Annotations[component.EvidenceStoreConfigResourceVersionAnnotation] != testConfigResourceVersion {
+		t.Fatalf("config resourceVersion annotation = %q", job.Annotations[component.EvidenceStoreConfigResourceVersionAnnotation])
 	}
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != bootstrapDeadlineSeconds ||
 		job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != bootstrapBackoffLimit {
@@ -76,31 +73,6 @@ func assertBootstrapPod(t *testing.T, pod corev1.PodSpec, instance Instance, con
 		!*container.SecurityContext.RunAsNonRoot || container.SecurityContext.ReadOnlyRootFilesystem == nil ||
 		!*container.SecurityContext.ReadOnlyRootFilesystem {
 		t.Fatalf("bootstrap container security = %#v", container.SecurityContext)
-	}
-}
-
-func TestBuildBootstrapJobHashTracksManagedInputs(t *testing.T) {
-	instance := validInstance()
-	config := validConfig()
-	first, err := buildBootstrapJob(instance, config, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := buildBootstrapJob(instance, config, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Annotations[bootstrapSpecHashAnnotation] != second.Annotations[bootstrapSpecHashAnnotation] {
-		t.Fatal("identical bootstrap inputs produced different hashes")
-	}
-
-	config.Bucket = "another-evidence-bucket"
-	changed, err := buildBootstrapJob(instance, config, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Annotations[bootstrapSpecHashAnnotation] == changed.Annotations[bootstrapSpecHashAnnotation] {
-		t.Fatal("changed bootstrap input retained the old hash")
 	}
 }
 

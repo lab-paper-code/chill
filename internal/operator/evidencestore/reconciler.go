@@ -57,7 +57,7 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string, options O
 		)
 	}
 
-	config, configDigest, err := loadConfig(ctx, r.Client, instance)
+	config, configResourceVersion, err := loadConfig(ctx, r.Client, instance)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -74,7 +74,9 @@ func (r *Reconciler) reconcile(ctx context.Context, systemName string, options O
 	if requeue {
 		return ctrl.Result{Requeue: true}, nil
 	}
-	_, requeue, err = reconcileBootstrapJob(ctx, r.Client, r.Scheme, system, instance, config, configDigest)
+	_, requeue, err = reconcileBootstrapJob(
+		ctx, r.Client, r.Scheme, system, instance, config, configResourceVersion,
+	)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile Evidence Store bootstrap: %w", err)
 	}

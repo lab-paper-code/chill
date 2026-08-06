@@ -1,8 +1,6 @@
 package evidencestore
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -14,13 +12,12 @@ import (
 )
 
 const (
-	bootstrapContainerName      = "bootstrap"
-	bootstrapDeadlineSeconds    = int64(60)
-	bootstrapBackoffLimit       = int32(3)
-	bootstrapSpecHashAnnotation = "edge.dacs.io/evidence-store-bootstrap-spec-hash"
+	bootstrapContainerName   = "bootstrap"
+	bootstrapDeadlineSeconds = int64(60)
+	bootstrapBackoffLimit    = int32(3)
 )
 
-func buildBootstrapJob(instance Instance, config Config, configDigest string) (*batchv1.Job, error) {
+func buildBootstrapJob(instance Instance, config Config, configResourceVersion string) *batchv1.Job {
 	labels := operandLabels(instance.SystemName)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -64,26 +61,12 @@ func buildBootstrapJob(instance Instance, config Config, configDigest string) (*
 			},
 		},
 	}
-	digest, err := bootstrapSpecHash(job.Spec)
-	if err != nil {
-		return nil, err
-	}
 	job.Annotations = map[string]string{
-		bootstrapSpecHashAnnotation:                   digest,
-		component.EvidenceStoreConfigDigestAnnotation: configDigest,
+		component.EvidenceStoreConfigResourceVersionAnnotation: configResourceVersion,
 	}
-	return job, nil
+	return job
 }
 
 func bootstrapEndpoint(instance Instance) string {
 	return fmt.Sprintf("http://%s:%d", instance.ServiceName, s3Port)
-}
-
-func bootstrapSpecHash(spec batchv1.JobSpec) (string, error) {
-	encoded, err := json.Marshal(spec)
-	if err != nil {
-		return "", fmt.Errorf("encode Evidence Store bootstrap Job spec: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	return fmt.Sprintf("sha256:%x", digest), nil
 }

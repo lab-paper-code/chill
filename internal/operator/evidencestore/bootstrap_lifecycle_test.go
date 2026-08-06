@@ -25,7 +25,7 @@ func TestReconcileBootstrapJobWaitsForAvailableDeployment(t *testing.T) {
 	instance := validInstance()
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system).Build()
 
-	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigDigest)
+	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigResourceVersion)
 	if err != nil || requeue || state != BootstrapStateWaiting {
 		t.Fatalf("reconcileBootstrapJob() = %q, %v, %v", state, requeue, err)
 	}
@@ -43,7 +43,7 @@ func TestReconcileBootstrapJobCreatesAfterDeploymentAvailable(t *testing.T) {
 	deployment := availableDeployment(t, scheme, system, instance)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, deployment).Build()
 
-	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigDigest)
+	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigResourceVersion)
 	if err != nil || requeue || state != BootstrapStateRunning {
 		t.Fatalf("reconcileBootstrapJob() = %q, %v, %v", state, requeue, err)
 	}
@@ -70,17 +70,14 @@ func TestReconcileBootstrapJobKeepsTerminalStateWithoutAutomaticRetry(t *testing
 			scheme := runtimeTestScheme(t)
 			system := runtimeTestSystem()
 			instance := validInstance()
-			job, err := buildBootstrapJob(instance, validConfig(), testConfigDigest)
-			if err != nil {
-				t.Fatal(err)
-			}
+			job := buildBootstrapJob(instance, validConfig(), testConfigResourceVersion)
 			job.Status.Conditions = []batchv1.JobCondition{{Type: test.condition, Status: corev1.ConditionTrue}}
 			if err := controllerutil.SetControllerReference(system, job, scheme); err != nil {
 				t.Fatal(err)
 			}
 			k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, job).Build()
 
-			state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigDigest)
+			state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigResourceVersion)
 			if err != nil || requeue || state != test.want {
 				t.Fatalf("reconcileBootstrapJob() = %q, %v, %v", state, requeue, err)
 			}
@@ -98,10 +95,7 @@ func TestReconcileBootstrapJobReplacesStaleInputsOnlyAfterDeploymentAvailable(t 
 	system := runtimeTestSystem()
 	instance := validInstance()
 	oldConfig := validConfig()
-	job, err := buildBootstrapJob(instance, oldConfig, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job := buildBootstrapJob(instance, oldConfig, testConfigResourceVersion)
 	if err := controllerutil.SetControllerReference(system, job, scheme); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +103,7 @@ func TestReconcileBootstrapJobReplacesStaleInputsOnlyAfterDeploymentAvailable(t 
 	newConfig.Bucket = "updated-evidence-bucket"
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, job).Build()
 
-	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, newConfig, testConfigDigest)
+	state, requeue, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, newConfig, testConfigResourceVersion)
 	if err != nil || requeue || state != BootstrapStateWaiting {
 		t.Fatalf("unavailable replacement = %q, %v, %v", state, requeue, err)
 	}
@@ -121,7 +115,7 @@ func TestReconcileBootstrapJobReplacesStaleInputsOnlyAfterDeploymentAvailable(t 
 	if err := k8sClient.Create(ctx, deployment); err != nil {
 		t.Fatal(err)
 	}
-	state, requeue, err = reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, newConfig, testConfigDigest)
+	state, requeue, err = reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, newConfig, testConfigResourceVersion)
 	if err != nil || !requeue || state != BootstrapStateRunning {
 		t.Fatalf("available replacement = %q, %v, %v", state, requeue, err)
 	}
@@ -136,10 +130,7 @@ func TestReconcileBootstrapJobReplacesStaleConfigAttestation(t *testing.T) {
 	system := runtimeTestSystem()
 	instance := validInstance()
 	config := validConfig()
-	job, err := buildBootstrapJob(instance, config, testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job := buildBootstrapJob(instance, config, testConfigResourceVersion)
 	if err := controllerutil.SetControllerReference(system, job, scheme); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +138,7 @@ func TestReconcileBootstrapJobReplacesStaleConfigAttestation(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, job, deployment).Build()
 
 	state, requeue, err := reconcileBootstrapJob(
-		ctx, k8sClient, scheme, system, instance, config, changedTestConfigDigest,
+		ctx, k8sClient, scheme, system, instance, config, changedTestConfigResourceVersion,
 	)
 	if err != nil || !requeue || state != BootstrapStateRunning {
 		t.Fatalf("config attestation replacement = %q, %v, %v", state, requeue, err)
@@ -162,13 +153,10 @@ func TestReconcileBootstrapJobRejectsForeignSameNamedJob(t *testing.T) {
 	scheme := runtimeTestScheme(t)
 	system := runtimeTestSystem()
 	instance := validInstance()
-	job, err := buildBootstrapJob(instance, validConfig(), testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job := buildBootstrapJob(instance, validConfig(), testConfigResourceVersion)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, job).Build()
 
-	_, _, err = reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigDigest)
+	_, _, err := reconcileBootstrapJob(ctx, k8sClient, scheme, system, instance, validConfig(), testConfigResourceVersion)
 	if err == nil || !strings.Contains(err.Error(), "exists without a controller reference") {
 		t.Fatalf("reconcileBootstrapJob() error = %v, want ownership error", err)
 	}
@@ -179,10 +167,7 @@ func TestDeleteOwnedBootstrapJobLeavesForeignJob(t *testing.T) {
 	scheme := runtimeTestScheme(t)
 	system := runtimeTestSystem()
 	instance := validInstance()
-	job, err := buildBootstrapJob(instance, validConfig(), testConfigDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job := buildBootstrapJob(instance, validConfig(), testConfigResourceVersion)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, job).Build()
 
 	if err := deleteOwnedBootstrapJob(ctx, k8sClient, system, instance); err != nil {

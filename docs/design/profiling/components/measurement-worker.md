@@ -185,8 +185,8 @@ it exact-reads that system's enabled Evidence Store reference and configuration,
 derives the internal Service FQDN and immutable credentials Secret reference,
 and never reads the credential bytes. It requires the current ChillSystem
 availability condition and a completed, operator-owned bootstrap Job attesting
-the exact configuration digest. It does not reconcile or directly probe the
-storage operand.
+the exact configuration ConfigMap `resourceVersion`. It does not reconcile or
+directly probe the storage operand.
 
 The resolved binding is retained in the immutable Job PodSpec through literal
 store, endpoint, bucket, and region values plus Secret references. Finalization

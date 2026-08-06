@@ -105,7 +105,6 @@ func (r *KubernetesEvidenceStoreResolver) Resolve(ctx context.Context) (Evidence
 			)
 		}
 	}
-	configDigest := component.EvidenceStoreConfigDigest(raw)
 	bootstrapJob := &batchv1.Job{}
 	bootstrapKey := types.NamespacedName{
 		Namespace: r.options.Namespace,
@@ -114,7 +113,7 @@ func (r *KubernetesEvidenceStoreResolver) Resolve(ctx context.Context) (Evidence
 	if err := r.reader.Get(ctx, bootstrapKey, bootstrapJob); err != nil {
 		return EvidenceStoreBinding{}, fmt.Errorf("get Evidence Store bootstrap Job %s: %w", bootstrapKey, err)
 	}
-	if err := requireCurrentBootstrap(system, bootstrapJob, configDigest); err != nil {
+	if err := requireCurrentBootstrap(system, bootstrapJob, configMap.ResourceVersion); err != nil {
 		return EvidenceStoreBinding{}, err
 	}
 
@@ -143,12 +142,13 @@ func requireEvidenceStoreAvailable(system *edgev1alpha1.ChillSystem) error {
 func requireCurrentBootstrap(
 	system *edgev1alpha1.ChillSystem,
 	job *batchv1.Job,
-	configDigest string,
+	configResourceVersion string,
 ) error {
 	if !metav1.IsControlledBy(job, system) || !job.DeletionTimestamp.IsZero() {
 		return errors.New("Evidence Store bootstrap Job ownership or lifecycle is invalid")
 	}
-	if job.Annotations[component.EvidenceStoreConfigDigestAnnotation] != configDigest {
+	if configResourceVersion == "" ||
+		job.Annotations[component.EvidenceStoreConfigResourceVersionAnnotation] != configResourceVersion {
 		return errors.New("Evidence Store bootstrap does not attest the current configuration")
 	}
 	for _, condition := range job.Status.Conditions {

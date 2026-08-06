@@ -7,8 +7,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/lab-paper-code/chill/internal/component"
 )
 
 func loadConfig(ctx context.Context, reader client.Reader, instance Instance) (Config, string, error) {
@@ -30,5 +28,8 @@ func loadConfig(ctx context.Context, reader client.Reader, instance Instance) (C
 	if err != nil {
 		return Config{}, "", fmt.Errorf("load Evidence Store config ConfigMap %s: %w", key.String(), err)
 	}
-	return config, component.EvidenceStoreConfigDigest(raw), nil
+	if configMap.ResourceVersion == "" {
+		return Config{}, "", fmt.Errorf("Evidence Store config ConfigMap %s has no resourceVersion", key.String())
+	}
+	return config, configMap.ResourceVersion, nil
 }

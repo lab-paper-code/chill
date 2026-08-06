@@ -120,6 +120,7 @@ func TestKubernetesEvidenceStoreResolverRejectsStaleBootstrapAttestation(t *test
 			name: "changed configuration",
 			mutate: func(_ *edgev1alpha1.ChillSystem, config *corev1.ConfigMap, _ *batchv1.Job) {
 				config.Data[component.EvidenceStoreConfigKey] += "\n"
+				config.ResourceVersion = "8"
 			},
 			want: "does not attest the current configuration",
 		},
@@ -199,8 +200,9 @@ func validEvidenceStoreObjects() []client.Object {
 		ObservedGeneration: system.Generation, Reason: "Ready",
 	}}
 	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "chill-system",
-		Name:      "chill-evidence-store-config",
+		Namespace:       "chill-system",
+		Name:            "chill-evidence-store-config",
+		ResourceVersion: "7",
 	}}
 	rawConfig := `
 image: registry.example/evidence@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -212,7 +214,7 @@ storageSize: 1Gi
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "chill-system", Name: component.EvidenceStoreBootstrapJobName(system.Name),
 		Annotations: map[string]string{
-			component.EvidenceStoreConfigDigestAnnotation: component.EvidenceStoreConfigDigest(rawConfig),
+			component.EvidenceStoreConfigResourceVersionAnnotation: config.ResourceVersion,
 		},
 		OwnerReferences: []metav1.OwnerReference{{
 			APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "ChillSystem", Name: system.Name,

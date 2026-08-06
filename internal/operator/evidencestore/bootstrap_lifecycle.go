@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,15 +35,12 @@ func reconcileBootstrapJob(
 	system *edgev1alpha1.ChillSystem,
 	instance Instance,
 	config Config,
-	configDigest string,
+	configResourceVersion string,
 ) (BootstrapState, bool, error) {
-	desired, err := buildBootstrapJob(instance, config, configDigest)
-	if err != nil {
-		return "", false, err
-	}
+	desired := buildBootstrapJob(instance, config, configResourceVersion)
 	key := types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}
 	current := &batchv1.Job{}
-	err = k8sClient.Get(ctx, key, current)
+	err := k8sClient.Get(ctx, key, current)
 	if err == nil {
 		if err := requireControlledBySystem(current, system); err != nil {
 			return "", false, err
@@ -92,9 +90,9 @@ func reconcileBootstrapJob(
 }
 
 func sameBootstrapContract(current, desired *batchv1.Job) bool {
-	return current.Annotations[bootstrapSpecHashAnnotation] == desired.Annotations[bootstrapSpecHashAnnotation] &&
-		current.Annotations[component.EvidenceStoreConfigDigestAnnotation] ==
-			desired.Annotations[component.EvidenceStoreConfigDigestAnnotation]
+	return current.Annotations[component.EvidenceStoreConfigResourceVersionAnnotation] ==
+		desired.Annotations[component.EvidenceStoreConfigResourceVersionAnnotation] &&
+		apiequality.Semantic.DeepDerivative(desired.Spec, current.Spec)
 }
 
 func deploymentAvailable(

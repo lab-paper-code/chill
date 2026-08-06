@@ -10,8 +10,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/lab-paper-code/chill/internal/component"
 )
 
 const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -119,7 +117,9 @@ func TestLoadConfigReadsResolvedConfigMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "custom-store-config"},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "chill-system", Name: "custom-store-config", ResourceVersion: testConfigResourceVersion,
+		},
 		Data: map[string]string{DefaultConfigKey: `
 image: docker.io/versity/versitygw@` + testDigest + `
 bootstrapImage: registry.local/chill/evidence-store-client@` + testDigest + `
@@ -136,15 +136,15 @@ storageSize: 1Gi
 		ConfigMapKey:  DefaultConfigKey,
 	}
 
-	config, configDigest, err := loadConfig(context.Background(), reader, instance)
+	config, configResourceVersion, err := loadConfig(context.Background(), reader, instance)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.Bucket != "chill-profiling-evidence" {
 		t.Fatalf("Bucket = %q", config.Bucket)
 	}
-	if configDigest != component.EvidenceStoreConfigDigest(configMap.Data[DefaultConfigKey]) {
-		t.Fatalf("config digest = %q", configDigest)
+	if configResourceVersion != configMap.ResourceVersion {
+		t.Fatalf("config resourceVersion = %q", configResourceVersion)
 	}
 }
 
