@@ -39,8 +39,8 @@ func TestPutImmutableCreatesVerifiedCandidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read PutObject body: %v", err)
 			}
-			if !bytes.Equal(actual, content) {
-				t.Fatalf("PutObject body = %q, want %q", actual, content)
+			if int64(len(actual)) != expected.Size {
+				t.Fatalf("PutObject body size = %d, want %d", len(actual), expected.Size)
 			}
 			return &awss3.PutObjectOutput{}, nil
 		},

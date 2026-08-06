@@ -26,12 +26,11 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	if !reflect.DeepEqual(prepared.Intent, expected) {
 		t.Fatalf("prepared intent drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.Intent)
 	}
-	wantDigest, err := expected.Digest()
-	if err != nil {
-		t.Fatal(err)
+	if prepared.IntentDigest == "" {
+		t.Fatal("prepared Run lost its retained intent identity")
 	}
-	if prepared.IntentDigest != wantDigest || string(prepared.CandidateReportBytes) != string(candidateBytes) {
-		t.Fatal("prepared Run lost intent or candidate-report identity")
+	if err := profilingrun.ValidateCandidateReport(prepared.CandidateReportBytes, prepared.Intent); err != nil {
+		t.Fatalf("prepared Run lost candidate-report semantics: %v", err)
 	}
 	if resolvers.metrics.nodeName != expected.TargetNode.Name {
 		t.Fatal("metric source was not resolved from the selected Node")

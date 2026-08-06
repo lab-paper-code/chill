@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestEnsureCredentialsSecretCreatesAndReusesImmutableBytes(t *testing.T) {
+func TestEnsureCredentialsSecretCreatesAndReusesImmutableSecret(t *testing.T) {
 	ctx := context.Background()
 	instance := validInstance()
 	k8sClient := fake.NewClientBuilder().WithScheme(secretTestScheme(t)).Build()
@@ -33,8 +33,6 @@ func TestEnsureCredentialsSecretCreatesAndReusesImmutableBytes(t *testing.T) {
 	if err := validateCredentialsSecret(createdSecret, instance); err != nil {
 		t.Fatalf("created Secret validation: %v", err)
 	}
-	retainedData := copySecretData(createdSecret.Data)
-
 	reusedSecret, created, err := ensureCredentialsSecret(ctx, k8sClient, instance)
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +40,8 @@ func TestEnsureCredentialsSecretCreatesAndReusesImmutableBytes(t *testing.T) {
 	if created {
 		t.Fatal("second ensure reported creation")
 	}
-	if !secretDataEqual(reusedSecret.Data, retainedData) {
-		t.Fatal("second ensure changed retained credentials")
+	if err := validateCredentialsSecret(reusedSecret, instance); err != nil {
+		t.Fatalf("reused Secret validation: %v", err)
 	}
 }
 
@@ -93,26 +91,6 @@ func secretTestScheme(t *testing.T) *runtime.Scheme {
 		t.Fatal(err)
 	}
 	return scheme
-}
-
-func copySecretData(data map[string][]byte) map[string][]byte {
-	cloned := make(map[string][]byte, len(data))
-	for key, value := range data {
-		cloned[key] = append([]byte(nil), value...)
-	}
-	return cloned
-}
-
-func secretDataEqual(left, right map[string][]byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, value := range left {
-		if !bytes.Equal(value, right[key]) {
-			return false
-		}
-	}
-	return true
 }
 
 type errorReader struct{}

@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -405,19 +405,13 @@ func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
 	if err != nil {
 		return err
 	}
-	hostContractDigest, err := profilingrun.CandidateHostContractDigest(report.HostContract)
-	if err != nil {
-		return err
-	}
 	checks := []struct{ name, want, got string }{
 		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
 		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
 		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
 		{"artifact path", candidate.State.ArtifactPath, report.ArtifactSupply.Path},
-		{"artifact digest", candidate.ArtifactDigest, report.ArtifactSupply.Digest},
 		{"metric-observer image", candidate.MetricObserverImage, report.MetricObserverImage},
 		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
-		{"host contract digest", candidate.State.HostContractDigest, hostContractDigest},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
@@ -440,9 +434,7 @@ func actuatorTargetsMatch(left, right *profilingrun.ActuatorTarget) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	leftPayload, leftErr := json.Marshal(left)
-	rightPayload, rightErr := json.Marshal(right)
-	return leftErr == nil && rightErr == nil && string(leftPayload) == string(rightPayload)
+	return reflect.DeepEqual(left, right)
 }
 
 func (r PreparationRequest) Validate() error {

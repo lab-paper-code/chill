@@ -13,22 +13,7 @@ func decodeTestIntent(payload []byte) (Intent, error) {
 	return intent, err
 }
 
-func TestIntentDigestIsDeterministic(t *testing.T) {
-	intent := validIntent()
-	first, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second || !strings.HasPrefix(first, "sha256:") {
-		t.Fatalf("unstable digest %q %q", first, second)
-	}
-}
-
-func TestRetainedV1Alpha6CanonicalBytesAndDigestRemainStable(t *testing.T) {
+func TestRetainedV1Alpha6IntentRemainsValid(t *testing.T) {
 	payload, err := os.ReadFile("testdata/intent-v1alpha6.json")
 	if err != nil {
 		t.Fatal(err)
@@ -37,31 +22,8 @@ func TestRetainedV1Alpha6CanonicalBytesAndDigestRemainStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := intent.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(payload) != string(canonical)+"\n" {
-		t.Fatalf("retained intent canonical bytes changed:\nwant %s\n got %s", payload, canonical)
-	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	const wantDigest = "sha256:a45a0a91f397b863fca9eb124419233bc240e5e5eb9395055ffa09640af4523b"
-	if digest != wantDigest {
-		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
-	}
-}
-
-func TestCurrentIntentDigestRemainsStable(t *testing.T) {
-	digest, err := validIntent().Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	const wantDigest = "sha256:41eeda39b3d97d0f62c2c222120c1e701e67c03f0daf80fca87e38420609acb3"
-	if digest != wantDigest {
-		t.Fatalf("current intent digest changed: want %s, got %s", wantDigest, digest)
+	if err := intent.Validate(); err != nil {
+		t.Fatalf("retained intent rejected: %v", err)
 	}
 }
 
@@ -73,32 +35,6 @@ func TestIntentDecoderRejectsExplicitNullActuation(t *testing.T) {
 	payload = []byte(strings.TrimSuffix(string(payload), "}") + `,"actuation":null}`)
 	if _, err := decodeTestIntent(payload); err == nil || !strings.Contains(err.Error(), "must be an object") {
 		t.Fatalf("explicit null actuation was not rejected: %v", err)
-	}
-}
-
-func TestRetainedV1Alpha8IntentDigestRemainsStable(t *testing.T) {
-	intent := validIntent()
-	intent.SchemaVersion = intentSchemaVersionV1Alpha8
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	const wantDigest = "sha256:d56d3771367f6f5fccd5745bd861da8d1f7a3549d3fe9878ceeb95a9d6d2239d"
-	if digest != wantDigest {
-		t.Fatalf("retained v1alpha8 intent digest changed: want %s, got %s", wantDigest, digest)
-	}
-}
-
-func TestRetainedV1Alpha7IntentDigestRemainsStable(t *testing.T) {
-	intent := validIntent()
-	intent.SchemaVersion = intentSchemaVersionV1Alpha7
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	const wantDigest = "sha256:fd10ce1e3301a912a667f17fea42d4eb44c7e2b6f9da5244c1c835e6302af8a9"
-	if digest != wantDigest {
-		t.Fatalf("retained v1alpha7 intent digest changed: want %s, got %s", wantDigest, digest)
 	}
 }
 

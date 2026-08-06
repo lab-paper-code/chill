@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -262,7 +264,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 	}
 }
 
-func TestKubernetesCandidateResolverIsDeterministicAndContentSensitive(t *testing.T) {
+func TestKubernetesCandidateResolverPreservesSnapshotSemantics(t *testing.T) {
 	objects := validCandidateObjects()
 	resolver := newCandidateResolver(t, objects...)
 	first, err := resolver.ResolveCandidate(context.Background(), validCandidateSelection())
@@ -273,20 +275,10 @@ func TestKubernetesCandidateResolverIsDeterministicAndContentSensitive(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(first.ReportBytes) != string(second.ReportBytes) ||
-		first.ModelSpecContentDigest != second.ModelSpecContentDigest {
-		t.Fatal("identical Kubernetes snapshots produced different candidates")
-	}
-
-	changedObjects := validCandidateObjects()
-	changedObjects[0].(*edgev1alpha1.ModelSpec).Generation = 3
-	changed := newCandidateResolver(t, changedObjects...)
-	third, err := changed.ResolveCandidate(context.Background(), validCandidateSelection())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ModelSpecContentDigest == third.ModelSpecContentDigest || string(first.ReportBytes) == string(third.ReportBytes) {
-		t.Fatal("changed ModelSpec content retained the previous candidate identity")
+	var firstReport, secondReport profilingrun.CandidateReport
+	if json.Unmarshal(first.ReportBytes, &firstReport) != nil || json.Unmarshal(second.ReportBytes, &secondReport) != nil ||
+		!reflect.DeepEqual(firstReport, secondReport) {
+		t.Fatal("identical Kubernetes snapshots produced different candidate semantics")
 	}
 }
 

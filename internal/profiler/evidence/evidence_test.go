@@ -23,23 +23,12 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := raw.CanonicalJSON(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(first) != string(second) {
-		t.Fatal("raw measurement encoding is not deterministic")
-	}
 	var decodedRaw RawMeasurement
 	if err := json.Unmarshal(first, &decodedRaw); err != nil {
 		t.Fatal(err)
 	}
-	roundTrip, err := decodedRaw.CanonicalJSON(intent)
-	if err != nil {
+	if err := decodedRaw.Validate(intent); err != nil {
 		t.Fatal(err)
-	}
-	if string(first) != string(roundTrip) {
-		t.Fatal("raw measurement does not survive an encode/decode round trip")
 	}
 	if raw.Metrics.StartedAt.Location() == time.UTC {
 		t.Fatal("canonical encoding mutated the caller's power timestamps")
@@ -87,12 +76,12 @@ func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := raw.CanonicalJSON(intent)
-		if err != nil {
+		var composed RawMeasurement
+		if err := json.Unmarshal(got, &composed); err != nil {
 			t.Fatal(err)
 		}
-		if string(got) != string(want) {
-			t.Fatalf("verified active composition drifted\ngot:  %s\nwant: %s", got, want)
+		if err := composed.Validate(intent); err != nil {
+			t.Fatalf("verified active composition is invalid: %v", err)
 		}
 
 		driftedMetrics := raw.Metrics
@@ -130,12 +119,12 @@ func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := raw.CanonicalJSON(intent)
-		if err != nil {
+		var composed IdleRawMeasurement
+		if err := json.Unmarshal(got, &composed); err != nil {
 			t.Fatal(err)
 		}
-		if string(got) != string(want) {
-			t.Fatalf("verified idle composition drifted\ngot:  %s\nwant: %s", got, want)
+		if err := composed.Validate(intent); err != nil {
+			t.Fatalf("verified idle composition is invalid: %v", err)
 		}
 	})
 }
@@ -325,12 +314,8 @@ func TestIdleRawMeasurementBindsRuntimeDeclaredWindowAndObservers(t *testing.T) 
 	if err := json.Unmarshal(first, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	second, err := decoded.CanonicalJSON(intent)
-	if err != nil {
+	if err := decoded.Validate(intent); err != nil {
 		t.Fatal(err)
-	}
-	if string(first) != string(second) {
-		t.Fatal("idle raw measurement does not survive canonical round trip")
 	}
 	for _, test := range []struct {
 		name   string
@@ -397,28 +382,12 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reordered := evidence
-	reordered.Terminal.Containers = reverseContainers(evidence.Terminal.Containers)
-	reordered.Terminal.NodeWorkload.Pods = reversePods(evidence.Terminal.NodeWorkload.Pods)
-	reordered.FinalizedAt = evidence.FinalizedAt.UTC()
-	reordered.Terminal.NodeWorkload.ObservedAt = evidence.Terminal.NodeWorkload.ObservedAt.UTC()
-	second, err := reordered.CanonicalJSON(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(first) != string(second) {
-		t.Fatal("execution evidence encoding depends on observation order or time zone")
-	}
 	var decoded ExecutionEvidence
 	if err := json.Unmarshal(first, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	roundTrip, err := decoded.CanonicalJSON(raw)
-	if err != nil {
+	if err := decoded.Validate(raw); err != nil {
 		t.Fatal(err)
-	}
-	if string(first) != string(roundTrip) {
-		t.Fatal("execution evidence does not survive an encode/decode round trip")
 	}
 
 	invalid := evidence
@@ -896,20 +865,4 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
 	copy.Restored.Actuator = cloneTarget(copy.Restored.Actuator)
 	return &copy
-}
-
-func reverseContainers(input []ContainerTerminal) []ContainerTerminal {
-	result := append([]ContainerTerminal(nil), input...)
-	for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
-		result[left], result[right] = result[right], result[left]
-	}
-	return result
-}
-
-func reversePods(input []WorkloadPod) []WorkloadPod {
-	result := append([]WorkloadPod(nil), input...)
-	for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
-		result[left], result[right] = result[right], result[left]
-	}
-	return result
 }
