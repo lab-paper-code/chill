@@ -69,7 +69,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| parallel | Node power-mode actuation | owner/protocol boundary accepted | Implement the durable handoff and prove apply/read-back/restore on one mode. |
+| parallel | Node power-mode actuation | local lifecycle implemented | Roll out one exact AGX Orin CPU ORT diagnostic and prove MODE_15W apply/read-back/measurement/restore without promoting TensorRT support. |
 | completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions
@@ -95,6 +95,9 @@ corresponding level.
   intents, while idle still performs no inference.
 - Installed facts are configuration. A row advances only from retained
   production evidence at the applicable level.
+- The AGX Orin CPU ORT MODE_15W rows are a bounded actuation-proof substrate.
+  They reuse the shared arm64 CPU ORT implementation but neither implement nor
+  promote the separately tracked ORT TensorRT rows.
 
 ## P1: Raspberry Pi 5 CPU ORT / fixed — paused
 
