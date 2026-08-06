@@ -27,16 +27,13 @@ import (
 )
 
 const (
-	intentRecordIntentKey           = "intent.json"
-	intentRecordCandidateKey        = "candidate-report.json"
-	intentRecordAdmissionPolicyKey  = "admission-policy.json"
-	intentRecordExecutionPolicyKey  = "execution-policy.json"
-	intentRecordActuationPolicyKey  = "actuation-policy.json"
-	intentDigestAnnotation          = "edge.dacs.io/profiling-run-intent-digest"
-	admissionPolicyAnnotation       = "edge.dacs.io/profiling-run-admission-policy-digest"
-	executionPolicyRecordAnnotation = "edge.dacs.io/profiling-run-execution-policy-digest"
-	actuationPolicyRecordAnnotation = "edge.dacs.io/profiling-run-actuation-policy-digest"
-	intentRecordNameHashCharacters  = 32
+	intentRecordIntentKey          = "intent.json"
+	intentRecordCandidateKey       = "candidate-report.json"
+	intentRecordAdmissionPolicyKey = "admission-policy.json"
+	intentRecordExecutionPolicyKey = "execution-policy.json"
+	intentRecordActuationPolicyKey = "actuation-policy.json"
+	intentDigestAnnotation         = "edge.dacs.io/profiling-run-intent-digest"
+	intentRecordNameHashCharacters = 32
 )
 
 // IntentRecords owns only the immutable frozen-input ConfigMap lifecycle.
@@ -121,14 +118,6 @@ func buildIntentRecord(
 	if err != nil {
 		return nil, err
 	}
-	policyDigest, err := frozen.AdmissionPolicy.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("digest frozen admission policy: %w", err)
-	}
-	executionPolicyDigest, err := frozen.ExecutionPolicy.Policy.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("digest frozen execution policy: %w", err)
-	}
 	record := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: run.Namespace,
@@ -136,11 +125,6 @@ func buildIntentRecord(
 			Labels: map[string]string{
 				"app.kubernetes.io/name":      component.DefaultSystemName,
 				"app.kubernetes.io/component": component.Profiler,
-			},
-			Annotations: map[string]string{
-				intentDigestAnnotation:          frozen.Prepared.IntentDigest,
-				admissionPolicyAnnotation:       policyDigest,
-				executionPolicyRecordAnnotation: executionPolicyDigest,
 			},
 		},
 		Immutable: ptr.To(true),
@@ -152,11 +136,6 @@ func buildIntentRecord(
 		},
 	}
 	if frozen.Prepared.ActuationPolicy != nil {
-		actuationPolicyDigest, err := frozen.Prepared.ActuationPolicy.Policy.Digest()
-		if err != nil {
-			return nil, fmt.Errorf("digest frozen actuation policy: %w", err)
-		}
-		record.Annotations[actuationPolicyRecordAnnotation] = actuationPolicyDigest
 		record.BinaryData[intentRecordActuationPolicyKey] = append(
 			[]byte(nil),
 			validated.ActuationPolicyBytes...,
@@ -337,9 +316,6 @@ func decodeIntentRecord(
 	if err != nil {
 		return FrozenRun{}, err
 	}
-	if record.Annotations[intentDigestAnnotation] != digest {
-		return FrozenRun{}, errors.New("frozen intent ConfigMap annotation digest mismatch")
-	}
 	expectedDataKeys := 4
 	if intent.Actuation != nil {
 		expectedDataKeys++
@@ -409,13 +385,6 @@ func decodeStoredAdmissionPolicy(record *corev1.ConfigMap) (profileradmission.Fr
 	if err != nil {
 		return profileradmission.FrozenPolicy{}, err
 	}
-	policyDigest, err := policy.Digest()
-	if err != nil {
-		return profileradmission.FrozenPolicy{}, err
-	}
-	if record.Annotations[admissionPolicyAnnotation] != policyDigest {
-		return profileradmission.FrozenPolicy{}, errors.New("frozen admission-policy annotation digest mismatch")
-	}
 	return policy, nil
 }
 
@@ -428,13 +397,6 @@ func decodeStoredExecutionPolicy(record *corev1.ConfigMap) (profiler.FrozenExecu
 	if err != nil {
 		return profiler.FrozenExecutionPolicy{}, err
 	}
-	policyDigest, err := policy.Policy.Digest()
-	if err != nil {
-		return profiler.FrozenExecutionPolicy{}, err
-	}
-	if record.Annotations[executionPolicyRecordAnnotation] != policyDigest {
-		return profiler.FrozenExecutionPolicy{}, errors.New("frozen execution-policy annotation digest mismatch")
-	}
 	return policy, nil
 }
 
@@ -443,26 +405,18 @@ func decodeStoredActuationPolicy(
 	required bool,
 ) (*profiler.FrozenActuationPolicy, error) {
 	policyBytes, present := record.BinaryData[intentRecordActuationPolicyKey]
-	annotation, annotated := record.Annotations[actuationPolicyRecordAnnotation]
 	if !required {
-		if present || annotated {
+		if present {
 			return nil, errors.New("fixed Run record cannot contain an actuation policy")
 		}
 		return nil, nil
 	}
-	if !present || len(policyBytes) == 0 || !annotated {
+	if !present || len(policyBytes) == 0 {
 		return nil, errors.New("frozen actuation-policy payload is incomplete")
 	}
 	policy, err := profiler.DecodeFrozenActuationPolicy(policyBytes)
 	if err != nil {
 		return nil, err
-	}
-	policyDigest, err := policy.Policy.Digest()
-	if err != nil {
-		return nil, err
-	}
-	if annotation != policyDigest {
-		return nil, errors.New("frozen actuation-policy annotation digest mismatch")
 	}
 	return &policy, nil
 }

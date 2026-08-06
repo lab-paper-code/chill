@@ -41,9 +41,7 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !created || record.Immutable == nil || !*record.Immutable ||
-		len(record.BinaryData) != 4 || record.Annotations[intentDigestAnnotation] != frozen.Prepared.IntentDigest ||
-		record.Annotations[admissionPolicyAnnotation] == "" ||
-		record.Annotations[executionPolicyRecordAnnotation] == "" {
+		len(record.BinaryData) != 4 || len(record.Annotations) != 0 {
 		t.Fatalf("created frozen intent record is incomplete: %#v", record)
 	}
 	if len(record.OwnerReferences) != 1 || record.OwnerReferences[0].UID != run.UID ||
@@ -84,7 +82,7 @@ func TestIntentRecordsRetainExactActuationPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !created || len(record.BinaryData) != 5 || len(record.BinaryData[intentRecordActuationPolicyKey]) == 0 ||
-		record.Annotations[actuationPolicyRecordAnnotation] == "" {
+		len(record.Annotations) != 0 {
 		t.Fatalf("actuated frozen record = %#v", record)
 	}
 	loaded, err := records.Load(ctx, run)
