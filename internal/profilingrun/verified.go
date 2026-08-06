@@ -6,8 +6,8 @@ import (
 	"fmt"
 )
 
-// VerifiedIntent is populated only after one intent has passed validation and
-// matched its externally supplied digest.
+// VerifiedIntent is populated only after one intent has passed structural and
+// semantic validation.
 type VerifiedIntent struct {
 	intent         Intent
 	digest         string
@@ -15,13 +15,10 @@ type VerifiedIntent struct {
 	verified       bool
 }
 
-func VerifyIntent(intent Intent, expectedDigest string) (VerifiedIntent, error) {
+func ValidateIntent(intent Intent) (VerifiedIntent, error) {
 	digest, err := intent.Digest()
 	if err != nil {
 		return VerifiedIntent{}, err
-	}
-	if digest != expectedDigest {
-		return VerifiedIntent{}, errors.New("Run intent digest mismatch")
 	}
 	workloadPayload, err := json.Marshal(intent.Workload)
 	if err != nil {

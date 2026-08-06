@@ -71,9 +71,9 @@ func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.VerifiedRes
 	}
 }
 
-// LoadVerifiedIntent reads one strict frozen-intent file and verifies its
-// externally supplied digest before any measurement-side effect is allowed.
-func LoadVerifiedIntent(path, expectedDigest string, maxBytes int64) (profilingrun.VerifiedIntent, error) {
+// LoadVerifiedIntent reads and validates one strict frozen-intent file before
+// any measurement-side effect is allowed.
+func LoadVerifiedIntent(path string, maxBytes int64) (profilingrun.VerifiedIntent, error) {
 	if !validAbsoluteFilePath(path) {
 		return profilingrun.VerifiedIntent{}, errors.New("intent path must be a clean absolute file path")
 	}
@@ -84,7 +84,7 @@ func LoadVerifiedIntent(path, expectedDigest string, maxBytes int64) (profilingr
 	if err := decodeProjectedJSONFile(path, maxBytes, &intent); err != nil {
 		return profilingrun.VerifiedIntent{}, fmt.Errorf("read frozen intent file: %w", err)
 	}
-	verified, err := profilingrun.VerifyIntent(intent, expectedDigest)
+	verified, err := profilingrun.ValidateIntent(intent)
 	if err != nil {
 		return profilingrun.VerifiedIntent{}, fmt.Errorf("validate frozen intent file: %w", err)
 	}

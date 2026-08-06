@@ -26,8 +26,8 @@ import (
 
 func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	directory := t.TempDir()
-	digest := writeWorkloadTestIntent(t, directory)
-	opts := workloadTestOptions(directory, digest)
+	writeWorkloadTestIntent(t, directory)
+	opts := workloadTestOptions(directory)
 	pod := workloadTestPod()
 	client := fake.NewSimpleClientset(pod.DeepCopy())
 	preflight := watch.NewRaceFreeFake()
@@ -98,8 +98,8 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 
 func TestExecuteRejectsPodOutsideFrozenNodeBeforeReady(t *testing.T) {
 	directory := t.TempDir()
-	digest := writeWorkloadTestIntent(t, directory)
-	opts := workloadTestOptions(directory, digest)
+	writeWorkloadTestIntent(t, directory)
+	opts := workloadTestOptions(directory)
 	pod := workloadTestPod()
 	pod.Spec.NodeName = "other-node"
 	client := fake.NewSimpleClientset(pod)
@@ -114,7 +114,7 @@ func TestExecuteRejectsPodOutsideFrozenNodeBeforeReady(t *testing.T) {
 }
 
 func TestOptionsRejectNonCanonicalSelectorKeys(t *testing.T) {
-	opts := workloadTestOptions(t.TempDir(), "sha256:"+strings.Repeat("a", 64))
+	opts := workloadTestOptions(t.TempDir())
 	opts.selectorLabelCSV = "z,a"
 	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "sorted") {
 		t.Fatalf("validate() error = %v", err)
@@ -160,7 +160,7 @@ func installPodObservationReactors(
 	})
 }
 
-func writeWorkloadTestIntent(t *testing.T, directory string) string {
+func writeWorkloadTestIntent(t *testing.T, directory string) {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -178,19 +178,14 @@ func writeWorkloadTestIntent(t *testing.T, directory string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(directory, "intent.json"), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return digest
 }
 
-func workloadTestOptions(directory, digest string) options {
+func workloadTestOptions(directory string) options {
 	return options{
-		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
+		intentPath:      filepath.Join(directory, "intent.json"),
 		readyPath:       filepath.Join(directory, "workload-ready"),
 		windowStartPath: filepath.Join(directory, "workload-window-start"),
 		windowReadyPath: filepath.Join(directory, "workload-window-ready"),

@@ -85,7 +85,7 @@ A one-shot CPU ORT adapter translates the intent into native objects. The Job:
 - requests and limits the frozen CPU amount for the runtime container;
 - copies the digest-pinned artifact into an `emptyDir` and verifies its bytes;
 - runs the runtime and MetricObserver in separate containers; and
-- carries the Run intent digest as a label/annotation and environment input.
+- mounts the same immutable intent record read-only into every worker container.
 
 Plan 2 does not claim that selection intent guarantees scheduling. It records
 Kubernetes admission, placement, image, and container outcomes as evidence.

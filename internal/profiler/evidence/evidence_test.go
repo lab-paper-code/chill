@@ -142,11 +142,7 @@ func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
 
 func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.VerifiedIntent {
 	t.Helper()
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := profilingrun.VerifyIntent(intent, digest)
+	verified, err := profilingrun.ValidateIntent(intent)
 	if err != nil {
 		t.Fatal(err)
 	}

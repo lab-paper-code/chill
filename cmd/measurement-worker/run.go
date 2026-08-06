@@ -33,7 +33,7 @@ type coordinatorBuilder func(
 ) (measurementCoordinator, error)
 
 type dependencies struct {
-	loadIntent          func(string, string, int64) (profilingrun.VerifiedIntent, error)
+	loadIntent          func(string, int64) (profilingrun.VerifiedIntent, error)
 	loadCandidateReport candidateReportLoader
 	buildCoordinator    coordinatorBuilder
 	writeReceipt        func(string, evidencestore.Receipt) error
@@ -54,7 +54,7 @@ func execute(
 	stdout, stderr io.Writer,
 	deps dependencies,
 ) error {
-	intent, err := deps.loadIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
+	intent, err := deps.loadIntent(opts.intentPath, maximumIntentBytes)
 	if err != nil {
 		return fmt.Errorf("%w: load frozen intent: %w", worker.ErrExecutionContract, err)
 	}

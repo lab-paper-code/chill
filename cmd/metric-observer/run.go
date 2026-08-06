@@ -27,7 +27,7 @@ func execute(
 	if client == nil {
 		return errors.New("HTTP client is required")
 	}
-	intent, err := worker.LoadVerifiedIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
+	intent, err := worker.LoadVerifiedIntent(opts.intentPath, maximumIntentBytes)
 	if err != nil {
 		return err
 	}

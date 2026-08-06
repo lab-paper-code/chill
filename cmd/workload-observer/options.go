@@ -26,7 +26,6 @@ var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type options struct {
 	intentPath       string
-	intentDigest     string
 	readyPath        string
 	windowStartPath  string
 	windowReadyPath  string
@@ -48,7 +47,6 @@ type options struct {
 
 func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.intentPath, "intent-file", defaultIntentPath, "read-only frozen Run intent JSON")
-	set.StringVar(&o.intentDigest, "intent-digest", "", "expected frozen Run intent SHA-256")
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "workload-observer-ready signal path")
 	set.StringVar(
 		&o.windowStartPath, "window-start-signal-file", defaultWindowStartSignalPath,
@@ -90,9 +88,6 @@ func (o options) validate() error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return errors.New(name + " is required without surrounding whitespace")
 		}
-	}
-	if !canonicalDigest.MatchString(o.intentDigest) {
-		return errors.New("intent digest must be a canonical SHA-256")
 	}
 	if !canonicalDigest.MatchString(o.contractDigest) {
 		return errors.New("workload contract digest must be a canonical SHA-256")

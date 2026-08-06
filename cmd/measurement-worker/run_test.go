@@ -19,10 +19,9 @@ import (
 func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	opts := validOptions()
 	verifiedIntent := validVerifiedCPUIntent(t)
-	opts.intentDigest = verifiedIntent.Digest()
 	wantReceipt := validReceipt()
 	coordinator := &fakeCoordinator{execute: func(request worker.Request) (evidencestore.Receipt, error) {
-		if request.Intent.Digest() != opts.intentDigest || request.PodUID != opts.podUID ||
+		if request.PodUID != opts.podUID ||
 			request.ScheduledNodeName != opts.scheduledNodeName ||
 			request.RawLocation.Store != opts.storeName || request.RawLocation.Key != opts.rawObjectKey {
 			t.Fatalf("request = %#v", request)
@@ -31,9 +30,9 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	}}
 	written := false
 	deps := dependencies{
-		loadIntent: func(path, digest string, maximum int64) (profilingrun.VerifiedIntent, error) {
-			if path != opts.intentPath || digest != opts.intentDigest || maximum != maximumIntentBytes {
-				t.Fatalf("intent load = %q %q %d", path, digest, maximum)
+		loadIntent: func(path string, maximum int64) (profilingrun.VerifiedIntent, error) {
+			if path != opts.intentPath || maximum != maximumIntentBytes {
+				t.Fatalf("intent load = %q %d", path, maximum)
 			}
 			return verifiedIntent, nil
 		},
@@ -87,7 +86,7 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			deps := successfulDependencies(validReceipt())
 			if name == "intent" {
-				deps.loadIntent = func(string, string, int64) (profilingrun.VerifiedIntent, error) {
+				deps.loadIntent = func(string, int64) (profilingrun.VerifiedIntent, error) {
 					return profilingrun.VerifiedIntent{}, test.failure
 				}
 			} else if name == "candidate" {
@@ -178,7 +177,7 @@ func TestDiagnosticDoesNotExposeEvidenceTransportDetails(t *testing.T) {
 func validOptions() options {
 	return options{
 		intentPath: defaultIntentPath, candidateReportPath: defaultCandidateReportPath,
-		intentDigest: "sha256:" + strings.Repeat("a", 64), podUID: "pod-uid",
+		podUID:            "pod-uid",
 		scheduledNodeName: "lattepanda",
 		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPaths:      []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
@@ -227,15 +226,11 @@ func validVerifiedCPUIntent(t *testing.T) profilingrun.VerifiedIntent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(t.TempDir(), "intent.json")
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := worker.LoadVerifiedIntent(path, digest, int64(len(payload)))
+	loaded, err := worker.LoadVerifiedIntent(path, int64(len(payload)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +250,7 @@ func validReceipt() evidencestore.Receipt {
 
 func successfulDependencies(receipt evidencestore.Receipt) dependencies {
 	return dependencies{
-		loadIntent: func(string, string, int64) (profilingrun.VerifiedIntent, error) {
+		loadIntent: func(string, int64) (profilingrun.VerifiedIntent, error) {
 			return profilingrun.VerifiedIntent{}, nil
 		},
 		loadCandidateReport: func(string, int64, profilingrun.VerifiedIntent) (profilingrun.VerifiedCandidateReport, error) {

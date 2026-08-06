@@ -73,7 +73,6 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	}
 	assertCandidateReportProjection(t, pod)
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
-	assertArgument(t, runtimeContainer.Args, "--intent-digest="+prepared.IntentDigest)
 	assertArgument(t, runtimeContainer.Args, "--store-endpoint="+binding.Endpoint)
 	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout=30s")
 	assertArgument(t, runtimeContainer.Args, "--max-workload-result-bytes=8388608")

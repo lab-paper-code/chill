@@ -184,7 +184,6 @@ func runtimeContainer(
 	return corev1.Container{
 		Name: "runtime", Image: intent.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
-			"--intent-digest=" + prepared.IntentDigest,
 			"--attempt-timeout=" + plan.AttemptTimeout.String(),
 			"--observer-ready-timeout=" + plan.ObserverReadyTimeout.String(),
 			"--metric-result-timeout=" + plan.MetricResultTimeout.String(),
@@ -216,7 +215,6 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 	return corev1.Container{
 		Name: "metric-observer", Image: prepared.Intent.Images.MetricObserver, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
-			"--intent-digest=" + prepared.IntentDigest,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
 			"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
@@ -247,7 +245,6 @@ func workloadObserverContainer(
 	plan profiler.ExecutionPlan,
 ) corev1.Container {
 	arguments := []string{
-		"--intent-digest=" + prepared.IntentDigest,
 		"--contract-digest=" + contractDigest,
 		"--selector-label-keys=" + strings.Join(selectorLabelKeys, ","),
 		"--end-wait-timeout=" + plan.AttemptTimeout.String(),

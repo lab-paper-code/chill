@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"strings"
 	"testing"
 )
 
@@ -15,7 +14,6 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 	options := options{}
 	options.bindFlags(set)
 	if err := set.Parse([]string{
-		"--intent-digest=sha256:" + strings.Repeat("a", 64),
 		"--attempt-timeout=10m",
 		"--observer-ready-timeout=1m",
 		"--metric-result-timeout=1m",
@@ -45,7 +43,6 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 func TestOptionsRejectInvalidDeliveryContract(t *testing.T) {
 	valid := validOptions()
 	tests := []func(*options){
-		func(options *options) { options.intentDigest = "sha256:invalid" },
 		func(options *options) { options.podUID = "" },
 		func(options *options) { options.scheduledNodeName = "" },
 		func(options *options) { options.storeName = " store " },

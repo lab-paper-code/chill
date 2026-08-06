@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"flag"
-	"regexp"
 	"time"
 )
 
@@ -17,11 +16,8 @@ const (
 	maximumResultBytes      int64 = 8 << 20
 )
 
-var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-
 type options struct {
 	intentPath       string
-	intentDigest     string
 	readyPath        string
 	startPath        string
 	endPath          string
@@ -33,7 +29,6 @@ type options struct {
 
 func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.intentPath, "intent-file", defaultIntentPath, "read-only frozen Run intent JSON")
-	set.StringVar(&o.intentDigest, "intent-digest", "", "expected frozen Run intent SHA-256")
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "observer-ready signal path")
 	set.StringVar(&o.startPath, "start-signal-file", defaultStartSignalPath, "measurement-start signal path")
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
@@ -44,9 +39,6 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 }
 
 func (o options) validate() error {
-	if !canonicalDigest.MatchString(o.intentDigest) {
-		return errors.New("intent digest must be a canonical SHA-256")
-	}
 	if o.startWaitTimeout <= 0 {
 		return errors.New("start wait timeout must be supplied by the Job execution contract")
 	}

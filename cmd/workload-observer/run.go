@@ -34,7 +34,7 @@ func execute(
 	if coreClient == nil {
 		return errors.New("Kubernetes core client is required")
 	}
-	intent, err := worker.LoadVerifiedIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
+	intent, err := worker.LoadVerifiedIntent(opts.intentPath, maximumIntentBytes)
 	if err != nil {
 		return err
 	}

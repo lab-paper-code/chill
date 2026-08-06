@@ -5,7 +5,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -33,12 +32,9 @@ const (
 	handoffPollInterval                    = 100 * time.Millisecond
 )
 
-var canonicalDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-
 type options struct {
 	intentPath              string
 	candidateReportPath     string
-	intentDigest            string
 	podUID                  string
 	scheduledNodeName       string
 	modelPath               string
@@ -91,7 +87,6 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.secretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	o.sessionToken = os.Getenv("AWS_SESSION_TOKEN")
 
-	set.StringVar(&o.intentDigest, "intent-digest", "", "expected frozen Run intent SHA-256")
 	set.DurationVar(&o.attemptTimeout, "attempt-timeout", 0, "Job-derived total worker attempt timeout")
 	set.DurationVar(&o.observerReadyTimeout, "observer-ready-timeout", 0, "Job-derived observer readiness timeout")
 	set.DurationVar(&o.metricResultTimeout, "metric-result-timeout", 0, "Job-derived metric-result handoff timeout")
@@ -109,9 +104,6 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 }
 
 func (o options) validate() error {
-	if !canonicalDigest.MatchString(o.intentDigest) {
-		return errors.New("intent digest must be a canonical SHA-256")
-	}
 	for _, field := range []struct{ name, value string }{
 		{name: "Pod UID", value: o.podUID},
 		{name: "scheduled Node name", value: o.scheduledNodeName},

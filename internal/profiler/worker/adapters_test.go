@@ -233,13 +233,9 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	}
 }
 
-func TestLoadVerifiedIntentVerifiesExactDigest(t *testing.T) {
+func TestLoadVerifiedIntentValidatesStructuredIntent(t *testing.T) {
 	intent := testIntent(t)
 	payload, err := intent.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest, err := intent.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +243,7 @@ func TestLoadVerifiedIntentVerifiesExactDigest(t *testing.T) {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadVerifiedIntent(path, digest, 1<<20)
+	loaded, err := LoadVerifiedIntent(path, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +251,7 @@ func TestLoadVerifiedIntentVerifiesExactDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedIntent.State != intent.State || loaded.Digest() != digest {
+	if loadedIntent.State != intent.State {
 		t.Fatalf("loaded intent drifted: %#v", loaded)
 	}
 	loadedIntent.TargetNode.Name = mutatedCopyName
@@ -267,10 +263,6 @@ func TestLoadVerifiedIntentVerifiesExactDigest(t *testing.T) {
 	if target != intent.TargetNode {
 		t.Fatalf("sealed intent was changed through a detached snapshot: %#v", target)
 	}
-	if _, err := LoadVerifiedIntent(path, "sha256:"+strings.Repeat("0", 64), 1<<20); err == nil ||
-		!strings.Contains(err.Error(), "digest mismatch") {
-		t.Fatalf("expected digest mismatch, got %v", err)
-	}
 }
 
 func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
@@ -279,11 +271,6 @@ func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	directory := t.TempDir()
 	revision := filepath.Join(directory, "..2026_07_16_00_00_00")
 	if err := os.Mkdir(revision, 0o700); err != nil {
@@ -300,7 +287,7 @@ func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := LoadVerifiedIntent(path, digest, 1<<20)
+	loaded, err := LoadVerifiedIntent(path, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +295,7 @@ func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedIntent.State != intent.State || loaded.Digest() != digest {
+	if loadedIntent.State != intent.State {
 		t.Fatalf("loaded projected intent drifted: %#v", loaded)
 	}
 }
@@ -784,11 +771,7 @@ func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
 }
 
 func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
-	digest, err := intent.Digest()
-	if err != nil {
-		panic(err)
-	}
-	verified, err := profilingrun.VerifyIntent(intent, digest)
+	verified, err := profilingrun.ValidateIntent(intent)
 	if err != nil {
 		panic(err)
 	}

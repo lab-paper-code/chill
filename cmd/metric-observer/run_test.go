@@ -28,8 +28,8 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	defer server.Close()
 
 	directory := t.TempDir()
-	intent, digest := writeTestIntent(t, directory, server.URL)
-	options := testOptions(directory, digest)
+	intent := writeTestIntent(t, directory, server.URL)
+	options := testOptions(directory)
 	if err := worker.PublishSignal(options.startPath); err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +71,8 @@ func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	defer server.Close()
 
 	directory := t.TempDir()
-	_, digest := writeTestIntent(t, directory, server.URL)
-	options := testOptions(directory, digest)
+	writeTestIntent(t, directory, server.URL)
+	options := testOptions(directory)
 	options.endWaitTimeout = 20 * time.Millisecond
 	if err := worker.PublishSignal(options.startPath); err != nil {
 		t.Fatal(err)
@@ -107,14 +107,15 @@ func TestSummarizeThermalReportsOnlyRetainedFacts(t *testing.T) {
 	}
 }
 
-func TestExecuteRejectsIntentBeforePublishingReady(t *testing.T) {
+func TestExecuteRejectsInvalidIntentBeforePublishingReady(t *testing.T) {
 	directory := t.TempDir()
-	_, digest := writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
-	options := testOptions(directory, digest)
-	options.intentDigest = "sha256:" + strings.Repeat("0", 64)
-	if err := execute(context.Background(), options, &http.Client{}, time.Second, time.Millisecond); err == nil ||
-		!strings.Contains(err.Error(), "digest mismatch") {
-		t.Fatalf("expected intent digest rejection, got %v", err)
+	writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
+	options := testOptions(directory)
+	if err := os.WriteFile(options.intentPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := execute(context.Background(), options, &http.Client{}, time.Second, time.Millisecond); err == nil {
+		t.Fatal("invalid intent was accepted")
 	}
 	if _, err := os.Stat(options.readyPath); !os.IsNotExist(err) {
 		t.Fatalf("invalid intent published observer-ready: %v", err)
@@ -123,8 +124,8 @@ func TestExecuteRejectsIntentBeforePublishingReady(t *testing.T) {
 
 func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	directory := t.TempDir()
-	_, digest := writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
-	options := testOptions(directory, digest)
+	writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
+	options := testOptions(directory)
 	err := execute(context.Background(), options, &http.Client{}, 20*time.Millisecond, time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
 		t.Fatalf("expected bounded start wait failure, got %v", err)
@@ -137,7 +138,7 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	}
 }
 
-func writeTestIntent(t *testing.T, directory, endpoint string) (profilingrun.Intent, string) {
+func writeTestIntent(t *testing.T, directory, endpoint string) profilingrun.Intent {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -160,20 +161,16 @@ func writeTestIntent(t *testing.T, directory, endpoint string) (profilingrun.Int
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(directory, "intent.json"), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return intent, digest
+	return intent
 }
 
-func testOptions(directory, digest string) options {
+func testOptions(directory string) options {
 	return options{
-		intentPath: filepath.Join(directory, "intent.json"), intentDigest: digest,
-		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
+		intentPath: filepath.Join(directory, "intent.json"),
+		readyPath:  filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
 		endWaitTimeout: time.Second, maxEvents: 100,
