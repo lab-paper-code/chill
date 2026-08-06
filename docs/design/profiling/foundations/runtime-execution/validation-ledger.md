@@ -54,14 +54,13 @@ runtime libraries, NVPModel configuration and state, and sysfs separately. It
 does not mount the host root. This remains read-only compatibility evidence,
 not an apply/read-back/restore result.
 
-## Shared arm64 CPU ORT facts
+## Current shared arm64 CPU ORT facts
 
 | Fact | Verified identity |
 |---|---|
-| Measurement worker, Raspberry Pi and Orange Pi | arm64 child `sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28`; ONNX Runtime; `CPUExecutionProvider` |
-| Measurement worker, AGX Orin diagnostic | arm64 child `sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e`; same CPU ORT adapter with cgroup-v1/v2 environment discovery |
-| MetricObserver | arm64 child `sha256:8fce6ecd849c3a85f145cd59c65666addbed75acde022a2bc97d8df09c9881a8` |
-| WorkloadObserver | arm64 child `sha256:b7d74f51159b6c41fb09d957890ac6dd13504364691313ae9466c66448bb1d94` |
+| Measurement worker | arm64 child `sha256:be8fabcde2f0074ad1f1da1a734d3a4d62dbd1308ebe3726a1be17ec2742fa3f`; ONNX Runtime; `CPUExecutionProvider` |
+| MetricObserver | arm64 child `sha256:397b1abb7061a48973d707796e4bff61dfa2449bdc593110a9d6a3f07c24be14` |
+| WorkloadObserver | arm64 child `sha256:7f2617ebfbba16c4619f738f5b5a86803d0f24578bf2f32af48b43025d859a4e` |
 | Model artifact image | arm64 child `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721` |
 | Model bytes | `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2` at `/artifact/mobilenet-v2-050.onnx` |
 | Chart profile | `charts/chill/values-profiler-arm64.yaml` |
@@ -69,66 +68,49 @@ not an apply/read-back/restore result.
 The runtime and artifact declarations are architecture-scoped facts. They do
 not by themselves prove execution or admission on every arm64 DeviceClass.
 
-## AGX Orin CPU ORT MODE_50W actuation and active admission (2026-08-06)
+## AGX Orin CPU ORT MODE_50W L3 proof (2026-08-06)
 
-The opt-in installation selected only `jetsono` for the NodeActuator. Run
-`jetsono-ort-cpu-mode50w-actuation-a4` and its exact owned handoff proved this
-sequence from Kubernetes status:
+Helm revision 13 ran Profiler image index
+`sha256:c6d993dec92ef4c9863063c555722c9bdd9e8261ee99ebca4fe0b9606f98005b`
+and froze the current arm64 worker and observers listed above. The six current
+Runs all proved `MAXN -> MODE_50W`, completed after verified settling, restored
+`MAXN`, finalized execution evidence v1alpha2, reloaded it, and reached
+`EvidenceAccepted`.
 
-- previous `MAXN / ID 0` observed at `02:05:02Z`;
-- target `MODE_50W / ID 3` independently read back at `02:05:03Z`, followed by
-  the configured 60-second settling interval;
-- the measurement Job completed successfully; and
-- restored `MAXN / ID 0` independently read back at `02:06:41Z` before
-  evidence finalization.
+- Active Runs `jetsono-ort-cpu-mode50w-head-a1`, `a2`, and `a3` used the
+  chart-selected `wall-power-2p5s-source-v1` policy. Each retained 32 successful
+  power/thermal samples with no failures. Evidence digests are
+  `sha256:7c940f1ce8345aeaf3b6a66d2128dde3a54c5201f88680355b1ac2a7890031ba`,
+  `sha256:fe37be6df10bfed4a0c39347b41c9a4a410ec64dea6d5fbb2167df5d051f92db`,
+  and `sha256:849b15a9e94f6725daa8e1f5033a8cee8a26082c845688a51bb84592c5fe8efd`.
+- Idle Runs `jetsono-ort-cpu-mode50w-head-i1`, `i2`, and `i3` used
+  `idle-wall-power-v1`, a 60-second model-loaded settling period, and a
+  30-second measurement window. Each retained 31 successful power/thermal
+  samples with no failures. Evidence digests are
+  `sha256:bcae76fdfe056d101b6ab28ea50d4f1dbe3b6e363d49c25124eafb6bbfe463a7`,
+  `sha256:bcdc21bfb5c5ed89f9c5dae989c71e905b261449c20e7c98187767c8626feb80`,
+  and `sha256:93a40abd6ee26fb80e17ee392e29a37e21548fb5a4c5e64ef5a57fe82acd407e`.
 
-The Profiler independently verified finalized execution evidence v1alpha2
-`sha256:444c64d3ef500ef5cdb459a169f5745dfb987048e41927b18e6d6e34f87b5f16`.
-The frozen runtime container and observed `imageID` both name the AGX Orin
-diagnostic child
-`sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e`.
-Admission remained `Insufficient` with `InsufficientSamples`,
-`PowerReadFailures`, `PowerWindowCoverage`, and `ThermalStateUnavailable`.
-That retained Run remains the initial L2 lifecycle proof, not admitted power
-evidence.
+A read-only live audit used `RetainedLoader`, the retained frozen admission
+records, and the production active/idle projections. All six shared execution
+state identity
+`execution-state-identity.v1alpha3@sha256:300f7d017f0176eb5c9cfb28d30feda49c94a569e946295797b579e13683b5a9`
+and owner-bound environment identity
+`external-environment-identity.v1alpha1@sha256:4cad33b77d2eb7d1b86ec9f9e292bcacee5c65be9fdea3f20abdff76605bdcdf`.
+The active protocol identity was stable at
+`measurement-protocol-identity.v1alpha1@sha256:0ed9e4324751e630f4034098810028f6269a241c6d8feae1dd7c8a38c9336e39`;
+the distinct idle protocol identity was stable at
+`measurement-protocol-identity.v1alpha1@sha256:efc0dce2257d8706e12aa61a4294b1fe64a3030a56d373513bd67cf4cd74f370`.
+Node `resourceVersion` changed between Runs and changed full intent digests but
+is deliberately excluded from these derivation identities.
 
-The installed chart then selected `wall-power-3s-source-v1` for this metric
-source instead of weakening the shared `wall-power-v2` policy. Run
-`jetsono-ort-cpu-mode50w-source3-a3` froze a 3-second interval, 2.8-second
-request timeout, 75-second active window, and 78-second observer window. Its
-raw object digest `sha256:a59cf475cc0cc6b230205286bf0913f144b18d172d6d57efe4bd56112311c994`
-matched the retained execution reference. It recorded 26 successful power and
-thermal samples, no failed reads, no active thermal-throttle samples, a maximum
-temperature of 53.031 C, and a maximum sample gap of 3.628 seconds. The worker
-completed 14,870 batch-one inferences in 75.002 seconds.
-
-The final Run independently observed `MAXN / ID 0` at `05:28:07Z`, read back
-`MODE_50W / ID 3` at `05:28:08Z`, became ready after the configured settling
-interval at `05:29:08Z`, and read back restored `MAXN / ID 0` at `05:30:34Z`.
-The Profiler reloaded execution evidence
-`sha256:58fd7778b2c3c21f7544c117812891f7ba3d144d16f176cc78cb1ee095f32405`
-and admitted it under frozen policy
-`sha256:3b041e96ded2acb00b414a3fc46d5384af527d7afd1c431c789c87cad64d5fe1`.
-This proves one exact active admission but does not promote the slice to L3:
-the three-trial identity audit has not been completed.
-
-Run `jetsono-ort-cpu-mode50w-idle-i1` then reused the existing model-loaded-idle
-producer and `idle-wall-power-v1`. Its 30-second measurement followed the
-worker's 60-second model-loaded settling interval. The raw object digest
-`sha256:1a42906c3bdfd884b2860f5ea8cc510f9d21eec0b4e3ee0a57700d9ac0e3f660`
-matched the retained execution reference. All 31 power and thermal samples
-succeeded, no thermal sample was active, maximum temperature was 49.406 C, and
-mean observed wall power was 10.368 W. The Profiler admitted execution evidence
-`sha256:5aec3f5f1d1cf88e978c40edb2d238854ad6a03a83dd53b62fff98fe82f0314b`
-under frozen policy
-`sha256:958500162bcb71bccf2e92245c13651f74d570d79eae37b882e3577b8093e8ff`.
-The handoff independently read back MODE_50W, settled, and restored MAXN at
-`05:37:15Z` before evidence finalization.
-
-The post-run live snapshot had `ChillSystem Ready=True`, the NodeActuator
-DaemonSet at `1/1`, and the final handoff at `Restore / Restored`. Failed and
-insufficient diagnostic Runs remain retained as evidence and do not promote
-any support row.
+With an explicitly supplied minimum of three trials and 95% confidence, the
+existing derivation core produced a model-loaded-idle baseline of
+`10.4192 ± 0.0766 W` and a batch-one incremental-energy point of
+`0.045275 ± 0.001177 J/item`. The point used the implemented Welch-
+Satterthwaite interval and had effective degrees of freedom `2.349`. This was a
+read-only diagnostic call with no production caller or persistence; it proves
+the L3 pair and current derivation path, not a multi-batch L4 campaign.
 
 ## Raspberry Pi 5 CPU ORT / fixed
 

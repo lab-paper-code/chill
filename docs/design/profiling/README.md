@@ -224,11 +224,13 @@ and withholds evidence finalization until ordered restoration is proven.
 Actuated finalization retains the exact Run/handoff identities, typed
 previous/target/restored observations, and lifecycle timestamps in execution
 evidence v1alpha2 while fixed Runs remain on v1alpha1. The chart remains
-disabled by default. An opt-in AGX Orin CPU ORT Run has now live-proved
-`MAXN -> MODE_50W -> MAXN`, durable evidence reload, and accepted active
-admission under the configured slow-source policy. One model-loaded-idle Run
-is also admitted; the remaining repetitions and identity audit are still open,
-so the exact slice remains below L3.
+disabled by default. The opt-in AGX Orin CPU ORT MODE_50W slice has now produced
+three sequential accepted active Runs and three sequential accepted
+model-loaded-idle Runs on current images. Retained reload and the production
+projections proved one shared execution-state identity and one shared
+owner-bound environment identity across all six, so both exact rows are L3. A
+read-only derivation produced the first batch-one incremental-energy estimate,
+but no multi-batch campaign or L4 claim follows from it.
 Catalog presence and historical standalone smoke are not production execution
 evidence.
 

@@ -33,15 +33,13 @@ evidence finalization until restoration and its causal ordering are proven.
 Finalized actuated execution evidence v1alpha2 retains the exact Run and
 handoff identities, previous/target/restored typed observations, and lifecycle
 timestamps; fixed Runs retain execution evidence v1alpha1. The chart remains
-disabled by default. An opt-in AGX Orin CPU ORT diagnostic has now proved
-`MAXN -> MODE_50W -> MAXN` apply, independent read-back, settling, successful
-active execution, restoration, v1alpha2 finalization, and retained reload. Its
-first observer settings were insufficient. A later Run froze a source-matched
-sampling policy and longer measurement window and produced accepted active
-evidence with the same apply/read-back/settle/restore boundary. One
-model-loaded-idle Run is also admitted. The slice still remains L2 until the
-required sequential trials and identity audit close; every TensorRT row
-remains below measurement-ready.
+disabled by default. The opt-in AGX Orin CPU ORT MODE_50W slice has now produced
+three sequential accepted active Runs and three sequential accepted
+model-loaded-idle Runs on the current runtime/observer image set. Retained
+reload and production projection proved stable shared execution-state and
+owner-bound environment identities across all six while active and idle kept
+their distinct stable protocol identities. The two exact CPU ORT rows are L3;
+every TensorRT row remains below measurement-ready.
 Later slices remain deferred until their stated entry condition is met or this
 plan is explicitly revised.
 
@@ -77,7 +75,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| parallel | Node power-mode actuation | live active and idle single-Run admissions proven | Complete the sequential active/idle identity audit without promoting TensorRT support. |
+| completed | AGX Orin CPU ORT / MODE_50W | L3 | Six current-image Runs are admitted under stable state, environment, and per-mode protocol identities. |
 | completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions
@@ -201,7 +199,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   target settling and before proven restoration.
 - [x] Admit one exact model-loaded-idle Run through the same actuation and
   restoration boundary.
-- [ ] Complete two additional active and idle trials and verify stable
+- [x] Complete two additional active and idle trials and verify stable
   derivation identities across all six retained objects.
 
 Intent v1alpha9 adds one optional `actuation` object with the selected power
@@ -256,9 +254,9 @@ that authorization drifts after a previous state was retained, it durably
 starts restoration instead of abandoning the Node. The runnable operand
 now selects these allowances and consumes the Lease and lifecycle paths. The
 first opt-in AGX Orin Run closed the target apply/read-back and restoration
-gate. Later active and model-loaded-idle Runs closed single-Run admission; the
-remaining sequential identity audit, live host-failure injection, and an
-operator alert sink remain open.
+gate. Three current-image active and three current-image model-loaded-idle Runs
+then closed admission and the sequential identity audit. Live host-failure
+injection and an operator alert sink remain open.
 
 The runnable layer composes the controller with installation-owned host access.
 Helm renders a disabled-by-default ConfigMap, ServiceAccount,
