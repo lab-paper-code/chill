@@ -32,10 +32,14 @@ settled target state, requests restoration after a terminal Job, and withholds
 evidence finalization until restoration and its causal ordering are proven.
 Finalized actuated execution evidence v1alpha2 retains the exact Run and
 handoff identities, previous/target/restored typed observations, and lifecycle
-timestamps; fixed Runs retain execution evidence v1alpha1. The chart is
-disabled by default, and no live mutation or apply/read-back/restore proof has
-occurred. Later slices remain deferred until their stated entry condition is
-met or this plan is explicitly revised.
+timestamps; fixed Runs retain execution evidence v1alpha1. The chart remains
+disabled by default. An opt-in AGX Orin CPU ORT diagnostic has now proved
+`MAXN -> MODE_50W -> MAXN` apply, independent read-back, settling, successful
+active execution, restoration, v1alpha2 finalization, and retained reload. Its
+scientific admission was `Insufficient`, so only the exact active row advances
+to L2; the idle row and every TensorRT row remain below measurement-ready.
+Later slices remain deferred until their stated entry condition is met or this
+plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
 accumulate command transcripts, image digests, Run statistics, or historical
@@ -69,7 +73,7 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| parallel | Node power-mode actuation | local lifecycle implemented | Roll out one exact AGX Orin CPU ORT diagnostic and prove MODE_50W apply/read-back/measurement/restore without promoting TensorRT support. |
+| parallel | Node power-mode actuation | first live lifecycle proven | Correct the AGX Orin observer-quality failures, then admit exact active and model-loaded-idle evidence without promoting TensorRT support. |
 | completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
 
 ## Stable decisions
@@ -178,11 +182,11 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   explicit narrow host mounts; keep the chart disabled until live restoration
   proof closes the mutation gate.
 - [x] Serialize every runnable-operand handoff with the exact Node-UID Lease;
-  live host-mutation proof remains open.
+  the first live MODE_50W lifecycle released that Lease after proven restore.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
   exact self-Pod allowances before any host operation.
 - [x] Fix `apply -> read-back -> settling -> measurement -> restore` in the
-  Profiler lifecycle; live proof remains a separate gate.
+  Profiler lifecycle and prove that ordering in one retained live Run.
 - [ ] Restore after Run failure, controller restart, and worker timeout.
 - [ ] Surface restoration failure as a terminal condition and operator alert.
 
@@ -236,9 +240,9 @@ closed. The reconciler independently requires the handoff's canonical policy
 digest to be in its installed authorization set before crossing any port; if
 that authorization drifts after a previous state was retained, it durably
 starts restoration instead of abandoning the Node. The runnable operand
-now selects these allowances and consumes the Lease and lifecycle paths. That
-composition does not close the live host-actuation gates: no live mutation or
-restoration proof exists.
+now selects these allowances and consumes the Lease and lifecycle paths. The
+first opt-in AGX Orin Run closed the target apply/read-back and restoration
+gate; admission-quality and failure-injection gates remain open.
 
 The runnable layer composes the controller with installation-owned host access.
 Helm renders a disabled-by-default ConfigMap, ServiceAccount,
@@ -255,8 +259,9 @@ not depend on missing Kubernetes service environment variables. The Jetson adapt
 `nvpmodel` argv with a bounded deadline, parses the query's exact name and ID,
 and never treats an apply exit as convergence. The chart mounts only the
 declared binary, runtime libraries, NVPModel configuration/state, and sysfs;
-it does not request privileged mode or added capabilities. This is local code
-and render proof only, not live actuation support.
+it does not request privileged mode or added capabilities. The exact AGX Orin
+MODE_50W lifecycle is live-proven; no other Node, mode, or runtime inherits
+that result.
 
 ### Jetson NVPModel
 
@@ -268,7 +273,8 @@ and render proof only, not live actuation support.
   2026-08-06 audit.
 - [x] Implement explicit bounded `Apply(ID)` and `Observe()` operations.
 - [x] Judge success in the controller by a separate parsed name/ID read-back,
-  never command exit alone; live proof remains open.
+  never command exit alone; the first MODE_50W live lifecycle proved both
+  target and restored read-backs.
 - [x] Retain exact Run/handoff identities and previous, target, and restored
   mode observations in finalized execution evidence.
 - [ ] Configure settling time and thermal stability in installation policy.

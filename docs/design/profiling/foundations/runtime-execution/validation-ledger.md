@@ -58,15 +58,44 @@ not an apply/read-back/restore result.
 
 | Fact | Verified identity |
 |---|---|
-| Measurement worker | arm64 child `sha256:42ff8d90d01324ed9cbb5a77be12c62360d57adf485f61ea8c23fee7c84dc773`; ONNX Runtime 1.23.2; `CPUExecutionProvider` |
-| MetricObserver | arm64 child `sha256:12bb583bee67761d3089ead9f6296be40aff1159e161cf35261f4ce949eb261d` |
-| WorkloadObserver | arm64 child `sha256:94053b7789e79332e0e0efd9e927909718a5399e65467d0ce8897c79773dbd28` |
+| Measurement worker, Raspberry Pi and Orange Pi | arm64 child `sha256:195c3085fc1c7ec03b239d63cb6995591c76facec8734faf6adc186131bd2e28`; ONNX Runtime; `CPUExecutionProvider` |
+| Measurement worker, AGX Orin diagnostic | arm64 child `sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e`; same CPU ORT adapter with cgroup-v1/v2 environment discovery |
+| MetricObserver | arm64 child `sha256:8fce6ecd849c3a85f145cd59c65666addbed75acde022a2bc97d8df09c9881a8` |
+| WorkloadObserver | arm64 child `sha256:b7d74f51159b6c41fb09d957890ac6dd13504364691313ae9466c66448bb1d94` |
 | Model artifact image | arm64 child `sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721` |
 | Model bytes | `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2` at `/artifact/mobilenet-v2-050.onnx` |
 | Chart profile | `charts/chill/values-profiler-arm64.yaml` |
 
 The runtime and artifact declarations are architecture-scoped facts. They do
 not by themselves prove execution or admission on every arm64 DeviceClass.
+
+## AGX Orin CPU ORT MODE_50W actuation diagnostic (2026-08-06)
+
+The opt-in installation selected only `jetsono` for the NodeActuator. Run
+`jetsono-ort-cpu-mode50w-actuation-a4` and its exact owned handoff proved this
+sequence from Kubernetes status:
+
+- previous `MAXN / ID 0` observed at `02:05:02Z`;
+- target `MODE_50W / ID 3` independently read back at `02:05:03Z`, followed by
+  the configured 60-second settling interval;
+- the measurement Job completed successfully; and
+- restored `MAXN / ID 0` independently read back at `02:06:41Z` before
+  evidence finalization.
+
+The Profiler independently verified finalized execution evidence v1alpha2
+`sha256:444c64d3ef500ef5cdb459a169f5745dfb987048e41927b18e6d6e34f87b5f16`.
+The frozen runtime container and observed `imageID` both name the AGX Orin
+diagnostic child
+`sha256:bf4ba4c58af5a20cb4d3c0c6d99c0f142ef467ffad94ebf29cfa3f65ac1adc0e`.
+Admission remained `Insufficient` with `InsufficientSamples`,
+`PowerReadFailures`, `PowerWindowCoverage`, and `ThermalStateUnavailable`.
+Accordingly this is an L2 active execution and lifecycle proof, not admitted
+power evidence; no model-loaded-idle Run was made.
+
+The post-run live snapshot had `ChillSystem Ready=True`, the NodeActuator
+DaemonSet at `1/1`, no remaining NodeActuation Lease, and a read-only host query
+reported `MAXN / ID 0`. Failed and insufficient diagnostic Runs remain retained
+as evidence and do not promote any support row.
 
 ## Raspberry Pi 5 CPU ORT / fixed
 
