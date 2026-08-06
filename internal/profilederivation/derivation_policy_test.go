@@ -3,7 +3,6 @@ package profilederivation
 import (
 	"bytes"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -104,8 +103,8 @@ func TestFreezeDiscoveryDerivationPolicyRejectsInvalidSemantics(t *testing.T) {
 		"discovery below point minimum": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.PointPolicies[1].MinimumTrials = 4
 		},
-		"invalid curve digest": func(spec *DiscoveryDerivationPolicySpec) {
-			spec.CurveFamilyContractDigest = "sha256:" + strings.Repeat("a", 64)
+		"invalid curve identity": func(spec *DiscoveryDerivationPolicySpec) {
+			spec.CurveFamilyContractDigest = " has-whitespace"
 		},
 		"invalid bsat": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.BatchSaturation.KMax = 1
@@ -135,9 +134,9 @@ func TestDiscoveryDerivationPolicyOwnsInputCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := policy.Digest()
+	frozen := policy.spec()
 	spec.PointPolicies[0].MinimumTrials = 99
-	if policy.Digest() != digest {
+	if !reflect.DeepEqual(policy.spec(), frozen) {
 		t.Fatal("caller mutation changed frozen discovery policy")
 	}
 	if _, err := policy.CanonicalJSON(); err != nil {

@@ -53,8 +53,8 @@ type ExecutionPolicySpec struct {
 	WorkspaceBytes                     int64  `json:"workspaceBytes"`
 }
 
-// ExecutionPolicy is the canonical selected worker envelope. Its digest is
-// the execution-policy version retained on the immutable Job.
+// ExecutionPolicy is the selected worker envelope retained on the immutable
+// Job.
 type ExecutionPolicy struct {
 	SchemaVersion string `json:"schemaVersion"`
 	ExecutionPolicySpec

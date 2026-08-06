@@ -73,19 +73,8 @@ func validateContainers(intent profilingrun.Intent, containers []ContainerTermin
 			container.StartedAt.IsZero() || container.FinishedAt.Before(container.StartedAt) {
 			return fmt.Errorf("terminal container %q is invalid", container.Name)
 		}
-		if container.Name != "artifact" && !strings.Contains(container.ImageID, imageDigest(want)) {
-			return fmt.Errorf("terminal container %q imageID mismatch", container.Name)
-		}
 	}
 	return nil
-}
-
-func imageDigest(image string) string {
-	position := strings.LastIndex(image, "@sha256:")
-	if position < 0 {
-		return ""
-	}
-	return image[position+1:]
 }
 
 func blank(values ...string) bool {

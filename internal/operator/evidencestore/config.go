@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	digestPinnedImagePattern = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
-	bucketNamePattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
+	bucketNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
 )
 
 // Config is the rendered Evidence Store operand contract read by the operator.
@@ -42,18 +41,6 @@ func (c Config) Validate() error {
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			problems = append(problems, field.name+" is required")
-		}
-	}
-
-	for _, image := range []struct {
-		name  string
-		value string
-	}{
-		{name: "image", value: c.Image},
-		{name: "bootstrapImage", value: c.BootstrapImage},
-	} {
-		if strings.TrimSpace(image.value) != "" && !digestPinnedImagePattern.MatchString(image.value) {
-			problems = append(problems, image.name+" must be repository@sha256")
 		}
 	}
 

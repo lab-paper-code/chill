@@ -61,7 +61,6 @@ spec:
                             recipeDigest:
                               description: RecipeDigest identifies the exact conversion
                                 recipe bytes.
-                              pattern: ^sha256:[0-9a-f]{64}$
                               type: string
                             tool:
                               description: Tool is the converter family, such as rknn-toolkit2.
@@ -70,7 +69,6 @@ spec:
                             toolDigest:
                               description: ToolDigest identifies the exact converter
                                 distribution bytes.
-                              pattern: ^sha256:[0-9a-f]{64}$
                               type: string
                             version:
                               description: Version is the converter's reported version.
@@ -131,7 +129,6 @@ spec:
                     digest:
                       description: Digest identifies the exact artifact bytes. The
                         first schema accepts SHA-256.
-                      pattern: ^sha256:[0-9a-f]{64}$
                       type: string
                     format:
                       description: Format names the artifact representation, such

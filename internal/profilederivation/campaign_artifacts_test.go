@@ -18,8 +18,9 @@ func TestCommittedCurveFamilyArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantContractDigest = "chill.dacs.io/curve-family-contract.v1alpha1@sha256:447c326bbdff27a3e6d750c70af714db739d27138c790c1ee9dbc5ffce4565d2"
-	if contract.Digest() != wantContractDigest {
-		t.Fatalf("committed curve-family digest = %q, want %q", contract.Digest(), wantContractDigest)
+	members := contract.Members()
+	if contract.Shared().LogicalModel == "" || len(members) != 2 ||
+		members[0].Batch != 1 || members[1].Batch != 2 {
+		t.Fatalf("unexpected committed curve-family contract: %+v %+v", contract.Shared(), members)
 	}
 }

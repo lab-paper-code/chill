@@ -130,7 +130,6 @@ type ProfilingRunStatus struct {
 
 	// IntentDigest identifies the exact frozen execution intent.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	IntentDigest string `json:"intentDigest,omitempty"`
 
 	// Job identifies the one owned native Job after creation.
@@ -182,7 +181,6 @@ type ProfilingRunEvidenceReference struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Key string `json:"key"`
 
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest"`
 
 	// +kubebuilder:validation:MinLength=1

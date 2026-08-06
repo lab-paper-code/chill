@@ -2,7 +2,7 @@ package profilederivation
 
 import "testing"
 
-func TestPlan5PolicyBoundDerivationRecordsBothDigests(t *testing.T) {
+func TestPlan5PolicyBoundDerivationUsesConfiguredPolicies(t *testing.T) {
 	curve, discoveryPolicy := testPolicyBoundTwoPassCurve(
 		t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, nil,
 	)
@@ -15,7 +15,7 @@ func TestPlan5PolicyBoundDerivationRecordsBothDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	if discovery.CandidateBatch == nil || *discovery.CandidateBatch != 3 ||
-		discovery.PolicyVersion != discoveryPolicy.Digest() {
+		discovery.PolicyVersion != discoveryPolicy.spec().BatchSaturation.Name {
 		t.Fatalf("unexpected policy-bound discovery: %+v", discovery)
 	}
 	sizing, err := DeriveBSatConfirmatorySizing(discoveryCurve, 3, discoveryPolicy)
@@ -30,11 +30,9 @@ func TestPlan5PolicyBoundDerivationRecordsBothDigests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != BSatAccepted ||
-		result.DiscoveryPolicyDigest != discoveryPolicy.Digest() ||
-		result.ConfirmatoryPolicyDigest != confirmatoryPolicy.Digest() ||
-		result.CurveFamilyContractDigest != discoveryPolicy.CurveFamilyContractDigest() {
-		t.Fatalf("final result lost policy provenance: %+v", result)
+	if result.Status != BSatAccepted || result.Code != BSatCodeDomainNoImprovementConfirmed ||
+		!result.DomainNoImprovementConfirmed || result.ConfirmatoryTrials != 3 {
+		t.Fatalf("unexpected final result: %+v", result)
 	}
 }
 
@@ -61,10 +59,8 @@ func TestPlan5PolicyBoundDerivationRetainsBudgetInsufficientOutcome(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != BSatUnavailable || result.Code != BSatCodeConfirmatoryBudgetInsufficient ||
-		result.DiscoveryPolicyDigest != discoveryPolicy.Digest() ||
-		result.ConfirmatoryPolicyDigest != confirmatoryPolicy.Digest() {
-		t.Fatalf("budget result lost policy provenance: %+v", result)
+	if result.Status != BSatUnavailable || result.Code != BSatCodeConfirmatoryBudgetInsufficient {
+		t.Fatalf("unexpected budget result: %+v", result)
 	}
 }
 
@@ -72,27 +68,11 @@ func TestPlan5PolicyBoundaryRejectsCurvePolicyDrift(t *testing.T) {
 	curve, discoveryPolicy := testPolicyBoundTwoPassCurve(
 		t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, nil,
 	)
-	discoveryCurve, err := curve.discoveryOnly()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	wrongFamilySpec := discoveryPolicy.spec()
-	wrongFamilySpec.CurveFamilyContractDigest = curveFamilyContractSchemaVersion +
-		"@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	wrongFamily, err := FreezeDiscoveryDerivationPolicy(wrongFamilySpec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DeriveBSatDiscovery(discoveryCurve, wrongFamily); err == nil {
-		t.Fatal("expected curve-family policy drift rejection")
-	}
-
 	pointDrift, err := curve.discoveryOnly()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pointDrift.passes[0].points[0].PointPolicyVersion = "sha256:drift"
+	pointDrift.passes[0].points[0].PointPolicyVersion = "other-point-policy"
 	if _, err := DeriveBSatDiscovery(pointDrift, discoveryPolicy); err == nil {
 		t.Fatal("expected point-policy drift rejection")
 	}
@@ -102,7 +82,7 @@ func TestPlan5PolicyBoundaryRejectsCurvePolicyDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	for state, baseline := range baselineDrift.baselines {
-		baseline.PolicyVersion = "sha256:drift"
+		baseline.PolicyVersion = "other-idle-policy"
 		baselineDrift.baselines[state] = baseline
 		break
 	}

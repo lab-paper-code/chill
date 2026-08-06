@@ -54,7 +54,6 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.deviceClass == oldSelf.deviceClass",message="deviceClass is immutable"
 // +kubebuilder:validation:XValidation:rule="self.powerMode == oldSelf.powerMode",message="powerMode is immutable"
 // +kubebuilder:validation:XValidation:rule="self.actuator == oldSelf.actuator",message="actuator target is immutable"
-// +kubebuilder:validation:XValidation:rule="self.policyDigest == oldSelf.policyDigest",message="policyDigest is immutable"
 // +kubebuilder:validation:XValidation:rule="self.settlingDurationSeconds == oldSelf.settlingDurationSeconds",message="settlingDurationSeconds is immutable"
 // +kubebuilder:validation:XValidation:rule="self.maxActuationDurationSeconds == oldSelf.maxActuationDurationSeconds",message="maxActuationDurationSeconds is immutable"
 // +kubebuilder:validation:XValidation:rule="self.deadline == oldSelf.deadline",message="deadline is immutable"
@@ -83,8 +82,7 @@ type NodeActuationSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.kind != 'Fixed'",message="NodeActuation requires a mutable actuator target"
 	Actuator PowerModeActuator `json:"actuator"`
 
-	// PolicyDigest identifies the canonical configured actuation policy.
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	// PolicyDigest identifies the selected configured actuation policy.
 	PolicyDigest string `json:"policyDigest"`
 
 	// SettlingDurationSeconds is the frozen post-verification settling period.

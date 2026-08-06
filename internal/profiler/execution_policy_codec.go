@@ -2,8 +2,6 @@ package profiler
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,29 +116,9 @@ func (f FrozenExecutionPolicy) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(f)
 }
 
-func (p ExecutionPolicy) Digest() (string, error) {
-	if err := p.Validate(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	return executionPolicyDigestBytes(payload), nil
-}
-
 func (f FrozenExecutionPolicy) Identity() (string, error) {
 	if err := f.Validate(); err != nil {
 		return "", err
 	}
-	digest, err := f.Policy.Digest()
-	if err != nil {
-		return "", err
-	}
-	return f.Policy.Name + "/" + digest, nil
-}
-
-func executionPolicyDigestBytes(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return f.Policy.Name, nil
 }

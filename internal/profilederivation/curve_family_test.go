@@ -3,6 +3,7 @@ package profilederivation
 import (
 	"bytes"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,24 +15,28 @@ func TestFreezeAndVerifyCurveFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	ordered := contract.Members()
-	if ordered[0].Batch != 1 || ordered[1].Batch != 2 ||
-		!strings.HasPrefix(contract.Digest(), curveFamilyContractSchemaVersion+"@sha256:") {
-		t.Fatalf("unexpected frozen contract: %s %+v", contract.Digest(), ordered)
+	if ordered[0].Batch != 1 || ordered[1].Batch != 2 {
+		t.Fatalf("unexpected frozen contract: %+v", ordered)
 	}
 	second, err := FreezeCurveFamilyContract(shared, members)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Digest() != contract.Digest() {
-		t.Fatalf("batch order changed the contract digest: %s != %s", second.Digest(), contract.Digest())
+	if !reflect.DeepEqual(second.Shared(), contract.Shared()) ||
+		!reflect.DeepEqual(second.Members(), contract.Members()) {
+		t.Fatal("batch order changed the frozen contract semantics")
 	}
 	canonical, err := contract.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	decoded, err := DecodeCurveFamilyContract(append([]byte(" \n"), canonical...))
-	if err != nil || decoded.Digest() != contract.Digest() {
-		t.Fatalf("decode did not reproduce the frozen contract: %s %v", decoded.Digest(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Shared(), contract.Shared()) ||
+		!reflect.DeepEqual(decoded.Members(), contract.Members()) {
+		t.Fatal("decoded contract lost configured semantics")
 	}
 	unknown := bytes.Replace(canonical, []byte(`"schemaVersion":`), []byte(`"unknown":1,"schemaVersion":`), 1)
 	if _, err := DecodeCurveFamilyContract(unknown); err == nil {
@@ -53,21 +58,20 @@ func TestFreezeAndVerifyCurveFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(family.Identity(), curveFamilyIdentitySchemaVersion+"@sha256:") ||
-		family.ContractDigest() != contract.Digest() || len(family.Members()) != 2 {
-		t.Fatalf("unexpected verified family: %s %s", family.Identity(), family.ContractDigest())
+	if family.Identity() == "" || len(family.Members()) != 2 {
+		t.Fatalf("unexpected verified family: %s", family.Identity())
 	}
 	reversed := []VerifiedCurveFamilyMember{verified[1], verified[0]}
 	reorderedFamily, err := VerifyCurveFamily(contract, reversed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reorderedFamily.Identity() != family.Identity() {
-		t.Fatal("verified member order changed the realized family identity")
+	if !reflect.DeepEqual(reorderedFamily.Members(), family.Members()) {
+		t.Fatal("verified member order changed the realized family semantics")
 	}
 
 	drifted := testVerifiedMembers(contract)
-	drifted[1].Shared.Conversion.RecipeDigest = testDigest("f")
+	drifted[1].Shared.Conversion.ToolVersion = "other-version"
 	if _, err := VerifyCurveFamily(contract, drifted); err == nil {
 		t.Fatal("expected verified conversion drift rejection")
 	}

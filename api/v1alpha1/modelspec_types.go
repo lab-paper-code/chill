@@ -31,7 +31,6 @@ type ModelArtifact struct {
 	Format string `json:"format"`
 
 	// Digest identifies the exact artifact bytes. The first schema accepts SHA-256.
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest"`
 
 	// Derivation binds a derived executable to its source artifact and conversion identity.
@@ -88,11 +87,9 @@ type ModelArtifactConversion struct {
 	Version string `json:"version"`
 
 	// ToolDigest identifies the exact converter distribution bytes.
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	ToolDigest string `json:"toolDigest"`
 
 	// RecipeDigest identifies the exact conversion recipe bytes.
-	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	RecipeDigest string `json:"recipeDigest"`
 }
 

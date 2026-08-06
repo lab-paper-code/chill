@@ -25,8 +25,8 @@ type ActuationPolicyCatalog struct {
 // fixes the timing bounds that the later durable handoff must enforce.
 type ActuationPolicySpec = nodeactuator.ActuationPolicySpec
 
-// ActuationPolicy is the canonical selected authorization. Its digest is
-// bound into the immutable Run intent.
+// ActuationPolicy is the selected authorization retained in the immutable Run
+// intent.
 type ActuationPolicy = nodeactuator.ActuationPolicy
 
 type ActuationPolicySource struct {

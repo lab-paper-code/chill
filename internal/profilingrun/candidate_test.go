@@ -230,44 +230,6 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 }
 
-func TestCandidateHostContractDigestIsOrderIndependentAndMaterial(t *testing.T) {
-	contract := rknnHostContractForTest()
-	contract.Libraries = append(contract.Libraries, CandidateReportHostLibrary{
-		Name: "libother", HostPath: "/usr/lib/libother.so", ContainerPath: "/usr/lib/libother.so",
-		Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-	})
-	first, err := CandidateHostContractDigest(&contract)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reordered := contract
-	reordered.Libraries = []CandidateReportHostLibrary{contract.Libraries[1], contract.Libraries[0]}
-	reordered.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
-	for left, right := 0, len(reordered.Devices)-1; left < right; left, right = left+1, right-1 {
-		reordered.Devices[left], reordered.Devices[right] = reordered.Devices[right], reordered.Devices[left]
-	}
-	second, err := CandidateHostContractDigest(&reordered)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Fatalf("equivalent host contract order changed digest: %s != %s", first, second)
-	}
-
-	changed := contract
-	changed.Driver.Version = "0.9.7"
-	third, err := CandidateHostContractDigest(&changed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if third == first {
-		t.Fatal("driver version did not change host contract digest")
-	}
-	if none, err := CandidateHostContractDigest(nil); err != nil || none != "" {
-		t.Fatalf("nil host contract digest = %q, %v", none, err)
-	}
-}
-
 func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()

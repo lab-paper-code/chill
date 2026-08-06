@@ -310,8 +310,7 @@ func TestBuildExecutionJobUsesConfiguredExecutionPolicyIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Annotations[executionPolicyAnnotation] != wantIdentity ||
-		!strings.Contains(wantIdentity, "/sha256:") {
+	if job.Annotations[executionPolicyAnnotation] != wantIdentity {
 		t.Fatalf("configured Job policy identity = %q, want %q", job.Annotations[executionPolicyAnnotation], wantIdentity)
 	}
 }

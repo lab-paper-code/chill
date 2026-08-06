@@ -70,8 +70,7 @@ type runtimePackage struct {
 	Version string `json:"version"`
 }
 
-// artifactSupply is a versioned delivery contract. The future Job worker must
-// still hash the bytes copied from Path and compare them with Digest.
+// artifactSupply is a versioned delivery contract.
 type artifactSupply struct {
 	SchemaVersion string `json:"schemaVersion"`
 	Image         string `json:"image"`
@@ -81,8 +80,8 @@ type artifactSupply struct {
 }
 
 // hostExecutionContract is installation configuration, not a current host
-// observation. The Job projection and worker must mount and verify every
-// declared boundary before measurement.
+// observation. The Job projection and worker must mount every declared
+// boundary before measurement.
 type hostExecutionContract struct {
 	Libraries  []hostLibraryContract `json:"libraries"`
 	Driver     hostDriverContract    `json:"driver"`

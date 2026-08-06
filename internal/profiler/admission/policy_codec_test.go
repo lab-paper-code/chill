@@ -60,7 +60,7 @@ func TestFreezeConfiguredPolicySelectsAndCanonicalizesExactPolicy(t *testing.T) 
 		t.Fatal(err)
 	}
 	if policy.MinimumSamples != 3 || policy.MaximumGapSeconds != 12 ||
-		!strings.HasPrefix(policy.Version, "sha256:") {
+		policy.Version != sealedRecord.Name {
 		t.Fatalf("admission policy = %#v", policy)
 	}
 	payload, err := frozen.CanonicalJSON()

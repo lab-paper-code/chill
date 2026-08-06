@@ -164,9 +164,8 @@ spec:
                 - uid
                 type: object
               policyDigest:
-                description: PolicyDigest identifies the canonical configured actuation
+                description: PolicyDigest identifies the selected configured actuation
                   policy.
-                pattern: ^sha256:[0-9a-f]{64}$
                 type: string
               powerMode:
                 description: PowerMode is the stable selected mode name.
@@ -225,8 +224,6 @@ spec:
               rule: self.powerMode == oldSelf.powerMode
             - message: actuator target is immutable
               rule: self.actuator == oldSelf.actuator
-            - message: policyDigest is immutable
-              rule: self.policyDigest == oldSelf.policyDigest
             - message: settlingDurationSeconds is immutable
               rule: self.settlingDurationSeconds == oldSelf.settlingDurationSeconds
             - message: maxActuationDurationSeconds is immutable

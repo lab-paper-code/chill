@@ -2,8 +2,6 @@ package admission
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,10 +80,9 @@ type frozenPolicyRecord struct {
 // populated value can only be constructed by the catalog-freeze or retained-
 // JSON decode boundaries in this package.
 type FrozenPolicy struct {
-	record       frozenPolicyRecord
-	canonical    []byte
-	policyDigest string
-	verified     bool
+	record    frozenPolicyRecord
+	canonical []byte
+	verified  bool
 }
 
 // FreezeConfiguredPolicy strict-decodes one catalog and selects a policy by
@@ -149,7 +146,7 @@ func DecodeFrozenPolicy(raw []byte) (FrozenPolicy, error) {
 	if err != nil {
 		return FrozenPolicy{}, err
 	}
-	return newFrozenPolicy(record, canonical)
+	return newFrozenPolicy(record, canonical), nil
 }
 
 func validateFrozenPolicy(record frozenPolicyRecord) error {
@@ -181,18 +178,14 @@ func sealFrozenPolicy(record frozenPolicyRecord) (FrozenPolicy, error) {
 	if err != nil {
 		return FrozenPolicy{}, fmt.Errorf("encode frozen admission policy: %w", err)
 	}
-	return newFrozenPolicy(record, canonical)
+	return newFrozenPolicy(record, canonical), nil
 }
 
-func newFrozenPolicy(record frozenPolicyRecord, canonical []byte) (FrozenPolicy, error) {
-	policyBytes, err := json.Marshal(record.Policy)
-	if err != nil {
-		return FrozenPolicy{}, fmt.Errorf("encode verified admission policy: %w", err)
-	}
+func newFrozenPolicy(record frozenPolicyRecord, canonical []byte) FrozenPolicy {
 	return FrozenPolicy{
 		record: record, canonical: append([]byte(nil), canonical...),
-		policyDigest: digestBytes(policyBytes), verified: true,
-	}, nil
+		verified: true,
+	}
 }
 
 func (f FrozenPolicy) Records() (PolicySource, Policy, error) {
@@ -209,20 +202,13 @@ func (f FrozenPolicy) CanonicalJSON() ([]byte, error) {
 	return append([]byte(nil), f.canonical...), nil
 }
 
-func (f FrozenPolicy) Digest() (string, error) {
-	if !f.verified {
-		return "", errors.New("frozen admission policy is empty")
-	}
-	return f.policyDigest, nil
-}
-
 func (f FrozenPolicy) AdmissionPolicy() (profilederivation.AdmissionPolicy, error) {
 	_, policy, err := f.Records()
 	if err != nil {
 		return profilederivation.AdmissionPolicy{}, err
 	}
 	return profilederivation.AdmissionPolicy{
-		Version:                        f.policyDigest,
+		Version:                        policy.Name,
 		MinimumSamples:                 policy.MinimumSamples,
 		MaximumGapSeconds:              policy.MaximumGapSeconds,
 		MaximumBoundaryDistanceSeconds: policy.MaximumBoundaryDistanceSeconds,
@@ -255,17 +241,6 @@ func finite(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-func (p Policy) Digest() (string, error) {
-	if err := p.Validate(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(p)
-	if err != nil {
-		return "", fmt.Errorf("encode admission policy: %w", err)
-	}
-	return digestBytes(payload), nil
-}
-
 func policyFromSpec(spec PolicySpec) Policy {
 	return Policy{
 		SchemaVersion: PolicySchemaVersion,
@@ -276,9 +251,4 @@ func policyFromSpec(spec PolicySpec) Policy {
 		RejectConcurrentCHILLWorkloads: spec.RejectConcurrentCHILLWorkloads,
 		RejectExternalWorkloadChanges:  spec.RejectExternalWorkloadChanges,
 	}
-}
-
-func digestBytes(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

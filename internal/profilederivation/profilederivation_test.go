@@ -179,7 +179,7 @@ func TestIdleAdmissionUsesSharedWindowQualityAndIdleCompleteness(t *testing.T) {
 	}{
 		{name: "inference", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.InferenceCountAfterModelLoad = 1 }},
 		{name: "settling", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.SettlingWindowVerified = false }},
-		{name: "provenance", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.RawEvidence.Digest = "bad" }},
+		{name: "provenance", want: VerdictRejected, edit: func(candidate *IdleObservation) { candidate.RawEvidence.Key = "" }},
 		{name: "coverage", want: VerdictInsufficient, edit: func(candidate *IdleObservation) { candidate.Samples = candidate.Samples[:1] }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

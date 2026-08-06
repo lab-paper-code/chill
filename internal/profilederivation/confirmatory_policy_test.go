@@ -30,12 +30,11 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.DiscoveryPolicyDigest() != discovery.Digest() ||
-		decoded.CurveFamilyContractDigest() != discovery.CurveFamilyContractDigest() ||
+	if decoded.CurveFamilyContractDigest() != discovery.CurveFamilyContractDigest() ||
 		decoded.CandidateBatch() != 3 || decoded.ConfirmatoryTrials() == nil ||
 		*decoded.ConfirmatoryTrials() != 3 ||
 		!slices.Equal(decoded.ConfirmatoryBatches(), []int{3, 4}) ||
-		bsat.Version != discovery.Digest() {
+		bsat.Version != discovery.spec().BatchSaturation.Name {
 		t.Fatalf("confirmatory policy lost its frozen allocation: %+v", decoded.record)
 	}
 }
@@ -53,7 +52,6 @@ func TestConfirmatoryDerivationPolicyRejectsDrift(t *testing.T) {
 	tests := map[string][]byte{
 		"unknown field":    []byte(strings.Replace(string(canonical), `"confirmation":`, `"unknown":1,"confirmation":`, 1)),
 		"trailing value":   append(append([]byte(nil), canonical...), []byte(` []`)...),
-		"discovery digest": replaceJSONString(t, canonical, discovery.Digest(), "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		"scientific field": []byte(strings.Replace(string(canonical), `"kmax":4`, `"kmax":5`, 1)),
 		"candidate":        []byte(strings.Replace(string(canonical), `"candidateBatch":3`, `"candidateBatch":2`, 1)),
 		"trial count":      []byte(strings.Replace(string(canonical), `"confirmatoryTrials":3`, `"confirmatoryTrials":4`, 1)),
@@ -109,13 +107,4 @@ func testSizedDiscoveryPolicy(t *testing.T) (DiscoveryDerivationPolicy, BSatSizi
 		t.Fatal(err)
 	}
 	return discovery, sizing
-}
-
-func replaceJSONString(t *testing.T, payload []byte, from, to string) []byte {
-	t.Helper()
-	needle := `"` + from + `"`
-	if !strings.Contains(string(payload), needle) {
-		t.Fatalf("fixture did not contain %q", from)
-	}
-	return []byte(strings.Replace(string(payload), needle, `"`+to+`"`, 1))
 }

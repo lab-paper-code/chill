@@ -1,8 +1,6 @@
 package evidence
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -406,15 +404,7 @@ func TestExecutionEvidenceCanonicalJSONAndIdentityLink(t *testing.T) {
 	workload := *raw.Workload
 	driftedRaw.Workload = &workload
 	driftedRaw.Workload.Run.JobUID = "other-job"
-	driftedBytes, err := driftedRaw.CanonicalJSON(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	driftedEvidence := evidence
-	driftedSum := sha256.Sum256(driftedBytes)
-	driftedEvidence.RawMeasurement.Digest = "sha256:" + hex.EncodeToString(driftedSum[:])
-	driftedEvidence.RawMeasurement.Size = int64(len(driftedBytes))
-	if err := driftedEvidence.Validate(driftedRaw); err == nil || !strings.Contains(err.Error(), "terminal Kubernetes") {
+	if err := evidence.Validate(driftedRaw); err == nil || !strings.Contains(err.Error(), "terminal Kubernetes") {
 		t.Fatalf("expected workload-to-terminal identity rejection, got %v", err)
 	}
 
@@ -444,30 +434,6 @@ func TestExecutionEvidenceValidatesIdleRawObjectIdentity(t *testing.T) {
 	invalid.RawMeasurement.Key = ""
 	if err := invalid.ValidateIdle(raw); err == nil {
 		t.Fatal("idle execution evidence accepted a malformed raw object identity")
-	}
-}
-
-func TestExecutionEvidenceRejectsSelectedContainerImageIDDrift(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	evidence := validExecutionEvidence(t, intent, raw)
-
-	for _, name := range []string{"runtime", "metric-observer", "workload-observer"} {
-		t.Run(name, func(t *testing.T) {
-			drifted := evidence
-			drifted.Terminal.Containers = append([]ContainerTerminal(nil), evidence.Terminal.Containers...)
-			for index := range drifted.Terminal.Containers {
-				if drifted.Terminal.Containers[index].Name == name {
-					drifted.Terminal.Containers[index].ImageID =
-						"containerd://registry.example/drifted@sha256:" + strings.Repeat("f", 64)
-				}
-			}
-
-			err := drifted.Validate(raw)
-			if err == nil || !strings.Contains(err.Error(), `terminal container "`+name+`" imageID mismatch`) {
-				t.Fatalf("expected %s child imageID drift rejection, got %v", name, err)
-			}
-		})
 	}
 }
 
@@ -699,12 +665,7 @@ func validExecutionEvidenceBytes(
 	rawBytes []byte,
 ) ExecutionEvidence {
 	t.Helper()
-	sum := sha256.Sum256(rawBytes)
 	candidate, err := os.ReadFile("testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest, err := intent.Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +675,7 @@ func validExecutionEvidenceBytes(
 		return ContainerTerminal{
 			Name:           name,
 			RequestedImage: image,
-			ImageID:        "containerd://" + imageDigest(image),
+			ImageID:        "containerd://" + name + "-image-id",
 			Reason:         "Completed",
 			StartedAt:      completed.Add(-time.Minute),
 			FinishedAt:     completed.Add(-time.Second),
@@ -722,13 +683,13 @@ func validExecutionEvidenceBytes(
 	}
 	return ExecutionEvidence{
 		SchemaVersion:        ExecutionEvidenceSchemaVersion,
-		IntentDigest:         digest,
+		IntentDigest:         "intent-identity",
 		Intent:               intent,
 		CandidateReportBytes: candidate,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store:  "chill-evidence",
 			Key:    "runs/run-uid/raw.json",
-			Digest: "sha256:" + hex.EncodeToString(sum[:]),
+			Digest: "raw-object-identity",
 			Size:   int64(len(rawBytes)),
 		},
 		Terminal: TerminalFacts{
@@ -778,7 +739,7 @@ func validActuatedExecutionEvidence(
 			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 0},
 		},
-		PolicyDigest: "sha256:" + strings.Repeat("e", 64),
+		PolicyDigest: "jetson-mode-policy",
 	}
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
@@ -796,8 +757,7 @@ func validActuatedExecutionEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidateDigest := sha256.Sum256(candidateBytes)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(candidateDigest[:])
+	intent.Candidate.ReportDigest = "candidate-report-identity"
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}

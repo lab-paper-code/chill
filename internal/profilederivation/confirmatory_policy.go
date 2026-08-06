@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha2"
+const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha3"
 
 type ConfirmatoryBatchAllocation struct {
 	Batch  int `json:"batch"`
@@ -28,8 +28,7 @@ type ConfirmatoryAllocation struct {
 type confirmatoryDerivationPolicyRecord struct {
 	SchemaVersion string `json:"schemaVersion"`
 	DiscoveryDerivationPolicySpec
-	DiscoveryPolicyDigest string                 `json:"discoveryPolicyDigest"`
-	Confirmation          ConfirmatoryAllocation `json:"confirmation"`
+	Confirmation ConfirmatoryAllocation `json:"confirmation"`
 }
 
 // ConfirmatoryDerivationPolicy is the second immutable policy artifact. It
@@ -66,7 +65,6 @@ func FreezeConfirmatoryDerivationPolicy(
 	record := confirmatoryDerivationPolicyRecord{
 		SchemaVersion:                 ConfirmatoryDerivationPolicySchemaVersion,
 		DiscoveryDerivationPolicySpec: discovery.spec(),
-		DiscoveryPolicyDigest:         discovery.Digest(),
 		Confirmation:                  allocation,
 	}
 	return freezeConfirmatoryDerivationPolicyRecord(record)
@@ -118,10 +116,6 @@ func (p ConfirmatoryDerivationPolicy) CanonicalJSON() ([]byte, error) {
 
 func (p ConfirmatoryDerivationPolicy) Digest() string { return p.digest }
 
-func (p ConfirmatoryDerivationPolicy) DiscoveryPolicyDigest() string {
-	return p.record.DiscoveryPolicyDigest
-}
-
 func (p ConfirmatoryDerivationPolicy) CurveFamilyContractDigest() string {
 	return p.record.CurveFamilyContractDigest
 }
@@ -163,7 +157,7 @@ func (p ConfirmatoryDerivationPolicy) discoveryPolicy() (DiscoveryDerivationPoli
 		DiscoveryDerivationPolicySpec: p.record.DiscoveryDerivationPolicySpec,
 	}
 	record.PointPolicies = append([]PointPolicyEntry(nil), record.PointPolicies...)
-	return DiscoveryDerivationPolicy{record: record, digest: p.record.DiscoveryPolicyDigest}, nil
+	return freezeDiscoveryDerivationPolicyRecord(record)
 }
 
 func validateConfirmatoryPolicyCurve(

@@ -21,7 +21,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Policy != testConfiguredActivePolicy || !strings.HasPrefix(plan.PolicyVersion, "sha256:") {
+	if plan.Policy != testConfiguredActivePolicy || plan.PolicyVersion != testConfiguredActivePolicy {
 		t.Fatalf("unexpected policy identity: %#v", plan)
 	}
 	if plan.MaxMetricEvents != 33 {
@@ -97,7 +97,7 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Policy != testConfiguredIdlePolicy || !strings.HasPrefix(plan.PolicyVersion, "sha256:") {
+	if plan.Policy != testConfiguredIdlePolicy || plan.PolicyVersion != testConfiguredIdlePolicy {
 		t.Fatalf("unexpected idle policy identity: %#v", plan)
 	}
 	if plan.ActiveDeadline != 271*time.Second || plan.AttemptTimeout != 241*time.Second ||
@@ -138,7 +138,7 @@ func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
 	if plan.MaxLatencySamples != 2048 || plan.ObserverCPURequest != "10m" || plan.ObserverCPULimit != "200m" {
 		t.Fatalf("configured execution envelope was not projected: %#v", plan)
 	}
-	if !strings.HasPrefix(plan.PolicyVersion, "sha256:") {
+	if plan.PolicyVersion != frozen.Policy.Name {
 		t.Fatalf("configured policy version = %q", plan.PolicyVersion)
 	}
 }

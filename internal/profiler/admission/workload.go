@@ -1,7 +1,6 @@
 package admission
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -126,7 +125,7 @@ func workloadEnvironmentIdentity(pods []workloadobserver.Pod) (string, error) {
 		Images    []string                        `json:"images"`
 		Labels    map[string]string               `json:"labels,omitempty"`
 	}
-	encoded := make([]json.RawMessage, 0, len(pods))
+	encoded := make([]string, 0, len(pods))
 	for _, pod := range pods {
 		entry := member{
 			Namespace: pod.Namespace, Owner: pod.Owner, Phase: pod.Phase,
@@ -139,14 +138,18 @@ func workloadEnvironmentIdentity(pods []workloadobserver.Pod) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("encode external workload member: %w", err)
 		}
-		encoded = append(encoded, payload)
+		encoded = append(encoded, string(payload))
 	}
-	sort.Slice(encoded, func(i, j int) bool { return bytes.Compare(encoded[i], encoded[j]) < 0 })
+	sort.Strings(encoded)
+	members := make([]json.RawMessage, len(encoded))
+	for index, payload := range encoded {
+		members[index] = json.RawMessage(payload)
+	}
 	return digestIdentity(
 		environmentIdentitySchemaVersion,
 		struct {
 			Known   bool              `json:"known"`
 			Members []json.RawMessage `json:"members"`
-		}{Known: true, Members: encoded},
+		}{Known: true, Members: members},
 	)
 }

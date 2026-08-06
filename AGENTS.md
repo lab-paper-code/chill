@@ -86,7 +86,7 @@ not replaced by code-intelligence checks.
 
 ## Verification boundaries
 
-- Do not add digest recomputation or comparison as a validation gate.
+- Do not add digest format, recomputation, or comparison as a validation gate.
 - Do not add byte-for-byte equality or canonical re-encoding comparisons as a
   validation gate.
 - Validate boundary inputs structurally and semantically, not by their encoding.

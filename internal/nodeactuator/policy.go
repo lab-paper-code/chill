@@ -1,9 +1,6 @@
 package nodeactuator
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -62,16 +59,4 @@ func (p ActuationPolicy) Validate() error {
 		return errors.New("actuation-policy maxActuationDurationSeconds must exceed settling and be at most 24 hours")
 	}
 	return nil
-}
-
-func (p ActuationPolicy) Digest() (string, error) {
-	if err := p.Validate(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

@@ -10,7 +10,6 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strings"
 )
 
 const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha2"
@@ -95,7 +94,6 @@ func freezeDiscoveryDerivationPolicyRecord(
 }
 
 // DecodeDiscoveryDerivationPolicy strict-decodes exactly one JSON policy file.
-// Whitespace and point-policy input order are not part of its canonical digest.
 func DecodeDiscoveryDerivationPolicy(raw []byte) (DiscoveryDerivationPolicy, error) {
 	var record discoveryDerivationPolicyRecord
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -143,7 +141,7 @@ func (p DiscoveryDerivationPolicy) PointPolicy(stage PointPolicyStage) (PointPol
 	for _, entry := range p.record.PointPolicies {
 		if entry.Stage == stage {
 			return PointPolicy{
-				Version: p.digest, MinimumTrials: entry.MinimumTrials,
+				Version: entry.Name, MinimumTrials: entry.MinimumTrials,
 				ConfidenceLevel: p.record.PointConfidenceLevel,
 			}, nil
 		}
@@ -160,7 +158,7 @@ func (p DiscoveryDerivationPolicy) BSatPolicy() (BSatPolicy, error) {
 		p.record.PointPolicies, PointPolicyStageIncrementalPoint,
 	)
 	return BSatPolicy{
-		Version: p.digest, KMax: entry.KMax,
+		Version: entry.Name, KMax: entry.KMax,
 		RelativeImprovementTolerance: entry.RelativeImprovementTolerance,
 		MinimumPointTrials:           minimumPointTrials,
 		DiscoveryTrials:              entry.DiscoveryTrials,
@@ -226,7 +224,7 @@ func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRec
 	if !validDerivationPolicyName(spec.Name) {
 		return errors.New("discovery derivation-policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
-	if !validVersionedIdentity(spec.CurveFamilyContractDigest, curveFamilyContractSchemaVersion) {
+	if !cleanCurveValue(spec.CurveFamilyContractDigest) {
 		return errors.New("discovery derivation policy has an invalid curve-family contract identity")
 	}
 	if len(spec.PointPolicies) != 2 {
@@ -285,12 +283,6 @@ func pointPolicyMinimumTrials(entries []PointPolicyEntry, stage PointPolicyStage
 
 func validDerivationPolicyName(name string) bool {
 	return len(name) >= 1 && len(name) <= 63 && derivationPolicyNamePattern.MatchString(name)
-}
-
-func validVersionedIdentity(value, schemaVersion string) bool {
-	prefix := schemaVersion + "@"
-	suffix := strings.TrimPrefix(value, prefix)
-	return strings.HasPrefix(value, prefix) && cleanCurveValue(suffix)
 }
 
 func derivationPolicyDigest(payload []byte) string {

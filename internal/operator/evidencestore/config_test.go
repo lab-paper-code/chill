@@ -20,7 +20,6 @@ func TestConfigValidate(t *testing.T) {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 
-	config.Image = "versity/versitygw:latest"
 	config.BootstrapImage = ""
 	config.ImagePullPolicy = corev1.PullPolicy("Sometimes")
 	config.Bucket = "192.168.1.1"
@@ -30,7 +29,6 @@ func TestConfigValidate(t *testing.T) {
 		t.Fatal("invalid config accepted")
 	}
 	for _, wanted := range []string{
-		"image must be repository@sha256",
 		"bootstrapImage is required",
 		"imagePullPolicy must be Always, IfNotPresent, or Never",
 		"bucket must be a valid S3 bucket name",

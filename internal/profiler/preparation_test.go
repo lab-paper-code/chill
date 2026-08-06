@@ -109,12 +109,8 @@ func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policyDigest, err := resolvers.actuation.result.Policy.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if prepared.Intent.Actuation == nil || prepared.ActuationPolicy == nil ||
-		prepared.Intent.Actuation.PolicyDigest != policyDigest ||
+		prepared.Intent.Actuation.PolicyDigest != resolvers.actuation.result.Policy.Name ||
 		prepared.Intent.Actuation.Actuator.JetsonNVPModel.ID != 1 ||
 		resolvers.actuation.calls != 1 || !reflect.DeepEqual(resolvers.actuation.selection, selection) {
 		t.Fatalf("prepared actuation binding = %#v policy=%#v", prepared.Intent.Actuation, prepared.ActuationPolicy)

@@ -362,7 +362,6 @@ spec:
                   execution evidence.
                 properties:
                   digest:
-                    pattern: ^sha256:[0-9a-f]{64}$
                     type: string
                   key:
                     description: Key is opaque to API consumers.
@@ -392,7 +391,6 @@ spec:
                 type: object
               intentDigest:
                 description: IntentDigest identifies the exact frozen execution intent.
-                pattern: ^sha256:[0-9a-f]{64}$
                 type: string
               job:
                 description: Job identifies the one owned native Job after creation.

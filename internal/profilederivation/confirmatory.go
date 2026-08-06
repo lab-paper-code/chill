@@ -39,7 +39,7 @@ func DeriveBSatConfirmatory(
 	if err != nil {
 		return BSatResult{}, err
 	}
-	result.DiscoveryPolicyDigest = policy.DiscoveryPolicyDigest()
+	result.DiscoveryPolicyDigest = discoveryPolicy.Digest()
 	result.ConfirmatoryPolicyDigest = policy.Digest()
 	return result, nil
 }

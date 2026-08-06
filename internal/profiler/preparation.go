@@ -251,14 +251,10 @@ func (p *Preparer) resolveActuation(
 	if err := validateActuationPolicySelection(policy.Policy, selection); err != nil {
 		return nil, nil, fmt.Errorf("validate selected actuation policy: %w", err)
 	}
-	digest, err := policy.Policy.Digest()
-	if err != nil {
-		return nil, nil, fmt.Errorf("digest selected actuation policy: %w", err)
-	}
 	return &profilingrun.ActuationContract{
 		PowerMode:    candidate.State.PowerMode,
 		Actuator:     selection.Actuator,
-		PolicyDigest: digest,
+		PolicyDigest: policy.Policy.Name,
 	}, &policy, nil
 }
 

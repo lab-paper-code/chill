@@ -83,7 +83,7 @@ var _ = Describe("NodeActuator operand reconciliation", func() {
 		handoff.Status = edgev1alpha1.NodeActuationStatus{
 			ObservedGeneration: handoff.Generation, Phase: edgev1alpha1.NodeActuationPhaseFailed,
 			TerminalFailure: &edgev1alpha1.NodeActuationFailure{
-				Stage: edgev1alpha1.NodeActuationFailureStagePolicy, Reason: "PolicyDigestRejected",
+				Stage: edgev1alpha1.NodeActuationFailureStagePolicy, Reason: "PolicyRejected",
 				Message: "rejected before mutation", OccurredAt: now,
 			},
 		}

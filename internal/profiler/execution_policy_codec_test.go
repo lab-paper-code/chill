@@ -36,7 +36,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(identity, "configured-active/sha256:") {
+	if identity != testConfiguredActivePolicy {
 		t.Fatalf("execution identity = %q", identity)
 	}
 	canonical, err := frozen.CanonicalJSON()

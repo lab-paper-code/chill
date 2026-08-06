@@ -3,7 +3,6 @@ package operatorintegration
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -70,9 +69,6 @@ var _ = Describe("NodeActuation API", func() {
 		}),
 		Entry("deadline precedes request", func(handoff *edgev1alpha1.NodeActuation) {
 			handoff.Spec.Deadline = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(-time.Second))
-		}),
-		Entry("noncanonical policy digest", func(handoff *edgev1alpha1.NodeActuation) {
-			handoff.Spec.PolicyDigest = "sha256:ABC"
 		}),
 	)
 
@@ -170,7 +166,7 @@ func validNodeActuation(name string, run *edgev1alpha1.ProfilingRun) *edgev1alph
 			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Actuator:                    jetsonNVPModelActuator(2),
-			PolicyDigest:                "sha256:" + strings.Repeat("a", 64),
+			PolicyDigest:                "jetson-mode-policy",
 			SettlingDurationSeconds:     60,
 			MaxActuationDurationSeconds: 900,
 			Deadline:                    metav1.NewTime(requested.Add(15 * time.Minute)),

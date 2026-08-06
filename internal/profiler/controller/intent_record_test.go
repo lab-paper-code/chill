@@ -296,12 +296,8 @@ func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, FrozenR
 	if err != nil {
 		t.Fatal(err)
 	}
-	policyDigest, err := policy.Policy.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	prepared.Intent.Actuation = &profilingrun.ActuationContract{
-		PowerMode: selection.PowerMode, Actuator: target, PolicyDigest: policyDigest,
+		PowerMode: selection.PowerMode, Actuator: target, PolicyDigest: policy.Policy.Name,
 	}
 	report, err := profilingrun.DecodeCandidateReport(prepared.CandidateReportBytes)
 	if err != nil {

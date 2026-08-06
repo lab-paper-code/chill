@@ -56,12 +56,6 @@ var _ = Describe("ModelSpec API", func() {
 		Entry("empty execution-path list", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.ExecutionPaths = nil
 		}),
-		Entry("non-canonical artifact digest", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Digest = "8645"
-		}),
-		Entry("uppercase artifact digest", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Digest = "sha256:" + "A" + model.Spec.Artifacts[0].Digest[8:]
-		}),
 		Entry("empty artifact name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Name = ""
 		}),
@@ -82,14 +76,6 @@ var _ = Describe("ModelSpec API", func() {
 		Entry("zero fixed batch", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
 			model.Spec.Artifacts[0].Derivation.FixedBatch = 0
-		}),
-		Entry("non-canonical converter digest", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
-			model.Spec.Artifacts[0].Derivation.Conversion.ToolDigest = "sha256:bad"
-		}),
-		Entry("non-canonical recipe digest", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
-			model.Spec.Artifacts[0].Derivation.Conversion.RecipeDigest = "sha256:bad"
 		}),
 		Entry("empty execution-path name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.ExecutionPaths[0].Name = ""

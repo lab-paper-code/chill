@@ -1,7 +1,6 @@
 package profiler
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
@@ -19,10 +18,6 @@ func TestFreezeConfiguredActuationPolicySelectsAndBindsCatalogSnapshot(t *testin
 		frozen.Policy.PowerMode != selection.PowerMode {
 		t.Fatalf("selected actuation policy = %#v", frozen)
 	}
-	digest, err := frozen.Policy.Digest()
-	if err != nil || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("policy digest = %q, %v", digest, err)
-	}
 	canonical, err := frozen.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +31,7 @@ func TestFreezeConfiguredActuationPolicySelectsAndBindsCatalogSnapshot(t *testin
 	}
 }
 
-func TestActuationPolicyIdentityDependsOnSelectedSemanticsNotConfigMapRevision(t *testing.T) {
+func TestActuationPolicyRetainsSelectionAndConfigMapRevision(t *testing.T) {
 	raw := testActuationPolicyCatalog(t, testActuationPolicySpec())
 	first, err := FreezeConfiguredActuationPolicy(raw, testActuationSelection(), testActuationPolicySource("1"))
 	if err != nil {
@@ -46,16 +41,8 @@ func TestActuationPolicyIdentityDependsOnSelectedSemanticsNotConfigMapRevision(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstDigest, err := first.Policy.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondDigest, err := second.Policy.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstDigest != secondDigest {
-		t.Fatalf("source revision changed selected policy identity: %q != %q", firstDigest, secondDigest)
+	if first.Policy != second.Policy {
+		t.Fatal("source revision changed the selected policy semantics")
 	}
 	if first.Source.ResourceVersion == second.Source.ResourceVersion {
 		t.Fatal("source revision was not retained in the frozen policy")
