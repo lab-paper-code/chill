@@ -72,6 +72,12 @@
 {{- if empty .Values.nodeActuator.safetyValidFor -}}
 {{- fail "nodeActuator.safetyValidFor must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}
+{{- if empty .Values.nodeActuator.kubernetesClient.tokenFile -}}
+{{- fail "nodeActuator.kubernetesClient.tokenFile must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.nodeActuator.kubernetesClient.caFile -}}
+{{- fail "nodeActuator.kubernetesClient.caFile must not be empty when nodeActuator.enabled=true" -}}
+{{- end -}}
 {{- if empty .Values.nodeActuator.allowedNamespaces -}}
 {{- fail "nodeActuator.allowedNamespaces must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}

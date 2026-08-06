@@ -15,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/lab-paper-code/chill/internal/kubeconfig"
 )
 
 var (
@@ -38,7 +40,16 @@ func main() {
 		setupLog.Error(err, "invalid NodeActuator options")
 		os.Exit(1)
 	}
-	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	kubernetesConfig, err := kubeconfig.BuildConfig(kubeconfig.Options{
+		APIServer: opts.kubeAPIServer,
+		TokenFile: opts.kubeAPITokenFile,
+		CAFile:    opts.kubeAPICAFile,
+	})
+	if err != nil {
+		setupLog.Error(err, "unable to load NodeActuator Kubernetes client config")
+		os.Exit(1)
+	}
+	manager, err := ctrl.NewManager(kubernetesConfig, ctrl.Options{
 		Scheme: scheme, Metrics: metricsserver.Options{BindAddress: opts.metricsAddr},
 		HealthProbeBindAddress: opts.probeAddr,
 		Cache:                  cache.Options{DefaultNamespaces: map[string]cache.Config{opts.watchNamespace: {}}},

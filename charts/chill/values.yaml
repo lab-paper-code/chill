@@ -315,6 +315,11 @@ nodeActuator:
   healthProbePort: 8081
   leaseDurationSeconds: 30
   safetyValidFor: 1m
+  kubernetesClient:
+    apiServer: ""
+    discoverFromDefaultEndpoint: true
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
   allowedNamespaces:
     - kube-system
   jetsonNVPModel:

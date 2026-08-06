@@ -235,7 +235,9 @@ while any handoff is non-terminal or lacks proven restoration. The command
 resolves exact Node UID from the API, excludes only its own downward-API Pod UID
 in addition to explicitly configured infrastructure namespaces, and derives
 authorized policy digests through the same `internal/nodeactuator` canonical
-type used by the Profiler. The Jetson adapter invokes the configured host
+type used by the Profiler. Its Kubernetes client reuses the shared explicit
+endpoint plus projected ServiceAccount token/CA path so KubeEdge edge Pods do
+not depend on missing Kubernetes service environment variables. The Jetson adapter invokes the configured host
 `nvpmodel` argv with a bounded deadline, parses the query's exact name and ID,
 and never treats an apply exit as convergence. The chart mounts only the
 declared binary, runtime libraries, NVPModel configuration/state, and sysfs;

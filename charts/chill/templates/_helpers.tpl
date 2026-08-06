@@ -132,6 +132,24 @@ app.kubernetes.io/component: operator
 {{- printf "%s:%s" .Values.nodeActuator.image.repository (include "chill.nodeActuatorImageTag" .) -}}
 {{- end -}}
 
+{{- define "chill.nodeActuatorKubernetesAPIServer" -}}
+{{- if .Values.nodeActuator.kubernetesClient.apiServer -}}
+{{- .Values.nodeActuator.kubernetesClient.apiServer -}}
+{{- else if .Values.nodeActuator.kubernetesClient.discoverFromDefaultEndpoint -}}
+{{- $endpoint := lookup "v1" "Endpoints" "default" "kubernetes" -}}
+{{- if and $endpoint $endpoint.subsets -}}
+{{- $subset := index $endpoint.subsets 0 -}}
+{{- if and $subset.addresses $subset.ports -}}
+{{- $address := index $subset.addresses 0 -}}
+{{- $port := index $subset.ports 0 -}}
+{{- if and $address.ip $port.port -}}
+{{- printf "https://%s:%v" $address.ip $port.port -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "chill.consoleName" -}}
 {{- printf "%s-console" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

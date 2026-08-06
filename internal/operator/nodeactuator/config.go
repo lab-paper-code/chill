@@ -23,6 +23,9 @@ type Config struct {
 	HealthProbePort      int32                              `json:"healthProbePort"`
 	LeaseDurationSeconds int32                              `json:"leaseDurationSeconds"`
 	SafetyValidFor       string                             `json:"safetyValidFor"`
+	KubeAPIServer        string                             `json:"kubeAPIServer,omitempty"`
+	KubeAPITokenFile     string                             `json:"kubeAPITokenFile"`
+	KubeAPICAFile        string                             `json:"kubeAPICAFile"`
 	AllowedNamespaces    []string                           `json:"allowedNamespaces"`
 	ActuationPolicies    []actuatorcore.ActuationPolicySpec `json:"actuationPolicies"`
 	JetsonNVPModel       *JetsonNVPModelConfig              `json:"jetsonNVPModel,omitempty"`
@@ -53,7 +56,8 @@ func (c Config) Validate() error {
 	for name, value := range map[string]string{
 		"image": c.Image, "imagePullPolicy": string(c.ImagePullPolicy),
 		"serviceAccountName": c.ServiceAccountName, "metricsBindAddress": c.MetricsBindAddress,
-		"safetyValidFor": c.SafetyValidFor,
+		"safetyValidFor": c.SafetyValidFor, "kubeAPITokenFile": c.KubeAPITokenFile,
+		"kubeAPICAFile": c.KubeAPICAFile,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			problems = append(problems, name+" is required without surrounding whitespace")
@@ -67,6 +71,9 @@ func (c Config) Validate() error {
 	}
 	if duration, err := time.ParseDuration(c.SafetyValidFor); err != nil || duration < time.Second || duration > 5*time.Minute {
 		problems = append(problems, "safetyValidFor must be a duration between 1 second and 5 minutes")
+	}
+	if strings.TrimSpace(c.KubeAPIServer) != c.KubeAPIServer {
+		problems = append(problems, "kubeAPIServer must not have surrounding whitespace")
 	}
 	if len(c.NodeSelector) == 0 {
 		problems = append(problems, "nodeSelector must explicitly select eligible Nodes")

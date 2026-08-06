@@ -18,6 +18,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 	operatornodeactuator "github.com/lab-paper-code/chill/internal/operator/nodeactuator"
 )
@@ -108,6 +109,8 @@ func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
 		LeaseDurationSeconds: 30, SafetyValidFor: "1m", AllowedNamespaces: []string{"kube-system"},
+		KubeAPITokenFile: kubeconfig.DefaultServiceAccountTokenFile,
+		KubeAPICAFile:    kubeconfig.DefaultServiceAccountCAFile,
 		ActuationPolicies: []actuatorcore.ActuationPolicySpec{{
 			Name: "xavier-nvpmodel-v1", DeviceClass: "jetson-xavier-nx-8g",
 			PowerMode: "MODE_15W_6CORE", ActuatorKind: actuatorcore.ActuatorKindJetsonNVPModel,

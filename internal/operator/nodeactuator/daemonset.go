@@ -68,6 +68,13 @@ func nodeActuatorArgs(options Options, config Config, policyDigests []string) []
 		"--metrics-bind-address=" + config.MetricsBindAddress,
 		fmt.Sprintf("--health-probe-bind-address=:%d", config.HealthProbePort),
 	}
+	if config.KubeAPIServer != "" {
+		args = append(args, "--kube-api-server="+config.KubeAPIServer)
+	}
+	args = append(args,
+		"--kube-api-token-file="+config.KubeAPITokenFile,
+		"--kube-api-ca-file="+config.KubeAPICAFile,
+	)
 	for _, namespace := range config.AllowedNamespaces {
 		args = append(args, "--allowed-namespace="+namespace)
 	}

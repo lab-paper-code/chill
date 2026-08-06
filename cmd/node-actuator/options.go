@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -22,6 +23,9 @@ type options struct {
 	allowedPolicyDigests stringListFlag
 	jetsonCommand        stringListFlag
 	jetsonTimeout        time.Duration
+	kubeAPIServer        string
+	kubeAPITokenFile     string
+	kubeAPICAFile        string
 	metricsAddr          string
 	probeAddr            string
 }
@@ -49,6 +53,15 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		&o.jetsonTimeout, "jetson-nvpmodel-timeout", 30*time.Second,
 		"Maximum duration of one Jetson NVPModel host command.",
 	)
+	flags.StringVar(&o.kubeAPIServer, "kube-api-server", "", "Kubernetes API URL; empty uses standard in-cluster config.")
+	flags.StringVar(
+		&o.kubeAPITokenFile, "kube-api-token-file", kubeconfig.DefaultServiceAccountTokenFile,
+		"Path to the service account bearer token file.",
+	)
+	flags.StringVar(
+		&o.kubeAPICAFile, "kube-api-ca-file", kubeconfig.DefaultServiceAccountCAFile,
+		"Path to the Kubernetes API CA file.",
+	)
 	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "Metrics endpoint bind address, or 0 to disable.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address.")
 }
@@ -57,7 +70,8 @@ func (o options) validate() error {
 	for name, value := range map[string]string{
 		"node name": o.nodeName, "Pod UID": o.podUID, "watch namespace": o.watchNamespace,
 		"Lease namespace": o.leaseNamespace, "metrics bind address": o.metricsAddr,
-		"health probe bind address": o.probeAddr,
+		"health probe bind address": o.probeAddr, "Kubernetes API token file": o.kubeAPITokenFile,
+		"Kubernetes API CA file": o.kubeAPICAFile,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
@@ -82,6 +96,9 @@ func (o options) validate() error {
 	}
 	if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
 		return errors.New("Jetson NVPModel command and a timeout between 1 second and 5 minutes are required")
+	}
+	if strings.TrimSpace(o.kubeAPIServer) != o.kubeAPIServer {
+		return errors.New("Kubernetes API server must not have surrounding whitespace")
 	}
 	if err := validateUniqueStrings(o.allowedNamespaces, "namespace", func(value string) error {
 		if len(validation.IsDNS1123Label(value)) != 0 {

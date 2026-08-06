@@ -35,6 +35,9 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 		!hasArg(container.Args, "--allowed-namespace=kube-system") ||
 		!hasArg(container.Args, "--allowed-policy-digest="+policyDigests[0]) ||
 		!hasArg(container.Args, "--jetson-nvpmodel-command=/host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1") ||
+		!hasArg(container.Args, "--kube-api-server=https://kubernetes.example:6443") ||
+		!hasArg(container.Args, "--kube-api-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token") ||
+		!hasArg(container.Args, "--kube-api-ca-file=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") ||
 		!hasFieldEnvironment(container.Env, "NODE_NAME", "spec.nodeName") ||
 		!hasFieldEnvironment(container.Env, "POD_UID", "metadata.uid") {
 		t.Fatalf("NodeActuator container contract = %#v", container)
@@ -52,6 +55,8 @@ func TestConfigRejectsImplicitEligibilityOrAuthorization(t *testing.T) {
 		"namespace":      func(config *Config) { config.AllowedNamespaces = nil },
 		"policy":         func(config *Config) { config.ActuationPolicies = nil },
 		"host adapter":   func(config *Config) { config.JetsonNVPModel = nil },
+		"API token":      func(config *Config) { config.KubeAPITokenFile = "" },
+		"API server":     func(config *Config) { config.KubeAPIServer = " https://kubernetes.example:6443" },
 		"unsupported adapter": func(config *Config) {
 			config.ActuationPolicies[0].ActuatorKind = actuatorcore.ActuatorKindNvidiaLockedGPUClock
 		},
@@ -81,6 +86,9 @@ func validConfig() Config {
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
 		LeaseDurationSeconds: 30, SafetyValidFor: "1m", AllowedNamespaces: []string{"kube-system"},
+		KubeAPIServer:    "https://kubernetes.example:6443",
+		KubeAPITokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+		KubeAPICAFile:    "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 		ActuationPolicies: []actuatorcore.ActuationPolicySpec{{
 			Name: "xavier-nvpmodel-v1", DeviceClass: "jetson-xavier-nx-8g",
 			PowerMode: "MODE_15W_6CORE", ActuatorKind: actuatorcore.ActuatorKindJetsonNVPModel,

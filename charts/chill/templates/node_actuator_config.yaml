@@ -1,4 +1,5 @@
 {{- if .Values.nodeActuator.enabled }}
+{{- $kubeAPIServer := include "chill.nodeActuatorKubernetesAPIServer" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +17,9 @@ data:
     healthProbePort: {{ .Values.nodeActuator.healthProbePort }}
     leaseDurationSeconds: {{ .Values.nodeActuator.leaseDurationSeconds }}
     safetyValidFor: {{ .Values.nodeActuator.safetyValidFor | quote }}
+    kubeAPIServer: {{ $kubeAPIServer | quote }}
+    kubeAPITokenFile: {{ .Values.nodeActuator.kubernetesClient.tokenFile | quote }}
+    kubeAPICAFile: {{ .Values.nodeActuator.kubernetesClient.caFile | quote }}
     allowedNamespaces:
 {{- toYaml .Values.nodeActuator.allowedNamespaces | nindent 6 }}
     actuationPolicies:
