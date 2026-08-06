@@ -55,16 +55,27 @@ func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
 func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
+	if err := validateIdleRuntimeSchema(intent, result); err != nil {
+		return err
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		return fmt.Errorf("validate idle Run intent: %w", err)
+	}
+	return validateBoundIdleRuntime(intent, digest, podUID, result)
+}
+
+func validateIdleRuntime(intent Intent, intentDigest, podUID string, result IdleRuntimeResult) error {
+	if err := validateIdleRuntimeSchema(intent, result); err != nil {
+		return err
+	}
+	return validateBoundIdleRuntime(intent, intentDigest, podUID, result)
+}
+
+func validateIdleRuntimeSchema(intent Intent, result IdleRuntimeResult) error {
 	if result.SchemaVersion != IdleRuntimeResultSchemaVersion &&
 		result.SchemaVersion != IdleRuntimeResultSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported idle runtime result schemaVersion %q", result.SchemaVersion)
-	}
-	if err := intent.Validate(); err != nil {
-		return fmt.Errorf("validate idle Run intent: %w", err)
-	}
-	if intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
-		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
-		return errors.New("idle runtime requires a supported model-loaded idle intent")
 	}
 	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
 		return errors.New("v1alpha1 idle runtime result is CPU ONNX Runtime only")
@@ -73,9 +84,14 @@ func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult)
 		(result.Backend != "" || result.DerivedContract.Backend != "") {
 		return errors.New("v1alpha1 idle runtime result cannot contain v1alpha2 backend fields")
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return err
+	return nil
+}
+
+//nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
+func validateBoundIdleRuntime(intent Intent, digest, podUID string, result IdleRuntimeResult) error {
+	if intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
+		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
+		return errors.New("idle runtime requires a supported model-loaded idle intent")
 	}
 	backend := result.Backend
 	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 {

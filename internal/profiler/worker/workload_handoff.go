@@ -37,7 +37,7 @@ func NewWorkloadResultFile(config WorkloadResultFileConfig) (*WorkloadResultFile
 	return &WorkloadResultFile{config: config}, nil
 }
 
-func (f *WorkloadResultFile) Read(ctx context.Context) (verifiedWorkloadResult, error) {
+func (f *WorkloadResultFile) Read(ctx context.Context) (workloadobserver.VerifiedResult, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, f.config.WaitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(f.config.PollInterval)
@@ -47,22 +47,19 @@ func (f *WorkloadResultFile) Read(ctx context.Context) (verifiedWorkloadResult, 
 		var result workloadobserver.Result
 		err := decodeJSONFile(f.config.Path, f.config.MaxBytes, &result)
 		if err == nil {
-			if err := result.Validate(); err != nil {
-				return verifiedWorkloadResult{}, fmt.Errorf("validate workload result file: %w", err)
-			}
-			verified, err := sealWorkloadResult(result)
+			verified, err := workloadobserver.VerifyResult(result)
 			if err != nil {
-				return verifiedWorkloadResult{}, err
+				return workloadobserver.VerifiedResult{}, fmt.Errorf("validate workload result file: %w", err)
 			}
 			return verified, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return verifiedWorkloadResult{}, fmt.Errorf("read workload result file: %w", err)
+			return workloadobserver.VerifiedResult{}, fmt.Errorf("read workload result file: %w", err)
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return verifiedWorkloadResult{}, fmt.Errorf("wait for workload result file: %w", waitCtx.Err())
+			return workloadobserver.VerifiedResult{}, fmt.Errorf("wait for workload result file: %w", waitCtx.Err())
 		case <-ticker.C:
 		}
 	}

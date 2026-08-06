@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 // Runtime performs the frozen warm-up and measurement protocol. Concrete
@@ -30,11 +32,11 @@ type RuntimeRequest struct {
 // MetricResultReader returns the complete result produced by the separate
 // MetricObserver process after the runtime measurement.
 type MetricResultReader interface {
-	Read(context.Context) (verifiedMetricResult, error)
+	Read(context.Context) (metricobserver.VerifiedResult, error)
 }
 
 type WorkloadResultReader interface {
-	Read(context.Context) (verifiedWorkloadResult, error)
+	Read(context.Context) (workloadobserver.VerifiedResult, error)
 }
 
 type Request struct {
@@ -79,7 +81,6 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read frozen intent: %w", ErrExecutionContract, err)
 	}
-	digest := request.Intent.Digest()
 	if strings.TrimSpace(request.PodUID) == "" || strings.TrimSpace(request.PodUID) != request.PodUID {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: Pod UID is required without surrounding whitespace", ErrExecutionContract,
@@ -119,8 +120,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read workload observation result: %w", ErrWorkloadObservation, err)
 	}
 	payload, err := canonicalRawMeasurement(
-		intent,
-		digest,
+		request.Intent,
 		request.PodUID,
 		runtimeMeasurement,
 		metricResult,

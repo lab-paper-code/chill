@@ -150,6 +150,24 @@ func (r RuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
+	if err := validateRuntimeSchema(intent, result); err != nil {
+		return err
+	}
+	digest, err := intent.Digest()
+	if err != nil {
+		return err
+	}
+	return validateBoundRuntime(intent, digest, podUID, result)
+}
+
+func validateRuntime(intent Intent, intentDigest, podUID string, result RuntimeResult) error {
+	if err := validateRuntimeSchema(intent, result); err != nil {
+		return err
+	}
+	return validateBoundRuntime(intent, intentDigest, podUID, result)
+}
+
+func validateRuntimeSchema(intent Intent, result RuntimeResult) error {
 	if result.SchemaVersion != RuntimeResultSchemaVersion &&
 		result.SchemaVersion != RuntimeResultSchemaVersionV1Alpha1 {
 		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
@@ -161,10 +179,11 @@ func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
 		(result.Backend != "" || result.DerivedContract.Backend != "") {
 		return errors.New("v1alpha1 runtime result cannot contain v1alpha2 backend fields")
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return err
-	}
+	return nil
+}
+
+//nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
+func validateBoundRuntime(intent Intent, digest, podUID string, result RuntimeResult) error {
 	backend := result.Backend
 	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
 		backend = result.Provider

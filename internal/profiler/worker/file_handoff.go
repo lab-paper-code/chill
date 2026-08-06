@@ -43,7 +43,7 @@ func NewMetricResultFile(config MetricResultFileConfig) (*MetricResultFile, erro
 	return &MetricResultFile{config: config}, nil
 }
 
-func (f *MetricResultFile) Read(ctx context.Context) (verifiedMetricResult, error) {
+func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.VerifiedResult, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, f.config.WaitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(f.config.PollInterval)
@@ -53,22 +53,19 @@ func (f *MetricResultFile) Read(ctx context.Context) (verifiedMetricResult, erro
 		var result metricobserver.Result
 		err := decodeJSONFile(f.config.Path, f.config.MaxBytes, &result)
 		if err == nil {
-			if err := result.Validate(); err != nil {
-				return verifiedMetricResult{}, fmt.Errorf("validate metric result file: %w", err)
-			}
-			verified, err := sealMetricResult(result)
+			verified, err := metricobserver.VerifyResult(result)
 			if err != nil {
-				return verifiedMetricResult{}, err
+				return metricobserver.VerifiedResult{}, fmt.Errorf("validate metric result file: %w", err)
 			}
 			return verified, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return verifiedMetricResult{}, fmt.Errorf("read metric result file: %w", err)
+			return metricobserver.VerifiedResult{}, fmt.Errorf("read metric result file: %w", err)
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return verifiedMetricResult{}, fmt.Errorf("wait for metric result file: %w", waitCtx.Err())
+			return metricobserver.VerifiedResult{}, fmt.Errorf("wait for metric result file: %w", waitCtx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -87,14 +84,11 @@ func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (FrozenIntent
 	if err := decodeProjectedJSONFile(path, maxBytes, &intent); err != nil {
 		return FrozenIntent{}, fmt.Errorf("read frozen intent file: %w", err)
 	}
-	digest, err := intent.Digest()
+	verified, err := profilingrun.VerifyIntent(intent, expectedDigest)
 	if err != nil {
 		return FrozenIntent{}, fmt.Errorf("validate frozen intent file: %w", err)
 	}
-	if digest != expectedDigest {
-		return FrozenIntent{}, errors.New("frozen intent file digest mismatch")
-	}
-	return newFrozenIntent(intent, digest), nil
+	return sealFrozenIntent(verified), nil
 }
 
 // LoadVerifiedCandidateReport reads the exact projected candidate report and

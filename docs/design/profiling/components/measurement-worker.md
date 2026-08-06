@@ -44,8 +44,12 @@ independently digest-pinned; this rule does not merge their responsibilities.
 The metric and workload result-file readers validate their respective records
 once after the atomic file boundary and return sealed values. Runtime adapters
 do the same after strict process-result decoding and runtime-specific contract
-checks. The coordinator can obtain detached records for raw composition, but it
-does not repeat those boundary validations and cannot mutate the sealed values.
+checks. The coordinator passes those sealed values into raw composition; it
+does not repeat their boundary validations or mutate them.
+The evidence composer accepts only the verified intent, runtime, metric, and
+workload value types owned by their source packages. It checks only new
+cross-record relationships such as source identity and window coverage, then
+canonicalizes the raw record without re-validating the nested values.
 
 The validated image set ran `active-regression-live-ad7b84f` through the active
 protocol. It

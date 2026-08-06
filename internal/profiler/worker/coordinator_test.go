@@ -62,7 +62,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	)
 
 	got, err := coordinator.Execute(context.Background(), Request{
-		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/intent.json"},
 	})
 	if err != nil {
@@ -95,8 +95,14 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
 	}}
 	coordinator := mustCoordinator(t,
-		runtimeMeasurementFunc(func(context.Context, RuntimeRequest) (RuntimeMeasurement, error) {
-			return sealIdleRuntimeMeasurement(idle)
+		runtimeMeasurementFunc(func(_ context.Context, request RuntimeRequest) (RuntimeMeasurement, error) {
+			verified, err := profilingrun.VerifyIdleRuntimeResult(
+				request.Intent.verifiedIntent(), request.PodUID, idle,
+			)
+			if err != nil {
+				return RuntimeMeasurement{}, err
+			}
+			return idleRuntimeMeasurement(verified), nil
 		}),
 		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
 		workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
@@ -105,7 +111,7 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 		store,
 	)
 	if _, err := coordinator.Execute(context.Background(), Request{
-		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "idle/raw.json"},
 	}); err != nil {
 		t.Fatal(err)
@@ -140,10 +146,6 @@ func TestCoordinatorRejectsEmptyFrozenIntentBeforeExternalWork(t *testing.T) {
 
 func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 	intent := testIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -158,8 +160,8 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 		&fakeStore{},
 	)
 
-	_, err = coordinator.Execute(context.Background(), Request{
-		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: "other-node",
+	_, err := coordinator.Execute(context.Background(), Request{
+		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: "other-node",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || !strings.Contains(err.Error(), "scheduled Node") || runtimeCalls != 0 {
@@ -169,12 +171,8 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 
 func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 	intent := testIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	request := Request{
-		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	}
 
@@ -237,10 +235,6 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 
 func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 	intent := testIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, _ []byte) (evidencestore.Receipt, error) {
 		identity.Digest = "sha256:" + strings.Repeat("0", 64)
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
@@ -253,8 +247,8 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		testWorkloadReader(t, intent),
 		store,
 	)
-	_, err = coordinator.Execute(context.Background(), Request{
-		Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+	_, err := coordinator.Execute(context.Background(), Request{
+		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
@@ -272,14 +266,11 @@ func (f runtimeFunc) Measure(
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	intent, err := request.Intent.snapshot()
+	verified, err := profilingrun.VerifyRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if err := profilingrun.ValidateRuntime(intent, request.PodUID, result); err != nil {
-		return RuntimeMeasurement{}, err
-	}
-	return sealActiveRuntimeMeasurement(result)
+	return activeRuntimeMeasurement(verified), nil
 }
 
 type runtimeMeasurementFunc func(context.Context, RuntimeRequest) (RuntimeMeasurement, error)
@@ -293,28 +284,22 @@ func (f runtimeMeasurementFunc) Measure(
 
 type metricReaderFunc func(context.Context) (metricobserver.Result, error)
 
-func (f metricReaderFunc) Read(ctx context.Context) (verifiedMetricResult, error) {
+func (f metricReaderFunc) Read(ctx context.Context) (metricobserver.VerifiedResult, error) {
 	result, err := f(ctx)
 	if err != nil {
-		return verifiedMetricResult{}, err
+		return metricobserver.VerifiedResult{}, err
 	}
-	if err := result.Validate(); err != nil {
-		return verifiedMetricResult{}, err
-	}
-	return sealMetricResult(result)
+	return metricobserver.VerifyResult(result)
 }
 
 type workloadReaderFunc func(context.Context) (workloadobserver.Result, error)
 
-func (f workloadReaderFunc) Read(ctx context.Context) (verifiedWorkloadResult, error) {
+func (f workloadReaderFunc) Read(ctx context.Context) (workloadobserver.VerifiedResult, error) {
 	result, err := f(ctx)
 	if err != nil {
-		return verifiedWorkloadResult{}, err
+		return workloadobserver.VerifiedResult{}, err
 	}
-	if err := result.Validate(); err != nil {
-		return verifiedWorkloadResult{}, err
-	}
-	return sealWorkloadResult(result)
+	return workloadobserver.VerifyResult(result)
 }
 
 type fakeStore struct {
@@ -389,7 +374,11 @@ func testFrozenIntent(t *testing.T, intent profilingrun.Intent) FrozenIntent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newFrozenIntent(intent, digest)
+	verified, err := profilingrun.VerifyIntent(intent, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealFrozenIntent(verified)
 }
 
 func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.RuntimeResult {

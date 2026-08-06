@@ -33,15 +33,23 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := result.activeResult()
+	verified, err := result.activeResult()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.idle || active.Provider != intent.State.Backend || active.ExperimentID != testPodUID {
+	active, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.mode != runtimeMeasurementActive || active.Provider != intent.State.Backend || active.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
 	}
 	active.NodeName = mutatedCopyName
-	sealed, err := result.activeResult()
+	sealedValue, err := result.activeResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := sealedValue.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,11 +68,15 @@ func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idle, err := result.idleResult()
+	verified, err := result.idleResult()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.idle || idle.PodUID != testPodUID ||
+	idle, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.mode != runtimeMeasurementIdle || idle.PodUID != testPodUID ||
 		idle.InferenceCountAfterModelLoad != 0 || !idle.ModelResidentAtEnd {
 		t.Fatalf("unexpected idle runtime result: %#v", result)
 	}
@@ -204,7 +216,7 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	record, err := got.record()
+	record, err := got.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +224,7 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 		t.Fatalf("unexpected metric result: %#v", got)
 	}
 	record.Source.NodeName = mutatedCopyName
-	sealed, err := got.record()
+	sealed, err := got.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,12 +365,16 @@ func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
 				t.Fatal(err)
 			}
 			if idle {
-				if _, err := result.idleResult(); err != nil || !result.idle {
+				if _, err := result.idleResult(); err != nil || result.mode != runtimeMeasurementIdle {
 					t.Fatalf("unexpected idle result: %#v err=%v", result, err)
 				}
 			} else {
-				active, err := result.activeResult()
-				if err != nil || result.idle || active.RKNN == nil {
+				verified, err := result.activeResult()
+				if err != nil {
+					t.Fatalf("unexpected active result: %#v err=%v", result, err)
+				}
+				active, err := verified.Record()
+				if err != nil || result.mode != runtimeMeasurementActive || active.RKNN == nil {
 					t.Fatalf("unexpected active result: %#v err=%v", result, err)
 				}
 			}
@@ -772,7 +788,11 @@ func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
 	if err != nil {
 		panic(err)
 	}
-	return RuntimeRequest{Intent: newFrozenIntent(intent, digest), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
+	verified, err := profilingrun.VerifyIntent(intent, digest)
+	if err != nil {
+		panic(err)
+	}
+	return RuntimeRequest{Intent: sealFrozenIntent(verified), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
 func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {

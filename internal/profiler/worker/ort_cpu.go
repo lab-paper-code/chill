@@ -145,19 +145,21 @@ func (r *ORTCPURuntime) Measure(
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT idle result: %w", err)
 		}
-		if err := profilingrun.ValidateIdleRuntime(intent, request.PodUID, result); err != nil {
+		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT idle result: %w", err)
 		}
-		return sealIdleRuntimeMeasurement(result)
+		return idleRuntimeMeasurement(verified), nil
 	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT result: %w", err)
 	}
-	if err := profilingrun.ValidateRuntime(intent, request.PodUID, result); err != nil {
+	verified, err := profilingrun.VerifyRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT result: %w", err)
 	}
-	return sealActiveRuntimeMeasurement(result)
+	return activeRuntimeMeasurement(verified), nil
 }
 
 func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {

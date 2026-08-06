@@ -64,6 +64,95 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
+func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
+	t.Run("active", func(t *testing.T) {
+		intent := loadIntent(t)
+		raw := validRaw(t, intent)
+		verifiedIntent := verifyIntentForTest(t, intent)
+		verifiedRuntime, err := profilingrun.VerifyRuntimeResult(verifiedIntent, raw.PodUID, raw.Runtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifiedMetrics, err := metricobserver.VerifyResult(raw.Metrics)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifiedWorkload, err := workloadobserver.VerifyResult(*raw.Workload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := ComposeRawMeasurement(
+			verifiedIntent, raw.PodUID, verifiedRuntime, verifiedMetrics, verifiedWorkload,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := raw.CanonicalJSON(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("verified active composition drifted\ngot:  %s\nwant: %s", got, want)
+		}
+
+		driftedMetrics := raw.Metrics
+		driftedMetrics.Source.NodeName = "other-node"
+		verifiedDrift, err := metricobserver.VerifyResult(driftedMetrics)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ComposeRawMeasurement(
+			verifiedIntent, raw.PodUID, verifiedRuntime, verifiedDrift, verifiedWorkload,
+		); err == nil || !strings.Contains(err.Error(), "source identity") {
+			t.Fatalf("expected verified cross-record drift rejection, got %v", err)
+		}
+	})
+
+	t.Run("idle", func(t *testing.T) {
+		intent := idleIntent(t)
+		raw := validIdleRaw(t, intent)
+		verifiedIntent := verifyIntentForTest(t, intent)
+		verifiedRuntime, err := profilingrun.VerifyIdleRuntimeResult(verifiedIntent, raw.PodUID, raw.Runtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifiedMetrics, err := metricobserver.VerifyResult(raw.Metrics)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifiedWorkload, err := workloadobserver.VerifyResult(*raw.Workload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := ComposeIdleRawMeasurement(
+			verifiedIntent, raw.PodUID, verifiedRuntime, verifiedMetrics, verifiedWorkload,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := raw.CanonicalJSON(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("verified idle composition drifted\ngot:  %s\nwant: %s", got, want)
+		}
+	})
+}
+
+func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.VerifiedIntent {
+	t.Helper()
+	digest, err := intent.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := profilingrun.VerifyIntent(intent, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified
+}
+
 func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T) {
 	t.Parallel()
 	intent, raw, execution := validActuatedExecutionEvidence(t)

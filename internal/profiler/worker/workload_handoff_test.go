@@ -26,7 +26,7 @@ func TestWorkloadResultFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := got.record()
+	record, err := got.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestWorkloadResultFileRoundTrip(t *testing.T) {
 		t.Fatalf("workload result = %#v", got)
 	}
 	record.InitialActivePods[0].Name = mutatedCopyName
-	sealed, err := got.record()
+	sealed, err := got.Record()
 	if err != nil {
 		t.Fatal(err)
 	}

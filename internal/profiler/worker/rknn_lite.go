@@ -150,25 +150,27 @@ func (r *RKNNLiteRuntime) Measure(
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite idle result: %w", err)
 		}
-		if err := profilingrun.ValidateIdleRuntime(intent, request.PodUID, result); err != nil {
+		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite idle result: %w", err)
 		}
 		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, nil); err != nil {
 			return RuntimeMeasurement{}, err
 		}
-		return sealIdleRuntimeMeasurement(result)
+		return idleRuntimeMeasurement(verified), nil
 	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite result: %w", err)
 	}
-	if err := profilingrun.ValidateRuntime(intent, request.PodUID, result); err != nil {
+	verified, err := profilingrun.VerifyRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite result: %w", err)
 	}
 	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.InputShape); err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	return sealActiveRuntimeMeasurement(result)
+	return activeRuntimeMeasurement(verified), nil
 }
 
 func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
