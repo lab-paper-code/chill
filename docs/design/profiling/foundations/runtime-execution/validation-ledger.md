@@ -110,7 +110,20 @@ The Profiler reloaded execution evidence
 and admitted it under frozen policy
 `sha256:3b041e96ded2acb00b414a3fc46d5384af527d7afd1c431c789c87cad64d5fe1`.
 This proves one exact active admission but does not promote the slice to L3:
-no model-loaded-idle Run or three-trial identity audit has been completed.
+the three-trial identity audit has not been completed.
+
+Run `jetsono-ort-cpu-mode50w-idle-i1` then reused the existing model-loaded-idle
+producer and `idle-wall-power-v1`. Its 30-second measurement followed the
+worker's 60-second model-loaded settling interval. The raw object digest
+`sha256:1a42906c3bdfd884b2860f5ea8cc510f9d21eec0b4e3ee0a57700d9ac0e3f660`
+matched the retained execution reference. All 31 power and thermal samples
+succeeded, no thermal sample was active, maximum temperature was 49.406 C, and
+mean observed wall power was 10.368 W. The Profiler admitted execution evidence
+`sha256:5aec3f5f1d1cf88e978c40edb2d238854ad6a03a83dd53b62fff98fe82f0314b`
+under frozen policy
+`sha256:958500162bcb71bccf2e92245c13651f74d570d79eae37b882e3577b8093e8ff`.
+The handoff independently read back MODE_50W, settled, and restored MAXN at
+`05:37:15Z` before evidence finalization.
 
 The post-run live snapshot had `ChillSystem Ready=True`, the NodeActuator
 DaemonSet at `1/1`, and the final handoff at `Restore / Restored`. Failed and
