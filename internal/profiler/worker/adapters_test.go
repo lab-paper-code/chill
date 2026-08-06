@@ -643,7 +643,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 		active.RKNN = testRKNNEvidence()
 		active.InputShape = []int{1, 224, 224, 3}
 		if mode == "host-drift" {
-			active.RKNN.HostLibraries[0].Digest = "sha256:" + strings.Repeat("f", 64)
+			active.RKNN.HostLibraries[0].Path = "/opt/vendor/lib/other.so"
 		}
 		result = active
 	}

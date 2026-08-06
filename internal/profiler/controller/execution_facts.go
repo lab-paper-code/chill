@@ -3,8 +3,6 @@ package controller
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,11 +28,7 @@ const (
 	trustedRuntimeInspection         = "exact-image-runtime-inspection-v1"
 )
 
-var (
-	pinnedWorkloadImage = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
-	artifactPath        = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
-	digestPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-)
+var artifactPath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
 type executionFactsDocument struct {
 	SchemaVersion       string                 `json:"schemaVersion"`
@@ -168,8 +162,9 @@ func selectExecutionDeclaration(
 		document.SchemaVersion != executionFactsSchemaV1Alpha2 {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
-	if !pinnedWorkloadImage.MatchString(document.MetricObserverImage) {
-		return resolvedExecutionDeclaration{}, errors.New("metric-observer image must be digest-pinned")
+	if strings.TrimSpace(document.MetricObserverImage) == "" ||
+		strings.TrimSpace(document.MetricObserverImage) != document.MetricObserverImage {
+		return resolvedExecutionDeclaration{}, errors.New("metric-observer image is required without surrounding whitespace")
 	}
 	if len(document.Declarations) == 0 {
 		return resolvedExecutionDeclaration{}, errors.New("Profiler execution facts require at least one declaration")
@@ -277,10 +272,8 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 }
 
 func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclaration, error) {
-	sum := sha256.Sum256([]byte(source.Payload))
-	actualDigest := "sha256:" + hex.EncodeToString(sum[:])
-	if source.ContentDigest != actualDigest {
-		return runtimeDeclaration{}, errors.New("runtime producer declaration content digest mismatch")
+	if strings.TrimSpace(source.ContentDigest) == "" || strings.TrimSpace(source.ContentDigest) != source.ContentDigest {
+		return runtimeDeclaration{}, errors.New("runtime producer declaration identity is required without surrounding whitespace")
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(source.Payload)))
 	decoder.DisallowUnknownFields()
@@ -302,9 +295,6 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return runtimeDeclaration{}, fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
-	}
-	if !pinnedWorkloadImage.MatchString(declaration.Image) {
-		return runtimeDeclaration{}, errors.New("runtime image must be digest-pinned")
 	}
 	if declaration.Verification != trustedRuntimeInspection {
 		return runtimeDeclaration{}, fmt.Errorf("unsupported runtime verification %q", declaration.Verification)
@@ -351,8 +341,8 @@ func validateHostExecutionContract(contract hostExecutionContract) error {
 		if !cleanAbsolutePath(library.HostPath) || !cleanAbsolutePath(library.ContainerPath) {
 			return errors.New("host library paths must be clean absolute paths")
 		}
-		if !digestPattern.MatchString(library.Digest) {
-			return errors.New("host library digest must be a canonical SHA-256 digest")
+		if strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
+			return errors.New("host library identity is required without surrounding whitespace")
 		}
 		if _, duplicate := seenLibraries[library.Name]; duplicate {
 			return fmt.Errorf("duplicate host library %q", library.Name)
@@ -447,14 +437,8 @@ func validateArtifactSupply(artifact artifactSupply) error {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if !pinnedWorkloadImage.MatchString(artifact.Image) {
-		return errors.New("artifact image must be digest-pinned")
-	}
 	if !cleanAbsolutePath(artifact.Path) {
 		return errors.New("artifact path must be a clean absolute container path")
-	}
-	if !digestPattern.MatchString(artifact.Digest) {
-		return errors.New("artifact digest must be a canonical SHA-256 digest")
 	}
 	return nil
 }

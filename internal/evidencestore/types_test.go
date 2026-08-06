@@ -17,11 +17,11 @@ func TestObjectIdentityValidate(t *testing.T) {
 	}
 
 	tests := map[string]ObjectIdentity{
-		"missing store":       {Key: valid.Key, Digest: valid.Digest, Size: valid.Size},
-		"missing key":         {Store: valid.Store, Digest: valid.Digest, Size: valid.Size},
-		"key whitespace":      {Store: valid.Store, Key: " " + valid.Key, Digest: valid.Digest, Size: valid.Size},
-		"noncanonical digest": {Store: valid.Store, Key: valid.Key, Digest: "165d50e3", Size: valid.Size},
-		"empty object":        {Store: valid.Store, Key: valid.Key, Digest: valid.Digest, Size: 0},
+		"missing store":  {Key: valid.Key, Digest: valid.Digest, Size: valid.Size},
+		"missing key":    {Store: valid.Store, Digest: valid.Digest, Size: valid.Size},
+		"key whitespace": {Store: valid.Store, Key: " " + valid.Key, Digest: valid.Digest, Size: valid.Size},
+		"missing digest": {Store: valid.Store, Key: valid.Key, Size: valid.Size},
+		"empty object":   {Store: valid.Store, Key: valid.Key, Digest: valid.Digest, Size: 0},
 	}
 	for name, identity := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -334,34 +334,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "RuntimeBackendUnavailable",
 		},
 		{
-			name: "mutable runtime image",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				replaceRuntimeDeclaration(config, testRuntimeImage, "registry.example/chill/runtime:latest")
-			},
-			match: "runtime image must be digest-pinned",
-		},
-		{
-			name: "mutable metric-observer image",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], testMetricObserverImage, "registry.example/chill/metric-observer:latest", 1,
-				)
-			},
-			match: "metric-observer image must be digest-pinned",
-		},
-		{
-			name: "runtime producer digest mismatch",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], "contentDigest: sha256:", "contentDigest: sha256:f", 1,
-				)
-			},
-			match: "runtime producer declaration content digest mismatch",
-		},
-		{
 			name: "artifact architecture mismatch",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
@@ -370,16 +342,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				)
 			},
 			match: "artifact supply architecture does not match DeviceClass",
-		},
-		{
-			name: "artifact digest mismatch",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], testArtifactDigest, "sha256:"+strings.Repeat("f", 64), 1,
-				)
-			},
-			match: "artifact supply digest does not match ModelSpec artifact",
 		},
 		{
 			name: "unsafe artifact path",

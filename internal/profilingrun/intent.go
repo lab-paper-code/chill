@@ -14,11 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var (
-	digestPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	imagePattern        = regexp.MustCompile(`^[^@[:space:]]+@sha256:[0-9a-f]{64}$`)
-	artifactPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
-)
+var artifactPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
 func (i Intent) Validate() error {
 	if err := i.validateSchema(); err != nil {
@@ -32,15 +28,15 @@ func (i Intent) Validate() error {
 		"candidate.runtimeDeclarationDigest": i.Candidate.RuntimeDeclarationDigest,
 		"state.artifactDigest":               i.State.ArtifactDigest,
 	} {
-		if !digestPattern.MatchString(value) {
-			return fmt.Errorf("%s must be a canonical SHA-256 digest", name)
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if i.Metrics.ConfigurationContentDigest != "" && !digestPattern.MatchString(i.Metrics.ConfigurationContentDigest) {
-		return errors.New("metrics.configurationContentDigest must be a canonical SHA-256 digest")
+	if value := i.Metrics.ConfigurationContentDigest; value != "" && strings.TrimSpace(value) != value {
+		return errors.New("metrics.configurationContentDigest must not have surrounding whitespace")
 	}
-	if i.State.HostContractDigest != "" && !digestPattern.MatchString(i.State.HostContractDigest) {
-		return errors.New("state.hostContractDigest must be a canonical SHA-256 digest")
+	if value := i.State.HostContractDigest; value != "" && strings.TrimSpace(value) != value {
+		return errors.New("state.hostContractDigest must not have surrounding whitespace")
 	}
 	if err := i.validateActuationContract(); err != nil {
 		return err
@@ -80,12 +76,12 @@ func (i Intent) Validate() error {
 		"images.artifact":       i.Images.Artifact,
 		"images.metricObserver": i.Images.MetricObserver,
 	} {
-		if !imagePattern.MatchString(value) {
-			return fmt.Errorf("%s must be repository@sha256", name)
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if !imagePattern.MatchString(i.Images.WorkloadObserver) {
-		return errors.New("images.workloadObserver must be repository@sha256")
+	if value := i.Images.WorkloadObserver; strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+		return errors.New("images.workloadObserver is required without surrounding whitespace")
 	}
 	if err := i.Workload.Validate(); err != nil {
 		return fmt.Errorf("validate workload contract: %w", err)
@@ -268,8 +264,9 @@ func (i Intent) validateActuationContract() error {
 		i.Actuation.PowerMode != i.State.PowerMode {
 		return errors.New("actuation powerMode must match execution state")
 	}
-	if !digestPattern.MatchString(i.Actuation.PolicyDigest) {
-		return errors.New("actuation.policyDigest must be a canonical SHA-256 digest")
+	if strings.TrimSpace(i.Actuation.PolicyDigest) == "" ||
+		strings.TrimSpace(i.Actuation.PolicyDigest) != i.Actuation.PolicyDigest {
+		return errors.New("actuation.policyDigest is required without surrounding whitespace")
 	}
 	if err := i.Actuation.Actuator.Validate(); err != nil {
 		return fmt.Errorf("validate actuation target: %w", err)

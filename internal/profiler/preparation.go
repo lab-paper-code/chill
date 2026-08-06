@@ -196,9 +196,9 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve metric source: %w", err)
 	}
-	if !strings.HasPrefix(metrics.ConfigurationContentDigest, "sha256:") ||
-		len(metrics.ConfigurationContentDigest) != len("sha256:")+64 {
-		return PreparedRun{}, errors.New("resolved metric source configuration digest must be a canonical SHA-256 digest")
+	if strings.TrimSpace(metrics.ConfigurationContentDigest) == "" ||
+		strings.TrimSpace(metrics.ConfigurationContentDigest) != metrics.ConfigurationContentDigest {
+		return PreparedRun{}, errors.New("resolved metric source configuration identity is required without surrounding whitespace")
 	}
 	workload, err := p.workloads.ResolveWorkloadObservation(ctx)
 	if err != nil {

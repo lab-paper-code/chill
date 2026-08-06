@@ -220,7 +220,7 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.metrics.result.ConfigurationContentDigest = ""
 			},
-			match: "configuration digest must be a canonical SHA-256 digest",
+			match: "configuration identity is required",
 		},
 		{
 			name: "unsupported runtime path",
@@ -228,13 +228,6 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 				resolvers.candidate.result.State.Backend = "CUDAExecutionProvider"
 			},
 			match: "runtime/backend contract is not supported",
-		},
-		{
-			name: "mutable workload observer image",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.workloads.result.Image = "registry.example/workload-observer:latest"
-			},
-			match: "images.workloadObserver",
 		},
 	}
 

@@ -2,13 +2,10 @@ package evidencestore
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
 
 const ReceiptSchemaVersion = "chill.dacs.io/evidence-store-receipt.v1alpha1"
-
-var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // ObjectLocation identifies where an object is stored without claiming an
 // expected content identity. Reading by location must be followed by content
@@ -46,8 +43,8 @@ func (i ObjectIdentity) Validate() error {
 	if err := i.Location().Validate(); err != nil {
 		return err
 	}
-	if !digestPattern.MatchString(i.Digest) {
-		return fmt.Errorf("%w: digest must be canonical sha256", ErrInvalidIdentity)
+	if strings.TrimSpace(i.Digest) == "" || strings.TrimSpace(i.Digest) != i.Digest {
+		return fmt.Errorf("%w: digest is required without surrounding whitespace", ErrInvalidIdentity)
 	}
 	if i.Size < 1 {
 		return fmt.Errorf("%w: size must be positive", ErrInvalidIdentity)

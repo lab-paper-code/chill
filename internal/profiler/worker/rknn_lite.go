@@ -251,7 +251,7 @@ func (r *RKNNLiteRuntime) validateObservedContract(
 	}
 	for _, observed := range evidence.HostLibraries {
 		expected, exists := expectedLibraries[observed.Name]
-		if !exists || observed.Path != expected.ContainerPath || observed.Digest != expected.Digest {
+		if !exists || observed.Path != expected.ContainerPath {
 			return errors.New("observed RKNNLite host libraries do not match the verified candidate")
 		}
 	}

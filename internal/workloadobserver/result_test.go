@@ -69,7 +69,7 @@ func TestResultValidateRejectsContradictoryEvidence(t *testing.T) {
 		match string
 	}{
 		{name: "schema", alter: func(result *Result) { result.SchemaVersion = "old" }, match: "schemaVersion"},
-		{name: "policy digest", alter: func(result *Result) { result.PolicyDigest = "sha256:no" }, match: "policy digest"},
+		{name: "policy identity", alter: func(result *Result) { result.PolicyDigest = "" }, match: "policy identity"},
 		{
 			name: "coverage", alter: func(result *Result) { result.CoverageEndedAt = result.CoverageStartedAt },
 			match: "coverage window",

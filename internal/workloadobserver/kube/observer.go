@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,8 +17,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
-
-var policyDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 const minimumEndFenceTimeout = 3 * time.Second
 
@@ -310,8 +307,8 @@ func validateRequest(request Request, onStarted func()) error {
 			return fmt.Errorf("workload observer %s is required without surrounding whitespace", name)
 		}
 	}
-	if !policyDigestPattern.MatchString(request.PolicyDigest) {
-		return errors.New("workload observer policy digest is invalid")
+	if strings.TrimSpace(request.PolicyDigest) == "" || strings.TrimSpace(request.PolicyDigest) != request.PolicyDigest {
+		return errors.New("workload observer policy identity is required without surrounding whitespace")
 	}
 	if request.EventLimit < 1 {
 		return errors.New("workload observer event limit must be positive")

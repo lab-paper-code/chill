@@ -295,7 +295,7 @@ func validateRKNNRuntimeEvidence(intent Intent, evidence *RKNNRuntimeEvidence) e
 	seenLibraries := make(map[string]struct{}, len(evidence.HostLibraries))
 	for _, library := range evidence.HostLibraries {
 		if strings.TrimSpace(library.Name) == "" || !validArtifactPath(library.Path) ||
-			!digestPattern.MatchString(library.Digest) {
+			strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
 			return errors.New("RKNN host library evidence is invalid")
 		}
 		if _, duplicate := seenLibraries[library.Name]; duplicate {

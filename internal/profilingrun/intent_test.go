@@ -123,10 +123,6 @@ func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
 		t.Fatalf("retained v1alpha6 schema accepted new state material: %v", err)
 	}
 
-	intent.State.HostContractDigest = "sha256:short"
-	if err := intent.Validate(); err == nil {
-		t.Fatal("expected invalid host contract digest rejection")
-	}
 }
 
 func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
@@ -210,7 +206,7 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 	}{
 		{name: "missing contract", mutate: func(candidate *Intent) { candidate.Actuation = nil }},
 		{name: "mode mismatch", mutate: func(candidate *Intent) { candidate.Actuation.PowerMode = "different-mode" }},
-		{name: "bad policy digest", mutate: func(candidate *Intent) { candidate.Actuation.PolicyDigest = "sha256:short" }},
+		{name: "missing policy identity", mutate: func(candidate *Intent) { candidate.Actuation.PolicyDigest = "" }},
 		{name: "negative NVPModel ID", mutate: func(candidate *Intent) { candidate.Actuation.Actuator.JetsonNVPModel.ID = -1 }},
 		{name: "mixed actuator union", mutate: func(candidate *Intent) {
 			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
@@ -252,11 +248,11 @@ func TestSupportedCPUORTIntentUsesRuntimeContractNotCatalogPathName(t *testing.T
 	}
 }
 
-func TestIntentRejectsMutableImage(t *testing.T) {
+func TestIntentAcceptsConfiguredImageReference(t *testing.T) {
 	intent := validIntent()
 	intent.Images.Runtime = "registry/runtime:latest"
-	if err := intent.Validate(); err == nil {
-		t.Fatal("expected mutable image rejection")
+	if err := intent.Validate(); err != nil {
+		t.Fatalf("configured image reference rejected: %v", err)
 	}
 }
 

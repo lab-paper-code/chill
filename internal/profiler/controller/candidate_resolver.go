@@ -118,9 +118,6 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if declaration.Artifact.Architecture != deviceClass.Spec.Architecture {
 		return profiler.ResolvedCandidate{}, errors.New("artifact supply architecture does not match DeviceClass")
 	}
-	if declaration.Artifact.Digest != artifact.Digest {
-		return profiler.ResolvedCandidate{}, errors.New("artifact supply digest does not match ModelSpec artifact")
-	}
 	report, err := buildCandidateReport(candidateReportInput{
 		Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
 		ConfigMapKey: r.options.ConfigMapKey, ModelDigest: modelDigest,

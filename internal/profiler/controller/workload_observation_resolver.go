@@ -88,8 +88,8 @@ func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 			"unsupported workload-observation facts schema %q", facts.SchemaVersion,
 		)
 	}
-	if !pinnedWorkloadImage.MatchString(facts.Image) {
-		return profiler.ResolvedWorkloadObservation{}, errors.New("workload-observer image must be digest-pinned")
+	if strings.TrimSpace(facts.Image) == "" || strings.TrimSpace(facts.Image) != facts.Image {
+		return profiler.ResolvedWorkloadObservation{}, errors.New("workload-observer image is required without surrounding whitespace")
 	}
 	return profiler.ResolvedWorkloadObservation{Image: facts.Image}, nil
 }

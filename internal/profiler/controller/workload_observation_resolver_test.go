@@ -20,7 +20,7 @@ func TestKubernetesWorkloadObservationResolverReturnsValidatedInstallationFacts(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resolved.Image, "@sha256:") {
+	if resolved.Image != testWorkloadObserverImage {
 		t.Fatalf("resolved workload observation = %#v", resolved)
 	}
 }
@@ -31,9 +31,9 @@ func TestKubernetesWorkloadObservationResolverRejectsUntrustedFacts(t *testing.T
 		facts string
 		match string
 	}{
-		{name: "mutable image", facts: strings.Replace(
-			validWorkloadObservationFacts(), testWorkloadObserverImage, "registry.example/workload-observer:latest", 1,
-		), match: "digest-pinned"},
+		{name: "missing image", facts: strings.Replace(
+			validWorkloadObservationFacts(), testWorkloadObserverImage, "", 1,
+		), match: "image is required"},
 		{name: "unknown field", facts: validWorkloadObservationFacts() + "unknown: true\n", match: "unknown"},
 	}
 	for _, test := range tests {

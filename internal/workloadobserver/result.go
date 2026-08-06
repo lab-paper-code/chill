@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
-
-var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // Validate checks internal observation consistency without applying admission
 // policy or interpreting Pod activity.
@@ -22,8 +19,8 @@ func (r Result) Validate() error {
 	if err := validateIdentities(r.Target, r.Run); err != nil {
 		return err
 	}
-	if !digestPattern.MatchString(r.PolicyDigest) {
-		return errors.New("workload observation policy digest is invalid")
+	if strings.TrimSpace(r.PolicyDigest) == "" || strings.TrimSpace(r.PolicyDigest) != r.PolicyDigest {
+		return errors.New("workload observation policy identity is required without surrounding whitespace")
 	}
 	if r.CoverageStartedAt.IsZero() || r.CoverageEndedAt.IsZero() ||
 		!r.CoverageEndedAt.After(r.CoverageStartedAt) {
