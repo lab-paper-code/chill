@@ -143,11 +143,11 @@ profiler:
         allowReceiptTimestamps: true
         rejectConcurrentCHILLWorkloads: true
         rejectExternalWorkloadChanges: true
-      - name: wall-power-3s-source-v1
+      - name: wall-power-2p5s-source-v1
         workloadMode: saturated-serial-fixed-batch
         minimumSamples: 20
         maximumGapSeconds: 4.0
-        maximumBoundaryDistanceSeconds: 3.0
+        maximumBoundaryDistanceSeconds: 2.5
         minimumCoverage: 0.95
         allowReceiptTimestamps: true
         rejectConcurrentCHILLWorkloads: true
