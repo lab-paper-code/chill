@@ -34,14 +34,15 @@ func execute(
 	if coreClient == nil {
 		return errors.New("Kubernetes core client is required")
 	}
-	intent, err := worker.LoadFrozenIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
+	intent, err := worker.LoadVerifiedIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
 	if err != nil {
 		return err
 	}
-	targetNode, err := intent.TargetNode()
+	intentRecord, err := intent.Record()
 	if err != nil {
 		return err
 	}
+	targetNode := intentRecord.TargetNode
 	pod, err := coreClient.Pods(opts.podNamespace).Get(ctx, opts.podName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get workload-observer Pod: %w", err)

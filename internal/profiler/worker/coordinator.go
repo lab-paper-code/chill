@@ -14,6 +14,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
@@ -24,7 +25,7 @@ type Runtime interface {
 }
 
 type RuntimeRequest struct {
-	Intent            FrozenIntent
+	Intent            profilingrun.VerifiedIntent
 	PodUID            string
 	ScheduledNodeName string
 }
@@ -40,7 +41,7 @@ type WorkloadResultReader interface {
 }
 
 type Request struct {
-	Intent            FrozenIntent
+	Intent            profilingrun.VerifiedIntent
 	PodUID            string
 	ScheduledNodeName string
 	RawLocation       evidencestore.ObjectLocation
@@ -77,7 +78,7 @@ func NewCoordinator(
 }
 
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
-	intent, err := request.Intent.snapshot()
+	intent, err := request.Intent.Record()
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read frozen intent: %w", ErrExecutionContract, err)
 	}

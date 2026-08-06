@@ -18,8 +18,8 @@ import (
 
 func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	opts := validOptions()
-	frozenIntent := validFrozenCPUIntent(t)
-	opts.intentDigest = frozenIntent.Digest()
+	verifiedIntent := validVerifiedCPUIntent(t)
+	opts.intentDigest = verifiedIntent.Digest()
 	wantReceipt := validReceipt()
 	coordinator := &fakeCoordinator{execute: func(request worker.Request) (evidencestore.Receipt, error) {
 		if request.Intent.Digest() != opts.intentDigest || request.PodUID != opts.podUID ||
@@ -31,16 +31,16 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	}}
 	written := false
 	deps := dependencies{
-		loadIntent: func(path, digest string, maximum int64) (worker.FrozenIntent, error) {
+		loadIntent: func(path, digest string, maximum int64) (profilingrun.VerifiedIntent, error) {
 			if path != opts.intentPath || digest != opts.intentDigest || maximum != maximumIntentBytes {
 				t.Fatalf("intent load = %q %q %d", path, digest, maximum)
 			}
-			return frozenIntent, nil
+			return verifiedIntent, nil
 		},
 		loadCandidateReport: func(
 			path string,
 			maximum int64,
-			_ worker.FrozenIntent,
+			_ profilingrun.VerifiedIntent,
 		) (profilingrun.VerifiedCandidateReport, error) {
 			if path != opts.candidateReportPath || maximum != maximumCandidateReportBytes {
 				t.Fatalf("candidate report load = %q %d", path, maximum)
@@ -49,7 +49,7 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 		},
 		buildCoordinator: func(
 			got options,
-			_ worker.FrozenIntent,
+			_ profilingrun.VerifiedIntent,
 			_ profilingrun.VerifiedCandidateReport,
 			stdout, stderr io.Writer,
 		) (measurementCoordinator, error) {
@@ -87,17 +87,21 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			deps := successfulDependencies(validReceipt())
 			if name == "intent" {
-				deps.loadIntent = func(string, string, int64) (worker.FrozenIntent, error) {
-					return worker.FrozenIntent{}, test.failure
+				deps.loadIntent = func(string, string, int64) (profilingrun.VerifiedIntent, error) {
+					return profilingrun.VerifiedIntent{}, test.failure
 				}
 			} else if name == "candidate" {
-				deps.loadCandidateReport = func(string, int64, worker.FrozenIntent) (profilingrun.VerifiedCandidateReport, error) {
+				deps.loadCandidateReport = func(
+					string,
+					int64,
+					profilingrun.VerifiedIntent,
+				) (profilingrun.VerifiedCandidateReport, error) {
 					return profilingrun.VerifiedCandidateReport{}, test.failure
 				}
 			} else {
 				deps.buildCoordinator = func(
 					options,
-					worker.FrozenIntent,
+					profilingrun.VerifiedIntent,
 					profilingrun.VerifiedCandidateReport,
 					io.Writer,
 					io.Writer,
@@ -118,7 +122,7 @@ func TestExecutePreservesStableFailureClass(t *testing.T) {
 func TestBuildCoordinatorAcceptsCompleteOptionsWithoutExternalIO(t *testing.T) {
 	if _, err := buildCoordinator(
 		validOptions(),
-		validFrozenCPUIntent(t),
+		validVerifiedCPUIntent(t),
 		profilingrun.VerifiedCandidateReport{},
 		io.Discard,
 		io.Discard,
@@ -216,7 +220,7 @@ func validCPUIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
-func validFrozenCPUIntent(t *testing.T) worker.FrozenIntent {
+func validVerifiedCPUIntent(t *testing.T) profilingrun.VerifiedIntent {
 	t.Helper()
 	intent := validCPUIntent(t)
 	payload, err := intent.CanonicalJSON()
@@ -231,7 +235,7 @@ func validFrozenCPUIntent(t *testing.T) worker.FrozenIntent {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := worker.LoadFrozenIntent(path, digest, int64(len(payload)))
+	loaded, err := worker.LoadVerifiedIntent(path, digest, int64(len(payload)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,15 +255,15 @@ func validReceipt() evidencestore.Receipt {
 
 func successfulDependencies(receipt evidencestore.Receipt) dependencies {
 	return dependencies{
-		loadIntent: func(string, string, int64) (worker.FrozenIntent, error) {
-			return worker.FrozenIntent{}, nil
+		loadIntent: func(string, string, int64) (profilingrun.VerifiedIntent, error) {
+			return profilingrun.VerifiedIntent{}, nil
 		},
-		loadCandidateReport: func(string, int64, worker.FrozenIntent) (profilingrun.VerifiedCandidateReport, error) {
+		loadCandidateReport: func(string, int64, profilingrun.VerifiedIntent) (profilingrun.VerifiedCandidateReport, error) {
 			return profilingrun.VerifiedCandidateReport{}, nil
 		},
 		buildCoordinator: func(
 			options,
-			worker.FrozenIntent,
+			profilingrun.VerifiedIntent,
 			profilingrun.VerifiedCandidateReport,
 			io.Writer,
 			io.Writer,

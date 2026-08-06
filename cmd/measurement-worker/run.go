@@ -21,19 +21,19 @@ type measurementCoordinator interface {
 type candidateReportLoader func(
 	string,
 	int64,
-	worker.FrozenIntent,
+	profilingrun.VerifiedIntent,
 ) (profilingrun.VerifiedCandidateReport, error)
 
 type coordinatorBuilder func(
 	options,
-	worker.FrozenIntent,
+	profilingrun.VerifiedIntent,
 	profilingrun.VerifiedCandidateReport,
 	io.Writer,
 	io.Writer,
 ) (measurementCoordinator, error)
 
 type dependencies struct {
-	loadIntent          func(string, string, int64) (worker.FrozenIntent, error)
+	loadIntent          func(string, string, int64) (profilingrun.VerifiedIntent, error)
 	loadCandidateReport candidateReportLoader
 	buildCoordinator    coordinatorBuilder
 	writeReceipt        func(string, evidencestore.Receipt) error
@@ -41,7 +41,7 @@ type dependencies struct {
 
 func productionDependencies() dependencies {
 	return dependencies{
-		loadIntent:          worker.LoadFrozenIntent,
+		loadIntent:          worker.LoadVerifiedIntent,
 		loadCandidateReport: worker.LoadVerifiedCandidateReport,
 		buildCoordinator:    buildCoordinator,
 		writeReceipt:        writeReceipt,
@@ -86,7 +86,7 @@ func execute(
 
 func buildCoordinator(
 	opts options,
-	intent worker.FrozenIntent,
+	intent profilingrun.VerifiedIntent,
 	verified profilingrun.VerifiedCandidateReport,
 	stdout, stderr io.Writer,
 ) (measurementCoordinator, error) {
@@ -126,11 +126,15 @@ func buildCoordinator(
 
 func buildRuntimeAdapter(
 	opts options,
-	intent worker.FrozenIntent,
+	intent profilingrun.VerifiedIntent,
 	verified profilingrun.VerifiedCandidateReport,
 	stdout, stderr io.Writer,
 ) (worker.Runtime, error) {
-	if intent.SupportsCPUORT() {
+	intentRecord, err := intent.Record()
+	if err != nil {
+		return nil, err
+	}
+	if profilingrun.IsSupportedCPUORTIntent(intentRecord) {
 		runtimeAdapter, err := worker.NewORTCPURuntime(worker.ORTCPURuntimeConfig{
 			Command: opts.runtimeCommand, ModelPath: opts.modelPath,
 			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
@@ -146,7 +150,7 @@ func buildRuntimeAdapter(
 		}
 		return runtimeAdapter, nil
 	}
-	if intent.SupportsRKNNLite() {
+	if profilingrun.IsSupportedRKNNLiteIntent(intentRecord) {
 		runtimeAdapter, err := worker.NewRKNNLiteRuntime(worker.RKNNLiteRuntimeConfig{
 			Command:            []string{"python3", "/opt/chill/runtime/rknnlite/runner.py"},
 			ModelPath:          defaultRKNNLiteModelPath,

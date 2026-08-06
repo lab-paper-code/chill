@@ -27,14 +27,15 @@ func execute(
 	if client == nil {
 		return errors.New("HTTP client is required")
 	}
-	intent, err := worker.LoadFrozenIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
+	intent, err := worker.LoadVerifiedIntent(opts.intentPath, opts.intentDigest, maximumIntentBytes)
 	if err != nil {
 		return err
 	}
-	metrics, err := intent.Metrics()
+	intentRecord, err := intent.Record()
 	if err != nil {
 		return err
 	}
+	metrics := intentRecord.Metrics
 	source, err := edgemetrics.New(metricobserver.SourceIdentity{
 		NodeName: metrics.NodeName,
 		Endpoint: metrics.Endpoint,

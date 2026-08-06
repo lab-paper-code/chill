@@ -119,7 +119,7 @@ func (r *RKNNLiteRuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
-	intent, err := request.Intent.snapshot()
+	intent, err := request.Intent.Record()
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
@@ -150,7 +150,7 @@ func (r *RKNNLiteRuntime) Measure(
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite idle result: %w", err)
 		}
-		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent, request.PodUID, result)
 		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite idle result: %w", err)
 		}
@@ -163,7 +163,7 @@ func (r *RKNNLiteRuntime) Measure(
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite result: %w", err)
 	}
-	verified, err := profilingrun.VerifyRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+	verified, err := profilingrun.VerifyRuntimeResult(request.Intent, request.PodUID, result)
 	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite result: %w", err)
 	}
@@ -174,7 +174,7 @@ func (r *RKNNLiteRuntime) Measure(
 }
 
 func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
-	intent, err := runtimeRequest.Intent.snapshot()
+	intent, err := runtimeRequest.Intent.Record()
 	if err != nil {
 		return nil, fmt.Errorf("read RKNNLite intent: %w", err)
 	}

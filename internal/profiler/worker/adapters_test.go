@@ -233,7 +233,7 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	}
 }
 
-func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
+func TestLoadVerifiedIntentVerifiesExactDigest(t *testing.T) {
 	intent := testIntent(t)
 	payload, err := intent.CanonicalJSON()
 	if err != nil {
@@ -247,11 +247,11 @@ func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadFrozenIntent(path, digest, 1<<20)
+	loaded, err := LoadVerifiedIntent(path, digest, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedIntent, err := loaded.snapshot()
+	loadedIntent, err := loaded.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,20 +259,21 @@ func TestLoadFrozenIntentVerifiesExactDigest(t *testing.T) {
 		t.Fatalf("loaded intent drifted: %#v", loaded)
 	}
 	loadedIntent.TargetNode.Name = mutatedCopyName
-	target, err := loaded.TargetNode()
+	sealedIntent, err := loaded.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
+	target := sealedIntent.TargetNode
 	if target != intent.TargetNode {
 		t.Fatalf("sealed intent was changed through a detached snapshot: %#v", target)
 	}
-	if _, err := LoadFrozenIntent(path, "sha256:"+strings.Repeat("0", 64), 1<<20); err == nil ||
+	if _, err := LoadVerifiedIntent(path, "sha256:"+strings.Repeat("0", 64), 1<<20); err == nil ||
 		!strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("expected digest mismatch, got %v", err)
 	}
 }
 
-func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
+func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	intent := testIntent(t)
 	payload, err := intent.CanonicalJSON()
 	if err != nil {
@@ -299,11 +300,11 @@ func TestLoadFrozenIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := LoadFrozenIntent(path, digest, 1<<20)
+	loaded, err := LoadVerifiedIntent(path, digest, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedIntent, err := loaded.snapshot()
+	loadedIntent, err := loaded.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +334,7 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 	if err := os.Symlink(filepath.Join("..data", "candidate-report.json"), path); err != nil {
 		t.Fatal(err)
 	}
-	verified, err := LoadVerifiedCandidateReport(path, 1<<20, testFrozenIntent(t, intent))
+	verified, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +343,7 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 	}
 
 	intent.Candidate.ReportDigest = "sha256:" + strings.Repeat("0", 64)
-	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testFrozenIntent(t, intent)); err == nil ||
+	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent)); err == nil ||
 		!strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("expected candidate digest rejection, got %v", err)
 	}
@@ -792,7 +793,7 @@ func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
 	if err != nil {
 		panic(err)
 	}
-	return RuntimeRequest{Intent: sealFrozenIntent(verified), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
+	return RuntimeRequest{Intent: verified, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
 func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {

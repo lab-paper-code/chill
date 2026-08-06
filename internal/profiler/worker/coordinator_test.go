@@ -62,7 +62,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	)
 
 	got, err := coordinator.Execute(context.Background(), Request{
-		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/intent.json"},
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 	coordinator := mustCoordinator(t,
 		runtimeMeasurementFunc(func(_ context.Context, request RuntimeRequest) (RuntimeMeasurement, error) {
 			verified, err := profilingrun.VerifyIdleRuntimeResult(
-				request.Intent.verifiedIntent(), request.PodUID, idle,
+				request.Intent, request.PodUID, idle,
 			)
 			if err != nil {
 				return RuntimeMeasurement{}, err
@@ -111,14 +111,14 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 		store,
 	)
 	if _, err := coordinator.Execute(context.Background(), Request{
-		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "idle/raw.json"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCoordinatorRejectsEmptyFrozenIntentBeforeExternalWork(t *testing.T) {
+func TestCoordinatorRejectsEmptyVerifiedIntentBeforeExternalWork(t *testing.T) {
 	intent := testIntent(t)
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
@@ -135,7 +135,7 @@ func TestCoordinatorRejectsEmptyFrozenIntentBeforeExternalWork(t *testing.T) {
 	)
 
 	_, err := coordinator.Execute(context.Background(), Request{
-		Intent: FrozenIntent{}, PodUID: testPodUID,
+		Intent: profilingrun.VerifiedIntent{}, PodUID: testPodUID,
 		ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation:       evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
@@ -161,7 +161,7 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 	)
 
 	_, err := coordinator.Execute(context.Background(), Request{
-		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: "other-node",
+		Intent: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: "other-node",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || !strings.Contains(err.Error(), "scheduled Node") || runtimeCalls != 0 {
@@ -172,7 +172,7 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 	intent := testIntent(t)
 	request := Request{
-		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	}
 
@@ -248,7 +248,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 		store,
 	)
 	_, err := coordinator.Execute(context.Background(), Request{
-		Intent: testFrozenIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		Intent: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
@@ -266,7 +266,7 @@ func (f runtimeFunc) Measure(
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	verified, err := profilingrun.VerifyRuntimeResult(request.Intent.verifiedIntent(), request.PodUID, result)
+	verified, err := profilingrun.VerifyRuntimeResult(request.Intent, request.PodUID, result)
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
@@ -368,7 +368,7 @@ func testIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
-func testFrozenIntent(t *testing.T, intent profilingrun.Intent) FrozenIntent {
+func testVerifiedIntent(t *testing.T, intent profilingrun.Intent) profilingrun.VerifiedIntent {
 	t.Helper()
 	digest, err := intent.Digest()
 	if err != nil {
@@ -378,7 +378,7 @@ func testFrozenIntent(t *testing.T, intent profilingrun.Intent) FrozenIntent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sealFrozenIntent(verified)
+	return verified
 }
 
 func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.RuntimeResult {

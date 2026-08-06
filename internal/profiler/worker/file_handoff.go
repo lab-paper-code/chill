@@ -71,24 +71,24 @@ func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.VerifiedRes
 	}
 }
 
-// LoadFrozenIntent reads one strict intent file and verifies its externally
-// supplied digest before any measurement-side effect is allowed.
-func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (FrozenIntent, error) {
+// LoadVerifiedIntent reads one strict frozen-intent file and verifies its
+// externally supplied digest before any measurement-side effect is allowed.
+func LoadVerifiedIntent(path, expectedDigest string, maxBytes int64) (profilingrun.VerifiedIntent, error) {
 	if !validAbsoluteFilePath(path) {
-		return FrozenIntent{}, errors.New("intent path must be a clean absolute file path")
+		return profilingrun.VerifiedIntent{}, errors.New("intent path must be a clean absolute file path")
 	}
 	if maxBytes < 1 {
-		return FrozenIntent{}, errors.New("intent maximum size must be positive")
+		return profilingrun.VerifiedIntent{}, errors.New("intent maximum size must be positive")
 	}
 	var intent profilingrun.Intent
 	if err := decodeProjectedJSONFile(path, maxBytes, &intent); err != nil {
-		return FrozenIntent{}, fmt.Errorf("read frozen intent file: %w", err)
+		return profilingrun.VerifiedIntent{}, fmt.Errorf("read frozen intent file: %w", err)
 	}
 	verified, err := profilingrun.VerifyIntent(intent, expectedDigest)
 	if err != nil {
-		return FrozenIntent{}, fmt.Errorf("validate frozen intent file: %w", err)
+		return profilingrun.VerifiedIntent{}, fmt.Errorf("validate frozen intent file: %w", err)
 	}
-	return sealFrozenIntent(verified), nil
+	return verified, nil
 }
 
 // LoadVerifiedCandidateReport reads the exact projected candidate report and
@@ -97,7 +97,7 @@ func LoadFrozenIntent(path, expectedDigest string, maxBytes int64) (FrozenIntent
 func LoadVerifiedCandidateReport(
 	path string,
 	maxBytes int64,
-	intent FrozenIntent,
+	intent profilingrun.VerifiedIntent,
 ) (profilingrun.VerifiedCandidateReport, error) {
 	if !validAbsoluteFilePath(path) {
 		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report path must be a clean absolute file path")
@@ -105,7 +105,7 @@ func LoadVerifiedCandidateReport(
 	if maxBytes < 1 {
 		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report maximum size must be positive")
 	}
-	intentValue, err := intent.snapshot()
+	intentValue, err := intent.Record()
 	if err != nil {
 		return profilingrun.VerifiedCandidateReport{}, err
 	}

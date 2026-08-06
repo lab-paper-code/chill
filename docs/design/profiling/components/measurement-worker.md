@@ -32,11 +32,12 @@ continuous with no entered, updated, or exited Pod. The Run reached
 `EvidenceAdmitted=True`.
 
 All three regular containers strictly decode the same frozen intent. The
-mounted-file loader validates and digest-matches it once, then returns a sealed
-`FrozenIntent`; observers, runtime adapters, and the coordinator carry that
-value, and the coordinator consumes its verified digest instead of accepting a
-second mutable intent-plus-expected-digest pair. Raw-result composition remains
-the separate boundary that correlates runtime and observer facts. Delivery
+mounted-file loader validates and digest-matches it once, then returns the
+owner package's `profilingrun.VerifiedIntent`; observers, runtime adapters, and
+the coordinator carry that value, and the coordinator consumes its verified
+digest instead of accepting a second mutable intent-plus-expected-digest pair.
+Raw-result composition remains the separate boundary that correlates runtime
+and observer facts. Delivery
 therefore deploys runtime-worker, MetricObserver, and WorkloadObserver images
 as one tested schema-compatible set. Their image identities remain
 independently digest-pinned; this rule does not merge their responsibilities.
