@@ -83,6 +83,43 @@ func (h *ActuationHandoffs) Ensure(
 	return existing, false, nil
 }
 
+// AdvanceToRestore performs the only mutable Profiler-owned handoff
+// transition. An elapsed absolute deadline is left to the NodeActuator's
+// fail-safe restoration path because the API contract forbids a request
+// timestamp at or after that deadline.
+func (h *ActuationHandoffs) AdvanceToRestore(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	frozen FrozenRun,
+	handoff *edgev1alpha1.NodeActuation,
+) (bool, error) {
+	if h == nil || h.client == nil || h.scheme == nil || h.now == nil {
+		return false, errors.New("actuation handoff repository is incomplete")
+	}
+	if err := verifyActuationHandoff(run, handoff, frozen); err != nil {
+		return false, err
+	}
+	if handoff.Spec.DesiredStage == edgev1alpha1.NodeActuationDesiredStageRestore {
+		return false, nil
+	}
+	requestedAt := h.now().UTC()
+	if !requestedAt.After(handoff.Spec.StageRequestedAt.Time) {
+		requestedAt = handoff.Spec.StageRequestedAt.Add(time.Nanosecond)
+	}
+	if !requestedAt.Before(handoff.Spec.Deadline.Time) {
+		return false, nil
+	}
+	base := handoff.DeepCopy()
+	desired := handoff.DeepCopy()
+	desired.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
+	desired.Spec.StageRequestedAt = metav1.NewTime(requestedAt)
+	if err := h.client.Patch(ctx, desired, client.MergeFrom(base)); err != nil {
+		return false, fmt.Errorf("advance NodeActuation to restore: %w", err)
+	}
+	handoff.Spec = desired.Spec
+	return true, nil
+}
+
 func buildActuationHandoff(
 	run *edgev1alpha1.ProfilingRun,
 	frozen FrozenRun,

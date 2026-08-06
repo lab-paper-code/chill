@@ -218,9 +218,11 @@ The first Jetson NVPModel host adapter now executes only a configured argv,
 parses an independent name/ID query, and keeps command completion distinct from
 controller read-back. Helm declares the exact binary, library, configuration,
 state, and sysfs mounts without privileged mode or added capabilities. The
-chart remains disabled by default; no live apply/read-back/restore proof has
-been run, and the Profiler still creates no measurement Job for a non-fixed
-Run. Catalog presence and historical standalone smoke are not production
+Profiler now creates a non-fixed Run's measurement Job only after verified and
+settled target state, advances the handoff to restoration after a terminal Job,
+and withholds evidence finalization until ordered restoration is proven. The
+chart remains disabled by default, and no live apply/read-back/restore proof has
+been run. Catalog presence and historical standalone smoke are not production
 execution evidence.
 
 ## Campaign records

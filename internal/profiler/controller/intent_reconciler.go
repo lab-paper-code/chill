@@ -30,6 +30,7 @@ type RunExecutionJobs interface {
 
 type RunActuationHandoffs interface {
 	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*edgev1alpha1.NodeActuation, bool, error)
+	AdvanceToRestore(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun, *edgev1alpha1.NodeActuation) (bool, error)
 }
 
 // RunReconciler advances one ProfilingRun through short, durable transitions.
@@ -78,40 +79,23 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if frozen.Stopped {
 		return ctrl.Result{}, nil
 	}
+	job, err := r.loadRecordedJob(ctx, run)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	if frozen.Run.Prepared.Intent.Actuation != nil {
-		handoff, _, err := r.handoffs.Ensure(ctx, run, frozen.Run)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("materialize ProfilingRun %s actuation handoff: %w", req.NamespacedName, err)
+		handled, err := r.reconcileActuatedRun(ctx, req, run, frozen.Run, job)
+		if err != nil || handled {
+			return ctrl.Result{}, err
 		}
-		if err := r.publishActuationReference(ctx, run, handoff); err != nil {
-			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s actuation reference: %w", req.NamespacedName, err)
-		}
-		return ctrl.Result{}, r.publishExecutionOutcome(
-			ctx,
-			run,
-			metav1.ConditionUnknown,
-			"NodeActuatorPending",
-			"durable Node actuation handoff is recorded; measurement waits for the NodeActuator consumer",
-		)
 	}
 	if run.Status.Job == nil {
-		job, _, err := r.jobs.Ensure(ctx, run, frozen.Run)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("materialize ProfilingRun %s Job: %w", req.NamespacedName, err)
-		}
-		if err := r.publishJobReference(ctx, run, job); err != nil {
-			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s Job reference: %w", req.NamespacedName, err)
-		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.ensureMeasurementJob(ctx, req, run, frozen.Run)
 	}
-
-	job := &batchv1.Job{}
-	jobKey := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
-	if err := r.Get(ctx, jobKey, job); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, r.publishExecutionOutcome(ctx, run, metav1.ConditionFalse, "ExecutionLost", "recorded measurement Job no longer exists")
-		}
-		return ctrl.Result{}, fmt.Errorf("get recorded measurement Job %s: %w", jobKey, err)
+	if job == nil {
+		return ctrl.Result{}, r.publishExecutionOutcome(
+			ctx, run, metav1.ConditionFalse, "ExecutionLost", "recorded measurement Job no longer exists",
+		)
 	}
 	snapshot, err := ProjectSnapshot(run, &frozen.Run.Prepared.Intent, job)
 	if err != nil {
@@ -160,6 +144,43 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	default:
 		return ctrl.Result{}, fmt.Errorf("unexpected ProfilingRun lifecycle action %q", decision.Action)
 	}
+}
+
+func (r *RunReconciler) loadRecordedJob(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+) (*batchv1.Job, error) {
+	if run.Status.Job == nil {
+		return nil, nil
+	}
+	if run.Status.Job.Name == "" || run.Status.Job.UID == "" {
+		return nil, errors.New("recorded measurement Job reference is incomplete")
+	}
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
+	if err := r.Get(ctx, key, job); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get recorded measurement Job %s: %w", key, err)
+	}
+	return job, nil
+}
+
+func (r *RunReconciler) ensureMeasurementJob(
+	ctx context.Context,
+	request ctrl.Request,
+	run *edgev1alpha1.ProfilingRun,
+	frozen FrozenRun,
+) error {
+	job, _, err := r.jobs.Ensure(ctx, run, frozen)
+	if err != nil {
+		return fmt.Errorf("materialize ProfilingRun %s Job: %w", request.NamespacedName, err)
+	}
+	if err := r.publishJobReference(ctx, run, job); err != nil {
+		return fmt.Errorf("publish ProfilingRun %s Job reference: %w", request.NamespacedName, err)
+	}
+	return nil
 }
 
 func (r *RunReconciler) publishActuationReference(

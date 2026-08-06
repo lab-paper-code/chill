@@ -27,7 +27,10 @@ producer, strict local-Node consumer projection, pure lifecycle decision core,
 exact Node-UID Lease primitive, internal status reconciler, and fail-closed
 workload-safety observer are implemented. The opt-in command and Operator/Helm
 DaemonSet lifecycle and first Jetson NVPModel host adapter are also implemented.
-The chart is disabled by default, and no live mutation or apply/read-back/restore
+The Profiler now gates measurement-Job creation on independently verified and
+settled target state, requests restoration after a terminal Job, and withholds
+evidence finalization until restoration and its causal ordering are proven. The
+chart is disabled by default, and no live mutation or apply/read-back/restore
 proof has occurred. Later slices remain deferred until their stated entry
 condition is met or this plan is explicitly revised.
 
@@ -172,7 +175,8 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   live host-mutation proof remains open.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
   exact self-Pod allowances before any host operation.
-- [ ] Fix `apply -> read-back -> settling -> measurement -> restore`.
+- [x] Fix `apply -> read-back -> settling -> measurement -> restore` in the
+  Profiler lifecycle; live proof remains a separate gate.
 - [ ] Restore after Run failure, controller restart, and worker timeout.
 - [ ] Surface restoration failure as a terminal condition and operator alert.
 
@@ -190,10 +194,14 @@ DeviceClass, mode, and actuator kind, binds its semantic digest into the
 intent, and retains its canonical bytes and ConfigMap source in the immutable
 record. Its first policy fields bind settling and maximum handoff duration.
 The Profiler now creates one owned `NodeActuation`, records its exact UID in
-Run status, reports `NodeActuatorPending`, and creates no measurement Job. The
-handoff keeps Run/Node UID, selected class/mode/target, policy digest, policy
-timing, absolute deadline, and Profiler-owned desired stage in immutable or
-monotonic `spec`; the actuator alone owns
+Run status, and reports `NodeActuatorPending` until the target is independently
+verified and settled. Only then may it create the measurement Job. A terminal
+Job advances the handoff once from `Apply` to `Restore`; evidence finalization
+is withheld until `Restored`, and a successful Job is accepted by that gate
+only when its completion timestamp does not follow the Profiler-owned restore
+request. The handoff keeps Run/Node UID, selected class/mode/target, policy
+digest, policy timing, absolute deadline, and Profiler-owned desired stage in
+immutable or monotonic `spec`; the actuator alone owns
 previous/target/restored observations, phase, timestamps, and terminal failure
 in `status`. Its consumer projection rejects a foreign Node name or UID before
 any Lease or host adapter can receive the request. This closes the durable API
