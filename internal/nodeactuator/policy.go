@@ -28,6 +28,13 @@ type ActuationPolicy struct {
 	ActuationPolicySpec
 }
 
+func (p ActuationPolicySpec) Validate() error {
+	return (ActuationPolicy{
+		SchemaVersion:       ActuationPolicySchemaVersion,
+		ActuationPolicySpec: p,
+	}).Validate()
+}
+
 func (p ActuationPolicy) Validate() error {
 	if p.SchemaVersion != ActuationPolicySchemaVersion {
 		return fmt.Errorf("unsupported actuation-policy schema %q", p.SchemaVersion)

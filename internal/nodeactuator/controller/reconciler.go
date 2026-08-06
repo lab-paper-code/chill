@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -40,9 +39,9 @@ type HostActuator interface {
 }
 
 type HandoffReconcilerOptions struct {
-	AssignedNode         nodeactuator.ObjectIdentity
-	AllowedPolicyDigests []string
-	SafetyValidFor       time.Duration
+	AssignedNode    nodeactuator.ObjectIdentity
+	AllowedPolicies []nodeactuator.ActuationPolicySpec
+	SafetyValidFor  time.Duration
 }
 
 func (o HandoffReconcilerOptions) Validate() error {
@@ -52,18 +51,19 @@ func (o HandoffReconcilerOptions) Validate() error {
 	if o.SafetyValidFor < time.Second || o.SafetyValidFor > 5*time.Minute {
 		return errors.New("workload safety validity must be between 1 second and 5 minutes")
 	}
-	if len(o.AllowedPolicyDigests) == 0 {
-		return errors.New("at least one allowed actuation-policy digest is required")
+	if len(o.AllowedPolicies) == 0 {
+		return errors.New("at least one allowed actuation policy is required")
 	}
-	seen := make(map[string]struct{}, len(o.AllowedPolicyDigests))
-	for _, digest := range o.AllowedPolicyDigests {
-		if err := nodeactuator.ValidatePolicyDigest(digest); err != nil {
-			return fmt.Errorf("validate allowed actuation-policy digest: %w", err)
+	seen := make(map[string]struct{}, len(o.AllowedPolicies))
+	for _, policy := range o.AllowedPolicies {
+		if err := policy.Validate(); err != nil {
+			return fmt.Errorf("validate allowed actuation policy: %w", err)
 		}
-		if _, duplicate := seen[digest]; duplicate {
-			return fmt.Errorf("duplicate allowed actuation-policy digest %q", digest)
+		selector := policy.DeviceClass + "\x00" + policy.PowerMode + "\x00" + policy.ActuatorKind
+		if _, duplicate := seen[selector]; duplicate {
+			return fmt.Errorf("duplicate allowed actuation-policy selector %q", selector)
 		}
-		seen[digest] = struct{}{}
+		seen[selector] = struct{}{}
 	}
 	return nil
 }
@@ -95,11 +95,9 @@ func NewHandoffReconciler(
 	return &HandoffReconciler{
 		Client: kubeClient, lease: lease, safety: safety, actuator: actuator,
 		options: HandoffReconcilerOptions{
-			AssignedNode: options.AssignedNode,
-			AllowedPolicyDigests: append(
-				[]string(nil), options.AllowedPolicyDigests...,
-			),
-			SafetyValidFor: options.SafetyValidFor,
+			AssignedNode:    options.AssignedNode,
+			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), options.AllowedPolicies...),
+			SafetyValidFor:  options.SafetyValidFor,
 		},
 		now: time.Now,
 	}, nil
@@ -143,11 +141,11 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	now := r.now().UTC()
-	if !slices.Contains(r.options.AllowedPolicyDigests, actuationRequest.PolicyDigest) &&
+	if !allowsActuationPolicy(r.options.AllowedPolicies, actuationRequest) &&
 		handoff.Status.TerminalFailure == nil {
 		failure := nodeactuator.Failure{
-			Stage: nodeactuator.FailureStagePolicy, Reason: "PolicyDigestRejected",
-			Message: "frozen actuation-policy digest is not authorized by this NodeActuator",
+			Stage: nodeactuator.FailureStagePolicy, Reason: "PolicyRejected",
+			Message: "frozen actuation policy is not authorized by this NodeActuator",
 		}
 		if mayHaveMutated(handoff.Status) || handoff.Status.PreviousObservation != nil {
 			return ctrl.Result{}, r.beginRestore(ctx, handoff, now, &failure)
@@ -185,6 +183,18 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, fmt.Errorf("decide NodeActuation %s lifecycle: %w", request.NamespacedName, err)
 	}
 	return r.execute(ctx, handoff, snapshot, decision)
+}
+
+func allowsActuationPolicy(policies []nodeactuator.ActuationPolicySpec, request nodeactuator.Request) bool {
+	for _, policy := range policies {
+		if policy.DeviceClass == request.DeviceClass && policy.PowerMode == request.PowerMode &&
+			policy.ActuatorKind == request.Target.Kind &&
+			policy.SettlingDurationSeconds == int(request.SettlingDurationSeconds) &&
+			policy.MaxActuationDurationSeconds == int(request.MaxActuationDurationSeconds) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *HandoffReconciler) synchronizeLeaseStatus(

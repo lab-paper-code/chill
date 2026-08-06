@@ -1,6 +1,7 @@
 package nodeactuator
 
 import (
+	"encoding/json"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -9,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/lab-paper-code/chill/internal/component"
+	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 )
 
 const containerName = component.NodeActuator
@@ -17,7 +19,11 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	policyDigests, err := configuredPolicyDigests(config.ActuationPolicies)
+	policies, err := configuredPolicies(config.ActuationPolicies)
+	if err != nil {
+		return nil, err
+	}
+	args, err := nodeActuatorArgs(options, config, policies)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +52,7 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 					Volumes: hostVolumes(config),
 					Containers: []corev1.Container{{
 						Name: containerName, Image: config.Image, ImagePullPolicy: config.ImagePullPolicy,
-						Command: []string{"/node-actuator"}, Args: nodeActuatorArgs(options, config, policyDigests),
+						Command: []string{"/node-actuator"}, Args: args,
 						Env: nodeIdentityEnvironment(), SecurityContext: config.SecurityContext,
 						VolumeMounts:   hostVolumeMounts(config),
 						Resources:      config.Resources,
@@ -59,7 +65,11 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 	}, nil
 }
 
-func nodeActuatorArgs(options Options, config Config, policyDigests []string) []string {
+func nodeActuatorArgs(
+	options Options,
+	config Config,
+	policies []actuatorcore.ActuationPolicySpec,
+) ([]string, error) {
 	args := []string{
 		"--watch-namespace=" + options.Namespace,
 		"--lease-namespace=" + options.Namespace,
@@ -78,14 +88,18 @@ func nodeActuatorArgs(options Options, config Config, policyDigests []string) []
 	for _, namespace := range config.AllowedNamespaces {
 		args = append(args, "--allowed-namespace="+namespace)
 	}
-	for _, digest := range policyDigests {
-		args = append(args, "--allowed-policy-digest="+digest)
+	for _, policy := range policies {
+		encoded, err := json.Marshal(policy)
+		if err != nil {
+			return nil, fmt.Errorf("encode allowed actuation policy %q: %w", policy.Name, err)
+		}
+		args = append(args, "--allowed-policy="+string(encoded))
 	}
 	for _, argument := range config.JetsonNVPModel.Command {
 		args = append(args, "--jetson-nvpmodel-command="+argument)
 	}
 	args = append(args, "--jetson-nvpmodel-timeout="+config.JetsonNVPModel.CommandTimeout)
-	return args
+	return args, nil
 }
 
 func hostVolumes(config Config) []corev1.Volume {

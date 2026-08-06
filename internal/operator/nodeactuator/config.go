@@ -81,7 +81,7 @@ func (c Config) Validate() error {
 	if err := validateAllowedNamespaces(c.AllowedNamespaces); err != nil {
 		problems = append(problems, err.Error())
 	}
-	if _, err := configuredPolicyDigests(c.ActuationPolicies); err != nil {
+	if _, err := configuredPolicies(c.ActuationPolicies); err != nil {
 		problems = append(problems, err.Error())
 	}
 	if err := c.validateHostAdapters(); err != nil {
@@ -175,32 +175,27 @@ func validateAllowedNamespaces(namespaces []string) error {
 	return nil
 }
 
-func configuredPolicyDigests(specs []actuatorcore.ActuationPolicySpec) ([]string, error) {
+func configuredPolicies(specs []actuatorcore.ActuationPolicySpec) ([]actuatorcore.ActuationPolicySpec, error) {
 	if len(specs) == 0 {
 		return nil, errors.New("actuationPolicies must contain at least one policy")
 	}
 	seenNames := make(map[string]struct{}, len(specs))
 	seenSelectors := make(map[string]struct{}, len(specs))
-	digests := make([]string, 0, len(specs))
+	policies := make([]actuatorcore.ActuationPolicySpec, 0, len(specs))
 	for _, spec := range specs {
-		policy := actuatorcore.ActuationPolicy{
-			SchemaVersion:       actuatorcore.ActuationPolicySchemaVersion,
-			ActuationPolicySpec: spec,
-		}
-		digest, err := policy.Digest()
-		if err != nil {
+		if err := spec.Validate(); err != nil {
 			return nil, fmt.Errorf("validate configured actuation policy %q: %w", spec.Name, err)
 		}
-		if _, duplicate := seenNames[policy.Name]; duplicate {
-			return nil, fmt.Errorf("duplicate configured actuation-policy name %q", policy.Name)
+		if _, duplicate := seenNames[spec.Name]; duplicate {
+			return nil, fmt.Errorf("duplicate configured actuation-policy name %q", spec.Name)
 		}
-		seenNames[policy.Name] = struct{}{}
-		selector := policy.DeviceClass + "\x00" + policy.PowerMode + "\x00" + policy.ActuatorKind
+		seenNames[spec.Name] = struct{}{}
+		selector := spec.DeviceClass + "\x00" + spec.PowerMode + "\x00" + spec.ActuatorKind
 		if _, duplicate := seenSelectors[selector]; duplicate {
 			return nil, fmt.Errorf("duplicate configured actuation-policy selector %q", selector)
 		}
 		seenSelectors[selector] = struct{}{}
-		digests = append(digests, digest)
+		policies = append(policies, spec)
 	}
-	return digests, nil
+	return policies, nil
 }

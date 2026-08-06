@@ -47,11 +47,9 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 	reconciler, err := actuatorcontroller.NewHandoffReconciler(
 		manager.GetClient(), leases, safety, hostActuator,
 		actuatorcontroller.HandoffReconcilerOptions{
-			AssignedNode: assigned,
-			AllowedPolicyDigests: append(
-				[]string(nil), opts.allowedPolicyDigests...,
-			),
-			SafetyValidFor: opts.safetyValidFor,
+			AssignedNode:    assigned,
+			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
+			SafetyValidFor:  opts.safetyValidFor,
 		},
 	)
 	if err != nil {

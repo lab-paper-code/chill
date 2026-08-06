@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -13,21 +16,21 @@ import (
 )
 
 type options struct {
-	nodeName             string
-	podUID               string
-	watchNamespace       string
-	leaseNamespace       string
-	leaseDuration        int
-	safetyValidFor       time.Duration
-	allowedNamespaces    stringListFlag
-	allowedPolicyDigests stringListFlag
-	jetsonCommand        stringListFlag
-	jetsonTimeout        time.Duration
-	kubeAPIServer        string
-	kubeAPITokenFile     string
-	kubeAPICAFile        string
-	metricsAddr          string
-	probeAddr            string
+	nodeName          string
+	podUID            string
+	watchNamespace    string
+	leaseNamespace    string
+	leaseDuration     int
+	safetyValidFor    time.Duration
+	allowedNamespaces stringListFlag
+	allowedPolicies   policyListFlag
+	jetsonCommand     stringListFlag
+	jetsonTimeout     time.Duration
+	kubeAPIServer     string
+	kubeAPITokenFile  string
+	kubeAPICAFile     string
+	metricsAddr       string
+	probeAddr         string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -42,8 +45,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"Explicit workload namespace allowed during actuation; repeatable.",
 	)
 	flags.Var(
-		&o.allowedPolicyDigests, "allowed-policy-digest",
-		"Authorized canonical actuation-policy digest; repeatable.",
+		&o.allowedPolicies, "allowed-policy",
+		"Authorized actuation-policy JSON object; repeatable.",
 	)
 	flags.Var(
 		&o.jetsonCommand, "jetson-nvpmodel-command",
@@ -91,8 +94,8 @@ func (o options) validate() error {
 	if o.safetyValidFor < time.Second || o.safetyValidFor > 5*time.Minute {
 		return errors.New("safety validity must be between 1 second and 5 minutes")
 	}
-	if len(o.allowedNamespaces) == 0 || len(o.allowedPolicyDigests) == 0 {
-		return errors.New("at least one allowed namespace and policy digest are required")
+	if len(o.allowedNamespaces) == 0 || len(o.allowedPolicies) == 0 {
+		return errors.New("at least one allowed namespace and actuation policy are required")
 	}
 	if len(o.jetsonCommand) == 0 || o.jetsonTimeout < time.Second || o.jetsonTimeout > 5*time.Minute {
 		return errors.New("Jetson NVPModel command and a timeout between 1 second and 5 minutes are required")
@@ -108,9 +111,7 @@ func (o options) validate() error {
 	}); err != nil {
 		return err
 	}
-	if err := validateUniqueStrings(
-		o.allowedPolicyDigests, "policy digest", nodeactuator.ValidatePolicyDigest,
-	); err != nil {
+	if err := validateUniquePolicies(o.allowedPolicies); err != nil {
 		return err
 	}
 	for _, argument := range o.jetsonCommand {
@@ -122,6 +123,26 @@ func (o options) validate() error {
 }
 
 type stringListFlag []string
+
+type policyListFlag []nodeactuator.ActuationPolicySpec
+
+func (f *policyListFlag) String() string {
+	return fmt.Sprintf("%v", []nodeactuator.ActuationPolicySpec(*f))
+}
+
+func (f *policyListFlag) Set(value string) error {
+	decoder := json.NewDecoder(bytes.NewBufferString(value))
+	decoder.DisallowUnknownFields()
+	var policy nodeactuator.ActuationPolicySpec
+	if err := decoder.Decode(&policy); err != nil {
+		return fmt.Errorf("decode allowed actuation policy: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("allowed actuation policy must contain exactly one JSON object")
+	}
+	*f = append(*f, policy)
+	return nil
+}
 
 func (f *stringListFlag) String() string {
 	return strings.Join(*f, ",")
@@ -145,6 +166,21 @@ func validateUniqueStrings(values []string, kind string, validate func(string) e
 			return fmt.Errorf("duplicate allowed %s %q", kind, value)
 		}
 		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateUniquePolicies(policies []nodeactuator.ActuationPolicySpec) error {
+	seen := make(map[string]struct{}, len(policies))
+	for _, policy := range policies {
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+		selector := policy.DeviceClass + "\x00" + policy.PowerMode + "\x00" + policy.ActuatorKind
+		if _, duplicate := seen[selector]; duplicate {
+			return fmt.Errorf("duplicate allowed actuation-policy selector %q", selector)
+		}
+		seen[selector] = struct{}{}
 	}
 	return nil
 }

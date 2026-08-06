@@ -1,6 +1,9 @@
 package nodeactuator
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
@@ -13,10 +16,6 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	options := validOptions()
 	config := validConfig()
 	daemonSet, err := buildDaemonSet(options, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	policyDigests, err := configuredPolicyDigests(config.ActuationPolicies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +32,7 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	if container.Command[0] != "/node-actuator" || container.SecurityContext == nil ||
 		container.SecurityContext.Privileged == nil || *container.SecurityContext.Privileged ||
 		!hasArg(container.Args, "--allowed-namespace=kube-system") ||
-		!hasArg(container.Args, "--allowed-policy-digest="+policyDigests[0]) ||
+		!hasPolicyArg(container.Args, config.ActuationPolicies[0]) ||
 		!hasArg(container.Args, "--jetson-nvpmodel-command=/host/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1") ||
 		!hasArg(container.Args, "--kube-api-server=https://kubernetes.example:6443") ||
 		!hasArg(container.Args, "--kube-api-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token") ||
@@ -46,6 +45,20 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 		!hasHostMount(daemonSet, "host-nvpmodel", "/usr/sbin/nvpmodel", "/host/usr/sbin/nvpmodel", true) {
 		t.Fatalf("NodeActuator host mounts = volumes:%#v mounts:%#v", daemonSet.Spec.Template.Spec.Volumes, container.VolumeMounts)
 	}
+}
+
+func hasPolicyArg(args []string, want actuatorcore.ActuationPolicySpec) bool {
+	for _, argument := range args {
+		const prefix = "--allowed-policy="
+		if !strings.HasPrefix(argument, prefix) {
+			continue
+		}
+		var got actuatorcore.ActuationPolicySpec
+		if json.Unmarshal([]byte(strings.TrimPrefix(argument, prefix)), &got) == nil && reflect.DeepEqual(got, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigRejectsImplicitEligibilityOrAuthorization(t *testing.T) {

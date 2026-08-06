@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -299,7 +298,9 @@ func TestHandoffReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing.T)
 	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(1)}
 	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
-	reconciler.options.AllowedPolicyDigests = []string{"sha256:" + strings.Repeat("b", 64)}
+	disallowed := testAllowedPolicy()
+	disallowed.PowerMode = "MAXN"
+	reconciler.options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{disallowed}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
 
 	reconcileTimes(t, ctx, reconciler, request, 2)
@@ -330,7 +331,9 @@ func TestHandoffReconcilerRestoresRetainedStateAfterPolicyDrift(t *testing.T) {
 	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(2)}
 	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
-	reconciler.options.AllowedPolicyDigests = []string{"sha256:" + strings.Repeat("b", 64)}
+	disallowed := testAllowedPolicy()
+	disallowed.PowerMode = "MAXN"
+	reconciler.options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{disallowed}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
 
 	reconcileTimes(t, ctx, reconciler, request, 1)
@@ -371,21 +374,22 @@ func TestHandoffReconcilerRestoresAfterPartialApplyError(t *testing.T) {
 
 func TestHandoffReconcilerOptionsRequireExplicitPolicyAuthorization(t *testing.T) {
 	t.Parallel()
-	digest := "sha256:" + strings.Repeat("a", 64)
 	base := HandoffReconcilerOptions{
-		AssignedNode:         nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
-		AllowedPolicyDigests: []string{digest},
-		SafetyValidFor:       time.Minute,
+		AssignedNode:    nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
+		AllowedPolicies: []nodeactuator.ActuationPolicySpec{testAllowedPolicy()},
+		SafetyValidFor:  time.Minute,
 	}
 	for name, mutate := range map[string]func(*HandoffReconcilerOptions){
 		"missing policy": func(options *HandoffReconcilerOptions) {
-			options.AllowedPolicyDigests = nil
+			options.AllowedPolicies = nil
 		},
 		"invalid policy": func(options *HandoffReconcilerOptions) {
-			options.AllowedPolicyDigests = []string{"sha256:bad"}
+			invalid := testAllowedPolicy()
+			invalid.PowerMode = "fixed"
+			options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{invalid}
 		},
 		"duplicate policy": func(options *HandoffReconcilerOptions) {
-			options.AllowedPolicyDigests = []string{digest, digest}
+			options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{testAllowedPolicy(), testAllowedPolicy()}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -410,11 +414,9 @@ func newTestHandoffReconciler(
 	reconciler, err := NewHandoffReconciler(
 		kubeClient, lease, safety, host,
 		HandoffReconcilerOptions{
-			AssignedNode: nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
-			AllowedPolicyDigests: []string{
-				"sha256:" + strings.Repeat("a", 64),
-			},
-			SafetyValidFor: 5 * time.Minute,
+			AssignedNode:    nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
+			AllowedPolicies: []nodeactuator.ActuationPolicySpec{testAllowedPolicy()},
+			SafetyValidFor:  5 * time.Minute,
 		},
 	)
 	if err != nil {
@@ -422,6 +424,14 @@ func newTestHandoffReconciler(
 	}
 	reconciler.now = func() time.Time { return *now }
 	return reconciler
+}
+
+func testAllowedPolicy() nodeactuator.ActuationPolicySpec {
+	return nodeactuator.ActuationPolicySpec{
+		Name: "xavier-mode", DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
+		ActuatorKind:            nodeactuator.ActuatorKindJetsonNVPModel,
+		SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
+	}
 }
 
 func reconcileTimes(
