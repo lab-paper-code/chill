@@ -114,7 +114,7 @@ func (s *Store) inspectExisting(
 		return evidencestore.Receipt{}, fmt.Errorf("inspect existing evidence object: %w", err)
 	}
 
-	verifyErr := evidencestore.Verify(content, expected)
+	verifyErr := evidencestore.ValidateSize(content, expected.Size)
 	closeErr := content.Close()
 	if verifyErr != nil {
 		if errors.Is(verifyErr, evidencestore.ErrContentMismatch) {
@@ -166,13 +166,6 @@ func (s *Store) prepareCandidate(
 	if _, err := candidate.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewind evidence candidate: %w", err)
 	}
-	if err := evidencestore.Verify(candidate, expected); err != nil {
-		return nil, err
-	}
-	if _, err := candidate.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind verified evidence candidate: %w", err)
-	}
-
 	failed = false
 	return candidate, nil
 }

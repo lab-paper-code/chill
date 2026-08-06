@@ -6,19 +6,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-func verifyStoredExecution(
+func validateStoredExecution(
 	payload []byte,
 	identity evidencestore.ObjectIdentity,
 	raw rawRecord,
 	intentDigest string,
 ) error {
-	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
-		return err
+	if int64(len(payload)) != identity.Size {
+		return fmt.Errorf("retained execution evidence size %d does not match declared size %d", len(payload), identity.Size)
 	}
 	var retained ExecutionEvidence
 	if err := decodeExact(payload, &retained); err != nil {

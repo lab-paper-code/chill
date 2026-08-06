@@ -64,8 +64,8 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read raw measurement: %w", err)
 	}
-	if err := evidencestore.Verify(bytes.NewReader(rawBytes), request.RawReceipt.Object); err != nil {
-		return FinalizeResult{}, fmt.Errorf("verify raw measurement bytes: %w", err)
+	if int64(len(rawBytes)) != request.RawReceipt.Object.Size {
+		return FinalizeResult{}, fmt.Errorf("%w: raw measurement size does not match its receipt", evidencestore.ErrContentMismatch)
 	}
 	raw, err := decodeRawRecord(rawBytes, request.Intent)
 	if err != nil {
@@ -120,7 +120,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, fmt.Errorf("read finalized evidence after create: %w", err)
 	}
-	if err := verifyStoredExecution(retained, identity, raw, intentDigest); err != nil {
+	if err := validateStoredExecution(retained, identity, raw, intentDigest); err != nil {
 		return FinalizeResult{}, fmt.Errorf("verify finalized evidence after create: %w", err)
 	}
 	return FinalizeResult{

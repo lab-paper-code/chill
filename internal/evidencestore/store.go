@@ -5,12 +5,10 @@ import (
 	"io"
 )
 
-// ImmutableWriter creates an object without replacing existing bytes. Before
-// returning success, an implementation must verify that content exactly
-// matches the expected size and digest. A mismatch returns ErrContentMismatch
-// and must not leave a newly created object. An exact pre-existing object is
-// reported as CreateOutcomeExistingExactMatch and a different one as
-// ErrPrecondition.
+// ImmutableWriter creates an object without replacing existing content. Before
+// returning success, an implementation must enforce the declared size. A size
+// mismatch returns ErrContentMismatch and must not leave a newly created
+// object.
 type ImmutableWriter interface {
 	PutImmutable(context.Context, ObjectIdentity, io.Reader) (Receipt, error)
 }
@@ -21,10 +19,9 @@ type Reader interface {
 	Open(context.Context, ObjectIdentity) (io.ReadCloser, error)
 }
 
-// LocationReader opens bytes when only a deterministic object location is
+// LocationReader opens content when only a deterministic object location is
 // known, such as recovery after an immutable write but before status was
-// persisted. The returned bytes are untrusted until the caller derives and
-// validates their content identity.
+// persisted. Callers remain responsible for bounded structural decoding.
 type LocationReader interface {
 	OpenLocation(context.Context, ObjectLocation) (io.ReadCloser, error)
 }

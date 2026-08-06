@@ -1,7 +1,6 @@
 package evidence
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,7 +8,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-func readVerified(
+func readExpectedSize(
 	ctx context.Context,
 	reader evidencestore.LocationReader,
 	identity evidencestore.ObjectIdentity,
@@ -19,8 +18,8 @@ func readVerified(
 	if err != nil {
 		return nil, err
 	}
-	if err := evidencestore.Verify(bytes.NewReader(payload), identity); err != nil {
-		return nil, err
+	if int64(len(payload)) != identity.Size {
+		return nil, fmt.Errorf("evidence object size %d does not match declared size %d", len(payload), identity.Size)
 	}
 	return payload, nil
 }

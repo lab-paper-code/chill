@@ -28,7 +28,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		calls = append(calls, "store")
-		if err := evidencestore.Verify(strings.NewReader(string(payload)), identity); err != nil {
+		if err := evidencestore.ValidateSize(strings.NewReader(string(payload)), identity.Size); err != nil {
 			t.Fatal(err)
 		}
 		var raw evidence.RawMeasurement

@@ -16,7 +16,7 @@ S3-compatible storage engine remains a replaceable dependency.
 The first path answers one question:
 
 > Can CHILL producers commit immutable evidence objects and can a separate
-> reader later reconstruct and verify the exact retained bytes?
+> reader later reconstruct a bounded, structurally valid retained record?
 
 This is not a general data platform, profile database, research catalog, or
 scheduler history store.
@@ -30,9 +30,8 @@ The current testbed demonstrated:
 - credentials come from a Secret and the edge worker has no Kubernetes API
   token;
 - the existing 389,364-byte evidence bundle survives authenticated PUT and
-  independent GET with exact SHA-256 and size;
-- same key plus exact bytes is idempotent, while different bytes are rejected
-  without overwrite; and
+  independent GET;
+- conditional create prevents an existing key from being overwritten; and
 - a new store Pod recovers the same object through the retained PVC.
 
 The resulting claim is deliberately narrow: one complete object is immutable
@@ -52,7 +51,7 @@ measurement worker
 
 Profiler controller
   -> internal evidence reader
-  -> independent raw-object verification
+  -> bounded raw-object decode and link validation
   -> internal evidence writer
   -> immutable execution-evidence record + compact verified reference
 ```
@@ -64,11 +63,11 @@ module does not authorize an Operator or Profiler controller change.
 
 | Owner | Responsibility |
 |---|---|
-| `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, exact digest and size verification |
+| `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, and size enforcement |
 | S3 adapter | Conditional create, object retrieval, S3 error translation, cancellation and response cleanup |
 | CHILL Operator | Deployment, ClusterIP Service, Secret, persistent-storage attachment, and component availability |
 | Measurement worker | Assemble raw runtime and power bytes, calculate identity, invoke immutable create, return a bounded receipt |
-| Profiler controller | Treat receipt as a hint, retrieve independently, verify raw content, combine terminal Kubernetes facts into a separate immutable execution-evidence record, publish compact status |
+| Profiler controller | Treat receipt as a hint, retrieve independently, validate schema and links, combine terminal Kubernetes facts into a separate immutable execution-evidence record, publish compact status |
 | Kubernetes, CSI, EdgeMesh, storage engine | Native workload lifecycle, volume mechanics, edge Service routing, and stored-byte serving |
 
 Important exclusions follow from this table:
@@ -108,9 +107,9 @@ confined to the adapter.
 
 The first package needs only four concepts:
 
-- expected object identity: logical store, opaque key, SHA-256, and byte size;
-- immutable create: new object, exact existing object, or conflict;
-- independent read and verification; and
+- object reference: logical store, opaque key, producer metadata, and byte size;
+- immutable create: new object or existing key without overwrite;
+- independent bounded read; and
 - stable error categories for not-found, authentication, precondition,
   timeout, transport, and content mismatch.
 
@@ -124,18 +123,18 @@ never sufficient for admission.
 
 A location-only read exists solely to recover an immutable object when its
 deterministic key was committed before the controller persisted the resulting
-digest and size. Location is not identity: these bytes remain untrusted until
-the caller derives their content identity, validates the schema and Run links,
-and confirms canonical encoding. An invalid existing object is never replaced.
+reference. The caller applies a byte bound, strict-decodes one object, and
+validates its schema and Run links. An invalid existing object is never
+replaced.
 
 The implementation must support bounded streaming or a bounded temporary file;
 it must not force future evidence into CR status or an unbounded in-memory byte
 slice. The first adapter supports one S3-compatible path without a plugin
 registry or multiple backend abstractions.
 
-An immutable create succeeds only when the candidate bytes match the expected
-size and digest. The first adapter verifies the candidate before conditional
-create; a mismatch returns a content-mismatch error and leaves no new object.
+An immutable create succeeds only when the candidate matches the declared
+size. The first adapter enforces that bound before conditional create; a
+mismatch returns a content-mismatch error and leaves no new object.
 
 ## Kubernetes management contract
 
@@ -199,12 +198,12 @@ Profiler-owned Deployment.
 
 ### Plan 1: internal contract and S3 adapter — implemented
 
-1. Add product-neutral types, ports, verification, and unit tests under
+1. Add product-neutral types, ports, size enforcement, and unit tests under
    `internal/evidencestore`.
 2. Add one S3-compatible adapter in its subpackage, including pre-create
-   candidate verification.
-3. Cover create, exact duplicate, conflicting duplicate, and independent
-   verification through the internal package and S3 adapter tests.
+   candidate size enforcement.
+3. Cover create, existing-key reuse, and independent bounded reads through the
+   internal package and S3 adapter tests.
 4. Verify store Pod replacement against the retained persistent object.
 
 Stop for review. Plan 1 adds no API fields, controller watches, or managed
@@ -225,23 +224,21 @@ Stop for review. The Operator still does not write or verify evidence.
 ### Plan 3: Profiler consumption — implemented
 
 The approved `ProfilingRun` controller injects the retained store binding into
-the worker, consumes its bounded receipt, independently verifies the raw
-measurement, writes and verifies a separate execution-evidence record from
+the worker, consumes its bounded receipt, independently reads the raw
+measurement, writes a separate execution-evidence record from
 terminal Kubernetes facts, and publishes the compact finalized reference and
 Conditions.
 
-The evidence loader is the single read-side verification boundary. It checks
-the referenced object bytes, canonical encoding, schema, and cross-record
+The evidence loader is the single read-side validation boundary. It applies the
+configured size bound, strict-decodes the schema, and validates cross-record
 links once, then returns an opaque active or idle evidence value. Admission
-accepts only that verified value and does not repeat content hashing or full
-record validation. Finalization retains its independent read-after-write check;
-that check covers the external store write rather than rechecking an in-memory
-value.
+accepts only that value and does not repeat record validation. Finalization
+retains its independent read-after-write decode.
 
 ## Acceptance boundary
 
-The boundary is acceptable when exact duplicate and conflict behavior have
-deterministic tests, S3 failures remain distinguishable, raw evidence and
+The boundary is acceptable when conditional create and existing-key behavior
+have deterministic tests, S3 failures remain distinguishable, raw evidence and
 credentials stay out of CR status and logs, and each plan stops for review.
 
 The following remain outside this contract:
@@ -255,7 +252,7 @@ The following remain outside this contract:
 
 ## Review question
 
-Does this design expose only the verified immutable evidence primitive while
+Does this design expose only the bounded immutable evidence primitive while
 keeping storage operation with the CHILL Operator, measurement execution with
 the worker, evidence finalization with the Profiler controller, and raw bytes
 outside Kubernetes status?

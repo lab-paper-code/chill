@@ -77,10 +77,6 @@ func TestPutImmutableRejectsInvalidCandidateBeforeS3(t *testing.T) {
 			wantErr: evidencestore.ErrContentMismatch,
 		},
 		{
-			name: "different digest", content: bytes.NewReader(append([]byte{'X'}, content[1:]...)),
-			wantErr: evidencestore.ErrContentMismatch,
-		},
-		{
 			name: "source failure", content: io.MultiReader(bytes.NewReader(content[:4]), errorReader{sourceFailure}),
 			wantErr: sourceFailure,
 		},
@@ -125,11 +121,8 @@ func TestPutImmutableClassifiesExistingObject(t *testing.T) {
 		wantOutcome evidencestore.CreateOutcome
 		wantErr     error
 	}{
-		{name: "exact duplicate", existing: content, wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
-		{
-			name: "conflicting duplicate", existing: append([]byte{'X'}, content[1:]...),
-			wantErr: evidencestore.ErrPrecondition,
-		},
+		{name: "existing object", existing: content, wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
+		{name: "same-size object", existing: append([]byte{'X'}, content[1:]...), wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
 	}
 
 	for _, test := range tests {

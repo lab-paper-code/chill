@@ -61,7 +61,7 @@ func (l *Loader) load(
 	ctx context.Context,
 	reference evidencestore.ObjectIdentity,
 ) (ExecutionEvidence, rawRecord, error) {
-	finalBytes, err := readVerified(ctx, l.store, reference, l.maxObjectBytes)
+	finalBytes, err := readExpectedSize(ctx, l.store, reference, l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read finalized evidence: %w", err)
 	}
@@ -69,7 +69,7 @@ func (l *Loader) load(
 	if err := decodeExact(finalBytes, &execution); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("decode finalized evidence: %w", err)
 	}
-	rawBytes, err := readVerified(ctx, l.store, execution.RawMeasurement, l.maxObjectBytes)
+	rawBytes, err := readExpectedSize(ctx, l.store, execution.RawMeasurement, l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read raw measurement: %w", err)
 	}
