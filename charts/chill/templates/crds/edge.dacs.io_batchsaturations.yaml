@@ -1,0 +1,393 @@
+{{- if .Values.crds.enabled }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+    helm.sh/resource-policy: keep
+  name: batchsaturations.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: BatchSaturation
+    listKind: BatchSaturationList
+    plural: batchsaturations
+    shortNames:
+    - bsat
+    singular: batchsaturation
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.acceptedTrials
+      name: Trials
+      type: integer
+    - jsonPath: .status.outcome
+      name: Outcome
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          BatchSaturation drives one batch-saturation measurement by owning the
+          ProfilingRun objects it creates.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              activeProtocol:
+                properties:
+                  durationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  inputGenerator:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  metricObservation:
+                    description: ProfilingRunMetricObservationSpec contains policy
+                      only, never an endpoint.
+                    properties:
+                      durationSeconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      intervalMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      timeoutMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - durationSeconds
+                    - intervalMilliseconds
+                    - timeoutMilliseconds
+                    type: object
+                    x-kubernetes-validations:
+                    - message: timeoutMilliseconds must be less than intervalMilliseconds
+                      rule: self.timeoutMilliseconds < self.intervalMilliseconds
+                  outputValidation:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  warmupIterations:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                required:
+                - durationSeconds
+                - inputGenerator
+                - metricObservation
+                - outputValidation
+                - warmupIterations
+                type: object
+                x-kubernetes-validations:
+                - message: metricObservation.durationSeconds must cover durationSeconds
+                  rule: self.metricObservation.durationSeconds >= self.durationSeconds
+              idleProtocol:
+                properties:
+                  durationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  metricObservation:
+                    description: ProfilingRunMetricObservationSpec contains policy
+                      only, never an endpoint.
+                    properties:
+                      durationSeconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      intervalMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      timeoutMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - durationSeconds
+                    - intervalMilliseconds
+                    - timeoutMilliseconds
+                    type: object
+                    x-kubernetes-validations:
+                    - message: timeoutMilliseconds must be less than intervalMilliseconds
+                      rule: self.timeoutMilliseconds < self.intervalMilliseconds
+                  settlingDurationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - durationSeconds
+                - metricObservation
+                - settlingDurationSeconds
+                type: object
+                x-kubernetes-validations:
+                - message: metricObservation.durationSeconds must cover durationSeconds
+                  rule: self.metricObservation.durationSeconds >= self.durationSeconds
+              method:
+                description: |-
+                  MeasurementMethodSpec selects one measurement method and carries exactly that
+                  method's parameters.
+                properties:
+                  name:
+                    enum:
+                    - sequential-early-stop
+                    type: string
+                  sequentialEarlyStop:
+                    properties:
+                      divergenceFactor:
+                        description: |-
+                          DivergenceFactor is the multiple of the best value above which the sweep
+                          stops early. Must exceed 1.
+                        type: string
+                      minDelta:
+                        description: |-
+                          MinDelta is the relative improvement below which a batch does not count
+                          as an improvement over the best batch so far.
+                        type: string
+                      patience:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      trialsPerBatch:
+                        format: int32
+                        minimum: 3
+                        type: integer
+                    required:
+                    - divergenceFactor
+                    - minDelta
+                    - patience
+                    - trialsPerBatch
+                    type: object
+                required:
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: method parameters must match the selected method name
+                  rule: 'self.name == ''sequential-early-stop'' ? has(self.sequentialEarlyStop)
+                    : !has(self.sequentialEarlyStop)'
+              retryLimit:
+                description: |-
+                  RetryLimit bounds attempts per batch that did not reach an Accepted
+                  verdict. It does not bound admitted trials.
+                format: int32
+                maximum: 10
+                minimum: 0
+                type: integer
+              state:
+                description: |-
+                  MeasurementStateSpec fixes the execution state every trial of one
+                  measurement shares.
+                properties:
+                  admissionPolicy:
+                    description: AdmissionPolicy identifies the configured single-Run
+                      scientific admission policy.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
+                  candidate:
+                    description: Candidate selects one static catalog execution path.
+                    properties:
+                      deviceClass:
+                        description: DeviceClass names the cluster-scoped DeviceClass.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      executionPath:
+                        description: ExecutionPath selects one path declared by ModelSpec.
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                      modelSpec:
+                        description: ModelSpec names the cluster-scoped ModelSpec.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      powerMode:
+                        description: |-
+                          PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
+                          directly; a non-fixed selection requires a frozen configured actuation
+                          policy and cannot create a measurement Job before its durable handoff.
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - deviceClass
+                    - executionPath
+                    - modelSpec
+                    - powerMode
+                    type: object
+                  cpuRequest:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPURequest is the non-exclusive scheduling request
+                      for the runtime container.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  targetNode:
+                    description: TargetNode names the Kubernetes Node on which the
+                      Run is requested.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - admissionPolicy
+                - candidate
+                - cpuRequest
+                - targetNode
+                type: object
+            required:
+            - activeProtocol
+            - idleProtocol
+            - method
+            - retryLimit
+            - state
+            type: object
+            x-kubernetes-validations:
+            - message: BatchSaturation spec is immutable
+              rule: self == oldSelf
+          status:
+            properties:
+              acceptedTrials:
+                format: int32
+                type: integer
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              outcome:
+                maxLength: 128
+                type: string
+              phase:
+                enum:
+                - Measuring
+                - Deriving
+                - Complete
+                - Failed
+                type: string
+              result:
+                properties:
+                  key:
+                    description: Key is opaque to API consumers.
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  schemaVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    description: Store is the logical CHILL-managed store identity,
+                      not an endpoint.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - schemaVersion
+                - size
+                - store
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 200 characters so generated Run names fit
+          rule: size(self.metadata.name) <= 200
+    served: true
+    storage: true
+    subresources:
+      status: {}
+{{- end }}

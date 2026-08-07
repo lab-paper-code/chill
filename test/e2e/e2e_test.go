@@ -205,11 +205,15 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespaceName, Name: name},
 		Spec: edgev1alpha1.ProfilingRunSpec{
-			Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-				ModelSpec: "gc-fixture", DeviceClass: "gc-fixture",
-				ExecutionPath: "gc-fixture", PowerMode: "fixed",
+			MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
+				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+					ModelSpec: "gc-fixture", DeviceClass: "gc-fixture",
+					ExecutionPath: "gc-fixture", PowerMode: "fixed",
+				},
+				TargetNode:      "gc-fixture",
+				CPURequest:      resource.MustParse("1m"),
+				AdmissionPolicy: "gc-fixture",
 			},
-			TargetNode: "gc-fixture", CPURequest: resource.MustParse("1m"),
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 1, DurationSeconds: 1,
 				WorkloadMode:     "saturated-serial-fixed-batch",
@@ -219,7 +223,6 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 2, TimeoutMilliseconds: 1, DurationSeconds: 1,
 			},
-			AdmissionPolicy: "gc-fixture",
 		},
 	}
 }

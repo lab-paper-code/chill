@@ -15,12 +15,9 @@ const (
 	ProfilingRunConditionEvidenceAdmitted = "EvidenceAdmitted"
 )
 
-// ProfilingRunSpec requests exactly one immutable profiling execution.
-// Materially different inputs require a new ProfilingRun.
-// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
-// +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
-// +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
-type ProfilingRunSpec struct {
+// MeasurementStateSpec fixes the execution state every trial of one
+// measurement shares.
+type MeasurementStateSpec struct {
 	// Candidate selects one static catalog execution path.
 	Candidate ProfilingRunCandidateSpec `json:"candidate"`
 
@@ -32,17 +29,26 @@ type ProfilingRunSpec struct {
 	// CPURequest is the non-exclusive scheduling request for the runtime container.
 	CPURequest resource.Quantity `json:"cpuRequest"`
 
-	// Measurement fixes the single-Run workload and measurement window.
-	Measurement ProfilingRunMeasurementSpec `json:"measurement"`
-
-	// MetricObservation fixes polling behavior. The source is resolved from TargetNode.
-	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
-
 	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	AdmissionPolicy string `json:"admissionPolicy"`
+}
+
+// ProfilingRunSpec requests exactly one immutable profiling execution.
+// Materially different inputs require a new ProfilingRun.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
+// +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
+// +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
+type ProfilingRunSpec struct {
+	MeasurementStateSpec `json:",inline"`
+
+	// Measurement fixes the single-Run workload and measurement window.
+	Measurement ProfilingRunMeasurementSpec `json:"measurement"`
+
+	// MetricObservation fixes polling behavior. The source is resolved from TargetNode.
+	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }
 
 type ProfilingRunCandidateSpec struct {

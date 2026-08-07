@@ -679,11 +679,15 @@ func validRun() *edgev1alpha1.ProfilingRun {
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "durable-job-identity", Namespace: profilerIntegrationNamespace},
 		Spec: edgev1alpha1.ProfilingRunSpec{
-			Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-				ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-				ExecutionPath: "ort-cpu", PowerMode: "fixed",
+			MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
+				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+					ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
+					ExecutionPath: "ort-cpu", PowerMode: "fixed",
+				},
+				TargetNode:      "lattepanda",
+				CPURequest:      resource.MustParse("100m"),
+				AdmissionPolicy: "wall-power-v2",
 			},
-			TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-fp32-v1",
@@ -692,7 +696,6 @@ func validRun() *edgev1alpha1.ProfilingRun {
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 			},
-			AdmissionPolicy: "wall-power-v2",
 		},
 	}
 }

@@ -413,15 +413,18 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 				CreationTimestamp: metav1.NewTime(time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)),
 			},
 			Spec: edgev1alpha1.ProfilingRunSpec{
-				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-					ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+				MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
+					Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+						ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+					},
+					TargetNode:      "lattepanda",
+					CPURequest:      resource.MustParse("4"),
+					AdmissionPolicy: "single-run-v1",
 				},
-				TargetNode: "lattepanda", CPURequest: resource.MustParse("4"),
 				Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4},
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 200, DurationSeconds: 60,
 				},
-				AdmissionPolicy: "single-run-v1",
 			},
 			Status: edgev1alpha1.ProfilingRunStatus{
 				ObservedGeneration: 1, IntentFrozen: true,
@@ -443,10 +446,12 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 		Run: operatorconsole.EvidencePassportRun{
 			Namespace: "chill-system", Name: "cpu-run", UID: "run-uid", Generation: 1,
 			Spec: edgev1alpha1.ProfilingRunSpec{
-				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
-					ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+				MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
+					Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+						ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
+					},
+					TargetNode: "lattepanda",
 				},
-				TargetNode: "lattepanda",
 			},
 			Conditions: []metav1.Condition{{
 				Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
