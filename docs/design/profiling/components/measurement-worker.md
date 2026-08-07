@@ -192,8 +192,8 @@ appear in the compact status reference. A Run cannot supply or override them.
 The initial object keys are fixed:
 
 ```text
-profiling-runs/<Run UID>/raw/<intent SHA-256 hex>.json
-profiling-runs/<Run UID>/execution/<intent SHA-256 hex>.json
+profiling-runs/<Run UID>/raw.json
+profiling-runs/<Run UID>/execution.json
 ```
 
 The logical store identity is the CHILL Evidence Store Service name, not its

@@ -47,7 +47,7 @@ get·list 및 Console Service proxy만 허용하는 unbound console viewer Clust
 
 `kubectl chill runs show`는 Kubernetes Service proxy를 통해 in-cluster Console read API를
 호출한다. Console은 지정한 ProfilingRun을 exact-read하고, 그 Run의 Job에 동결된 Evidence
-Store binding을 따라 final·raw 객체를 읽어 digest와 Run·Job·Pod·Node identity를 검증한 뒤
+Store binding을 따라 final·raw 객체를 읽어 schema와 Run·Job·Pod·Node 연결을 검증한 뒤
 bounded Evidence Passport를 조회 시점에 만든다. 원시 latency·power 배열, 저장소 endpoint와
 credential은 CLI에 전달하지 않는다. WorkloadObserver evidence가 있으면 연속성, 관찰 경계,
 초기·최종 active Pod 수, material event 수와 co-resident identity를 함께 투영한다. frozen
@@ -66,7 +66,7 @@ admission verdict를 다시 계산하지 않는다. 안정적으로 존재한 �
 | CHILL 설치 | `ChillSystem`의 구성요소 availability Conditions | 서비스 SLO, 에너지 제어와 Scheduler 정상성 |
 | 디바이스 인벤토리 | `DeviceClass.spec`과 selector에 일치하는 현재 Kubernetes Nodes | `DeviceClass.status`의 멤버 목록·Ready 집계, CHILL 실행 eligibility |
 | 모델 카탈로그 | `ModelSpec`의 artifact digest와 execution path 요구사항 | 운영 승격 profile, 물질화된 compatible-class index |
-| 프로파일 요청 | immutable `ProfilingRun.spec`, frozen intent digest와 intent record | Dashboard·CLI의 공통 생성 요청 표면 |
+| 프로파일 요청 | immutable `ProfilingRun.spec`과 frozen intent record | Dashboard·CLI의 공통 생성 요청 표면 |
 | 실행 결과 | owned Job, 실제 Pod·Node identity, 측정창 co-resident, 검증된 evidence reference와 single-Run admission | campaign 조정, `b_sat` 파생과 운영 profile 승격 |
 | 상위 제어 | 빈 `DeviceProfile`·`ClusterEnergyModel` API scaffold | 전력 곡선, `b_sat`, current/optimal/target 구성, decision과 transition 상태 |
 
