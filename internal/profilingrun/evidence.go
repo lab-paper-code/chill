@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersionV1Alpha1 = "chill.dacs.io/batch-characterization.v1alpha1"
-	RuntimeResultSchemaVersion         = "chill.dacs.io/batch-characterization.v1alpha2"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha3"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -23,11 +22,9 @@ const (
 type RuntimeResult struct {
 	SchemaVersion             string               `json:"schemaVersion"`
 	Status                    string               `json:"status"`
-	SweepID                   string               `json:"sweepId"`
 	ExperimentID              string               `json:"experimentId"`
 	NodeName                  string               `json:"nodeName"`
 	Model                     string               `json:"model"`
-	ArtifactDigest            string               `json:"artifactDigest"`
 	Architecture              string               `json:"architecture"`
 	Runtime                   string               `json:"runtime"`
 	RuntimeVersion            string               `json:"runtimeVersion"`
@@ -76,14 +73,13 @@ type RuntimeCPU struct {
 	CgroupCPUStatDelta map[string]int `json:"cgroupCPUStatDelta"`
 }
 type DerivedContract struct {
-	SchemaVersion   string          `json:"schemaVersion"`
-	RunIntentDigest string          `json:"runIntentDigest"`
-	Backend         string          `json:"backend,omitempty"`
-	Provider        string          `json:"provider,omitempty"`
-	NodeSnapshot    NodeSnapshot    `json:"nodeSnapshot"`
-	CPU             json.RawMessage `json:"cpu"`
-	RuntimeOptions  json.RawMessage `json:"runtimeOptions"`
-	Scheduling      json.RawMessage `json:"scheduling"`
+	SchemaVersion  string          `json:"schemaVersion"`
+	Backend        string          `json:"backend,omitempty"`
+	Provider       string          `json:"provider,omitempty"`
+	NodeSnapshot   NodeSnapshot    `json:"nodeSnapshot"`
+	CPU            json.RawMessage `json:"cpu"`
+	RuntimeOptions json.RawMessage `json:"runtimeOptions"`
+	Scheduling     json.RawMessage `json:"scheduling"`
 }
 
 type RKNNRuntimeEvidence struct {
@@ -105,9 +101,8 @@ type RKNNPackageObservation struct {
 }
 
 type RKNNHostLibraryObservation struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Digest string `json:"digest"`
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 type RKNNDriverObservation struct {
@@ -150,40 +145,21 @@ func (r RuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
-	if err := validateRuntimeSchema(intent, result); err != nil {
-		return err
+	if result.SchemaVersion != RuntimeResultSchemaVersion {
+		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
 	}
 	return validateBoundRuntime(intent, podUID, result)
 }
 
-func validateRuntimeSchema(intent Intent, result RuntimeResult) error {
-	if result.SchemaVersion != RuntimeResultSchemaVersion &&
-		result.SchemaVersion != RuntimeResultSchemaVersionV1Alpha1 {
-		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
-	}
-	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
-		return errors.New("v1alpha1 runtime result is CPU ONNX Runtime only")
-	}
-	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 &&
-		(result.Backend != "" || result.DerivedContract.Backend != "") {
-		return errors.New("v1alpha1 runtime result cannot contain v1alpha2 backend fields")
-	}
-	return nil
-}
-
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
 func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) error {
-	backend := result.Backend
-	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
-		backend = result.Provider
-	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
 		{"Pod UID", podUID, result.ExperimentID},
 		{"Node", intent.TargetNode.Name, result.NodeName},
 		{"model", intent.State.Model, result.Model},
 		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
-		{"backend", intent.State.Backend, backend},
+		{"backend", intent.State.Backend, result.Backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
@@ -225,11 +201,7 @@ func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) er
 	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("derived contract identity mismatch")
 	}
-	derivedBackend := result.DerivedContract.Backend
-	if result.SchemaVersion == RuntimeResultSchemaVersionV1Alpha1 {
-		derivedBackend = result.DerivedContract.Provider
-	}
-	if derivedBackend != intent.State.Backend {
+	if result.DerivedContract.Backend != intent.State.Backend {
 		return errors.New("derived contract backend mismatch")
 	}
 	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" {
@@ -294,8 +266,7 @@ func validateRKNNRuntimeEvidence(intent Intent, evidence *RKNNRuntimeEvidence) e
 	}
 	seenLibraries := make(map[string]struct{}, len(evidence.HostLibraries))
 	for _, library := range evidence.HostLibraries {
-		if strings.TrimSpace(library.Name) == "" || !validArtifactPath(library.Path) ||
-			strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
+		if strings.TrimSpace(library.Name) == "" || !validArtifactPath(library.Path) {
 			return errors.New("RKNN host library evidence is invalid")
 		}
 		if _, duplicate := seenLibraries[library.Name]; duplicate {

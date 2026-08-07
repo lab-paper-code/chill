@@ -1,7 +1,6 @@
 package profiler
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
 	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
 	intent.State.Backend = profilingrun.RKNNLiteBackend
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	intent.State.HostContract = &profilingrun.CandidateReportHostContract{}
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
 	policy := testExecutionPolicySpec(intent.Measurement.WorkloadMode)

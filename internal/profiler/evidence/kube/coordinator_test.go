@@ -17,7 +17,7 @@ func TestCoordinatorProjectsReceiptAndTerminalFacts(t *testing.T) {
 	finalizer := &recordingFinalizer{result: evidence.FinalizeResult{
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-			Digest: "sha256:" + strings.Repeat("c", 64), Size: 100,
+			Size: 100,
 		},
 	}}
 	coordinator, err := NewCoordinator(finalizer)
@@ -147,10 +147,9 @@ func validReceiptJSON(t *testing.T) string {
 	receipt := evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
 		Object: evidencestore.ObjectIdentity{
-			Store:  "chill-evidence",
-			Key:    "runs/run-uid/raw.json",
-			Digest: "sha256:" + strings.Repeat("a", 64),
-			Size:   100,
+			Store: "chill-evidence",
+			Key:   "runs/run-uid/raw.json",
+			Size:  100,
 		},
 		Outcome: evidencestore.CreateOutcomeCreated,
 	}

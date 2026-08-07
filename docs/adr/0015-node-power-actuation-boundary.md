@@ -40,14 +40,14 @@ state and remains unprivileged.
 The durable handoff introduced with the first implementation must separate:
 
 - desired mode name, typed actuator kind and target, selected Node name and
-  UID, configured actuation-policy digest, and the owning Run UID;
+  UID, configured actuation-policy name, and the owning Run UID;
 - the previously observed mode, target observation, and final restored
   observation;
 - apply, verification, settling, restoration, and failure timestamps; and
 - desired lifecycle stage from observed phase, reason, and terminal failure.
 
 The immutable Run intent binds the selected mode, typed target, and policy
-digest. Mutable convergence and restoration observations do not rewrite that
+name. Mutable convergence and restoration observations do not rewrite that
 intent. The exact Kubernetes API shape for the handoff is delivered with its
 controller and consumer; it must follow the separate per-Node state rule in
 ADR 0011 rather than adding mutable state to `DeviceClass.status`.

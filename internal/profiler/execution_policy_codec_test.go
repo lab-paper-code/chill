@@ -32,13 +32,6 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	if frozen.Policy.Name != testConfiguredActivePolicy {
 		t.Fatalf("selected execution policy = %#v", frozen)
 	}
-	identity, err := frozen.Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity != testConfiguredActivePolicy {
-		t.Fatalf("execution identity = %q", identity)
-	}
 	canonical, err := frozen.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +45,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 	}
 }
 
-func TestExecutionPolicyIdentityDependsOnSemanticsNotConfigMapRevision(t *testing.T) {
+func TestExecutionPolicyRetainsSourceRevisionOutsideSelectedPolicy(t *testing.T) {
 	intent := currentExecutionPolicyTestIntent(t)
 	raw := executionPolicyCatalogFixture(t)
 	freeze := func(resourceVersion string) FrozenExecutionPolicy {
@@ -72,10 +65,8 @@ func TestExecutionPolicyIdentityDependsOnSemanticsNotConfigMapRevision(t *testin
 	}
 	first := freeze("1")
 	second := freeze("2")
-	firstIdentity, _ := first.Identity()
-	secondIdentity, _ := second.Identity()
-	if firstIdentity != secondIdentity {
-		t.Fatalf("source-only revision changed semantic identity: %q != %q", firstIdentity, secondIdentity)
+	if first.Policy != second.Policy {
+		t.Fatalf("source-only revision changed selected policy: %#v != %#v", first.Policy, second.Policy)
 	}
 	if first.Source.ResourceVersion == second.Source.ResourceVersion {
 		t.Fatal("source revision was not retained in the frozen record")

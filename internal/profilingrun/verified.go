@@ -9,27 +9,15 @@ import (
 // VerifiedIntent is populated only after one intent has passed structural and
 // semantic validation.
 type VerifiedIntent struct {
-	intent         Intent
-	digest         string
-	workloadDigest string
-	verified       bool
+	intent   Intent
+	verified bool
 }
 
 func ValidateIntent(intent Intent) (VerifiedIntent, error) {
-	digest, err := intent.Digest()
-	if err != nil {
+	if err := intent.Validate(); err != nil {
 		return VerifiedIntent{}, err
 	}
-	workloadPayload, err := json.Marshal(intent.Workload)
-	if err != nil {
-		return VerifiedIntent{}, fmt.Errorf("encode verified workload contract: %w", err)
-	}
-	return VerifiedIntent{
-		intent:         cloneIntent(intent),
-		digest:         digest,
-		workloadDigest: sha256Digest(workloadPayload),
-		verified:       true,
-	}, nil
+	return VerifiedIntent{intent: cloneIntent(intent), verified: true}, nil
 }
 
 func (i VerifiedIntent) Record() (Intent, error) {
@@ -37,20 +25,6 @@ func (i VerifiedIntent) Record() (Intent, error) {
 		return Intent{}, errors.New("verified Run intent is empty")
 	}
 	return cloneIntent(i.intent), nil
-}
-
-func (i VerifiedIntent) Digest() string {
-	if !i.verified {
-		return ""
-	}
-	return i.digest
-}
-
-func (i VerifiedIntent) WorkloadDigest() string {
-	if !i.verified {
-		return ""
-	}
-	return i.workloadDigest
 }
 
 // VerifiedRuntimeResult is an active process result bound to one verified
@@ -129,6 +103,7 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 
 func cloneIntent(source Intent) Intent {
 	result := source
+	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
 	if source.Actuation != nil {
 		actuation := *source.Actuation
 		if source.Actuation.Actuator.JetsonNVPModel != nil {
@@ -146,4 +121,18 @@ func cloneIntent(source Intent) Intent {
 		result.Actuation = &actuation
 	}
 	return result
+}
+
+func cloneCandidateHostContract(source *CandidateReportHostContract) *CandidateReportHostContract {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.Libraries = append([]CandidateReportHostLibrary(nil), source.Libraries...)
+	result.Devices = append([]CandidateReportHostDevice(nil), source.Devices...)
+	if source.Platform != nil {
+		platform := *source.Platform
+		result.Platform = &platform
+	}
+	return &result
 }

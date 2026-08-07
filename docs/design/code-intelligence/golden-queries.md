@@ -50,7 +50,7 @@ result types.
 Required evidence: `go list` for actual imports and the MetricObserver ADR for
 allowed direction. Package edges do not prove runtime sampling behavior.
 
-## Q5. What changes if ProfilingRunStatus.IntentDigest changes?
+## Q5. What changes if ProfilingRunStatus.IntentFrozen changes?
 
 The field is declared in `api/v1alpha1/profilingrun_types.go`. Current semantic
 references include intent recovery and publication in `intent_freezer.go`,

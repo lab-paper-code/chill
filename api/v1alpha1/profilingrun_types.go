@@ -128,9 +128,9 @@ type ProfilingRunStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// IntentDigest identifies the exact frozen execution intent.
+	// IntentFrozen reports that the immutable intent record exists for this generation.
 	// +optional
-	IntentDigest string `json:"intentDigest,omitempty"`
+	IntentFrozen bool `json:"intentFrozen,omitempty"`
 
 	// Job identifies the one owned native Job after creation.
 	// +optional
@@ -180,8 +180,6 @@ type ProfilingRunEvidenceReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Key string `json:"key"`
-
-	Digest string `json:"digest"`
 
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128

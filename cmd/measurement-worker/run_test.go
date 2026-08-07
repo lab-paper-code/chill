@@ -242,7 +242,7 @@ func validReceipt() evidencestore.Receipt {
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
 		Object: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "profiling-runs/run/raw/intent.json",
-			Digest: "sha256:" + strings.Repeat("b", 64), Size: 100,
+			Size: 100,
 		},
 		Outcome: evidencestore.CreateOutcomeCreated,
 	}

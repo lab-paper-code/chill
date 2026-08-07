@@ -39,45 +39,34 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              ModelSpecSpec defines the stable model artifacts and their execution-path
+            description: ModelSpecSpec defines model artifacts and their execution-path
               requirements.
             properties:
               artifacts:
-                description: Artifacts contains immutable executable representations
-                  of this logical model.
+                description: Artifacts contains executable representations of this
+                  logical model.
                 items:
-                  description: ModelArtifact identifies one immutable executable representation.
+                  description: ModelArtifact identifies one executable representation.
                   properties:
                     derivation:
                       description: |-
-                        Derivation binds a derived executable to its source artifact and conversion identity.
+                        Derivation binds a derived executable to its source artifact and conversion settings.
                         It is absent for canonical source artifacts.
                       properties:
                         conversion:
                           description: Conversion binds the converter and recipe used
                             to produce this artifact.
                           properties:
-                            recipeDigest:
-                              description: RecipeDigest identifies the exact conversion
-                                recipe bytes.
-                              type: string
                             tool:
                               description: Tool is the converter family, such as rknn-toolkit2.
                               minLength: 1
-                              type: string
-                            toolDigest:
-                              description: ToolDigest identifies the exact converter
-                                distribution bytes.
                               type: string
                             version:
                               description: Version is the converter's reported version.
                               minLength: 1
                               type: string
                           required:
-                          - recipeDigest
                           - tool
-                          - toolDigest
                           - version
                           type: object
                         fixedBatch:
@@ -126,10 +115,6 @@ spec:
                       - sourceArtifact
                       - targetPlatform
                       type: object
-                    digest:
-                      description: Digest identifies the exact artifact bytes. The
-                        first schema accepts SHA-256.
-                      type: string
                     format:
                       description: Format names the artifact representation, such
                         as onnx.
@@ -141,7 +126,6 @@ spec:
                       minLength: 1
                       type: string
                   required:
-                  - digest
                   - format
                   - name
                   type: object

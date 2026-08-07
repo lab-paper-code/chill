@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -52,12 +50,8 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
 		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
 	}
-	wantPolicyIdentity, err := frozen.ExecutionPolicy.Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !metav1.IsControlledBy(job, run) || job.Annotations[intentDigestAnnotation] != prepared.IntentDigest ||
-		job.Annotations[executionPolicyAnnotation] != wantPolicyIdentity {
+	if !metav1.IsControlledBy(job, run) ||
+		job.Annotations[executionPolicyAnnotation] != frozen.ExecutionPolicy.Policy.Name {
 		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
 	}
 	pod := job.Spec.Template.Spec
@@ -67,8 +61,8 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	}
 	artifact := pod.InitContainers[0]
 	if artifact.Image != prepared.Intent.Images.Artifact ||
-		len(artifact.Args) != 5 || artifact.Args[2] != prepared.Intent.State.ArtifactPath ||
-		artifact.Args[4] != cpuORTModelDestination {
+		len(artifact.Args) != 4 || artifact.Args[2] != prepared.Intent.State.ArtifactPath ||
+		artifact.Args[3] != cpuORTModelDestination {
 		t.Fatalf("artifact supply was not frozen into the Job: %#v", artifact)
 	}
 	assertCandidateReportProjection(t, pod)
@@ -76,8 +70,7 @@ func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
 	assertArgument(t, runtimeContainer.Args, "--store-endpoint="+binding.Endpoint)
 	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout=30s")
 	assertArgument(t, runtimeContainer.Args, "--max-workload-result-bytes=8388608")
-	assertArgument(t, runtimeContainer.Args, "--raw-object-key=profiling-runs/"+string(run.UID)+"/raw/"+
-		strings.TrimPrefix(prepared.IntentDigest, "sha256:")+".json")
+	assertArgument(t, runtimeContainer.Args, "--raw-object-key=profiling-runs/"+string(run.UID)+"/raw.json")
 	if runtimeContainer.Resources.Limits.Cpu().String() != prepared.Intent.CPU.Limit ||
 		runtimeContainer.Resources.Requests.Cpu().String() != prepared.Intent.CPU.Request {
 		t.Fatalf("runtime CPU contract drifted: %#v", runtimeContainer.Resources)
@@ -121,7 +114,7 @@ func TestBuildExecutionJobProjectsExactRKNNLiteHostAccess(t *testing.T) {
 		t.Fatalf("RKNNLite host volumes = %d, want 12: %#v", len(pod.Volumes), pod.Volumes)
 	}
 	artifact := pod.InitContainers[0]
-	if len(artifact.Args) != 5 || artifact.Args[4] != rknnModelDestination {
+	if len(artifact.Args) != 4 || artifact.Args[3] != rknnModelDestination {
 		t.Fatalf("RKNNLite artifact destination drifted: %#v", artifact.Args)
 	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
@@ -184,16 +177,11 @@ func TestProjectRuntimeJobRejectsCrossCategoryHostPathCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	report.HostContract.Driver.VersionPath = report.HostContract.Libraries[0].HostPath
-	prepared.Intent.State.HostContractDigest, err = profilingrun.CandidateHostContractDigest(report.HostContract)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prepared.Intent.State.HostContract = report.HostContract
 	prepared.CandidateReportBytes, err = json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(prepared.CandidateReportBytes)
-	prepared.Intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
 	verified, err := profilingrun.VerifyCandidateReport(prepared.CandidateReportBytes, prepared.Intent)
 	if err != nil {
 		t.Fatal(err)
@@ -245,12 +233,6 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
-	var err error
-	prepared.IntentDigest, err = prepared.Intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	frozen := frozenRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(
 		run,
@@ -262,11 +244,7 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPolicyIdentity, err := frozen.ExecutionPolicy.Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.Annotations[executionPolicyAnnotation] != wantPolicyIdentity ||
+	if job.Annotations[executionPolicyAnnotation] != frozen.ExecutionPolicy.Policy.Name ||
 		job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 271 {
 		t.Fatalf("idle Job policy drifted: %#v", job)
 	}
@@ -306,12 +284,11 @@ func TestBuildExecutionJobUsesConfiguredExecutionPolicyIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantIdentity, err := policy.Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.Annotations[executionPolicyAnnotation] != wantIdentity {
-		t.Fatalf("configured Job policy identity = %q, want %q", job.Annotations[executionPolicyAnnotation], wantIdentity)
+	if job.Annotations[executionPolicyAnnotation] != policy.Policy.Name {
+		t.Fatalf(
+			"configured Job policy identity = %q, want %q",
+			job.Annotations[executionPolicyAnnotation], policy.Policy.Name,
+		)
 	}
 }
 
@@ -393,11 +370,6 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	prepared.Intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	prepared.Intent.Images.WorkloadObserver = testWorkloadObserverImage
 	prepared.Intent.Workload = profilingrun.CurrentWorkloadContract()
-	digest, err := prepared.Intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	prepared.IntentDigest = digest
 	return prepared
 }
 
@@ -426,7 +398,6 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	host := profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{
 			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			Digest: "sha256:" + strings.Repeat("b", 64),
 		}},
 		Driver: profilingrun.CandidateReportHostDriver{
 			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
@@ -442,17 +413,14 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 			ResourceName: resourceName, ExclusivityClaimed: resourceName != "",
 		},
 	}
-	intent.State.HostContractDigest, err = profilingrun.CandidateHostContractDigest(&host)
-	if err != nil {
-		t.Fatal(err)
-	}
+	intent.State.HostContract = &host
 	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
 	report.Inputs.ModelSpec.Name = intent.State.Model
 	report.Inputs.DeviceClass.Name = intent.State.DeviceClass
 	report.Inputs.RuntimeDeclaration.Image = intent.Images.Runtime
 	report.Selection = profilingrun.CandidateReportSelection{
 		ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
-		ArtifactDigest: intent.State.ArtifactDigest, PowerMode: intent.State.PowerMode,
+		PowerMode: intent.State.PowerMode,
 	}
 	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
 		Architecture: intent.TargetNode.Architecture,
@@ -461,7 +429,7 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	}
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
-		Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
+		Path: intent.State.ArtifactPath,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
@@ -477,12 +445,7 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(prepared.CandidateReportBytes)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
-	prepared.IntentDigest, err = intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
+	intent.Candidate.Inputs = report.Inputs
 	return prepared
 }
 

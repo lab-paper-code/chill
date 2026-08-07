@@ -24,8 +24,7 @@ func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resolved.Kind != edgeMetricsKind || resolved.Endpoint != testPowerEndpoint ||
-		resolved.PowerMetric != "shelly_power_total_watts" ||
-		!strings.HasPrefix(resolved.ConfigurationContentDigest, "sha256:") {
+		resolved.PowerMetric != "shelly_power_total_watts" {
 		t.Fatalf("unexpected resolved metric source: %#v", resolved)
 	}
 
@@ -38,7 +37,7 @@ func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 	}
 }
 
-func TestKubernetesMetricSourceResolverDigestTracksSelectedEntryOnly(t *testing.T) {
+func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.T) {
 	base := validMetricSourceConfigMap()
 	first := newMetricSourceResolver(t, base.DeepCopy())
 	resolved, err := first.ResolveMetricSource(context.Background(), "lattepanda")
@@ -56,8 +55,8 @@ func TestKubernetesMetricSourceResolverDigestTracksSelectedEntryOnly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.ConfigurationContentDigest != resolved.ConfigurationContentDigest {
-		t.Fatal("unrelated Node entry changed selected metric-source identity")
+	if second != resolved {
+		t.Fatal("unrelated Node entry changed selected metric-source facts")
 	}
 
 	changed := base.DeepCopy()
@@ -68,8 +67,8 @@ func TestKubernetesMetricSourceResolverDigestTracksSelectedEntryOnly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.ConfigurationContentDigest == resolved.ConfigurationContentDigest {
-		t.Fatal("changed selected entry retained previous identity")
+	if third.Endpoint == resolved.Endpoint {
+		t.Fatal("changed selected entry was not observed")
 	}
 }
 

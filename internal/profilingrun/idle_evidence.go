@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	IdleRuntimeResultSchemaVersionV1Alpha1 = "chill.dacs.io/model-loaded-idle-runtime.v1alpha1"
-	IdleRuntimeResultSchemaVersion         = "chill.dacs.io/model-loaded-idle-runtime.v1alpha2"
+	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 )
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
@@ -17,11 +16,9 @@ const (
 type IdleRuntimeResult struct {
 	SchemaVersion                string               `json:"schemaVersion"`
 	Status                       string               `json:"status"`
-	IntentDigest                 string               `json:"intentDigest"`
 	PodUID                       string               `json:"podUID"`
 	NodeName                     string               `json:"nodeName"`
 	Model                        string               `json:"model"`
-	ArtifactDigest               string               `json:"artifactDigest"`
 	Architecture                 string               `json:"architecture"`
 	Runtime                      string               `json:"runtime"`
 	RuntimeVersion               string               `json:"runtimeVersion"`
@@ -55,25 +52,10 @@ func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
 func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
-	if err := validateIdleRuntimeSchema(intent, result); err != nil {
-		return err
-	}
-	return validateBoundIdleRuntime(intent, podUID, result)
-}
-
-func validateIdleRuntimeSchema(intent Intent, result IdleRuntimeResult) error {
-	if result.SchemaVersion != IdleRuntimeResultSchemaVersion &&
-		result.SchemaVersion != IdleRuntimeResultSchemaVersionV1Alpha1 {
+	if result.SchemaVersion != IdleRuntimeResultSchemaVersion {
 		return fmt.Errorf("unsupported idle runtime result schemaVersion %q", result.SchemaVersion)
 	}
-	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 && !IsSupportedCPUORTIntent(intent) {
-		return errors.New("v1alpha1 idle runtime result is CPU ONNX Runtime only")
-	}
-	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 &&
-		(result.Backend != "" || result.DerivedContract.Backend != "") {
-		return errors.New("v1alpha1 idle runtime result cannot contain v1alpha2 backend fields")
-	}
-	return nil
+	return validateBoundIdleRuntime(intent, podUID, result)
 }
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
@@ -82,17 +64,13 @@ func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeRe
 		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
 		return errors.New("idle runtime requires a supported model-loaded idle intent")
 	}
-	backend := result.Backend
-	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 {
-		backend = result.Provider
-	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
 		{"Pod UID", podUID, result.PodUID},
 		{"Node", intent.TargetNode.Name, result.NodeName},
 		{"model", intent.State.Model, result.Model},
 		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
-		{"backend", intent.State.Backend, backend},
+		{"backend", intent.State.Backend, result.Backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
@@ -138,11 +116,7 @@ func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeRe
 	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
 		return errors.New("idle derived contract identity mismatch")
 	}
-	derivedBackend := result.DerivedContract.Backend
-	if result.SchemaVersion == IdleRuntimeResultSchemaVersionV1Alpha1 {
-		derivedBackend = result.DerivedContract.Provider
-	}
-	if derivedBackend != intent.State.Backend {
+	if result.DerivedContract.Backend != intent.State.Backend {
 		return errors.New("idle derived contract backend mismatch")
 	}
 	return nil

@@ -19,9 +19,6 @@ func (r Result) Validate() error {
 	if err := validateIdentities(r.Target, r.Run); err != nil {
 		return err
 	}
-	if strings.TrimSpace(r.PolicyDigest) == "" || strings.TrimSpace(r.PolicyDigest) != r.PolicyDigest {
-		return errors.New("workload observation policy identity is required without surrounding whitespace")
-	}
 	if r.CoverageStartedAt.IsZero() || r.CoverageEndedAt.IsZero() ||
 		!r.CoverageEndedAt.After(r.CoverageStartedAt) {
 		return errors.New("workload observation coverage window is invalid")

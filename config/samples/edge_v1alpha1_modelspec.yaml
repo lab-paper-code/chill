@@ -6,10 +6,8 @@ spec:
   artifacts:
   - name: canonical-onnx
     format: onnx
-    digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
   - name: mobilenet-v2-050-rk3588-bs1
     format: rknn
-    digest: sha256:6de31d66b487431ae4b46a7a4a8d2aa0f4d1b98fef3ca1f439f4a1c216f5ef22
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
@@ -21,11 +19,8 @@ spec:
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2
-        toolDigest: sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc
-        recipeDigest: sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed
   - name: mobilenet-v2-050-rk3588-bs2
     format: rknn
-    digest: sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
@@ -37,8 +32,6 @@ spec:
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2
-        toolDigest: sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc
-        recipeDigest: sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed
   executionPaths:
   - name: ort-cpu
     artifact: canonical-onnx

@@ -52,7 +52,7 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 		bsat.Version == "" || bsat.KMax != 4 ||
 		bsat.MinimumPointTrials != 3 || bsat.FamilyWiseAlpha != 0.05 ||
 		decoded.Name() != "e1-batch-saturation" ||
-		decoded.CurveFamilyContractDigest() != spec.CurveFamilyContractDigest {
+		decoded.CurveFamilyName() != spec.CurveFamilyName {
 		t.Fatalf("decoded policy lost configured semantics: %+v %+v %+v", idle, active, bsat)
 	}
 }
@@ -103,8 +103,8 @@ func TestFreezeDiscoveryDerivationPolicyRejectsInvalidSemantics(t *testing.T) {
 		"discovery below point minimum": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.PointPolicies[1].MinimumTrials = 4
 		},
-		"invalid curve identity": func(spec *DiscoveryDerivationPolicySpec) {
-			spec.CurveFamilyContractDigest = " has-whitespace"
+		"invalid curve name": func(spec *DiscoveryDerivationPolicySpec) {
+			spec.CurveFamilyName = " has-whitespace"
 		},
 		"invalid bsat": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.BatchSaturation.KMax = 1
@@ -159,14 +159,14 @@ func TestFrozenDerivationTypesRejectZeroValues(t *testing.T) {
 func testDiscoveryDerivationPolicySpec(t *testing.T) DiscoveryDerivationPolicySpec {
 	t.Helper()
 	contract, _ := testVerifiedFamily(t, 4)
-	return testDiscoveryDerivationPolicySpecForDigest(contract.Digest())
+	return testDiscoveryDerivationPolicySpecForFamily(contract.Shared().Name)
 }
 
-func testDiscoveryDerivationPolicySpecForDigest(contractDigest string) DiscoveryDerivationPolicySpec {
+func testDiscoveryDerivationPolicySpecForFamily(familyName string) DiscoveryDerivationPolicySpec {
 	return DiscoveryDerivationPolicySpec{
-		Name:                      "e1-batch-saturation",
-		CurveFamilyContractDigest: contractDigest,
-		PointConfidenceLevel:      0.95,
+		Name:                 "e1-batch-saturation",
+		CurveFamilyName:      familyName,
+		PointConfidenceLevel: 0.95,
 		PointPolicies: []PointPolicyEntry{
 			{Name: "idle-baseline", Stage: PointPolicyStageIdleBaseline, MinimumTrials: 3},
 			{Name: "incremental-point", Stage: PointPolicyStageIncrementalPoint, MinimumTrials: 3},

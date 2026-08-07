@@ -2,8 +2,6 @@ package profilederivation
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +10,7 @@ import (
 	"sort"
 )
 
-const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha2"
+const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha3"
 
 type PointPolicyStage string
 
@@ -44,11 +42,11 @@ type BSatPolicyEntry struct {
 }
 
 type DiscoveryDerivationPolicySpec struct {
-	Name                      string             `json:"name"`
-	CurveFamilyContractDigest string             `json:"curveFamilyContractDigest"`
-	PointConfidenceLevel      float64            `json:"pointConfidenceLevel"`
-	PointPolicies             []PointPolicyEntry `json:"pointPolicies"`
-	BatchSaturation           BSatPolicyEntry    `json:"batchSaturation"`
+	Name                 string             `json:"name"`
+	CurveFamilyName      string             `json:"curveFamilyName"`
+	PointConfidenceLevel float64            `json:"pointConfidenceLevel"`
+	PointPolicies        []PointPolicyEntry `json:"pointPolicies"`
+	BatchSaturation      BSatPolicyEntry    `json:"batchSaturation"`
 }
 
 type discoveryDerivationPolicyRecord struct {
@@ -56,11 +54,10 @@ type discoveryDerivationPolicyRecord struct {
 	DiscoveryDerivationPolicySpec
 }
 
-// DiscoveryDerivationPolicy is an immutable, content-addressed projection of
-// the policy file fixed before discovery measurement starts.
+// DiscoveryDerivationPolicy is an immutable projection of the policy file
+// fixed before discovery measurement starts.
 type DiscoveryDerivationPolicy struct {
 	record discoveryDerivationPolicyRecord
-	digest string
 }
 
 func FreezeDiscoveryDerivationPolicy(
@@ -86,11 +83,7 @@ func freezeDiscoveryDerivationPolicyRecord(
 	if err := validateDiscoveryDerivationPolicyRecord(record); err != nil {
 		return DiscoveryDerivationPolicy{}, err
 	}
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return DiscoveryDerivationPolicy{}, fmt.Errorf("encode discovery derivation policy: %w", err)
-	}
-	return DiscoveryDerivationPolicy{record: record, digest: derivationPolicyDigest(payload)}, nil
+	return DiscoveryDerivationPolicy{record: record}, nil
 }
 
 // DecodeDiscoveryDerivationPolicy strict-decodes exactly one JSON policy file.
@@ -120,12 +113,10 @@ func (p DiscoveryDerivationPolicy) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(p.record)
 }
 
-func (p DiscoveryDerivationPolicy) Digest() string { return p.digest }
-
 func (p DiscoveryDerivationPolicy) Name() string { return p.record.Name }
 
-func (p DiscoveryDerivationPolicy) CurveFamilyContractDigest() string {
-	return p.record.CurveFamilyContractDigest
+func (p DiscoveryDerivationPolicy) CurveFamilyName() string {
+	return p.record.CurveFamilyName
 }
 
 func (p DiscoveryDerivationPolicy) spec() DiscoveryDerivationPolicySpec {
@@ -178,6 +169,9 @@ func validateDiscoveryPolicyCurve(
 	if err := policy.requireFrozen(); err != nil {
 		return BSatPolicy{}, err
 	}
+	if policy.CurveFamilyName() != curve.FamilyName() {
+		return BSatPolicy{}, errors.New("curve family does not match the discovery policy")
+	}
 	idlePolicy, err := policy.PointPolicy(PointPolicyStageIdleBaseline)
 	if err != nil {
 		return BSatPolicy{}, err
@@ -195,8 +189,7 @@ func validateDiscoveryPolicyCurve(
 	for _, pass := range curve.passes {
 		for _, point := range pass.points {
 			if point.PointPolicyVersion != activePolicy.Version || len(point.Trials) < activePolicy.MinimumTrials ||
-				point.Confidence.Level != activePolicy.ConfidenceLevel ||
-				point.PreviousConfidence.Level != activePolicy.ConfidenceLevel {
+				point.Confidence.Level != activePolicy.ConfidenceLevel {
 				return BSatPolicy{}, errors.New("curve point does not match the discovery point policy")
 			}
 		}
@@ -205,7 +198,7 @@ func validateDiscoveryPolicyCurve(
 }
 
 // requireFrozen checks opaque type state only. The constructor and decoder own
-// all content validation and digest construction.
+// all content validation.
 func (p DiscoveryDerivationPolicy) requireFrozen() error {
 	if p.record.SchemaVersion != DiscoveryDerivationPolicySchemaVersion {
 		return errors.New("discovery derivation policy was not frozen")
@@ -224,8 +217,8 @@ func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRec
 	if !validDerivationPolicyName(spec.Name) {
 		return errors.New("discovery derivation-policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
-	if !cleanCurveValue(spec.CurveFamilyContractDigest) {
-		return errors.New("discovery derivation policy has an invalid curve-family contract identity")
+	if !validDerivationPolicyName(spec.CurveFamilyName) {
+		return errors.New("discovery derivation policy has an invalid curve-family name")
 	}
 	if len(spec.PointPolicies) != 2 {
 		return errors.New("discovery derivation policy requires exactly two point policies")
@@ -259,7 +252,7 @@ func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRec
 		spec.PointPolicies, PointPolicyStageIncrementalPoint,
 	)
 	if err := validateBSatPolicy(BSatPolicy{
-		Version: "pending-policy-digest", KMax: entry.KMax,
+		Version: entry.Name, KMax: entry.KMax,
 		RelativeImprovementTolerance: entry.RelativeImprovementTolerance,
 		MinimumPointTrials:           minimumPointTrials,
 		DiscoveryTrials:              entry.DiscoveryTrials,
@@ -283,9 +276,4 @@ func pointPolicyMinimumTrials(entries []PointPolicyEntry, stage PointPolicyStage
 
 func validDerivationPolicyName(name string) bool {
 	return len(name) >= 1 && len(name) <= 63 && derivationPolicyNamePattern.MatchString(name)
-}
-
-func derivationPolicyDigest(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -83,7 +83,7 @@ if ! diff -u "$go_imports" "$codegraph_imports" >/dev/null; then
   exit 1
 fi
 
-q5_candidates="$(query_json IntentDigest)"
+q5_candidates="$(query_json IntentFrozen)"
 if contains_path api/v1alpha1/profilingrun_types.go <<<"$q5_candidates"; then
   q5=pass
 else
@@ -94,8 +94,8 @@ for file in \
   internal/profiler/controller/intent_freezer.go \
   internal/profiler/controller/projection.go \
   test/integration/operator/profilingrun_api_test.go; do
-  if ! rg -q 'IntentDigest' "$repo_root/$file"; then
-    echo "codegraph check: authoritative IntentDigest source missing in $file" >&2
+  if ! rg -q 'IntentFrozen' "$repo_root/$file"; then
+    echo "codegraph check: authoritative IntentFrozen source missing in $file" >&2
     exit 1
   fi
 done
@@ -125,7 +125,7 @@ printf 'codegraph.check.q1_event_edge=framework-derived-source-required\n'
 printf 'codegraph.check.q2_candidates=%s\n' "$q2"
 printf 'codegraph.check.q2_implementation_authority=gopls-required\n'
 printf 'codegraph.check.q3_q4_package_edges=pass:%s\n' "$(wc -l <"$go_imports")"
-printf 'codegraph.check.q5_intent_digest=%s\n' "$q5"
+printf 'codegraph.check.q5_intent_frozen=%s\n' "$q5"
 printf 'codegraph.check.q5_source_verification=pass\n'
 printf 'codegraph.check.q6_helm_resources=%s\n' "$q6"
 printf 'codegraph.check.q6_helm_verification=pass:23->30\n'

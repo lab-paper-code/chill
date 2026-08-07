@@ -2,8 +2,6 @@ package profiler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -35,8 +33,7 @@ type CandidateSelection struct {
 }
 
 // PreparationRequest contains caller-selected Run inputs. Resolved endpoint,
-// cluster identity, content digests, and execution images are deliberately not
-// caller supplied.
+// cluster identity, and execution images are deliberately not caller supplied.
 type PreparationRequest struct {
 	Candidate   CandidateSelection
 	TargetNode  string
@@ -55,22 +52,19 @@ type MetricObservationPolicy struct {
 // exact report. The preparer independently verifies these facts against the
 // report before freezing them.
 type ResolvedCandidate struct {
-	ReportBytes                     []byte
-	ModelSpecContentDigest          string
-	DeviceClassContentDigest        string
-	RuntimeDeclarationContentDigest string
-	Verdict                         string
-	State                           profilingrun.ExecutionState
-	DeviceArchitecture              string
-	DeviceNodeSelector              map[string]string
-	DevicePowerModes                []string
-	SelectedActuator                *profilingrun.ActuatorTarget
-	RuntimeImage                    string
-	ArtifactImage                   string
-	ArtifactArchitecture            string
-	ArtifactPath                    string
-	ArtifactDigest                  string
-	MetricObserverImage             string
+	ReportBytes          []byte
+	Inputs               profilingrun.CandidateReportInputs
+	Verdict              string
+	State                profilingrun.ExecutionState
+	DeviceArchitecture   string
+	DeviceNodeSelector   map[string]string
+	DevicePowerModes     []string
+	SelectedActuator     *profilingrun.ActuatorTarget
+	RuntimeImage         string
+	ArtifactImage        string
+	ArtifactArchitecture string
+	ArtifactPath         string
+	MetricObserverImage  string
 }
 
 // NodeSelection binds the requested Node to facts from the exact DeviceClass
@@ -82,10 +76,9 @@ type NodeSelection struct {
 }
 
 type ResolvedMetricSource struct {
-	Kind                       string
-	Endpoint                   string
-	PowerMetric                string
-	ConfigurationContentDigest string
+	Kind        string
+	Endpoint    string
+	PowerMetric string
 }
 
 type ResolvedWorkloadObservation struct {
@@ -114,7 +107,6 @@ type ActuationPolicyResolver interface {
 
 type PreparedRun struct {
 	Intent               profilingrun.Intent
-	IntentDigest         string
 	CandidateReportBytes []byte
 	ActuationPolicy      *FrozenActuationPolicy
 }
@@ -196,10 +188,6 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve metric source: %w", err)
 	}
-	if strings.TrimSpace(metrics.ConfigurationContentDigest) == "" ||
-		strings.TrimSpace(metrics.ConfigurationContentDigest) != metrics.ConfigurationContentDigest {
-		return PreparedRun{}, errors.New("resolved metric source configuration identity is required without surrounding whitespace")
-	}
 	workload, err := p.workloads.ResolveWorkloadObservation(ctx)
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve workload observation: %w", err)
@@ -216,13 +204,8 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, intent); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate resolved candidate report: %w", err)
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return PreparedRun{}, fmt.Errorf("digest frozen Run intent: %w", err)
-	}
 	prepared := PreparedRun{
 		Intent:               intent,
-		IntentDigest:         digest,
 		CandidateReportBytes: append([]byte(nil), candidate.ReportBytes...),
 		ActuationPolicy:      policy,
 	}
@@ -252,9 +235,9 @@ func (p *Preparer) resolveActuation(
 		return nil, nil, fmt.Errorf("validate selected actuation policy: %w", err)
 	}
 	return &profilingrun.ActuationContract{
-		PowerMode:    candidate.State.PowerMode,
-		Actuator:     selection.Actuator,
-		PolicyDigest: policy.Policy.Name,
+		PowerMode:  candidate.State.PowerMode,
+		Actuator:   selection.Actuator,
+		PolicyName: policy.Policy.Name,
 	}, &policy, nil
 }
 
@@ -308,7 +291,6 @@ func (p *Preparer) freeze(
 	if err != nil || cpu < 1 {
 		return profilingrun.Intent{}, errors.New("resolved Node allocatable CPU must be a positive integer")
 	}
-	reportSum := sha256.Sum256(candidate.ReportBytes)
 	cpuContract := profilingrun.CPUContract{
 		Policy: firstCPUPolicy, PolicyVersion: firstCPUPolicyVersion,
 		Request: request.CPURequest, Limit: node.AllocatableCPU,
@@ -320,12 +302,7 @@ func (p *Preparer) freeze(
 	intent := profilingrun.Intent{
 		SchemaVersion: profilingrun.SchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
-			ReportDigest:             "sha256:" + hex.EncodeToString(reportSum[:]),
-			ModelSpecContentDigest:   candidate.ModelSpecContentDigest,
-			DeviceClassContentDigest: candidate.DeviceClassContentDigest,
-			RuntimeDeclarationDigest: candidate.RuntimeDeclarationContentDigest,
-			ExecutionPath:            request.Candidate.ExecutionPath,
-			Verdict:                  candidate.Verdict,
+			Inputs: candidate.Inputs, ExecutionPath: request.Candidate.ExecutionPath, Verdict: candidate.Verdict,
 		},
 		State: candidate.State,
 		Images: profilingrun.Images{
@@ -338,14 +315,9 @@ func (p *Preparer) freeze(
 		CPU:         cpuContract,
 		Measurement: request.Measurement,
 		Metrics: profilingrun.MetricContract{
-			SourceKind:                 metrics.Kind,
-			NodeName:                   node.Name,
-			Endpoint:                   metrics.Endpoint,
-			PowerMetric:                metrics.PowerMetric,
-			ConfigurationContentDigest: metrics.ConfigurationContentDigest,
-			IntervalMilliseconds:       request.Metrics.IntervalMilliseconds,
-			TimeoutMilliseconds:        request.Metrics.TimeoutMilliseconds,
-			DurationSeconds:            request.Metrics.DurationSeconds,
+			SourceKind: metrics.Kind, NodeName: node.Name, Endpoint: metrics.Endpoint, PowerMetric: metrics.PowerMetric,
+			IntervalMilliseconds: request.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:  request.Metrics.TimeoutMilliseconds, DurationSeconds: request.Metrics.DurationSeconds,
 		},
 		Workload:  profilingrun.CurrentWorkloadContract(),
 		Actuation: actuation,
@@ -368,7 +340,7 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 		candidate.State.Backend == firstRuntimeBackend:
 	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
 		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
-		candidate.State.HostContractDigest != "":
+		candidate.State.HostContract != nil:
 	default:
 		return errors.New("resolved candidate runtime/backend contract is not supported")
 	}

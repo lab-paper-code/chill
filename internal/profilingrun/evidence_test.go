@@ -1,7 +1,6 @@
 package profilingrun
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -80,12 +79,11 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 }
 
 func validRuntimeResult(intent Intent) RuntimeResult {
-	digest, _ := intent.Digest()
 	targetDuration := float64(intent.Measurement.DurationSeconds)
 	return RuntimeResult{
-		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
+		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-		ArtifactDigest: intent.State.ArtifactDigest, Runtime: intent.State.RuntimeFamily,
+		Runtime:      intent.State.RuntimeFamily,
 		Architecture: "x86_64", RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend},
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
@@ -100,7 +98,7 @@ func validRuntimeResult(intent Intent) RuntimeResult {
 			AffinityCPUCount: 4, CPUSetEffective: "0-3",
 		},
 		DerivedContract: DerivedContract{
-			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			Backend: intent.State.Backend, Provider: intent.State.Backend,
 			NodeSnapshot: intent.TargetNode,
 		},
 		RepetitionResults: []Repetition{{
@@ -169,21 +167,6 @@ func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
 	}
 }
 
-func TestValidateRuntimeRetainsV1Alpha1CPUResult(t *testing.T) {
-	intent := validIntent()
-	result := validRuntimeResult(intent)
-	result.SchemaVersion = RuntimeResultSchemaVersionV1Alpha1
-	result.Backend = ""
-	result.DerivedContract.Backend = ""
-	if err := ValidateRuntime(intent, "pod-uid", result); err != nil {
-		t.Fatal(err)
-	}
-	result.Backend = intent.State.Backend
-	if err := ValidateRuntime(intent, "pod-uid", result); err == nil {
-		t.Fatal("retained v1alpha1 runtime result accepted a v1alpha2 backend field")
-	}
-}
-
 func TestNormalizeRuntimeArchitecture(t *testing.T) {
 	for runtime, want := range map[string]string{"x86_64": "amd64", "aarch64": testARM64Architecture} {
 		if got := normalizeArchitecture(runtime); got != want {
@@ -199,15 +182,11 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	result := IdleRuntimeResult{
-		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded", IntentDigest: digest,
+		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
 		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
-		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
+		Architecture: "x86_64",
+		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders:   []string{intent.State.Backend},
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
@@ -216,31 +195,12 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		CPUContract: RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4,
 			ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"},
 		DerivedContract: DerivedContract{
-			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			Backend: intent.State.Backend, Provider: intent.State.Backend,
 			NodeSnapshot: intent.TargetNode,
 		},
 	}
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
 		t.Fatal(err)
-	}
-	for _, schemaVersion := range []string{intentSchemaVersionV1Alpha8, intentSchemaVersionV1Alpha7} {
-		retainedIntent := intent
-		retainedIntent.SchemaVersion = schemaVersion
-		retainedDigest, err := retainedIntent.Digest()
-		if err != nil {
-			t.Fatal(err)
-		}
-		retainedResult := result
-		retainedResult.IntentDigest = retainedDigest
-		retainedResult.DerivedContract.RunIntentDigest = retainedDigest
-		if err := ValidateIdleRuntime(retainedIntent, "pod-uid", retainedResult); err != nil {
-			t.Fatalf("retained %s idle evidence was rejected: %v", schemaVersion, err)
-		}
-	}
-	v1alpha6 := intent
-	v1alpha6.SchemaVersion = intentSchemaVersionV1Alpha6
-	if err := v1alpha6.Validate(); err == nil || !strings.Contains(err.Error(), "model-loaded idle") {
-		t.Fatalf("v1alpha6 accepted model-loaded idle: %v", err)
 	}
 	for _, mutate := range []func(*IdleRuntimeResult){
 		func(r *IdleRuntimeResult) { r.SettlingCompletedAt = "2026-01-01T00:00:30Z" },
@@ -258,15 +218,11 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 
 func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 	intent := validRKNNIntent(true)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	result := IdleRuntimeResult{
-		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded", IntentDigest: digest,
+		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
 		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "aarch64",
-		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: intent.State.Backend,
+		Architecture: "aarch64",
+		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: intent.State.Backend,
 		RKNN:                 validRKNNRuntimeEvidence(1),
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
@@ -274,23 +230,11 @@ func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 		ModelResidentAtEnd: true,
 		CPUContract:        RuntimeCPU{CgroupCPUMax: "400000 100000", AffinityCPUCount: 4, CPUSetEffective: "0-3"},
 		DerivedContract: DerivedContract{
-			RunIntentDigest: digest, Backend: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+			Backend: intent.State.Backend, NodeSnapshot: intent.TargetNode,
 		},
 	}
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
 		t.Fatal(err)
-	}
-	retainedIntent := intent
-	retainedIntent.SchemaVersion = intentSchemaVersionV1Alpha8
-	retainedDigest, err := retainedIntent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	retainedResult := result
-	retainedResult.IntentDigest = retainedDigest
-	retainedResult.DerivedContract.RunIntentDigest = retainedDigest
-	if err := ValidateIdleRuntime(retainedIntent, "pod-uid", retainedResult); err != nil {
-		t.Fatalf("retained v1alpha8 RKNNLite idle evidence was rejected: %v", err)
 	}
 	result.RKNN.LoadSucceeded = false
 	if err := ValidateIdleRuntime(intent, "pod-uid", result); err == nil {
@@ -305,7 +249,8 @@ func validRKNNIntent(idle bool) Intent {
 	intent.State.ArtifactPath = "/artifact/model.rknn"
 	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	intent.State.Backend = RKNNLiteBackend
-	intent.State.HostContractDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	contract := rknnHostContractForTest()
+	intent.State.HostContract = &contract
 	intent.TargetNode.Architecture = testARM64Architecture
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
@@ -324,7 +269,6 @@ func validRKNNRuntimeEvidence(batch int) *RKNNRuntimeEvidence {
 		Package: RKNNPackageObservation{Name: "rknn-toolkit-lite2", Version: "2.3.2"},
 		HostLibraries: []RKNNHostLibraryObservation{{
 			Name: "librknnrt", Path: "/usr/lib/librknnrt.so",
-			Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		}},
 		Driver: RKNNDriverObservation{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
 		Platform: RKNNPlatformObservation{

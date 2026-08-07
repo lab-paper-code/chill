@@ -47,7 +47,7 @@ type Request struct {
 	DeviceClass                 string
 	PowerMode                   string
 	Target                      Target
-	PolicyDigest                string
+	PolicyName                  string
 	SettlingDurationSeconds     int32
 	MaxActuationDurationSeconds int32
 	Deadline                    time.Time
@@ -79,7 +79,7 @@ func (r Request) ValidateForNode(assigned ObjectIdentity) error {
 	if err := r.Target.Validate(); err != nil {
 		return fmt.Errorf("validate handoff target: %w", err)
 	}
-	if strings.TrimSpace(r.PolicyDigest) == "" || strings.TrimSpace(r.PolicyDigest) != r.PolicyDigest {
+	if strings.TrimSpace(r.PolicyName) == "" || strings.TrimSpace(r.PolicyName) != r.PolicyName {
 		return errors.New("handoff policy identity is required without surrounding whitespace")
 	}
 	if r.SettlingDurationSeconds < 1 || r.SettlingDurationSeconds > 86_400 {

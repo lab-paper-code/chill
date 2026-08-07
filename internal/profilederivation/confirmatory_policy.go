@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha3"
+const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha4"
 
 type ConfirmatoryBatchAllocation struct {
 	Batch  int `json:"batch"`
@@ -36,7 +36,6 @@ type confirmatoryDerivationPolicyRecord struct {
 // allocation selected before confirmatory measurement starts.
 type ConfirmatoryDerivationPolicy struct {
 	record confirmatoryDerivationPolicyRecord
-	digest string
 }
 
 func FreezeConfirmatoryDerivationPolicy(
@@ -114,10 +113,10 @@ func (p ConfirmatoryDerivationPolicy) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(p.record)
 }
 
-func (p ConfirmatoryDerivationPolicy) Digest() string { return p.digest }
+func (p ConfirmatoryDerivationPolicy) Name() string { return p.record.Name }
 
-func (p ConfirmatoryDerivationPolicy) CurveFamilyContractDigest() string {
-	return p.record.CurveFamilyContractDigest
+func (p ConfirmatoryDerivationPolicy) CurveFamilyName() string {
+	return p.record.CurveFamilyName
 }
 
 func (p ConfirmatoryDerivationPolicy) CandidateBatch() int {
@@ -205,11 +204,7 @@ func freezeConfirmatoryDerivationPolicyRecord(
 	if err := validateConfirmatoryDerivationPolicyRecord(record, discovery); err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return ConfirmatoryDerivationPolicy{}, fmt.Errorf("encode confirmatory derivation policy: %w", err)
-	}
-	return ConfirmatoryDerivationPolicy{record: record, digest: derivationPolicyDigest(payload)}, nil
+	return ConfirmatoryDerivationPolicy{record: record}, nil
 }
 
 func validateConfirmatoryDerivationPolicyRecord(
@@ -259,7 +254,7 @@ func validateConfirmatoryDerivationPolicyRecord(
 }
 
 // requireFrozen checks opaque type state only. The constructor and decoder own
-// all content validation and digest construction.
+// all content validation.
 func (p ConfirmatoryDerivationPolicy) requireFrozen() error {
 	if p.record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
 		return errors.New("confirmatory derivation policy was not frozen")

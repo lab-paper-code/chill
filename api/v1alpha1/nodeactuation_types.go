@@ -82,8 +82,10 @@ type NodeActuationSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.kind != 'Fixed'",message="NodeActuation requires a mutable actuator target"
 	Actuator PowerModeActuator `json:"actuator"`
 
-	// PolicyDigest identifies the selected configured actuation policy.
-	PolicyDigest string `json:"policyDigest"`
+	// PolicyName identifies the selected configured actuation policy.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	PolicyName string `json:"policyName"`
 
 	// SettlingDurationSeconds is the frozen post-verification settling period.
 	// +kubebuilder:validation:Minimum=1

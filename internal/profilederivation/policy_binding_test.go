@@ -134,7 +134,7 @@ func testPolicyBoundTwoPassCurve(
 ) (Curve, DiscoveryDerivationPolicy) {
 	t.Helper()
 	contract, family := testVerifiedFamily(t, len(discoveryMeans))
-	spec := testDiscoveryDerivationPolicySpecForDigest(contract.Digest())
+	spec := testDiscoveryDerivationPolicySpecForFamily(contract.Shared().Name)
 	if mutatePolicy != nil {
 		mutatePolicy(&spec)
 	}

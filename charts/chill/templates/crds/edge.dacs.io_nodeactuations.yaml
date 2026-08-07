@@ -165,9 +165,11 @@ spec:
                 - name
                 - uid
                 type: object
-              policyDigest:
-                description: PolicyDigest identifies the selected configured actuation
+              policyName:
+                description: PolicyName identifies the selected configured actuation
                   policy.
+                maxLength: 253
+                minLength: 1
                 type: string
               powerMode:
                 description: PowerMode is the stable selected mode name.
@@ -209,7 +211,7 @@ spec:
             - deviceClass
             - maxActuationDurationSeconds
             - node
-            - policyDigest
+            - policyName
             - powerMode
             - run
             - settlingDurationSeconds

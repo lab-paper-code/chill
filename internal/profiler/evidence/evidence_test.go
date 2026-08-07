@@ -147,7 +147,7 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.SchemaVersion != ActuatedExecutionEvidenceSchemaVersion || decoded.Actuation == nil ||
+	if decoded.SchemaVersion != ExecutionEvidenceSchemaVersion || decoded.Actuation == nil ||
 		decoded.Actuation.Handoff.UID != execution.Actuation.Handoff.UID ||
 		decoded.Actuation.Target.PowerMode != intent.Actuation.PowerMode {
 		t.Fatalf("actuated evidence round trip = %#v", decoded.Actuation)
@@ -157,8 +157,8 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 		name   string
 		mutate func(*ExecutionEvidence)
 	}{
-		{name: "retained schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = ExecutionEvidenceSchemaVersion
+		{name: "unsupported schema", mutate: func(candidate *ExecutionEvidence) {
+			candidate.SchemaVersion = "foreign"
 		}},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
@@ -187,36 +187,15 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 	}
 }
 
-func TestFixedExecutionEvidenceRejectsActuatedSchemaOrFacts(t *testing.T) {
+func TestFixedExecutionEvidenceRejectsActuationFacts(t *testing.T) {
 	t.Parallel()
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	execution := validExecutionEvidence(t, intent, raw)
-	execution.SchemaVersion = ActuatedExecutionEvidenceSchemaVersion
-	if err := execution.Validate(raw); err == nil {
-		t.Fatal("fixed evidence accepted actuated schema")
-	}
-	execution.SchemaVersion = ExecutionEvidenceSchemaVersion
 	_, _, facts := validActuatedExecutionEvidence(t)
 	execution.Actuation = facts.Actuation
 	if err := execution.Validate(raw); err == nil {
 		t.Fatal("fixed evidence accepted actuation facts")
-	}
-}
-
-func TestRawMeasurementRetainsV1Alpha3CPUBytesContract(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	raw.SchemaVersion = rawMeasurementSchemaVersionV1Alpha3
-	raw.Runtime.SchemaVersion = profilingrun.RuntimeResultSchemaVersionV1Alpha1
-	raw.Runtime.Backend = ""
-	raw.Runtime.DerivedContract.Backend = ""
-	if _, err := raw.CanonicalJSON(intent); err != nil {
-		t.Fatal(err)
-	}
-	raw.SchemaVersion = RawMeasurementSchemaVersion
-	if err := raw.Validate(intent); err == nil || !strings.Contains(err.Error(), "current runtime result") {
-		t.Fatalf("current raw schema accepted retained runtime result: %v", err)
 	}
 }
 
@@ -342,22 +321,6 @@ func TestIdleRawMeasurementBindsRuntimeDeclaredWindowAndObservers(t *testing.T) 
 	}
 }
 
-func TestIdleRawMeasurementRetainsV1Alpha1CPUBytesContract(t *testing.T) {
-	intent := idleIntent(t)
-	raw := validIdleRaw(t, intent)
-	raw.SchemaVersion = idleRawMeasurementSchemaVersionV1Alpha1
-	raw.Runtime.SchemaVersion = profilingrun.IdleRuntimeResultSchemaVersionV1Alpha1
-	raw.Runtime.Backend = ""
-	raw.Runtime.DerivedContract.Backend = ""
-	if _, err := raw.CanonicalJSON(intent); err != nil {
-		t.Fatal(err)
-	}
-	raw.SchemaVersion = IdleRawMeasurementSchemaVersion
-	if err := raw.Validate(intent); err == nil || !strings.Contains(err.Error(), "current idle runtime result") {
-		t.Fatalf("current idle raw schema accepted retained runtime result: %v", err)
-	}
-}
-
 func TestIdleRawMeasurementStrictDecodeRejectsUnknownFields(t *testing.T) {
 	intent := idleIntent(t)
 	payload, err := validIdleRaw(t, intent).CanonicalJSON(intent)
@@ -459,26 +422,19 @@ func loadIntent(t *testing.T) profilingrun.Intent {
 
 func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 	t.Helper()
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	location := time.FixedZone("KST", 9*60*60)
 	started := time.Date(2026, time.July, 16, 12, 0, 0, 0, location)
 	podUID := "profiling-pod-uid"
 	targetDuration := float64(intent.Measurement.DurationSeconds)
 	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
-		IntentDigest:  digest,
 		PodUID:        podUID,
 		Runtime: profilingrun.RuntimeResult{
 			SchemaVersion:             profilingrun.RuntimeResultSchemaVersion,
 			Status:                    "Succeeded",
-			SweepID:                   digest,
 			ExperimentID:              podUID,
 			NodeName:                  intent.TargetNode.Name,
 			Model:                     intent.State.Model,
-			ArtifactDigest:            intent.State.ArtifactDigest,
 			Architecture:              "x86_64",
 			Runtime:                   intent.State.RuntimeFamily,
 			RuntimeVersion:            "1.16.0",
@@ -509,10 +465,9 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 				CgroupCPUStatDelta: map[string]int{"user_usec": 1, "system_usec": 2},
 			},
 			DerivedContract: profilingrun.DerivedContract{
-				RunIntentDigest: digest,
-				Backend:         intent.State.Backend,
-				Provider:        intent.State.Backend,
-				NodeSnapshot:    intent.TargetNode,
+				Backend:      intent.State.Backend,
+				Provider:     intent.State.Backend,
+				NodeSnapshot: intent.TargetNode,
 			},
 			RepetitionResults: []profilingrun.Repetition{{
 				Repetition:           1,
@@ -553,10 +508,6 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			},
 		},
 	}
-	policyDigest, err := intent.Workload.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	runPod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Running",
 		Images: []string{intent.Images.Runtime},
@@ -569,7 +520,6 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "profiling-run-pod", PodUID: podUID,
 		},
-		PolicyDigest:      policyDigest,
 		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: started.Add(31 * time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
@@ -595,19 +545,14 @@ func idleIntent(t *testing.T) profilingrun.Intent {
 func validIdleRaw(t *testing.T, intent profilingrun.Intent) IdleRawMeasurement {
 	t.Helper()
 	activeShape := validRaw(t, intent)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	started := activeShape.Metrics.StartedAt
 	return IdleRawMeasurement{
 		SchemaVersion: IdleRawMeasurementSchemaVersion,
-		IntentDigest:  digest,
 		PodUID:        activeShape.PodUID,
 		Runtime: profilingrun.IdleRuntimeResult{
 			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-			IntentDigest: digest, PodUID: activeShape.PodUID, NodeName: intent.TargetNode.Name,
-			Model: intent.State.Model, ArtifactDigest: intent.State.ArtifactDigest,
+			PodUID: activeShape.PodUID, NodeName: intent.TargetNode.Name,
+			Model:        intent.State.Model,
 			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: intent.State.Backend, Provider: intent.State.Backend,
 			AvailableProviders:        []string{intent.State.Backend},
@@ -623,7 +568,7 @@ func validIdleRaw(t *testing.T, intent profilingrun.Intent) IdleRawMeasurement {
 				AffinityCPUCount:  intent.CPU.ORTIntraOpThreads, CPUSetEffective: "0-3",
 			},
 			DerivedContract: profilingrun.DerivedContract{
-				RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+				Backend: intent.State.Backend, Provider: intent.State.Backend,
 				NodeSnapshot: intent.TargetNode,
 			},
 		},
@@ -681,16 +626,18 @@ func validExecutionEvidenceBytes(
 			FinishedAt:     completed.Add(-time.Second),
 		}
 	}
+	report, err := profilingrun.DecodeCandidateReport(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return ExecutionEvidence{
-		SchemaVersion:        ExecutionEvidenceSchemaVersion,
-		IntentDigest:         "intent-identity",
-		Intent:               intent,
-		CandidateReportBytes: candidate,
+		SchemaVersion:   ExecutionEvidenceSchemaVersion,
+		Intent:          intent,
+		CandidateReport: report,
 		RawMeasurement: evidencestore.ObjectIdentity{
-			Store:  "chill-evidence",
-			Key:    "runs/run-uid/raw.json",
-			Digest: "raw-object-identity",
-			Size:   int64(len(rawBytes)),
+			Store: "chill-evidence",
+			Key:   "runs/run-uid/raw.json",
+			Size:  int64(len(rawBytes)),
 		},
 		Terminal: TerminalFacts{
 			Job: JobTerminalFacts{
@@ -739,7 +686,7 @@ func validActuatedExecutionEvidence(
 			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 0},
 		},
-		PolicyDigest: "jetson-mode-policy",
+		PolicyName: "jetson-mode-policy",
 	}
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
@@ -753,11 +700,6 @@ func validActuatedExecutionEvidence(
 	report.Selection.PowerMode = intent.Actuation.PowerMode
 	report.Selection.Actuator = &intent.Actuation.Actuator
 	report.DeviceClassFacts.PowerModes = []string{intent.Actuation.PowerMode}
-	candidateBytes, err = json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	intent.Candidate.ReportDigest = "candidate-report-identity"
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -767,8 +709,8 @@ func validActuatedExecutionEvidence(
 		t.Fatal(err)
 	}
 	execution := validExecutionEvidenceBytes(t, intent, raw.PodUID, rawBytes)
-	execution.SchemaVersion = ActuatedExecutionEvidenceSchemaVersion
-	execution.CandidateReportBytes = candidateBytes
+	execution.SchemaVersion = ExecutionEvidenceSchemaVersion
+	execution.CandidateReport = report
 	completed := execution.Terminal.Job.CompletionTime
 	execution.FinalizedAt = completed.Add(4 * time.Second)
 	target := func() profilingrun.ActuatorTarget {

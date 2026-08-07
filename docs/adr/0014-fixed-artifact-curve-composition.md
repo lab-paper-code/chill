@@ -8,9 +8,9 @@ Accepted
 
 CHILL derives incremental energy only after an active trial is paired with a
 model-loaded-idle baseline from the same exact execution state. The execution
-state deliberately binds the artifact name, digest, and path. That binding is
-material: two compiled engines can load different bytes, reserve different
-resources, and draw different idle power even when they came from the same
+state deliberately binds the artifact name, path, and immutable artifact-image
+reference. That binding is material: two compiled engines can reserve different
+resources and draw different idle power even when they came from the same
 logical model.
 
 A runtime may nevertheless require one immutable artifact per supported batch.
@@ -32,55 +32,50 @@ plan.
 Keep `StateIdentity`, `EnvironmentIdentity`, and
 `MeasurementProtocolIdentity` as exact single-Run and single-point identities.
 Do not remove artifact or artifact-supply facts from them, and do not change
-retained intent bytes or identity schema versions for curve composition.
+their semantic projections for curve composition.
 
-Add a planned contract and a realized identity at the derivation/campaign
-boundary:
+Add one named, planned contract and a Loader-verified family at the
+derivation/campaign boundary:
 
-- `CurveFamilyContractDigest` is the digest of the batch-ordered eligible
-  member map resolved from the catalog and execution configuration before any
-  campaign Run starts. Its canonical record uses
-  `chill.dacs.io/curve-family-contract.v1alpha1@sha256:<digest>`.
-- `CurveFamilyIdentity` is produced after retained evidence crosses the Loader
-  boundary and every frozen Run is verified against that contract. It binds the
-  contract digest, exact realized member identities, and the one observed
+- `CurveFamilyContract` is the batch-ordered eligible member map resolved from
+  the catalog and execution configuration before any campaign Run starts. Its
+  configured `name` is the stable policy-facing reference.
+- `CurveFamily` is constructed only after retained evidence crosses the Loader
+  boundary and every frozen Run is checked semantically against that contract.
+  It carries the exact realized member identities and the one observed
   environment identity.
 
-The latter is a composition identity, not a fourth Run identity and not a claim
-that its member execution states are physically identical. Its canonical record
-is digested as
-`chill.dacs.io/curve-family-identity.v1alpha1@sha256:<digest>`.
+The latter is a verified composition boundary, not a fourth Run identity and
+not a claim that its member execution states are physically identical. CHILL
+does not derive another digest or validate serialized bytes at this boundary.
 
 A family contract fails closed unless all planned members share:
 
-- the logical model and canonical source-artifact digest;
-- the same frozen `ModelSpec` and `DeviceClass` content digests;
+- the logical model and the configured family name;
 - DeviceClass, actual Node UID, runtime family and backend, runtime image,
-  power mode, host contract, CPU contract, and wall-meter source;
+  power mode, CPU contract, and wall-meter source;
 - within each workload mode, the active or idle protocol fields other than
   batch and the member's exact artifact-supply image; and
 - for derived fixed-batch artifacts, target platform, converter tool, converter
-  version and distribution digest, conversion-recipe digest, and the non-batch
-  tensor contract.
+  version, and the non-batch tensor contract.
 
-Each member explicitly binds its batch, execution path, artifact name, digest,
-path, artifact-supply image digest, fixed-batch capability, and full input
+Each member explicitly binds its batch, execution path, artifact name, path,
+immutable artifact-image reference, fixed-batch capability, and full input
 shape. The fixed-batch capability and leading input dimension must equal the
 member batch. Artifact names, runtime-family labels, or execution-path naming
-alone never establish membership. A conversion recipe that differs between
-members is not treated as a batch-only change.
+alone never establish membership.
 
 The realized projection additionally requires every verified member Run to
 match its planned contract entry and all member evidence to carry one common
 `EnvironmentIdentity`. Environment is observed evidence, not a catalog fact.
 
-The offline campaign record freezes the eligible member map and
-`CurveFamilyContractDigest` before measurement. The observed environment cannot
-be truthfully frozen before the WorkloadObserver records it, so the realized
-`CurveFamilyIdentity` is created only after Loader verification. Plan 5 freezes
-the complete `1..Kmax` member map. Plan 5a may stop before exhausting that map,
-but it reports the contract digest, realized family identity, and measured
-contiguous prefix. This adds no campaign CRD, controller, or Run intent field.
+The offline campaign record freezes the configured family name and eligible
+member map before measurement. The observed environment cannot be truthfully
+frozen before the WorkloadObserver records it, so a verified `CurveFamily` is
+created only after Loader verification. Plan 5 freezes the complete `1..Kmax`
+member map. Plan 5a may stop before exhausting that map, but it reports the
+family name, observed environment, and measured contiguous prefix. This adds no
+campaign CRD, controller, or Run intent field.
 
 An opaque curve owns a set of admitted idle baselines keyed by exact
 `StateIdentity`:
@@ -111,7 +106,8 @@ share a state, their coefficients combine and the existing shared-baseline
 partial cancellation is recovered exactly. Plan 5 must verify the resulting
 joint coverage, including covariance from any active point reused by several
 contrasts, before accepting a confidence claim. Plan 5a uses only the derived
-means but still records the family identity and every baseline used.
+means but still records the family name, observed environment, and every
+baseline used.
 
 ## Consequences
 
@@ -119,10 +115,9 @@ Single-Run admission, `IncrementalTrial`, and exact per-batch aggregation remain
 unchanged. Existing L3 evidence and identity strings remain valid.
 
 The current retained RKNNLite batch-one and batch-two rows are not yet one
-campaign family: they were frozen from different catalog and conversion-recipe
-snapshots and use different generations of helper/runtime images. Batch one
-must be converted with the current recipe and both rows must be remeasured under
-one frozen family contract before Plan 5a can consume them.
+campaign family: they were frozen from different catalog snapshots and use
+different generations of helper/runtime images. Both rows must be remeasured
+under one frozen family contract before Plan 5a can consume them.
 
 Fixed-artifact campaigns cost an admitted model-loaded-idle baseline set per
 member state. CHILL does not infer per-engine idle equivalence to reduce that

@@ -242,8 +242,7 @@ func decodeJSONFile(path string, maxBytes int64, target any) error {
 }
 
 // decodeProjectedJSONFile follows a Kubernetes projected-volume symlink, then
-// verifies and decodes the regular file held by the opened descriptor. Content
-// identity remains protected by the caller's expected digest.
+// verifies and decodes the regular file held by the opened descriptor.
 func decodeProjectedJSONFile(path string, maxBytes int64, target any) error {
 	payload, err := readProjectedFile(path, maxBytes)
 	if err != nil {

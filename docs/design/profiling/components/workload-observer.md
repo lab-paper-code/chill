@@ -162,7 +162,7 @@ target Node, but built-in Kubernetes RBAC authorizes Pod list/watch at namespace
 or cluster scope rather than by Node field. Because co-residents can live in any
 namespace, this is necessarily a cluster-wide Pod-read capability. Kubernetes
 returns complete Pod objects; the observer projects only the bounded identity
-fields above into evidence. The credential and digest-pinned observer image must
+fields above into evidence. The credential and immutable OCI observer image reference must
 remain isolated from all other Job containers.
 
 Regular Kubernetes Pods may use standard in-cluster configuration. KubeEdge

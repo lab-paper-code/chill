@@ -3,8 +3,7 @@ package evidencestore
 import "errors"
 
 var (
-	// ErrInvalidIdentity indicates that an expected object identity is incomplete
-	// or non-canonical.
+	// ErrInvalidIdentity indicates that an object identity is incomplete.
 	ErrInvalidIdentity = errors.New("invalid evidence object identity")
 	// ErrNotFound indicates that the referenced evidence object does not exist.
 	ErrNotFound = errors.New("evidence object not found")
@@ -18,7 +17,6 @@ var (
 	// ErrTransport indicates that the store could not be reached or returned an
 	// unusable transport response.
 	ErrTransport = errors.New("evidence store transport failed")
-	// ErrContentMismatch indicates that retrieved bytes do not match their
-	// expected size or digest.
+	// ErrContentMismatch indicates that content violates a declared size boundary.
 	ErrContentMismatch = errors.New("evidence content mismatch")
 )

@@ -73,8 +73,8 @@ A kind does not establish trust by itself.
 
 Identifies the exact source supporting the claim:
 
-- artifact content digest
-- pulled image digest, not only an image tag
+- artifact name, path, and immutable carrier image
+- pulled immutable OCI image reference, not only an image tag
 - Node UID plus resourceVersion for a retained Node snapshot
 - Pod UID, container identity, and Run identity
 - runtime component identity where it can be observed
@@ -88,7 +88,7 @@ Records what was actually checked. Examples include:
 
 - declared only
 - packaged in an identified image
-- content digest matched
+- source object identity matched
 - API field observed
 - Kubernetes allocation confirmed for a Pod
 - runtime availability reported
@@ -130,8 +130,8 @@ Timestamp semantics must be explicit:
 MetricObserver receipt time must never be represented as a Shelly device
 measurement time.
 
-Immutable content normally needs a digest rather than repeated timestamps on
-every claim.
+Immutable content needs a stable owner and reference rather than repeated
+timestamps on every claim.
 
 ### Derivation identity
 
@@ -231,7 +231,7 @@ exists.
   image-owned package declaration field exist; one exact declaration bound to
   the production RKNN worker image is pending
 - host `librknnrt` and driver identity: a current diagnostic snapshot and a
-  separate expected host-contract field exist; its normalized digest is bound
+  separate expected host-contract field exist; its semantic fields are bound
   into new physical state identities, while a Run-bound verifier and observed
   drift comparison are pending
 - `/dev/dri` access and successful initialization: a non-root diagnostic proved
@@ -258,10 +258,10 @@ that copy is historical Run evidence, not a second current-status authority.
 
 Similarly:
 
-- a mutable image tag does not preserve runtime identity when its digest moves
+- a mutable image tag does not preserve runtime identity when its resolved image changes
 - a runtime's self-reported version is process evidence, not supply-chain
   attestation
-- a verified model digest does not verify adjacent artifact metadata or the
+- a verified model file does not verify adjacent artifact metadata or the
   runtime image
 - hostPath presence does not identify the mounted library or prove ABI
   compatibility
@@ -277,7 +277,7 @@ Any later provenance representation must satisfy these checks:
 3. A changed Node resourceVersion invalidates reuse of a CPU derivation for a
    new current decision; the old result remains historical evidence.
 4. GPU request and successful GPU allocation remain separate claims.
-5. The same runtime image tag resolving to a different digest is a different
+5. The same runtime image tag resolving to a different image is a different
    runtime input identity.
 6. A Shelly receipt timestamp cannot be synthesized into a device timestamp.
 7. Self-declared RKNN ABI metadata cannot produce a verified compatibility
@@ -300,7 +300,7 @@ Narrowed:
 
 - source kind enums can still be useful routing vocabulary, provided they do
   not imply equal trust or replace source identity and verification depth
-- timestamps are required for mutable observations, but immutable digests do
+- timestamps are required for mutable observations, but immutable references do
   not need redundant per-field times
 - retained Kubernetes snapshots are acceptable as immutable Run evidence, but
   not as current cluster status

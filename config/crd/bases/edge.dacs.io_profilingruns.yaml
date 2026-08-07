@@ -361,8 +361,6 @@ spec:
                 description: Evidence identifies independently verified immutable
                   execution evidence.
                 properties:
-                  digest:
-                    type: string
                   key:
                     description: Key is opaque to API consumers.
                     maxLength: 1024
@@ -383,15 +381,15 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - digest
                 - key
                 - schemaVersion
                 - size
                 - store
                 type: object
-              intentDigest:
-                description: IntentDigest identifies the exact frozen execution intent.
-                type: string
+              intentFrozen:
+                description: IntentFrozen reports that the immutable intent record
+                  exists for this generation.
+                type: boolean
               job:
                 description: Job identifies the one owned native Job after creation.
                 properties:

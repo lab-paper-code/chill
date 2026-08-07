@@ -166,7 +166,7 @@ func validNodeActuation(name string, run *edgev1alpha1.ProfilingRun) *edgev1alph
 			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Actuator:                    jetsonNVPModelActuator(2),
-			PolicyDigest:                "jetson-mode-policy",
+			PolicyName:                  "jetson-mode-policy",
 			SettlingDurationSeconds:     60,
 			MaxActuationDurationSeconds: 900,
 			Deadline:                    metav1.NewTime(requested.Add(15 * time.Minute)),

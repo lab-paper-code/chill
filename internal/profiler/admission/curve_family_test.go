@@ -1,7 +1,6 @@
 package admission
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
@@ -35,19 +34,17 @@ func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	shared := profilederivation.CurveFamilySharedContract{
-		LogicalModel: active.State.Model, ModelSpecContentDigest: active.Candidate.ModelSpecContentDigest,
-		DeviceClassContentDigest: active.Candidate.DeviceClassContentDigest,
-		RuntimeDeclarationDigest: active.Candidate.RuntimeDeclarationDigest,
-		DeviceClass:              active.State.DeviceClass, NodeUID: active.TargetNode.UID,
+		Name: "test-curve", LogicalModel: active.State.Model,
+		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
-		HostContractDigest: active.State.HostContractDigest, CPU: projectCurveCPU(active.CPU),
+		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
 	}
 	member := profilederivation.CurveFamilyMemberContract{
 		Batch: 1, ExecutionPath: active.Candidate.ExecutionPath,
-		ArtifactName: active.State.Artifact, ArtifactDigest: active.State.ArtifactDigest,
+		ArtifactName: active.State.Artifact,
 		ArtifactPath: active.State.ArtifactPath, ArtifactImage: active.Images.Artifact,
 	}
 	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err != nil {
@@ -77,7 +74,7 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 	active.State.ArtifactPath = "/artifact/model.onnx"
 	active.State.RuntimeFamily = "onnxruntime"
 	active.State.Backend = "CPUExecutionProvider"
-	active.State.HostContractDigest = ""
+	active.State.HostContract = nil
 	active.Measurement.Batch = 2
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
@@ -94,10 +91,8 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 		t.Fatal(err)
 	}
 	shared := profilederivation.CurveFamilySharedContract{
-		LogicalModel: active.State.Model, ModelSpecContentDigest: active.Candidate.ModelSpecContentDigest,
-		DeviceClassContentDigest: active.Candidate.DeviceClassContentDigest,
-		RuntimeDeclarationDigest: active.Candidate.RuntimeDeclarationDigest,
-		DeviceClass:              active.State.DeviceClass, NodeUID: active.TargetNode.UID,
+		Name: "test-curve", LogicalModel: active.State.Model,
+		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
@@ -105,7 +100,7 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 	}
 	member := profilederivation.CurveFamilyMemberContract{
 		Batch: 2, ExecutionPath: active.Candidate.ExecutionPath,
-		ArtifactName: active.State.Artifact, ArtifactDigest: active.State.ArtifactDigest,
+		ArtifactName: active.State.Artifact,
 		ArtifactPath: active.State.ArtifactPath, ArtifactImage: active.Images.Artifact,
 		FixedBatchCapability: 0,
 	}
@@ -128,20 +123,23 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 func curveMemberIntent() profilingrun.Intent {
 	intent := admissionIntentWithWorkloadContract()
 	intent.Candidate = profilingrun.CandidateIdentity{
-		ReportDigest:             "sha256:" + strings.Repeat("1", 64),
-		ModelSpecContentDigest:   "sha256:" + strings.Repeat("2", 64),
-		DeviceClassContentDigest: "sha256:" + strings.Repeat("3", 64),
-		RuntimeDeclarationDigest: "sha256:" + strings.Repeat("4", 64),
-		ExecutionPath:            "rknnlite", Verdict: "Compatible",
+		Inputs: profilingrun.CandidateReportInputs{
+			ModelSpec:   profilingrun.CandidateReportObjectInput{Name: "mobilenet", UID: "model-uid", ResourceVersion: "1"},
+			DeviceClass: profilingrun.CandidateReportObjectInput{Name: "lattepanda", UID: "class-uid", ResourceVersion: "1"},
+			RuntimeDeclaration: profilingrun.CandidateReportRuntimeInput{
+				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "1",
+				Key: "execution-facts.yaml", Image: "runtime",
+			},
+		},
+		ExecutionPath: "rknnlite", Verdict: "Compatible",
 	}
 	intent.State.Artifact = "model-bs1"
 	intent.State.ArtifactPath = "/artifact/model.rknn"
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("5", 64)
+	intent.State.HostContract = &profilingrun.CandidateReportHostContract{}
 	intent.Images = profilingrun.Images{
 		Runtime: "runtime", Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",
 	}
 	intent.CPU.Request = "3"
-	intent.Metrics.ConfigurationContentDigest = "sha256:" + strings.Repeat("6", 64)
 	intent.Measurement.Batch = 1
 	return intent
 }

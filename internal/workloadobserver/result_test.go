@@ -69,7 +69,6 @@ func TestResultValidateRejectsContradictoryEvidence(t *testing.T) {
 		match string
 	}{
 		{name: "schema", alter: func(result *Result) { result.SchemaVersion = "old" }, match: "schemaVersion"},
-		{name: "policy identity", alter: func(result *Result) { result.PolicyDigest = "" }, match: "policy identity"},
 		{
 			name: "coverage", alter: func(result *Result) { result.CoverageEndedAt = result.CoverageStartedAt },
 			match: "coverage window",
@@ -173,7 +172,6 @@ func validResult() Result {
 		SchemaVersion:          ResultSchemaVersion,
 		Target:                 TargetIdentity{NodeName: "lattepanda", NodeUID: "node-uid"},
 		Run:                    RunIdentity{Namespace: "chill-system", JobUID: "job-uid", PodName: run.Name, PodUID: run.UID},
-		PolicyDigest:           "sha256:" + strings.Repeat("a", 64),
 		CoverageStartedAt:      started,
 		CoverageEndedAt:        started.Add(30 * time.Second),
 		InitialResourceVersion: "100",

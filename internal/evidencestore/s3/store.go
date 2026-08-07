@@ -54,7 +54,7 @@ func (s *Store) PutImmutable(
 	if !isPrecondition(err) {
 		return evidencestore.Receipt{}, translate("create evidence object", err)
 	}
-	return s.inspectExisting(ctx, expected)
+	return receipt(expected, evidencestore.CreateOutcomeExisting), nil
 }
 
 func (s *Store) Open(
@@ -100,32 +100,6 @@ func (s *Store) validateLocation(location evidencestore.ObjectLocation) error {
 		)
 	}
 	return nil
-}
-
-func (s *Store) inspectExisting(
-	ctx context.Context,
-	expected evidencestore.ObjectIdentity,
-) (evidencestore.Receipt, error) {
-	content, err := s.Open(ctx, expected)
-	if err != nil {
-		if errors.Is(err, evidencestore.ErrNotFound) {
-			return evidencestore.Receipt{}, fmt.Errorf("%w: conflicting object was not readable", evidencestore.ErrPrecondition)
-		}
-		return evidencestore.Receipt{}, fmt.Errorf("inspect existing evidence object: %w", err)
-	}
-
-	verifyErr := evidencestore.ValidateSize(content, expected.Size)
-	closeErr := content.Close()
-	if verifyErr != nil {
-		if errors.Is(verifyErr, evidencestore.ErrContentMismatch) {
-			return evidencestore.Receipt{}, fmt.Errorf("%w: existing object has different content", evidencestore.ErrPrecondition)
-		}
-		return evidencestore.Receipt{}, fmt.Errorf("verify existing evidence object: %w", verifyErr)
-	}
-	if closeErr != nil {
-		return evidencestore.Receipt{}, translate("close existing evidence object", closeErr)
-	}
-	return receipt(expected, evidencestore.CreateOutcomeExistingExactMatch), nil
 }
 
 func (s *Store) prepareCandidate(

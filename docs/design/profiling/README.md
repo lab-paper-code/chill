@@ -158,9 +158,10 @@ implemented, and the global post-selection error allocation is derived and
 regression-tested. The deterministic domain-wide discovery screen is also
 implemented, as is the global-`H` confirmatory sizing rule. The final joint
 contrast/covariance estimator and typed confirmatory result are implemented.
-The discovery and confirmatory policies have strict canonical decoders and
-content digests, the second artifact is checked against the realized sizing
-allocation, and the final result binds both digests. The first concrete Plan 5
+The discovery and confirmatory policies have strict semantic decoders and
+configured names. The second artifact is checked against the repeated discovery
+fields and realized sizing allocation, and the final result binds those names.
+The first concrete Plan 5
 campaign retained and re-verified all 12 idle and discovery Runs for the
 two-member RKNN family. Discovery selected batch one, but the pre-frozen
 three-trial cap could not meet the simultaneous 5% precision rule. Its committed
@@ -208,7 +209,7 @@ exact Node-UID Lease primitive are implemented. An internal status reconciler
 now drives those primitives against the durable handoff, and a fail-closed
 workload-safety adapter reports exact active Pod blockers outside explicit
 namespace and Pod-UID allowances. The reconciler also rejects an uninstalled
-actuation-policy digest before any Lease, safety, or host port and enters the
+actuation-policy name before any Lease, safety, or host port and enters the
 same restoration path if policy authorization drifts after state was retained.
 The opt-in command and Operator/Helm DaemonSet lifecycle are now implemented,
 with exact Node and self-Pod identity supplied through the downward API, shared

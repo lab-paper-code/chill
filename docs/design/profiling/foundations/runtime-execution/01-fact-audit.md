@@ -44,7 +44,7 @@ unmeasured batches.
 
 | Value | Audit classification | Step 1 evidence |
 |---|---|---|
-| ONNX artifact bytes and digest | verified declaration and run observation | init container checks the digest; runner recomputes it before load (`manifests/batch-sweep-job.yaml:35-42,62-67`, `runner.py:162-167`) |
+| ONNX artifact delivery | verified declaration and run observation | init container copies the configured path from the immutable carrier image; runner requires a regular file before load |
 | selected Node name and allocatable CPU | Node snapshot observation before Job creation | derivation reads `metadata.name` and `status.allocatable.cpu` (`derive-execution-contract.py:27-32`) |
 | integer CPU budget | derived decision | `floor(allocatableCPU)` (`derive-execution-contract.py:32-34`) |
 | container CPU limit equals budget | derived decision plus post-start observation | renderer applies the value; runner checks `cpu.max` (`derive-execution-contract.py:45-55`, `runner.py:145-158`) |
@@ -62,8 +62,8 @@ unmeasured batches.
 | runtime/provider in the derived contract | hardcoded before the runtime image is inspected. Availability is observed only after the Pod starts. |
 | arbitrary ONNX batch capability | unknown. The runner creates the selected input and observes success, but the contract has no artifact-declared supported set. |
 | complete model semantic validation | unknown. The CPU runner does not validate output shape or content. |
-| immutable runtime substrate | unknown. Runtime images are referenced by mutable tags and their pulled digest is not part of the derived contract. |
-| contract input identity | incomplete. Node UID/resourceVersion, artifact digest, runtime image digest, and a contract digest are absent from the derived document. |
+| immutable runtime substrate | unknown. Runtime images are referenced by mutable tags and their pulled `imageID` is not part of the derived contract. |
+| contract input identity | incomplete. Node UID/resourceVersion, artifact carrier reference, immutable OCI runtime image reference, and a declared semantic contract are absent from the derived document. |
 
 ### CPU verdict
 
@@ -78,7 +78,7 @@ without either enforcement evidence or a narrower claim.
 
 | Value | Audit classification | Step 1 evidence |
 |---|---|---|
-| selected RKNN artifact bytes and digest | verified declaration and run observation | runner recomputes the digest (`rknn_runner.py:68-83`) |
+| selected RKNN artifact delivery | verified declaration and run observation | runner opens the configured regular file from the selected immutable carrier image |
 | selected batch belongs to the supplied batch declaration | declaration validation | runner checks `BATCH_SIZE`, shape mode, and `SUPPORTED_BATCHES` (`rknn_runner.py:68-80`) |
 | selected artifact loads and runtime initializes on NPU core 0 | run observation for one Pod | return codes from `load_rknn` and `init_runtime` are checked (`rknn_runner.py:85-89`) |
 | NHWC runtime input works for the selected artifact | run observation and experiment decision | steady buffer uses NHWC after the reproduced layout failure (`rknn_runner.py:91-104`) |
@@ -89,7 +89,7 @@ without either enforcement evidence or a narrower claim.
 | Current value or claim | Audit result |
 |---|---|
 | `SUPPORTED_BATCHES` | supplied by manifest/render arguments, not introspected from the RKNN artifact. A successful run proves only the selected batch. |
-| RKNNLite/librknnrt ABI 2.3.2 | incomplete. The Python package is image-owned, while `librknnrt.so` is injected from the host; driver, library digest, and ABI comparison are not recorded. |
+| RKNNLite/librknnrt ABI 2.3.2 | incomplete. The Python package is image-owned, while `librknnrt.so` is injected from the host; driver, library path, and ABI comparison are not recorded. |
 | `RKNPUExecutionProvider` | misleading vocabulary. This path calls RKNNLite directly and is not an ONNX Runtime Execution Provider. |
 | `OnePodPerNodeSingleNPUCore` | unresolved policy. Privileged `/dev/dri` host access is not a Kubernetes extended-resource allocation and does not enforce NPU sharing or exclusivity. |
 | `/dev/dri/renderD129` | experiment wiring tied to one host, not a stable DeviceClass capability or portable runtime contract. |
@@ -109,7 +109,7 @@ identifiable producer and the NPU has a Kubernetes resource contract.
 
 | Value | Audit classification | Step 1 evidence |
 |---|---|---|
-| EfficientNet-B4 ONNX bytes and digest | verified declaration and run observation | runner recomputes the digest before session creation (`jetson_runner.py:60-73`) |
+| EfficientNet-B4 ONNX delivery | verified declaration and run observation | runner opens the configured model before session creation |
 | TensorRT provider is available and first in the registered chain | run observation | availability and `session.get_providers()` are checked (`jetson_runner.py:72-90`) |
 | requested provider chain | derived execution decision | session requests TensorRT followed by CUDA (`jetson_runner.py:84-86`) |
 | FP16 and INT8 disabled | runtime configuration decision | TensorRT provider options disable both (`jetson_runner.py:66-82`) |
@@ -128,9 +128,9 @@ identifiable producer and the NPU has a Kubernetes resource contract.
 | `MODE_15W_6CORE`, nvpmodel ID 2 | runner constant based on an earlier observation; it is not queried or enforced when the run begins. |
 | L4T R35.4.1 as current Node/runtime compatibility | runner constant and image-selection assumption; Node driver/L4T is not compared at start. |
 | `OnePodPerNodeExclusiveGPU` | overbroad. The device-plugin allocation supports one-GPU allocation, not node-wide exclusivity, CPU isolation, or absence of other workloads. |
-| reusable TensorRT engine identity | unknown. Cache is Pod-local `emptyDir`; no engine digest, optimization profile, or artifact linkage is retained. |
+| reusable TensorRT engine identity | unknown. Cache is Pod-local `emptyDir`; no engine provenance, optimization profile, or artifact linkage is retained. |
 | `sessionBuildSeconds` is total preparation time | false. First warm-up performed several additional minutes of GPU work in the retained run. |
-| immutable ORT/native runtime provenance | incomplete. The image imports a host-sourced ORT wheel without recording its source/digest in the execution result. |
+| immutable ORT/native runtime provenance | incomplete. The image imports a host-sourced ORT wheel without recording its source in the execution result. |
 
 ### Jetson verdict
 
@@ -142,7 +142,7 @@ L4T/TensorRT ABI match.
 
 ## Cross-cutting facts and ownership hazards
 
-1. Artifact content digest, runtime image identity, and mutable host ABI are
+1. artifact name, path, and immutable carrier image, runtime image identity, and mutable host ABI are
    three different identities. The original experiments did not consistently retain
    all three.
 2. A provider observed anywhere in the EEP inventory is vocabulary evidence,

@@ -22,35 +22,33 @@ is a collection of Runs and is not introduced as an API by this plan.
 The first Run intent freezes:
 
 - the static candidate report input identities and selected model path;
-- logical model, artifact digest, runtime family, and backend;
-- digest-pinned runtime, artifact-carrier, and MetricObserver images;
+- logical model, artifact carrier reference, runtime family, and backend;
+- immutable OCI references for runtime, artifact-carrier, and observer images;
 - selected batch, warm-up, bounded measurement duration, and repetitions;
 - target Node name, UID, resourceVersion, architecture, and allocatable CPU;
 - the CPU derivation policy and its material inputs and outputs; and
 - the resolved metric source and bounded observation request.
 
-The intent identity is the SHA-256 of canonical JSON. It is not a Job, Pod, or
-Kubernetes UID. A changed snapshot or decision creates a different intent.
+The immutable ConfigMap owned by one Run is its frozen intent record. A changed
+snapshot or decision requires a different Run rather than a recomputed token.
 
 The model-loaded-idle extension remains one `profilingrun.Intent`; it does not
 introduce a second frozen-intent type. Candidate, execution state, images, Node,
 CPU, metric source, and workload-observation provenance are common execution
 facts, and duplicating them would create two validation and finalization paths.
-The intent schema is `v1alpha9`. It retains the measurement-protocol
-`settlingDurationSeconds` field and the optional digest of only the
-order-normalized physical host contract. CPU ORT omits that state field.
+The current intent schema retains the measurement-protocol
+`settlingDurationSeconds` field and an optional semantic physical host contract.
+CPU ORT omits that state field.
 The common CPU quota remains frozen for all workers, while RKNNLite omits the
 ORT-only intra/inter-op settings. The optional `actuation` object binds a
-non-fixed mode to its exact typed target and configured policy digest; fixed
-Runs omit it. Retained v1alpha8, v1alpha7, and v1alpha6 CPU intent bytes remain
-readable and are protected by their original golden digests. V1alpha6 cannot
-carry host-contract or model-loaded-idle fields. RKNNLite retains v1alpha8 in
-addition to current v1alpha9.
+non-fixed mode to its exact typed target and configured policy name; fixed
+Runs omit it. The Go and Python runtime boundaries accept only the matching
+current schema.
 
-Candidate-report v1alpha6 is the upstream authority for an exact selected
+The current candidate report is the upstream authority for an exact selected
 actuator target. For an actuated Run, the immutable record additionally stores
-the canonical selected actuation policy and its ConfigMap source; the intent
-binds only the policy's semantic digest. Fixed records retain the existing
+the selected actuation policy and its ConfigMap source; the intent binds the
+configured policy name. Fixed records retain the existing
 four payloads, while actuated records require the fifth policy payload. This
 freezes inputs only: Plan 6 still withholds the Job until a durable handoff has
 converged and settled the Node. The handoff is a separate owned
@@ -80,10 +78,10 @@ A one-shot CPU ORT adapter translates the intent into native objects. The Job:
 
 - has `parallelism=1`, `completions=1`, `backoffLimit=0`, and `restartPolicy=Never`;
 - disables service-account token mounting;
-- uses digest-pinned images and `IfNotPresent` pull policy;
+- uses immutable OCI image references and `IfNotPresent` pull policy;
 - expresses placement as a hostname selector and records actual binding later;
 - requests and limits the frozen CPU amount for the runtime container;
-- copies the digest-pinned artifact into an `emptyDir` and verifies its bytes;
+- copies the declared artifact from its immutable carrier image into an `emptyDir`;
 - runs the runtime and MetricObserver in separate containers; and
 - mounts the same immutable intent record read-only into every worker container.
 
@@ -99,15 +97,15 @@ registry or `DeviceProfile` write.
 The collector waits for the bounded Job, requires exactly one owned Pod, and
 preserves:
 
-- Run intent JSON and digest;
+- the frozen Run intent record;
 - raw Job, Pod, and actual Node snapshots, including UIDs;
 - container statuses and pulled image identities;
 - the strict runtime result for the selected batch;
-- artifact digest, runtime/provider, CPU/cgroup, warm-up, inference, timestamp,
+- artifact carrier reference, runtime/provider, CPU/cgroup, warm-up, inference, timestamp,
   and output-validation facts; and
 - the unmodified MetricObserver result and its source identity.
 
-The bundle is written atomically and named by its content digest. Job completion
+The bundle is written atomically and named by its source object identity. Job completion
 alone is not a valid Run. Missing, duplicate, malformed, mismatched, or failed
 runtime evidence fails the Run evidence gate. Collection/I/O failure remains
 distinct from an observed Run failure.
@@ -152,10 +150,10 @@ scientifically admissible and does not authorize a profile.
 
 ## Implementation result
 
-One exact Lattepanda Run was materialized and collected under intent digest
-`sha256:526040beceecf15f145e50372822280d9a3a0962809f1a4cc812aa64d4a9794c`.
+One exact Lattepanda Run was materialized and collected under a frozen intent
+record.
 The single Pod completed without retry or restart. Runtime evidence matched the
-digest-pinned image, Node UID, artifact bytes, ORT CPU backend, four-CPU quota,
+immutable OCI image reference, Node UID, artifact identity, ORT CPU backend, four-CPU quota,
 four/one ORT threads, effective cpuset and affinity, selected batch, and output
 shape. Warm-up completion precedes the measurement window, and the 5,541
 reported calls exactly match 5,541 retained raw latency samples over 30 seconds.
@@ -169,6 +167,6 @@ execution evidence, while power attribution and scientific admission remain a
 Plan 3 decision. The init-container `imageID` was not comparable to the requested
 artifact manifest on this KubeEdge/containerd path; exact artifact bytes were
 instead verified inside the runtime and both raw identities are retained.
-The final bundle is named by the SHA-256 of the exact bytes written, embeds the
-original Plan 1 candidate report, and revalidates Job-to-Pod ownership, terminal
+The final bundle retains the original Plan 1 candidate report and validates
+Job-to-Pod ownership, terminal
 Job success, full Run annotations, and all requested Pod-spec image references.

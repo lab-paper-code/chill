@@ -48,8 +48,7 @@ type SequentialResult struct {
 	Patience                     int                     `json:"patience"`
 	TrialsPerBatch               int                     `json:"trialsPerBatch"`
 	DivergenceFactor             float64                 `json:"divergenceFactor"`
-	CurveFamilyContractDigest    string                  `json:"curveFamilyContractDigest"`
-	CurveFamilyIdentity          string                  `json:"curveFamilyIdentity"`
+	CurveFamilyName              string                  `json:"curveFamilyName"`
 	IdleBaselinesByState         map[string]IdleBaseline `json:"idleBaselinesByState"`
 }
 
@@ -75,10 +74,9 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		Status:        SequentialContinue,
 		PolicyVersion: policy.Version, MinDelta: policy.MinDelta,
 		Patience: policy.Patience, TrialsPerBatch: policy.TrialsPerBatch,
-		DivergenceFactor:          policy.DivergenceFactor,
-		CurveFamilyContractDigest: curve.ContractDigest(),
-		CurveFamilyIdentity:       curve.FamilyIdentity(),
-		IdleBaselinesByState:      make(map[string]IdleBaseline),
+		DivergenceFactor:     policy.DivergenceFactor,
+		CurveFamilyName:      curve.FamilyName(),
+		IdleBaselinesByState: make(map[string]IdleBaseline),
 	}
 	best := math.Inf(1)
 	bestBatch := 0

@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha2"
+const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha3"
 
 type RKNNLiteRuntimeConfig struct {
 	Command                 []string
@@ -47,7 +47,6 @@ var _ Runtime = (*RKNNLiteRuntime)(nil)
 type rknnLiteRequest struct {
 	SchemaVersion                    string                                `json:"schemaVersion"`
 	Intent                           profilingrun.Intent                   `json:"intent"`
-	IntentDigest                     string                                `json:"intentDigest"`
 	PodUID                           string                                `json:"podUID"`
 	ScheduledNodeName                string                                `json:"scheduledNodeName"`
 	ModelPath                        string                                `json:"modelPath"`
@@ -179,7 +178,7 @@ func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, 
 		return nil, fmt.Errorf("read RKNNLite intent: %w", err)
 	}
 	request := rknnLiteRequest{
-		SchemaVersion: rknnLiteRequestSchemaVersion, Intent: intent, IntentDigest: runtimeRequest.Intent.Digest(),
+		SchemaVersion: rknnLiteRequestSchemaVersion, Intent: intent,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, Candidate: copyRuntimeDelivery(r.config.Delivery),
 		ObserverReadyPaths:               r.config.ObserverReadyPaths,

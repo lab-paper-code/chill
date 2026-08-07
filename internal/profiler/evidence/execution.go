@@ -43,7 +43,7 @@ func (e ExecutionEvidence) validateLinkedRaw(
 	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
-	if err := profilingrun.ValidateCandidateReport(e.CandidateReportBytes, e.Intent); err != nil {
+	if _, err := profilingrun.VerifyCandidateReportRecord(e.CandidateReport, e.Intent); err != nil {
 		return fmt.Errorf("validate candidate report: %w", err)
 	}
 	if err := e.Terminal.validate(e.Intent, rawPodUID); err != nil {

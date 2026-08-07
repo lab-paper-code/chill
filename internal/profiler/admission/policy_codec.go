@@ -44,8 +44,7 @@ type PolicySpec struct {
 	RejectExternalWorkloadChanges  bool    `json:"rejectExternalWorkloadChanges"`
 }
 
-// Policy is the self-describing selected policy whose content digest becomes
-// the scientific admission-policy version.
+// Policy is the self-describing selected scientific admission policy.
 type Policy struct {
 	SchemaVersion                  string  `json:"schemaVersion"`
 	Name                           string  `json:"name"`
@@ -76,18 +75,17 @@ type frozenPolicyRecord struct {
 	Policy        Policy       `json:"policy"`
 }
 
-// FrozenPolicy is retained verbatim beside the immutable execution intent. A
-// populated value can only be constructed by the catalog-freeze or retained-
-// JSON decode boundaries in this package.
+// FrozenPolicy retains the validated policy and source snapshot beside the
+// immutable execution intent. A populated value can only be constructed by the
+// catalog-freeze or retained-JSON decode boundaries in this package.
 type FrozenPolicy struct {
-	record    frozenPolicyRecord
-	canonical []byte
-	verified  bool
+	record   frozenPolicyRecord
+	verified bool
 }
 
 // FreezeConfiguredPolicy strict-decodes one catalog and selects a policy by
 // name while retaining exact ConfigMap provenance. The selected policy is
-// copied into the frozen record and is the input to its semantic digest.
+// copied into the frozen record.
 func FreezeConfiguredPolicy(raw []byte, selectedName string, source PolicySource) (FrozenPolicy, error) {
 	if len(raw) == 0 {
 		return FrozenPolicy{}, errors.New("admission-policy catalog is empty")
@@ -142,11 +140,7 @@ func DecodeFrozenPolicy(raw []byte) (FrozenPolicy, error) {
 	if err := validateFrozenPolicy(record); err != nil {
 		return FrozenPolicy{}, err
 	}
-	canonical, err := json.Marshal(record)
-	if err != nil {
-		return FrozenPolicy{}, err
-	}
-	return newFrozenPolicy(record, canonical), nil
+	return FrozenPolicy{record: record, verified: true}, nil
 }
 
 func validateFrozenPolicy(record frozenPolicyRecord) error {
@@ -174,18 +168,7 @@ func sealFrozenPolicy(record frozenPolicyRecord) (FrozenPolicy, error) {
 	if err := validateFrozenPolicy(record); err != nil {
 		return FrozenPolicy{}, err
 	}
-	canonical, err := json.Marshal(record)
-	if err != nil {
-		return FrozenPolicy{}, fmt.Errorf("encode frozen admission policy: %w", err)
-	}
-	return newFrozenPolicy(record, canonical), nil
-}
-
-func newFrozenPolicy(record frozenPolicyRecord, canonical []byte) FrozenPolicy {
-	return FrozenPolicy{
-		record: record, canonical: append([]byte(nil), canonical...),
-		verified: true,
-	}
+	return FrozenPolicy{record: record, verified: true}, nil
 }
 
 func (f FrozenPolicy) Records() (PolicySource, Policy, error) {
@@ -199,7 +182,7 @@ func (f FrozenPolicy) CanonicalJSON() ([]byte, error) {
 	if !f.verified {
 		return nil, errors.New("frozen admission policy is empty")
 	}
-	return append([]byte(nil), f.canonical...), nil
+	return json.Marshal(f.record)
 }
 
 func (f FrozenPolicy) AdmissionPolicy() (profilederivation.AdmissionPolicy, error) {

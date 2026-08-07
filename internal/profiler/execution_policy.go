@@ -3,7 +3,6 @@ package profiler
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
@@ -76,14 +75,9 @@ func DeriveExecutionPlan(
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
 
-	policyIdentity, err := frozen.Identity()
-	if err != nil {
-		return ExecutionPlan{}, err
-	}
-	policyVersion := strings.TrimPrefix(policyIdentity, policy.Name+"/")
 	plan := ExecutionPlan{
 		Policy:        policy.Name,
-		PolicyVersion: policyVersion,
+		PolicyVersion: policy.Name,
 
 		ActiveDeadline: metricDuration + settlingDuration +
 			time.Duration(policy.ActiveDeadlineOverheadSeconds)*time.Second,

@@ -364,7 +364,7 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 			ObjectMeta: metav1.ObjectMeta{Name: "mobilenet", UID: "model-uid", ResourceVersion: "model-rv"},
 			Spec: edgev1alpha1.ModelSpecSpec{
 				Artifacts: []edgev1alpha1.ModelArtifact{{
-					Name: "canonical-onnx", Format: "onnx", Digest: "sha256:" + strings.Repeat("b", 64),
+					Name: "canonical-onnx", Format: "onnx",
 				}},
 				ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 					Name: "ort-cpu", Artifact: "canonical-onnx",
@@ -424,7 +424,7 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 				AdmissionPolicy: "single-run-v1",
 			},
 			Status: edgev1alpha1.ProfilingRunStatus{
-				ObservedGeneration: 1, IntentDigest: "sha256:" + strings.Repeat("a", 64),
+				ObservedGeneration: 1, IntentFrozen: true,
 				Conditions: []metav1.Condition{{
 					Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
 					ObservedGeneration: 1, Reason: "ExecutionPending", Message: "execution is not implemented",
@@ -458,11 +458,11 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 			FinalizedAt: time.Date(2026, 7, 20, 1, 1, 0, 0, time.UTC),
 			Final: evidencestore.ObjectIdentity{
 				Store: "chill-evidence", Key: "execution.json",
-				Digest: "sha256:" + strings.Repeat("a", 64), Size: 9000,
+				Size: 9000,
 			},
 			Raw: evidencestore.ObjectIdentity{
 				Store: "chill-evidence", Key: "raw.json",
-				Digest: "sha256:" + strings.Repeat("b", 64), Size: 8000,
+				Size: 8000,
 			},
 		},
 		Measurement: operatorconsole.EvidencePassportMeasurement{

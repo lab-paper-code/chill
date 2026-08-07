@@ -30,7 +30,7 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.CurveFamilyContractDigest() != discovery.CurveFamilyContractDigest() ||
+	if decoded.CurveFamilyName() != discovery.CurveFamilyName() ||
 		decoded.CandidateBatch() != 3 || decoded.ConfirmatoryTrials() == nil ||
 		*decoded.ConfirmatoryTrials() != 3 ||
 		!slices.Equal(decoded.ConfirmatoryBatches(), []int{3, 4}) ||
@@ -93,7 +93,7 @@ func TestFreezeConfirmatoryDerivationPolicyRetainsBudgetInsufficientSizing(t *te
 func testSizedDiscoveryPolicy(t *testing.T) (DiscoveryDerivationPolicy, BSatSizingResult) {
 	t.Helper()
 	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	spec := testDiscoveryDerivationPolicySpecForDigest(curve.ContractDigest())
+	spec := testDiscoveryDerivationPolicySpecForFamily(curve.FamilyName())
 	discovery, err := FreezeDiscoveryDerivationPolicy(spec)
 	if err != nil {
 		t.Fatal(err)

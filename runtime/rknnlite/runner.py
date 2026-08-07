@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
 import os
 import platform
-import re
 import stat
 import sys
 import tempfile
@@ -20,12 +18,10 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha2"
-RETAINED_REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha1"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha9"
-RETAINED_INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha8"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha2"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha2"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha3"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha10"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha3"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
@@ -41,7 +37,6 @@ CORE_MASK_NAME = "NPU_CORE_0"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
-DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class ContractError(Exception):
@@ -49,12 +44,17 @@ class ContractError(Exception):
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def log(stage: str, message: str, **fields: object) -> None:
     suffix = " ".join(
-        f"{key}={json.dumps(value, separators=(',', ':'))}" for key, value in fields.items()
+        f"{key}={json.dumps(value, separators=(',', ':'))}"
+        for key, value in fields.items()
     )
     print(
         f"{now()} INFO  [{stage:<12}] {message}" + (f" | {suffix}" if suffix else ""),
@@ -112,7 +112,9 @@ def require_object(value: Any, name: str) -> dict[str, Any]:
 
 def require_string(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
-        raise ContractError(f"{name} must be a non-empty string without surrounding whitespace")
+        raise ContractError(
+            f"{name} must be a non-empty string without surrounding whitespace"
+        )
     return value
 
 
@@ -142,28 +144,36 @@ def validate_actuation(intent: dict[str, Any], state: dict[str, Any]) -> None:
         if power_mode != "fixed":
             raise ContractError("non-fixed power mode requires actuation")
         return
-    if intent["schemaVersion"] != INTENT_SCHEMA:
-        raise ContractError("retained intent cannot contain actuation")
     if power_mode == "fixed":
         raise ContractError("fixed power mode cannot contain actuation")
     actuation = require_object(intent["actuation"], "intent.actuation")
-    require_fields(actuation, {"powerMode", "actuator", "policyDigest"}, "intent.actuation")
-    if require_string(actuation["powerMode"], "intent.actuation.powerMode") != power_mode:
-        raise ContractError("intent.actuation.powerMode does not match intent.state.powerMode")
-    if not DIGEST_PATTERN.fullmatch(
-        require_string(actuation["policyDigest"], "intent.actuation.policyDigest")
+    require_fields(
+        actuation, {"powerMode", "actuator", "policyName"}, "intent.actuation"
+    )
+    if (
+        require_string(actuation["powerMode"], "intent.actuation.powerMode")
+        != power_mode
     ):
-        raise ContractError("intent.actuation.policyDigest must be a canonical SHA-256 digest")
+        raise ContractError(
+            "intent.actuation.powerMode does not match intent.state.powerMode"
+        )
+    require_string(actuation["policyName"], "intent.actuation.policyName")
     actuator = require_object(actuation["actuator"], "intent.actuation.actuator")
     kind = require_string(actuator.get("kind"), "intent.actuation.actuator.kind")
     if kind == "JetsonNVPModel":
-        require_fields(actuator, {"kind", "jetsonNVPModel"}, "intent.actuation.actuator")
-        target = require_object(actuator["jetsonNVPModel"], "intent.actuation.actuator.jetsonNVPModel")
+        require_fields(
+            actuator, {"kind", "jetsonNVPModel"}, "intent.actuation.actuator"
+        )
+        target = require_object(
+            actuator["jetsonNVPModel"], "intent.actuation.actuator.jetsonNVPModel"
+        )
         require_fields(target, {"id"}, "intent.actuation.actuator.jetsonNVPModel")
         require_integer(target["id"], "intent.actuation.actuator.jetsonNVPModel.id")
         return
     if kind == "NvidiaLockedGPUClock":
-        require_fields(actuator, {"kind", "nvidiaLockedGPUClock"}, "intent.actuation.actuator")
+        require_fields(
+            actuator, {"kind", "nvidiaLockedGPUClock"}, "intent.actuation.actuator"
+        )
         target = require_object(
             actuator["nvidiaLockedGPUClock"],
             "intent.actuation.actuator.nvidiaLockedGPUClock",
@@ -194,7 +204,6 @@ def validate_request(request: dict[str, Any]) -> None:
         {
             "schemaVersion",
             "intent",
-            "intentDigest",
             "podUID",
             "scheduledNodeName",
             "modelPath",
@@ -211,18 +220,18 @@ def validate_request(request: dict[str, Any]) -> None:
         },
         "runtime request",
     )
-    if request["schemaVersion"] not in {REQUEST_SCHEMA, RETAINED_REQUEST_SCHEMA}:
+    if request["schemaVersion"] != REQUEST_SCHEMA:
         raise ContractError("unsupported runtime request schemaVersion")
-    digest = require_string(request["intentDigest"], "intentDigest")
-    if not DIGEST_PATTERN.fullmatch(digest):
-        raise ContractError("intentDigest must be a canonical SHA-256 digest")
     require_string(request["podUID"], "podUID")
     scheduled_node = require_string(request["scheduledNodeName"], "scheduledNodeName")
     require_absolute_file_path(request["modelPath"], "modelPath")
     ready_paths = request["observerReadyPaths"]
     if not isinstance(ready_paths, list) or not ready_paths:
         raise ContractError("observerReadyPaths must be a non-empty array")
-    normalized = [require_absolute_file_path(value, "observerReadyPaths item") for value in ready_paths]
+    normalized = [
+        require_absolute_file_path(value, "observerReadyPaths item")
+        for value in ready_paths
+    ]
     if len(set(normalized)) != len(normalized):
         raise ContractError("observerReadyPaths must be unique")
     for field in (
@@ -243,32 +252,30 @@ def validate_request(request: dict[str, Any]) -> None:
 
     intent = require_object(request["intent"], "intent")
     intent_fields = {
-        "schemaVersion", "candidate", "state", "images", "targetNode", "cpu",
-        "measurement", "metrics", "workload",
+        "schemaVersion",
+        "candidate",
+        "state",
+        "images",
+        "targetNode",
+        "cpu",
+        "measurement",
+        "metrics",
+        "workload",
     }
     if "actuation" in intent:
         intent_fields.add("actuation")
     require_fields(intent, intent_fields, "intent")
-    if intent["schemaVersion"] not in {INTENT_SCHEMA, RETAINED_INTENT_SCHEMA}:
-        raise ContractError("RKNNLite requires current or retained v1alpha8 intent schema")
-    if request["schemaVersion"] == REQUEST_SCHEMA and intent["schemaVersion"] != INTENT_SCHEMA:
-        raise ContractError("current runtime request requires the current intent schema")
-    if request["schemaVersion"] == RETAINED_REQUEST_SCHEMA and intent["schemaVersion"] != RETAINED_INTENT_SCHEMA:
-        raise ContractError("retained runtime request requires retained v1alpha8 intent schema")
+    if intent["schemaVersion"] != INTENT_SCHEMA:
+        raise ContractError("RKNNLite requires the current intent schema")
     candidate_identity = require_object(intent["candidate"], "intent.candidate")
     require_fields(
         candidate_identity,
-        {
-            "reportDigest",
-            "modelSpecContentDigest",
-            "deviceClassContentDigest",
-            "runtimeDeclarationDigest",
-            "executionPath",
-            "verdict",
-        },
+        {"inputs", "executionPath", "verdict"},
         "intent.candidate",
     )
-    require_string(candidate_identity["executionPath"], "intent.candidate.executionPath")
+    require_string(
+        candidate_identity["executionPath"], "intent.candidate.executionPath"
+    )
     if candidate_identity["verdict"] != "Compatible":
         raise ContractError("intent candidate does not select RKNNLite")
 
@@ -279,20 +286,16 @@ def validate_request(request: dict[str, Any]) -> None:
             "deviceClass",
             "model",
             "artifact",
-            "artifactDigest",
             "artifactPath",
             "runtimeFamily",
             "backend",
             "powerMode",
-            "hostContractDigest",
+            "hostContract",
         },
         "intent.state",
     )
     if state["runtimeFamily"] != "rknnlite" or state["backend"] != "not-applicable":
         raise ContractError("unsupported runtime family or backend")
-    for field in ("artifactDigest", "hostContractDigest"):
-        if not DIGEST_PATTERN.fullmatch(require_string(state[field], f"intent.state.{field}")):
-            raise ContractError(f"intent.state.{field} must be a canonical SHA-256 digest")
     require_string(state["model"], "intent.state.model")
     validate_actuation(intent, state)
 
@@ -332,12 +335,20 @@ def validate_request(request: dict[str, Any]) -> None:
         "outputValidation",
     }
     if measurement.get("workloadMode") == IDLE_WORKLOAD:
-        require_fields(measurement, common_fields | {"settlingDurationSeconds"}, "intent.measurement")
+        require_fields(
+            measurement,
+            common_fields | {"settlingDurationSeconds"},
+            "intent.measurement",
+        )
     else:
         require_fields(measurement, common_fields, "intent.measurement")
     require_integer(measurement["batch"], "intent.measurement.batch", 1)
-    require_integer(measurement["warmupIterations"], "intent.measurement.warmupIterations")
-    require_integer(measurement["durationSeconds"], "intent.measurement.durationSeconds", 1)
+    require_integer(
+        measurement["warmupIterations"], "intent.measurement.warmupIterations"
+    )
+    require_integer(
+        measurement["durationSeconds"], "intent.measurement.durationSeconds", 1
+    )
     if measurement["repetitions"] != 1:
         raise ContractError("RKNNLite requires exactly one repetition")
     if measurement["workloadMode"] == IDLE_WORKLOAD:
@@ -347,7 +358,8 @@ def validate_request(request: dict[str, Any]) -> None:
                 measurement["settlingDurationSeconds"],
                 "intent.measurement.settlingDurationSeconds",
                 1,
-            ) < 1
+            )
+            < 1
             or measurement["inputGenerator"] != NO_INPUT_GENERATOR
             or measurement["outputValidation"] != NO_OUTPUT_VALIDATION
         ):
@@ -369,7 +381,9 @@ def validate_candidate(value: Any, batch: int) -> None:
         {"artifactCapability", "runtimePackages", "hostContract", "runtimeAccess"},
         "candidate",
     )
-    capability = require_object(candidate["artifactCapability"], "candidate.artifactCapability")
+    capability = require_object(
+        candidate["artifactCapability"], "candidate.artifactCapability"
+    )
     require_fields(
         capability,
         {"targetPlatform", "fixedBatch", "inputShape", "inputLayout", "inputDataType"},
@@ -378,7 +392,9 @@ def validate_candidate(value: Any, batch: int) -> None:
     shape = capability["inputShape"]
     if not isinstance(shape, list) or not shape:
         raise ContractError("candidate inputShape must be a non-empty array")
-    normalized_shape = [require_integer(value, "candidate inputShape item", 1) for value in shape]
+    normalized_shape = [
+        require_integer(value, "candidate inputShape item", 1) for value in shape
+    ]
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
         or capability["fixedBatch"] != batch
@@ -386,11 +402,15 @@ def validate_candidate(value: Any, batch: int) -> None:
         or capability["inputLayout"] != SUPPORTED_INPUT_LAYOUT
         or capability["inputDataType"] != SUPPORTED_INPUT_DATA_TYPE
     ):
-        raise ContractError("candidate artifact capability is unsupported or does not match the batch")
+        raise ContractError(
+            "candidate artifact capability is unsupported or does not match the batch"
+        )
 
     packages = candidate["runtimePackages"]
     if not isinstance(packages, list) or len(packages) != 1:
-        raise ContractError("candidate must declare exactly one RKNNLite runtime package")
+        raise ContractError(
+            "candidate must declare exactly one RKNNLite runtime package"
+        )
     package = require_object(packages[0], "candidate.runtimePackages item")
     require_fields(package, {"name", "version"}, "candidate.runtimePackages item")
     if package["name"] != SUPPORTED_RUNTIME_PACKAGE:
@@ -398,75 +418,105 @@ def validate_candidate(value: Any, batch: int) -> None:
     require_string(package["version"], "candidate runtime package version")
 
     host = require_object(candidate["hostContract"], "candidate.hostContract")
-    require_fields(host, {"libraries", "driver", "devices", "platform", "allocation"}, "candidate.hostContract")
+    require_fields(
+        host,
+        {"libraries", "driver", "devices", "platform", "allocation"},
+        "candidate.hostContract",
+    )
     libraries = host["libraries"]
     if not isinstance(libraries, list) or not libraries:
         raise ContractError("candidate host libraries must be a non-empty array")
     library_names: set[str] = set()
     for item in libraries:
         library = require_object(item, "candidate host library")
-        require_fields(library, {"name", "hostPath", "containerPath", "digest"}, "candidate host library")
+        require_fields(
+            library, {"name", "hostPath", "containerPath"}, "candidate host library"
+        )
         name = require_string(library["name"], "candidate host library name")
         if name in library_names:
             raise ContractError("candidate host library names must be unique")
         library_names.add(name)
-        require_absolute_file_path(library["hostPath"], "candidate host library hostPath")
-        require_absolute_file_path(library["containerPath"], "candidate host library containerPath")
-        if not DIGEST_PATTERN.fullmatch(require_string(library["digest"], "candidate host library digest")):
-            raise ContractError("candidate host library digest must be a canonical SHA-256 digest")
+        require_absolute_file_path(
+            library["hostPath"], "candidate host library hostPath"
+        )
+        require_absolute_file_path(
+            library["containerPath"], "candidate host library containerPath"
+        )
 
     driver = require_object(host["driver"], "candidate host driver")
     require_fields(driver, {"name", "versionPath", "version"}, "candidate host driver")
     require_string(driver["name"], "candidate host driver name")
-    require_absolute_file_path(driver["versionPath"], "candidate host driver versionPath")
+    require_absolute_file_path(
+        driver["versionPath"], "candidate host driver versionPath"
+    )
     require_string(driver["version"], "candidate host driver version")
     platform_contract = require_object(host["platform"], "candidate host platform")
-    require_fields(platform_contract, {"compatiblePath", "compatibleToken"}, "candidate host platform")
-    require_absolute_file_path(platform_contract["compatiblePath"], "candidate host platform compatiblePath")
-    require_string(platform_contract["compatibleToken"], "candidate host platform compatibleToken")
+    require_fields(
+        platform_contract,
+        {"compatiblePath", "compatibleToken"},
+        "candidate host platform",
+    )
+    require_absolute_file_path(
+        platform_contract["compatiblePath"], "candidate host platform compatiblePath"
+    )
+    require_string(
+        platform_contract["compatibleToken"], "candidate host platform compatibleToken"
+    )
     devices = host["devices"]
     if not isinstance(devices, list) or not devices:
         raise ContractError("candidate host devices must be a non-empty array")
     device_paths = [
-        str(require_absolute_file_path(require_object(item, "candidate host device").get("path"), "candidate host device path"))
+        str(
+            require_absolute_file_path(
+                require_object(item, "candidate host device").get("path"),
+                "candidate host device path",
+            )
+        )
         for item in devices
     ]
     for item in devices:
-        require_fields(require_object(item, "candidate host device"), {"path"}, "candidate host device")
+        require_fields(
+            require_object(item, "candidate host device"),
+            {"path"},
+            "candidate host device",
+        )
     if len(set(device_paths)) != len(device_paths):
         raise ContractError("candidate host device paths must be unique")
     allocation = require_object(host["allocation"], "candidate host allocation")
-    require_fields(allocation, {"resourceName", "exclusivityClaimed"}, "candidate host allocation")
-    if not isinstance(allocation["resourceName"], str) or allocation["resourceName"].strip() != allocation["resourceName"]:
+    require_fields(
+        allocation, {"resourceName", "exclusivityClaimed"}, "candidate host allocation"
+    )
+    if (
+        not isinstance(allocation["resourceName"], str)
+        or allocation["resourceName"].strip() != allocation["resourceName"]
+    ):
         raise ContractError("candidate host allocation resourceName is invalid")
-    require_boolean(allocation["exclusivityClaimed"], "candidate host allocation exclusivityClaimed")
+    require_boolean(
+        allocation["exclusivityClaimed"], "candidate host allocation exclusivityClaimed"
+    )
 
     access = require_object(candidate["runtimeAccess"], "candidate.runtimeAccess")
-    require_fields(access, {"privileged", "supplementalGroups"}, "candidate.runtimeAccess")
+    require_fields(
+        access, {"privileged", "supplementalGroups"}, "candidate.runtimeAccess"
+    )
     require_boolean(access["privileged"], "candidate.runtimeAccess.privileged")
     groups = access["supplementalGroups"]
     if not isinstance(groups, list):
         raise ContractError("candidate supplementalGroups must be an array")
-    normalized_groups = [require_integer(group, "candidate supplemental group", 1) for group in groups]
+    normalized_groups = [
+        require_integer(group, "candidate supplemental group", 1) for group in groups
+    ]
     if len(set(normalized_groups)) != len(normalized_groups):
         raise ContractError("candidate supplementalGroups must be unique")
 
 
-def sha256_file(path: Path, name: str = "file") -> str:
+def validate_regular_file(path: Path, name: str = "file") -> None:
     try:
         info = path.lstat()
     except OSError as error:
         raise ContractError(f"inspect {name}: {error}") from error
     if not stat.S_ISREG(info.st_mode):
         raise ContractError(f"{name} is not a regular file")
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1 << 20), b""):
-                digest.update(chunk)
-    except OSError as error:
-        raise ContractError(f"read {name}: {error}") from error
-    return "sha256:" + digest.hexdigest()
 
 
 def read_required_text(path: Path, name: str) -> str:
@@ -486,13 +536,19 @@ def wait_for_signal(path: Path, timeout_seconds: float) -> None:
             info = path.lstat()
         except FileNotFoundError:
             if time.monotonic() >= deadline:
-                raise ContractError(f"timed out waiting for observer readiness at {path}")
+                raise ContractError(
+                    f"timed out waiting for observer readiness at {path}"
+                )
             time.sleep(SIGNAL_POLL_SECONDS)
             continue
         except OSError as error:
-            raise ContractError(f"inspect observer readiness signal at {path}: {error}") from error
+            raise ContractError(
+                f"inspect observer readiness signal at {path}: {error}"
+            ) from error
         if not stat.S_ISREG(info.st_mode):
-            raise ContractError(f"observer readiness signal at {path} is not a regular file")
+            raise ContractError(
+                f"observer readiness signal at {path} is not a regular file"
+            )
         return
 
 
@@ -507,7 +563,9 @@ def publish_immutable(path: Path, payload: bytes) -> None:
         raise ContractError("output path already exists")
     temporary_name: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=".chill-runtime-", dir=path.parent, delete=False) as temporary:
+        with tempfile.NamedTemporaryFile(
+            prefix=".chill-runtime-", dir=path.parent, delete=False
+        ) as temporary:
             temporary_name = temporary.name
             temporary.write(payload)
             temporary.flush()
@@ -524,9 +582,13 @@ def publish_immutable(path: Path, payload: bytes) -> None:
 
 
 def encode_result(result: dict[str, Any], max_bytes: int) -> bytes:
-    payload = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    payload = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
     if len(payload) > max_bytes:
-        raise ContractError("runtime result exceeds the Job execution contract size budget")
+        raise ContractError(
+            "runtime result exceeds the Job execution contract size budget"
+        )
     return payload
 
 
@@ -588,7 +650,9 @@ def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
 
 
 def normalize_architecture(value: str) -> str:
-    return {"x86_64": "amd64", "aarch64": "arm64"}.get(value.lower().strip(), value.lower().strip())
+    return {"x86_64": "amd64", "aarch64": "arm64"}.get(
+        value.lower().strip(), value.lower().strip()
+    )
 
 
 def percentile(samples: list[float], fraction: float) -> float:
@@ -607,7 +671,9 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     for output in outputs:
         shape = list(output.shape)
         if output.size < 1 or not shape or shape[0] != batch:
-            raise ContractError("inference output shape does not preserve the frozen batch")
+            raise ContractError(
+                "inference output shape does not preserve the frozen batch"
+            )
         shapes.append(shape)
     return shapes
 
@@ -615,10 +681,14 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
 def generate_input(numpy: Any, shape: list[int], max_bytes: int) -> Any:
     input_bytes = math.prod(shape) * 4
     if input_bytes > max_bytes:
-        raise ContractError("input tensor exceeds the Job execution contract size budget")
+        raise ContractError(
+            "input tensor exceeds the Job execution contract size budget"
+        )
     sample = numpy.empty(shape, dtype=numpy.float32)
     if getattr(sample, "nbytes", None) != input_bytes:
-        raise ContractError("generated input tensor does not match its admitted byte size")
+        raise ContractError(
+            "generated input tensor does not match its admitted byte size"
+        )
     flat = sample.reshape(-1)
     generator = numpy.random.default_rng(0)
     for start in range(0, len(flat), INPUT_GENERATION_CHUNK_ELEMENTS):
@@ -627,11 +697,15 @@ def generate_input(numpy: Any, shape: list[int], max_bytes: int) -> Any:
     return sample
 
 
-def measurement_complete(elapsed: float, duration: int, sample_count: int, max_samples: int) -> bool:
+def measurement_complete(
+    elapsed: float, duration: int, sample_count: int, max_samples: int
+) -> bool:
     if elapsed >= duration:
         return True
     if sample_count >= max_samples:
-        raise ContractError("latency sample budget exhausted before measurement duration")
+        raise ContractError(
+            "latency sample budget exhausted before measurement duration"
+        )
     return False
 
 
@@ -641,20 +715,24 @@ def observe_host_contract(candidate: dict[str, Any]) -> dict[str, Any]:
     try:
         package_version = importlib.metadata.version(package["name"])
     except importlib.metadata.PackageNotFoundError as error:
-        raise ContractError(f"runtime package {package['name']} is not installed") from error
+        raise ContractError(
+            f"runtime package {package['name']} is not installed"
+        ) from error
     if package_version != package["version"]:
-        raise ContractError("installed RKNNLite package version does not match the candidate")
+        raise ContractError(
+            "installed RKNNLite package version does not match the candidate"
+        )
 
     libraries: list[dict[str, Any]] = []
     for library in host["libraries"]:
         path = Path(library["containerPath"])
-        digest = sha256_file(path, f"host library {library['name']}")
-        if digest != library["digest"]:
-            raise ContractError(f"host library {library['name']} digest does not match the candidate")
-        libraries.append({"name": library["name"], "path": str(path), "digest": digest})
+        validate_regular_file(path, f"host library {library['name']}")
+        libraries.append({"name": library["name"], "path": str(path)})
 
     driver = host["driver"]
-    driver_version = read_required_text(Path(driver["versionPath"]), "RKNN driver version")
+    driver_version = read_required_text(
+        Path(driver["versionPath"]), "RKNN driver version"
+    )
     if driver_version != driver["version"]:
         raise ContractError("RKNN driver version does not match the candidate")
 
@@ -711,11 +789,10 @@ def observe_host_contract(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def derived_contract(intent: dict[str, Any], intent_digest: str) -> dict[str, Any]:
+def derived_contract(intent: dict[str, Any]) -> dict[str, Any]:
     cpu = intent["cpu"]
     return {
         "schemaVersion": DERIVED_CONTRACT_SCHEMA,
-        "runIntentDigest": intent_digest,
         "backend": intent["state"]["backend"],
         "nodeSnapshot": intent["targetNode"],
         "cpu": {
@@ -756,7 +833,6 @@ def execute_idle(
     request: dict[str, Any],
     rknn: Any,
     evidence: dict[str, Any],
-    actual_digest: str,
     architecture: str,
     cpu_max: str,
     affinity: list[int],
@@ -766,7 +842,9 @@ def execute_idle(
     intent = request["intent"]
     state, measurement = intent["state"], intent["measurement"]
     for ready_path in request["observerReadyPaths"]:
-        wait_for_signal(Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0)
+        wait_for_signal(
+            Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
+        )
     publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
     wait_for_signal(
         Path(request["workloadWindowReadyPath"]),
@@ -775,7 +853,9 @@ def execute_idle(
     settling_started_at = now()
     settling_started = time.monotonic()
     while True:
-        remaining = measurement["settlingDurationSeconds"] - (time.monotonic() - settling_started)
+        remaining = measurement["settlingDurationSeconds"] - (
+            time.monotonic() - settling_started
+        )
         if remaining <= 0:
             break
         time.sleep(min(remaining, 0.1))
@@ -787,7 +867,9 @@ def execute_idle(
     measurement_started_at = now()
     monotonic_started = time.monotonic()
     while True:
-        remaining = measurement["durationSeconds"] - (time.monotonic() - monotonic_started)
+        remaining = measurement["durationSeconds"] - (
+            time.monotonic() - monotonic_started
+        )
         if remaining <= 0:
             break
         time.sleep(min(remaining, 0.1))
@@ -800,11 +882,9 @@ def execute_idle(
     result = {
         "schemaVersion": IDLE_RESULT_SCHEMA,
         "status": "Succeeded",
-        "intentDigest": request["intentDigest"],
         "podUID": request["podUID"],
         "nodeName": request["scheduledNodeName"],
         "model": state["model"],
-        "artifactDigest": actual_digest,
         "architecture": architecture,
         "runtime": "rknnlite",
         "runtimeVersion": evidence["package"]["version"],
@@ -821,9 +901,13 @@ def execute_idle(
         "cpuContract": runtime_cpu_evidence(
             cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after
         ),
-        "derivedExecutionContract": derived_contract(intent, request["intentDigest"]),
+        "derivedExecutionContract": derived_contract(intent),
     }
-    log("result", "completed RKNNLite model-loaded idle measurement", elapsedSeconds=round(measurement_elapsed, 3))
+    log(
+        "result",
+        "completed RKNNLite model-loaded idle measurement",
+        elapsedSeconds=round(measurement_elapsed, 3),
+    )
     return result
 
 
@@ -833,11 +917,13 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
     state, measurement = intent["state"], intent["measurement"]
     candidate = request["candidate"]
     model_path = Path(request["modelPath"])
-    actual_digest = sha256_file(model_path, "RKNN artifact")
-    if actual_digest != state["artifactDigest"]:
-        raise ContractError("RKNN artifact digest does not match the frozen intent")
+    validate_regular_file(model_path, "RKNN artifact")
+    if state["hostContract"] != candidate["hostContract"]:
+        raise ContractError("candidate host contract does not match the frozen intent")
     architecture = platform.machine()
-    if normalize_architecture(architecture) != normalize_architecture(intent["targetNode"]["architecture"]):
+    if normalize_architecture(architecture) != normalize_architecture(
+        intent["targetNode"]["architecture"]
+    ):
         raise ContractError("runtime architecture does not match the frozen Node")
     cpu_max, affinity, cpuset = validate_cpu_contract(intent)
     evidence = observe_host_contract(candidate)
@@ -865,7 +951,6 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 request,
                 rknn,
                 evidence,
-                actual_digest,
                 architecture,
                 cpu_max,
                 affinity,
@@ -876,8 +961,15 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         shape = candidate["artifactCapability"]["inputShape"]
         sample = generate_input(numpy, shape, request["maxInputBytes"])
         for ready_path in request["observerReadyPaths"]:
-            wait_for_signal(Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0)
-        log("warmup", "starting frozen RKNNLite warm-up", iterations=measurement["warmupIterations"], inputShape=shape)
+            wait_for_signal(
+                Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
+            )
+        log(
+            "warmup",
+            "starting frozen RKNNLite warm-up",
+            iterations=measurement["warmupIterations"],
+            inputShape=shape,
+        )
         output_shapes: list[list[int]] | None = None
         try:
             for _ in range(measurement["warmupIterations"]):
@@ -906,10 +998,14 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             while True:
                 inference_started = time.perf_counter_ns()
                 outputs = rknn.inference(inputs=[sample])
-                samples.append((time.perf_counter_ns() - inference_started) / 1_000_000.0)
+                samples.append(
+                    (time.perf_counter_ns() - inference_started) / 1_000_000.0
+                )
                 observed_shapes = validate_outputs(outputs, measurement["batch"])
                 if output_shapes is not None and observed_shapes != output_shapes:
-                    raise ContractError("RKNNLite output shapes changed during measurement")
+                    raise ContractError(
+                        "RKNNLite output shapes changed during measurement"
+                    )
                 output_shapes = observed_shapes
                 if measurement_complete(
                     time.monotonic() - monotonic_started,
@@ -932,11 +1028,9 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         result = {
             "schemaVersion": RESULT_SCHEMA,
             "status": "Succeeded",
-            "sweepId": request["intentDigest"],
             "experimentId": request["podUID"],
             "nodeName": request["scheduledNodeName"],
             "model": state["model"],
-            "artifactDigest": actual_digest,
             "architecture": architecture,
             "runtime": "rknnlite",
             "runtimeVersion": evidence["package"]["version"],
@@ -959,7 +1053,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             "cpuContract": runtime_cpu_evidence(
                 cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after
             ),
-            "derivedExecutionContract": derived_contract(intent, request["intentDigest"]),
+            "derivedExecutionContract": derived_contract(intent),
             "repetitionResults": [
                 {
                     "repetition": 1,
@@ -978,12 +1072,19 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 "p95": round(percentile(samples, 0.95), 3),
                 "p99": round(percentile(samples, 0.99), 3),
             },
-            "throughputItemsPerSecond": round(measurement["batch"] * 1000.0 / mean_latency, 3),
+            "throughputItemsPerSecond": round(
+                measurement["batch"] * 1000.0 / mean_latency, 3
+            ),
             "power": None,
             "energyPerRequest": None,
             "bSat": None,
         }
-        log("result", "completed frozen RKNNLite measurement", inferences=len(samples), elapsedSeconds=round(measurement_elapsed, 3))
+        log(
+            "result",
+            "completed frozen RKNNLite measurement",
+            inferences=len(samples),
+            elapsedSeconds=round(measurement_elapsed, 3),
+        )
         return result
     finally:
         try:
@@ -1001,7 +1102,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     arguments = parse_args()
     try:
-        result_path = require_absolute_file_path(str(arguments.result_file), "result-file")
+        result_path = require_absolute_file_path(
+            str(arguments.result_file), "result-file"
+        )
         request = decode_request(sys.stdin.buffer)
         import numpy
         from rknnlite.api import RKNNLite

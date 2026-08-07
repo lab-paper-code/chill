@@ -30,21 +30,17 @@ func (l ObjectLocation) Validate() error {
 	return nil
 }
 
-// ObjectIdentity is the expected identity of one immutable evidence object.
+// ObjectIdentity describes one immutable evidence object.
 // Key is opaque to this package; path conventions belong to its caller.
 type ObjectIdentity struct {
-	Store  string `json:"store"`
-	Key    string `json:"key"`
-	Digest string `json:"digest"`
-	Size   int64  `json:"size"`
+	Store string `json:"store"`
+	Key   string `json:"key"`
+	Size  int64  `json:"size"`
 }
 
 func (i ObjectIdentity) Validate() error {
 	if err := i.Location().Validate(); err != nil {
 		return err
-	}
-	if strings.TrimSpace(i.Digest) == "" || strings.TrimSpace(i.Digest) != i.Digest {
-		return fmt.Errorf("%w: digest is required without surrounding whitespace", ErrInvalidIdentity)
 	}
 	if i.Size < 1 {
 		return fmt.Errorf("%w: size must be positive", ErrInvalidIdentity)
@@ -59,8 +55,8 @@ func (i ObjectIdentity) Location() ObjectLocation {
 type CreateOutcome string
 
 const (
-	CreateOutcomeCreated            CreateOutcome = "Created"
-	CreateOutcomeExistingExactMatch CreateOutcome = "ExistingExactMatch"
+	CreateOutcomeCreated  CreateOutcome = "Created"
+	CreateOutcomeExisting CreateOutcome = "Existing"
 )
 
 // Receipt is a bounded result of an immutable-create attempt. It deliberately
@@ -79,7 +75,7 @@ func (r Receipt) Validate() error {
 		return err
 	}
 	switch r.Outcome {
-	case CreateOutcomeCreated, CreateOutcomeExistingExactMatch:
+	case CreateOutcomeCreated, CreateOutcomeExisting:
 		return nil
 	default:
 		return fmt.Errorf("unsupported create outcome %q", r.Outcome)

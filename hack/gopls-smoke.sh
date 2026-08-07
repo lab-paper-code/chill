@@ -72,16 +72,16 @@ setup_definition="$(gopls_command definition "$setup_call")"
 require_contains setup-definition "$setup_definition" \
   'internal/profiler/controller/intent_setup.go'
 
-intent_digest="$(position_of \
+intent_frozen="$(position_of \
   api/v1alpha1/profilingrun_types.go \
-  'IntentDigest string' \
-  'IntentDigest')"
-intent_digest_references="$(gopls_command references "$intent_digest")"
-require_contains intent-digest-freezer-reference "$intent_digest_references" \
+  'IntentFrozen bool' \
+  'IntentFrozen')"
+intent_frozen_references="$(gopls_command references "$intent_frozen")"
+require_contains intent-frozen-freezer-reference "$intent_frozen_references" \
   'internal/profiler/controller/intent_freezer.go'
-require_contains intent-digest-projection-reference "$intent_digest_references" \
+require_contains intent-frozen-projection-reference "$intent_frozen_references" \
   'internal/profiler/controller/projection.go'
-require_contains intent-digest-integration-reference "$intent_digest_references" \
+require_contains intent-frozen-integration-reference "$intent_frozen_references" \
   'test/integration/operator/profilingrun_api_test.go'
 
 reconcile="$(position_of \
@@ -98,5 +98,5 @@ printf 'phase1.workspace_diagnostics=0\n'
 printf 'phase1.file_errors=0\n'
 printf 'phase1.freezer_implementation=pass\n'
 printf 'phase1.setup_definition=pass\n'
-printf 'phase1.intent_digest_references=pass\n'
+printf 'phase1.intent_frozen_references=pass\n'
 printf 'phase1.reconcile_event_edge=framework-derived\n'

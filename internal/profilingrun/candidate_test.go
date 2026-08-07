@@ -40,24 +40,24 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 		Scope:         "StaticCompatibility",
 		Inputs: CandidateReportInputs{
 			ModelSpec: CandidateReportObjectInput{
-				Name: "model", UID: "model-uid", ResourceVersion: "1", ContentDigest: "sha256:model",
+				Name: "model", UID: "model-uid", ResourceVersion: "1",
 			},
 			DeviceClass: CandidateReportObjectInput{
-				Name: "class", UID: "class-uid", ResourceVersion: "2", ContentDigest: "sha256:class",
+				Name: "class", UID: "class-uid", ResourceVersion: "2",
 			},
 			RuntimeDeclaration: CandidateReportRuntimeInput{
 				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "3",
-				Key: "execution-facts.yaml", ContentDigest: "sha256:runtime", Image: "runtime@sha256:digest",
+				Key: "execution-facts.yaml", Image: "runtime@sha256:digest",
 			},
 		},
 		Selection: CandidateReportSelection{
-			ExecutionPath: "ort-cpu", Artifact: "model.onnx", ArtifactDigest: "sha256:artifact", PowerMode: "fixed",
+			ExecutionPath: "ort-cpu", Artifact: "model.onnx", PowerMode: "fixed",
 		},
 		DeviceClassFacts: CandidateReportDeviceClassFacts{
 			Architecture: "amd64", NodeSelector: map[string]string{"class": "lattepanda"}, PowerModes: []string{"fixed"},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx", Digest: "sha256:artifact",
+			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx",
 		},
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},
@@ -108,11 +108,12 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	intent := validIntent()
 	intent.State.DeviceClass = "jetson-xavier-nx-8g"
+	intent.Candidate.Inputs.DeviceClass.Name = intent.State.DeviceClass
 	intent.State.PowerMode = testActuatedNVPMode
 	intent.TargetNode.Architecture = testARM64Architecture
 	intent.Actuation = &ActuationContract{
-		PowerMode:    intent.State.PowerMode,
-		PolicyDigest: "sha256:" + strings.Repeat("b", 64),
+		PowerMode:  intent.State.PowerMode,
+		PolicyName: "jetson-15w",
 		Actuator: ActuatorTarget{
 			Kind:           ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
@@ -121,25 +122,11 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	report := CandidateReport{
 		SchemaVersion: CandidateReportSchemaVersion,
 		Scope:         "StaticCompatibility",
-		Inputs: CandidateReportInputs{
-			ModelSpec: CandidateReportObjectInput{
-				Name: intent.State.Model, UID: "model-uid", ResourceVersion: "1",
-				ContentDigest: intent.Candidate.ModelSpecContentDigest,
-			},
-			DeviceClass: CandidateReportObjectInput{
-				Name: intent.State.DeviceClass, UID: "class-uid", ResourceVersion: "2",
-				ContentDigest: intent.Candidate.DeviceClassContentDigest,
-			},
-			RuntimeDeclaration: CandidateReportRuntimeInput{
-				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "3",
-				Key: "execution-facts.yaml", ContentDigest: intent.Candidate.RuntimeDeclarationDigest,
-				Image: intent.Images.Runtime,
-			},
-		},
+		Inputs:        intent.Candidate.Inputs,
 		Selection: CandidateReportSelection{
 			ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
-			ArtifactDigest: intent.State.ArtifactDigest, PowerMode: intent.State.PowerMode,
-			Actuator: &intent.Actuation.Actuator,
+			PowerMode: intent.State.PowerMode,
+			Actuator:  &intent.Actuation.Actuator,
 		},
 		DeviceClassFacts: CandidateReportDeviceClassFacts{
 			Architecture: intent.TargetNode.Architecture,
@@ -148,7 +135,7 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
-			Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
+			Path: intent.State.ArtifactPath,
 		},
 		MetricObserverImage: intent.Images.MetricObserver,
 		Verdict:             intent.Candidate.Verdict,
@@ -175,30 +162,6 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	if err := ValidateCandidateReport(driftedPayload, intent); err == nil ||
 		!strings.Contains(err.Error(), "actuator target") {
 		t.Fatalf("candidate actuator drift was accepted: %v", err)
-	}
-}
-
-func TestDecodeCandidateReportRetainsV1Alpha5WithoutActuation(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.SchemaVersion = candidateReportSchemaVersionV1Alpha5
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err != nil {
-		t.Fatal(err)
-	}
-	report.Selection.PowerMode = testActuatedNVPMode
-	report.Selection.Actuator = &ActuatorTarget{
-		Kind:           ActuatorKindJetsonNVPModel,
-		JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
-	}
-	payload, err = json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil || !strings.Contains(err.Error(), "retained") {
-		t.Fatalf("retained report accepted actuation: %v", err)
 	}
 }
 
@@ -236,27 +199,19 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	report.HostContract = &contract
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
 	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
-	hostDigest, err := CandidateHostContractDigest(report.HostContract)
-	if err != nil {
-		t.Fatal(err)
-	}
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
 	intent := Intent{
 		Candidate: CandidateIdentity{
-			ReportDigest:             "sha256:" + strings.Repeat("a", 64),
-			ModelSpecContentDigest:   report.Inputs.ModelSpec.ContentDigest,
-			DeviceClassContentDigest: report.Inputs.DeviceClass.ContentDigest,
-			RuntimeDeclarationDigest: report.Inputs.RuntimeDeclaration.ContentDigest,
-			ExecutionPath:            report.Selection.ExecutionPath, Verdict: report.Verdict,
+			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
 		},
 		State: ExecutionState{
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
-			Artifact: report.Selection.Artifact, ArtifactDigest: report.Selection.ArtifactDigest,
+			Artifact:     report.Selection.Artifact,
 			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
-			RuntimeFamily: "rknnlite", HostContractDigest: hostDigest,
+			RuntimeFamily: "rknnlite", HostContract: cloneCandidateHostContract(report.HostContract),
 		},
 		Images: Images{
 			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,
@@ -287,10 +242,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	withoutPlatformIntent := intent
-	withoutPlatformIntent.State.HostContractDigest, err = CandidateHostContractDigest(withoutPlatform.HostContract)
-	if err != nil {
-		t.Fatal(err)
-	}
+	withoutPlatformIntent.State.HostContract = cloneCandidateHostContract(withoutPlatform.HostContract)
 	if _, err := VerifyCandidateReport(withoutPlatformPayload, withoutPlatformIntent); err == nil ||
 		!strings.Contains(err.Error(), "host platform") {
 		t.Fatalf("RKNN candidate without host platform was accepted: %v", err)
@@ -306,7 +258,6 @@ func rknnHostContractForTest() CandidateReportHostContract {
 	return CandidateReportHostContract{
 		Libraries: []CandidateReportHostLibrary{{
 			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}},
 		Driver: CandidateReportHostDriver{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
 		Devices: []CandidateReportHostDevice{
@@ -328,110 +279,30 @@ func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	}
 }
 
-func TestDecodeCandidateReportRetainsV1Alpha2EvidenceCompatibility(t *testing.T) {
-	payload, err := os.ReadFile("testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := DecodeCandidateReport(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
-		t.Fatalf("decoded schema = %q", report.SchemaVersion)
-	}
-
-	invalid := completeCandidateReportForTest()
-	invalid.SchemaVersion = candidateReportSchemaVersionV1Alpha2
-	invalid.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
-	payload, err = json.Marshal(invalid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil {
-		t.Fatal("expected v1alpha2 report with v1alpha3 fields rejection")
-	}
-}
-
-func TestDecodeCandidateReportRetainsV1Alpha3EvidenceCompatibility(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.SchemaVersion = candidateReportSchemaVersionV1Alpha3
-	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
-	contract := rknnHostContractForTest()
-	contract.Platform = nil
-	report.HostContract = &contract
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err != nil {
-		t.Fatal(err)
-	}
-
-	contract.Platform = &CandidateReportHostPlatform{
-		CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
-	}
-	report.HostContract = &contract
-	payload, err = json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil {
-		t.Fatal("expected v1alpha3 report with v1alpha4 host platform rejection")
-	}
-}
-
-func TestDecodeCandidateReportRetainsV1Alpha4EvidenceCompatibility(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.SchemaVersion = candidateReportSchemaVersionV1Alpha4
-	report.RuntimePackages = []CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
-	contract := rknnHostContractForTest()
-	report.HostContract = &contract
-	report.ArtifactCapability = &CandidateArtifactCapability{TargetPlatform: "rk3588", FixedBatch: 1}
-	report.RuntimeAccess = &CandidateReportRuntimeAccess{Privileged: true, SupplementalGroups: []int64{44, 110}}
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err != nil {
-		t.Fatal(err)
-	}
-	report.ArtifactCapability.InputShape = []int32{1, 224, 224, 3}
-	report.ArtifactCapability.InputLayout = RKNNLiteInputLayout
-	report.ArtifactCapability.InputDataType = RKNNLiteInputDataType
-	payload, err = json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil {
-		t.Fatal("v1alpha4 candidate report accepted a v1alpha5 artifact input contract")
-	}
-}
-
 func completeCandidateReportForTest() CandidateReport {
 	return CandidateReport{
 		SchemaVersion: CandidateReportSchemaVersion,
 		Scope:         "StaticCompatibility",
 		Inputs: CandidateReportInputs{
 			ModelSpec: CandidateReportObjectInput{
-				Name: "model", UID: "model-uid", ResourceVersion: "1", ContentDigest: "sha256:model",
+				Name: "model", UID: "model-uid", ResourceVersion: "1",
 			},
 			DeviceClass: CandidateReportObjectInput{
-				Name: "class", UID: "class-uid", ResourceVersion: "2", ContentDigest: "sha256:class",
+				Name: "class", UID: "class-uid", ResourceVersion: "2",
 			},
 			RuntimeDeclaration: CandidateReportRuntimeInput{
 				Namespace: "chill-system", Name: "facts", UID: "facts-uid", ResourceVersion: "3",
-				Key: "execution-facts.yaml", ContentDigest: "sha256:runtime", Image: "runtime@sha256:digest",
+				Key: "execution-facts.yaml", Image: "runtime@sha256:digest",
 			},
 		},
 		Selection: CandidateReportSelection{
-			ExecutionPath: "rknnlite", Artifact: "model.rknn", ArtifactDigest: "sha256:artifact", PowerMode: "fixed",
+			ExecutionPath: "rknnlite", Artifact: "model.rknn", PowerMode: "fixed",
 		},
 		DeviceClassFacts: CandidateReportDeviceClassFacts{
 			Architecture: testARM64Architecture, NodeSelector: map[string]string{"class": "orangepi"}, PowerModes: []string{"fixed"},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Path: "/artifact/model.rknn", Digest: "sha256:artifact",
+			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Path: "/artifact/model.rknn",
 		},
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},

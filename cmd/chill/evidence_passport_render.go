@@ -177,10 +177,8 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 	if err := writePassportSection(table, "EVIDENCE LINEAGE", [][2]string{
 		{"Finalized at", passport.Evidence.FinalizedAt.Format(time.RFC3339Nano)},
 		{"Final object", passport.Evidence.Final.Store + "/" + passport.Evidence.Final.Key},
-		{"Final digest", passport.Evidence.Final.Digest},
 		{"Final bytes", fmt.Sprint(passport.Evidence.Final.Size)},
 		{"Raw object", passport.Evidence.Raw.Store + "/" + passport.Evidence.Raw.Key},
-		{"Raw digest", passport.Evidence.Raw.Digest},
 		{"Raw bytes", fmt.Sprint(passport.Evidence.Raw.Size)},
 	}); err != nil {
 		return err

@@ -82,17 +82,17 @@ The derivation boundary uses three independently versioned identities:
 
 | Identity | Bound fields | Deliberately excluded |
 |---|---|---|
-| `StateIdentity` | execution state including model/artifact digest and path, runtime image, optional normalized host-contract digest, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
+| `StateIdentity` | execution state including model/artifact carrier reference and path, runtime image, optional normalized host contract, actual Node UID, CPU contract, and exact wall-meter source | workload mode, warm-up, duration, sampling schedule, helper images, batch |
 | `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
 
 These remain exact single-Run and single-point identities. A batch curve that
 uses different fixed-batch artifacts does not weaken or normalize them. It uses
-the separate composition identity and per-state baseline ownership fixed by
+the separate verified composition boundary and per-state baseline ownership fixed by
 [ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md). That
-ADR separates the pre-measurement `CurveFamilyContractDigest` from the realized
-`CurveFamilyIdentity`, which is projected only after verified evidence crosses
-the Loader boundary. Neither is stored in or recomputed from one Run.
+ADR separates the pre-measurement `CurveFamilyName` from the verified
+`CurveFamily`, which is constructed only after evidence crosses the Loader
+boundary. Neither is stored in or recomputed from one Run.
 
 Binding the actual Node UID intentionally makes this first derivation
 node-instance-scoped; it does not assert within-type homogeneity or authorize
@@ -113,13 +113,10 @@ to differ because active and model-loaded idle use different workload modes;
 both identities and both admission policies are retained in the estimator
 identity. Idle trials may aggregate only when their three identities match.
 Active trials and batch points likewise require matching identities, with batch
-validated separately. Identity strings include their projection schema version
-and digest. CPU-only fixed state keeps the existing v1alpha1 projection and
-retained intent bytes. An intent carrying a host-contract digest uses
-execution-state-identity v1alpha2, so host library, driver, device visibility,
-or allocation drift cannot pool with another physical state. Current v1alpha9
-actuated state uses execution-state-identity v1alpha3 and additionally binds
-the typed target and actuation-policy digest; those facts do not enter the
+validated separately. Identity strings are opaque projections of semantic
+fields. A host contract binds host library, driver, device visibility, and
+allocation, so physical-state drift cannot pool. Actuated state additionally binds
+the typed target and actuation-policy name; those facts do not enter the
 measurement-protocol identity.
 
 Consequently, a model-loaded-idle baseline is reusable only by active trials
@@ -220,15 +217,15 @@ canonical idle protocol, exact model load before the full settling
 interval, zero inference after model load, retained end residency, and a
 runtime-declared window. Only an Accepted result projects to `IdleTrial`.
 Each projected trial retains the verified raw object's logical store, opaque
-key, SHA-256 digest, and byte size; baseline aggregation rejects missing or
-reused raw identities.
+key, and byte size; baseline aggregation rejects missing or reused raw object
+references.
 
 Power-window thresholds are installation-time configured policy data rather
 than Go constants or caller-supplied Run fields. A Run selects a policy name;
-the control path freezes that policy's canonical bytes and ConfigMap provenance
-before execution. Admission verifies that the retained policy workload mode
-matches the frozen intent and uses the selected policy content digest as its
-version. This preserves exact replay and aggregation identity while allowing an
+the control path freezes that policy's semantic fields and ConfigMap source
+identity before execution. Admission verifies that the selected policy workload
+mode matches the frozen intent and uses the source object identity as its
+version. This preserves replay and aggregation identity while allowing an
 operator to add a meter-specific policy without a CRD or binary release.
 
 The producer uses the public `ProfilingRun` mode discriminator and a separate
@@ -237,7 +234,7 @@ finalization are shared with active execution; only runtime completeness, raw
 projection, verified loading, and final admission dispatch are mode-specific.
 A controller never infers idle from metric values.
 
-The adapter strict-decodes and revalidates the Plan 2 bundle, including intent,
+The adapter strict-decodes and validates the Plan 2 bundle, including intent,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-
 latency count, and immutable content filename. Thermal state is not silently
 assumed healthy when no producer exists.
@@ -247,11 +244,11 @@ assumed healthy when no producer exists.
 On 2026-08-03, three same-condition Runs were executed sequentially on the
 live Lattepanda Node:
 
-| Run | intent digest | Node resourceVersion | admitted mean wall power |
-|---|---|---:|---:|
-| `idle-baseline-live-ad7b84f-a` | `sha256:febddc5fcab32f0c8aae37970f49cb5893d3e3bc4d48f300368b58451aa07db0` | 275297891 | 4.929898 W |
-| `idle-baseline-live-ad7b84f-b` | `sha256:febddc5fcab32f0c8aae37970f49cb5893d3e3bc4d48f300368b58451aa07db0` | 275297891 | 4.893351 W |
-| `idle-baseline-live-ad7b84f-c` | `sha256:28eaf098a7da910fe6f4770c6195a38abbab190f97dead7870a6876662ad28a4` | 275301868 | 4.897335 W |
+| Run | Node resourceVersion | admitted mean wall power |
+|---|---:|---:|
+| `idle-baseline-live-ad7b84f-a` | 275297891 | 4.929898 W |
+| `idle-baseline-live-ad7b84f-b` | 275297891 | 4.893351 W |
+| `idle-baseline-live-ad7b84f-c` | 275301868 | 4.897335 W |
 
 All three reached `ExecutionComplete=True`, `EvidenceVerified=True`, and
 `EvidenceAdmitted=True` with `idle-wall-power-v1`. Re-reading each retained raw
@@ -263,15 +260,15 @@ agreed exactly on:
 - `EnvironmentIdentity`: `chill.dacs.io/external-environment-identity.v1alpha1@sha256:4e7f69c7ab9450af5bc06f11e5e76c930ca3431dc8f0e5f9dd6097af38ba2d58`; and
 - idle `MeasurementProtocolIdentity`: `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:c7a36290499e36e445d709e61509c3d5112c07bfd61149a6407998facefe0d7d`.
 
-The first two intents were byte-identical. A normalized byte comparison showed
-that the third differed only in `targetNode.resourceVersion`, confirming on the
-live path that this causal execution snapshot changes the intent digest without
-changing any of the three aggregation identities.
+The three semantic intent projections differed only in the third Run's
+`targetNode.resourceVersion`, confirming on the live path that this causal
+execution snapshot can change without changing any of the three aggregation
+identities.
 
 Calling `DeriveIdleBaseline` with those three independently admitted trials and
 policy `idle-baseline-v1` produced 4.906861 W with a 95% Student-t confidence
 half-width of 0.049809 W. The read-only diagnostic reconstructed each retained
-Job and store binding, verified all immutable bytes, and routed only the S3
+Job and store binding, validated the loaded records semantically, and routed only the S3
 transport through a local port-forward. It did not add a production caller or
 persist a baseline. Production campaign ownership therefore remains open even
 though the pure derivation and identity-stability assumptions now have live
@@ -280,7 +277,7 @@ evidence.
 ### Earlier idle-trial selection audit
 
 The earlier `idle-model-loaded-live-ad7b84f-v2` Run was not rejected by the
-identity scheme. Re-reading its retained bytes through the same loader and idle
+identity scheme. Re-reading its retained records through the same loader and idle
 projector produced 4.862052 W, and its state, owner-bound environment, and idle
 protocol identities all matched the later three-trial baseline exactly. It was
 absent only because that read-only diagnostic named the later A/B/C Runs as its
@@ -304,7 +301,7 @@ the exact `active-regression-live-ad7b84f` spec were then executed sequentially:
 | `active-epsilon-live-69a83ad-b` | 492.160 J | 5,255 | 0.065637 J | 8.945 ms |
 | `active-epsilon-live-69a83ad-c` | 485.927 J | 5,178 | 0.065410 J | 9.295 ms |
 
-All three passed `wall-power-v2`, carried the same frozen intent digest, and
+All three passed `wall-power-v2`, carried the same material intent, and
 matched the idle baseline's state and environment identities. Their active
 measurement-protocol identity also matched one another and intentionally
 differed from the idle protocol identity. Re-loading the immutable evidence and
@@ -327,9 +324,8 @@ object was added or persisted.
 
 ### Earlier active-only evidence result
 
-For retained evidence
-`sha256:165d50e316de2b3d7da0728df1245aaf56f8f5a407668db1c24a756b6ba3fe42`,
-the timestamp-aware diagnostic total is 543.686 J over 30.010 seconds and 5,541
+For the earlier retained evidence object, the timestamp-aware diagnostic total
+is 543.686 J over 30.010 seconds and 5,541
 items. Admission is insufficient because thermal state was not captured and a
 post-run Pod snapshot cannot prove continuous workload membership across the
 earlier measurement window. Incremental

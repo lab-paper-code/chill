@@ -58,8 +58,8 @@ func TestFreezeAndVerifyCurveFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if family.Identity() == "" || len(family.Members()) != 2 {
-		t.Fatalf("unexpected verified family: %s", family.Identity())
+	if family.Name() != shared.Name || len(family.Members()) != 2 {
+		t.Fatalf("unexpected verified family: %s", family.Name())
 	}
 	reversed := []VerifiedCurveFamilyMember{verified[1], verified[0]}
 	reorderedFamily, err := VerifyCurveFamily(contract, reversed)
@@ -204,7 +204,7 @@ func TestSequentialGoldenStops(t *testing.T) {
 			if test.wantBoundary > 0 && (got.BoundaryBatch == nil || *got.BoundaryBatch != test.wantBoundary) {
 				t.Fatalf("boundary = %+v, want %d", got.BoundaryBatch, test.wantBoundary)
 			}
-			if got.CurveFamilyContractDigest == "" || got.CurveFamilyIdentity == "" ||
+			if got.CurveFamilyName == "" ||
 				len(got.IdleBaselinesByState) != len(test.means) {
 				t.Fatalf("sequential provenance is incomplete: %+v", got)
 			}
@@ -246,23 +246,21 @@ func testSequentialCurve(t *testing.T, means []float64, boundary bool) Curve {
 
 func testCurveContract(memberCount int) (CurveFamilySharedContract, []CurveFamilyMemberContract) {
 	shared := CurveFamilySharedContract{
-		LogicalModel: "mobilenet-v2-050", SourceArtifactDigest: testDigest("1"),
-		ModelSpecContentDigest: testDigest("2"), DeviceClassContentDigest: testDigest("3"),
-		RuntimeDeclarationDigest: testDigest("4"), DeviceClass: "orangepi-5-plus-16g",
-		NodeUID: "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
-		RuntimeImage: testImage("runtime", "5"), PowerMode: "fixed", HostContractDigest: testDigest("6"),
+		Name: "mobilenet-rknn-curve", LogicalModel: "mobilenet-v2-050",
+		DeviceClass: "orangepi-5-plus-16g",
+		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
+		RuntimeImage: testImage("runtime", "5"), PowerMode: "fixed",
 		CPU: CurveCPUContract{
 			Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8",
 		},
 		MetricSource: CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
-			PowerMetric: "power_watts", ConfigurationContentDigest: testDigest("7"),
+			PowerMetric: "power_watts",
 		},
 		ActiveProtocol: testCurveProtocol("saturated", testImage("metric", "8"), testImage("workload", "9")),
 		IdleProtocol:   testCurveProtocol("idle-model-loaded", testImage("metric", "8"), testImage("workload", "9")),
 		Conversion: CurveConversionContract{
 			Derived: true, TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
-			ToolDistributionDigest: testDigest("a"), RecipeDigest: testDigest("b"),
 		},
 		Tensor: CurveTensorContract{Layout: "NHWC", DataType: "float32", NonBatchShape: []int{224, 224, 3}},
 	}
@@ -275,7 +273,7 @@ func testCurveContract(memberCount int) (CurveFamilySharedContract, []CurveFamil
 		batch := index + 1
 		members[index] = CurveFamilyMemberContract{
 			Batch: batch, ExecutionPath: "rknnlite-bs" + string(rune('0'+batch)),
-			ArtifactName: "artifact-bs" + string(rune('0'+batch)), ArtifactDigest: testDigest(string(rune('c' + index))),
+			ArtifactName:  "artifact-bs" + string(rune('0'+batch)),
 			ArtifactPath:  "/artifact/model-bs" + string(rune('0'+batch)) + ".rknn",
 			ArtifactImage: testImage("artifact", string(rune('c'+index))), FixedBatchCapability: batch,
 			InputShape: []int{batch, 224, 224, 3},
@@ -290,7 +288,7 @@ func testCurveProtocol(mode, metricImage, workloadImage string) CurveProtocolCon
 		DurationSeconds: 30, Repetitions: 1,
 		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: metricImage,
-		WorkloadObserverImage: workloadImage, WorkloadContractDigest: testDigest("d"),
+		WorkloadObserverImage: workloadImage, WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
 }
 
@@ -378,22 +376,22 @@ func testPass(t *testing.T, family CurveFamily, means []float64, idPrefix string
 	return pass
 }
 
-func testDigest(character string) string {
+func testSHA256Value(character string) string {
 	return "sha256:" + strings.Repeat(character, 64)
 }
 
 func testImage(name, character string) string {
-	return "registry.example/chill/" + name + "@" + testDigest(character)
+	return "registry.example/chill/" + name + "@" + testSHA256Value(character)
 }
 
 func testStateIdentity(character string) string {
-	return "chill.dacs.io/execution-state-identity.v1alpha2@" + testDigest(character)
+	return "chill.dacs.io/execution-state-identity.v1alpha2@" + testSHA256Value(character)
 }
 
 func testEnvironmentIdentity(character string) string {
-	return "chill.dacs.io/external-environment-identity.v1alpha1@" + testDigest(character)
+	return "chill.dacs.io/external-environment-identity.v1alpha1@" + testSHA256Value(character)
 }
 
 func testProtocolIdentity(character string) string {
-	return "chill.dacs.io/measurement-protocol-identity.v1alpha1@" + testDigest(character)
+	return "chill.dacs.io/measurement-protocol-identity.v1alpha1@" + testSHA256Value(character)
 }

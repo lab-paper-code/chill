@@ -27,7 +27,7 @@ batch. Exact point identities remain unchanged; the sweep consumes one frozen
 curve family and one admitted idle baseline per distinct member state. The
 RKNN batch-one and batch-two members now have aligned retained L3 evidence under
 the same catalog, recipe, runtime, and helper-image generation. Those diagnostic
-Runs preceded a committed `CurveFamilyContractDigest`, so they validate the
+Runs preceded a committed `CurveFamilyName`, so they validate the
 input boundary but are not retroactive Plan 5a campaign evidence. The new
 pre-registered campaign produced those fresh Runs and closed the L4 gate.
 
@@ -253,7 +253,7 @@ the frozen eligible member map, or reports exhaustion of that map as
 | Boundary | Status |
 |---|---|
 | frozen family contract and strict persisted-contract decoder | implemented |
-| post-Loader plain member verification and realized family identity | implemented with no Kubernetes dependency |
+| post-Loader plain member verification and verified family construction | implemented with no Kubernetes dependency |
 | exact-state baseline ownership and pass/trial uniqueness | implemented |
 | relative best-so-far rule and typed stop reasons | implemented and golden-tested |
 | first policy/family/inclusion record | frozen before measurement and preserved |
@@ -269,8 +269,8 @@ MinDelta           = 0.05
 Patience           = 2
 TrialsPerBatch     = 3
 EpsilonByBatch     = the mean at every measured batch
-CurveFamilyContractDigest = the pre-frozen eligible member map
-CurveFamilyIdentity = the Loader-verified realized family
+CurveFamilyName = the pre-frozen eligible member map
+ObservedEnvironment = the Loader-verified shared environment
 IdleBaselinesByState = every exact baseline used by the measured prefix
 ```
 

@@ -19,9 +19,7 @@ import (
 )
 
 const (
-	executionFactsSchemaV1Alpha2     = "chill.dacs.io/profiler-execution-facts.v1alpha2"
-	executionFactsSchemaV1Alpha3     = "chill.dacs.io/profiler-execution-facts.v1alpha3"
-	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha4"
+	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha5"
 	runtimeDeclarationSchemaV1Alpha1 = "chill.dacs.io/runtime-declaration.v1alpha1"
 	runtimeDeclarationSchema         = "chill.dacs.io/runtime-declaration.v1alpha2"
 	artifactSupplySchema             = "chill.dacs.io/artifact-supply.v1alpha1"
@@ -49,8 +47,7 @@ type executionDeclaration struct {
 // runtimeDeclarationSource preserves the exact producer output instead of
 // allowing installation configuration to restate observed runtime facts.
 type runtimeDeclarationSource struct {
-	ContentDigest string `json:"contentDigest"`
-	Payload       string `json:"payload"`
+	Payload string `json:"payload"`
 }
 
 type runtimeDeclaration struct {
@@ -76,7 +73,6 @@ type artifactSupply struct {
 	Image         string `json:"image"`
 	Architecture  string `json:"architecture"`
 	Path          string `json:"path"`
-	Digest        string `json:"digest"`
 }
 
 // hostExecutionContract is installation configuration, not a current host
@@ -94,7 +90,6 @@ type hostLibraryContract struct {
 	Name          string `json:"name"`
 	HostPath      string `json:"hostPath"`
 	ContainerPath string `json:"containerPath"`
-	Digest        string `json:"digest"`
 }
 
 type hostDriverContract struct {
@@ -113,7 +108,7 @@ type hostPlatformContract struct {
 }
 
 // runtimeAccessContract is a Kubernetes delivery requirement, not physical
-// host identity. It is retained next to, but excluded from, HostContractDigest.
+// host identity.
 type runtimeAccessContract struct {
 	Privileged         bool    `json:"privileged"`
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
@@ -125,15 +120,14 @@ type npuAllocationClaim struct {
 }
 
 type resolvedExecutionDeclaration struct {
-	ModelSpec                string
-	DeviceClass              string
-	ExecutionPath            string
-	Runtime                  runtimeDeclaration
-	RuntimeDeclarationDigest string
-	Artifact                 artifactSupply
-	Host                     *hostExecutionContract
-	Access                   *runtimeAccessContract
-	MetricObserverImage      string
+	ModelSpec           string
+	DeviceClass         string
+	ExecutionPath       string
+	Runtime             runtimeDeclaration
+	Artifact            artifactSupply
+	Host                *hostExecutionContract
+	Access              *runtimeAccessContract
+	MetricObserverImage string
 }
 
 func selectExecutionDeclaration(
@@ -156,9 +150,7 @@ func selectExecutionDeclaration(
 	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
-	if document.SchemaVersion != executionFactsSchema &&
-		document.SchemaVersion != executionFactsSchemaV1Alpha3 &&
-		document.SchemaVersion != executionFactsSchemaV1Alpha2 {
+	if document.SchemaVersion != executionFactsSchema {
 		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
 	if strings.TrimSpace(document.MetricObserverImage) == "" ||
@@ -225,7 +217,7 @@ func readSingleYAMLDocument(raw []byte) ([]byte, error) {
 func validateExecutionDeclaration(schemaVersion string, source executionDeclaration) (resolvedExecutionDeclaration, error) {
 	for name, value := range map[string]string{
 		"modelSpec": source.ModelSpec, "deviceClass": source.DeviceClass,
-		"executionPath": source.ExecutionPath, "runtime declaration digest": source.Runtime.ContentDigest,
+		"executionPath": source.ExecutionPath,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return resolvedExecutionDeclaration{}, fmt.Errorf("%s is required without surrounding whitespace", name)
@@ -237,18 +229,6 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 	}
 	if err := validateArtifactSupply(source.Artifact); err != nil {
 		return resolvedExecutionDeclaration{}, err
-	}
-	if schemaVersion == executionFactsSchemaV1Alpha2 && source.Host != nil {
-		return resolvedExecutionDeclaration{}, errors.New("v1alpha2 execution facts cannot contain a host contract")
-	}
-	if schemaVersion == executionFactsSchemaV1Alpha2 && source.Access != nil {
-		return resolvedExecutionDeclaration{}, errors.New("v1alpha2 execution facts cannot contain a runtime access contract")
-	}
-	if schemaVersion == executionFactsSchemaV1Alpha3 && source.Access != nil {
-		return resolvedExecutionDeclaration{}, errors.New("v1alpha3 execution facts cannot contain a runtime access contract")
-	}
-	if schemaVersion == executionFactsSchemaV1Alpha3 && source.Host != nil && source.Host.Platform != nil {
-		return resolvedExecutionDeclaration{}, errors.New("v1alpha3 execution facts cannot contain a host platform contract")
 	}
 	if source.Host != nil {
 		if err := validateHostExecutionContract(*source.Host); err != nil {
@@ -265,15 +245,12 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 	}
 	return resolvedExecutionDeclaration{
 		ModelSpec: source.ModelSpec, DeviceClass: source.DeviceClass, ExecutionPath: source.ExecutionPath,
-		Runtime: runtime, RuntimeDeclarationDigest: source.Runtime.ContentDigest, Artifact: source.Artifact,
+		Runtime: runtime, Artifact: source.Artifact,
 		Host: cloneHostExecutionContract(source.Host), Access: cloneRuntimeAccessContract(source.Access),
 	}, nil
 }
 
 func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclaration, error) {
-	if strings.TrimSpace(source.ContentDigest) == "" || strings.TrimSpace(source.ContentDigest) != source.ContentDigest {
-		return runtimeDeclaration{}, errors.New("runtime producer declaration identity is required without surrounding whitespace")
-	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(source.Payload)))
 	decoder.DisallowUnknownFields()
 	var declaration runtimeDeclaration
@@ -339,9 +316,6 @@ func validateHostExecutionContract(contract hostExecutionContract) error {
 		}
 		if !cleanAbsolutePath(library.HostPath) || !cleanAbsolutePath(library.ContainerPath) {
 			return errors.New("host library paths must be clean absolute paths")
-		}
-		if strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
-			return errors.New("host library identity is required without surrounding whitespace")
 		}
 		if _, duplicate := seenLibraries[library.Name]; duplicate {
 			return fmt.Errorf("duplicate host library %q", library.Name)
@@ -430,7 +404,7 @@ func validateArtifactSupply(artifact artifactSupply) error {
 	}
 	for name, value := range map[string]string{
 		"artifact image": artifact.Image, "artifact architecture": artifact.Architecture,
-		"artifact path": artifact.Path, "artifact digest": artifact.Digest,
+		"artifact path": artifact.Path,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)

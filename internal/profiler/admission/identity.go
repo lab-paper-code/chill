@@ -10,9 +10,7 @@ import (
 )
 
 const (
-	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha1"
-	hostBoundStateIdentitySchemaVersion      = "chill.dacs.io/execution-state-identity.v1alpha2"
-	actuatedStateIdentitySchemaVersion       = "chill.dacs.io/execution-state-identity.v1alpha3"
+	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha4"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
 	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha1"
 )
@@ -25,11 +23,10 @@ type RunIdentities struct {
 }
 
 type metricSourceIdentity struct {
-	SourceKind                 string `json:"sourceKind"`
-	NodeName                   string `json:"nodeName"`
-	Endpoint                   string `json:"endpoint"`
-	PowerMetric                string `json:"powerMetric"`
-	ConfigurationContentDigest string `json:"configurationContentDigest,omitempty"`
+	SourceKind  string `json:"sourceKind"`
+	NodeName    string `json:"nodeName"`
+	Endpoint    string `json:"endpoint"`
+	PowerMetric string `json:"powerMetric"`
 }
 
 type metricSamplingProtocol struct {
@@ -41,14 +38,7 @@ type metricSamplingProtocol struct {
 // ProjectRunIdentities derives versioned identities from one frozen intent
 // and the actual Node UID recorded in finalized evidence.
 func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdentities, error) {
-	stateSchemaVersion := stateIdentitySchemaVersion
-	if intent.State.HostContractDigest != "" {
-		stateSchemaVersion = hostBoundStateIdentitySchemaVersion
-	}
-	if intent.Actuation != nil {
-		stateSchemaVersion = actuatedStateIdentitySchemaVersion
-	}
-	state, err := digestIdentity(stateSchemaVersion, struct {
+	state, err := digestIdentity(stateIdentitySchemaVersion, struct {
 		State        profilingrun.ExecutionState     `json:"state"`
 		RuntimeImage string                          `json:"runtimeImage"`
 		NodeUID      string                          `json:"nodeUID"`
@@ -61,7 +51,6 @@ func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdenti
 		MetricSource: metricSourceIdentity{
 			SourceKind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 			Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
-			ConfigurationContentDigest: intent.Metrics.ConfigurationContentDigest,
 		},
 	})
 	if err != nil {

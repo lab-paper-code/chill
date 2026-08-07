@@ -30,9 +30,10 @@ DaemonSet lifecycle and first Jetson NVPModel host adapter are also implemented.
 The Profiler now gates measurement-Job creation on independently verified and
 settled target state, requests restoration after a terminal Job, and withholds
 evidence finalization until restoration and its causal ordering are proven.
-Finalized actuated execution evidence v1alpha2 retains the exact Run and
+Finalized execution evidence v1alpha3 retains the exact Run and
 handoff identities, previous/target/restored typed observations, and lifecycle
-timestamps; fixed Runs retain execution evidence v1alpha1. The chart remains
+timestamps when actuation is present; fixed Runs use the same current schema
+without an actuation section. The chart remains
 disabled by default. The opt-in AGX Orin CPU ORT MODE_50W slice has now produced
 three sequential accepted active Runs and three sequential accepted
 model-loaded-idle Runs on the current runtime/observer image set. Retained
@@ -44,7 +45,7 @@ Later slices remain deferred until their stated entry condition is met or this
 plan is explicitly revised.
 
 This file owns work order, decisions, and completion conditions. It does not
-accumulate command transcripts, image digests, Run statistics, or historical
+accumulate command transcripts, immutable OCI image references, Run statistics, or historical
 live snapshots. Those belong in the validation ledger; exact row level and
 blocking reason belong in the support matrix.
 
@@ -93,7 +94,7 @@ corresponding level.
   Node-wide mutation exclusively to a dedicated per-Node actuator operand;
   Profiler orchestrates the durable Run lifecycle, while discovery and the
   measurement worker remain unprivileged.
-- Exact child-image digests, not manifest-list digests, are frozen into
+- Exact runnable child OCI image references, not manifest-list references, are frozen into
   runtime, artifact, MetricObserver, and WorkloadObserver facts.
 - Execution-path names select catalog entries and configured envelopes; the
   realized runtime family/backend selects the production adapter. A fixed-batch
@@ -156,9 +157,9 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Separate desired, observed, previous, and restored mode; actuator
   kind/target; policy and Run identity; lifecycle stage; and apply,
   verification, settling, and restoration timestamps in the durable handoff.
-- [x] Freeze the selected target and configured actuation-policy digest into
+- [x] Freeze the selected target and configured actuation-policy name into
   immutable Run intent.
-- [x] Fix intent v1alpha9 and simultaneous Go/Python decoder compatibility
+- [x] Fix intent v1alpha10 and simultaneous Go/Python decoder compatibility
   before wiring any selectable-mode producer.
 - [x] Materialize one owned durable handoff and verify its exact local-Node
   consumer projection without enabling a measurement Job or host mutation.
@@ -173,11 +174,11 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Implement a fail-closed Kubernetes workload-safety observation that
   retains every active blocking Pod identity outside explicit namespace and
   exact Pod-UID allowances; install no implicit default policy.
-- [x] Reject any handoff whose canonical actuation-policy digest is absent from
+- [x] Reject any handoff whose actuation-policy name is absent from
   the actuator's explicit authorization set before crossing a Lease, safety,
   or host port; policy drift after retained state enters restoration.
 - [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
-  lifecycle with exact Node/self-Pod identity, shared Go policy digesting,
+  lifecycle with exact Node/self-Pod identity, shared Go policy naming,
   scoped API permissions, and a stop gate that retains the operand for every
   unfinished or unrestored handoff.
 - [x] Wire the first Jetson NVPModel adapter with a bounded configured argv and
@@ -202,18 +203,17 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Complete two additional active and idle trials and verify stable
   derivation identities across all six retained objects.
 
-Intent v1alpha9 adds one optional `actuation` object with the selected power
-mode, exact typed actuator target, and canonical configured-policy digest.
+Intent v1alpha10 carries one optional `actuation` object with the selected power
+mode, exact typed actuator target, and configured-policy name.
 Fixed Runs omit the object and retain their existing execution-state identity.
-An actuated Run uses execution-state-identity v1alpha3, which binds the whole
+An actuated Run uses execution-state-identity v1alpha4, which binds the whole
 actuation object while leaving measurement-protocol identity unchanged. Older
-schemas reject the new field. CPU ORT accepts retained v1alpha8/v1alpha7/v1alpha6
-and RKNNLite accepts retained v1alpha8; the current Python request decoders pair
-only with current v1alpha9, while their retained envelopes pair only with the
-corresponding retained intent family. Candidate-report v1alpha6 carries the
-exact selected target. The Profiler selects a configured policy by exact
-DeviceClass, mode, and actuator kind, binds its semantic digest into the
-intent, and retains its canonical bytes and ConfigMap source in the immutable
+schemas are not accepted by the current execution boundary. CPU ORT and
+RKNNLite Go/Python decoders pair only with current v1alpha10. The candidate
+report carries the exact
+selected target. The Profiler selects a configured policy by exact DeviceClass,
+mode, and actuator kind, binds its name into the intent, and retains its typed
+record and ConfigMap source in the immutable
 record. Its first policy fields bind settling and maximum handoff duration.
 The Profiler now creates one owned `NodeActuation`, records its exact UID in
 Run status, and reports `NodeActuatorPending` until the target is independently
@@ -222,7 +222,7 @@ Job advances the handoff once from `Apply` to `Restore`; evidence finalization
 is withheld until `Restored`, and a successful Job is accepted by that gate
 only when its completion timestamp does not follow the Profiler-owned restore
 request. The handoff keeps Run/Node UID, selected class/mode/target, policy
-digest, policy timing, absolute deadline, and Profiler-owned desired stage in
+name, policy timing, absolute deadline, and Profiler-owned desired stage in
 immutable or monotonic `spec`; the actuator alone owns
 previous/target/restored observations, phase, timestamps, and terminal failure
 in `status`. Its consumer projection rejects a foreign Node name or UID before
@@ -248,8 +248,8 @@ workload-safety adapter lists active Pods on the exact target Node and allows
 only explicitly configured namespaces or exact Pod UIDs; this permits the
 per-Node DaemonSet to exclude only its own Pod without trusting every workload in
 the release namespace. An unapproved Pod or an incomplete blocker set fails
-closed. The reconciler independently requires the handoff's canonical policy
-digest to be in its installed authorization set before crossing any port; if
+closed. The reconciler independently requires the handoff's policy name to be
+in its installed authorization set before crossing any port; if
 that authorization drifts after a previous state was retained, it durably
 starts restoration instead of abandoning the Node. The runnable operand
 now selects these allowances and consumes the Lease and lifecycle paths. The
@@ -266,7 +266,7 @@ DaemonSet, reports its availability, and refuses disable or system finalization
 while any handoff is non-terminal or lacks proven restoration. The command
 resolves exact Node UID from the API, excludes only its own downward-API Pod UID
 in addition to explicitly configured infrastructure namespaces, and derives
-authorized policy digests through the same `internal/nodeactuator` canonical
+authorized policy names through the same validated `internal/nodeactuator`
 type used by the Profiler. Its Kubernetes client reuses the shared explicit
 endpoint plus projected ServiceAccount token/CA path so KubeEdge edge Pods do
 not depend on missing Kubernetes service environment variables. The Jetson adapter invokes the configured host
@@ -323,43 +323,39 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha4 and candidate-report v1alpha6 now keep image-owned
+Execution-facts v1alpha5 and candidate-report v1alpha7 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform, fixed batch, and the explicit
-runtime input tensor. Its decoder retains strict v1alpha2-v1alpha4
-compatibility through v1alpha5 for already frozen evidence.
-Intent v1alpha9 retains the order-normalized physical host-contract digest,
+runtime input tensor. Their decoders accept the current schemas only.
+Intent v1alpha10 retains the normalized physical host contract,
 omits ORT-only thread settings from RKNNLite's common CPU quota, and adds the
-optional typed actuation binding. V1alpha8/v1alpha7/v1alpha6 CPU bytes remain
-readable by both Go and Python, and v1alpha8 RKNNLite remains readable.
-Host-bound derivation identities use execution-state-identity v1alpha2 while
-CPU identities remain unchanged. The installed RKNN declaration pins the
-arm64-only runtime manifest, fixed-batch artifact manifest and bytes, exact
+optional typed actuation binding. Host-bound derivation identities use
+execution-state-identity v1alpha4. The installed RKNN declaration pins the
+arm64-only runtime image, fixed-batch artifact supply image and path, exact
 host ABI/device contract, and runtime access contract.
 The production Job now consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
 Pod-level supplemental groups, runtime-only privilege, and an optional extended
 resource. Observer containers receive neither host mounts nor privilege. The
-worker now reads the exact projected candidate bytes at its process boundary,
-selects the explicit RKNNLite adapter, and compares the producer's package,
-host-library digest, driver, platform, device, batch, layout, and active input-
+worker reads the projected candidate record at its process boundary, selects
+the explicit RKNNLite adapter, and compares the producer's package, host-library
+path, driver, platform, device, batch, layout, and active input-
 shape observations with that sealed candidate delivery. The Python producer
 emits the corresponding active or model-loaded-idle runtime result.
 
-Active runtime-result v1alpha2 and idle runtime-result v1alpha2 now discriminate
-the common backend from CPU ORT provider vocabulary and carry an optional RKNN
-observation containing package, host-library digest, driver, platform token,
+The current active and idle runtime results discriminate the common backend
+from CPU ORT provider vocabulary and carry an optional RKNN observation
+containing package, host-library path, driver, platform token,
 exact character devices, core mask, input layout, initialization/load outcome,
-and selected batch. Active raw v1alpha4 and idle raw v1alpha2 require those
-current nested results, while the immediately retained CPU raw/runtime pairs
-remain readable. The RKNNLite Python producer now strictly decodes the current
+and selected batch. Active raw v1alpha5 and idle raw v1alpha3 require those
+current nested results. The RKNNLite Python producer strictly decodes the current
 intent and verified candidate projection, verifies the artifact and mutable
 host contract, runs only `NPU_CORE_0`, and emits active or inference-free
 model-loaded-idle results under the same bounded handoff protocol. The image
-recipe publishes a direct arm64 manifest so the frozen runtime digest and
-Kubernetes `imageID` remain the same verification identity.
+recipe publishes a direct arm64 manifest so the frozen runtime OCI reference
+and Kubernetes `imageID` describe the same runnable image.
 
 Preparation and the frozen execution-policy selector accept only the
 explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
@@ -418,7 +414,7 @@ Entry condition: the owning execution path reaches L3 for
 - [x] Keep the batch-one and batch-two rows separate; do not promote the class,
   runtime, model family, or a multi-batch curve from either row alone.
 - [x] Preserve exact execution-state identity and define a pre-frozen
-  `CurveFamilyContractDigest`, a Loader-verified `CurveFamilyIdentity`, and idle
+  `CurveFamilyName`, a Loader-verified `CurveFamily`, and idle
   baselines keyed by member state. ADR 0014 owns the cross-plan contract; Plans
   5 and 5a own its consumers.
 - [x] Reconvert batch one with the current repository recipe, freeze batch one
@@ -438,10 +434,10 @@ states and idle baselines.
 Every L3 vertical slice must prove all applicable items:
 
 - exact artifact, runtime, MetricObserver, and WorkloadObserver child-image
-  digests are frozen in the intent;
+  OCI references are frozen in the intent;
 - the selected Node matches the exact DeviceClass snapshot;
 - desired and observed power mode match and remain stable;
-- execution re-verifies artifact bytes and runtime/backend facts;
+- execution validates artifact identity and runtime/backend facts;
 - active and model-loaded-idle evidence are reloaded from durable storage;
 - missing thermal/throttle evidence does not fail open;
 - architecture, backend, mode, artifact, and host-ABI negative tests exist;
@@ -460,7 +456,7 @@ uses explicitly captured snapshots and focused `ProfilingRun` objects.
 - A checkbox closes only when the support matrix and validation ledger point
   to the applicable authoritative proof.
 - Keep completed checkbox text short. Put dated measurements, commands,
-  digests, sample counts, and deployment revisions in the validation ledger.
+  sample counts, and deployment revisions in the validation ledger.
 - Do not promote a row from repository configuration or package tests alone.
 - Do not copy live evidence back into this plan after it is recorded in the
   ledger.

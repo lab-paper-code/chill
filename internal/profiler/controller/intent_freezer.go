@@ -70,7 +70,7 @@ func NewIntentFreezer(
 	}, nil
 }
 
-// Freeze makes the immutable record durable before publishing its digest in
+// Freeze makes the immutable record durable before marking it frozen in
 // status. On restart it always recovers a pre-existing record before resolving
 // mutable cluster facts again.
 func (f *IntentFreezer) Freeze(
@@ -84,12 +84,12 @@ func (f *IntentFreezer) Freeze(
 		return FreezeIntentResult{Stopped: true}, nil
 	}
 
-	if run.Status.IntentDigest != "" {
+	if run.Status.IntentFrozen {
 		frozen, err := f.records.Load(ctx, run)
 		if err != nil {
 			return FreezeIntentResult{}, fmt.Errorf("load recorded Run intent: %w", err)
 		}
-		updated, err := f.publishStatus(ctx, run, frozen.Prepared.IntentDigest)
+		updated, err := f.publishStatus(ctx, run)
 		if err != nil {
 			return FreezeIntentResult{}, err
 		}
@@ -98,7 +98,7 @@ func (f *IntentFreezer) Freeze(
 
 	frozen, err := f.records.Load(ctx, run)
 	if err == nil {
-		updated, err := f.publishStatus(ctx, run, frozen.Prepared.IntentDigest)
+		updated, err := f.publishStatus(ctx, run)
 		if err != nil {
 			return FreezeIntentResult{}, err
 		}
@@ -141,7 +141,7 @@ func (f *IntentFreezer) Freeze(
 	if err != nil {
 		return FreezeIntentResult{}, fmt.Errorf("retain frozen Run intent: %w", err)
 	}
-	updated, err := f.publishStatus(ctx, run, prepared.IntentDigest)
+	updated, err := f.publishStatus(ctx, run)
 	if err != nil {
 		return FreezeIntentResult{}, err
 	}
@@ -153,18 +153,14 @@ func (f *IntentFreezer) Freeze(
 func (f *IntentFreezer) publishStatus(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	digest string,
 ) (bool, error) {
-	if run.Status.IntentDigest != "" && run.Status.ObservedGeneration == run.Generation {
+	if run.Status.IntentFrozen && run.Status.ObservedGeneration == run.Generation {
 		return false, nil
-	}
-	if run.Status.IntentDigest != "" {
-		digest = run.Status.IntentDigest
 	}
 
 	base := run.DeepCopy()
 	desired := run.DeepCopy()
-	desired.Status.IntentDigest = digest
+	desired.Status.IntentFrozen = true
 	desired.Status.ObservedGeneration = run.Generation
 	if err := f.kubeClient.Status().Patch(ctx, desired, client.MergeFrom(base)); err != nil {
 		return false, fmt.Errorf("publish frozen Run intent status: %w", err)

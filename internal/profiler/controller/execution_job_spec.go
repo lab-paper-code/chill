@@ -75,25 +75,16 @@ func buildExecutionJob(
 	if err != nil {
 		return nil, err
 	}
-	rawKey := rawEvidenceObjectKey(run.UID, prepared.IntentDigest)
-	policyIdentity, err := frozen.ExecutionPolicy.Identity()
-	if err != nil {
-		return nil, fmt.Errorf("identify frozen execution policy: %w", err)
-	}
+	rawKey := rawEvidenceObjectKey(run.UID)
 	labels := map[string]string{
 		"app.kubernetes.io/name":                 component.DefaultSystemName,
 		"app.kubernetes.io/component":            component.Profiler,
 		profilingrun.MeasurementWorkloadLabelKey: profilingrun.MeasurementWorkloadLabelValue,
 	}
 	annotations := map[string]string{
-		intentDigestAnnotation:    prepared.IntentDigest,
-		executionPolicyAnnotation: policyIdentity,
+		executionPolicyAnnotation: frozen.ExecutionPolicy.Policy.Name,
 	}
 	deadlineSeconds := int64(plan.ActiveDeadline.Seconds())
-	policyDigest, err := prepared.Intent.Workload.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("digest workload observation contract: %w", err)
-	}
 	selectorLabelKeys, err := prepared.Intent.Workload.LabelKeys()
 	if err != nil {
 		return nil, fmt.Errorf("resolve workload observation label keys: %w", err)
@@ -125,7 +116,7 @@ func buildExecutionJob(
 					Containers: []corev1.Container{
 						runtimeContainer(prepared, binding, rawKey, plan, runtimeProjection),
 						metricObserverContainer(prepared, plan),
-						workloadObserverContainer(prepared, policyDigest, selectorLabelKeys, options, plan),
+						workloadObserverContainer(prepared, selectorLabelKeys, options, plan),
 					},
 					Volumes: append(executionVolumes(intentName, plan), runtimeProjection.Volumes...),
 				},
@@ -139,13 +130,12 @@ func buildExecutionJob(
 }
 
 func artifactContainer(intent profilingrun.Intent, destination string) corev1.Container {
-	digest := strings.TrimPrefix(intent.State.ArtifactDigest, "sha256:")
 	return corev1.Container{
 		Name: "artifact", Image: intent.Images.Artifact, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: []string{"sh", "-ec"},
 		Args: []string{
-			`cp "$1" "$3" && echo "$2  $3" | sha256sum -c -`,
-			"artifact-copy", intent.State.ArtifactPath, digest, destination,
+			`cp "$1" "$2"`,
+			"artifact-copy", intent.State.ArtifactPath, destination,
 		},
 		SecurityContext: restrictedContainerSecurityContext(),
 		VolumeMounts:    []corev1.VolumeMount{{Name: modelVolumeName, MountPath: modelMountPath}},
@@ -239,13 +229,11 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 
 func workloadObserverContainer(
 	prepared profiler.PreparedRun,
-	contractDigest string,
 	selectorLabelKeys []string,
 	options ExecutionJobOptions,
 	plan profiler.ExecutionPlan,
 ) corev1.Container {
 	arguments := []string{
-		"--contract-digest=" + contractDigest,
 		"--selector-label-keys=" + strings.Join(selectorLabelKeys, ","),
 		"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 		"--end-fence-timeout=" + plan.WorkloadEndFenceTimeout.String(),

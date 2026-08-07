@@ -1,1 +1,79 @@
-{"schemaVersion":"chill.dacs.io/profiling-run-intent.v1alpha6","candidate":{"reportDigest":"sha256:f53b477f213f71d5e7b4b28b9d6cc70e3351782945277c10bcb0fbce3f0c87db","modelSpecContentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","deviceClassContentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtimeDeclarationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","executionPath":"ort-cpu","verdict":"Compatible"},"state":{"deviceClass":"lattepanda-3-delta-8g","model":"mobilenet-v2-050","artifact":"canonical-onnx","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifactPath":"/artifact/mobilenet-v2-050.onnx","runtimeFamily":"onnxruntime","backend":"CPUExecutionProvider","powerMode":"fixed"},"images":{"runtime":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifact":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","metricObserver":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloadObserver":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"targetNode":{"name":"lattepanda","uid":"uid","resourceVersion":"1","architecture":"amd64","allocatableCPU":"4"},"cpu":{"policy":"AllocatableCPUQuota","policyVersion":"v1","request":"100m","limit":"4","ortIntraOpThreads":4,"ortInterOpThreads":1,"exclusivityClaimed":false},"measurement":{"batch":1,"warmupIterations":20,"durationSeconds":30,"repetitions":1,"workloadMode":"saturated-serial-fixed-batch","inputGenerator":"numpy-default-rng-seed-0-fp32-v1","outputValidation":"nonempty-shape-batch-v1"},"metrics":{"sourceKind":"edge-metrics","nodeName":"lattepanda","endpoint":"http://edge-metric.monitoring.svc:9102/metrics","powerMetric":"shelly_power_total_watts","configurationContentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","intervalMilliseconds":1000,"timeoutMilliseconds":500,"durationSeconds":31},"workload":{"schemaVersion":"chill.dacs.io/workload-contract.v1alpha1"}}
+{
+  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha10",
+  "candidate": {
+    "inputs": {
+      "modelSpec": {
+        "name": "mobilenet-v2-050",
+        "uid": "model-uid",
+        "resourceVersion": "1"
+      },
+      "deviceClass": {
+        "name": "lattepanda-3-delta-8g",
+        "uid": "device-class-uid",
+        "resourceVersion": "2"
+      },
+      "runtimeDeclaration": {
+        "namespace": "chill-system",
+        "name": "chill-profiler-facts",
+        "uid": "facts-uid",
+        "resourceVersion": "3",
+        "key": "execution-facts.yaml",
+        "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "executionPath": "ort-cpu",
+    "verdict": "Compatible"
+  },
+  "state": {
+    "deviceClass": "lattepanda-3-delta-8g",
+    "model": "mobilenet-v2-050",
+    "artifact": "canonical-onnx",
+    "artifactPath": "/artifact/mobilenet-v2-050.onnx",
+    "runtimeFamily": "onnxruntime",
+    "backend": "CPUExecutionProvider",
+    "powerMode": "fixed"
+  },
+  "images": {
+    "runtime": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "artifact": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "metricObserver": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workloadObserver": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "targetNode": {
+    "name": "lattepanda",
+    "uid": "uid",
+    "resourceVersion": "1",
+    "architecture": "amd64",
+    "allocatableCPU": "4"
+  },
+  "cpu": {
+    "policy": "AllocatableCPUQuota",
+    "policyVersion": "v1",
+    "request": "100m",
+    "limit": "4",
+    "ortIntraOpThreads": 4,
+    "ortInterOpThreads": 1,
+    "exclusivityClaimed": false
+  },
+  "measurement": {
+    "batch": 1,
+    "warmupIterations": 20,
+    "durationSeconds": 30,
+    "repetitions": 1,
+    "workloadMode": "saturated-serial-fixed-batch",
+    "inputGenerator": "numpy-default-rng-seed-0-fp32-v1",
+    "outputValidation": "nonempty-shape-batch-v1"
+  },
+  "metrics": {
+    "sourceKind": "edge-metrics",
+    "nodeName": "lattepanda",
+    "endpoint": "http://edge-metric.monitoring.svc:9102/metrics",
+    "powerMetric": "shelly_power_total_watts",
+    "intervalMilliseconds": 1000,
+    "timeoutMilliseconds": 500,
+    "durationSeconds": 31
+  },
+  "workload": {
+    "schemaVersion": "chill.dacs.io/workload-contract.v1alpha1"
+  }
+}

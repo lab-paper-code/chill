@@ -8,23 +8,19 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion         = "chill.dacs.io/profiling-execution-evidence.v1alpha1"
-	ActuatedExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha2"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha3"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
 // than duplicates the immutable raw measurement object.
 type ExecutionEvidence struct {
-	SchemaVersion string              `json:"schemaVersion"`
-	IntentDigest  string              `json:"intentDigest"`
-	Intent        profilingrun.Intent `json:"intent"`
-	// CandidateReportBytes is encoded as base64 by encoding/json so the exact
-	// report bytes remain reproducible after an evidence round trip.
-	CandidateReportBytes []byte                       `json:"candidateReportBytes"`
-	RawMeasurement       evidencestore.ObjectIdentity `json:"rawMeasurement"`
-	Terminal             TerminalFacts                `json:"terminal"`
-	Actuation            *ActuationFacts              `json:"actuation,omitempty"`
-	FinalizedAt          time.Time                    `json:"finalizedAt"`
+	SchemaVersion   string                       `json:"schemaVersion"`
+	Intent          profilingrun.Intent          `json:"intent"`
+	CandidateReport profilingrun.CandidateReport `json:"candidateReport"`
+	RawMeasurement  evidencestore.ObjectIdentity `json:"rawMeasurement"`
+	Terminal        TerminalFacts                `json:"terminal"`
+	Actuation       *ActuationFacts              `json:"actuation,omitempty"`
+	FinalizedAt     time.Time                    `json:"finalizedAt"`
 }
 
 // ActuationFacts are Profiler-observed Kubernetes facts finalized only after
@@ -54,8 +50,7 @@ type ActuationObservation struct {
 }
 
 func IsSupportedExecutionEvidenceSchemaVersion(version string) bool {
-	return version == ExecutionEvidenceSchemaVersion ||
-		version == ActuatedExecutionEvidenceSchemaVersion
+	return version == ExecutionEvidenceSchemaVersion
 }
 
 type TerminalFacts struct {

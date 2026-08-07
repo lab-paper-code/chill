@@ -9,19 +9,19 @@ metric/workload end-fence success path was live-verified with three sequential,
 same-intent Runs admitted by `wall-power-v2`. This document does not authorize
 batch campaigns, `b_sat` derivation, another runtime, or serving.
 
-The `v1alpha7` CPU intent, public idle request, CPU ORT runner branch, separate
-idle runtime/raw schemas, shared immutable finalization/loading, and idle
-admission dispatch are live-verified. The `v1alpha8` RKNNLite generation is
-also live-verified. The `v1alpha9` codec and matching CPU ORT/RKNNLite decoders
-are implemented locally for the actuation contract but are not live-verified.
+The current intent and runtime request schemas, CPU ORT and RKNNLite adapters,
+separate idle runtime/raw schemas, shared immutable finalization/loading, and
+idle admission dispatch are implemented. The earlier active and idle paths were
+live-verified; the current simplified semantic contracts have not yet been
+re-run on the live cluster.
 
 ## Model-loaded-idle live verification
 
 On 2026-08-03, `idle-model-loaded-live-ad7b84f-v2` completed on Lattepanda and
-was `Accepted` by `idle-wall-power-v1`. The immutable raw object used
-`chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha1`; its receipt digest
-and size matched a direct Evidence Store read, and the finalized execution
-evidence retained that exact raw-object identity.
+was `Accepted` by `idle-wall-power-v1`. The finalized evidence retained the raw
+object's configured store, opaque key, and bounded size. This historical Run
+predates the current schema and is evidence for the method, not live proof of
+the current wire contract.
 
 The runtime evidence records model load before a 60-second settling interval,
 a 30-second monotonic measurement window, zero inference after model load, and
@@ -32,15 +32,14 @@ continuous with no entered, updated, or exited Pod. The Run reached
 `EvidenceAdmitted=True`.
 
 All three regular containers strictly decode the same frozen intent. The
-mounted-file loader validates and digest-matches it once, then returns the
-owner package's `profilingrun.VerifiedIntent`; observers, runtime adapters, and
-the coordinator carry that value, and the coordinator consumes its verified
-digest instead of accepting a second mutable intent-plus-expected-digest pair.
+mounted-file loader validates it once, then returns the owner package's
+`profilingrun.VerifiedIntent`; observers, runtime adapters, and the coordinator
+carry that value instead of accepting parallel mutable intent inputs.
 Raw-result composition remains the separate boundary that correlates runtime
 and observer facts. Delivery
 therefore deploys runtime-worker, MetricObserver, and WorkloadObserver images
-as one tested schema-compatible set. Their image identities remain
-independently digest-pinned; this rule does not merge their responsibilities.
+as one tested schema-compatible set. Each image remains an independently pinned
+OCI reference; this rule does not merge their responsibilities.
 
 The metric and workload result-file readers validate their respective records
 once after the atomic file boundary and return sealed values. Runtime adapters
@@ -83,7 +82,7 @@ The first Job contains four execution roles, not a generic plugin graph:
 ```text
 artifact init container
   -> copy the declared artifact path
-  -> verify the frozen artifact digest
+  -> expose it as a regular file at the runtime-specific destination
 
 runtime container (the measurement worker and sole raw writer)
   -> verify intent and artifact
@@ -121,9 +120,9 @@ image remains an init-container supply image.
 
 The immutable intent record remains the scientific execution authority. It
 also retains the exact admission and worker-execution policies selected before
-Job creation. All regular containers mount only its canonical `intent.json`
-plus `candidate-report.json` read-only. Every process verifies the intent
-digest; the runtime path alone consumes the already controller-verified
+Job creation. All regular containers mount only its `intent.json` plus
+`candidate-report.json` read-only. Every process strict-decodes the current
+intent; the runtime path alone consumes the already controller-verified
 candidate report for runtime-specific delivery and host checks. Frozen policy
 payloads remain controller-side provenance and are not worker inputs.
 
@@ -150,22 +149,15 @@ core-mask, initialization, and inference checks; it does not reuse ONNX Runtime
 provider vocabulary. The Go adapter compares the emitted mutable observations
 with the sealed candidate projection before raw evidence construction.
 
-Active and idle Runs use internal intent schema `v1alpha9`. The retained
-`v1alpha7` schema added the optional physical host-contract digest needed by
-accelerator paths; CPU ORT omits that field. Retained `v1alpha8` additionally
-kept the common CPU quota while omitting the ORT-only intra/inter-op fields
-from RKNNLite intents. Current `v1alpha9` adds an optional typed actuation
-contract containing the non-fixed mode, exact actuator target, and configured
-policy digest. Fixed Runs omit it. The producer can freeze either form, but an
-actuated Run is withheld before Job creation until the durable actuation
-handoff exists. The frozen
-measurement protocol includes settling duration and reuses the same intent
-type and common execution provenance rather than creating a parallel frozen
-type. The Go intent codec and Python CPU ORT adapter accept current `v1alpha9`
-and retained `v1alpha8`/`v1alpha7`/`v1alpha6` CPU intents; v1alpha6 cannot carry
-the host state or idle fields. RKNNLite accepts current `v1alpha9` and retained
-`v1alpha8`. Current and retained request envelopes are paired explicitly, so a
-new request cannot silently carry older intent bytes.
+Active and idle Runs use only the current internal intent schema. The optional
+physical host contract is represented as semantic library, driver, platform,
+device, and allocation facts. The optional typed actuation contract contains
+the non-fixed mode, exact actuator target, and configured policy name; fixed
+Runs omit it. An actuated Run is withheld before Job creation until the durable
+actuation handoff exists. The measurement protocol includes settling duration
+and reuses the same intent type and common execution provenance rather than
+creating a parallel frozen type. Go and Python accept only their matching
+current request and intent schemas.
 
 The runtime worker and both observers consume that canonical intent through
 strict decoders. Delivery configuration must therefore select images that
@@ -254,8 +246,8 @@ final filename.
 
 The runtime sequence is fixed:
 
-1. strict-decode and validate the mounted intent and expected digest;
-2. verify Pod UID, scheduled Node name, artifact bytes, CPU contract, runtime,
+1. strict-decode and validate the mounted intent;
+2. verify Pod UID, scheduled Node name, artifact file, CPU contract, runtime,
    provider, and output-validation capability;
 3. wait with a bounded timeout for both observer readiness signals;
 4. execute active warm-up, or for idle retain the loaded model for the full
@@ -268,8 +260,8 @@ The runtime sequence is fixed:
 8. wait with bounded timeouts for both result files;
 9. validate metric source and workload identities, summaries, timestamps, and
    coverage of the runtime measurement window;
-10. canonicalize the mode-specific active or idle raw measurement, calculate
-    its digest and size, and perform one immutable create; and
+10. encode the mode-specific active or idle raw measurement, record its bounded
+    size, and perform one immutable create; and
 11. write the validated Evidence Store receipt to `/dev/termination-log` and
     exit successfully.
 
@@ -295,23 +287,21 @@ The WorkloadObserver sequence is fixed:
 
 ## Raw evidence and receipt
 
-The current `profiling-raw-measurement.v1alpha4` object is the active worker
-output; retained v1alpha3 CPU objects remain readable only with their original
-v1alpha1 CPU runtime result.
-It contains only facts available before the worker exits:
+The current active raw-measurement object contains only facts available before
+the worker exits:
 
-- intent digest and actual Pod UID;
+- the validated intent and actual Pod UID;
 - the existing validated runtime result;
 - the complete MetricObserver result; and
 - the complete bounded WorkloadObserver result.
 
-Model-loaded idle uses current raw v1alpha2 and retains v1alpha1 CPU objects
-because its runtime completeness proof is exact model load, settling
+Model-loaded idle uses its own current raw schema because its runtime
+completeness proof is exact model load, settling
 completion, zero inference, retained residency, and a
 runtime-declared duration rather than active latency and output-validation
-evidence. Both raw schemas retain the same intent digest, actual Pod UID,
-MetricObserver result, WorkloadObserver result, and immutable object-identity
-verification boundary.
+evidence. Both raw schemas retain the same validated intent, actual Pod UID,
+MetricObserver result, WorkloadObserver result, and immutable store/key/size
+reference boundary.
 
 It contains no Job completion, terminal Pod state, or post-run Node snapshot,
 credentials, or backend response. Those Kubernetes facts are added only by the
@@ -345,7 +335,7 @@ The controller creates one deterministic Job owned by the `ProfilingRun`:
 - `automountServiceAccountToken=false`;
 - Pod UID and scheduled Node name injected from the Downward API;
 - exact target-Node placement and frozen CPU request/limit;
-- digest-pinned artifact, runtime, MetricObserver, and WorkloadObserver images;
+- immutable OCI references for artifact, runtime, MetricObserver, and WorkloadObserver images;
 - restricted container security contexts; and
 - one bounded active deadline covering startup, warm-up, measurement, handoff,
   and evidence commit.

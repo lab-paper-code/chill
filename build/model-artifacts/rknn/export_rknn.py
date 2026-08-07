@@ -1,9 +1,8 @@
-"""Build one immutable, batch-fixed RKNN artifact and provenance record."""
+"""Build one batch-fixed RKNN artifact and semantic conversion record."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -12,33 +11,16 @@ import tempfile
 from pathlib import Path
 
 
-RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha1"
-
-
-def sha256_file(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def require_digest(path, expected, label):
-    prefix = "sha256:"
-    if not expected.startswith(prefix) or len(expected) != len(prefix) + 64:
-        raise ValueError(f"{label} digest must be a sha256 digest")
-    observed = sha256_file(path)
-    if observed != expected[len(prefix):]:
-        raise ValueError(
-            f"{label} digest mismatch: expected {expected}, observed sha256:{observed}"
-        )
+RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha2"
 
 
 def set_fixed_batch(model, batch_size):
     if batch_size <= 0:
         raise ValueError("batch size must be positive")
-    value_infos = list(model.graph.input) + list(model.graph.output) + list(
-        model.graph.value_info
+    value_infos = (
+        list(model.graph.input)
+        + list(model.graph.output)
+        + list(model.graph.value_info)
     )
     for value_info in value_infos:
         tensor_type = value_info.type.tensor_type
@@ -48,18 +30,12 @@ def set_fixed_batch(model, batch_size):
             first_dimension.dim_value = batch_size
 
 
-def recipe_digest():
-    return "sha256:" + sha256_file(Path(__file__))
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build a batch-fixed RKNN artifact from a digest-bound ONNX model"
+        description="Build a batch-fixed RKNN artifact from a selected ONNX model"
     )
     parser.add_argument("--source-onnx", required=True)
-    parser.add_argument("--source-digest", required=True)
     parser.add_argument("--tool-wheel", required=True)
-    parser.add_argument("--tool-digest", required=True)
     parser.add_argument("--tool-version", required=True)
     parser.add_argument("--target-platform", required=True)
     parser.add_argument("--batch-size", required=True, type=int)
@@ -77,8 +53,8 @@ def main():
 
     if output.exists() or record.exists():
         raise SystemExit("refusing to overwrite an existing artifact or record")
-    require_digest(source, args.source_digest, "source ONNX")
-    require_digest(wheel, args.tool_digest, "RKNN Toolkit2 wheel")
+    if not source.is_file() or not wheel.is_file():
+        raise SystemExit("source ONNX and RKNN Toolkit2 wheel must be regular files")
     if args.batch_size <= 0:
         raise SystemExit("batch size must be positive")
 
@@ -123,19 +99,16 @@ def main():
             raise SystemExit("RKNN converter produced no artifact bytes")
         os.replace(temporary_output, output)
 
-    output_digest = "sha256:" + sha256_file(output)
     conversion_record = {
         "schemaVersion": RECORD_SCHEMA,
         "source": {
             "name": source.name,
-            "digest": args.source_digest,
         },
         "conversion": {
             "tool": "rknn-toolkit2",
             "version": installed_version,
             "toolArtifact": wheel.name,
-            "toolDigest": args.tool_digest,
-            "recipeDigest": recipe_digest(),
+            "recipe": Path(__file__).name,
             "pythonVersion": platform.python_version(),
             "onnxVersion": onnx.__version__,
             "targetPlatform": args.target_platform,
@@ -144,7 +117,6 @@ def main():
         },
         "output": {
             "name": output.name,
-            "digest": output_digest,
             "sizeBytes": output.stat().st_size,
         },
     }

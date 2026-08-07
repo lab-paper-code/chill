@@ -24,13 +24,12 @@ var _ = Describe("ModelSpec API", func() {
 		})
 	})
 
-	It("accepts a digest-bound derived artifact", func() {
+	It("accepts a derived artifact", func() {
 		ctx := context.Background()
 		model := validModelSpec(uniqueModelSpecName("derived"))
 		model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
 			Name:       "mobilenet-v2-050-rk3588-bs1",
 			Format:     "rknn",
-			Digest:     "sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550",
 			Derivation: validDerivedArtifact(),
 		})
 
@@ -129,10 +128,8 @@ func validDerivedArtifact() *edgev1alpha1.ModelArtifactDerivation {
 		TargetPlatform: "rk3588",
 		FixedBatch:     1,
 		Conversion: edgev1alpha1.ModelArtifactConversion{
-			Tool:         "rknn-toolkit2",
-			Version:      "2.3.2",
-			ToolDigest:   "sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc",
-			RecipeDigest: "sha256:0d4bf28be3c14f1ecc5662a326a273441d9e057e3dfb9102dcdf143c14e2a234",
+			Tool:    "rknn-toolkit2",
+			Version: "2.3.2",
 		},
 	}
 }
@@ -145,7 +142,6 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 				{
 					Name:   "canonical-onnx",
 					Format: "onnx",
-					Digest: "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
 				},
 			},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{

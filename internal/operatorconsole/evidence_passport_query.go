@@ -96,7 +96,7 @@ func evidenceIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) (ev
 		return evidencestore.ObjectIdentity{}, errors.New("verified evidence is not available")
 	}
 	identity := evidencestore.ObjectIdentity{
-		Store: reference.Store, Key: reference.Key, Digest: reference.Digest, Size: reference.Size,
+		Store: reference.Store, Key: reference.Key, Size: reference.Size,
 	}
 	if err := identity.Validate(); err != nil {
 		return evidencestore.ObjectIdentity{}, err

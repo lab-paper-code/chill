@@ -122,13 +122,8 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 	if selected == nil {
 		return profiler.ResolvedMetricSource{}, fmt.Errorf("%w: no entry for Node %q", ErrMetricSourceUnavailable, nodeName)
 	}
-	digest, err := canonicalDigest(*selected)
-	if err != nil {
-		return profiler.ResolvedMetricSource{}, fmt.Errorf("digest selected metric source: %w", err)
-	}
 	return profiler.ResolvedMetricSource{
 		Kind: selected.Kind, Endpoint: selected.Endpoint, PowerMetric: selected.PowerMetric,
-		ConfigurationContentDigest: digest,
 	}, nil
 }
 

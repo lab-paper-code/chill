@@ -1,7 +1,7 @@
 {
-  "schemaVersion": "chill.dacs.io/discovery-derivation-policy.v1alpha2",
+  "schemaVersion": "chill.dacs.io/discovery-derivation-policy.v1alpha3",
   "name": "agx-ortcpu-mode50w-bsat-v1",
-  "curveFamilyContractDigest": "chill.dacs.io/curve-family-contract.v1alpha1@sha256:891268f5a816897090178f7401bf49ea06110bbc4100d158d9ba1ffd43ee0002",
+  "curveFamilyName": "agx-ortcpu-mode50w-bsat-v1",
   "pointConfidenceLevel": 0.95,
   "pointPolicies": [
     {

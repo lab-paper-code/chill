@@ -45,8 +45,7 @@ func deriveBSatConfirmatorySizing(
 		Status: BSatUnavailable, Code: BSatCodeConfirmatoryBudgetInsufficient,
 		CandidateBatch: candidate, MaximumFeasibleConfirmatoryTrials: maximumTrials,
 		GlobalStatementCount: statementCount, SizingMethod: BSatConfirmatorySizingMethod,
-		PolicyVersion: policy.Version, CurveFamilyContractDigest: curve.ContractDigest(),
-		CurveFamilyIdentity: curve.FamilyIdentity(),
+		PolicyVersion: policy.Version, CurveFamilyName: curve.FamilyName(),
 	}
 	for batch := candidate; batch <= policy.KMax; batch++ {
 		result.ConfirmatoryBatches = append(result.ConfirmatoryBatches, batch)

@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -14,24 +12,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func catalogContentDigest(name, uid string, generation int64, spec any) (string, error) {
-	return canonicalDigest(struct {
-		Name       string `json:"name"`
-		UID        string `json:"uid"`
-		Generation int64  `json:"generation"`
-		Spec       any    `json:"spec"`
-	}{Name: name, UID: uid, Generation: generation, Spec: spec})
-}
-
-func canonicalDigest(value any) (string, error) {
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
-}
-
 func compatibilityReasonCodes(result modelcompat.Result) string {
 	codes := make([]string, len(result.Reasons))
 	for index, reason := range result.Reasons {
@@ -41,24 +21,20 @@ func compatibilityReasonCodes(result modelcompat.Result) string {
 }
 
 type candidateReportInput struct {
-	Model             *edgev1alpha1.ModelSpec
-	DeviceClass       *edgev1alpha1.DeviceClass
-	ConfigMap         *corev1.ConfigMap
-	ConfigMapKey      string
-	ModelDigest       string
-	DeviceDigest      string
-	DeclarationDigest string
-	Path              edgev1alpha1.ModelExecutionPath
-	Artifact          edgev1alpha1.ModelArtifact
-	PowerMode         string
-	DeviceFacts       selectedDeviceFacts
-	Declaration       resolvedExecutionDeclaration
-	Result            modelcompat.Result
+	Model        *edgev1alpha1.ModelSpec
+	DeviceClass  *edgev1alpha1.DeviceClass
+	ConfigMap    *corev1.ConfigMap
+	ConfigMapKey string
+	Path         edgev1alpha1.ModelExecutionPath
+	Artifact     edgev1alpha1.ModelArtifact
+	PowerMode    string
+	DeviceFacts  selectedDeviceFacts
+	Declaration  resolvedExecutionDeclaration
+	Result       modelcompat.Result
 }
 
 type builtCandidateReport struct {
-	Bytes              []byte
-	HostContractDigest string
+	Bytes []byte
 }
 
 func buildCandidateReport(input candidateReportInput) (builtCandidateReport, error) {
@@ -67,32 +43,25 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		reasons[index] = profilingrun.CandidateReportReason{Kind: string(reason.Kind), Code: string(reason.Code)}
 	}
 	hostContract := reportHostContract(input.Declaration.Host)
-	hostContractDigest, err := profilingrun.CandidateHostContractDigest(hostContract)
-	if err != nil {
-		return builtCandidateReport{}, fmt.Errorf("identify candidate host contract: %w", err)
-	}
 	report := profilingrun.CandidateReport{
 		SchemaVersion: profilingrun.CandidateReportSchemaVersion,
 		Scope:         "StaticCompatibility",
 		Inputs: profilingrun.CandidateReportInputs{
 			ModelSpec: profilingrun.CandidateReportObjectInput{
 				Name: input.Model.Name, UID: string(input.Model.UID), ResourceVersion: input.Model.ResourceVersion,
-				ContentDigest: input.ModelDigest,
 			},
 			DeviceClass: profilingrun.CandidateReportObjectInput{
 				Name: input.DeviceClass.Name, UID: string(input.DeviceClass.UID), ResourceVersion: input.DeviceClass.ResourceVersion,
-				ContentDigest: input.DeviceDigest,
 			},
 			RuntimeDeclaration: profilingrun.CandidateReportRuntimeInput{
 				Namespace: input.ConfigMap.Namespace, Name: input.ConfigMap.Name, UID: string(input.ConfigMap.UID),
-				ResourceVersion: input.ConfigMap.ResourceVersion, Key: input.ConfigMapKey,
-				ContentDigest: input.DeclarationDigest, Image: input.Declaration.Runtime.Image,
+				ResourceVersion: input.ConfigMap.ResourceVersion, Key: input.ConfigMapKey, Image: input.Declaration.Runtime.Image,
 			},
 		},
 		Selection: profilingrun.CandidateReportSelection{
 			ExecutionPath: input.Path.Name, Artifact: input.Artifact.Name,
-			ArtifactDigest: input.Artifact.Digest, PowerMode: input.PowerMode,
-			Actuator: cloneActuatorTarget(input.DeviceFacts.selectedActuator),
+			PowerMode: input.PowerMode,
+			Actuator:  cloneActuatorTarget(input.DeviceFacts.selectedActuator),
 		},
 		DeviceClassFacts: profilingrun.CandidateReportDeviceClassFacts{
 			Architecture: input.DeviceClass.Spec.Architecture,
@@ -101,7 +70,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		},
 		ArtifactSupply: profilingrun.CandidateReportArtifactSupply{
 			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
-			Path: input.Declaration.Artifact.Path, Digest: input.Declaration.Artifact.Digest,
+			Path: input.Declaration.Artifact.Path,
 		},
 		ArtifactCapability:  reportArtifactCapability(input.Artifact.Derivation),
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
@@ -114,7 +83,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 	if err != nil {
 		return builtCandidateReport{}, fmt.Errorf("encode static candidate report: %w", err)
 	}
-	return builtCandidateReport{Bytes: payload, HostContractDigest: hostContractDigest}, nil
+	return builtCandidateReport{Bytes: payload}, nil
 }
 
 func cloneActuatorTarget(source *profilingrun.ActuatorTarget) *profilingrun.ActuatorTarget {
@@ -189,7 +158,7 @@ func reportHostContract(source *hostExecutionContract) *profilingrun.CandidateRe
 	for index, library := range source.Libraries {
 		result.Libraries[index] = profilingrun.CandidateReportHostLibrary{
 			Name: library.Name, HostPath: library.HostPath,
-			ContainerPath: library.ContainerPath, Digest: library.Digest,
+			ContainerPath: library.ContainerPath,
 		}
 	}
 	for index, device := range source.Devices {

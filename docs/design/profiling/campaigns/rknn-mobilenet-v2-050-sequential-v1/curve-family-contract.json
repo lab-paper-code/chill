@@ -1,18 +1,13 @@
 {
-  "schemaVersion": "chill.dacs.io/curve-family-contract.v1alpha1",
+  "schemaVersion": "chill.dacs.io/curve-family-contract.v1alpha2",
   "shared": {
     "logicalModel": "mobilenet-v2-050",
-    "sourceArtifactDigest": "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2",
-    "modelSpecContentDigest": "sha256:7b9d267a0008d0d510d35fc0f52364edda28188137f6804a6874445c191a8880",
-    "deviceClassContentDigest": "sha256:43ddafb414530892f2a932f88d941dbf90a6e2ed331344dcf97379a4c2b6ea17",
-    "runtimeDeclarationDigest": "sha256:109ece351af0188fd416ee7c32dfea61d217b1367ff27ddd81003c859d2236d7",
     "deviceClass": "orangepi-5-plus-16g",
     "nodeUID": "3cbe367f-2511-47fc-9b34-67c98fac69fd",
     "runtimeFamily": "rknnlite",
     "backend": "not-applicable",
     "runtimeImage": "155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3",
     "powerMode": "fixed",
-    "hostContractDigest": "sha256:5253400f9d44eaa6c8c076de8a53eb9a7ac38c4b54673d0e0eca5d8324317ffe",
     "cpu": {
       "policy": "AllocatableCPUQuota",
       "policyVersion": "v1",
@@ -26,8 +21,7 @@
       "sourceKind": "edge-metrics",
       "nodeName": "orangepi",
       "endpoint": "http://155.230.34.143:9102/metrics",
-      "powerMetric": "shelly_power_total_watts",
-      "configurationContentDigest": "sha256:11a53a85e24270e2edaaecfaf88565bcbfe8e3ac344bafef16a0442115b8e0d2"
+      "powerMetric": "shelly_power_total_watts"
     },
     "activeProtocol": {
       "workloadMode": "saturated-serial-fixed-batch",
@@ -42,7 +36,7 @@
       "metricDurationSeconds": 31,
       "metricObserverImage": "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe",
       "workloadObserverImage": "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7",
-      "workloadContractDigest": "sha256:ecc5d2be7207c2e59d04424339f7c5baf535843db7aa1d222f62a665721ee0da"
+      "workloadSchemaVersion": "chill.dacs.io/workload-contract.v1alpha1"
     },
     "idleProtocol": {
       "workloadMode": "idle-model-loaded",
@@ -57,42 +51,53 @@
       "metricDurationSeconds": 31,
       "metricObserverImage": "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe",
       "workloadObserverImage": "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:8dabc29500bda81cc04d4aebe56489293f193281a99a583d8d027bfff65488d7",
-      "workloadContractDigest": "sha256:ecc5d2be7207c2e59d04424339f7c5baf535843db7aa1d222f62a665721ee0da"
+      "workloadSchemaVersion": "chill.dacs.io/workload-contract.v1alpha1"
     },
     "conversion": {
       "derived": true,
       "targetPlatform": "rk3588",
       "tool": "rknn-toolkit2",
-      "toolVersion": "2.3.2",
-      "toolDistributionDigest": "sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc",
-      "recipeDigest": "sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed"
+      "toolVersion": "2.3.2"
     },
     "tensor": {
       "layout": "NHWC",
       "dataType": "float32",
-      "nonBatchShape": [224, 224, 3]
-    }
+      "nonBatchShape": [
+        224,
+        224,
+        3
+      ]
+    },
+    "name": "rknn-mobilenet-v2-050-sequential-v1"
   },
   "members": [
     {
       "batch": 1,
       "executionPath": "rknnlite",
       "artifactName": "mobilenet-v2-050-rk3588-bs1",
-      "artifactDigest": "sha256:6de31d66b487431ae4b46a7a4a8d2aa0f4d1b98fef3ca1f439f4a1c216f5ef22",
       "artifactPath": "/artifact/mobilenet-v2-050-rk3588-bs1.rknn",
       "artifactImage": "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs1-artifact@sha256:9ae0055465f024c9ae1c7264c0d5311b8dfc2141458414350a555fa9e62223ce",
       "fixedBatchCapability": 1,
-      "inputShape": [1, 224, 224, 3]
+      "inputShape": [
+        1,
+        224,
+        224,
+        3
+      ]
     },
     {
       "batch": 2,
       "executionPath": "rknnlite-bs2",
       "artifactName": "mobilenet-v2-050-rk3588-bs2",
-      "artifactDigest": "sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d",
       "artifactPath": "/artifact/mobilenet-v2-050-rk3588-bs2.rknn",
       "artifactImage": "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs2-artifact@sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed",
       "fixedBatchCapability": 2,
-      "inputShape": [2, 224, 224, 3]
+      "inputShape": [
+        2,
+        224,
+        224,
+        3
+      ]
     }
   ]
 }

@@ -15,9 +15,9 @@ under its own version. The post-selection error allocation is also fixed and
 regression-tested across shared- and distinct-baseline regimes, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
 estimator, global-`H` confirmatory sizing, and typed confirmatory result are
-implemented. Both policy files have strict canonical decoders and content
-digests; the confirmatory file is checked against the discovery artifact and
-realized sizing allocation, and the final result binds both digests. A concrete
+implemented. Both policy files have strict semantic decoders and configured
+names; the confirmatory file repeats the discovery fields and is checked against
+the realized sizing allocation. The final result binds both names. A concrete
 two-member RKNN campaign is also closed. All 12 idle and discovery Runs were
 retained, Loader-verified, admitted, and included. Discovery selected batch one,
 but the frozen three-trial cap could not meet the 5% confirmatory precision rule.
@@ -41,7 +41,7 @@ change, cross-model pooling, or scheduler consumption.
 original one-state assumption for runtimes with one immutable artifact per
 fixed batch. Exact execution-state and protocol identities remain unchanged.
 An opaque curve instead owns one pre-frozen family contract, one
-Loader-verified realized family identity, and an admitted idle baseline for
+Loader-verified family, and an admitted idle baseline for
 every distinct member state. A dynamic-batch artifact remains the one-state,
 one-baseline special case.
 
@@ -364,9 +364,9 @@ Two files are written and fixed before the first Run.
 
 ### The derivation policy file
 
-This file holds every value that decides what the campaign accepts. Its content
-digest is recorded in the derived result, so a published number always identifies
-the rule that produced it.
+This file holds every value that decides what the campaign accepts. Its
+configured name is recorded in the derived result, so a published number
+identifies the rule that produced it.
 
 ```text
 DiscoveryDerivationPolicy
@@ -394,7 +394,7 @@ The estimator, Bonferroni allocation, and confirmatory sizing methods are
 versioned package constants because the implementation supports exactly one of
 each. Their identities are recorded in the result. The point confidence level
 and family-wise alpha accept their implemented numeric ranges and are frozen in
-the current `v1alpha2` policy digest; neither value has a compiled default. The
+the current `v1alpha2` policy name; neither value has a compiled default. The
 committed `v1alpha1` campaign files remain historical records of the earlier
 fixed-method runs and are not accepted as current policy input. New policies
 cannot omit either value.
@@ -412,8 +412,8 @@ the cap or active-Run budget allows, the campaign ends as
 to fit the budget.
 
 A second version of this file is written after discovery and before the first
-confirmatory Run. It records the discovery version's digest, the realized
-`n_conf`, and the realized Run allocation. It changes nothing else. Both digests
+confirmatory Run. It repeats the discovery fields and records the realized
+`n_conf` and Run allocation. It changes nothing else. Both configured names
 appear in the result.
 
 ### Fixed confirmatory sizing method
@@ -500,14 +500,14 @@ This file identifies the campaign and makes its evidence checkable by reading.
 Before measurement it fixes:
 
 - the execution state under measurement;
-- the derivation policy file it uses, by content digest;
+- the derivation policy file it uses, by source object identity;
 - the evidence-inclusion rule, in prose: every identity-compatible admitted trial
   produced under this campaign is included, and none is excluded;
 - the rule that generates confirmatory batches `c..Kmax` from whatever candidate
   discovery proposes; and
 - whether idle-baseline Runs count against the policy file's Run budget.
 
-After the campaign it records every Run name and its retained intent digest, with
+After the campaign it records every Run name and its retained frozen intent record, with
 discovery and confirmatory Runs listed separately.
 
 Fixing the *generating rule* rather than the confirmatory batch list is what lets
@@ -563,7 +563,7 @@ DeriveBSatConfirmatory(curve Curve, candidate int,
 `FreezeCurveFamilyContract` fixes ADR 0014's shared anchor and exact
 batch-member map before measurement. `VerifyCurveFamily` compares Loader-verified
 frozen Run facts with that contract and binds their common observed environment
-before producing the versioned family identity. `DeriveCurve` resolves each
+before constructing the verified family. `DeriveCurve` resolves each
 trial to that map, selects the baseline with the same `StateIdentity`, and
 performs the per-trial incremental step and per-batch aggregation internally.
 Since `Curve` has no exported fields and no other constructor, every point that
@@ -719,12 +719,12 @@ the curve-family contract and both stage-scoped point-policy versions, requires
 exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
 lower bound and every contrast upper bound at the frozen global-`H` quantile.
 Its result retains both pass point sets, all exact-state idle baselines, bounds
-for every later batch, estimator and sizing versions, both policy digests, and
+for every later batch, estimator and sizing versions, both policy names, and
 the family contract and realized identities. A later measured improvement above
 tolerance returns `CandidateOnly: DomainNoImprovementNotConfirmed`; there is no
 `Ambiguous` outcome in the Plan 5 boundary. A budget-insufficient sizing outcome
 is frozen as a confirmatory policy without a Run allocation, so its typed final
-result also retains both policy digests without pretending confirmation ran.
+result also retains both policy names without pretending confirmation ran.
 
 Confirmation still validates that the domain runs from batch 1. Accepting
 saturation at `c` without evidence that batches below `c` were measured would not
@@ -757,12 +757,12 @@ What the code guarantees, and what a reader has to check:
 | a hand-assembled `Point` cannot reach the decision | `DeriveBSatConfirmatory` accepts `Curve`, not `[]Point` |
 | discovery and confirmatory evidence do not overlap | `DeriveCurve` rejects a `TrialID` present in more than one pass |
 | the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
-| a published number identifies its planned and realized family and rule | curve-family contract digest, realized identity, and both policy digests recorded in the result |
+| a published number identifies its planned and realized family and rule | curve-family name, observed environment, and both policy names recorded in the result |
 | the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
 | every eligible trial was included | **the campaign record's stated rule and its published Run list — read, not enforced** |
 
-The last two rows are checked by reading rather than by code. The digests prove
-*which* policy produced a result; nothing in the design proves *when* it was
+The last two rows are checked by reading rather than by code. Policy names state
+*which* rule produced a result; the Git history establishes *when* it was
 written. The two published Run lists must have no Run in common, and together
 must account for exactly the trials that entered the result. This is the standard
 of pre-registration used in empirical work. It is not proof against an operator
@@ -811,7 +811,7 @@ import no Kubernetes, CHILL API, controller-runtime, or transport package.
 Plan 5 is complete when:
 
 - `Kmax`, `tau`, the acceptance quantity, and the acceptance rule live in the
-  discovery policy version, and both policy digests version the result;
+  discovery policy version, and both policy names version the result;
 - the complete two-pass procedure, including candidate selection and the
   exact-state baseline covariance, is shown by derivation or simulation to hold
   its stated confidence;
@@ -836,8 +836,8 @@ Plan 5 is complete when:
   a separately versioned interval, with the earlier interval retained;
 - a trial with low observed throughput is admitted, retained, and kept in the
   domain; and
-- the campaign record lists every Run, separated by pass, with retained intent
-  digests.
+- the campaign record lists every Run, separated by pass, with its Run UID and
+  Pod-derived trial ID.
 
 ## Implementation sequence
 
@@ -860,19 +860,18 @@ Plan 5 is complete when:
 5. Implement discovery screening, fixed confirmatory sizing, and the
    confirmatory boundary. Remove the
    `Ambiguous` outcome, which the domain-wide maximum subsumes.
-   Implemented. The earlier adjacent rule remains only under explicit `Legacy*`
-   types and cannot enter the opaque Plan 5 boundary.
-6. Decode the policy file and record its digests. Rename
+   Implemented; the superseded adjacent estimator and its types are deleted.
+6. Decode the policy file and record its configured name. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
    `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
    persisted to the evidence store, since these are a JSON field name and a
    reason-code value. Add golden tests. Implemented: both policy artifacts have
-   canonical decoding and content digests, the confirmatory allocation is
-   checked against sizing, and the final result records both digests.
+   strict decoding and source object identities, the confirmatory allocation is
+   checked against sizing, and the final result records both policy names.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
-   campaign record, eligible member map, and `CurveFamilyContractDigest` in the
-   discovery policy version. The realized `CurveFamilyIdentity` follows Loader
+   campaign record, eligible member map, and `CurveFamilyName` in the
+   discovery policy version. The verified `CurveFamily` follows Loader
    verification. Implemented for
    [the first two-member RKNN campaign](../campaigns/rknn-mobilenet-v2-050-bsat-v1/README.md),
    which subsequently included all 12 matching idle and discovery Runs.
@@ -899,6 +898,6 @@ Standby-versus-model-loaded idle and transition-cost decomposition belong to a
 transition plan. They do not gate this campaign. Per-engine model-loaded idle is
 not deferred: ADR 0014 requires an admitted baseline for every distinct member
 state. Batch remains excluded from the exact state and protocol projections as
-an axis value, but a fixed-batch artifact's digest, path, capability, and supply
-image remain bound. `CurveFamilyIdentity` is the only boundary allowed to
+an axis value, but a fixed-batch artifact's name, path, capability, and supply
+image remain bound. The verified `CurveFamily` is the only boundary allowed to
 compose those exact states.

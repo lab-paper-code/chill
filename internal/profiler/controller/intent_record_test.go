@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -171,7 +169,6 @@ func TestIntentRecordsRejectPreparedRunSpecDrift(t *testing.T) {
 	run := testRun()
 	frozen := testFrozenRun(t)
 	frozen.Prepared.Intent.Measurement.Batch = 2
-	frozen.Prepared.IntentDigest, _ = frozen.Prepared.Intent.Digest()
 	scheme := intentRecordTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	records, err := NewIntentRecords(kubeClient, scheme)
@@ -250,17 +247,11 @@ func TestIntentRecordNameIsStableAndRunUIDScoped(t *testing.T) {
 func testPreparedRun(t *testing.T) profiler.PreparedRun {
 	t.Helper()
 	intent := testFrozenIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	candidate, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return profiler.PreparedRun{
-		Intent: intent, IntentDigest: digest, CandidateReportBytes: candidate,
-	}
+	return profiler.PreparedRun{Intent: intent, CandidateReportBytes: candidate}
 }
 
 func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, FrozenRun) {
@@ -297,7 +288,7 @@ func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, FrozenR
 		t.Fatal(err)
 	}
 	prepared.Intent.Actuation = &profilingrun.ActuationContract{
-		PowerMode: selection.PowerMode, Actuator: target, PolicyDigest: policy.Policy.Name,
+		PowerMode: selection.PowerMode, Actuator: target, PolicyName: policy.Policy.Name,
 	}
 	report, err := profilingrun.DecodeCandidateReport(prepared.CandidateReportBytes)
 	if err != nil {
@@ -311,12 +302,7 @@ func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, FrozenR
 	if err != nil {
 		t.Fatal(err)
 	}
-	reportSum := sha256.Sum256(prepared.CandidateReportBytes)
-	prepared.Intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(reportSum[:])
-	prepared.IntentDigest, err = prepared.Intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
+	prepared.Intent.Candidate.Inputs = report.Inputs
 	prepared.ActuationPolicy = &policy
 	return run, frozenRunForPrepared(t, prepared)
 }

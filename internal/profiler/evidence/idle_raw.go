@@ -13,17 +13,13 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const (
-	idleRawMeasurementSchemaVersionV1Alpha1 = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha1"
-	IdleRawMeasurementSchemaVersion         = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha2"
-)
+const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha3"
 
 // IdleRawMeasurement retains only worker-visible facts. Its runtime result is
 // distinct from active inference evidence, while metric/workload provenance is
 // shared.
 type IdleRawMeasurement struct {
 	SchemaVersion string                         `json:"schemaVersion"`
-	IntentDigest  string                         `json:"intentDigest"`
 	PodUID        string                         `json:"podUID"`
 	Runtime       profilingrun.IdleRuntimeResult `json:"runtime"`
 	Metrics       metricobserver.Result          `json:"metrics"`
@@ -54,16 +50,10 @@ func (m IdleRawMeasurement) Validate(intent profilingrun.Intent) error {
 }
 
 func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != IdleRawMeasurementSchemaVersion &&
-		m.SchemaVersion != idleRawMeasurementSchemaVersionV1Alpha1 {
+	if m.SchemaVersion != IdleRawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
 	}
-	if m.SchemaVersion == idleRawMeasurementSchemaVersionV1Alpha1 &&
-		m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersionV1Alpha1 {
-		return errors.New("v1alpha1 idle raw measurement requires the retained v1alpha1 runtime result")
-	}
-	if m.SchemaVersion == IdleRawMeasurementSchemaVersion &&
-		m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersion {
+	if m.Runtime.SchemaVersion != profilingrun.IdleRuntimeResultSchemaVersion {
 		return errors.New("current idle raw measurement requires the current idle runtime result")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {

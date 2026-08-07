@@ -1,8 +1,6 @@
 package profilingrun
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,22 +19,8 @@ func (i Intent) Validate() error {
 		return err
 	}
 
-	for name, value := range map[string]string{
-		"candidate.reportDigest":             i.Candidate.ReportDigest,
-		"candidate.modelSpecContentDigest":   i.Candidate.ModelSpecContentDigest,
-		"candidate.deviceClassContentDigest": i.Candidate.DeviceClassContentDigest,
-		"candidate.runtimeDeclarationDigest": i.Candidate.RuntimeDeclarationDigest,
-		"state.artifactDigest":               i.State.ArtifactDigest,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
-	}
-	if value := i.Metrics.ConfigurationContentDigest; value != "" && strings.TrimSpace(value) != value {
-		return errors.New("metrics.configurationContentDigest must not have surrounding whitespace")
-	}
-	if value := i.State.HostContractDigest; value != "" && strings.TrimSpace(value) != value {
-		return errors.New("state.hostContractDigest must not have surrounding whitespace")
+	if err := validateCandidateInputs(i.Candidate.Inputs); err != nil {
+		return err
 	}
 	if err := i.validateActuationContract(); err != nil {
 		return err
@@ -110,24 +94,8 @@ func (i Intent) Validate() error {
 }
 
 func (i Intent) validateSchema() error {
-	if i.SchemaVersion != SchemaVersion &&
-		i.SchemaVersion != intentSchemaVersionV1Alpha8 &&
-		i.SchemaVersion != intentSchemaVersionV1Alpha7 &&
-		i.SchemaVersion != intentSchemaVersionV1Alpha6 {
+	if i.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %q", i.SchemaVersion)
-	}
-	if i.SchemaVersion == intentSchemaVersionV1Alpha6 && i.State.HostContractDigest != "" {
-		return errors.New("v1alpha6 intent cannot contain state.hostContractDigest")
-	}
-	if i.SchemaVersion == intentSchemaVersionV1Alpha6 &&
-		i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
-		return errors.New("v1alpha6 intent cannot contain model-loaded idle measurement")
-	}
-	if i.SchemaVersion != SchemaVersion && i.Actuation != nil {
-		return errors.New("retained intent schema cannot contain actuation")
-	}
-	if i.SchemaVersion != SchemaVersion && i.State.PowerMode != FixedPowerMode {
-		return errors.New("retained intent schema cannot select an actuated power mode")
 	}
 	if !validArtifactPath(i.State.ArtifactPath) {
 		return errors.New("state.artifactPath must be a clean absolute container path")
@@ -155,9 +123,8 @@ func (i Intent) validateMeasurementMode() error {
 	return nil
 }
 
-// IsSupportedActiveIntent reports whether the first CPU ORT active worker
-// family can execute a current or retained intent. Callers must validate the
-// intent separately.
+// IsSupportedActiveIntent reports whether the CPU ORT active worker can
+// execute the current intent. Callers must validate the intent separately.
 func IsSupportedActiveIntent(i Intent) bool {
 	return supportedCPUORTIntentSchema(i.SchemaVersion) &&
 		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode &&
@@ -176,11 +143,11 @@ func IsSupportedCPUORTIntent(i Intent) bool {
 // IsSupportedRKNNLiteIntent covers the current active and model-loaded-idle
 // contracts implemented by the explicit host-bound RKNNLite worker.
 func IsSupportedRKNNLiteIntent(i Intent) bool {
-	return (i.SchemaVersion == SchemaVersion || i.SchemaVersion == intentSchemaVersionV1Alpha8) &&
+	return i.SchemaVersion == SchemaVersion &&
 		hasExecutionPath(i) &&
 		i.State.RuntimeFamily == RKNNLiteRuntimeFamily &&
 		i.State.Backend == RKNNLiteBackend &&
-		i.State.HostContractDigest != "" &&
+		i.State.HostContract != nil &&
 		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
@@ -197,16 +164,11 @@ func hasExecutionPath(i Intent) bool {
 }
 
 func supportedCPUORTIntentSchema(schemaVersion string) bool {
-	return schemaVersion == SchemaVersion ||
-		schemaVersion == intentSchemaVersionV1Alpha8 ||
-		schemaVersion == intentSchemaVersionV1Alpha7 ||
-		schemaVersion == intentSchemaVersionV1Alpha6
+	return schemaVersion == SchemaVersion
 }
 
 func supportedCPUORTIdleIntentSchema(schemaVersion string) bool {
-	return schemaVersion == SchemaVersion ||
-		schemaVersion == intentSchemaVersionV1Alpha8 ||
-		schemaVersion == intentSchemaVersionV1Alpha7
+	return schemaVersion == SchemaVersion
 }
 
 func (i Intent) validateCPUContract() error {
@@ -232,9 +194,6 @@ func (i Intent) validateCPUContract() error {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
 	}
 	if i.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if i.SchemaVersion != SchemaVersion && i.SchemaVersion != intentSchemaVersionV1Alpha8 {
-			return errors.New("RKNNLite requires current or retained v1alpha8 intent schema")
-		}
 		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
 			return errors.New("RKNNLite CPU contract cannot contain ONNX Runtime thread settings")
 		}
@@ -242,6 +201,28 @@ func (i Intent) validateCPUContract() error {
 	}
 	if i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
 		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+	}
+	return nil
+}
+
+func validateCandidateInputs(inputs CandidateReportInputs) error {
+	for name, value := range map[string]string{
+		"candidate ModelSpec name":                 inputs.ModelSpec.Name,
+		"candidate ModelSpec UID":                  inputs.ModelSpec.UID,
+		"candidate ModelSpec resourceVersion":      inputs.ModelSpec.ResourceVersion,
+		"candidate DeviceClass name":               inputs.DeviceClass.Name,
+		"candidate DeviceClass UID":                inputs.DeviceClass.UID,
+		"candidate DeviceClass resourceVersion":    inputs.DeviceClass.ResourceVersion,
+		"candidate runtime namespace":              inputs.RuntimeDeclaration.Namespace,
+		"candidate runtime source name":            inputs.RuntimeDeclaration.Name,
+		"candidate runtime source UID":             inputs.RuntimeDeclaration.UID,
+		"candidate runtime source resourceVersion": inputs.RuntimeDeclaration.ResourceVersion,
+		"candidate runtime source key":             inputs.RuntimeDeclaration.Key,
+		"candidate runtime image":                  inputs.RuntimeDeclaration.Image,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%s is required without surrounding whitespace", name)
+		}
 	}
 	return nil
 }
@@ -264,9 +245,9 @@ func (i Intent) validateActuationContract() error {
 		i.Actuation.PowerMode != i.State.PowerMode {
 		return errors.New("actuation powerMode must match execution state")
 	}
-	if strings.TrimSpace(i.Actuation.PolicyDigest) == "" ||
-		strings.TrimSpace(i.Actuation.PolicyDigest) != i.Actuation.PolicyDigest {
-		return errors.New("actuation.policyDigest is required without surrounding whitespace")
+	if strings.TrimSpace(i.Actuation.PolicyName) == "" ||
+		strings.TrimSpace(i.Actuation.PolicyName) != i.Actuation.PolicyName {
+		return errors.New("actuation.policyName is required without surrounding whitespace")
 	}
 	if err := i.Actuation.Actuator.Validate(); err != nil {
 		return fmt.Errorf("validate actuation target: %w", err)
@@ -308,19 +289,4 @@ func (i Intent) CanonicalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(i)
-}
-
-// MarshalJSON fixes the canonical field order used by intent digests.
-func (i Intent) MarshalJSON() ([]byte, error) {
-	type wire Intent
-	return json.Marshal(wire(i))
-}
-
-func (i Intent) Digest() (string, error) {
-	payload, err := i.CanonicalJSON()
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }

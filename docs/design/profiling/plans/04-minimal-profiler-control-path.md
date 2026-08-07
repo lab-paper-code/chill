@@ -18,12 +18,12 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha9`; retained v1alpha8, v1alpha7, and v1alpha6 CPU
-records remain readable, as does retained v1alpha8 RKNNLite. The current schema
-adds an optional typed actuation binding while preserving the common worker CPU
-quota and RKNNLite's omission of ORT-only thread settings. Each immutable intent record
-contains the structured intent, candidate report, admission policy, and
-execution policy.
+The internal intent is `v1alpha10`, and the Go and Python execution boundaries
+accept that current schema only. It carries semantic source-object identities,
+the typed host contract, and an optional typed actuation binding while
+preserving the common worker CPU quota and RKNNLite's omission of ORT-only
+thread settings. Each immutable intent record contains the structured intent,
+candidate report, admission policy, and execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
 idle admission dispatch are implemented and live-verified. The accepted idle
@@ -39,7 +39,7 @@ Profiler restart proceeds to admission without repeating finalization, and that
 a completed admission is a stable no-op. A third envtest proves that recreating
 the recorded Job name with a different UID is rejected without
 rematerialization or Run-status mutation; the same fail-closed result now covers
-an unchanged Job UID whose controller owner drifts. Retained-intent digest,
+an unchanged Job UID whose controller owner drifts. Retained-frozen intent record,
 immutable Run-spec, evidence-store binding, raw-object identity, and executed
 container-image drift remain covered by their focused unit gates. The Operator
 envtest also reconstructs its Profiler reconciler over the retained
@@ -146,7 +146,7 @@ native owner relationships and the Profiler controllers retain that lifecycle.
   Node and CHILL catalog facts required to prepare a Run;
 - the default Profiler Deployment configuration referenced by `ChillSystem`;
 - the default trusted fact-source ConfigMap referenced by that Deployment
-  configuration, including digest-pinned runtime and artifact workload images
+  configuration, including immutable OCI runtime and artifact workload images
   and the Node-to-edge-metrics map; and
 - the install, upgrade, and removal lifecycle of those authorization and
   configuration objects.
@@ -276,7 +276,7 @@ Its desired state should contain references and policy inputs sufficient to
 derive one immutable intent:
 
 - exact model artifact and execution-path identity;
-- exact trusted runtime declaration and digest-pinned images;
+- exact trusted runtime declaration and immutable OCI image references;
 - selected DeviceClass and target Node;
 - selected power mode;
 - fixed batch, warm-up, duration, repetitions, and CPU policy;
@@ -295,11 +295,11 @@ or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 
 | Fact | Authority | Frozen Run value |
 |---|---|---|
-| logical artifact and required execution path | referenced `ModelSpec` | object identity, artifact content digest, format, runtime family, and backend |
+| logical artifact and required execution path | referenced `ModelSpec` | object identity, artifact name, path, and immutable carrier image, format, runtime family, and backend |
 | stable hardware class and declared power modes | referenced `DeviceClass` | object identity, architecture, and selected power-mode identity |
-| trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration content digest plus digest-pinned runtime and artifact workload images |
+| trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration source object identity plus immutable OCI runtime and artifact workload images |
 | selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
-| Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration content digest |
+| Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration source object identity |
 | single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics and exact ConfigMap namespace, name, UID, resourceVersion, and key |
 | worker execution envelope | DeviceClass, execution-path, and workload-mode entry in the fact-source ConfigMap | timeout margins, producer capacities, container resources, and exact ConfigMap namespace, name, UID, resourceVersion, and key |
 
@@ -348,7 +348,7 @@ annotation uses the selected policy's semantic identity; ConfigMap-only
 revision changes do not create a new execution identity. Restart recovery never
 consults mutable execution-policy configuration.
 
-`ProfilingRun.spec.candidate.powerMode` is required. Candidate-report v1alpha6
+`ProfilingRun.spec.candidate.powerMode` is required. Candidate-report v1alpha7
 verifies that it is declared by the selected `DeviceClass` and directly retains
 the exact typed actuator target for a non-fixed mode. The Profiler selects a
 configured actuation policy by DeviceClass, mode, and actuator kind; its
@@ -382,9 +382,9 @@ Status remains compact and reconstructable:
 
 - `observedGeneration`;
 - Kubernetes-style conditions for execution completion and evidence admission;
-- intent digest;
+- frozen intent record;
 - owned Job reference and actual Node/Pod identities;
-- evidence store/key reference, content digest, schema version, and byte size;
+- evidence store/key reference, schema version, and byte size;
   and
 - structured admission verdict and reason codes.
 
@@ -398,7 +398,7 @@ aggregate `message` field is introduced.
 1. Validate request, selected power mode, and referenced facts
 2. Resolve the trusted execution declaration and evaluate exact static compatibility
 3. Resolve the exact Node snapshot and Node -> edge-metrics source
-4. Freeze all source identities, content digests, and the Run intent
+4. Freeze all source identities, source object identities, and the Run intent
 5. Create one deterministic, ProfilingRun-owned Job
 6. Let its measurement worker execute and persist raw runtime + power evidence
 7. Observe native Job/Pod completion and verify the raw-measurement receipt
@@ -517,21 +517,21 @@ first ownership contract is:
 - human and research consumers read through the finalized reference without
   becoming writers to either object.
 
-Each object identity is the digest of its exact stored bytes. A location alone
-is not identity. The finalized record contains the verified raw-measurement
-reference and its digest. The compact finalized reference carried by Run status
-contains a logical store identity and opaque object key, content digest, schema
-version, and byte size. It contains no raw samples, endpoint credentials,
+Each object reference contains the configured logical store, an opaque immutable
+key, and a positive byte size. The finalized record contains the raw-measurement
+reference. The compact finalized reference carried by Run status adds the schema
+version. It contains no raw samples, endpoint credentials,
 Secret data, or caller-selected storage URL. The selected store comes from
 CHILL system configuration; a Run cannot redirect evidence to an arbitrary
 endpoint.
 
-The worker constructs the bounded raw-measurement object, calculates its digest
-and size, and performs an immutable create. It does not claim terminal Job or
-Pod state, because those facts do not exist until the worker has exited. A
-repeated write of the same bytes may succeed idempotently; existing different
-bytes at the same key must fail. The sink must not expose a partial object as
-committed. After a successful commit, the worker emits only a small structured
+The worker constructs the bounded raw-measurement object, records its size, and
+performs an immutable create. It does not claim terminal Job or
+Pod state, because those facts do not exist until the worker has exited. An
+existing immutable key is reported without reopening and comparing its content;
+the controller's semantic loader owns validation. The sink must not expose a
+partial object as committed. After a successful create or existing-key result,
+the worker emits only a small structured
 receipt through the native container termination message. The receipt is a
 handoff hint, not proof.
 
@@ -540,8 +540,8 @@ The controller trusts the handoff only after it:
 1. observes the one owned Job and Pod attempt in a terminal state;
 2. parses the bounded receipt from the terminated worker container;
 3. retrieves the object through the configured evidence-store reader;
-4. verifies byte size, content digest, schema, Run intent digest, and
-   measurement identities;
+4. enforces the size bound, strict-decodes the schema, and verifies the Run and
+   measurement relationships;
 5. constructs an immutable execution-evidence record containing the verified
    raw reference and the observed terminal Job, Pod, Node, ownership, and image
    facts;
@@ -549,17 +549,17 @@ The controller trusts the handoff only after it:
 7. publishes its compact reference and evidence/admission Conditions.
 
 Retrieval and verification produce an opaque evidence value. Scientific
-admission consumes that value directly, so the same raw and finalized bytes
-are not rehashed or structurally revalidated inside the admission package.
+admission consumes that value directly and does not repeat structural
+validation inside the admission package.
 
-Finalization uses a deterministic object key and canonical bytes. Before
+Finalization uses a deterministic object key and a typed semantic record. Before
 constructing a record, the controller checks that key and reuses an existing
 valid record. When no record exists, it projects the required UIDs, ownership,
 placement, requested and pulled image identities, termination states, native
 completion timestamps, and bounded workload observation rather than
 serializing entire live Kubernetes objects. Volatile `resourceVersion`, managed
 fields, and unrelated metadata are not part of the record. A crash after the
-immutable write therefore recovers the existing bytes instead of reconstructing
+immutable write therefore recovers the existing record instead of reconstructing
 them from later cluster state.
 
 Job success without a committed and verified raw object and a verified finalized
@@ -680,7 +680,7 @@ sentinel values accepted by the active result validator.
     production evidence and admission path. Implemented and live-verified.
 14. Demonstrate Profiler availability through `ChillSystem`, then the Run flow
     through `kubectl get/describe profilingrun`, its owned Job, and the evidence
-    digest. Implemented through the evidence digest.
+    object reference. Implemented through the evidence object reference.
 15. Expose and execute `idle-model-loaded` through the same Run/Job lifecycle,
     while retaining distinct runtime/raw completeness and idle admission.
     Implemented and live-verified on Lattepanda.
@@ -715,7 +715,7 @@ The first Profiler is complete only when:
 - the selected power mode is explicit and belongs to the selected DeviceClass;
 - new Runs resolve only installation-time trusted execution declarations,
   while frozen Runs remain bound to the exact ConfigMap identity, declaration,
-  and source-entry content digests;
+  and source-entry source object identities;
 - Node-to-edge-metrics resolution is explicit and captured in the frozen intent;
 - exactly one native Job/Pod attempt is attributable to the Run;
 - strict evidence validation is covered by the current worker, evidence,

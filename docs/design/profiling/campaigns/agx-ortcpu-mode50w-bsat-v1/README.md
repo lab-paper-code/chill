@@ -21,14 +21,11 @@ capability boundary. This campaign therefore does not use Plan 5a's typed
 
 - family contract: [curve-family-contract.json](curve-family-contract.json)
 - discovery policy: [discovery-policy.json](discovery-policy.json)
-- canonical family-contract identity:
-  `chill.dacs.io/curve-family-contract.v1alpha1@sha256:891268f5a816897090178f7401bf49ea06110bbc4100d158d9ba1ffd43ee0002`
-- canonical discovery-policy digest:
-  `sha256:d93265a9d9e445586e3587b27a0c3aecf9d616c78560d25103d5b083d29459b4`
+- family name: `agx-ortcpu-mode50w-bsat-v1`
+- discovery-policy name: `agx-ortcpu-mode50w-bsat-v1`
 - exact Node and mode: `jetsono` UID
   `52b04c16-4f4a-4b4c-938c-eac35e679f09`, `MODE_50W`
-- configured actuation-policy digest:
-  `sha256:630e486ffe3eb24bd89a5439f6c926a7658cb55c4befaf7f2637f18a95b3c92f`
+- configured actuation-policy name: `orin-mode-50w-v1`
 - `Kmax=2`, `tau=0.05`, `n_disc=3`,
   `maximumConfirmatoryTrials=6`, `maximumActiveRunBudget=18`, point confidence
   `0.95`, and family-wise alpha `0.05`

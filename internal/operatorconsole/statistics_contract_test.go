@@ -3,7 +3,6 @@ package operatorconsole
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
@@ -62,7 +61,7 @@ func zeroIdleBaseline(t *testing.T) profilederivation.IdleBaseline {
 			TrialID:                     fmt.Sprintf("idle-%d", index),
 			RawEvidence: profilederivation.RawEvidenceIdentity{
 				Store: "store", Key: fmt.Sprintf("idle/%d", index),
-				Digest: "sha256:" + strings.Repeat("a", 64), Size: 1,
+				Size: 1,
 			},
 			AdmissionPolicyVersion: "idle-admission",
 		}

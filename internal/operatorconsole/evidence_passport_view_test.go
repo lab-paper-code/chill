@@ -20,10 +20,9 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	execution.FinalizedAt = started.Add(time.Minute)
 	execution.RawMeasurement.Store = "chill-evidence"
 	execution.RawMeasurement.Key = rawObjectKey
-	execution.RawMeasurement.Digest = run.Status.Evidence.Digest
 	execution.RawMeasurement.Size = 512
 	execution.Intent = profilingrun.Intent{Workload: profilingrun.CurrentWorkloadContract()}
-	workload := passportWorkloadResult(t, execution.Intent, started)
+	workload := passportWorkloadResult(t, started)
 	measurement := profilerevidence.RawMeasurement{
 		Runtime: profilingrun.RuntimeResult{
 			Runtime: "onnxruntime", RuntimeVersion: "1.16.0", Provider: "CPUExecutionProvider",
@@ -104,14 +103,9 @@ func assertPassportWorkload(t *testing.T, workload *EvidencePassportWorkload) {
 
 func passportWorkloadResult(
 	t *testing.T,
-	intent profilingrun.Intent,
 	started time.Time,
 ) workloadobserver.Result {
 	t.Helper()
-	digest, err := intent.Workload.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	run := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "run", UID: "run-uid", Phase: "Running",
 		Images: []string{"runtime@sha256:" + strings.Repeat("a", 64)},
@@ -132,7 +126,7 @@ func passportWorkloadResult(
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: "run-uid",
 		},
-		PolicyDigest: digest, CoverageStartedAt: started, CoverageEndedAt: started.Add(31 * time.Second),
+		CoverageStartedAt: started, CoverageEndedAt: started.Add(31 * time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "10", EventLimit: 10,
 		InitialActivePods: pods, FinalActivePods: append([]workloadobserver.Pod(nil), pods...), Continuous: true,
 	}

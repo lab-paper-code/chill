@@ -41,8 +41,7 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		PolicyVersion: policy.Version, KMax: policy.KMax,
 		RelativeImprovementTolerance: policy.RelativeImprovementTolerance,
 		DiscoveryTrials:              policy.DiscoveryTrials,
-		CurveFamilyContractDigest:    curve.ContractDigest(),
-		CurveFamilyIdentity:          curve.FamilyIdentity(),
+		CurveFamilyName:              curve.FamilyName(),
 	}
 	for index, point := range discovery.points {
 		expectedBatch := index + 1

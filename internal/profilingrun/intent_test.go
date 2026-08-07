@@ -2,7 +2,6 @@ package profilingrun
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 )
@@ -11,20 +10,6 @@ func decodeTestIntent(payload []byte) (Intent, error) {
 	var intent Intent
 	err := json.Unmarshal(payload, &intent)
 	return intent, err
-}
-
-func TestRetainedV1Alpha6IntentRemainsValid(t *testing.T) {
-	payload, err := os.ReadFile("testdata/intent-v1alpha6.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	intent, err := decodeTestIntent(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := intent.Validate(); err != nil {
-		t.Fatalf("retained intent rejected: %v", err)
-	}
 }
 
 func TestIntentDecoderRejectsExplicitNullActuation(t *testing.T) {
@@ -38,27 +23,13 @@ func TestIntentDecoderRejectsExplicitNullActuation(t *testing.T) {
 	}
 }
 
-func TestCurrentIntentBindsOptionalHostContractDigest(t *testing.T) {
+func TestCurrentIntentBindsOptionalHostContract(t *testing.T) {
 	intent := validIntent()
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	contract := rknnHostContractForTest()
+	intent.State.HostContract = &contract
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
-
-	retained := intent
-	retained.SchemaVersion = intentSchemaVersionV1Alpha8
-	if err := retained.Validate(); err != nil {
-		t.Fatalf("retained v1alpha8 schema rejected host state material: %v", err)
-	}
-	retained.SchemaVersion = intentSchemaVersionV1Alpha7
-	if err := retained.Validate(); err != nil {
-		t.Fatalf("retained v1alpha7 schema rejected host state material: %v", err)
-	}
-	retained.SchemaVersion = intentSchemaVersionV1Alpha6
-	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "v1alpha6") {
-		t.Fatalf("retained v1alpha6 schema accepted new state material: %v", err)
-	}
-
 }
 
 func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
@@ -66,7 +37,8 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 	intent.Candidate.ExecutionPath = "rknnlite-bs2"
 	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	intent.State.Backend = RKNNLiteBackend
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	contract := rknnHostContractForTest()
+	intent.State.HostContract = &contract
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
 	if err := intent.Validate(); err != nil {
@@ -92,23 +64,14 @@ func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
 	if err := withORTSettings.Validate(); err == nil || !strings.Contains(err.Error(), "ONNX Runtime thread") {
 		t.Fatalf("RKNNLite intent accepted ORT-only settings: %v", err)
 	}
-	retained := intent
-	retained.SchemaVersion = intentSchemaVersionV1Alpha8
-	if err := retained.Validate(); err != nil || !IsSupportedRKNNLiteIntent(retained) {
-		t.Fatalf("retained v1alpha8 RKNNLite contract was rejected: %v", err)
-	}
-	retained.SchemaVersion = intentSchemaVersionV1Alpha7
-	if err := retained.Validate(); err == nil || !strings.Contains(err.Error(), "current or retained v1alpha8") {
-		t.Fatalf("v1alpha7 intent schema accepted RKNNLite contract: %v", err)
-	}
 }
 
 func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("b", 64)
+	policyName := "node-power-default"
 	intent := validIntent()
 	intent.State.PowerMode = testActuatedNVPMode
 	intent.Actuation = &ActuationContract{
-		PowerMode: intent.State.PowerMode, PolicyDigest: digest,
+		PowerMode: intent.State.PowerMode, PolicyName: policyName,
 		Actuator: ActuatorTarget{
 			Kind:           ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
@@ -126,7 +89,7 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 	clock := validIntent()
 	clock.State.PowerMode = "gpu-1200"
 	clock.Actuation = &ActuationContract{
-		PowerMode: clock.State.PowerMode, PolicyDigest: digest,
+		PowerMode: clock.State.PowerMode, PolicyName: policyName,
 		Actuator: ActuatorTarget{
 			Kind:                 ActuatorKindNvidiaLockedGPUClock,
 			NvidiaLockedGPUClock: &NvidiaLockedGPUClockTarget{MinMHz: 1200, MaxMHz: 1200, Mode: &clockMode},
@@ -142,12 +105,12 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 	}{
 		{name: "missing contract", mutate: func(candidate *Intent) { candidate.Actuation = nil }},
 		{name: "mode mismatch", mutate: func(candidate *Intent) { candidate.Actuation.PowerMode = "different-mode" }},
-		{name: "missing policy identity", mutate: func(candidate *Intent) { candidate.Actuation.PolicyDigest = "" }},
+		{name: "missing policy identity", mutate: func(candidate *Intent) { candidate.Actuation.PolicyName = "" }},
 		{name: "negative NVPModel ID", mutate: func(candidate *Intent) { candidate.Actuation.Actuator.JetsonNVPModel.ID = -1 }},
 		{name: "mixed actuator union", mutate: func(candidate *Intent) {
 			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
 		}},
-		{name: "retained schema", mutate: func(candidate *Intent) { candidate.SchemaVersion = intentSchemaVersionV1Alpha8 }},
+		{name: "unsupported schema", mutate: func(candidate *Intent) { candidate.SchemaVersion = "foreign" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := intent
@@ -194,10 +157,6 @@ func TestIntentAcceptsConfiguredImageReference(t *testing.T) {
 
 func TestCurrentIntentFreezesGenericWorkloadObservationContract(t *testing.T) {
 	intent := validIntent()
-	digest, err := intent.Workload.Digest()
-	if err != nil || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("contract digest = %q, error = %v", digest, err)
-	}
 	keys, err := intent.Workload.LabelKeys()
 	if err != nil || strings.Join(keys, ",") !=
 		"app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role" {
@@ -255,7 +214,8 @@ func TestCurrentRKNNLiteIntentAllowsArtifactBatchForIdle(t *testing.T) {
 	idle.Candidate.ExecutionPath = "rknnlite-bs2"
 	idle.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	idle.State.Backend = RKNNLiteBackend
-	idle.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	contract := rknnHostContractForTest()
+	idle.State.HostContract = &contract
 	idle.CPU.ORTIntraOpThreads = 0
 	idle.CPU.ORTInterOpThreads = 0
 	idle.Measurement = MeasurementContract{
@@ -320,22 +280,29 @@ func validIntent() Intent {
 	return Intent{
 		SchemaVersion: SchemaVersion,
 		Candidate: CandidateIdentity{
-			ReportDigest:             d,
-			ModelSpecContentDigest:   d,
-			DeviceClassContentDigest: d,
-			RuntimeDeclarationDigest: d,
-			ExecutionPath:            "ort-cpu",
-			Verdict:                  "Compatible",
+			Inputs: CandidateReportInputs{
+				ModelSpec: CandidateReportObjectInput{
+					Name: "mobilenet-v2-050", UID: "model-uid", ResourceVersion: "1",
+				},
+				DeviceClass: CandidateReportObjectInput{
+					Name: "lattepanda-3-delta-8g", UID: "class-uid", ResourceVersion: "1",
+				},
+				RuntimeDeclaration: CandidateReportRuntimeInput{
+					Namespace: "chill-system", Name: "profiling-execution-facts", UID: "facts-uid",
+					ResourceVersion: "1", Key: "execution-facts.yaml", Image: image,
+				},
+			},
+			ExecutionPath: "ort-cpu",
+			Verdict:       "Compatible",
 		},
 		State: ExecutionState{
-			DeviceClass:    "lattepanda-3-delta-8g",
-			Model:          "mobilenet-v2-050",
-			Artifact:       "canonical-onnx",
-			ArtifactDigest: d,
-			ArtifactPath:   "/artifact/mobilenet-v2-050.onnx",
-			RuntimeFamily:  "onnxruntime",
-			Backend:        "CPUExecutionProvider",
-			PowerMode:      "fixed",
+			DeviceClass:   "lattepanda-3-delta-8g",
+			Model:         "mobilenet-v2-050",
+			Artifact:      "canonical-onnx",
+			ArtifactPath:  "/artifact/mobilenet-v2-050.onnx",
+			RuntimeFamily: "onnxruntime",
+			Backend:       "CPUExecutionProvider",
+			PowerMode:     "fixed",
 		},
 		Images: Images{
 			Runtime: image, Artifact: image, MetricObserver: image, WorkloadObserver: image,
@@ -365,14 +332,13 @@ func validIntent() Intent {
 			OutputValidation: "nonempty-shape-batch-v1",
 		},
 		Metrics: MetricContract{
-			SourceKind:                 "edge-metrics",
-			NodeName:                   "lattepanda",
-			Endpoint:                   "http://edge-metric.monitoring.svc:9102/metrics",
-			PowerMetric:                "shelly_power_total_watts",
-			ConfigurationContentDigest: d,
-			IntervalMilliseconds:       1000,
-			TimeoutMilliseconds:        500,
-			DurationSeconds:            31,
+			SourceKind:           "edge-metrics",
+			NodeName:             "lattepanda",
+			Endpoint:             "http://edge-metric.monitoring.svc:9102/metrics",
+			PowerMetric:          "shelly_power_total_watts",
+			IntervalMilliseconds: 1000,
+			TimeoutMilliseconds:  500,
+			DurationSeconds:      31,
 		},
 		Workload: CurrentWorkloadContract(),
 	}

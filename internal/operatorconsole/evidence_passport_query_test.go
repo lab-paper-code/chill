@@ -37,12 +37,12 @@ func TestEvidencePassportQueryFollowsRunReferenceAndPreservesSources(t *testing.
 		t.Fatalf("loader calls/reference = %d, %#v", loader.calls, loader.reference)
 	}
 	if !got.ReadAt.Equal(readAt.UTC()) || got.Run.UID != run.UID ||
-		got.Execution.IntentDigest != run.Status.IntentDigest || got.Measurement.PodUID != "pod-uid" {
+		!got.Run.Status.IntentFrozen || got.Measurement.PodUID != "pod-uid" {
 		t.Fatalf("passport = %#v", got)
 	}
 
-	got.Run.Status.IntentDigest = "changed"
-	if run.Status.IntentDigest == "changed" {
+	got.Run.Status.IntentFrozen = false
+	if !run.Status.IntentFrozen {
 		t.Fatal("query returned a mutable alias of the Kubernetes object")
 	}
 }
@@ -166,29 +166,27 @@ func passportFixture() (
 	evidencestore.ObjectIdentity,
 	profilerevidence.ExecutionEvidence,
 ) {
-	digest := "sha256:" + strings.Repeat("a", 64)
 	identity := evidencestore.ObjectIdentity{
 		Store: "chill-evidence", Key: "profiling-runs/run/execution.json",
-		Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,
+		Size: 1024,
 	}
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentDigest: digest,
+			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
-				Store: identity.Store, Key: identity.Key, Digest: identity.Digest,
+				Store: identity.Store, Key: identity.Key,
 				Size: identity.Size, SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 			},
 		},
 	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		IntentDigest:  digest,
 		Terminal: profilerevidence.TerminalFacts{
 			Job:  profilerevidence.JobTerminalFacts{Namespace: "chill-system", Name: "job", UID: "job-uid"},
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: "chill-system", Name: "pod", UID: "pod-uid"},

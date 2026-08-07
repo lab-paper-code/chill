@@ -57,7 +57,7 @@ func TestLoaderLoadsFinalAndRawObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedExecution.IntentDigest != execution.IntentDigest || loadedRaw.PodUID != raw.PodUID {
+	if loadedExecution.Intent.State.Model != execution.Intent.State.Model || loadedRaw.PodUID != raw.PodUID {
 		t.Fatalf("loaded evidence identity mismatch: %#v %#v", loadedExecution, loadedRaw)
 	}
 

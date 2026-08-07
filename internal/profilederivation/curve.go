@@ -174,9 +174,7 @@ func deriveCurvePoint(
 	return point, nil
 }
 
-func (c Curve) FamilyIdentity() string { return c.family.Identity() }
-
-func (c Curve) ContractDigest() string { return c.family.ContractDigest() }
+func (c Curve) FamilyName() string { return c.family.Name() }
 
 func (c Curve) Points() []Point {
 	var result []Point
@@ -229,7 +227,7 @@ func (f CurveFamily) requireVerified() error {
 	if err := f.contract.requireFrozen(); err != nil {
 		return err
 	}
-	if f.identity == "" || f.environmentIdentity == "" || len(f.members) != len(f.contract.record.Members) {
+	if f.Name() == "" || f.environmentIdentity == "" || len(f.members) != len(f.contract.record.Members) {
 		return errors.New("curve family was not verified")
 	}
 	return nil
@@ -282,7 +280,6 @@ func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {
 func clonePoint(point Point) Point {
 	point.Trials = append([]AdmittedTrial(nil), point.Trials...)
 	point.Confidence = clonePointConfidence(point.Confidence)
-	point.PreviousConfidence = clonePointConfidence(point.PreviousConfidence)
 	return point
 }
 

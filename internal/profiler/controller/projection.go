@@ -83,7 +83,7 @@ func ProjectSnapshot(
 	}
 
 	snapshot := profiler.Snapshot{}
-	if err := projectIntent(run.Status.IntentDigest, frozenIntent, &snapshot); err != nil {
+	if err := projectIntent(run.Status.IntentFrozen, frozenIntent, &snapshot); err != nil {
 		return profiler.Snapshot{}, err
 	}
 	if err := projectJob(run, job, &snapshot); err != nil {
@@ -99,12 +99,12 @@ func ProjectSnapshot(
 	return snapshot, nil
 }
 
-func projectIntent(digest string, frozen *profilingrun.Intent, snapshot *profiler.Snapshot) error {
-	if digest == "" && frozen == nil {
+func projectIntent(frozenStatus bool, frozen *profilingrun.Intent, snapshot *profiler.Snapshot) error {
+	if !frozenStatus && frozen == nil {
 		return nil
 	}
-	if digest == "" || frozen == nil {
-		return errors.New("intent digest and frozen intent must be observed together")
+	if !frozenStatus || frozen == nil {
+		return errors.New("intent status and frozen intent must be observed together")
 	}
 	copy := *frozen
 	snapshot.Intent = &copy
@@ -171,7 +171,7 @@ func projectEvidence(reference *edgev1alpha1.ProfilingRunEvidenceReference, snap
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", reference.SchemaVersion)
 	}
 	identity := evidencestore.ObjectIdentity{
-		Store: reference.Store, Key: reference.Key, Digest: reference.Digest, Size: reference.Size,
+		Store: reference.Store, Key: reference.Key, Size: reference.Size,
 	}
 	if err := identity.Validate(); err != nil {
 		return fmt.Errorf("validate status evidence reference: %w", err)

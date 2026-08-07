@@ -2,8 +2,6 @@ package evidence
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,11 +42,9 @@ func decodeExact(payload []byte, target any) error {
 }
 
 func identityFor(location evidencestore.ObjectLocation, payload []byte) evidencestore.ObjectIdentity {
-	sum := sha256.Sum256(payload)
 	return evidencestore.ObjectIdentity{
-		Store:  location.Store,
-		Key:    location.Key,
-		Digest: "sha256:" + hex.EncodeToString(sum[:]),
-		Size:   int64(len(payload)),
+		Store: location.Store,
+		Key:   location.Key,
+		Size:  int64(len(payload)),
 	}
 }

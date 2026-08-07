@@ -60,7 +60,7 @@ Jetson. This is a conceptual list, not a field schema.
 
 - immutable Run identity
 - logical model reference
-- selected artifact reference and content digest
+- selected artifact reference and source object identity
 - selected runtime-path reference
 - selected batch
 
@@ -71,7 +71,7 @@ the Profiler's campaign search range.
 
 ### Common lifecycle outcomes
 
-- artifact digest verification outcome
+- artifact carrier reference verification outcome
 - runtime load/initialization outcome
 - selected-batch execution outcome
 - output-validation outcome and validation method

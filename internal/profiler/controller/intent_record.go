@@ -32,7 +32,6 @@ const (
 	intentRecordAdmissionPolicyKey = "admission-policy.json"
 	intentRecordExecutionPolicyKey = "execution-policy.json"
 	intentRecordActuationPolicyKey = "actuation-policy.json"
-	intentDigestAnnotation         = "edge.dacs.io/profiling-run-intent-digest"
 	intentRecordNameHashCharacters = 32
 )
 
@@ -295,7 +294,7 @@ func decodeIntentRecord(
 		return FrozenRun{}, errors.New("frozen intent ConfigMap payload is incomplete")
 	}
 
-	intent, digest, err := decodeStoredIntent(intentBytes)
+	intent, err := decodeStoredIntent(intentBytes)
 	if err != nil {
 		return FrozenRun{}, err
 	}
@@ -307,7 +306,7 @@ func decodeIntentRecord(
 		return FrozenRun{}, errors.New("frozen intent ConfigMap has unexpected data keys")
 	}
 	prepared := profiler.PreparedRun{
-		Intent: intent, IntentDigest: digest,
+		Intent:               intent,
 		CandidateReportBytes: append([]byte(nil), candidateBytes...),
 	}
 	actuationPolicy, err := decodeStoredActuationPolicy(record, intent.Actuation != nil)
@@ -334,22 +333,21 @@ func decodeIntentRecord(
 	return frozen, nil
 }
 
-func decodeStoredIntent(raw []byte) (profilingrun.Intent, string, error) {
+func decodeStoredIntent(raw []byte) (profilingrun.Intent, error) {
 	var intent profilingrun.Intent
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&intent); err != nil {
-		return profilingrun.Intent{}, "", fmt.Errorf("decode frozen Run intent: %w", err)
+		return profilingrun.Intent{}, fmt.Errorf("decode frozen Run intent: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return profilingrun.Intent{}, "", errors.New("frozen Run intent contains a trailing JSON value")
+		return profilingrun.Intent{}, errors.New("frozen Run intent contains a trailing JSON value")
 	}
-	digest, err := intent.Digest()
-	if err != nil {
-		return profilingrun.Intent{}, "", fmt.Errorf("validate frozen Run intent: %w", err)
+	if err := intent.Validate(); err != nil {
+		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
 	}
-	return intent, digest, nil
+	return intent, nil
 }
 
 func decodeStoredAdmissionPolicy(record *corev1.ConfigMap) (profileradmission.FrozenPolicy, error) {

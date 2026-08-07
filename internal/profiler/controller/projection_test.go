@@ -78,10 +78,6 @@ func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 
 func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 	intent := testFrozenIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
 		name      string
 		configure func(*edgev1alpha1.ProfilingRun) *batchv1.Job
@@ -91,7 +87,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "create Job after intent is recorded",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				run.Status.IntentDigest = digest
+				run.Status.IntentFrozen = true
 				return nil
 			},
 			want: profiler.ActionCreateJob,
@@ -99,7 +95,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "wait for active Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run, digest)
+				recordIntentAndJob(run)
 				return ownedJob(run, nil)
 			},
 			want: profiler.ActionWaitForJob,
@@ -107,7 +103,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "finalize successful Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run, digest)
+				recordIntentAndJob(run)
 				return ownedJob(run, &batchv1.JobStatus{
 					Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
 				})
@@ -117,7 +113,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "do not recreate missing recorded Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run, digest)
+				recordIntentAndJob(run)
 				return nil
 			},
 			want: profiler.ActionReportExecutionLost,
@@ -125,7 +121,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "admit retained evidence after Job disappears",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run, digest)
+				recordIntentAndJob(run)
 				run.Status.Evidence = testEvidenceReference()
 				return nil
 			},
@@ -134,7 +130,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "complete after admission is recorded",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run, digest)
+				recordIntentAndJob(run)
 				run.Status.Evidence = testEvidenceReference()
 				run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 					Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
@@ -150,7 +146,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 			run := testRun()
 			job := test.configure(run)
 			var observedIntent *profilingrun.Intent
-			if run.Status.IntentDigest != "" {
+			if run.Status.IntentFrozen {
 				observedIntent = &intent
 			}
 			snapshot, err := ProjectSnapshot(run, observedIntent, job)
@@ -170,10 +166,6 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 
 func TestProjectSnapshotRejectsIdentityAndOutcomeContradictions(t *testing.T) {
 	intent := testFrozenIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
 		name   string
 		mutate func(*edgev1alpha1.ProfilingRun, *batchv1.Job)
@@ -209,7 +201,7 @@ func TestProjectSnapshotRejectsIdentityAndOutcomeContradictions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()
-			recordIntentAndJob(run, digest)
+			recordIntentAndJob(run)
 			job := ownedJob(run, nil)
 			test.mutate(run, job)
 			_, err := ProjectSnapshot(run, &intent, job)
@@ -271,8 +263,8 @@ func testFrozenIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
-func recordIntentAndJob(run *edgev1alpha1.ProfilingRun, digest string) {
-	run.Status.IntentDigest = digest
+func recordIntentAndJob(run *edgev1alpha1.ProfilingRun) {
+	run.Status.IntentFrozen = true
 	run.Status.Job = &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"}
 }
 
@@ -296,7 +288,6 @@ func ownedJob(run *edgev1alpha1.ProfilingRun, status *batchv1.JobStatus) *batchv
 func testEvidenceReference() *edgev1alpha1.ProfilingRunEvidenceReference {
 	return &edgev1alpha1.ProfilingRunEvidenceReference{
 		Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-		Digest:        "sha256:" + strings.Repeat("a", 64),
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Size: 1024,
 	}
 }

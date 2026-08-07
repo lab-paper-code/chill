@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
@@ -18,8 +19,8 @@ type FrozenRun struct {
 }
 
 func (r FrozenRun) Validate() error {
-	if r.Prepared.IntentDigest == "" {
-		return errors.New("frozen Run prepared intent is required")
+	if err := r.Prepared.Intent.Validate(); err != nil {
+		return fmt.Errorf("validate frozen Run intent: %w", err)
 	}
 	admissionSource, _, err := r.AdmissionPolicy.Records()
 	if err != nil {

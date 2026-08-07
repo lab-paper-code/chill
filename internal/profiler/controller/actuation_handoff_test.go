@@ -38,7 +38,7 @@ func TestBuildActuationHandoffFreezesExactRunNodeTargetPolicyAndDeadline(t *test
 		t.Fatalf("handoff identity = %#v", handoff)
 	}
 	policy := frozen.Prepared.ActuationPolicy.Policy
-	if handoff.Spec.PolicyDigest != frozen.Prepared.Intent.Actuation.PolicyDigest ||
+	if handoff.Spec.PolicyName != frozen.Prepared.Intent.Actuation.PolicyName ||
 		handoff.Spec.SettlingDurationSeconds != int32(policy.SettlingDurationSeconds) ||
 		handoff.Spec.MaxActuationDurationSeconds != int32(policy.MaxActuationDurationSeconds) ||
 		handoff.Spec.DesiredStage != edgev1alpha1.NodeActuationDesiredStageApply ||
@@ -66,7 +66,7 @@ func TestVerifyActuationHandoffRejectsFrozenIdentityAndTimingDrift(t *testing.T)
 		match  string
 	}{
 		{name: "node UID", mutate: func(h *edgev1alpha1.NodeActuation) { h.Spec.Node.UID = testDriftValue }, match: "frozen Run input"},
-		{name: "policy", mutate: func(h *edgev1alpha1.NodeActuation) { h.Spec.PolicyDigest = "sha256:" + strings.Repeat("f", 64) }, match: "frozen Run input"},
+		{name: "policy", mutate: func(h *edgev1alpha1.NodeActuation) { h.Spec.PolicyName = "other-policy" }, match: "frozen Run input"},
 		{name: "deadline", mutate: func(h *edgev1alpha1.NodeActuation) {
 			h.Spec.Deadline = metav1.NewTime(h.Spec.Deadline.Add(time.Second))
 		}, match: "deadline"},

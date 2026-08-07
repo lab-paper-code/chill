@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -23,8 +21,6 @@ import (
 )
 
 const (
-	testArtifactDigest      = "sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2"
-	testRKNNArtifactDigest  = "sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550"
 	testArtifactPath        = "/artifact/mobilenet-v2-050.onnx"
 	testArchitecture        = "amd64"
 	testARM64Architecture   = "arm64"
@@ -67,7 +63,6 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		t.Fatalf("runtime packages were not retained separately: %#v", report.RuntimePackages)
 	}
 	if report.HostContract == nil || len(report.HostContract.Libraries) != 1 ||
-		report.HostContract.Libraries[0].Digest != "sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8" ||
 		report.HostContract.Driver.Version != "0.9.6" || len(report.HostContract.Devices) != 4 ||
 		report.HostContract.Platform == nil || report.HostContract.Platform.CompatibleToken != "rockchip,rk3588" ||
 		report.HostContract.Allocation.ResourceName != "" || report.HostContract.Allocation.ExclusivityClaimed {
@@ -82,12 +77,8 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		t.Fatalf("artifact capability or runtime access was not retained: %#v %#v",
 			report.ArtifactCapability, report.RuntimeAccess)
 	}
-	wantHostDigest, err := profilingrun.CandidateHostContractDigest(report.HostContract)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.State.HostContractDigest != wantHostDigest {
-		t.Fatalf("frozen host contract digest = %q, want %q", resolved.State.HostContractDigest, wantHostDigest)
+	if !reflect.DeepEqual(resolved.State.HostContract, report.HostContract) {
+		t.Fatalf("frozen host contract = %#v, want %#v", resolved.State.HostContract, report.HostContract)
 	}
 }
 
@@ -107,9 +98,8 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 
 func TestDecodeRuntimeDeclarationValidatesImageOwnedPackages(t *testing.T) {
 	payload := validRKNNRuntimeDeclaration()
-	sum := sha256.Sum256([]byte(payload))
 	declaration, err := decodeRuntimeDeclaration(runtimeDeclarationSource{
-		ContentDigest: "sha256:" + hex.EncodeToString(sum[:]), Payload: payload,
+		Payload: payload,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,9 +114,8 @@ func TestDecodeRuntimeDeclarationValidatesImageOwnedPackages(t *testing.T) {
 		`"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"},{"name":"rknn-toolkit-lite2","version":"2.3.2"}]`,
 		1,
 	)
-	duplicateSum := sha256.Sum256([]byte(duplicate))
 	if _, err := decodeRuntimeDeclaration(runtimeDeclarationSource{
-		ContentDigest: "sha256:" + hex.EncodeToString(duplicateSum[:]), Payload: duplicate,
+		Payload: duplicate,
 	}); err == nil || !strings.Contains(err.Error(), "duplicate runtime package") {
 		t.Fatalf("expected duplicate package rejection, got %v", err)
 	}
@@ -136,7 +125,6 @@ func TestValidateHostExecutionContractFailsClosed(t *testing.T) {
 	valid := hostExecutionContract{
 		Libraries: []hostLibraryContract{{
 			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			Digest: "sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8",
 		}},
 		Driver:  hostDriverContract{Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6"},
 		Devices: []hostDeviceContract{{Path: "/dev/dri/renderD128"}},
@@ -181,35 +169,13 @@ func TestValidateRuntimeAccessContractFailsClosed(t *testing.T) {
 	}
 }
 
-func TestSelectExecutionDeclarationRetainsV1Alpha2Compatibility(t *testing.T) {
-	document := strings.Replace(validExecutionFacts(), executionFactsSchema, executionFactsSchemaV1Alpha2, 1)
-	configMap := validCandidateObjects()[2].(*corev1.ConfigMap)
-	configMap.Data["execution-facts.yaml"] = document
-	if _, err := selectExecutionDeclaration(configMap, "execution-facts.yaml", profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	withHost := strings.Replace(document, "    artifact:\n", "    host: {}\n    artifact:\n", 1)
-	configMap.Data["execution-facts.yaml"] = withHost
-	if _, err := selectExecutionDeclaration(configMap, "execution-facts.yaml", profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
-	}); err == nil {
-		t.Fatal("expected v1alpha2 execution facts with host contract rejection")
-	}
-}
-
 func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
 	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != fixedPowerMode ||
-		resolved.State.HostContractDigest != "" ||
+		resolved.State.HostContract != nil ||
 		resolved.State.ArtifactPath != testArtifactPath ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
 		resolved.ArtifactArchitecture != testArchitecture || resolved.ArtifactPath != testArtifactPath ||
-		resolved.ArtifactDigest != testArtifactDigest ||
 		resolved.MetricObserverImage != testMetricObserverImage ||
 		resolved.DeviceArchitecture != testArchitecture ||
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
@@ -222,15 +188,9 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 
 func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
-	reportSum := sha256.Sum256(resolved.ReportBytes)
 	intent := profilingrun.Intent{
 		Candidate: profilingrun.CandidateIdentity{
-			ReportDigest:             "sha256:" + hex.EncodeToString(reportSum[:]),
-			ModelSpecContentDigest:   resolved.ModelSpecContentDigest,
-			DeviceClassContentDigest: resolved.DeviceClassContentDigest,
-			RuntimeDeclarationDigest: resolved.RuntimeDeclarationContentDigest,
-			ExecutionPath:            selection.ExecutionPath,
-			Verdict:                  resolved.Verdict,
+			Inputs: resolved.Inputs, ExecutionPath: selection.ExecutionPath, Verdict: resolved.Verdict,
 		},
 		State: resolved.State,
 		Images: profilingrun.Images{
@@ -258,8 +218,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 		report.DeviceClassFacts.Architecture != testArchitecture ||
 		report.DeviceClassFacts.NodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass ||
 		report.ArtifactSupply.Image != testArtifactImage ||
-		report.ArtifactSupply.Path != testArtifactPath ||
-		report.ArtifactSupply.Digest != testArtifactDigest {
+		report.ArtifactSupply.Path != testArtifactPath {
 		t.Fatalf("candidate report lost source identity: %#v", report)
 	}
 }
@@ -448,10 +407,8 @@ func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivatio
 			DataType: profilingrun.RKNNLiteInputDataType,
 		},
 		Conversion: edgev1alpha1.ModelArtifactConversion{
-			Tool:         "rknn-toolkit2",
-			Version:      "2.3.2",
-			ToolDigest:   "sha256:" + strings.Repeat("a", 64),
-			RecipeDigest: "sha256:" + strings.Repeat("b", 64),
+			Tool:    "rknn-toolkit2",
+			Version: "2.3.2",
 		},
 	}
 }
@@ -519,7 +476,7 @@ func validCandidateObjects() []client.Object {
 		},
 		Spec: edgev1alpha1.ModelSpecSpec{
 			Artifacts: []edgev1alpha1.ModelArtifact{{
-				Name: "canonical-onnx", Format: "onnx", Digest: testArtifactDigest,
+				Name: "canonical-onnx", Format: "onnx",
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 				Name: "ort-cpu", Artifact: "canonical-onnx",
@@ -554,7 +511,7 @@ func validRKNNCandidateObjects() []client.Object {
 	objects := validCandidateObjects()
 	model := objects[0].(*edgev1alpha1.ModelSpec)
 	model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
-		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn", Digest: testRKNNArtifactDigest,
+		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn",
 		Derivation: validArtifactDerivation("canonical-onnx"),
 	})
 	model.Spec.ExecutionPaths = append(model.Spec.ExecutionPaths, edgev1alpha1.ModelExecutionPath{
@@ -571,15 +528,13 @@ func validRKNNCandidateObjects() []client.Object {
 
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
-	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha4
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha5
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
     deviceClass: lattepanda-3-delta-8g
     executionPath: ort-cpu
     runtime:
-      contentDigest: sha256:` + hex.EncodeToString(digest[:]) + `
       payload: |-
         ` + payload + `
     artifact:
@@ -587,21 +542,18 @@ declarations:
       image: ` + testArtifactImage + `
       architecture: amd64
       path: /artifact/mobilenet-v2-050.onnx
-      digest: ` + testArtifactDigest + `
 `
 }
 
 func validRKNNExecutionFacts() string {
 	payload := validRKNNRuntimeDeclaration()
-	digest := sha256.Sum256([]byte(payload))
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha4
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha5
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - modelSpec: mobilenet-v2-050
     deviceClass: orangepi-5-plus-16g
     executionPath: rknnlite
     runtime:
-      contentDigest: sha256:` + hex.EncodeToString(digest[:]) + `
       payload: |-
         ` + payload + `
     artifact:
@@ -609,13 +561,11 @@ declarations:
       image: ` + testArtifactImage + `
       architecture: arm64
       path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
-      digest: ` + testRKNNArtifactDigest + `
     host:
       libraries:
         - name: librknnrt
           hostPath: /usr/lib/librknnrt.so
           containerPath: /usr/lib/librknnrt.so
-          digest: sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
       driver:
         name: rknpu
         versionPath: /sys/module/rknpu/version
@@ -650,9 +600,6 @@ func validRKNNRuntimeDeclaration() string {
 func replaceRuntimeDeclaration(config *corev1.ConfigMap, old, replacement string) {
 	original := validRuntimeDeclaration()
 	changed := strings.Replace(original, old, replacement, 1)
-	originalSum := sha256.Sum256([]byte(original))
-	changedSum := sha256.Sum256([]byte(changed))
 	raw := config.Data["execution-facts.yaml"]
-	raw = strings.Replace(raw, hex.EncodeToString(originalSum[:]), hex.EncodeToString(changedSum[:]), 1)
 	config.Data["execution-facts.yaml"] = strings.Replace(raw, original, changed, 1)
 }

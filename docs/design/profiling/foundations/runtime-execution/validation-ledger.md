@@ -79,17 +79,11 @@ Runs all proved `MAXN -> MODE_50W`, completed after verified settling, restored
 
 - Active Runs `jetsono-ort-cpu-mode50w-head-a1`, `a2`, and `a3` used the
   chart-selected `wall-power-2p5s-source-v1` policy. Each retained 32 successful
-  power/thermal samples with no failures. Evidence digests are
-  `sha256:7c940f1ce8345aeaf3b6a66d2128dde3a54c5201f88680355b1ac2a7890031ba`,
-  `sha256:fe37be6df10bfed4a0c39347b41c9a4a410ec64dea6d5fbb2167df5d051f92db`,
-  and `sha256:849b15a9e94f6725daa8e1f5033a8cee8a26082c845688a51bb84592c5fe8efd`.
+  power/thermal samples with no failures.
 - Idle Runs `jetsono-ort-cpu-mode50w-head-i1`, `i2`, and `i3` used
   `idle-wall-power-v1`, a 60-second model-loaded settling period, and a
   30-second measurement window. Each retained 31 successful power/thermal
-  samples with no failures. Evidence digests are
-  `sha256:bcae76fdfe056d101b6ab28ea50d4f1dbe3b6e363d49c25124eafb6bbfe463a7`,
-  `sha256:bcdc21bfb5c5ed89f9c5dae989c71e905b261449c20e7c98187767c8626feb80`,
-  and `sha256:93a40abd6ee26fb80e17ee392e29a37e21548fb5a4c5e64ef5a57fe82acd407e`.
+  samples with no failures.
 
 A read-only live audit used `RetainedLoader`, the retained frozen admission
 records, and the production active/idle projections. All six shared execution
@@ -101,7 +95,8 @@ The active protocol identity was stable at
 `measurement-protocol-identity.v1alpha1@sha256:0ed9e4324751e630f4034098810028f6269a241c6d8feae1dd7c8a38c9336e39`;
 the distinct idle protocol identity was stable at
 `measurement-protocol-identity.v1alpha1@sha256:efc0dce2257d8706e12aa61a4294b1fe64a3030a56d373513bd67cf4cd74f370`.
-Node `resourceVersion` changed between Runs and changed full intent digests but
+Node `resourceVersion` changed between Runs and changed the full frozen intent
+records but
 is deliberately excluded from these derivation identities.
 
 With an explicitly supplied minimum of three trials and 95% confidence, the
@@ -157,7 +152,7 @@ the L3 pair and current derivation path, not a multi-batch L4 campaign.
   `shelly_power_total_watts`; CHILL Helm revision 6 installed the source.
 - The live edge-metrics registry exposed exactly one attached meter,
   `shellyplugsg3-d0cf13d81a88`. The current v1alpha1 frozen identity binds the
-  selected Node/kind/endpoint/metric entry and its digest; the physical serial
+  selected Node/kind/endpoint/metric entry and its source object identity; the physical serial
   is live topology corroboration, not a separately verified intent field.
 
 ### Thermal completeness
@@ -211,41 +206,37 @@ the L3 pair and current derivation path, not a multi-batch L4 campaign.
 - The Run-level source timeout was raised to 900 ms while retaining the
   one-second interval and unchanged admission policies. Active Runs
   `orangepi-active-bs1-a2`, `a3`, and `a4` then retained distinct evidence
-  objects with digests
-  `sha256:b8955645f2c6f18b144fad63d50a82288d78be0469a9a00483877c4aa491a6b1`,
-  `sha256:0a1e60544ccb0e98c15b1ac52b322e9aefc7a34486175818c2d72236f1aa35f5`,
-  and `sha256:4090d88233c54d10838447b2b392023035000f6e6c221c43bd86a11df44badfb`.
+  objects.
   Each had 31 successful power/thermal samples, no failed reads, no active
   thermal sample, and an `Accepted` `wall-power-v2` verdict.
 - Model-loaded-idle Runs `orangepi-idle-model-loaded-i1`, `i2`, and `i3` used
   the same 7-core CPU contract, 60-second observer-independent settling, and
-  900 ms source timeout. Their retained evidence digests were
-  `sha256:ea14ceb262c0ad7447e70c7d39316d7f566577952d4d122c08f96821b568f96b`,
-  `sha256:785ab5a48ec135715b99d5e24c71ac4b2b4e5dcebec08924fe023cc3f327a6eb`,
-  and `sha256:d6bc5844d38aa5009c726b28bd66bb48c9cfe3c36a8ab5b299bcea9ea4d50c95`.
+  900 ms source timeout. Their retained evidence objects had distinct immutable
+  keys.
   Each had 31 successful power/thermal samples, no failed reads, no active
   thermal sample, and an `Accepted` `idle-wall-power-v1` verdict.
 - All six finalized and raw objects were re-read from the retained Evidence
-  Store and matched their recorded size and SHA-256 identity. A read-only
+  Store, bounded by their recorded size, and validated against their semantic
+  Run bindings. A read-only
   diagnostic replay of the source-defined projection produced one
-  `execution-state-identity.v1alpha1` digest
+  `execution-state-identity.v1alpha1`
   `sha256:76af5e787e39b6d3b75b99f2cf68d0fdad98955edeb78d472b587fcc7a81a509`
-  and one owner-bound `external-environment-identity.v1alpha1` digest
+  and one owner-bound `external-environment-identity.v1alpha1`
   `sha256:5cf2ea9b25f2fe839b9a73833cb11f79046aa4b70954910c038d2748536c886a`
-  across all six. The `measurement-protocol-identity.v1alpha1` digests
+  across all six. The `measurement-protocol-identity.v1alpha1` values
   `sha256:6a529e0937982d30d0148cda363fae6a3df41e1d1c6e69b833773b5e69bae42a`
   for active and
   `sha256:ed345c51d0d3d00f10848fb0fa5a960b13cac1e2f455a0a1432734b4d544172b`
   for idle were each stable within their mode.
-- The first idle full intent digest differed from the latter two only because
+- The first idle frozen intent differed from the latter two only because
   the frozen Node `resourceVersion` advanced from `277617801` to `277621852`.
   That value remains an exact audit snapshot but is deliberately absent from
   state, environment, and measurement-protocol identities; it is therefore
   not a pooling key. Plan 6's common gate now states the actual derivation
-  boundary instead of requiring byte-identical full intents.
+  boundary instead of requiring identical full intent snapshots.
 - `gopls` references and current source confirmed that both production arm64
   classes enter the same `ort-cpu` candidate, preparation, execution-policy,
-  and worker adapter path. The chart uses the same digest-pinned runtime and
+  and worker adapter path. The chart uses the same immutable OCI runtime and
   artifact declarations plus wildcard active/idle execution policies; only
   installed DeviceClass/metric facts and immutable Run resource values differ.
   No Orange-Pi-specific Go path was added or extracted.
@@ -265,17 +256,17 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   Pod invoked RKNNLite with float32 NHWC `[1,224,224,3]`; the two layouts are
   recorded separately rather than inferred from one another.
 - The converter is the official x86-64 CPython 3.8 RKNN Toolkit2 v2.3.2 wheel
-  from tag `v2.3.2` (`42aa1d426c0a9e0869b6374edba009f7208a1926`), wheel digest
+  from tag `v2.3.2` (`42aa1d426c0a9e0869b6374edba009f7208a1926`), wheel checksum
   `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`.
-  The exact exporter recipe digest is
+  The exact exporter recipe checksum is
   `sha256:0d4bf28be3c14f1ecc5662a326a273441d9e057e3dfb9102dcdf143c14e2a234`.
 - Two consecutive conversions under that source/tool/recipe/target/batch
-  identity produced output digests
+  identity produced output checksums
   `sha256:918fee5efba66f5fa8b3c960a857be2791912439e032f789b57e8a95960bf550`
   and
   `sha256:aa6afc1305754a76f17074a69bbc461cd4ee6487244776620be64efffef3b814`.
   RKNN output is therefore treated as nondeterministic: conversion identity
-  never substitutes for the selected output-byte digest.
+  never substitutes for the selected output-artifact identity.
 - The first output is selected and packaged by
   `build/docker/derived-model-artifact.Dockerfile`. Registry index
   `sha256:d241fe041c2b32fd25166a2cc6ea20eb88116861b2fed24103c7e66f79ac3856`
@@ -303,7 +294,7 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   `ProfilingRun` evidence. The repository now has strict source and retained-
   report fields that separate the image-owned package from the expected host
   library, driver, device visibility, and allocation/exclusivity claim. New
-  intents bind its order-normalized digest into physical state identity. No
+  intents bind its normalized host contract into physical state identity. No
   exact RKNN declaration is installed and no production Job verifies the
   expected host values, so both RKNN rows remain L0.
 
@@ -354,8 +345,8 @@ to L3. Multiple batches remain untested, so this is not L4 campaign evidence.
   exposed two independent delivery gaps. The privileged runtime could see the
   host cgroup namespace, so its own cgroup-v2 scope had to be resolved from
   `/proc/self/cgroup`; the previously installed observers also predated intent
-  v1alpha8 and rejected `hostContractDigest`. Commit `ab17ef1` corrected the
-  runtime scope resolution, and current observer images were rebuilt.
+  the current host contract. Commit `ab17ef1` corrected the runtime scope
+  resolution, and current observer images were rebuilt.
 - Active `a3` and idle `i1` were retained and admitted with the corrected
   implementation, but their facts named buildx manifest-list digests. They are
   successful pre-finalization evidence, not members of the final L3 identity
@@ -387,14 +378,14 @@ input layout, model load/init success, selected batch, and active output shape.
 
 ### Retained L3 admissions and identity audit
 
-| Mode | Run | Final evidence digest |
-|---|---|---|
-| active | `orangepi-rknnlite-active-bs1-a5` | `sha256:f3e85cdd238ac9dde1dfbadd631d759ac097b04c4d86680348f883d47c4dece6` |
-| active | `orangepi-rknnlite-active-bs1-a6` | `sha256:1d329c8d358e8cf08df215e40e30a5d5a8f69ca07db84f8895c2635a0de6fd2b` |
-| active | `orangepi-rknnlite-active-bs1-a7` | `sha256:47a9c45546a972c2049c67eb2630efe2b674c584f77688cc89f6ec70a6ee21c9` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i2` | `sha256:a7a9b106ccfedd0ea477a29c22cc7e31d3043788f6c40e29575ccdfce59c0615` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i3` | `sha256:0cddf43208dbfebfcc32415eabb467cfe525eb177e2c4910725f76df361a0d00` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i4` | `sha256:0e72a81a13fda890d213f7314e01badfb9589a009a0df02ac07fdbea2c7fe0e7` |
+| Mode | Run |
+|---|---|
+| active | `orangepi-rknnlite-active-bs1-a5` |
+| active | `orangepi-rknnlite-active-bs1-a6` |
+| active | `orangepi-rknnlite-active-bs1-a7` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i2` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i3` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-i4` |
 
 All six Runs completed, durably reloaded, independently verified, and admitted
 `Accepted`. A read-only live audit used `RetainedLoader` plus the production
@@ -408,10 +399,10 @@ active/idle projectors and proved:
   `measurement-protocol-identity.v1alpha1@sha256:b6a7ffd93c8d21c6908534ea1f14995611f3021509e7c880751f96644583e8ff`;
 - one distinct idle protocol identity,
   `measurement-protocol-identity.v1alpha1@sha256:59cbd81ac19b738ee739d6aef26ee2353bcb6b818dc4b8d1232ee7d53920513f`;
-- six unique Pod-derived Trial IDs and six unique verified raw-evidence
-  digests.
+- six unique Pod-derived Trial IDs and six unique verified raw-evidence object
+  references.
 
-Full intent digests changed only when the frozen Node
+Full frozen intent records changed only when the frozen Node
 `resourceVersion` advanced (`277795071`, `277799068`, and `277803120`). Direct
 intent diffs found no other within-mode drift. Node `resourceVersion` is an
 audit field deliberately excluded from all three derivation identities, while
@@ -459,17 +450,17 @@ multiple fixed-batch artifacts remain P7/L4 work.
 - Helm revision 9 installed the three direct arm64 runtime/helper manifests.
   The final retained family is:
 
-| Mode | Run | Run UID | Pod-derived Trial ID | Final evidence digest |
-|---|---|---|---|---|
-| active | `orangepi-rknnlite-active-bs2-a5` | `aba5c5ad-6ea3-43d1-94dc-ddd9e5011212` | `3afa297f-c465-4c19-9a35-c03d475124d8` | `sha256:6dab9d576b6140c1a2638ac45507a2d6c4d931aba24207188f8e0e77f753a16a` |
-| active | `orangepi-rknnlite-active-bs2-a6` | `364c6d42-8388-4399-8731-5edc2975a0be` | `cfd697cc-5748-47e6-b160-bcd73557a72a` | `sha256:0c6b075f019be2aef8acc599746b10b6a96517866237ba2d4e1abb65b9bf3b18` |
-| active | `orangepi-rknnlite-active-bs2-a7` | `3a1252a3-f1af-4e5f-b723-f815aa2ec4c8` | `d41fc4fb-c56b-4b5d-87b4-c99c266b1097` | `sha256:188786598f8943a952e888b97d45c296118693a11b642aedd61ee53eb8f27d1c` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i5` | `d7c270df-917f-42d0-9b30-c6c9f9f24f8a` | `112906a2-d8d3-4acf-93b4-922210a37f7d` | `sha256:53baca364527e8773183bf8318a4c7b242e8fbf00abb84d6ba4ad468e43c0b51` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i6` | `0ca298be-ffed-44c8-a1c9-b52d80b9afe3` | `348e104e-b50e-4207-95a2-1993cf033936` | `sha256:7f842798cb95df5270c87c81a663c67dafc9675cb46e317e231f631e3312e92f` |
-| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i7` | `74fa476c-561e-4f8a-a149-9981446a8fac` | `25a63803-416e-4308-a1d1-eda728f70ab4` | `sha256:6c4aa542b9bf2d850e87b7ccf098869e457d88988d222fdaedc4d39e7fd1a8a2` |
+| Mode | Run | Run UID | Pod-derived Trial ID |
+|---|---|---|---|
+| active | `orangepi-rknnlite-active-bs2-a5` | `aba5c5ad-6ea3-43d1-94dc-ddd9e5011212` | `3afa297f-c465-4c19-9a35-c03d475124d8` |
+| active | `orangepi-rknnlite-active-bs2-a6` | `364c6d42-8388-4399-8731-5edc2975a0be` | `cfd697cc-5748-47e6-b160-bcd73557a72a` |
+| active | `orangepi-rknnlite-active-bs2-a7` | `3a1252a3-f1af-4e5f-b723-f815aa2ec4c8` | `d41fc4fb-c56b-4b5d-87b4-c99c266b1097` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i5` | `d7c270df-917f-42d0-9b30-c6c9f9f24f8a` | `112906a2-d8d3-4acf-93b4-922210a37f7d` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i6` | `0ca298be-ffed-44c8-a1c9-b52d80b9afe3` | `348e104e-b50e-4207-95a2-1993cf033936` |
+| model-loaded idle | `orangepi-rknnlite-idle-model-loaded-bs2-i7` | `74fa476c-561e-4f8a-a149-9981446a8fac` | `25a63803-416e-4308-a1d1-eda728f70ab4` |
 
 All six evidence objects were independently reloaded through the retained Job
-binding, credentials, S3 reader, digest verifier, and production active/idle
+binding, credentials, S3 reader, semantic loader, and production active/idle
 projectors. The three active Runs share protocol identity
 `measurement-protocol-identity.v1alpha1@sha256:5812007de5098d3f393f109b0e1006d4a0173ba70d5e54f26c7eef22710d41ad`;
 the three idle Runs share the distinct protocol identity
@@ -499,7 +490,7 @@ this proves the L3 row and current derivation path, not a Plan 5/5a L4 claim.
 The live audit also confirmed that the batch-one state identity is
 `execution-state-identity.v1alpha2@sha256:dec774c084f4da8fef51feb78208bc402f7aa5068dfa164d9185f88b01cf6905`,
 which differs from batch two. Current source binds the full execution state,
-including artifact digest and path, into state identity; it separately binds
+including artifact carrier reference and path, into state identity; it separately binds
 the artifact and observer images into protocol identity. Consequently the two
 fixed-artifact rows could not share the one execution state and one idle
 baseline then required by Plans 5 and 5a. This was the P7-to-L4 gate at that
@@ -513,30 +504,25 @@ single-Run identities. Commit `a1ddd91` then replaced the retained batch-one
 artifact with a conversion produced by the same repository recipe as batch
 two. The conversion inputs were:
 
-- canonical ONNX source digest
+- canonical ONNX source checksum
   `sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2`;
-- RKNN Toolkit2 2.3.2 wheel digest
+- RKNN Toolkit2 2.3.2 wheel checksum
   `sha256:13508573068e6011434ac64858a082234f783aeec2aee68fb9c140b65e1bf9bc`;
-- target `rk3588` and repository recipe digest
+- target `rk3588` and repository recipe checksum
   `sha256:e70198b219f306c0939b4fcd36713dc26c77b381851e6c210fdb43d9554773ed`;
-- batch-one artifact digest
+- batch-one artifact checksum
   `sha256:6de31d66b487431ae4b46a7a4a8d2aa0f4d1b98fef3ca1f439f4a1c216f5ef22`
   and direct arm64 artifact-image manifest
   `sha256:9ae0055465f024c9ae1c7264c0d5311b8dfc2141458414350a555fa9e62223ce`;
   and
-- unchanged batch-two artifact digest
+- unchanged batch-two artifact checksum
   `sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d`
   and direct arm64 artifact-image manifest
   `sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed`.
 
-Registry read-back reproduced the batch-one artifact byte digest exactly.
-Helm revision 10 and ModelSpec generation 4 installed both members through one
-ModelSpec content digest
-`sha256:7b9d267a0008d0d510d35fc0f52364edda28188137f6804a6874445c191a8880`,
-one DeviceClass content digest
-`sha256:43ddafb414530892f2a932f88d941dbf90a6e2ed331344dcf97379a4c2b6ea17`,
-and one runtime declaration digest
-`sha256:109ece351af0188fd416ee7c32dfea61d217b1367ff27ddd81003c859d2236d7`.
+Registry read-back reproduced the selected batch-one artifact checksum.
+Helm revision 10 and ModelSpec generation 4 installed both members through the
+same ModelSpec, DeviceClass, and runtime-declaration source objects.
 The runtime, MetricObserver, and WorkloadObserver direct arm64 manifests were,
 respectively, `sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3`,
 `sha256:aebc8edeb18cee92eef4ef28761543fd97579be46bb9597cf2404d7d2e15affe`,
@@ -550,25 +536,25 @@ The Runs were submitted one at a time and execution stopped on any verdict
 other than `Accepted`. All 12 reached `ExecutionComplete=True`,
 `EvidenceVerified=True`, and `EvidenceAdmitted=True`:
 
-| Mode/member | Run | Run UID | Pod-derived Trial ID | Final evidence digest |
-|---|---|---|---|---|
-| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a1` | `5c4b73bd-87fc-4223-9ebd-168caa7b466b` | `0d60864f-11ec-410b-8e55-86dcc7b3678d` | `sha256:937aef9c7ea4a856fa4edbd1eaac852570296f0ef835db359a55a36dfd49805b` |
-| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a2` | `0f2ffe02-1f95-40bc-97d5-b05dbedfaaca` | `f6dc3405-c357-40b9-9562-fb0c58639c1f` | `sha256:64f2d3dc4ab93c6ce738cd1df345010d5aaaea211cb2ca060428c84b64bee5cd` |
-| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a3` | `556d46e5-ae1a-478e-8835-6f8a8d002f37` | `cd5b8deb-d8de-4608-ba1b-c0d86c7d7428` | `sha256:8400193574623d7aa30eee9e00df24489b41780d642f0bc7d4ce5e9089bac7fd` |
-| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i1` | `7ba76330-1d54-4a29-9283-10681e130560` | `8d708a86-62c5-4233-b019-4d02218042d4` | `sha256:0232a5cfc1c634ec1b8f353ac81d7c67a94aa099c6f8b7f2cf3c261b8ddc45e3` |
-| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i2` | `663fac98-687f-4bc6-9ab1-0dc0690112ab` | `491dd071-07a5-4a16-98d9-e28cfd8b6e2a` | `sha256:f429b779da2b10b62836f1eaab5af9d8afa6c1999733197786d381e7605cb46d` |
-| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i3` | `cf7cbf3e-96f3-47ff-81ca-d11499820fe5` | `5db49577-b1ae-430b-a74a-8afabde5346c` | `sha256:a5785ec155772c2222ebbc79242e18a0bcf9c4996ae6e4d22321583898456169` |
-| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a1` | `7450f68d-7447-414b-9d1b-def0ba5d9c03` | `d90e1018-014f-4e68-af5e-c908eca2a407` | `sha256:9319c42f58b7c77f8e6a41f8be3e54610aeb1ccf25567e51ba668a48d20afb48` |
-| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a2` | `997c5bb0-8b55-4d3c-aaaa-1dc3406c19aa` | `e452de0f-db24-43e4-b50e-a5396ce205c6` | `sha256:aa5b9c6c1eae3d9ba89160f10fa2c0d8f0dafcab39cc59456d60a0af7b81f5a2` |
-| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a3` | `381029ed-0a3e-414b-9250-6fa7f4e7011b` | `d9a7de3e-9971-439a-b539-43d772a9eeb6` | `sha256:f79f8c1af676aebf9771cee8e7358db2bcd1ec024180aba162b93fbc95ffa512` |
-| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i1` | `0d2bca80-31e2-472d-a021-b2c2365310fa` | `015a6078-3bef-4e97-9e3c-066d0830cfbf` | `sha256:d4103edeafe6b0a4d16cc889050ee56cbef4d60c7e0ebc177cbedc7ead609b48` |
-| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i2` | `0408449d-b248-4881-ad4e-b0a7889178b6` | `8a7909dd-ad9d-499f-8e10-d552033e9a8f` | `sha256:ab7ad58b39ef3eef82b839745ec51f41269151718823fbf285e168edc54a34e6` |
-| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i3` | `ad33f779-3eea-4aa2-bde9-c10939f4f845` | `45d3c354-4ada-4b36-b1ec-1122095f9266` | `sha256:c9d1f379acb4cb4f71145ed94255a8a5be3206c5f0e6007b32bcae771de1f25e` |
+| Mode/member | Run | Run UID | Pod-derived Trial ID |
+|---|---|---|---|
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a1` | `5c4b73bd-87fc-4223-9ebd-168caa7b466b` | `0d60864f-11ec-410b-8e55-86dcc7b3678d` |
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a2` | `0f2ffe02-1f95-40bc-97d5-b05dbedfaaca` | `f6dc3405-c357-40b9-9562-fb0c58639c1f` |
+| active / batch 1 | `orangepi-rknnlite-family-v1-active-bs1-a3` | `556d46e5-ae1a-478e-8835-6f8a8d002f37` | `cd5b8deb-d8de-4608-ba1b-c0d86c7d7428` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i1` | `7ba76330-1d54-4a29-9283-10681e130560` | `8d708a86-62c5-4233-b019-4d02218042d4` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i2` | `663fac98-687f-4bc6-9ab1-0dc0690112ab` | `491dd071-07a5-4a16-98d9-e28cfd8b6e2a` |
+| idle / batch 1 | `orangepi-rknnlite-family-v1-idle-bs1-i3` | `cf7cbf3e-96f3-47ff-81ca-d11499820fe5` | `5db49577-b1ae-430b-a74a-8afabde5346c` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a1` | `7450f68d-7447-414b-9d1b-def0ba5d9c03` | `d90e1018-014f-4e68-af5e-c908eca2a407` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a2` | `997c5bb0-8b55-4d3c-aaaa-1dc3406c19aa` | `e452de0f-db24-43e4-b50e-a5396ce205c6` |
+| active / batch 2 | `orangepi-rknnlite-family-v1-active-bs2-a3` | `381029ed-0a3e-414b-9250-6fa7f4e7011b` | `d9a7de3e-9971-439a-b539-43d772a9eeb6` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i1` | `0d2bca80-31e2-472d-a021-b2c2365310fa` | `015a6078-3bef-4e97-9e3c-066d0830cfbf` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i2` | `0408449d-b248-4881-ad4e-b0a7889178b6` | `8a7909dd-ad9d-499f-8e10-d552033e9a8f` |
+| idle / batch 2 | `orangepi-rknnlite-family-v1-idle-bs2-i3` | `ad33f779-3eea-4aa2-bde9-c10939f4f845` | `45d3c354-4ada-4b36-b1ec-1122095f9266` |
 
 ### Loader-verified identities and diagnostic points
 
 All retained objects were independently reloaded through the recorded Job
-binding, credential Secret, S3 reader, digest verifier, and production
+binding, credential Secret, S3 reader, semantic loader, and production
 active/idle projectors. Both members ran on Node UID
 `3cbe367f-2511-47fc-9b34-67c98fac69fd` and share owner-bound environment
 identity
@@ -591,7 +577,7 @@ A read-only call to the existing `DeriveIdleBaseline`, `IncrementalTrial`, and
 
 The intervals use the current 95% Student-t construction and diagnostic point
 policy `live-diagnostic-min3-v1`. The batch-two mean is 3.42% below batch one,
-but no early-stop conclusion is made: no `CurveFamilyContractDigest`, eligible
+but no early-stop conclusion is made: no `CurveFamilyName`, eligible
 member map, `minDelta`, or patience record was committed before these Runs.
 This evidence closes the P7 reconversion/aligned-remeasurement item and proves
 that state-keyed baselines work on retained live evidence. It leaves both rows
@@ -607,12 +593,12 @@ model-loaded-idle Runs reached `Accepted`; the retained Loader independently
 verified their final and raw object identities, owned Job bindings, frozen
 intents and policies, candidate reports, terminal container image IDs, and
 active/idle evidence schemas. The campaign record owns the exact Run UIDs,
-Pod-derived trial IDs, intent/evidence digests, realized identities, and the
+Pod-derived trial IDs, evidence object references, realized identities, and the
 one recorded procedural deviation so this ledger does not duplicate that
 machine-audit list.
 
-The realized family identity is
-`chill.dacs.io/curve-family-identity.v1alpha1@sha256:5fa8ac8447016f259bf75e68549e73bcf8fa6974a958eaf28d1b126fe99cd60a`.
+The realized family uses the configured name
+`rknn-mobilenet-v2-050-sequential-v1`.
 Batch-one and batch-two incremental means were respectively
 `0.00892543797 J/item` and `0.00885848038 J/item`. The latter improved by only
 0.750188%, below the frozen 5% margin, so the rule retained batch one as the

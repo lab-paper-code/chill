@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -163,7 +164,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
 	prepared := currentPreparedRun(t)
-	run.Status.IntentDigest = prepared.IntentDigest
+	run.Status.IntentFrozen = true
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}}
 	jobs := &recordingExecutionJobs{}
@@ -179,7 +180,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if freezer.calls != 1 || jobs.calls != 1 || jobs.frozen.Prepared.IntentDigest != prepared.IntentDigest {
+	if freezer.calls != 1 || jobs.calls != 1 || !reflect.DeepEqual(jobs.frozen.Prepared.Intent, prepared.Intent) {
 		t.Fatalf("unexpected transition calls: freezer=%d jobs=%d", freezer.calls, jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
@@ -194,7 +195,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
-	run.Status.IntentDigest = frozen.Prepared.IntentDigest
+	run.Status.IntentFrozen = true
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
 	handoffs := &recordingActuationHandoffs{}
@@ -232,7 +233,7 @@ func TestRunReconcilerCreatesActuatedJobOnlyAfterTargetIsReady(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
-	run.Status.IntentDigest = frozen.Prepared.IntentDigest
+	run.Status.IntentFrozen = true
 	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseReady)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
@@ -269,7 +270,7 @@ func TestRunReconcilerRequestsRestoreAfterActuatedJobTerminates(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
-	recordIntentAndJob(run, frozen.Prepared.IntentDigest)
+	recordIntentAndJob(run)
 	completedAt := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC))
 	job := ownedJob(run, &batchv1.JobStatus{
 		Succeeded:      1,
@@ -314,7 +315,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
-	recordIntentAndJob(run, frozen.Prepared.IntentDigest)
+	recordIntentAndJob(run)
 	completedAt := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC))
 	job := ownedJob(run, &batchv1.JobStatus{
 		Succeeded:      1,
@@ -328,10 +329,10 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	handoff.Spec.StageRequestedAt = metav1.NewTime(completedAt.Add(time.Second))
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalized := FinalizedRunEvidence{
-		SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
-			Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,
+			Size: 1024,
 		},
 		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
 		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "jetsono", UID: "node-uid"},
@@ -359,8 +360,8 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Evidence == nil || actual.Status.Evidence.Digest != finalized.Reference.Digest ||
-		actual.Status.Evidence.SchemaVersion != profilerevidence.ActuatedExecutionEvidenceSchemaVersion {
+	if actual.Status.Evidence == nil || actual.Status.Evidence.Key != finalized.Reference.Key ||
+		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion {
 		t.Fatalf("finalized actuated status = %#v", actual.Status)
 	}
 }
@@ -369,7 +370,7 @@ func TestRunReconcilerPublishesRestoreFailureAsTerminalExecution(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
-	run.Status.IntentDigest = frozen.Prepared.IntentDigest
+	run.Status.IntentFrozen = true
 	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseFailed)
 	handoff.Status.TerminalFailure = &edgev1alpha1.NodeActuationFailure{
 		Stage: edgev1alpha1.NodeActuationFailureStageRestore, Reason: "RestoreReadBackMismatch",
@@ -406,7 +407,7 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
-	run.Status.IntentDigest = "sha256:" + strings.Repeat("a", 64)
+	run.Status.IntentFrozen = true
 	run.Status.Job = &edgev1alpha1.ProfilingRunObjectReference{Name: "existing", UID: "existing-uid"}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{}
@@ -432,7 +433,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
 	prepared := currentPreparedRun(t)
-	recordIntentAndJob(run, prepared.IntentDigest)
+	recordIntentAndJob(run)
 	job := ownedJob(run, &batchv1.JobStatus{
 		Succeeded:  1,
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
@@ -441,7 +442,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/run-uid/execution.json",
-			Digest: "sha256:" + strings.Repeat("b", 64), Size: 1024,
+			Size: 1024,
 		},
 		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
 		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
@@ -470,7 +471,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Evidence == nil || actual.Status.Evidence.Digest != finalized.Reference.Digest ||
+	if actual.Status.Evidence == nil || actual.Status.Evidence.Key != finalized.Reference.Key ||
 		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion ||
 		actual.Status.ActualExecution == nil || actual.Status.ActualExecution.Pod != finalized.Pod ||
 		actual.Status.ActualExecution.Node != finalized.Node {
@@ -501,7 +502,7 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			scheme := runReconcilerTestScheme(t)
 			run := testRun()
 			prepared := currentPreparedRun(t)
-			recordIntentAndJob(run, prepared.IntentDigest)
+			recordIntentAndJob(run)
 			run.Status.Evidence = testEvidenceReference()
 			run.Status.ActualExecution = &edgev1alpha1.ProfilingRunActualExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},

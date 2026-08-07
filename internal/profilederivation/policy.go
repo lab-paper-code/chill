@@ -8,8 +8,6 @@ import (
 const (
 	PointEstimatorVersion            = "incremental-point-welch-satterthwaite-v2"
 	PointConfidenceMethod            = "student-t-welch-satterthwaite"
-	PreviousPointEstimatorVersion    = "incremental-point-rss-half-width-v1"
-	PreviousPointConfidenceMethod    = "student-t"
 	BSatConfirmatorySizingMethod     = "bonferroni-welch-relative-precision-v1"
 	BSatConfirmatoryEstimatorVersion = "bonferroni-welch-domain-v1"
 )

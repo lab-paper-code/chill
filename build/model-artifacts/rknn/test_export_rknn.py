@@ -1,6 +1,4 @@
-import hashlib
 import importlib.util
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -69,19 +67,6 @@ class ExportRKNNTest(unittest.TestCase):
     def test_set_fixed_batch_rejects_non_positive_value(self):
         with self.assertRaisesRegex(ValueError, "positive"):
             EXPORT_RKNN.set_fixed_batch(type("Model", (), {})(), 0)
-
-    def test_require_digest_rejects_mismatch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "source"
-            source.write_bytes(b"source")
-            expected = "sha256:" + hashlib.sha256(b"different").hexdigest()
-
-            with self.assertRaisesRegex(ValueError, "digest mismatch"):
-                EXPORT_RKNN.require_digest(source, expected, "source")
-
-    def test_recipe_digest_names_the_recipe_bytes(self):
-        expected = "sha256:" + hashlib.sha256(MODULE_PATH.read_bytes()).hexdigest()
-        self.assertEqual(EXPORT_RKNN.recipe_digest(), expected)
 
 
 if __name__ == "__main__":

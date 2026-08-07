@@ -12,19 +12,10 @@ import (
 
 func (e ExecutionEvidence) validateActuation() error {
 	if e.Intent.Actuation == nil {
-		if e.SchemaVersion != ExecutionEvidenceSchemaVersion {
-			return fmt.Errorf("fixed Run requires execution evidence schemaVersion %q", ExecutionEvidenceSchemaVersion)
-		}
 		if e.Actuation != nil {
 			return errors.New("fixed Run cannot contain actuation facts")
 		}
 		return nil
-	}
-	if e.SchemaVersion != ActuatedExecutionEvidenceSchemaVersion {
-		return fmt.Errorf(
-			"actuated Run requires execution evidence schemaVersion %q",
-			ActuatedExecutionEvidenceSchemaVersion,
-		)
 	}
 	if e.Actuation == nil {
 		return errors.New("actuated Run requires finalized actuation facts")

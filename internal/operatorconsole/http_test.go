@@ -129,7 +129,6 @@ func httpPassportSnapshot() EvidencePassportSnapshot {
 	execution.FinalizedAt = started.Add(time.Minute)
 	execution.RawMeasurement.Store = "chill-evidence"
 	execution.RawMeasurement.Key = "raw.json"
-	execution.RawMeasurement.Digest = run.Status.Evidence.Digest
 	execution.RawMeasurement.Size = 512
 	return EvidencePassportSnapshot{
 		ReadAt: started.Add(2 * time.Minute), Run: *run, Execution: execution,

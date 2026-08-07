@@ -105,13 +105,12 @@ func TestNewRetainedLoaderRequiresDependencies(t *testing.T) {
 	}
 }
 
-func TestValidateRunEvidenceBindingBindsExactActuationHandoff(t *testing.T) {
+func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 	t.Parallel()
-	digest := "sha256:" + strings.Repeat("a", 64)
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentDigest: digest,
+			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
 			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
@@ -119,13 +118,12 @@ func TestValidateRunEvidenceBindingBindsExactActuationHandoff(t *testing.T) {
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
-				SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
+				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 			},
 		},
 	}
 	execution := profilerevidence.ExecutionEvidence{
-		SchemaVersion: profilerevidence.ActuatedExecutionEvidenceSchemaVersion,
-		IntentDigest:  digest,
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Intent: profilingrun.Intent{
 			Actuation: &profilingrun.ActuationContract{},
 		},
@@ -157,11 +155,10 @@ func TestValidateRunEvidenceBindingBindsExactActuationHandoff(t *testing.T) {
 
 func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
 	t.Parallel()
-	digest := "sha256:" + strings.Repeat("a", 64)
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentDigest: digest,
+			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
 			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
@@ -175,7 +172,6 @@ func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
 	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		IntentDigest:  digest,
 		Terminal: profilerevidence.TerminalFacts{
 			Job:  profilerevidence.JobTerminalFacts{Namespace: run.Namespace, Name: "job", UID: "job-uid"},
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: run.Namespace, Name: "pod", UID: "pod-uid"},
@@ -198,7 +194,7 @@ func retainedLoaderFixture() (
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentDigest: "sha256:" + strings.Repeat("a", 64),
+			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"},
 		},
 	}
@@ -238,7 +234,7 @@ func retainedLoaderFixture() (
 	}
 	reference := evidencestore.ObjectIdentity{
 		Store: "chill-evidence", Key: "execution.json",
-		Digest: "sha256:" + strings.Repeat("b", 64), Size: 100,
+		Size: 100,
 	}
 	return run, job, secret, reference
 }

@@ -21,56 +21,47 @@ profiling:
       deviceClass: raspberry-pi-5-8g
       executionPath: ort-cpu
       runtime:
-        contentDigest: sha256:c67f851d26bef8fb4159ac8c2d15d4109ae4718ae03844ff765c6337e2b203d1
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:be8fabcde2f0074ad1f1da1a734d3a4d62dbd1308ebe3726a1be17ec2742fa3f","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
         architecture: arm64
         path: /artifact/mobilenet-v2-050.onnx
-        digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
     - modelSpec: mobilenet-v2-050
       deviceClass: orangepi-5-plus-16g
       executionPath: ort-cpu
       runtime:
-        contentDigest: sha256:c67f851d26bef8fb4159ac8c2d15d4109ae4718ae03844ff765c6337e2b203d1
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:be8fabcde2f0074ad1f1da1a734d3a4d62dbd1308ebe3726a1be17ec2742fa3f","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
         architecture: arm64
         path: /artifact/mobilenet-v2-050.onnx
-        digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
     - modelSpec: mobilenet-v2-050
       deviceClass: jetson-agx-orin-64g
       executionPath: ort-cpu
       runtime:
-        contentDigest: sha256:c67f851d26bef8fb4159ac8c2d15d4109ae4718ae03844ff765c6337e2b203d1
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:be8fabcde2f0074ad1f1da1a734d3a4d62dbd1308ebe3726a1be17ec2742fa3f","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
         architecture: arm64
         path: /artifact/mobilenet-v2-050.onnx
-        digest: sha256:8645e5d6511cf0f78fa4a451e3bd86b3ab6b39bb5f9216ba32d2d9aebc852ee2
     - modelSpec: mobilenet-v2-050
       deviceClass: orangepi-5-plus-16g
       executionPath: rknnlite
       runtime:
-        contentDigest: sha256:109ece351af0188fd416ee7c32dfea61d217b1367ff27ddd81003c859d2236d7
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs1-artifact@sha256:9ae0055465f024c9ae1c7264c0d5311b8dfc2141458414350a555fa9e62223ce"
         architecture: arm64
         path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
-        digest: sha256:6de31d66b487431ae4b46a7a4a8d2aa0f4d1b98fef3ca1f439f4a1c216f5ef22
       host:
         libraries:
           - name: librknnrt
             hostPath: /usr/lib/librknnrt.so
             containerPath: /usr/lib/librknnrt.so
-            digest: sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
         driver:
           name: rknpu
           versionPath: /sys/module/rknpu/version
@@ -93,20 +84,17 @@ profiling:
       deviceClass: orangepi-5-plus-16g
       executionPath: rknnlite-bs2
       runtime:
-        contentDigest: sha256:109ece351af0188fd416ee7c32dfea61d217b1367ff27ddd81003c859d2236d7
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs2-artifact@sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed"
         architecture: arm64
         path: /artifact/mobilenet-v2-050-rk3588-bs2.rknn
-        digest: sha256:59462967d0461f0e926dae9a07a48900774b39189eba1d8e026d24b251ac884d
       host:
         libraries:
           - name: librknnrt
             hostPath: /usr/lib/librknnrt.so
             containerPath: /usr/lib/librknnrt.so
-            digest: sha256:d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
         driver:
           name: rknpu
           versionPath: /sys/module/rknpu/version

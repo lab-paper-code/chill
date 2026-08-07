@@ -36,7 +36,7 @@ func ProjectRequest(
 		DeviceClass:                 handoff.Spec.DeviceClass,
 		PowerMode:                   handoff.Spec.PowerMode,
 		Target:                      projectTarget(handoff.Spec.Actuator),
-		PolicyDigest:                handoff.Spec.PolicyDigest,
+		PolicyName:                  handoff.Spec.PolicyName,
 		SettlingDurationSeconds:     handoff.Spec.SettlingDurationSeconds,
 		MaxActuationDurationSeconds: handoff.Spec.MaxActuationDurationSeconds,
 		Deadline:                    handoff.Spec.Deadline.Time,

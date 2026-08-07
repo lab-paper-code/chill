@@ -14,16 +14,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const (
-	rawMeasurementSchemaVersionV1Alpha3 = "chill.dacs.io/profiling-raw-measurement.v1alpha3"
-	RawMeasurementSchemaVersion         = "chill.dacs.io/profiling-raw-measurement.v1alpha4"
-)
+const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha5"
 
 // RawMeasurement contains only facts available to the in-Job worker before it
 // exits. Kubernetes terminal state is deliberately excluded.
 type RawMeasurement struct {
 	SchemaVersion string                     `json:"schemaVersion"`
-	IntentDigest  string                     `json:"intentDigest"`
 	PodUID        string                     `json:"podUID"`
 	Runtime       profilingrun.RuntimeResult `json:"runtime"`
 	Metrics       metricobserver.Result      `json:"metrics"`
@@ -55,16 +51,10 @@ func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
 }
 
 func (m RawMeasurement) validate(intent profilingrun.Intent) error {
-	if m.SchemaVersion != RawMeasurementSchemaVersion &&
-		m.SchemaVersion != rawMeasurementSchemaVersionV1Alpha3 {
+	if m.SchemaVersion != RawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
 	}
-	if m.SchemaVersion == rawMeasurementSchemaVersionV1Alpha3 &&
-		m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersionV1Alpha1 {
-		return errors.New("v1alpha3 raw measurement requires the retained v1alpha1 runtime result")
-	}
-	if m.SchemaVersion == RawMeasurementSchemaVersion &&
-		m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersion {
+	if m.Runtime.SchemaVersion != profilingrun.RuntimeResultSchemaVersion {
 		return errors.New("current raw measurement requires the current runtime result")
 	}
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {

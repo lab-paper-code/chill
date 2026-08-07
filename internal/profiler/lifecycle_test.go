@@ -186,9 +186,8 @@ func testIntent(t *testing.T) profilingrun.Intent {
 
 func testEvidenceReference() evidencestore.ObjectIdentity {
 	return evidencestore.ObjectIdentity{
-		Store:  "chill-evidence",
-		Key:    "runs/run-uid/execution.json",
-		Digest: "sha256:" + strings.Repeat("a", 64),
-		Size:   100,
+		Store: "chill-evidence",
+		Key:   "runs/run-uid/execution.json",
+		Size:  100,
 	}
 }

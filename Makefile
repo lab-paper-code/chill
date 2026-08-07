@@ -15,11 +15,9 @@ MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TA
 RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
-RKNN_SOURCE_DIGEST ?=
 RKNN_TOOL_WHEEL ?=
-RKNN_TOOL_DIGEST ?=
-RKNN_TOOL_VERSION ?= 2.3.2
-RKNN_TARGET_PLATFORM ?= rk3588
+RKNN_TOOL_VERSION ?=
+RKNN_TARGET_PLATFORM ?=
 RKNN_FIXED_BATCH ?=
 RKNN_OUTPUT ?=
 RKNN_CONVERSION_RECORD ?=
@@ -273,19 +271,17 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 ##@ Build
 
 .PHONY: rknn-convert-artifact
-rknn-convert-artifact: ## Build one digest-bound, batch-fixed RKNN artifact and conversion record.
+rknn-convert-artifact: ## Build one batch-fixed RKNN artifact and semantic conversion record.
 	test -n "$(RKNN_SOURCE_ONNX)"
-	test -n "$(RKNN_SOURCE_DIGEST)"
 	test -n "$(RKNN_TOOL_WHEEL)"
-	test -n "$(RKNN_TOOL_DIGEST)"
+	test -n "$(RKNN_TOOL_VERSION)"
+	test -n "$(RKNN_TARGET_PLATFORM)"
 	test -n "$(RKNN_FIXED_BATCH)"
 	test -n "$(RKNN_OUTPUT)"
 	test -n "$(RKNN_CONVERSION_RECORD)"
 	$(RKNN_CONVERTER_PYTHON) build/model-artifacts/rknn/export_rknn.py \
 		--source-onnx "$(RKNN_SOURCE_ONNX)" \
-		--source-digest "$(RKNN_SOURCE_DIGEST)" \
 		--tool-wheel "$(RKNN_TOOL_WHEEL)" \
-		--tool-digest "$(RKNN_TOOL_DIGEST)" \
 		--tool-version "$(RKNN_TOOL_VERSION)" \
 		--target-platform "$(RKNN_TARGET_PLATFORM)" \
 		--batch-size "$(RKNN_FIXED_BATCH)" \

@@ -261,7 +261,7 @@ func validSnapshot() Snapshot {
 			Node:        ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Target:                  Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: 2}},
-			PolicyDigest:            "sha256:" + strings.Repeat("a", 64),
+			PolicyName:              "actuation-policy-v1",
 			SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
 			Deadline: now.Add(15 * time.Minute), DesiredStage: DesiredStageApply, StageRequestedAt: now,
 		},

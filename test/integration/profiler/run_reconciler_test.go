@@ -190,7 +190,7 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
 			Store: "chill-evidence-store", Key: "runs/durable-job-identity/execution.json",
-			Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Size: 1024,
+			Size: 1024,
 		},
 		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "measurement-pod", UID: "pod-uid"},
 		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
@@ -210,7 +210,7 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 	restarted := newReconcilerHarness(t, kube, prepared)
 	restarted.admitter.err = nil
 	restarted.admitter.result = profileradmission.Result{
-		Verdict: profileradmission.VerdictAccepted, PolicyVersion: "sha256:policy",
+		Verdict: profileradmission.VerdictAccepted, PolicyVersion: "wall-power-v2",
 	}
 	reconcile(t, ctx, restarted.reconciler, request)
 	afterAdmission := getRun(t, ctx, kube, request.NamespacedName)
@@ -359,10 +359,6 @@ func createRunWithFrozenIntent(
 ) (*edgev1alpha1.ProfilingRun, profiler.PreparedRun) {
 	t.Helper()
 	intent := loadRetainedIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	run := validRun()
 	if err := kube.Create(ctx, run); err != nil {
 		t.Fatal(err)
@@ -370,12 +366,12 @@ func createRunWithFrozenIntent(
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
 		t.Fatal(err)
 	}
-	run.Status.IntentDigest = digest
+	run.Status.IntentFrozen = true
 	run.Status.ObservedGeneration = run.Generation
 	if err := kube.Status().Update(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	return run, profiler.PreparedRun{Intent: intent, IntentDigest: digest}
+	return run, profiler.PreparedRun{Intent: intent}
 }
 
 func newReconcilerHarness(
@@ -638,7 +634,7 @@ func assertFinalizedEvidence(
 	finalized profilercontroller.FinalizedRunEvidence,
 ) {
 	t.Helper()
-	if run.Status.Evidence == nil || run.Status.Evidence.Digest != finalized.Reference.Digest ||
+	if run.Status.Evidence == nil || run.Status.Evidence.Key != finalized.Reference.Key ||
 		run.Status.ActualExecution == nil || run.Status.ActualExecution.Pod != finalized.Pod ||
 		run.Status.ActualExecution.Node != finalized.Node {
 		t.Fatalf("finalized evidence status is incomplete: %#v", run.Status)

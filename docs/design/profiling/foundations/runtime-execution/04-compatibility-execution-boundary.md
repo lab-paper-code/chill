@@ -47,7 +47,7 @@ conflict, or missing requirement against trusted stable capabilities?
 
 ### Inputs
 
-- immutable artifact identity and digest-bound requirements
+- artifact identity and immutable carrier-image requirements
 - artifact format, target, architecture, accelerator, and batch constraints
   only where their producer and provenance are trustworthy
 - stable DeviceClass capabilities
@@ -106,7 +106,7 @@ execution should CHILL ask Kubernetes to run?
 - immutable Run correlation identity
 - runtime-specific desired configuration
 - selected batch and input binding
-- native Kubernetes workload intent: image digest, requests/limits,
+- native Kubernetes workload intent: immutable OCI image reference, requests/limits,
   selectors/affinity/tolerations, volumes, and runtime-specific access
 - references to material snapshots and policy/rule identities used to derive
   the decision
@@ -176,7 +176,7 @@ execute the selected point with the required validation?
 ### Inputs and observations
 
 - Run, Pod, actual Node, container, and pulled image identities
-- actual artifact bytes and digest
+- actual artifact path and carrier image
 - effective resource/cgroup/device-access observations
 - actual runtime component/version observations
 - provider availability, registration, selection, and graph assignment where
@@ -189,7 +189,7 @@ execute the selected point with the required validation?
 
 - actual `cpu.max`, affinity/cpuset, ORT settings, and throttling
 - actual provider availability and session selection
-- artifact digest, warm-up, and selected-batch inference outcome
+- artifact carrier reference, warm-up, and selected-batch inference outcome
 
 ### Accelerator examples
 
@@ -318,14 +318,14 @@ not flatten them into one `compatible`, `eligible`, or generic reason string.
 2. Missing power-mode enforcement is an evidence mismatch, not silent success.
 3. Output-shape failure invalidates the selected Run, not every logical-model
    path.
-4. Runtime image digest drift invalidates the frozen Run identity even when the
+4. immutable OCI runtime image reference drift invalidates the frozen Run identity even when the
    tag is unchanged.
 
 ### Profile admission
 
 1. Valid execution with insufficient power samples rejects the profile only.
 2. Valid measurements that fail an SLO remain an explicit profile/SLO result.
-3. A profile from a different image digest, provider state, or power mode is
+3. A profile from a different immutable OCI image reference, provider state, or power mode is
    not reused for the new execution state.
 
 ## Adversarial review disposition

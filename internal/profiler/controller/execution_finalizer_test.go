@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -161,11 +160,10 @@ func unusedStoreFactory(EvidenceStoreBinding, string, string) (profilerevidence.
 	return nil, nil
 }
 
-func TestFinalizedEvidenceObjectKeyIsRunAndIntentScoped(t *testing.T) {
+func TestFinalizedEvidenceObjectKeyIsRunScoped(t *testing.T) {
 	t.Parallel()
-	digest := "sha256:" + strings.Repeat("a", 64)
-	want := "profiling-runs/run-uid/execution/" + strings.Repeat("a", 64) + ".json"
-	if got := finalizedEvidenceObjectKey(types.UID("run-uid"), digest); got != want {
+	want := "profiling-runs/run-uid/execution.json"
+	if got := finalizedEvidenceObjectKey(types.UID("run-uid")); got != want {
 		t.Fatalf("key = %q, want %q", got, want)
 	}
 }

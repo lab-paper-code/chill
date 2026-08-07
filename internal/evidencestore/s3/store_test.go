@@ -3,9 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -106,7 +104,7 @@ func TestPutImmutableRejectsInvalidCandidateBeforeS3(t *testing.T) {
 	}
 }
 
-func TestPutImmutableClassifiesExistingObject(t *testing.T) {
+func TestPutImmutableReportsExistingObjectWithoutReadingIt(t *testing.T) {
 	content := []byte("immutable profiling evidence")
 	expected := identityFor(content)
 	precondition := &smithy.GenericAPIError{
@@ -115,38 +113,25 @@ func TestPutImmutableClassifiesExistingObject(t *testing.T) {
 		Fault:   smithy.FaultClient,
 	}
 
-	tests := []struct {
-		name        string
-		existing    []byte
-		wantOutcome evidencestore.CreateOutcome
-		wantErr     error
-	}{
-		{name: "existing object", existing: content, wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
-		{name: "same-size object", existing: append([]byte{'X'}, content[1:]...), wantOutcome: evidencestore.CreateOutcomeExistingExactMatch},
+	store := testObjectStore(
+		&fakeClient{
+			put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
+				return nil, precondition
+			},
+			get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+				t.Fatal("existing object should be validated by its semantic consumer")
+				return nil, nil
+			},
+		},
+		t.TempDir(),
+	)
+
+	receipt, err := store.PutImmutable(context.Background(), expected, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			store := testObjectStore(
-				&fakeClient{
-					put: func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error) {
-						return nil, precondition
-					},
-					get: func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
-						return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(test.existing))}, nil
-					},
-				},
-				t.TempDir(),
-			)
-
-			receipt, err := store.PutImmutable(context.Background(), expected, bytes.NewReader(content))
-			if !errors.Is(err, test.wantErr) {
-				t.Fatalf("PutImmutable() error = %v, want %v", err, test.wantErr)
-			}
-			if test.wantErr == nil && (receipt.Object != expected || receipt.Outcome != test.wantOutcome) {
-				t.Fatalf("PutImmutable() receipt = %+v", receipt)
-			}
-		})
+	if receipt.Object != expected || receipt.Outcome != evidencestore.CreateOutcomeExisting {
+		t.Fatalf("PutImmutable() receipt = %+v", receipt)
 	}
 }
 
@@ -256,12 +241,10 @@ func TestObjectOperationsRejectAnotherLogicalStoreBeforeS3(t *testing.T) {
 }
 
 func identityFor(content []byte) evidencestore.ObjectIdentity {
-	sum := sha256.Sum256(content)
 	return evidencestore.ObjectIdentity{
-		Store:  "chill-evidence-store",
-		Key:    "runs/run-1.json",
-		Digest: fmt.Sprintf("sha256:%x", sum),
-		Size:   int64(len(content)),
+		Store: "chill-evidence-store",
+		Key:   "runs/run-1.json",
+		Size:  int64(len(content)),
 	}
 }
 

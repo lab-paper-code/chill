@@ -47,7 +47,7 @@ func TestKubernetesInventoryQueryReadsAndProjectsAuthorities(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mobilenet", UID: "model-uid"},
 		Spec: edgev1alpha1.ModelSpecSpec{
 			Artifacts: []edgev1alpha1.ModelArtifact{{
-				Name: "canonical-onnx", Format: "onnx", Digest: "sha256:" + strings.Repeat("a", 64),
+				Name: "canonical-onnx", Format: "onnx",
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 				Name: "ort-cpu", Artifact: "canonical-onnx",

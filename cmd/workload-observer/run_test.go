@@ -185,14 +185,14 @@ func writeWorkloadTestIntent(t *testing.T, directory string) {
 
 func workloadTestOptions(directory string) options {
 	return options{
-		intentPath:      filepath.Join(directory, "intent.json"),
-		readyPath:       filepath.Join(directory, "workload-ready"),
-		windowStartPath: filepath.Join(directory, "workload-window-start"),
-		windowReadyPath: filepath.Join(directory, "workload-window-ready"),
-		endPath:         filepath.Join(directory, "measurement-end"),
-		resultPath:      filepath.Join(directory, "workload-result.json"),
-		contractDigest:  "sha256:" + strings.Repeat("b", 64), selectorLabelCSV: "app,component",
-		endWaitTimeout: time.Second, endFenceTimeout: 3 * time.Second,
+		intentPath:       filepath.Join(directory, "intent.json"),
+		readyPath:        filepath.Join(directory, "workload-ready"),
+		windowStartPath:  filepath.Join(directory, "workload-window-start"),
+		windowReadyPath:  filepath.Join(directory, "workload-window-ready"),
+		endPath:          filepath.Join(directory, "measurement-end"),
+		resultPath:       filepath.Join(directory, "workload-result.json"),
+		selectorLabelCSV: "app,component",
+		endWaitTimeout:   time.Second, endFenceTimeout: 3 * time.Second,
 		maxEvents: 100, maxResultBytes: 1 << 20,
 		podNamespace: "chill-system", podName: "run", podUID: "pod-uid",
 	}

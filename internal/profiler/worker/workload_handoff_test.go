@@ -73,7 +73,6 @@ func validWorkloadResult() workloadobserver.Result {
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: "pod-uid",
 		},
-		PolicyDigest:      "sha256:" + strings.Repeat("a", 64),
 		CoverageStartedAt: started, CoverageEndedAt: started.Add(time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{pod}, FinalActivePods: []workloadobserver.Pod{pod},

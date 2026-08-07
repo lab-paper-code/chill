@@ -6,8 +6,6 @@ package worker
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -145,11 +143,9 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 }
 
 func identityFor(location evidencestore.ObjectLocation, payload []byte) evidencestore.ObjectIdentity {
-	sum := sha256.Sum256(payload)
 	return evidencestore.ObjectIdentity{
-		Store:  location.Store,
-		Key:    location.Key,
-		Digest: "sha256:" + hex.EncodeToString(sum[:]),
-		Size:   int64(len(payload)),
+		Store: location.Store,
+		Key:   location.Key,
+		Size:  int64(len(payload)),
 	}
 }

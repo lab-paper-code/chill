@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const testImageReferenceSuffix = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func TestConfigValidate(t *testing.T) {
 	config := validConfig()
@@ -70,8 +70,8 @@ func TestValidBucketName(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	raw := []byte(`
-image: docker.io/versity/versitygw@` + testDigest + `
-bootstrapImage: registry.local/chill/evidence-store-client@` + testDigest + `
+image: docker.io/versity/versitygw@` + testImageReferenceSuffix + `
+bootstrapImage: registry.local/chill/evidence-store-client@` + testImageReferenceSuffix + `
 imagePullPolicy: IfNotPresent
 bucket: chill-profiling-evidence
 region: us-east-1
@@ -96,8 +96,8 @@ resources:
 
 func TestParseConfigRejectsUnknownFields(t *testing.T) {
 	raw := []byte(`
-image: docker.io/versity/versitygw@` + testDigest + `
-bootstrapImage: registry.local/chill/evidence-store-client@` + testDigest + `
+image: docker.io/versity/versitygw@` + testImageReferenceSuffix + `
+bootstrapImage: registry.local/chill/evidence-store-client@` + testImageReferenceSuffix + `
 imagePullPolicy: IfNotPresent
 bucket: chill-profiling-evidence
 region: us-east-1
@@ -119,8 +119,8 @@ func TestLoadConfigReadsResolvedConfigMap(t *testing.T) {
 			Namespace: "chill-system", Name: "custom-store-config", ResourceVersion: testConfigResourceVersion,
 		},
 		Data: map[string]string{DefaultConfigKey: `
-image: docker.io/versity/versitygw@` + testDigest + `
-bootstrapImage: registry.local/chill/evidence-store-client@` + testDigest + `
+image: docker.io/versity/versitygw@` + testImageReferenceSuffix + `
+bootstrapImage: registry.local/chill/evidence-store-client@` + testImageReferenceSuffix + `
 imagePullPolicy: IfNotPresent
 bucket: chill-profiling-evidence
 region: us-east-1
@@ -169,8 +169,8 @@ func TestLoadConfigRejectsMissingDataKey(t *testing.T) {
 
 func validConfig() Config {
 	return Config{
-		Image:            "docker.io/versity/versitygw@" + testDigest,
-		BootstrapImage:   "registry.local/chill/evidence-store-client@" + testDigest,
+		Image:            "docker.io/versity/versitygw@" + testImageReferenceSuffix,
+		BootstrapImage:   "registry.local/chill/evidence-store-client@" + testImageReferenceSuffix,
 		ImagePullPolicy:  corev1.PullIfNotPresent,
 		Bucket:           "chill-profiling-evidence",
 		Region:           "us-east-1",

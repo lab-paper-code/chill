@@ -221,7 +221,7 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if point.MeanIncrementalJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
-		point.PreviousConfidence.HalfWidth <= 0 || point.LatencyP99Milliseconds != 3 {
+		point.LatencyP99Milliseconds != 3 {
 		t.Fatalf("unexpected point: %+v", point)
 	}
 	lowerConfidenceTrials := append([]AdmittedTrial(nil), trials...)
@@ -235,7 +235,6 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if lowerConfidencePoint.Confidence.Level != 0.8 ||
-		lowerConfidencePoint.PreviousConfidence.Level != 0.8 ||
 		lowerConfidencePoint.Confidence.HalfWidth >= point.Confidence.HalfWidth {
 		t.Fatalf("configured point confidence was not applied: %+v", lowerConfidencePoint)
 	}
@@ -270,7 +269,6 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 	uncertain := append([]AdmittedTrial(nil), trials...)
 	baselineVariance := math.Pow(.5/studentTCritical(0.95, 2), 2)
 	for index := range uncertain {
-		uncertain[index].BaselineUncertaintyJoulesPerItem = .5
 		uncertain[index].BaselineMeanWallWattsVariance = baselineVariance
 	}
 	uncertainPoint, err := Aggregate(uncertain, pointPolicy("v1"))
@@ -278,11 +276,10 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if uncertainPoint.Confidence.VarianceOfMean == nil ||
-		*uncertainPoint.Confidence.VarianceOfMean < baselineVariance ||
-		uncertainPoint.PreviousConfidence.HalfWidth < .5 {
+		*uncertainPoint.Confidence.VarianceOfMean < baselineVariance {
 		t.Fatal("baseline uncertainty was discarded")
 	}
-	uncertain[0].BaselineUncertaintyJoulesPerItem = math.NaN()
+	uncertain[0].BaselineMeanWallWattsVariance = math.NaN()
 	if _, err := Aggregate(uncertain, pointPolicy("v1")); err == nil {
 		t.Fatal("expected invalid uncertainty contribution rejection")
 	}
@@ -341,11 +338,6 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 		point.Confidence.HalfWidth <= 0 {
 		t.Fatalf("rebuilt confidence is incomplete: %+v", point.Confidence)
 	}
-	if point.PreviousConfidence.EstimatorVersion != PreviousPointEstimatorVersion ||
-		point.PreviousConfidence.Method != PreviousPointConfidenceMethod ||
-		math.Abs(point.PreviousConfidence.HalfWidth-0.004723645122343838) > 1e-12 {
-		t.Fatalf("previous live interval was not retained: %+v", point.PreviousConfidence)
-	}
 	activeVariance := point.IncrementalSampleVariance / float64(len(activeTrials))
 	baselineVariance := math.Pow(point.MeanBaselineCoefficientSecondsPerItem, 2) *
 		baseline.MeanWallWattsVariance
@@ -355,72 +347,8 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 	wantHalfWidth := studentTQuantile(0.975, wantDegreesOfFreedom) * math.Sqrt(wantVariance)
 	if math.Abs(*point.Confidence.VarianceOfMean-wantVariance) > 1e-15 ||
 		math.Abs(*point.Confidence.EffectiveDegreesOfFreedom-wantDegreesOfFreedom) > 1e-12 ||
-		math.Abs(point.Confidence.HalfWidth-wantHalfWidth) > 1e-12 ||
-		point.Confidence.HalfWidth == point.PreviousConfidence.HalfWidth {
+		math.Abs(point.Confidence.HalfWidth-wantHalfWidth) > 1e-12 {
 		t.Fatalf("Welch components were not preserved: %+v", point.Confidence)
-	}
-}
-
-func TestBSatGoldenOutcomes(t *testing.T) {
-	p := func(batch int, mean, half float64) Point {
-		return Point{
-			StateIdentity:                "s",
-			EnvironmentIdentity:          "environment",
-			MeasurementProtocolIdentity:  "protocol",
-			EstimatorIdentity:            "e",
-			PointPolicyVersion:           "p",
-			Batch:                        batch,
-			MeanIncrementalJoulesPerItem: mean,
-			Confidence: PointConfidence{
-				EstimatorVersion: PointEstimatorVersion,
-				Method:           PointConfidenceMethod, Level: 0.95, HalfWidth: half,
-			},
-			PreviousConfidence: PointConfidence{
-				EstimatorVersion: PreviousPointEstimatorVersion,
-				Method:           PreviousPointConfidenceMethod, Level: 0.95, HalfWidth: half,
-			},
-		}
-	}
-	policy := LegacyBSatPolicy{Version: "v1", RelativeEquivalenceTolerance: .02}
-	tests := []struct {
-		name   string
-		points []Point
-		want   BSatStatus
-		batch  int
-	}{
-		{"accepted", []Point{p(1, 1, .001), p(2, .8, .001), p(3, .795, .001), p(4, .8, .001)}, BSatAccepted, 2},
-		{"candidate uncertainty", []Point{p(1, 1, .001), p(2, .8, .05), p(3, .795, .05)}, BSatCandidateOnly, 2},
-		{"censored", []Point{p(1, 1, .001), p(2, .8, .001), p(3, .6, .001)}, BSatCensored, 0},
-		{"ambiguous later drop", []Point{p(1, 1, .001), p(2, .99, .001), p(3, .7, .001)}, LegacyBSatAmbiguous, 1},
-		{"missing adjacent", []Point{p(1, 1, .001), p(2, .8, .001), p(4, .79, .001)}, BSatUnavailable, 0},
-		{"gap after plateau", []Point{p(1, 1, .001), p(2, .99, .001), p(4, 1, .001)}, BSatUnavailable, 0},
-		{"missing lower domain", []Point{p(2, 1, .001), p(3, .99, .001)}, BSatUnavailable, 0},
-		{"mixed point policy", func() []Point {
-			values := []Point{p(1, 1, .001), p(2, .99, .001)}
-			values[1].PointPolicyVersion = otherPolicy
-			return values
-		}(), BSatUnavailable, 0},
-		{"mixed environment", func() []Point {
-			values := []Point{p(1, 1, .001), p(2, .99, .001)}
-			values[1].EnvironmentIdentity = otherPolicy
-			return values
-		}(), BSatUnavailable, 0},
-		{"mixed measurement protocol", func() []Point {
-			values := []Point{p(1, 1, .001), p(2, .99, .001)}
-			values[1].MeasurementProtocolIdentity = otherPolicy
-			return values
-		}(), BSatUnavailable, 0},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := DeriveBSat(test.points, policy)
-			if got.Status != test.want {
-				t.Fatalf("got %+v", got)
-			}
-			if test.batch > 0 && (got.Batch == nil || *got.Batch != test.batch) {
-				t.Fatalf("batch %+v", got.Batch)
-			}
-		})
 	}
 }
 
@@ -431,6 +359,6 @@ func pointPolicy(version string) PointPolicy {
 func rawEvidence(key string) RawEvidenceIdentity {
 	return RawEvidenceIdentity{
 		Store: "chill-evidence", Key: "runs/" + key + "/raw.json",
-		Digest: "sha256:" + strings.Repeat("a", 64), Size: 1,
+		Size: 1,
 	}
 }

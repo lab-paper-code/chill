@@ -24,7 +24,7 @@ func TestKubernetesProfilingRunsQueryReadsSelectedNamespace(t *testing.T) {
 	runB := &edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run-b"}}
 	runA := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run-a", UID: "run-uid", Generation: 2},
-		Status:     edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 2, IntentDigest: "sha256:" + strings.Repeat("a", 64)},
+		Status:     edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 2, IntentFrozen: true},
 	}
 	foreign := &edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "foreign"}}
 	reader := &profilingRunsResourceVersionReader{

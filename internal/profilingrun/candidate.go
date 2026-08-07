@@ -1,27 +1,19 @@
 package profilingrun
 
 import (
-	"cmp"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"slices"
+	"reflect"
 	"strings"
 
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	candidateReportSchemaVersionV1Alpha2 = "chill.dacs.io/modelcompat-report.v1alpha2"
-	candidateReportSchemaVersionV1Alpha3 = "chill.dacs.io/modelcompat-report.v1alpha3"
-	candidateReportSchemaVersionV1Alpha4 = "chill.dacs.io/modelcompat-report.v1alpha4"
-	candidateReportSchemaVersionV1Alpha5 = "chill.dacs.io/modelcompat-report.v1alpha5"
-	CandidateReportSchemaVersion         = "chill.dacs.io/modelcompat-report.v1alpha6"
-	candidateReportScope                 = "StaticCompatibility"
-	candidateHostContractSchemaVersion   = "chill.dacs.io/accelerator-host-contract.v1alpha1"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha7"
+	candidateReportScope         = "StaticCompatibility"
 )
 
 // CandidateReport is the shared wire contract between candidate resolution
@@ -53,7 +45,6 @@ type CandidateReportObjectInput struct {
 	Name            string `json:"name"`
 	UID             string `json:"uid,omitempty"`
 	ResourceVersion string `json:"resourceVersion,omitempty"`
-	ContentDigest   string `json:"contentDigest"`
 }
 
 type CandidateReportRuntimeInput struct {
@@ -62,16 +53,14 @@ type CandidateReportRuntimeInput struct {
 	UID             string `json:"uid,omitempty"`
 	ResourceVersion string `json:"resourceVersion,omitempty"`
 	Key             string `json:"key,omitempty"`
-	ContentDigest   string `json:"contentDigest"`
 	Image           string `json:"image"`
 }
 
 type CandidateReportSelection struct {
-	ExecutionPath  string          `json:"executionPath"`
-	Artifact       string          `json:"artifact"`
-	ArtifactDigest string          `json:"artifactDigest"`
-	PowerMode      string          `json:"powerMode,omitempty"`
-	Actuator       *ActuatorTarget `json:"actuator,omitempty"`
+	ExecutionPath string          `json:"executionPath"`
+	Artifact      string          `json:"artifact"`
+	PowerMode     string          `json:"powerMode,omitempty"`
+	Actuator      *ActuatorTarget `json:"actuator,omitempty"`
 }
 
 type CandidateReportDeviceClassFacts struct {
@@ -84,7 +73,6 @@ type CandidateReportArtifactSupply struct {
 	Image        string `json:"image,omitempty"`
 	Architecture string `json:"architecture,omitempty"`
 	Path         string `json:"path,omitempty"`
-	Digest       string `json:"digest,omitempty"`
 }
 
 // CandidateArtifactCapability carries only runtime-consumed facts of one
@@ -119,7 +107,6 @@ type CandidateReportHostLibrary struct {
 	Name          string `json:"name"`
 	HostPath      string `json:"hostPath"`
 	ContainerPath string `json:"containerPath"`
-	Digest        string `json:"digest"`
 }
 
 type CandidateReportHostDriver struct {
@@ -146,7 +133,7 @@ type CandidateReportNPUAllocation struct {
 }
 
 // CandidateReportRuntimeAccess freezes Kubernetes delivery requirements
-// separately from the physical host contract digest.
+// separately from the physical host contract.
 type CandidateReportRuntimeAccess struct {
 	Privileged         bool    `json:"privileged"`
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
@@ -157,6 +144,37 @@ type CandidateReportRuntimeAccess struct {
 // consumes its copied projection instead of decoding or validating it again.
 type VerifiedCandidateReport struct {
 	report CandidateReport
+}
+
+func (r VerifiedCandidateReport) Record() CandidateReport {
+	result := r.report
+	result.DeviceClassFacts.NodeSelector = cloneStringMap(r.report.DeviceClassFacts.NodeSelector)
+	result.DeviceClassFacts.PowerModes = append([]string(nil), r.report.DeviceClassFacts.PowerModes...)
+	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
+	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
+	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
+	if r.report.ArtifactCapability != nil {
+		capability := *r.report.ArtifactCapability
+		capability.InputShape = append([]int32(nil), r.report.ArtifactCapability.InputShape...)
+		result.ArtifactCapability = &capability
+	}
+	if r.report.RuntimeAccess != nil {
+		access := *r.report.RuntimeAccess
+		access.SupplementalGroups = append([]int64(nil), r.report.RuntimeAccess.SupplementalGroups...)
+		result.RuntimeAccess = &access
+	}
+	return result
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 type CandidateRuntimeDelivery struct {
@@ -192,52 +210,6 @@ func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	return delivery
 }
 
-// CanonicalCandidateHostContract returns the order-normalized identity input
-// without deciding whether the contract is admissible.
-func CanonicalCandidateHostContract(contract CandidateReportHostContract) ([]byte, error) {
-	canonical := contract
-	canonical.Libraries = append([]CandidateReportHostLibrary(nil), contract.Libraries...)
-	slices.SortFunc(canonical.Libraries, func(left, right CandidateReportHostLibrary) int {
-		if value := cmp.Compare(left.Name, right.Name); value != 0 {
-			return value
-		}
-		if value := cmp.Compare(left.HostPath, right.HostPath); value != 0 {
-			return value
-		}
-		return cmp.Compare(left.ContainerPath, right.ContainerPath)
-	})
-	canonical.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
-	slices.SortFunc(canonical.Devices, func(left, right CandidateReportHostDevice) int {
-		return cmp.Compare(left.Path, right.Path)
-	})
-	return json.Marshal(struct {
-		SchemaVersion string                      `json:"schemaVersion"`
-		Contract      CandidateReportHostContract `json:"contract"`
-	}{SchemaVersion: candidateHostContractSchemaVersion, Contract: canonical})
-}
-
-// CandidateHostContractDigest identifies only the physical host contract. A
-// nil contract returns an empty digest so CPU-only state retains its existing
-// identity material.
-func CandidateHostContractDigest(contract *CandidateReportHostContract) (string, error) {
-	if contract == nil {
-		return "", nil
-	}
-	if err := validateCandidateHostContract(*contract); err != nil {
-		return "", err
-	}
-	return digestCanonicalCandidateHostContract(*contract)
-}
-
-func digestCanonicalCandidateHostContract(contract CandidateReportHostContract) (string, error) {
-	payload, err := CanonicalCandidateHostContract(contract)
-	if err != nil {
-		return "", fmt.Errorf("canonicalize candidate host contract: %w", err)
-	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
-}
-
 type CandidateReportReason struct {
 	Kind string `json:"kind"`
 	Code string `json:"code"`
@@ -271,11 +243,7 @@ func DecodeCandidateReport(payload []byte) (CandidateReport, error) {
 }
 
 func validateCandidateReportGeneration(payload []byte, report CandidateReport) error {
-	if report.SchemaVersion != CandidateReportSchemaVersion &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha5 &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha4 &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha3 &&
-		report.SchemaVersion != candidateReportSchemaVersionV1Alpha2 {
+	if report.SchemaVersion != CandidateReportSchemaVersion {
 		return fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
 	}
 	var rawFields struct {
@@ -294,27 +262,6 @@ func validateCandidateReportGeneration(payload []byte, report CandidateReport) e
 			return errors.New("candidate report selection.actuator must be an object when present")
 		}
 	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha2 &&
-		(len(report.RuntimePackages) != 0 || report.HostContract != nil ||
-			report.ArtifactCapability != nil || report.RuntimeAccess != nil) {
-		return errors.New("v1alpha2 candidate report cannot contain runtime packages or a host contract")
-	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha3 &&
-		(report.ArtifactCapability != nil || report.RuntimeAccess != nil ||
-			(report.HostContract != nil && report.HostContract.Platform != nil)) {
-		return errors.New("v1alpha3 candidate report cannot contain artifact capability, host platform, or runtime access")
-	}
-	if report.SchemaVersion == candidateReportSchemaVersionV1Alpha4 && report.ArtifactCapability != nil &&
-		(len(report.ArtifactCapability.InputShape) != 0 || report.ArtifactCapability.InputLayout != "" ||
-			report.ArtifactCapability.InputDataType != "") {
-		return errors.New("v1alpha4 candidate report cannot contain an artifact input contract")
-	}
-	if report.SchemaVersion != CandidateReportSchemaVersion && actuatorPresent {
-		return errors.New("retained candidate report cannot contain a selected actuator")
-	}
-	if report.SchemaVersion != CandidateReportSchemaVersion && report.Selection.PowerMode != FixedPowerMode {
-		return errors.New("retained candidate report cannot select an actuated power mode")
-	}
 	return nil
 }
 
@@ -323,27 +270,22 @@ func validateInternalCandidateReport(report CandidateReport) error {
 		"ModelSpec name":                      report.Inputs.ModelSpec.Name,
 		"ModelSpec UID":                       report.Inputs.ModelSpec.UID,
 		"ModelSpec resourceVersion":           report.Inputs.ModelSpec.ResourceVersion,
-		"ModelSpec contentDigest":             report.Inputs.ModelSpec.ContentDigest,
 		"DeviceClass name":                    report.Inputs.DeviceClass.Name,
 		"DeviceClass UID":                     report.Inputs.DeviceClass.UID,
 		"DeviceClass resourceVersion":         report.Inputs.DeviceClass.ResourceVersion,
-		"DeviceClass contentDigest":           report.Inputs.DeviceClass.ContentDigest,
 		"runtime declaration namespace":       report.Inputs.RuntimeDeclaration.Namespace,
 		"runtime declaration name":            report.Inputs.RuntimeDeclaration.Name,
 		"runtime declaration UID":             report.Inputs.RuntimeDeclaration.UID,
 		"runtime declaration resourceVersion": report.Inputs.RuntimeDeclaration.ResourceVersion,
 		"runtime declaration key":             report.Inputs.RuntimeDeclaration.Key,
-		"runtime declaration contentDigest":   report.Inputs.RuntimeDeclaration.ContentDigest,
 		"runtime declaration image":           report.Inputs.RuntimeDeclaration.Image,
 		"selection executionPath":             report.Selection.ExecutionPath,
 		"selection artifact":                  report.Selection.Artifact,
-		"selection artifactDigest":            report.Selection.ArtifactDigest,
 		"selection powerMode":                 report.Selection.PowerMode,
 		"DeviceClass architecture":            report.DeviceClassFacts.Architecture,
 		"artifact supply image":               report.ArtifactSupply.Image,
 		"artifact supply architecture":        report.ArtifactSupply.Architecture,
 		"artifact supply path":                report.ArtifactSupply.Path,
-		"artifact supply digest":              report.ArtifactSupply.Digest,
 		"metric-observer image":               report.MetricObserverImage,
 		"verdict":                             report.Verdict,
 	}
@@ -423,9 +365,8 @@ func validateCandidateHostContract(contract CandidateReportHostContract) error {
 	}
 	seenLibraries := make(map[string]struct{}, len(contract.Libraries))
 	for _, library := range contract.Libraries {
-		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name ||
-			strings.TrimSpace(library.Digest) == "" || strings.TrimSpace(library.Digest) != library.Digest {
-			return errors.New("candidate report host library name and identity are required without surrounding whitespace")
+		if strings.TrimSpace(library.Name) == "" || strings.TrimSpace(library.Name) != library.Name {
+			return errors.New("candidate report host library name is required without surrounding whitespace")
 		}
 		if !validArtifactPath(library.HostPath) || !validArtifactPath(library.ContainerPath) {
 			return errors.New("candidate report host library paths must be clean absolute paths")
@@ -489,10 +430,18 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 	if err != nil {
 		return VerifiedCandidateReport{}, err
 	}
+	return VerifyCandidateReportRecord(report, intent)
+}
+
+func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (VerifiedCandidateReport, error) {
+	if report.SchemaVersion != CandidateReportSchemaVersion {
+		return VerifiedCandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
+	}
+	if err := validateInternalCandidateReport(report); err != nil {
+		return VerifiedCandidateReport{}, err
+	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if (report.SchemaVersion != CandidateReportSchemaVersion &&
-			report.SchemaVersion != candidateReportSchemaVersionV1Alpha5) ||
-			report.ArtifactCapability == nil ||
+		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
 			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
 			len(report.ArtifactCapability.InputShape) == 0 ||
 			report.ArtifactCapability.InputShape[0] != report.ArtifactCapability.FixedBatch ||
@@ -527,6 +476,12 @@ func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateRepo
 		if check.want != check.got {
 			return VerifiedCandidateReport{}, fmt.Errorf("candidate %s mismatch", check.name)
 		}
+	}
+	if !reflect.DeepEqual(intent.Candidate.Inputs, report.Inputs) {
+		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match Run intent")
+	}
+	if !reflect.DeepEqual(intent.State.HostContract, report.HostContract) {
+		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match Run intent")
 	}
 	if intent.Actuation == nil {
 		if report.Selection.Actuator != nil {

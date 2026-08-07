@@ -136,14 +136,13 @@ func projectCurveCPU(cpu profilingrun.CPUContract) profilederivation.CurveCPUCon
 func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederivation.CurveMetricSourceContract {
 	return profilederivation.CurveMetricSourceContract{
 		SourceKind: metrics.SourceKind, NodeName: metrics.NodeName, Endpoint: metrics.Endpoint,
-		PowerMetric: metrics.PowerMetric, ConfigurationContentDigest: metrics.ConfigurationContentDigest,
+		PowerMetric: metrics.PowerMetric,
 	}
 }
 
 func projectCurveProtocol(intent profilingrun.Intent) (profilederivation.CurveProtocolContract, error) {
-	workloadDigest, err := intent.Workload.Digest()
-	if err != nil {
-		return profilederivation.CurveProtocolContract{}, fmt.Errorf("digest frozen workload contract: %w", err)
+	if err := intent.Workload.Validate(); err != nil {
+		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate frozen workload contract: %w", err)
 	}
 	return profilederivation.CurveProtocolContract{
 		WorkloadMode:               intent.Measurement.WorkloadMode,
@@ -158,6 +157,6 @@ func projectCurveProtocol(intent profilingrun.Intent) (profilederivation.CurvePr
 		MetricDurationSeconds:      intent.Metrics.DurationSeconds,
 		MetricObserverImage:        intent.Images.MetricObserver,
 		WorkloadObserverImage:      intent.Images.WorkloadObserver,
-		WorkloadContractDigest:     workloadDigest,
+		WorkloadSchemaVersion:      intent.Workload.SchemaVersion,
 	}, nil
 }

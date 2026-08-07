@@ -152,7 +152,7 @@ func buildActuationHandoff(
 			DeviceClass:                 material.intent.State.DeviceClass,
 			PowerMode:                   material.intent.Actuation.PowerMode,
 			Actuator:                    projectActuatorTarget(material.intent.Actuation.Actuator),
-			PolicyDigest:                material.intent.Actuation.PolicyDigest,
+			PolicyName:                  material.intent.Actuation.PolicyName,
 			SettlingDurationSeconds:     int32(material.settlingDurationSeconds),
 			MaxActuationDurationSeconds: int32(material.maxActuationDurationSeconds),
 			Deadline:                    metav1.NewTime(now.UTC().Add(time.Duration(material.maxActuationDurationSeconds) * time.Second)),
@@ -213,7 +213,7 @@ func verifyActuationHandoff(
 		DeviceClass:                 material.intent.State.DeviceClass,
 		PowerMode:                   material.intent.Actuation.PowerMode,
 		Actuator:                    projectActuatorTarget(material.intent.Actuation.Actuator),
-		PolicyDigest:                material.intent.Actuation.PolicyDigest,
+		PolicyName:                  material.intent.Actuation.PolicyName,
 		SettlingDurationSeconds:     int32(material.settlingDurationSeconds),
 		MaxActuationDurationSeconds: int32(material.maxActuationDurationSeconds),
 	}

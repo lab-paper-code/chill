@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import tempfile
 import unittest
@@ -39,7 +38,9 @@ class FakeFlat:
         if key.start is None or key.stop is None or key.step is not None:
             raise AssertionError(f"unexpected input slice {key}")
         if values.length != key.stop - key.start:
-            raise AssertionError("generated chunk length does not match its destination")
+            raise AssertionError(
+                "generated chunk length does not match its destination"
+            )
 
 
 class FakeChunk:
@@ -63,7 +64,9 @@ class FakeNumpy:
     @staticmethod
     def empty(shape: list[int], *, dtype: object) -> FakeSample:
         if shape != [1, 224, 224, 3] or dtype is not FakeNumpy.float32:
-            raise AssertionError(f"unexpected input allocation shape={shape} dtype={dtype}")
+            raise AssertionError(
+                f"unexpected input allocation shape={shape} dtype={dtype}"
+            )
         return FakeSample()
 
     class random:
@@ -112,7 +115,6 @@ def valid_host_evidence() -> dict[str, object]:
             {
                 "name": "librknnrt",
                 "path": "/usr/lib/librknnrt.so",
-                "digest": "sha256:" + "b" * 64,
             }
         ],
         "driver": {
@@ -138,10 +140,48 @@ def valid_host_evidence() -> dict[str, object]:
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
-    artifact_digest = "sha256:" + hashlib.sha256(model_path.read_bytes()).hexdigest()
+    host_contract = {
+        "libraries": [
+            {
+                "name": "librknnrt",
+                "hostPath": "/usr/lib/librknnrt.so",
+                "containerPath": "/usr/lib/librknnrt.so",
+            }
+        ],
+        "driver": {
+            "name": "rknpu",
+            "versionPath": "/sys/module/rknpu/version",
+            "version": "0.9.6",
+        },
+        "devices": [{"path": "/dev/dri/card0"}, {"path": "/dev/dri/renderD128"}],
+        "platform": {
+            "compatiblePath": "/proc/device-tree/compatible",
+            "compatibleToken": "rockchip,rk3588",
+        },
+        "allocation": {"resourceName": "", "exclusivityClaimed": False},
+    }
+    candidate_inputs = {
+        "modelSpec": {
+            "name": "mobilenet-v2-050",
+            "uid": "model-uid",
+            "resourceVersion": "10",
+        },
+        "deviceClass": {
+            "name": "orangepi-5-plus-16g",
+            "uid": "device-uid",
+            "resourceVersion": "20",
+        },
+        "runtimeDeclaration": {
+            "namespace": "chill-system",
+            "name": "chill-profiler-facts",
+            "uid": "facts-uid",
+            "resourceVersion": "30",
+            "key": "runtime-declarations.yaml",
+            "image": "registry.local/chill/rknnlite-worker:current",
+        },
+    }
     return {
         "schemaVersion": runner.REQUEST_SCHEMA,
-        "intentDigest": "sha256:" + "1" * 64,
         "podUID": "pod-uid",
         "scheduledNodeName": "orangepi",
         "modelPath": str(model_path),
@@ -154,27 +194,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "inputDataType": "float32",
             },
             "runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
-            "hostContract": {
-                "libraries": [
-                    {
-                        "name": "librknnrt",
-                        "hostPath": "/usr/lib/librknnrt.so",
-                        "containerPath": "/usr/lib/librknnrt.so",
-                        "digest": "sha256:" + "b" * 64,
-                    }
-                ],
-                "driver": {
-                    "name": "rknpu",
-                    "versionPath": "/sys/module/rknpu/version",
-                    "version": "0.9.6",
-                },
-                "devices": [{"path": "/dev/dri/card0"}, {"path": "/dev/dri/renderD128"}],
-                "platform": {
-                    "compatiblePath": "/proc/device-tree/compatible",
-                    "compatibleToken": "rockchip,rk3588",
-                },
-                "allocation": {"resourceName": "", "exclusivityClaimed": False},
-            },
+            "hostContract": host_contract,
             "runtimeAccess": {"privileged": True, "supplementalGroups": [44, 110]},
         },
         "observerReadyPaths": [
@@ -192,10 +212,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "intent": {
             "schemaVersion": runner.INTENT_SCHEMA,
             "candidate": {
-                "reportDigest": "sha256:" + "a" * 64,
-                "modelSpecContentDigest": "sha256:" + "a" * 64,
-                "deviceClassContentDigest": "sha256:" + "a" * 64,
-                "runtimeDeclarationDigest": "sha256:" + "a" * 64,
+                "inputs": candidate_inputs,
                 "executionPath": "rknnlite",
                 "verdict": "Compatible",
             },
@@ -203,12 +220,11 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "deviceClass": "orangepi-5-plus-16g",
                 "model": "mobilenet-v2-050",
                 "artifact": "mobilenet-v2-050-rk3588-bs1",
-                "artifactDigest": artifact_digest,
                 "artifactPath": "/artifact/model.rknn",
                 "runtimeFamily": "rknnlite",
                 "backend": "not-applicable",
                 "powerMode": "fixed",
-                "hostContractDigest": "sha256:" + "c" * 64,
+                "hostContract": host_contract,
             },
             "images": {},
             "targetNode": {
@@ -276,20 +292,21 @@ class RunnerTest(unittest.TestCase):
             membership = Path(directory) / "self-cgroup"
             membership.write_text("2:cpu:/pod\n", encoding="utf-8")
             with self.assertRaisesRegex(runner.ContractError, "exactly one"):
-                runner.current_cgroup_v2_directory(membership, Path(directory) / "cgroup")
+                runner.current_cgroup_v2_directory(
+                    membership, Path(directory) / "cgroup"
+                )
 
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
-            runner.decode_request(io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}'))
+            runner.decode_request(
+                io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}')
+            )
 
-    def test_validate_request_retains_v1alpha8_intent_pair(self) -> None:
+    def test_validate_request_accepts_current_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
-            request = valid_request(model)
-            request["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
-            request["intent"]["schemaVersion"] = runner.RETAINED_INTENT_SCHEMA
-            runner.validate_request(request)
+            runner.validate_request(valid_request(model))
 
     def test_validate_request_binds_current_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -300,12 +317,12 @@ class RunnerTest(unittest.TestCase):
             request["intent"]["actuation"] = {
                 "powerMode": "MODE_15W_6CORE",
                 "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
-                "policyDigest": "sha256:" + "b" * 64,
+                "policyName": "jetson-mode-15w",
             }
             runner.validate_request(request)
 
-            request["intent"]["actuation"]["policyDigest"] = "sha256:short"
-            with self.assertRaisesRegex(runner.ContractError, "policyDigest"):
+            request["intent"]["actuation"]["policyName"] = ""
+            with self.assertRaisesRegex(runner.ContractError, "policyName"):
                 runner.validate_request(request)
 
     def test_validate_request_rejects_null_actuation_contract(self) -> None:
@@ -315,22 +332,26 @@ class RunnerTest(unittest.TestCase):
             request = valid_request(model)
             request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
             request["intent"]["actuation"] = None
-            with self.assertRaisesRegex(runner.ContractError, "actuation must be an object"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "actuation must be an object"
+            ):
                 runner.validate_request(request)
 
-    def test_validate_request_requires_matching_request_and_intent_generation(self) -> None:
+    def test_validate_request_rejects_unsupported_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
-            current = valid_request(model)
-            current["intent"]["schemaVersion"] = runner.RETAINED_INTENT_SCHEMA
-            with self.assertRaisesRegex(runner.ContractError, "current runtime request"):
-                runner.validate_request(current)
+            request = valid_request(model)
+            request["intent"]["schemaVersion"] = "unsupported"
+            with self.assertRaisesRegex(runner.ContractError, "current intent schema"):
+                runner.validate_request(request)
 
-            retained = valid_request(model)
-            retained["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
-            with self.assertRaisesRegex(runner.ContractError, "retained runtime request"):
-                runner.validate_request(retained)
+            request = valid_request(model)
+            request["schemaVersion"] = "unsupported"
+            with self.assertRaisesRegex(
+                runner.ContractError, "unsupported runtime request"
+            ):
+                runner.validate_request(request)
 
     def test_validate_request_rejects_candidate_tensor_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -348,12 +369,16 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             active = valid_request(model)
             active["intent"]["measurement"]["settlingDurationSeconds"] = 30
-            with self.assertRaisesRegex(runner.ContractError, "settlingDurationSeconds"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "settlingDurationSeconds"
+            ):
                 runner.validate_request(active)
             idle = valid_idle_request(model)
             runner.validate_request(idle)
 
-    def test_validate_request_accepts_artifact_specific_idle_path_and_batch(self) -> None:
+    def test_validate_request_accepts_artifact_specific_idle_path_and_batch(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
@@ -367,19 +392,15 @@ class RunnerTest(unittest.TestCase):
 
             runner.validate_request(request)
 
-    def test_observe_host_contract_fails_on_library_digest_drift(self) -> None:
+    def test_observe_host_contract_rejects_runtime_package_version_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             candidate = valid_request(model)["candidate"]
-            with ExitStack() as stack:
-                stack.enter_context(
-                    mock.patch.object(runner.importlib.metadata, "version", return_value="2.3.2")
-                )
-                stack.enter_context(
-                    mock.patch.object(runner, "sha256_file", return_value="sha256:" + "f" * 64)
-                )
-                with self.assertRaisesRegex(runner.ContractError, "digest"):
+            with mock.patch.object(
+                runner.importlib.metadata, "version", return_value="2.3.1"
+            ):
+                with self.assertRaisesRegex(runner.ContractError, "package version"):
                     runner.observe_host_contract(candidate)
 
     def test_execute_active_retains_rknn_contract(self) -> None:
@@ -388,7 +409,11 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_request(model)
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="aarch64"))
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.platform, "machine", return_value="aarch64"
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(
                         runner,
@@ -397,10 +422,16 @@ class RunnerTest(unittest.TestCase):
                     )
                 )
                 stack.enter_context(
-                    mock.patch.object(runner, "observe_host_contract", return_value=valid_host_evidence())
+                    mock.patch.object(
+                        runner,
+                        "observe_host_contract",
+                        return_value=valid_host_evidence(),
+                    )
                 )
                 wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                publish = stack.enter_context(
+                    mock.patch.object(runner, "publish_immutable")
+                )
                 stack.enter_context(
                     mock.patch.object(
                         runner,
@@ -408,9 +439,21 @@ class RunnerTest(unittest.TestCase):
                         side_effect=[{"usage_usec": 10}, {"usage_usec": 30}],
                     )
                 )
-                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[1.0, 1.5]))
-                stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]))
-                stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.0, 1.0]))
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "process_time", side_effect=[1.0, 1.5]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "monotonic", side_effect=[0.0, 1.0, 1.0]
+                    )
+                )
                 result = runner.execute(request, FakeRKNNLite, FakeNumpy)
 
             instance = FakeRKNNLite.last_instance
@@ -438,7 +481,11 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_idle_request(model)
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="aarch64"))
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.platform, "machine", return_value="aarch64"
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(
                         runner,
@@ -447,7 +494,11 @@ class RunnerTest(unittest.TestCase):
                     )
                 )
                 stack.enter_context(
-                    mock.patch.object(runner, "observe_host_contract", return_value=valid_host_evidence())
+                    mock.patch.object(
+                        runner,
+                        "observe_host_contract",
+                        return_value=valid_host_evidence(),
+                    )
                 )
                 stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
                 stack.enter_context(mock.patch.object(runner, "publish_immutable"))
@@ -459,7 +510,11 @@ class RunnerTest(unittest.TestCase):
                         side_effect=[{"usage_usec": 10}, {"usage_usec": 15}],
                     )
                 )
-                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[1.0, 1.1]))
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "process_time", side_effect=[1.0, 1.1]
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(
                         runner.time,

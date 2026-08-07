@@ -21,13 +21,6 @@ func (v VerifiedEvidence) Records() (ExecutionEvidence, RawMeasurement, error) {
 	return v.execution, v.raw, nil
 }
 
-func (v VerifiedEvidence) IntentDigest() string {
-	if !v.loaded {
-		return ""
-	}
-	return v.execution.IntentDigest
-}
-
 // VerifiedIdleEvidence is model-loaded-idle evidence that crossed the same
 // immutable-storage verification boundary.
 type VerifiedIdleEvidence struct {
@@ -45,11 +38,4 @@ func (v VerifiedIdleEvidence) Records() (ExecutionEvidence, IdleRawMeasurement, 
 		return ExecutionEvidence{}, IdleRawMeasurement{}, errors.New("verified idle evidence is empty")
 	}
 	return v.execution, v.raw, nil
-}
-
-func (v VerifiedIdleEvidence) IntentDigest() string {
-	if !v.loaded {
-		return ""
-	}
-	return v.execution.IntentDigest
 }

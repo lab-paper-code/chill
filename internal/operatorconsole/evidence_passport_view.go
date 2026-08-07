@@ -172,10 +172,9 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 	thermal := summarizeThermal(snapshot.Measurement.Metrics)
 	workload := summarizeWorkload(snapshot.Measurement.Workload)
 	final := evidencestore.ObjectIdentity{
-		Store:  snapshot.Run.Status.Evidence.Store,
-		Key:    snapshot.Run.Status.Evidence.Key,
-		Digest: snapshot.Run.Status.Evidence.Digest,
-		Size:   snapshot.Run.Status.Evidence.Size,
+		Store: snapshot.Run.Status.Evidence.Store,
+		Key:   snapshot.Run.Status.Evidence.Key,
+		Size:  snapshot.Run.Status.Evidence.Size,
 	}
 	run := snapshot.Run.DeepCopy()
 	return EvidencePassport{

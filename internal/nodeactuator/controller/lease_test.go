@@ -166,7 +166,7 @@ func leaseTestRequest(handoffUID string) nodeactuator.Request {
 			Kind:           nodeactuator.ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{ID: 2},
 		},
-		PolicyDigest:            "sha256:" + strings.Repeat("a", 64),
+		PolicyName:              "actuation-policy-v1",
 		SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
 		Deadline: now.Add(15 * time.Minute), DesiredStage: nodeactuator.DesiredStageApply,
 		StageRequestedAt: now,

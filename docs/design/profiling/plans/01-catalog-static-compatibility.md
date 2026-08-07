@@ -32,7 +32,7 @@ Accepted for the first CPU ORT path:
 
 ```text
 Model identity              metadata.name
-Artifact                    local name + format + SHA-256 digest
+Artifact                    local name + format
 Execution path              local name + artifact reference
 Runtime requirement         family + backend
 ```
@@ -50,7 +50,7 @@ Not included in the first schema:
 - campaign, power-observation, execution-result, profile, or status fields
 
 The demonstrated canonical ONNX artifact is not architecture-specific, and
-the selected campaign batches do not establish a digest-bound artifact batch
+the selected campaign batches do not establish an artifact batch
 capability. Those fields remain absent rather than being guessed from one CPU
 Run or added for future runtimes.
 
@@ -64,18 +64,15 @@ source artifact reference     canonical ONNX artifact in the same ModelSpec
 target platform               rk3588
 fixed batch                   one positive encoded batch
 runtime input tensor          shape + layout + data type
-conversion identity           tool + version + tool distribution SHA-256
-                              + recipe SHA-256
+conversion identity           tool + version
 ```
 
-The derived artifact retains its own output-byte digest. That digest is not
-recomputed from the conversion fields: RKNN Toolkit2 v2.3.2 produced different
-output bytes in two consecutive conversions under the same declared source,
-tool, recipe, target, and batch. The catalog therefore binds an exact selected
-output and separately records how it was produced.
+The derived artifact is selected by its catalog name and immutable carrier
+image. Conversion fields describe how it was produced; they are not a second
+content-verification system.
 
 The source reference is resolved semantically by the candidate adapter. The
-OpenAPI schema validates only the structure and digest forms. Runtime image,
+OpenAPI schema validates only structure. Runtime image,
 host `librknnrt`, driver, device visibility, initialization, and NPU allocation
 remain outside `ModelSpec` and must come from their owning execution sources.
 
@@ -87,12 +84,12 @@ image:
 ```text
 buildx push metadata
   -> select the single runnable linux/amd64 child manifest
-  -> run the exact repository@child-digest image
+  -> run its immutable repository@sha256 OCI reference
   -> inspect architecture, imported ORT identity, and CPU backend
-  -> atomically write a digest-named declaration
+  -> publish the declaration under the configured fact-source key
 ```
 
-The authoritative identity is the runnable child manifest digest, not a
+The authoritative runtime reference is the runnable child OCI reference, not a
 mutable tag or an image index attestation descriptor. The producer normalizes
 the observed `x86_64` machine vocabulary to Kubernetes `amd64` and fails
 closed on missing or ambiguous platform data, failed ORT import, unexpected
@@ -128,7 +125,7 @@ Candidate-report v1alpha6 freezes these groups plus the selected derived
 artifact's target platform, fixed batch, runtime input tensor contract, and
 the exact typed actuator target for a non-fixed selection into the immutable
 Run input. Intent v1alpha9 retains the order-normalized physical
-host-contract digest in state and defines the optional typed actuation binding
+host contract in state and defines the optional typed actuation binding
 consumed by Plan 6. Existing v1alpha1 runtime declarations, v1alpha2/v1alpha3 execution
 facts, and v1alpha2-v1alpha5 candidate reports remain readable but cannot carry
 the later fields. These are expected contracts, not proof that a particular
@@ -194,7 +191,7 @@ result is not written into `ModelSpec.status` or `DeviceClass.status`.
 
 - produce CPU architecture, ONNX Runtime family, and CPU backend facts by
   inspecting the exact image from the runtime-image build/publish flow
-- bind the declaration to an immutable image digest
+- bind the declaration to an immutable immutable OCI image reference
 - retain how each declared fact was verified
 
 These are supplied runtime-image facts. They are independent from the
@@ -292,15 +289,15 @@ The first CPU ONNX Runtime path now closes this plan's acceptance boundary:
 
 - `ModelSpec` carries immutable artifacts and stable execution-path
   requirements without compatibility-result or Run status fields.
-- the isolated producer binds observed CPU runtime facts to the exact runnable
-  image manifest digest;
+- the isolated producer binds observed CPU runtime facts to the immutable
+  runnable OCI image reference;
 - `internal/modelcompat` returns deterministic `Compatible`, `Incompatible`,
   or `Unknown` results without Kubernetes dependencies; and
 - the offline candidate report consumes exact files, writes no cluster state,
   and creates no workload.
 
 The three verdicts were exercised against exact fixture identities, and the
-live `cpu-v1` registry tag currently resolves to the same runnable child digest
+live `cpu-v1` registry tag currently resolves to the same runnable child reference
 as the retained runtime declaration. Repository tests, targeted race tests,
 lint, generated-artifact drift checks, Helm rendering, and the dependency audit
 form the completion evidence. The declaration verification label remains a

@@ -3,6 +3,7 @@ package evidence
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -113,7 +114,7 @@ func TestFinalizerAndLoaderPreserveActuatedEvidenceSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != ActuatedExecutionEvidenceSchemaVersion {
+	if result.SchemaVersion != ExecutionEvidenceSchemaVersion {
 		t.Fatalf("finalized schemaVersion = %q", result.SchemaVersion)
 	}
 	loader, err := NewLoader(store, 1<<20)
@@ -183,7 +184,7 @@ func TestFinalizerFailsClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := finalizer.Finalize(context.Background(), requestFrom(record)); err == nil {
-			t.Fatal("expected retained-byte verification failure")
+			t.Fatal("expected retained-record validation failure")
 		}
 	})
 
@@ -201,9 +202,13 @@ func TestFinalizerFailsClosed(t *testing.T) {
 }
 
 func requestFrom(record ExecutionEvidence) FinalizeRequest {
+	candidate, err := json.Marshal(record.CandidateReport)
+	if err != nil {
+		panic(err)
+	}
 	return FinalizeRequest{
 		Intent:               record.Intent,
-		CandidateReportBytes: record.CandidateReportBytes,
+		CandidateReportBytes: candidate,
 		RawReceipt: evidencestore.Receipt{
 			SchemaVersion: evidencestore.ReceiptSchemaVersion,
 			Object:        record.RawMeasurement,
@@ -252,7 +257,7 @@ func (s *fakeObjectStore) PutImmutable(
 	}
 	location := identity.Location()
 	if _, ok := s.objects[location]; ok {
-		return fakeReceipt(identity, evidencestore.CreateOutcomeExistingExactMatch), nil
+		return fakeReceipt(identity, evidencestore.CreateOutcomeExisting), nil
 	}
 	s.objects[location] = append([]byte(nil), payload...)
 	if s.corruptAfterPut {

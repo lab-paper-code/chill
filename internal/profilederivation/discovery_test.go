@@ -15,8 +15,7 @@ func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 		result.CandidateBatch == nil || *result.CandidateBatch != 3 ||
 		result.CandidateMaximumRemainingImprovement == nil ||
 		math.Abs(*result.CandidateMaximumRemainingImprovement-(.04/.94)) > 1e-12 ||
-		len(result.MeasuredBatches) != 4 || result.CurveFamilyIdentity == "" ||
-		result.CurveFamilyContractDigest == "" {
+		len(result.MeasuredBatches) != 4 || result.CurveFamilyName == "" {
 		t.Fatalf("unexpected discovery result: %+v", result)
 	}
 }

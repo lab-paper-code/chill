@@ -198,7 +198,7 @@ func (r *RunReconciler) publishActuationReference(
 		}
 		return nil
 	}
-	if run.Status.IntentDigest == "" {
+	if !run.Status.IntentFrozen {
 		return errors.New("cannot publish NodeActuation before frozen intent")
 	}
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
@@ -271,7 +271,7 @@ func (r *RunReconciler) publishJobReference(
 		}
 		return nil
 	}
-	if run.Status.IntentDigest == "" {
+	if !run.Status.IntentFrozen {
 		return errors.New("cannot publish measurement Job before frozen intent")
 	}
 	base := run.DeepCopy()
@@ -350,7 +350,6 @@ func (r *RunReconciler) publishFinalizedEvidence(
 		desired.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{
 			Store:         finalized.Reference.Store,
 			Key:           finalized.Reference.Key,
-			Digest:        finalized.Reference.Digest,
 			SchemaVersion: finalized.SchemaVersion,
 			Size:          finalized.Reference.Size,
 		}

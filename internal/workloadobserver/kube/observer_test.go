@@ -18,8 +18,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const testPolicyDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
 func TestProbeEstablishesAndClosesUnretainedWatch(t *testing.T) {
 	preflight := watch.NewRaceFreeFake()
 	source := sourceWithRunPod(preflight)
@@ -471,7 +469,6 @@ func testRequest(eventLimit int) Request {
 			PodName:   "run",
 			PodUID:    "run-uid",
 		},
-		PolicyDigest:          testPolicyDigest,
 		SelectorLabelKeys:     []string{"app"},
 		EventLimit:            eventLimit,
 		EndFenceContainerName: "metric-observer",

@@ -46,7 +46,7 @@ func projectIdleObservation(
 		TrialID:                     execution.Terminal.Pod.UID,
 		RawEvidence: profilederivation.RawEvidenceIdentity{
 			Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key,
-			Digest: execution.RawMeasurement.Digest, Size: execution.RawMeasurement.Size,
+			Size: execution.RawMeasurement.Size,
 		},
 		WindowStart: windowStart, WindowEnd: windowEnd,
 		ModelLoadedBeforeSettling: !modelLoaded.After(settlingStarted),

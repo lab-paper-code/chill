@@ -11,8 +11,7 @@ import (
 )
 
 func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 
 	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
@@ -26,9 +25,8 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 }
 
 func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	first := admissionWorkloadResult(t, intent)
-	second := admissionWorkloadResult(t, intent)
+	first := admissionWorkloadResult(t)
+	second := admissionWorkloadResult(t)
 	extra := workloadobserver.Pod{
 		Namespace: "system", Name: "stable-agent", UID: "stable-agent-uid", Phase: "Running",
 		Owner:  &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "stable-agent", UID: "stable-owner-uid"},
@@ -129,8 +127,7 @@ func TestWorkloadEnvironmentIdentityKeepsUnownedPodsUIDBound(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 	transient := workloadobserver.Pod{
 		Namespace: "default", Name: "foreign", UID: "foreign-uid", Phase: "Running",
 		Owner:  &workloadobserver.OwnerIdentity{Kind: "ReplicaSet", Name: "foreign-abc", UID: "owner-uid"},
@@ -154,8 +151,7 @@ func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 	other := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "other-run", UID: "other-run-uid", Phase: "Running",
 		Owner: &workloadobserver.OwnerIdentity{Kind: "Job", Name: "profilingrun-other", UID: "other-job-uid"},
@@ -184,8 +180,7 @@ func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 	result.Continuous = false
 	result.Failure = &workloadobserver.Failure{
 		ObservedAt: result.CoverageEndedAt,
@@ -202,8 +197,7 @@ func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 	runtimeStarted := result.CoverageStartedAt.Add(10 * time.Second)
 	runtimeEnded := result.CoverageStartedAt.Add(20 * time.Second)
 	before := workloadobserver.Pod{
@@ -245,8 +239,7 @@ func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *testing.T) {
-	intent := admissionIntentWithWorkloadContract()
-	result := admissionWorkloadResult(t, intent)
+	result := admissionWorkloadResult(t)
 	other := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "earlier-run", UID: "earlier-run-uid", Phase: "Running",
 		Owner: &workloadobserver.OwnerIdentity{Kind: "Job", Name: "profilingrun-earlier", UID: "earlier-job-uid"},
@@ -292,12 +285,8 @@ func projectDefaultWorkloadWindow(
 	)
 }
 
-func admissionWorkloadResult(t *testing.T, intent profilingrun.Intent) workloadobserver.Result {
+func admissionWorkloadResult(t *testing.T) workloadobserver.Result {
 	t.Helper()
-	digest, err := intent.Workload.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	started := time.Date(2026, 7, 20, 1, 2, 2, 0, time.UTC)
 	run := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "run", UID: "run-pod", Phase: "Running",
@@ -317,7 +306,7 @@ func admissionWorkloadResult(t *testing.T, intent profilingrun.Intent) workloado
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: run.Name, PodUID: run.UID,
 		},
-		PolicyDigest: digest, CoverageStartedAt: started, CoverageEndedAt: started.Add(32 * time.Second),
+		CoverageStartedAt: started, CoverageEndedAt: started.Add(32 * time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "10", EventLimit: 10,
 		InitialActivePods: pods, FinalActivePods: append([]workloadobserver.Pod(nil), pods...), Continuous: true,
 	}

@@ -9,10 +9,7 @@ import (
 )
 
 const (
-	intentSchemaVersionV1Alpha6 = "chill.dacs.io/profiling-run-intent.v1alpha6"
-	intentSchemaVersionV1Alpha7 = "chill.dacs.io/profiling-run-intent.v1alpha7"
-	intentSchemaVersionV1Alpha8 = "chill.dacs.io/profiling-run-intent.v1alpha8"
-	SchemaVersion               = "chill.dacs.io/profiling-run-intent.v1alpha9"
+	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha10"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -39,8 +36,7 @@ type Intent struct {
 	Actuation     *ActuationContract  `json:"actuation,omitempty"`
 }
 
-// UnmarshalJSON strictly decodes the current wire field names while retaining
-// immutable CPU and RKNNLite schemas that still have live Run records.
+// UnmarshalJSON strictly decodes the current wire fields.
 func (i *Intent) UnmarshalJSON(payload []byte) error {
 	type wire Intent
 	var decoded wire
@@ -74,24 +70,20 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 }
 
 type CandidateIdentity struct {
-	ReportDigest             string `json:"reportDigest"`
-	ModelSpecContentDigest   string `json:"modelSpecContentDigest"`
-	DeviceClassContentDigest string `json:"deviceClassContentDigest"`
-	RuntimeDeclarationDigest string `json:"runtimeDeclarationDigest"`
-	ExecutionPath            string `json:"executionPath"`
-	Verdict                  string `json:"verdict"`
+	Inputs        CandidateReportInputs `json:"inputs"`
+	ExecutionPath string                `json:"executionPath"`
+	Verdict       string                `json:"verdict"`
 }
 
 type ExecutionState struct {
-	DeviceClass        string `json:"deviceClass"`
-	Model              string `json:"model"`
-	Artifact           string `json:"artifact"`
-	ArtifactDigest     string `json:"artifactDigest"`
-	ArtifactPath       string `json:"artifactPath,omitempty"`
-	RuntimeFamily      string `json:"runtimeFamily"`
-	Backend            string `json:"backend"`
-	PowerMode          string `json:"powerMode"`
-	HostContractDigest string `json:"hostContractDigest,omitempty"`
+	DeviceClass   string                       `json:"deviceClass"`
+	Model         string                       `json:"model"`
+	Artifact      string                       `json:"artifact"`
+	ArtifactPath  string                       `json:"artifactPath,omitempty"`
+	RuntimeFamily string                       `json:"runtimeFamily"`
+	Backend       string                       `json:"backend"`
+	PowerMode     string                       `json:"powerMode"`
+	HostContract  *CandidateReportHostContract `json:"hostContract,omitempty"`
 }
 
 type Images struct {
@@ -119,13 +111,13 @@ type CPUContract struct {
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
 }
 
-// ActuationContract binds a non-fixed selected power mode to the exact typed
-// target and configured policy identity that must converge before execution.
+// ActuationContract binds a non-fixed selected power mode to the typed target
+// and configured policy entry that must converge before execution.
 // Mutable observations and restoration state remain outside the intent.
 type ActuationContract struct {
-	PowerMode    string         `json:"powerMode"`
-	Actuator     ActuatorTarget `json:"actuator"`
-	PolicyDigest string         `json:"policyDigest"`
+	PowerMode  string         `json:"powerMode"`
+	Actuator   ActuatorTarget `json:"actuator"`
+	PolicyName string         `json:"policyName"`
 }
 
 // ActuatorTarget is a strict discriminated union matching the catalogued
@@ -159,12 +151,11 @@ type MeasurementContract struct {
 }
 
 type MetricContract struct {
-	SourceKind                 string `json:"sourceKind"`
-	NodeName                   string `json:"nodeName"`
-	Endpoint                   string `json:"endpoint"`
-	PowerMetric                string `json:"powerMetric"`
-	ConfigurationContentDigest string `json:"configurationContentDigest,omitempty"`
-	IntervalMilliseconds       int    `json:"intervalMilliseconds"`
-	TimeoutMilliseconds        int    `json:"timeoutMilliseconds"`
-	DurationSeconds            int    `json:"durationSeconds"`
+	SourceKind           string `json:"sourceKind"`
+	NodeName             string `json:"nodeName"`
+	Endpoint             string `json:"endpoint"`
+	PowerMetric          string `json:"powerMetric"`
+	IntervalMilliseconds int    `json:"intervalMilliseconds"`
+	TimeoutMilliseconds  int    `json:"timeoutMilliseconds"`
+	DurationSeconds      int    `json:"durationSeconds"`
 }

@@ -67,13 +67,12 @@ type AdmissionResult struct {
 }
 
 type AdmittedTrial struct {
-	StateIdentity                    string  `json:"stateIdentity"`
-	EnvironmentIdentity              string  `json:"environmentIdentity"`
-	MeasurementProtocolIdentity      string  `json:"measurementProtocolIdentity"`
-	TrialID                          string  `json:"trialID"`
-	AdmissionPolicyVersion           string  `json:"admissionPolicyVersion"`
-	EstimatorIdentity                string  `json:"estimatorIdentity"`
-	BaselineUncertaintyJoulesPerItem float64 `json:"baselineUncertaintyJoulesPerItem"`
+	StateIdentity               string `json:"stateIdentity"`
+	EnvironmentIdentity         string `json:"environmentIdentity"`
+	MeasurementProtocolIdentity string `json:"measurementProtocolIdentity"`
+	TrialID                     string `json:"trialID"`
+	AdmissionPolicyVersion      string `json:"admissionPolicyVersion"`
+	EstimatorIdentity           string `json:"estimatorIdentity"`
 	// Baseline sufficient statistics are copied from the admitted exact-state
 	// baseline for point aggregation. Curve retains the baseline object that
 	// owns cross-point covariance.
@@ -87,10 +86,9 @@ type AdmittedTrial struct {
 	LatencyP99Milliseconds            float64 `json:"latencyP99Milliseconds"`
 }
 type RawEvidenceIdentity struct {
-	Store  string `json:"store"`
-	Key    string `json:"key"`
-	Digest string `json:"digest"`
-	Size   int64  `json:"size"`
+	Store string `json:"store"`
+	Key   string `json:"key"`
+	Size  int64  `json:"size"`
 }
 type IdleObservation struct {
 	StateIdentity                string              `json:"stateIdentity"`
@@ -158,10 +156,9 @@ type PointPolicy struct {
 	ConfidenceLevel float64 `json:"confidenceLevel"`
 }
 
-// PointConfidence versions one interval construction around the shared point
-// estimate. The retained pre-Welch construction has neither a variance nor
-// effective degrees of freedom. A zero-variance Welch estimate retains its
-// zero variance but has no effective degrees of freedom.
+// PointConfidence versions the interval construction around the shared point
+// estimate. A zero-variance Welch estimate retains its zero variance but has
+// no effective degrees of freedom.
 type PointConfidence struct {
 	EstimatorVersion          string   `json:"estimatorVersion"`
 	Method                    string   `json:"method"`
@@ -184,18 +181,16 @@ type Point struct {
 	IncrementalSampleVariance             float64         `json:"incrementalSampleVariance"`
 	MeanBaselineCoefficientSecondsPerItem float64         `json:"meanBaselineCoefficientSecondsPerItem"`
 	Confidence                            PointConfidence `json:"confidence"`
-	PreviousConfidence                    PointConfidence `json:"previousConfidence"`
 	LatencyP99Milliseconds                float64         `json:"latencyP99Milliseconds"`
 }
 
 type BSatStatus string
 
 const (
-	BSatAccepted        BSatStatus = "Accepted"
-	BSatCandidateOnly   BSatStatus = "CandidateOnly"
-	BSatCensored        BSatStatus = "Censored"
-	BSatUnavailable     BSatStatus = "Unavailable"
-	LegacyBSatAmbiguous BSatStatus = "Ambiguous"
+	BSatAccepted      BSatStatus = "Accepted"
+	BSatCandidateOnly BSatStatus = "CandidateOnly"
+	BSatCensored      BSatStatus = "Censored"
+	BSatUnavailable   BSatStatus = "Unavailable"
 
 	BSatCodeDiscoveryCandidateSelected      = "DiscoveryCandidateSelected"
 	BSatCodeCapabilityBoundary              = "CapabilityBoundary"
@@ -206,21 +201,6 @@ const (
 	BSatCodeDomainNoImprovementNotConfirmed = "DomainNoImprovementNotConfirmed"
 	BSatCodeNonPositiveReferenceLowerBound  = "NonPositiveReferenceLowerBound"
 )
-
-type LegacyBSatPolicy struct {
-	Version                      string  `json:"version"`
-	RelativeEquivalenceTolerance float64 `json:"relativeEquivalenceTolerance"`
-}
-type LegacyBSatResult struct {
-	Status                      BSatStatus `json:"status"`
-	PolicyVersion               string     `json:"policyVersion"`
-	StateIdentity               string     `json:"stateIdentity,omitempty"`
-	EnvironmentIdentity         string     `json:"environmentIdentity,omitempty"`
-	MeasurementProtocolIdentity string     `json:"measurementProtocolIdentity,omitempty"`
-	Batch                       *int       `json:"batch,omitempty"`
-	Code                        string     `json:"code"`
-	MeasuredBatches             []int      `json:"measuredBatches"`
-}
 
 // BSatPolicy is fixed before discovery starts. The complete decoded-policy
 // provenance is added at the policy-file boundary; this pure value owns the
@@ -246,8 +226,7 @@ type BSatDiscoveryResult struct {
 	KMax                                 int        `json:"kmax"`
 	RelativeImprovementTolerance         float64    `json:"relativeImprovementTolerance"`
 	DiscoveryTrials                      int        `json:"discoveryTrials"`
-	CurveFamilyContractDigest            string     `json:"curveFamilyContractDigest"`
-	CurveFamilyIdentity                  string     `json:"curveFamilyIdentity"`
+	CurveFamilyName                      string     `json:"curveFamilyName"`
 	BoundaryBatch                        *int       `json:"boundaryBatch,omitempty"`
 }
 
@@ -265,8 +244,7 @@ type BSatSizingResult struct {
 	ProjectedTotalActiveRuns          *int       `json:"projectedTotalActiveRuns,omitempty"`
 	SizingMethod                      string     `json:"sizingMethod"`
 	PolicyVersion                     string     `json:"policyVersion"`
-	CurveFamilyContractDigest         string     `json:"curveFamilyContractDigest"`
-	CurveFamilyIdentity               string     `json:"curveFamilyIdentity"`
+	CurveFamilyName                   string     `json:"curveFamilyName"`
 }
 
 type BSatContrastBound struct {
@@ -307,8 +285,6 @@ type BSatResult struct {
 	ConfirmatoryEstimatorVersion          string                   `json:"confirmatoryEstimatorVersion"`
 	ConfidenceLevel                       float64                  `json:"confidenceLevel"`
 	SizingMethod                          string                   `json:"sizingMethod"`
-	DiscoveryPolicyDigest                 string                   `json:"discoveryPolicyDigest"`
-	ConfirmatoryPolicyDigest              string                   `json:"confirmatoryPolicyDigest"`
-	CurveFamilyContractDigest             string                   `json:"curveFamilyContractDigest"`
-	CurveFamilyIdentity                   string                   `json:"curveFamilyIdentity"`
+	PolicyName                            string                   `json:"policyName"`
+	CurveFamilyName                       string                   `json:"curveFamilyName"`
 }

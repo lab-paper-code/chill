@@ -115,10 +115,3 @@ func (f FrozenExecutionPolicy) CanonicalJSON() ([]byte, error) {
 	}
 	return json.Marshal(f)
 }
-
-func (f FrozenExecutionPolicy) Identity() (string, error) {
-	if err := f.Validate(); err != nil {
-		return "", err
-	}
-	return f.Policy.Name, nil
-}

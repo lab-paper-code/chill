@@ -73,7 +73,6 @@ func execute(
 			PodName:   opts.podName,
 			PodUID:    opts.podUID,
 		},
-		PolicyDigest:          opts.contractDigest,
 		SelectorLabelKeys:     keys,
 		EventLimit:            opts.maxEvents,
 		EndFenceContainerName: endFenceContainerName,

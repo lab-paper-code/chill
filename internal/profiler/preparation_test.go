@@ -2,8 +2,6 @@ package profiler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -25,9 +23,6 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(prepared.Intent, expected) {
 		t.Fatalf("prepared intent drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.Intent)
-	}
-	if prepared.IntentDigest == "" {
-		t.Fatal("prepared Run lost its retained intent identity")
 	}
 	if err := profilingrun.ValidateCandidateReport(prepared.CandidateReportBytes, prepared.Intent); err != nil {
 		t.Fatalf("prepared Run lost candidate-report semantics: %v", err)
@@ -110,7 +105,7 @@ func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if prepared.Intent.Actuation == nil || prepared.ActuationPolicy == nil ||
-		prepared.Intent.Actuation.PolicyDigest != resolvers.actuation.result.Policy.Name ||
+		prepared.Intent.Actuation.PolicyName != resolvers.actuation.result.Policy.Name ||
 		prepared.Intent.Actuation.Actuator.JetsonNVPModel.ID != 1 ||
 		resolvers.actuation.calls != 1 || !reflect.DeepEqual(resolvers.actuation.selection, selection) {
 		t.Fatalf("prepared actuation binding = %#v policy=%#v", prepared.Intent.Actuation, prepared.ActuationPolicy)
@@ -209,13 +204,6 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 				resolvers.metrics.result.Endpoint = ""
 			},
 			match: "metrics.endpoint is required",
-		},
-		{
-			name: "missing metric source configuration identity",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.metrics.result.ConfigurationContentDigest = ""
-			},
-			match: "configuration identity is required",
 		},
 		{
 			name: "unsupported runtime path",
@@ -317,10 +305,9 @@ func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *Reso
 	candidate.ArtifactArchitecture = candidate.DeviceArchitecture
 	candidate.ArtifactPath = "/artifact/model.onnx"
 	candidate.State.ArtifactPath = candidate.ArtifactPath
-	candidate.ArtifactDigest = candidate.State.ArtifactDigest
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
-		Path: candidate.ArtifactPath, Digest: candidate.ArtifactDigest,
+		Path: candidate.ArtifactPath,
 	}
 	report.MetricObserverImage = candidate.MetricObserverImage
 	encoded, err := json.Marshal(report)
@@ -518,7 +505,6 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	host := profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{
 			Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-			Digest: "sha256:" + strings.Repeat("b", 64),
 		}},
 		Driver: profilingrun.CandidateReportHostDriver{
 			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
@@ -531,17 +517,14 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
 		},
 	}
-	intent.State.HostContractDigest, err = profilingrun.CandidateHostContractDigest(&host)
-	if err != nil {
-		t.Fatal(err)
-	}
+	intent.State.HostContract = &host
 	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
 	report.Inputs.ModelSpec.Name = intent.State.Model
 	report.Inputs.DeviceClass.Name = intent.State.DeviceClass
 	report.Inputs.RuntimeDeclaration.Image = intent.Images.Runtime
 	report.Selection = profilingrun.CandidateReportSelection{
 		ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
-		ArtifactDigest: intent.State.ArtifactDigest, PowerMode: intent.State.PowerMode,
+		PowerMode: intent.State.PowerMode,
 	}
 	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
 		Architecture: intent.TargetNode.Architecture,
@@ -550,7 +533,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	}
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
 		Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
-		Path: intent.State.ArtifactPath, Digest: intent.State.ArtifactDigest,
+		Path: intent.State.ArtifactPath,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "rk3588", FixedBatch: 2, InputShape: []int32{2, 224, 224, 3},
@@ -566,8 +549,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(candidateBytes)
-	intent.Candidate.ReportDigest = "sha256:" + hex.EncodeToString(sum[:])
+	intent.Candidate.Inputs = report.Inputs
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -585,13 +567,11 @@ type fakePreparationResolvers struct {
 func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparationResolvers {
 	return &fakePreparationResolvers{
 		candidate: &fakeCandidateResolver{result: ResolvedCandidate{
-			ReportBytes:                     append([]byte(nil), report...),
-			ModelSpecContentDigest:          intent.Candidate.ModelSpecContentDigest,
-			DeviceClassContentDigest:        intent.Candidate.DeviceClassContentDigest,
-			RuntimeDeclarationContentDigest: intent.Candidate.RuntimeDeclarationDigest,
-			Verdict:                         intent.Candidate.Verdict,
-			State:                           intent.State,
-			DeviceArchitecture:              intent.TargetNode.Architecture,
+			ReportBytes:        append([]byte(nil), report...),
+			Inputs:             intent.Candidate.Inputs,
+			Verdict:            intent.Candidate.Verdict,
+			State:              intent.State,
+			DeviceArchitecture: intent.TargetNode.Architecture,
 			DeviceNodeSelector: map[string]string{
 				"edge.dacs.io/device-class": intent.State.DeviceClass,
 			},
@@ -600,13 +580,11 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 			ArtifactImage:        intent.Images.Artifact,
 			ArtifactArchitecture: intent.TargetNode.Architecture,
 			ArtifactPath:         intent.State.ArtifactPath,
-			ArtifactDigest:       intent.State.ArtifactDigest,
 			MetricObserverImage:  intent.Images.MetricObserver,
 		}},
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
 			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
-			ConfigurationContentDigest: intent.Metrics.ConfigurationContentDigest,
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
 			Image: intent.Images.WorkloadObserver,

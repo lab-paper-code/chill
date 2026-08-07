@@ -98,15 +98,15 @@ func writeInventoryTable(writer io.Writer, document inventoryDocument) error {
 			}
 		}
 	}
-	if _, err := fmt.Fprintln(table, "\nMODEL\tARTIFACT\tFORMAT\tDIGEST"); err != nil {
+	if _, err := fmt.Fprintln(table, "\nMODEL\tARTIFACT\tFORMAT"); err != nil {
 		return err
 	}
 	for _, model := range document.Models {
 		artifacts := append([]edgev1alpha1.ModelArtifact(nil), model.Spec.Artifacts...)
 		sort.Slice(artifacts, func(i, j int) bool { return artifacts[i].Name < artifacts[j].Name })
 		for _, artifact := range artifacts {
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
-				model.Name, artifact.Name, artifact.Format, compactDigest(artifact.Digest)); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\n",
+				model.Name, artifact.Name, artifact.Format); err != nil {
 				return err
 			}
 		}

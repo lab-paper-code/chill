@@ -105,24 +105,13 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		)
 	}
 
-	modelDigest, err := catalogContentDigest(model.Name, string(model.UID), model.Generation, model.Spec)
-	if err != nil {
-		return profiler.ResolvedCandidate{}, fmt.Errorf("digest ModelSpec content: %w", err)
-	}
-	deviceDigest, err := catalogContentDigest(
-		deviceClass.Name, string(deviceClass.UID), deviceClass.Generation, deviceClass.Spec,
-	)
-	if err != nil {
-		return profiler.ResolvedCandidate{}, fmt.Errorf("digest DeviceClass content: %w", err)
-	}
 	if declaration.Artifact.Architecture != deviceClass.Spec.Architecture {
 		return profiler.ResolvedCandidate{}, errors.New("artifact supply architecture does not match DeviceClass")
 	}
 	report, err := buildCandidateReport(candidateReportInput{
 		Model: model, DeviceClass: deviceClass, ConfigMap: configMap,
-		ConfigMapKey: r.options.ConfigMapKey, ModelDigest: modelDigest,
-		DeviceDigest: deviceDigest, DeclarationDigest: declaration.RuntimeDeclarationDigest,
-		Path: modelPath, Artifact: artifact, PowerMode: selection.PowerMode,
+		ConfigMapKey: r.options.ConfigMapKey,
+		Path:         modelPath, Artifact: artifact, PowerMode: selection.PowerMode,
 		DeviceFacts: deviceFacts, Declaration: declaration, Result: result,
 	})
 	if err != nil {
@@ -130,17 +119,26 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	}
 
 	return profiler.ResolvedCandidate{
-		ReportBytes:                     report.Bytes,
-		ModelSpecContentDigest:          modelDigest,
-		DeviceClassContentDigest:        deviceDigest,
-		RuntimeDeclarationContentDigest: declaration.RuntimeDeclarationDigest,
-		Verdict:                         string(result.Verdict),
+		ReportBytes: report.Bytes,
+		Inputs: profilingrun.CandidateReportInputs{
+			ModelSpec: profilingrun.CandidateReportObjectInput{
+				Name: model.Name, UID: string(model.UID), ResourceVersion: model.ResourceVersion,
+			},
+			DeviceClass: profilingrun.CandidateReportObjectInput{
+				Name: deviceClass.Name, UID: string(deviceClass.UID), ResourceVersion: deviceClass.ResourceVersion,
+			},
+			RuntimeDeclaration: profilingrun.CandidateReportRuntimeInput{
+				Namespace: configMap.Namespace, Name: configMap.Name, UID: string(configMap.UID),
+				ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey, Image: declaration.Runtime.Image,
+			},
+		},
+		Verdict: string(result.Verdict),
 		State: profilingrun.ExecutionState{
 			DeviceClass: selection.DeviceClass,
-			Model:       selection.ModelSpec, Artifact: artifact.Name, ArtifactDigest: artifact.Digest,
+			Model:       selection.ModelSpec, Artifact: artifact.Name,
 			ArtifactPath:  declaration.Artifact.Path,
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
-			PowerMode: selection.PowerMode, HostContractDigest: report.HostContractDigest,
+			PowerMode: selection.PowerMode, HostContract: reportHostContract(declaration.Host),
 		},
 		DeviceArchitecture:   deviceClass.Spec.Architecture,
 		DeviceNodeSelector:   deviceFacts.nodeSelector,
@@ -150,7 +148,6 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		ArtifactImage:        declaration.Artifact.Image,
 		ArtifactArchitecture: declaration.Artifact.Architecture,
 		ArtifactPath:         declaration.Artifact.Path,
-		ArtifactDigest:       declaration.Artifact.Digest,
 		MetricObserverImage:  declaration.MetricObserverImage,
 	}, nil
 }

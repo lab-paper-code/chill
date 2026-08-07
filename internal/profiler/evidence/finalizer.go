@@ -71,26 +71,21 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	if err != nil {
 		return FinalizeResult{}, err
 	}
-	intentDigest, err := request.Intent.Digest()
-	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate Run intent: %w", err)
-	}
 	if err := raw.validate(request.Intent); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate raw measurement: %w", err)
 	}
-	schemaVersion := ExecutionEvidenceSchemaVersion
-	if request.Intent.Actuation != nil {
-		schemaVersion = ActuatedExecutionEvidenceSchemaVersion
+	verifiedCandidate, err := profilingrun.VerifyCandidateReport(request.CandidateReportBytes, request.Intent)
+	if err != nil {
+		return FinalizeResult{}, fmt.Errorf("validate candidate report: %w", err)
 	}
 	candidate := ExecutionEvidence{
-		SchemaVersion:        schemaVersion,
-		IntentDigest:         intentDigest,
-		Intent:               request.Intent,
-		CandidateReportBytes: append([]byte(nil), request.CandidateReportBytes...),
-		RawMeasurement:       request.RawReceipt.Object,
-		Terminal:             request.Terminal,
-		Actuation:            cloneActuationFacts(request.Actuation),
-		FinalizedAt:          request.FinalizedAt,
+		SchemaVersion:   ExecutionEvidenceSchemaVersion,
+		Intent:          request.Intent,
+		CandidateReport: verifiedCandidate.Record(),
+		RawMeasurement:  request.RawReceipt.Object,
+		Terminal:        request.Terminal,
+		Actuation:       cloneActuationFacts(request.Actuation),
+		FinalizedAt:     request.FinalizedAt,
 	}
 	if err := raw.validateExecution(candidate); err != nil {
 		return FinalizeResult{}, fmt.Errorf("validate execution evidence: %w", err)
@@ -125,7 +120,7 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 	}
 	return FinalizeResult{
 		Reference: identity, SchemaVersion: candidate.SchemaVersion,
-		Reused: receipt.Outcome == evidencestore.CreateOutcomeExistingExactMatch,
+		Reused: receipt.Outcome == evidencestore.CreateOutcomeExisting,
 	}, nil
 }
 

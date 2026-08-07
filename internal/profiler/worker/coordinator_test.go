@@ -19,10 +19,6 @@ import (
 
 func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	intent := testIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	runtimeResult := testRuntimeResult(t, intent)
 	metricResult := testMetricResult(intent)
 	var calls []string
@@ -35,7 +31,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 		if err := json.Unmarshal(payload, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if raw.IntentDigest != digest || raw.PodUID != testPodUID || raw.Runtime.Status != "Succeeded" ||
+		if raw.PodUID != testPodUID || raw.Runtime.Status != "Succeeded" ||
 			raw.Metrics.Source.NodeName != intent.TargetNode.Name || raw.Workload == nil ||
 			raw.Workload.Target.NodeUID != intent.TargetNode.UID {
 			t.Fatalf("unexpected raw measurement: %#v", raw)
@@ -75,20 +71,13 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 
 func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 	intent := testIdleIntent(t)
-	digest, err := intent.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idle, err := idleRuntimeResult(intent, testPodUID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	idle := idleRuntimeResult(intent, testPodUID)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		var raw evidence.IdleRawMeasurement
 		if err := json.Unmarshal(payload, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if raw.IntentDigest != digest || raw.PodUID != testPodUID || raw.Runtime.InferenceCountAfterModelLoad != 0 ||
+		if raw.PodUID != testPodUID || raw.Runtime.InferenceCountAfterModelLoad != 0 ||
 			!raw.Runtime.ModelResidentAtEnd || raw.Workload == nil {
 			t.Fatalf("unexpected idle raw measurement: %#v", raw)
 		}
@@ -236,7 +225,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 	intent := testIntent(t)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, _ []byte) (evidencestore.Receipt, error) {
-		identity.Digest = "sha256:" + strings.Repeat("0", 64)
+		identity.Size++
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
 	}}
 	coordinator := mustCoordinator(t,
@@ -379,11 +368,7 @@ func testVerifiedIntent(t *testing.T, intent profilingrun.Intent) profilingrun.V
 
 func testRuntimeResult(t *testing.T, intent profilingrun.Intent) profilingrun.RuntimeResult {
 	t.Helper()
-	result, err := runtimeResult(intent, testPodUID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result
+	return runtimeResult(intent, testPodUID)
 }
 
 func testIdleIntent(t *testing.T) profilingrun.Intent {
@@ -400,11 +385,7 @@ func testIdleIntent(t *testing.T) profilingrun.Intent {
 	return intent
 }
 
-func idleRuntimeResult(intent profilingrun.Intent, podUID string) (profilingrun.IdleRuntimeResult, error) {
-	digest, err := intent.Digest()
-	if err != nil {
-		return profilingrun.IdleRuntimeResult{}, err
-	}
+func idleRuntimeResult(intent profilingrun.Intent, podUID string) profilingrun.IdleRuntimeResult {
 	modelLoaded := time.Date(2026, time.July, 16, 2, 59, 0, 0, time.UTC)
 	settlingStarted := modelLoaded.Add(time.Second)
 	settlingCompleted := settlingStarted.Add(time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second)
@@ -412,11 +393,9 @@ func idleRuntimeResult(intent profilingrun.Intent, podUID string) (profilingrun.
 	return profilingrun.IdleRuntimeResult{
 		SchemaVersion:                profilingrun.IdleRuntimeResultSchemaVersion,
 		Status:                       "Succeeded",
-		IntentDigest:                 digest,
 		PodUID:                       podUID,
 		NodeName:                     intent.TargetNode.Name,
 		Model:                        intent.State.Model,
-		ArtifactDigest:               intent.State.ArtifactDigest,
 		Architecture:                 "x86_64",
 		Runtime:                      intent.State.RuntimeFamily,
 		RuntimeVersion:               "1.16.0",
@@ -437,24 +416,20 @@ func idleRuntimeResult(intent profilingrun.Intent, podUID string) (profilingrun.
 			CPUSetEffective: "0-3",
 		},
 		DerivedContract: profilingrun.DerivedContract{
-			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			Backend: intent.State.Backend, Provider: intent.State.Backend,
 			NodeSnapshot: intent.TargetNode,
 		},
-	}, nil
+	}
 }
 
-func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.RuntimeResult, error) {
-	digest, err := intent.Digest()
-	if err != nil {
-		return profilingrun.RuntimeResult{}, err
-	}
+func runtimeResult(intent profilingrun.Intent, podUID string) profilingrun.RuntimeResult {
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
 	targetDuration := float64(intent.Measurement.DurationSeconds)
 	return profilingrun.RuntimeResult{
-		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", SweepID: digest,
+		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-		ArtifactDigest: intent.State.ArtifactDigest, Architecture: "x86_64",
-		Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+		Architecture: "x86_64",
+		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 		Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
 		WarmupIterations:  intent.Measurement.WarmupIterations,
@@ -473,7 +448,7 @@ func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.Runt
 			CPUSetEffective: "0-3",
 		},
 		DerivedContract: profilingrun.DerivedContract{
-			RunIntentDigest: digest, Backend: intent.State.Backend, Provider: intent.State.Backend,
+			Backend: intent.State.Backend, Provider: intent.State.Backend,
 			NodeSnapshot: intent.TargetNode,
 		},
 		RepetitionResults: []profilingrun.Repetition{{
@@ -481,7 +456,7 @@ func runtimeResult(intent profilingrun.Intent, podUID string) (profilingrun.Runt
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			LatencyMilliseconds: []float64{1, 2},
 		}},
-	}, nil
+	}
 }
 
 func testMetricResult(intent profilingrun.Intent) metricobserver.Result {
@@ -522,10 +497,6 @@ func testWorkloadResult(
 	runtime profilingrun.RuntimeResult,
 ) workloadobserver.Result {
 	t.Helper()
-	policyDigest, err := intent.Workload.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	started, ended, err := runtime.MeasurementWindow()
 	if err != nil {
 		t.Fatal(err)
@@ -542,7 +513,6 @@ func testWorkloadResult(
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: runtime.ExperimentID,
 		},
-		PolicyDigest:      policyDigest,
 		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: ended.Add(time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{pod}, FinalActivePods: []workloadobserver.Pod{pod},
@@ -556,10 +526,6 @@ func testIdleWorkloadResult(
 	runtime profilingrun.IdleRuntimeResult,
 ) workloadobserver.Result {
 	t.Helper()
-	policyDigest, err := intent.Workload.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
 	started, ended, err := runtime.MeasurementWindow()
 	if err != nil {
 		t.Fatal(err)
@@ -576,7 +542,6 @@ func testIdleWorkloadResult(
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: runtime.PodUID,
 		},
-		PolicyDigest:      policyDigest,
 		CoverageStartedAt: started.Add(-time.Second), CoverageEndedAt: ended.Add(time.Second),
 		InitialResourceVersion: "10", LastResourceVersion: "11", EventLimit: 10,
 		InitialActivePods: []workloadobserver.Pod{pod}, FinalActivePods: []workloadobserver.Pod{pod},

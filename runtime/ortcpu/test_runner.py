@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import tempfile
@@ -46,7 +45,9 @@ class FakeFlat:
         if key.start is None or key.stop is None or key.step is not None:
             raise AssertionError(f"unexpected input slice {key}")
         if values.length != key.stop - key.start:
-            raise AssertionError("generated chunk length does not match its destination")
+            raise AssertionError(
+                "generated chunk length does not match its destination"
+            )
 
 
 class FakeChunk:
@@ -70,7 +71,9 @@ class FakeNumpy:
     @staticmethod
     def empty(shape: list[int], *, dtype: object) -> FakeSample:
         if shape != [1, 3, 224, 224] or dtype is not FakeNumpy.float32:
-            raise AssertionError(f"unexpected input allocation shape={shape} dtype={dtype}")
+            raise AssertionError(
+                f"unexpected input allocation shape={shape} dtype={dtype}"
+            )
         return FakeSample()
 
     class random:
@@ -118,8 +121,13 @@ class FakeORT:
         return FakeSessionOptions()
 
     @classmethod
-    def InferenceSession(cls, _path: str, *, sess_options: FakeSessionOptions, providers: list[str]) -> FakeSession:
-        if sess_options.intra_op_num_threads != 4 or sess_options.inter_op_num_threads != 1:
+    def InferenceSession(
+        cls, _path: str, *, sess_options: FakeSessionOptions, providers: list[str]
+    ) -> FakeSession:
+        if (
+            sess_options.intra_op_num_threads != 4
+            or sess_options.inter_op_num_threads != 1
+        ):
             raise AssertionError("ORT thread options were not frozen")
         if providers != ["CPUExecutionProvider"]:
             raise AssertionError(f"unexpected providers {providers}")
@@ -128,10 +136,8 @@ class FakeORT:
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
-    artifact_digest = "sha256:" + hashlib.sha256(model_path.read_bytes()).hexdigest()
     return {
         "schemaVersion": runner.REQUEST_SCHEMA,
-        "intentDigest": "sha256:" + "1" * 64,
         "podUID": "pod-uid",
         "scheduledNodeName": "lattepanda",
         "modelPath": str(model_path),
@@ -154,7 +160,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "deviceClass": "lattepanda-3-delta-8g",
                 "model": "mobilenet-v2-050",
                 "artifact": "canonical-onnx",
-                "artifactDigest": artifact_digest,
                 "artifactPath": "/artifact/mobilenet-v2-050.onnx",
                 "runtimeFamily": "onnxruntime",
                 "backend": "CPUExecutionProvider",
@@ -210,7 +215,9 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 class RunnerTest(unittest.TestCase):
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
-            runner.decode_request(io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}'))
+            runner.decode_request(
+                io.BytesIO(b'{"schemaVersion":"a","schemaVersion":"b"}')
+            )
 
     def test_validate_request_rejects_unknown_contract_field(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -218,19 +225,16 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_request(model)
             request["unknown"] = True
-            with self.assertRaisesRegex(runner.ContractError, "unknown=\\['unknown'\\]"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "unknown=\\['unknown'\\]"
+            ):
                 runner.validate_request(request)
 
-    def test_validate_request_retains_frozen_cpu_intents(self) -> None:
+    def test_validate_request_accepts_current_cpu_intent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
-            for schema_version in runner.RETAINED_INTENT_SCHEMAS:
-                with self.subTest(schema_version=schema_version):
-                    request = valid_request(model)
-                    request["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
-                    request["intent"]["schemaVersion"] = schema_version
-                    runner.validate_request(request)
+            runner.validate_request(valid_request(model))
 
     def test_validate_request_binds_current_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -241,7 +245,7 @@ class RunnerTest(unittest.TestCase):
             request["intent"]["actuation"] = {
                 "powerMode": "MODE_15W_6CORE",
                 "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
-                "policyDigest": "sha256:" + "b" * 64,
+                "policyName": "jetson-mode-15w",
             }
             runner.validate_request(request)
 
@@ -256,22 +260,28 @@ class RunnerTest(unittest.TestCase):
             request = valid_request(model)
             request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
             request["intent"]["actuation"] = None
-            with self.assertRaisesRegex(runner.ContractError, "actuation must be an object"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "actuation must be an object"
+            ):
                 runner.validate_request(request)
 
-    def test_validate_request_requires_matching_request_and_intent_generation(self) -> None:
+    def test_validate_request_rejects_unsupported_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
-            current = valid_request(model)
-            current["intent"]["schemaVersion"] = next(iter(runner.RETAINED_INTENT_SCHEMAS))
-            with self.assertRaisesRegex(runner.ContractError, "current runtime request"):
-                runner.validate_request(current)
+            request = valid_request(model)
+            request["intent"]["schemaVersion"] = "unsupported"
+            with self.assertRaisesRegex(
+                runner.ContractError, "supported CPU intent schema"
+            ):
+                runner.validate_request(request)
 
-            retained = valid_request(model)
-            retained["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
-            with self.assertRaisesRegex(runner.ContractError, "retained runtime request"):
-                runner.validate_request(retained)
+            request = valid_request(model)
+            request["schemaVersion"] = "unsupported"
+            with self.assertRaisesRegex(
+                runner.ContractError, "unsupported runtime request"
+            ):
+                runner.validate_request(request)
 
     def test_validate_request_requires_job_timing_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -279,7 +289,9 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_request(model)
             del request["observerReadyTimeoutMilliseconds"]
-            with self.assertRaisesRegex(runner.ContractError, "observerReadyTimeoutMilliseconds"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "observerReadyTimeoutMilliseconds"
+            ):
                 runner.validate_request(request)
 
     def test_validate_request_rejects_scheduled_node_drift(self) -> None:
@@ -302,25 +314,25 @@ class RunnerTest(unittest.TestCase):
                     with self.assertRaisesRegex(runner.ContractError, field):
                         runner.validate_request(request)
 
-    def test_validate_request_keeps_active_and_idle_measurement_fields_disjoint(self) -> None:
+    def test_validate_request_keeps_active_and_idle_measurement_fields_disjoint(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             active = valid_request(model)
             active["intent"]["measurement"]["settlingDurationSeconds"] = 60
-            with self.assertRaisesRegex(runner.ContractError, "unknown=\\['settlingDurationSeconds'\\]"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "unknown=\\['settlingDurationSeconds'\\]"
+            ):
                 runner.validate_request(active)
 
             idle = valid_idle_request(model)
             del idle["intent"]["measurement"]["settlingDurationSeconds"]
-            with self.assertRaisesRegex(runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"
+            ):
                 runner.validate_request(idle)
-
-            retained_idle = valid_idle_request(model)
-            retained_idle["schemaVersion"] = runner.RETAINED_REQUEST_SCHEMA
-            retained_idle["intent"]["schemaVersion"] = runner.ACTIVE_ONLY_RETAINED_INTENT_SCHEMA
-            with self.assertRaisesRegex(runner.ContractError, "v1alpha6"):
-                runner.validate_request(retained_idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "input tensor"):
@@ -338,7 +350,9 @@ class RunnerTest(unittest.TestCase):
             (root / "cpu.stat").write_text("usage_usec 20\n", encoding="utf-8")
             (root / "cpuset.cpus.effective").write_text("0-3\n", encoding="utf-8")
             intent = {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}
-            with mock.patch.object(runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}):
+            with mock.patch.object(
+                runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}
+            ):
                 cpu_max, affinity, cpuset = runner.validate_cpu_contract(intent, root)
 
             self.assertEqual(cpu_max, "400000 100000")
@@ -360,8 +374,12 @@ class RunnerTest(unittest.TestCase):
             )
             (cpuset / "cpuset.cpus").write_text("0-11\n", encoding="utf-8")
             intent = {"cpu": {"limit": "12", "ortIntraOpThreads": 12}}
-            with mock.patch.object(runner.os, "sched_getaffinity", return_value=set(range(12))):
-                cpu_max, affinity, cpuset_value = runner.validate_cpu_contract(intent, root)
+            with mock.patch.object(
+                runner.os, "sched_getaffinity", return_value=set(range(12))
+            ):
+                cpu_max, affinity, cpuset_value = runner.validate_cpu_contract(
+                    intent, root
+                )
 
             self.assertEqual(cpu_max, "1200000 100000")
             self.assertEqual(affinity, list(range(12)))
@@ -373,7 +391,9 @@ class RunnerTest(unittest.TestCase):
 
     def test_cpu_contract_rejects_unknown_cgroup_layout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(runner.ContractError, "supported cgroup CPU controller"):
+            with self.assertRaisesRegex(
+                runner.ContractError, "supported cgroup CPU controller"
+            ):
                 runner.validate_cpu_contract(
                     {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}, Path(directory)
                 )
@@ -393,45 +413,83 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_request(model)
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
-                stack.enter_context(mock.patch.object(
-                    runner, "validate_cpu_contract", return_value=("400000 100000", [0, 1, 2, 3], "0-3")
-                ))
+                stack.enter_context(
+                    mock.patch.object(runner.platform, "machine", return_value="x86_64")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "validate_cpu_contract",
+                        return_value=("400000 100000", [0, 1, 2, 3], "0-3"),
+                    )
+                )
                 wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
-                stack.enter_context(mock.patch.object(
-                    runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 30}]
-                ))
-                stack.enter_context(mock.patch.object(runner, "now", side_effect=[
-                    "2026-07-16T00:00:00.000000Z",
-                    "2026-07-16T00:00:00.100000Z",
-                    "2026-07-16T00:00:01.200000Z",
-                    "2026-07-16T00:00:01.300000Z",
-                    "2026-07-16T00:00:01.400000Z",
-                ]))
-                stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
-                stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]))
-                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.8]))
+                publish = stack.enter_context(
+                    mock.patch.object(runner, "publish_immutable")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "cpu_stat",
+                        side_effect=[{"usage_usec": 10}, {"usage_usec": 30}],
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "now",
+                        side_effect=[
+                            "2026-07-16T00:00:00.000000Z",
+                            "2026-07-16T00:00:00.100000Z",
+                            "2026-07-16T00:00:01.200000Z",
+                            "2026-07-16T00:00:01.300000Z",
+                            "2026-07-16T00:00:01.400000Z",
+                        ],
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "perf_counter_ns", side_effect=[0, 5_000_000]
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "process_time", side_effect=[2.0, 2.8]
+                    )
+                )
                 result = runner.execute(request, FakeORT, FakeNumpy)
 
-            self.assertEqual(publish.call_args_list, [
-                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
-            ])
-            self.assertEqual(wait.call_args_list, [
-                mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]
-            ] + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)])
+            self.assertEqual(
+                publish.call_args_list,
+                [
+                    mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
+                    mock.call(Path(request["measurementStartPath"]), b"signal\n"),
+                    mock.call(Path(request["measurementEndPath"]), b"signal\n"),
+                ],
+            )
+            self.assertEqual(
+                wait.call_args_list,
+                [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
+                + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+            )
             self.assertEqual(FakeORT.last_session.calls, 3)
             self.assertEqual(result["status"], "Succeeded")
-            self.assertEqual(result["sweepId"], request["intentDigest"])
             self.assertEqual(result["experimentId"], "pod-uid")
             self.assertEqual(result["nodeName"], request["scheduledNodeName"])
             self.assertEqual(result["provider"], "CPUExecutionProvider")
             self.assertEqual(result["inferenceCount"], 1)
             self.assertEqual(result["latencyMs"]["mean"], 5.0)
-            self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
-            self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")
+            self.assertEqual(
+                result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20}
+            )
+            self.assertEqual(
+                result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid"
+            )
             self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
             generator = FakeNumpy.last_generator
             if generator is None:
@@ -447,28 +505,54 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_idle_request(model)
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
-                stack.enter_context(mock.patch.object(
-                    runner, "validate_cpu_contract", return_value=("400000 100000", [0, 1, 2, 3], "0-3")
-                ))
+                stack.enter_context(
+                    mock.patch.object(runner.platform, "machine", return_value="x86_64")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "validate_cpu_contract",
+                        return_value=("400000 100000", [0, 1, 2, 3], "0-3"),
+                    )
+                )
                 wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
-                publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                publish = stack.enter_context(
+                    mock.patch.object(runner, "publish_immutable")
+                )
                 sleep = stack.enter_context(mock.patch.object(runner.time, "sleep"))
-                stack.enter_context(mock.patch.object(
-                    runner, "cpu_stat", side_effect=[{"usage_usec": 10}, {"usage_usec": 15}]
-                ))
-                stack.enter_context(mock.patch.object(runner, "now", side_effect=[
-                    "2026-07-16T00:00:00.000000Z",
-                    "2026-07-16T00:00:01.000000Z",
-                    "2026-07-16T00:01:01.000000Z",
-                    "2026-07-16T00:01:01.100000Z",
-                    "2026-07-16T00:01:31.200000Z",
-                    "2026-07-16T00:01:31.300000Z",
-                ]))
-                stack.enter_context(mock.patch.object(
-                    runner.time, "monotonic", side_effect=[0.0, 0.0, 60.0, 100.0, 100.0, 130.0, 130.0]
-                ))
-                stack.enter_context(mock.patch.object(runner.time, "process_time", side_effect=[2.0, 2.1]))
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "cpu_stat",
+                        side_effect=[{"usage_usec": 10}, {"usage_usec": 15}],
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner,
+                        "now",
+                        side_effect=[
+                            "2026-07-16T00:00:00.000000Z",
+                            "2026-07-16T00:00:01.000000Z",
+                            "2026-07-16T00:01:01.000000Z",
+                            "2026-07-16T00:01:01.100000Z",
+                            "2026-07-16T00:01:31.200000Z",
+                            "2026-07-16T00:01:31.300000Z",
+                        ],
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time,
+                        "monotonic",
+                        side_effect=[0.0, 0.0, 60.0, 100.0, 100.0, 130.0, 130.0],
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        runner.time, "process_time", side_effect=[2.0, 2.1]
+                    )
+                )
                 result = runner.execute(request, FakeORT, FakeNumpy)
 
             self.assertEqual(FakeORT.last_session.calls, 0)
@@ -476,17 +560,26 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
             self.assertTrue(result["modelResidentAtEnd"])
             self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")
-            self.assertEqual(result["measurementStartedAt"], "2026-07-16T00:01:01.100000Z")
-            self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 5})
+            self.assertEqual(
+                result["measurementStartedAt"], "2026-07-16T00:01:01.100000Z"
+            )
+            self.assertEqual(
+                result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 5}
+            )
             self.assertGreaterEqual(sleep.call_count, 2)
-            self.assertEqual(publish.call_args_list, [
-                mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementStartPath"]), b"signal\n"),
-                mock.call(Path(request["measurementEndPath"]), b"signal\n"),
-            ])
-            self.assertEqual(wait.call_args_list, [
-                mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]
-            ] + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)])
+            self.assertEqual(
+                publish.call_args_list,
+                [
+                    mock.call(Path(request["workloadWindowStartPath"]), b"signal\n"),
+                    mock.call(Path(request["measurementStartPath"]), b"signal\n"),
+                    mock.call(Path(request["measurementEndPath"]), b"signal\n"),
+                ],
+            )
+            self.assertEqual(
+                wait.call_args_list,
+                [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
+                + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
+            )
 
 
 if __name__ == "__main__":

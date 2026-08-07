@@ -53,15 +53,15 @@ func writeProfilingRunsTable(writer io.Writer, document profilingRunsDocument) e
 		return err
 	}
 	const runHeader = "NAMESPACE\tRUN\tMODEL\tEXECUTION_PATH\tDEVICE_CLASS\tTARGET_NODE\t" +
-		"BATCH\tGENERATION\tOBSERVED\tINTENT_DIGEST"
+		"BATCH\tGENERATION\tOBSERVED\tINTENT_FROZEN"
 	if _, err := fmt.Fprintln(table, runHeader); err != nil {
 		return err
 	}
 	for _, run := range document.Runs {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%t\n",
 			run.Namespace, run.Name, run.Spec.Candidate.ModelSpec, run.Spec.Candidate.ExecutionPath,
 			run.Spec.Candidate.DeviceClass, run.Spec.TargetNode, run.Spec.Measurement.Batch,
-			run.Generation, run.Status.ObservedGeneration, compactDigest(run.Status.IntentDigest)); err != nil {
+			run.Generation, run.Status.ObservedGeneration, run.Status.IntentFrozen); err != nil {
 			return err
 		}
 	}

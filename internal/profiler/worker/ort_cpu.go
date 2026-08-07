@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha9"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha10"
 
 type ORTCPURuntimeConfig struct {
 	Command                 []string
@@ -45,7 +45,6 @@ var _ Runtime = (*ORTCPURuntime)(nil)
 type ortCPURequest struct {
 	SchemaVersion                    string              `json:"schemaVersion"`
 	Intent                           profilingrun.Intent `json:"intent"`
-	IntentDigest                     string              `json:"intentDigest"`
 	PodUID                           string              `json:"podUID"`
 	ScheduledNodeName                string              `json:"scheduledNodeName"`
 	ModelPath                        string              `json:"modelPath"`
@@ -169,7 +168,7 @@ func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, er
 	}
 
 	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent, IntentDigest: runtimeRequest.Intent.Digest(),
+		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,

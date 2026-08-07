@@ -1,9 +1,6 @@
 package profilingrun
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 )
 
@@ -30,17 +27,6 @@ func (c WorkloadContract) Validate() error {
 	return fmt.Errorf("unsupported workload contract schemaVersion %q", c.SchemaVersion)
 }
 
-func (c WorkloadContract) Digest() (string, error) {
-	if err := c.Validate(); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(c)
-	if err != nil {
-		return "", fmt.Errorf("encode workload contract: %w", err)
-	}
-	return sha256Digest(payload), nil
-}
-
 // LabelKeys returns only the labels required to distinguish another CHILL
 // measurement Pod. External workload identities remain generic Pod facts.
 func (c WorkloadContract) LabelKeys() ([]string, error) {
@@ -56,9 +42,4 @@ func (c WorkloadContract) LabelKeys() ([]string, error) {
 
 func IsMeasurementWorkload(ownerKind string, labels map[string]string) bool {
 	return ownerKind == "Job" && labels[MeasurementWorkloadLabelKey] == MeasurementWorkloadLabelValue
-}
-
-func sha256Digest(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -3,7 +3,6 @@ package profilederivation
 import (
 	"errors"
 	"math"
-	"sort"
 
 	"gonum.org/v1/gonum/stat"
 )
@@ -140,7 +139,6 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 	completedItems := float64(trial.CompletedItems)
 	activeWallJoulesPerItem := *admission.TotalWallJoules / completedItems
 	baselineCoefficient := admission.WindowSeconds / completedItems
-	baselineUncertainty := baseline.ConfidenceHalfWidth * baselineCoefficient
 	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
 		"|idleProtocol=" + baseline.MeasurementProtocolIdentity +
@@ -153,7 +151,6 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 		TrialID:                           trial.TrialID,
 		AdmissionPolicyVersion:            admission.PolicyVersion,
 		EstimatorIdentity:                 estimatorIdentity,
-		BaselineUncertaintyJoulesPerItem:  baselineUncertainty,
 		BaselineMeanWallWattsVariance:     baseline.MeanWallWattsVariance,
 		BaselineDegreesOfFreedom:          baseline.DegreesOfFreedom,
 		BaselineConfidenceLevel:           baseline.ConfidenceLevel,
@@ -188,7 +185,6 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 	admissionVersion := trials[0].AdmissionPolicyVersion
 	baselineVariance := trials[0].BaselineMeanWallWattsVariance
 	baselineDegreesOfFreedom := trials[0].BaselineDegreesOfFreedom
-	var baselineUncertainty float64
 	for index, trial := range trials {
 		if err := validateAdmittedTrialIdentity(trial, point, admissionVersion); err != nil {
 			return Point{}, err
@@ -204,16 +200,12 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		seen[trial.TrialID] = struct{}{}
 		values[index] = trial.IncrementalJoulesPerItem
 		coefficients[index] = trial.BaselineCoefficientSecondsPerItem
-		if trial.BaselineUncertaintyJoulesPerItem > baselineUncertainty {
-			baselineUncertainty = trial.BaselineUncertaintyJoulesPerItem
-		}
 		if trial.LatencyP99Milliseconds > latency {
 			latency = trial.LatencyP99Milliseconds
 		}
 	}
 	statistics, err := derivePointStatistics(
-		values, coefficients, baselineVariance, baselineDegreesOfFreedom, baselineUncertainty,
-		policy.ConfidenceLevel,
+		values, coefficients, baselineVariance, baselineDegreesOfFreedom, policy.ConfidenceLevel,
 	)
 	if err != nil {
 		return Point{}, err
@@ -222,7 +214,6 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 	point.IncrementalSampleVariance = statistics.incrementalSampleVariance
 	point.MeanBaselineCoefficientSecondsPerItem = statistics.meanBaselineCoefficientSecondsPerItem
 	point.Confidence = statistics.confidence
-	point.PreviousConfidence = statistics.previousConfidence
 	point.LatencyP99Milliseconds = latency
 	return point, nil
 }
@@ -246,10 +237,7 @@ func validateAdmittedTrialStatistics(
 	baselineDegreesOfFreedom int,
 	confidenceLevel float64,
 ) error {
-	if trial.BaselineUncertaintyJoulesPerItem < 0 ||
-		math.IsNaN(trial.BaselineUncertaintyJoulesPerItem) ||
-		math.IsInf(trial.BaselineUncertaintyJoulesPerItem, 0) ||
-		trial.BaselineMeanWallWattsVariance < 0 ||
+	if trial.BaselineMeanWallWattsVariance < 0 ||
 		math.IsNaN(trial.BaselineMeanWallWattsVariance) ||
 		math.IsInf(trial.BaselineMeanWallWattsVariance, 0) ||
 		trial.BaselineMeanWallWattsVariance != baselineVariance ||
@@ -265,119 +253,5 @@ func validateAdmittedTrialStatistics(
 		trial.IncrementalJoulesPerItem > trial.ActiveWallJoulesPerItem {
 		return errors.New("trial sufficient statistics are invalid")
 	}
-	expectedBaselineUncertainty := studentTCritical(
-		trial.BaselineConfidenceLevel, float64(trial.BaselineDegreesOfFreedom),
-	) *
-		math.Sqrt(trial.BaselineMeanWallWattsVariance) * trial.BaselineCoefficientSecondsPerItem
-	if !equalWithinTolerance(trial.BaselineUncertaintyJoulesPerItem, expectedBaselineUncertainty) {
-		return errors.New("baseline uncertainty contribution is inconsistent")
-	}
 	return nil
-}
-
-// DeriveBSat retains the pre-Plan-5 adjacent rule and its previous confidence
-// construction. The opaque-curve confirmatory boundary owns the rebuilt
-// confidence and domain-wide rule.
-func DeriveBSat(points []Point, policy LegacyBSatPolicy) LegacyBSatResult {
-	result := LegacyBSatResult{Status: BSatUnavailable, PolicyVersion: policy.Version, Code: "InsufficientCurve"}
-	if policy.Version == "" || policy.RelativeEquivalenceTolerance < 0 || policy.RelativeEquivalenceTolerance >= 1 ||
-		len(points) < 2 {
-		return result
-	}
-	ordered := append([]Point(nil), points...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Batch < ordered[j].Batch })
-	identity := ordered[0].StateIdentity
-	environmentIdentity := ordered[0].EnvironmentIdentity
-	measurementProtocolIdentity := ordered[0].MeasurementProtocolIdentity
-	estimatorIdentity := ordered[0].EstimatorIdentity
-	pointPolicyVersion := ordered[0].PointPolicyVersion
-	confidenceEstimator := ordered[0].PreviousConfidence.EstimatorVersion
-	confidenceMethod := ordered[0].PreviousConfidence.Method
-	confidenceLevel := ordered[0].PreviousConfidence.Level
-	curve := curveIdentity{
-		state: identity, environment: environmentIdentity, protocol: measurementProtocolIdentity,
-		estimator: estimatorIdentity, pointPolicy: pointPolicyVersion,
-		confidenceEstimator: confidenceEstimator, confidenceMethod: confidenceMethod,
-		confidenceLevel: confidenceLevel,
-	}
-	result.StateIdentity = identity
-	result.EnvironmentIdentity = environmentIdentity
-	result.MeasurementProtocolIdentity = measurementProtocolIdentity
-	if ordered[0].Batch != 1 {
-		result.Code = "MissingLowerBatchDomain"
-		return result
-	}
-	for index, point := range ordered {
-		result.MeasuredBatches = append(result.MeasuredBatches, point.Batch)
-		if !validCurvePoint(point, curve) {
-			result.Code = "CurveIdentityMismatch"
-			return result
-		}
-		if index > 0 && point.Batch != ordered[index-1].Batch+1 {
-			result.Code = "MissingAdjacentBatch"
-			return result
-		}
-	}
-	for index := 0; index < len(ordered)-1; index++ {
-		current, next := ordered[index], ordered[index+1]
-		meanPlateau := next.MeanIncrementalJoulesPerItem >= current.MeanIncrementalJoulesPerItem*(1-policy.RelativeEquivalenceTolerance)
-		if !meanPlateau {
-			continue
-		}
-		batch := current.Batch
-		result.Batch = &batch
-		for later := index + 1; later < len(ordered); later++ {
-			if ordered[later].MeanIncrementalJoulesPerItem < current.MeanIncrementalJoulesPerItem*(1-policy.RelativeEquivalenceTolerance) {
-				result.Status = LegacyBSatAmbiguous
-				result.Code = "LaterEnergyDecrease"
-				return result
-			}
-		}
-		maxImprovement := (current.MeanIncrementalJoulesPerItem + current.PreviousConfidence.HalfWidth) -
-			(next.MeanIncrementalJoulesPerItem - next.PreviousConfidence.HalfWidth)
-		allowed := policy.RelativeEquivalenceTolerance * math.Max(
-			current.MeanIncrementalJoulesPerItem-current.PreviousConfidence.HalfWidth,
-			0,
-		)
-		if maxImprovement <= allowed {
-			result.Status = BSatAccepted
-			result.Code = "AdjacentEquivalenceConfirmed"
-		} else {
-			result.Status = BSatCandidateOnly
-			result.Code = "UncertaintyNotConclusive"
-		}
-		return result
-	}
-	result.Status = BSatCensored
-	result.Code = BSatCodeNoSaturationObserved
-	return result
-}
-
-type curveIdentity struct {
-	state               string
-	environment         string
-	protocol            string
-	estimator           string
-	pointPolicy         string
-	confidenceEstimator string
-	confidenceMethod    string
-	confidenceLevel     float64
-}
-
-func validCurvePoint(point Point, identity curveIdentity) bool {
-	return point.StateIdentity == identity.state && identity.state != "" &&
-		point.EnvironmentIdentity == identity.environment && identity.environment != "" &&
-		point.MeasurementProtocolIdentity == identity.protocol && identity.protocol != "" &&
-		point.EstimatorIdentity == identity.estimator && identity.estimator != "" &&
-		point.PointPolicyVersion == identity.pointPolicy && identity.pointPolicy != "" &&
-		point.PreviousConfidence.EstimatorVersion == identity.confidenceEstimator &&
-		point.PreviousConfidence.EstimatorVersion != "" &&
-		point.PreviousConfidence.Method == identity.confidenceMethod &&
-		point.PreviousConfidence.Level == identity.confidenceLevel &&
-		point.MeanIncrementalJoulesPerItem > 0 &&
-		!math.IsNaN(point.MeanIncrementalJoulesPerItem) &&
-		!math.IsInf(point.MeanIncrementalJoulesPerItem, 0) &&
-		point.PreviousConfidence.HalfWidth >= 0 &&
-		!math.IsNaN(point.PreviousConfidence.HalfWidth) &&
-		!math.IsInf(point.PreviousConfidence.HalfWidth, 0)
 }

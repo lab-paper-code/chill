@@ -76,7 +76,6 @@ type Result struct {
 	SchemaVersion          string         `json:"schemaVersion"`
 	Target                 TargetIdentity `json:"target"`
 	Run                    RunIdentity    `json:"run"`
-	PolicyDigest           string         `json:"policyDigest"`
 	CoverageStartedAt      time.Time      `json:"coverageStartedAt"`
 	CoverageEndedAt        time.Time      `json:"coverageEndedAt"`
 	InitialResourceVersion string         `json:"initialResourceVersion"`

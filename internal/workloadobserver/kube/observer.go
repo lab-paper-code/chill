@@ -36,7 +36,6 @@ type PodSource interface {
 type Request struct {
 	Target                workloadobserver.TargetIdentity
 	Run                   workloadobserver.RunIdentity
-	PolicyDigest          string
 	SelectorLabelKeys     []string
 	EventLimit            int
 	EndFenceContainerName string
@@ -102,7 +101,6 @@ func (o *Observer) Observe(
 		SchemaVersion:          workloadobserver.ResultSchemaVersion,
 		Target:                 request.Target,
 		Run:                    request.Run,
-		PolicyDigest:           request.PolicyDigest,
 		CoverageStartedAt:      startedAt,
 		InitialResourceVersion: prepared.resourceVersion,
 		LastResourceVersion:    prepared.resourceVersion,
@@ -306,9 +304,6 @@ func validateRequest(request Request, onStarted func()) error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("workload observer %s is required without surrounding whitespace", name)
 		}
-	}
-	if strings.TrimSpace(request.PolicyDigest) == "" || strings.TrimSpace(request.PolicyDigest) != request.PolicyDigest {
-		return errors.New("workload observer policy identity is required without surrounding whitespace")
 	}
 	if request.EventLimit < 1 {
 		return errors.New("workload observer event limit must be positive")

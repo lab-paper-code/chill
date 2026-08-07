@@ -33,8 +33,7 @@ func TestIntentFreezerCreatesRecordBeforePublishingStatus(t *testing.T) {
 		t.Fatalf("unexpected first freeze result: %#v calls=%d", result, preparer.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != result.Run.Prepared.IntentDigest ||
-		stored.Status.ObservedGeneration != run.Generation {
+	if !stored.Status.IntentFrozen || stored.Status.ObservedGeneration != run.Generation {
 		t.Fatalf("published status = %#v", stored.Status)
 	}
 	if _, err := records.Load(ctx, stored); err != nil {
@@ -88,8 +87,8 @@ func TestIntentFreezerRecoversCrashBetweenRecordAndStatus(t *testing.T) {
 		t.Fatalf("crash recovery result: %#v calls=%d", result, preparer.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != frozen.Prepared.IntentDigest {
-		t.Fatalf("recovered digest = %q", stored.Status.IntentDigest)
+	if !stored.Status.IntentFrozen {
+		t.Fatal("recovered intent was not marked frozen")
 	}
 }
 
@@ -97,7 +96,7 @@ func TestIntentFreezerNeverRecreatesRecordClaimedByStatus(t *testing.T) {
 	ctx := context.Background()
 	run := testRun()
 	run.Generation = 3
-	run.Status.IntentDigest = testPreparedRun(t).IntentDigest
+	run.Status.IntentFrozen = true
 	scheme := intentRecordTestScheme(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&edgev1alpha1.ProfilingRun{}).WithObjects(run).Build()
@@ -125,7 +124,7 @@ func TestIntentFreezerPreservesPreparationFailureAndStatus(t *testing.T) {
 		t.Fatalf("preparation error = %v calls=%d", err, preparer.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != "" || stored.Status.ObservedGeneration != 0 {
+	if stored.Status.IntentFrozen || stored.Status.ObservedGeneration != 0 {
 		t.Fatalf("failed preparation changed status: %#v", stored.Status)
 	}
 	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
@@ -145,7 +144,7 @@ func TestIntentFreezerPreservesPolicyResolutionFailureAndStatus(t *testing.T) {
 		t.Fatalf("policy error = %v preparer=%d policies=%d", err, preparer.calls, policies.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != "" || stored.Status.ObservedGeneration != 0 {
+	if stored.Status.IntentFrozen || stored.Status.ObservedGeneration != 0 {
 		t.Fatalf("failed policy resolution changed status: %#v", stored.Status)
 	}
 	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
@@ -211,7 +210,7 @@ func TestIntentFreezerPreservesExecutionPolicyResolutionFailureAndStatus(t *test
 		t.Fatalf("execution-policy error = %v preparer=%d execution=%d", err, preparer.calls, executionPolicies.calls)
 	}
 	stored := getIntentFreezerRun(t, ctx, kubeClient, run)
-	if stored.Status.IntentDigest != "" || stored.Status.ObservedGeneration != 0 {
+	if stored.Status.IntentFrozen || stored.Status.ObservedGeneration != 0 {
 		t.Fatalf("failed execution-policy resolution changed status: %#v", stored.Status)
 	}
 	if _, err := records.Load(ctx, stored); !apierrors.IsNotFound(err) {
@@ -235,26 +234,6 @@ func TestIntentFreezerStopsForDeletingRun(t *testing.T) {
 		Freeze(context.Background(), run)
 	if err != nil || !result.Stopped || preparer.calls != 0 {
 		t.Fatalf("deletion result: %#v err=%v calls=%d", result, err, preparer.calls)
-	}
-}
-
-func TestIntentFreezerRecoversOwnedRecordWithoutDigestRevalidation(t *testing.T) {
-	ctx := context.Background()
-	run, kubeClient, records := intentFreezerFixture(t)
-	frozen := testFrozenRun(t)
-	if _, _, err := records.Ensure(ctx, run, frozen); err != nil {
-		t.Fatal(err)
-	}
-	base := run.DeepCopy()
-	run.Status.IntentDigest = "sha256:" + strings.Repeat("0", 64)
-	if err := kubeClient.Status().Patch(ctx, run, client.MergeFrom(base)); err != nil {
-		t.Fatal(err)
-	}
-	preparer := &countingPreparer{prepared: frozen.Prepared}
-
-	result, err := mustIntentFreezer(t, kubeClient, preparer, testPolicyResolver(t), records).Freeze(ctx, run)
-	if err != nil || result.Run.Prepared.Intent.State.Model != frozen.Prepared.Intent.State.Model || preparer.calls != 0 {
-		t.Fatalf("record recovery = %#v err=%v calls=%d", result, err, preparer.calls)
 	}
 }
 

@@ -80,7 +80,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 		Intent: intent,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "chill-evidence", Key: "runs/idle/raw.json",
-			Digest: "sha256:" + strings.Repeat("a", 64), Size: 1024,
+			Size: 1024,
 		},
 		Terminal: profilerevidence.TerminalFacts{
 			Pod:  profilerevidence.PodTerminalFacts{UID: "idle-pod"},
@@ -238,20 +238,22 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatal("actual Node UID must change execution-state identity")
 	}
 	hostBound := intent
-	hostBound.State.HostContractDigest = "sha256:" + strings.Repeat("d", 64)
+	hostBound.State.HostContract = &profilingrun.CandidateReportHostContract{
+		Libraries: []profilingrun.CandidateReportHostLibrary{{Name: "runtime", HostPath: "/host/runtime", ContainerPath: "/runtime"}},
+	}
 	hostBoundIdentities, err := ProjectRunIdentities(hostBound, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hostBoundIdentities.StateIdentity == base.StateIdentity ||
-		!strings.HasPrefix(hostBoundIdentities.StateIdentity, hostBoundStateIdentitySchemaVersion+"@sha256:") {
+		!strings.HasPrefix(hostBoundIdentities.StateIdentity, stateIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("host contract was not bound to physical state identity: %#v", hostBoundIdentities)
 	}
 	actuated := intent
 	actuated.State.PowerMode = "MODE_15W_6CORE"
 	actuated.Actuation = &profilingrun.ActuationContract{
-		PowerMode:    actuated.State.PowerMode,
-		PolicyDigest: "sha256:" + strings.Repeat("e", 64),
+		PowerMode:  actuated.State.PowerMode,
+		PolicyName: "jetson-15w",
 		Actuator: profilingrun.ActuatorTarget{
 			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 2},
@@ -262,7 +264,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatal(err)
 	}
 	if actuatedIdentities.StateIdentity == base.StateIdentity ||
-		!strings.HasPrefix(actuatedIdentities.StateIdentity, actuatedStateIdentitySchemaVersion+"@sha256:") ||
+		!strings.HasPrefix(actuatedIdentities.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
 		actuatedIdentities.MeasurementProtocolIdentity != base.MeasurementProtocolIdentity {
 		t.Fatalf("actuation was not isolated to physical state identity: %#v", actuatedIdentities)
 	}
@@ -275,7 +277,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 func admissionIntent() profilingrun.Intent {
 	return profilingrun.Intent{
 		State: profilingrun.ExecutionState{
-			DeviceClass: "lattepanda", Model: "mobilenet", ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
+			DeviceClass: "lattepanda", Model: "mobilenet",
 			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
 		},
 		Images:     profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},

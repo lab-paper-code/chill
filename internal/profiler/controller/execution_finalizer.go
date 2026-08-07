@@ -111,7 +111,7 @@ func (f *KubernetesExecutionFinalizer) Finalize(
 		ReceiptContainerName: runtimeContainerName,
 		FinalLocation: evidencestore.ObjectLocation{
 			Store: binding.Store,
-			Key:   finalizedEvidenceObjectKey(run.UID, prepared.IntentDigest),
+			Key:   finalizedEvidenceObjectKey(run.UID),
 		},
 		Actuation:   actuation,
 		FinalizedAt: f.now().UTC(),

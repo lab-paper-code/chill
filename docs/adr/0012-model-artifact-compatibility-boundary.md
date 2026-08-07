@@ -19,12 +19,13 @@ through several distinct paths:
   execution providers
 - RK3588-targeted, batch-fixed RKNN artifacts through RKNNLite
 
-The RKNN artifacts have their own digests and retain the source ONNX digest,
-target platform, fixed batch size, and conversion metadata. The measurement
-path also validates the loaded model, selected execution provider, batch
-size, and device operating mode before admitting a result. These facts show
-that compatibility applies to an executable artifact variant and execution
-path, not only to a logical model and CPU architecture.
+The RKNN artifacts retain the source artifact name, target platform, fixed
+batch size, and conversion metadata. Their immutable OCI supply images identify
+the exact executable delivered to a Run. The measurement path also validates
+the loaded model, selected execution provider, batch size, and device operating
+mode before admitting a result. These facts show that compatibility applies to
+an executable artifact variant and execution path, not only to a logical model
+and CPU architecture.
 
 Runtime availability is not an intrinsic hardware property. The current
 testbed has different ONNX Runtime versions and provider sets across devices,
@@ -46,9 +47,9 @@ contract.
 Use the following domain boundaries:
 
 - A model is the logical workload identity and model-level semantics.
-- An artifact variant is an immutable executable representation of that model,
-  identified by content digest and carrying the requirements needed to select
-  its execution path.
+- An artifact variant is an executable representation of that model carrying
+  the requirements needed to select its execution path. Its Run-specific
+  supply comes from an immutable OCI image reference.
 - A runtime path identifies the runtime family and backend or execution
   provider used to load the variant. Runtime availability is supplied by the
   serving workload or another explicit runtime declaration when that component
@@ -62,7 +63,7 @@ serving images, or `supportedRuntimes` to `DeviceClass.spec` or status.
 
 Design `ModelSpec` around a logical model with one or more artifact variants.
 The first schema must represent only facts required by an existing execution or
-profiling path. Candidate facts include artifact reference and digest, format,
+profiling path. Candidate facts include artifact name and supply image, format,
 architecture and accelerator requirements, runtime family, backend or
 execution provider, target platform, and fixed or supported batch constraints.
 The exact field shape is decided with the first consumer and samples; this ADR

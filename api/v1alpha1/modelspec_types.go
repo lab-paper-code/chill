@@ -4,10 +4,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ModelSpecSpec defines the stable model artifacts and their execution-path
-// requirements.
+// ModelSpecSpec defines model artifacts and their execution-path requirements.
 type ModelSpecSpec struct {
-	// Artifacts contains immutable executable representations of this logical model.
+	// Artifacts contains executable representations of this logical model.
 	// +kubebuilder:validation:MinItems=1
 	// +listType=map
 	// +listMapKey=name
@@ -20,7 +19,7 @@ type ModelSpecSpec struct {
 	ExecutionPaths []ModelExecutionPath `json:"executionPaths"`
 }
 
-// ModelArtifact identifies one immutable executable representation.
+// ModelArtifact identifies one executable representation.
 type ModelArtifact struct {
 	// Name is unique within one ModelSpec and is referenced by execution paths.
 	// +kubebuilder:validation:MinLength=1
@@ -30,17 +29,13 @@ type ModelArtifact struct {
 	// +kubebuilder:validation:MinLength=1
 	Format string `json:"format"`
 
-	// Digest identifies the exact artifact bytes. The first schema accepts SHA-256.
-	Digest string `json:"digest"`
-
-	// Derivation binds a derived executable to its source artifact and conversion identity.
+	// Derivation binds a derived executable to its source artifact and conversion settings.
 	// It is absent for canonical source artifacts.
 	// +optional
 	Derivation *ModelArtifactDerivation `json:"derivation,omitempty"`
 }
 
-// ModelArtifactDerivation identifies how one immutable derived artifact was produced.
-// The derived artifact's own Digest remains the identity of its output bytes.
+// ModelArtifactDerivation identifies how one derived artifact was produced.
 type ModelArtifactDerivation struct {
 	// SourceArtifact references the source ModelArtifact name in this ModelSpec.
 	// Reference resolution is semantic validation, not OpenAPI structure.
@@ -85,12 +80,6 @@ type ModelArtifactConversion struct {
 	// Version is the converter's reported version.
 	// +kubebuilder:validation:MinLength=1
 	Version string `json:"version"`
-
-	// ToolDigest identifies the exact converter distribution bytes.
-	ToolDigest string `json:"toolDigest"`
-
-	// RecipeDigest identifies the exact conversion recipe bytes.
-	RecipeDigest string `json:"recipeDigest"`
 }
 
 // ModelExecutionPath describes one stable artifact/runtime requirement.

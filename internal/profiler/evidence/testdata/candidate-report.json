@@ -1,1 +1,46 @@
-{"schemaVersion":"chill.dacs.io/modelcompat-report.v1alpha2","scope":"StaticCompatibility","inputs":{"modelSpec":{"name":"mobilenet-v2-050","uid":"model-uid","resourceVersion":"1","contentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"deviceClass":{"name":"lattepanda-3-delta-8g","uid":"device-class-uid","resourceVersion":"2","contentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"runtimeDeclaration":{"namespace":"chill-system","name":"chill-profiler-facts","uid":"facts-uid","resourceVersion":"3","key":"execution-facts.yaml","contentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","image":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"selection":{"executionPath":"ort-cpu","artifact":"canonical-onnx","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","powerMode":"fixed"},"deviceClassFacts":{"architecture":"amd64","nodeSelector":{"edge.dacs.io/device-class":"lattepanda-3-delta-8g"},"powerModes":["fixed"]},"artifactSupply":{"image":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","architecture":"amd64","path":"/artifact/mobilenet-v2-050.onnx","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"metricObserverImage":"registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verdict":"Compatible","reasons":[]}
+{
+  "schemaVersion": "chill.dacs.io/modelcompat-report.v1alpha7",
+  "scope": "StaticCompatibility",
+  "inputs": {
+    "modelSpec": {
+      "name": "mobilenet-v2-050",
+      "uid": "model-uid",
+      "resourceVersion": "1"
+    },
+    "deviceClass": {
+      "name": "lattepanda-3-delta-8g",
+      "uid": "device-class-uid",
+      "resourceVersion": "2"
+    },
+    "runtimeDeclaration": {
+      "namespace": "chill-system",
+      "name": "chill-profiler-facts",
+      "uid": "facts-uid",
+      "resourceVersion": "3",
+      "key": "execution-facts.yaml",
+      "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "selection": {
+    "executionPath": "ort-cpu",
+    "artifact": "canonical-onnx",
+    "powerMode": "fixed"
+  },
+  "deviceClassFacts": {
+    "architecture": "amd64",
+    "nodeSelector": {
+      "edge.dacs.io/device-class": "lattepanda-3-delta-8g"
+    },
+    "powerModes": [
+      "fixed"
+    ]
+  },
+  "artifactSupply": {
+    "image": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "architecture": "amd64",
+    "path": "/artifact/mobilenet-v2-050.onnx"
+  },
+  "metricObserverImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verdict": "Compatible",
+  "reasons": []
+}

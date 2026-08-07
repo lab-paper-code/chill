@@ -44,7 +44,6 @@ func ComposeRawMeasurement(
 	}
 	raw := RawMeasurement{
 		SchemaVersion: RawMeasurementSchemaVersion,
-		IntentDigest:  intent.Digest(),
 		PodUID:        podUID,
 		Runtime:       runtimeRecord,
 		Metrics:       metricRecord,
@@ -95,7 +94,6 @@ func ComposeIdleRawMeasurement(
 	}
 	raw := IdleRawMeasurement{
 		SchemaVersion: IdleRawMeasurementSchemaVersion,
-		IntentDigest:  intent.Digest(),
 		PodUID:        podUID,
 		Runtime:       runtimeRecord,
 		Metrics:       metricRecord,

@@ -15,15 +15,6 @@ func percentile(values []float64, quantile float64) float64 {
 	return stat.Quantile(quantile, stat.Empirical, ordered, nil)
 }
 
-func studentTHalfWidth(values []float64, confidenceLevel float64) float64 {
-	if len(values) < 3 {
-		return math.Inf(1)
-	}
-	_, sampleVariance := stat.MeanVariance(values, nil)
-	return studentTCritical(confidenceLevel, float64(len(values)-1)) *
-		math.Sqrt(sampleVariance/float64(len(values)))
-}
-
 func studentTCritical(confidenceLevel, degreesOfFreedom float64) float64 {
 	return studentTQuantile(1-(1-confidenceLevel)/2, degreesOfFreedom)
 }
@@ -42,7 +33,6 @@ type pointStatistics struct {
 	incrementalSampleVariance             float64
 	meanBaselineCoefficientSecondsPerItem float64
 	confidence                            PointConfidence
-	previousConfidence                    PointConfidence
 }
 
 func derivePointStatistics(
@@ -50,7 +40,6 @@ func derivePointStatistics(
 	coefficients []float64,
 	baselineVariance float64,
 	baselineDegreesOfFreedom int,
-	previousBaselineUncertainty float64,
 	confidenceLevel float64,
 ) (pointStatistics, error) {
 	result := pointStatistics{}
@@ -76,15 +65,6 @@ func derivePointStatistics(
 		result.confidence.HalfWidth = studentTQuantile(
 			1-(1-confidenceLevel)/2, *degreesOfFreedom,
 		) * math.Sqrt(variance)
-	}
-	result.previousConfidence = PointConfidence{
-		EstimatorVersion: PreviousPointEstimatorVersion,
-		Method:           PreviousPointConfidenceMethod,
-		Level:            confidenceLevel,
-		HalfWidth: math.Hypot(
-			studentTHalfWidth(values, confidenceLevel),
-			previousBaselineUncertainty,
-		),
 	}
 	return result, nil
 }

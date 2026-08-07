@@ -300,7 +300,7 @@ func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
 	}
 }
 
-func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
+func TestLoadVerifiedCandidateReportBindsProjectedSemantics(t *testing.T) {
 	intent := testIntent(t)
 	payload, err := os.ReadFile("../controller/testdata/candidate-report.json")
 	if err != nil {
@@ -329,10 +329,6 @@ func TestLoadVerifiedCandidateReportBindsExactProjectedBytes(t *testing.T) {
 		t.Fatalf("CPU candidate exposed accelerator delivery: %#v", delivery)
 	}
 
-	intent.Candidate.ReportDigest = "sha256:" + strings.Repeat("0", 64)
-	if _, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent)); err != nil {
-		t.Fatalf("digest metadata changed semantic candidate validation: %v", err)
-	}
 }
 
 func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
@@ -547,14 +543,10 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if err := decoder.Decode(&request); err != nil {
 		os.Exit(10)
 	}
-	if request.SchemaVersion != ortCPURequestSchemaVersion || request.IntentDigest == "" || request.ModelPath == "" ||
+	if request.SchemaVersion != ortCPURequestSchemaVersion || request.ModelPath == "" ||
 		len(request.ObserverReadyPaths) == 0 || request.MeasurementStartPath == "" || request.MeasurementEndPath == "" ||
 		request.ObserverReadyTimeoutMilliseconds < 1 || request.MaxLatencySamples < 1 ||
 		request.MaxInputBytes < 1 || request.MaxResultBytes < 1 {
-		os.Exit(11)
-	}
-	digest, err := request.Intent.Digest()
-	if err != nil || request.IntentDigest != digest {
 		os.Exit(11)
 	}
 	resultPath := helperResultPath(os.Args)
@@ -566,17 +558,9 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	}
 	var result any
 	if mode == rknnIdleSuccessTestMode {
-		idle, err := idleRuntimeResult(request.Intent, request.PodUID)
-		if err != nil {
-			os.Exit(13)
-		}
-		result = idle
+		result = idleRuntimeResult(request.Intent, request.PodUID)
 	} else {
-		active, err := runtimeResult(request.Intent, request.PodUID)
-		if err != nil {
-			os.Exit(13)
-		}
-		result = active
+		result = runtimeResult(request.Intent, request.PodUID)
 	}
 	if mode == "unknown-field" {
 		payload, marshalErr := json.Marshal(result)
@@ -613,10 +597,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 	}
 	var result any
 	if mode == "idle-success" {
-		idle, err := idleRuntimeResult(request.Intent, request.PodUID)
-		if err != nil {
-			os.Exit(22)
-		}
+		idle := idleRuntimeResult(request.Intent, request.PodUID)
 		idle.Architecture = "aarch64"
 		idle.RuntimeVersion = "2.3.2"
 		idle.Provider = ""
@@ -628,10 +609,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 		idle.RKNN = testRKNNEvidence()
 		result = idle
 	} else {
-		active, err := runtimeResult(request.Intent, request.PodUID)
-		if err != nil {
-			os.Exit(22)
-		}
+		active := runtimeResult(request.Intent, request.PodUID)
 		active.Architecture = "aarch64"
 		active.RuntimeVersion = "2.3.2"
 		active.Provider = ""
@@ -706,7 +684,8 @@ func testRKNNIntent(t *testing.T, idle bool) profilingrun.Intent {
 	intent.State.ArtifactPath = "/artifact/model.rknn"
 	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
 	intent.State.Backend = profilingrun.RKNNLiteBackend
-	intent.State.HostContractDigest = "sha256:" + strings.Repeat("b", 64)
+	delivery := testRKNNDelivery()
+	intent.State.HostContract = delivery.HostContract
 	intent.TargetNode.Architecture = "arm64"
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
@@ -733,7 +712,6 @@ func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
 		HostContract: &profilingrun.CandidateReportHostContract{
 			Libraries: []profilingrun.CandidateReportHostLibrary{{
 				Name: "librknnrt", HostPath: "/usr/lib/librknnrt.so", ContainerPath: "/usr/lib/librknnrt.so",
-				Digest: "sha256:" + strings.Repeat("b", 64),
 			}},
 			Driver: profilingrun.CandidateReportHostDriver{
 				Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
@@ -753,7 +731,7 @@ func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
 	return &profilingrun.RKNNRuntimeEvidence{
 		Package: profilingrun.RKNNPackageObservation{Name: "rknn-toolkit-lite2", Version: "2.3.2"},
 		HostLibraries: []profilingrun.RKNNHostLibraryObservation{{
-			Name: "librknnrt", Path: "/usr/lib/librknnrt.so", Digest: "sha256:" + strings.Repeat("b", 64),
+			Name: "librknnrt", Path: "/usr/lib/librknnrt.so",
 		}},
 		Driver: profilingrun.RKNNDriverObservation{
 			Name: "rknpu", VersionPath: "/sys/module/rknpu/version", Version: "0.9.6",
