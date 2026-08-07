@@ -23,6 +23,7 @@ excludeFiles:
 # component. Keep this mapping synchronized with architecture-coverage.sh.
 components:
   api: { in: api/v1alpha1 }
+  batch-saturation-core: { in: internal/batchsaturation }
   entrypoints: { in: [cmd, cmd/**] }
   platform-core:
     in:
@@ -60,6 +61,9 @@ deps:
     anyProjectDeps: true
 
   api:
+    anyVendorDeps: true
+
+  batch-saturation-core:
     anyVendorDeps: true
 
   # These small support packages may collaborate within this reviewed group,
