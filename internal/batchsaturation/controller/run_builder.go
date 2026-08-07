@@ -1,0 +1,89 @@
+// Package controller adapts owned ProfilingRun objects to the pure
+// batch-saturation progress rules. It performs no derivation of its own.
+package controller
+
+import (
+	"errors"
+	"fmt"
+
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/batchsaturation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	activeWorkloadMode   = "saturated-serial-fixed-batch"
+	idleWorkloadMode     = "idle-model-loaded"
+	idleInputGenerator   = "none"
+	idleOutputValidation = "none"
+
+	labelBatchSaturation = "edge.dacs.io/batch-saturation"
+	labelWorkloadMode    = "edge.dacs.io/workload-mode"
+	labelBatch           = "edge.dacs.io/batch"
+	labelAttempt         = "edge.dacs.io/attempt"
+)
+
+// RunName is deterministic so re-executing one decision collides instead of
+// creating a duplicate trial.
+func RunName(parent string, measurement batchsaturation.Measurement, attempt int) string {
+	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
+}
+
+func BuildRun(
+	parent *edgev1alpha1.BatchSaturation,
+	measurement batchsaturation.Measurement,
+	attempt int,
+) (*edgev1alpha1.ProfilingRun, error) {
+	if parent == nil {
+		return nil, errors.New("a parent BatchSaturation is required")
+	}
+	if err := measurement.Validate(); err != nil {
+		return nil, fmt.Errorf("validate measurement: %w", err)
+	}
+	if attempt < 1 {
+		return nil, errors.New("attempt must be positive")
+	}
+	spec := edgev1alpha1.ProfilingRunSpec{MeasurementStateSpec: parent.Spec.State}
+	switch measurement.WorkloadMode {
+	case batchsaturation.WorkloadModeActive:
+		protocol := parent.Spec.ActiveProtocol
+		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
+			Batch:            int32(measurement.Batch),
+			WarmupIterations: protocol.WarmupIterations,
+			DurationSeconds:  protocol.DurationSeconds,
+			WorkloadMode:     activeWorkloadMode,
+			InputGenerator:   protocol.InputGenerator,
+			OutputValidation: protocol.OutputValidation,
+		}
+		spec.MetricObservation = protocol.MetricObservation
+	case batchsaturation.WorkloadModeIdle:
+		protocol := parent.Spec.IdleProtocol
+		settling := protocol.SettlingDurationSeconds
+		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
+			Batch:                   int32(measurement.Batch),
+			WarmupIterations:        0,
+			SettlingDurationSeconds: &settling,
+			DurationSeconds:         protocol.DurationSeconds,
+			WorkloadMode:            idleWorkloadMode,
+			InputGenerator:          idleInputGenerator,
+			OutputValidation:        idleOutputValidation,
+		}
+		spec.MetricObservation = protocol.MetricObservation
+	}
+	return &edgev1alpha1.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      RunName(parent.Name, measurement, attempt),
+			Namespace: parent.Namespace,
+			Labels: map[string]string{
+				labelBatchSaturation: parent.Name,
+				labelWorkloadMode:    string(measurement.WorkloadMode),
+				labelBatch:           fmt.Sprintf("%d", measurement.Batch),
+				labelAttempt:         fmt.Sprintf("%d", attempt),
+			},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(
+				parent, edgev1alpha1.GroupVersion.WithKind("BatchSaturation"),
+			)},
+		},
+		Spec: spec,
+	}, nil
+}

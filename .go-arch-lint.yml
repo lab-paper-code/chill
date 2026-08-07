@@ -24,6 +24,7 @@ excludeFiles:
 components:
   api: { in: api/v1alpha1 }
   batch-saturation-core: { in: internal/batchsaturation }
+  batch-saturation-controller: { in: internal/batchsaturation/controller }
   entrypoints: { in: [cmd, cmd/**] }
   platform-core:
     in:
@@ -65,6 +66,11 @@ deps:
 
   batch-saturation-core:
     anyVendorDeps: true
+
+  batch-saturation-controller:
+    mayDependOn:
+      - api
+      - batch-saturation-core
 
   # These small support packages may collaborate within this reviewed group,
   # but cannot reach upward into operators or profiler orchestration.

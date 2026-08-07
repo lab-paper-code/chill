@@ -11,6 +11,7 @@ config="$repo_root/.go-arch-lint.yml"
 components=(
   api
   batch-saturation-core
+  batch-saturation-controller
   entrypoints
   platform-core
   device-class
@@ -43,6 +44,7 @@ component_for() {
   case "$package_path" in
     api/v1alpha1) echo api ;;
     internal/batchsaturation) echo batch-saturation-core ;;
+    internal/batchsaturation/controller) echo batch-saturation-controller ;;
     cmd|cmd/*) echo entrypoints ;;
     internal/component|internal/kubeconfig|internal/metadata|internal/nodeprobe)
       echo platform-core
