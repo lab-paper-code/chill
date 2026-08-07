@@ -238,8 +238,9 @@ evidence.
 ## Campaign records
 
 [campaigns/README.md](campaigns/README.md) indexes immutable offline campaign
-inputs and post-run evidence lists. A record does not expand the scope of its
-owning plan and is not controller state.
+inputs and concise terminal outcomes. Per-Run results remain in Run status and
+the evidence store. A record does not expand the scope of its owning plan and
+is not controller state.
 
 ## Component contracts
 

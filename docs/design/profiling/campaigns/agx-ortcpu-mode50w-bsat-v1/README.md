@@ -73,8 +73,3 @@ jetsono-ortcpu-m50-bsat-v1-confirm-bs{1|2}-c{1|2|3|4|5|6}
 
 The confirmatory grammar reserves the configured cap but authorizes no
 confirmation Run until a second committed policy fixes the realized allocation.
-
-## Results
-
-Not started. This record creates no campaign controller, API object,
-`DeviceProfile`, or scheduler input.

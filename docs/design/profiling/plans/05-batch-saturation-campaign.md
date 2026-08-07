@@ -47,9 +47,9 @@ one-baseline special case.
 
 Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
 4 leaves batch selection and repeated trials to a later campaign planner. This
-plan closes both by pre-registration and a published Run list. The
-[Verification boundary](#verification-boundary) states exactly what that
-guarantees.
+plan closes both by pre-registration and read-time enumeration of the frozen
+Run-name prefix. The [Verification boundary](#verification-boundary) states
+exactly what that guarantees.
 
 ## Question
 
@@ -69,8 +69,9 @@ The whole procedure runs in two passes over the same frozen curve family.
 policy: how far up the batch domain we will measure, how much remaining
 improvement we are willing to walk away from, and how many trials each pass gets.
 The other is the campaign record: which Runs belong to this campaign and how the
-second pass is generated from the first. Every choice in them therefore predates
-the evidence it will judge.
+second pass is generated from the first. It fixes a Run-name prefix and an
+inclusion rule, not a copied result list. Every choice in both files therefore
+predates the evidence it will judge.
 
 **Pass one, discovery.** Measure every batch from 1 up to the declared maximum,
 a few trials each. This is a cheap, low-precision sweep. Its job is to find the
@@ -496,19 +497,21 @@ the supported floating-point range is an error, not an approximation.
 
 ### The campaign record
 
-This file identifies the campaign and makes its evidence checkable by reading.
-Before measurement it fixes:
+This file identifies the campaign and makes its evidence set discoverable from
+retained `ProfilingRun` objects. Before measurement it fixes:
 
 - the execution state under measurement;
 - the derivation policy file it uses, by source object identity;
+- the namespace and Run-name prefix;
 - the evidence-inclusion rule, in prose: every identity-compatible admitted trial
   produced under this campaign is included, and none is excluded;
 - the rule that generates confirmatory batches `c..Kmax` from whatever candidate
   discovery proposes; and
 - whether idle-baseline Runs count against the policy file's Run budget.
 
-After the campaign it records every Run name and its retained frozen intent record, with
-discovery and confirmatory Runs listed separately.
+The record is not amended with Run identities or measurement values. Readers
+enumerate the frozen prefix, inspect Run admission status, and follow each
+`status.evidence` reference at read time.
 
 Fixing the *generating rule* rather than the confirmatory batch list is what lets
 the campaign start without knowing the candidate, while keeping the range from
@@ -759,14 +762,14 @@ What the code guarantees, and what a reader has to check:
 | the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
 | a published number identifies its planned and realized family and rule | curve-family name, observed environment, and both policy names recorded in the result |
 | the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
-| every eligible trial was included | **the campaign record's stated rule and its published Run list — read, not enforced** |
+| every eligible trial was included | **enumerate the campaign's frozen Run-name prefix and compare the admitted set with the derivation input — read, not enforced** |
 
 The last two rows are checked by reading rather than by code. Policy names state
 *which* rule produced a result; the Git history establishes *when* it was
-written. The two published Run lists must have no Run in common, and together
-must account for exactly the trials that entered the result. This is the standard
-of pre-registration used in empirical work. It is not proof against an operator
-who runs extra Runs and leaves them out of the record.
+written. The retained discovery and confirmation Run sets must have no trial in
+common, and together must account for exactly the trials that entered the
+result. This is the standard of pre-registration used in empirical work. It is
+not proof against an operator who deletes a Run before review.
 
 Machine-enforced equivalents — an assignment field inside the immutable intent, a
 selection-scope identity, a closed eligible population checked against what was
@@ -836,8 +839,8 @@ Plan 5 is complete when:
   a separately versioned interval, with the earlier interval retained;
 - a trial with low observed throughput is admitted, retained, and kept in the
   domain; and
-- the campaign record lists every Run, separated by pass, with its Run UID and
-  Pod-derived trial ID.
+- the frozen Run-name prefix can be enumerated, and every admitted matching Run
+  appears exactly once in the appropriate derivation pass.
 
 ## Implementation sequence
 
