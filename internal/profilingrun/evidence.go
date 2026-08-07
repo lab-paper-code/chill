@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha3"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha4"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -37,7 +37,6 @@ type RuntimeResult struct {
 	WarmupCompletedAt         string               `json:"warmupCompletedAt"`
 	InferenceCount            int                  `json:"inferenceCount"`
 	MeasurementMode           string               `json:"measurementMode"`
-	Repetitions               int                  `json:"repetitions"`
 	MeasurementStartedAt      string               `json:"measurementStartedAt"`
 	MeasurementEndedAt        string               `json:"measurementEndedAt"`
 	MeasurementElapsedSeconds float64              `json:"measurementElapsedSecondsMonotonic"`
@@ -169,15 +168,16 @@ func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) er
 	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(intent.TargetNode.Architecture) {
 		return errors.New("runtime architecture does not match the frozen Node")
 	}
-	if result.BatchSize != intent.Measurement.Batch || result.WarmupIterations != intent.Measurement.WarmupIterations ||
-		result.Repetitions != intent.Measurement.Repetitions {
+	if result.BatchSize != intent.Measurement.Batch || result.WarmupIterations != intent.Measurement.WarmupIterations {
 		return errors.New("measurement protocol mismatch")
 	}
-	minimumElapsed := float64(intent.Measurement.DurationSeconds*intent.Measurement.Repetitions) - 0.5
+	minimumElapsed := float64(intent.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
-		result.MeasurementElapsedSeconds < minimumElapsed ||
-		len(result.RepetitionResults) != intent.Measurement.Repetitions {
+		result.MeasurementElapsedSeconds < minimumElapsed {
 		return errors.New("runtime measurement evidence is incomplete")
+	}
+	if len(result.RepetitionResults) < 1 {
+		return errors.New("runtime result must contain at least one repetition result")
 	}
 	if result.TargetDurationSeconds == nil ||
 		*result.TargetDurationSeconds != float64(intent.Measurement.DurationSeconds) {

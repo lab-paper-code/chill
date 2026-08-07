@@ -430,9 +430,6 @@ func (r PreparationRequest) Validate() error {
 		r.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
-	if r.Measurement.Repetitions != 1 {
-		return errors.New("profiling execution requires exactly one measurement repetition")
-	}
 	for name, value := range map[string]string{
 		"measurement workloadMode":     r.Measurement.WorkloadMode,
 		"measurement inputGenerator":   r.Measurement.InputGenerator,

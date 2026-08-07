@@ -79,9 +79,6 @@ func (i Intent) Validate() error {
 	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
-	if i.Measurement.Repetitions != 1 {
-		return errors.New("first profiling path requires exactly one measurement repetition")
-	}
 	if err := i.validateMeasurementMode(); err != nil {
 		return err
 	}

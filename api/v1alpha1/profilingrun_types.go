@@ -86,11 +86,6 @@ type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
 
-	// The first path treats each ProfilingRun as one independent trial.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
-	Repetitions int32 `json:"repetitions"`
-
 	// +kubebuilder:validation:Enum=saturated-serial-fixed-batch;idle-model-loaded
 	WorkloadMode string `json:"workloadMode"`
 

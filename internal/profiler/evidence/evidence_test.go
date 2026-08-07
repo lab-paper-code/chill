@@ -446,7 +446,6 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 			WarmupCompletedAt:         started.Add(-time.Second).UTC().Format(time.RFC3339Nano),
 			InferenceCount:            2,
 			MeasurementMode:           "duration",
-			Repetitions:               intent.Measurement.Repetitions,
 			MeasurementStartedAt:      started.UTC().Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30,
@@ -532,7 +531,7 @@ func idleIntent(t *testing.T) profilingrun.Intent {
 	t.Helper()
 	intent := loadIntent(t)
 	intent.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}

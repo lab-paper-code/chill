@@ -176,18 +176,10 @@ func TestMeasurementWorkloadRequiresCHILLRoleAndJobOwner(t *testing.T) {
 	}
 }
 
-func TestIntentRejectsMultipleMeasurementRepetitions(t *testing.T) {
-	intent := validIntent()
-	intent.Measurement.Repetitions = 2
-	if err := intent.Validate(); err == nil {
-		t.Fatal("expected first-path repetition rejection")
-	}
-}
-
 func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
 	idle := validIntent()
 	idle.Measurement = MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
@@ -219,7 +211,7 @@ func TestCurrentRKNNLiteIntentAllowsArtifactBatchForIdle(t *testing.T) {
 	idle.CPU.ORTIntraOpThreads = 0
 	idle.CPU.ORTInterOpThreads = 0
 	idle.Measurement = MeasurementContract{
-		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
@@ -326,7 +318,6 @@ func validIntent() Intent {
 			Batch:            1,
 			WarmupIterations: 20,
 			DurationSeconds:  30,
-			Repetitions:      1,
 			WorkloadMode:     "saturated-serial-fixed-batch",
 			InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
 			OutputValidation: "nonempty-shape-batch-v1",

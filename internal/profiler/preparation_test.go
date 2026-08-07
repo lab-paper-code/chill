@@ -401,9 +401,6 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		mutate func(*PreparationRequest)
 	}{
 		{name: "zero batch", mutate: func(request *PreparationRequest) { request.Measurement.Batch = 0 }},
-		{name: "multiple repetitions", mutate: func(request *PreparationRequest) {
-			request.Measurement.Repetitions = 2
-		}},
 		{name: "invalid CPU request", mutate: func(request *PreparationRequest) {
 			request.CPURequest = "not-a-quantity"
 		}},

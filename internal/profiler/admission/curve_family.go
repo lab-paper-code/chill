@@ -151,7 +151,6 @@ func projectCurveProtocol(intent profilingrun.Intent) (profilederivation.CurvePr
 		WarmupIterations:           intent.Measurement.WarmupIterations,
 		SettlingDurationSeconds:    intent.Measurement.SettlingDurationSeconds,
 		DurationSeconds:            intent.Measurement.DurationSeconds,
-		Repetitions:                intent.Measurement.Repetitions,
 		MetricIntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
 		MetricTimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
 		MetricDurationSeconds:      intent.Metrics.DurationSeconds,

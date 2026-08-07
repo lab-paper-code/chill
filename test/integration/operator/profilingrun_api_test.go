@@ -75,9 +75,6 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("zero batch", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Batch = 0
 		}),
-		Entry("multiple repetitions", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.Measurement.Repetitions = 2
-		}),
 		Entry("non-positive CPU request", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.CPURequest = resource.MustParse("-1")
 		}),
@@ -134,7 +131,7 @@ var _ = Describe("ProfilingRun API", func() {
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha3", Size: 1024,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha4", Size: 1024,
 			},
 			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
 				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
@@ -162,7 +159,7 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 			TargetNode: "lattepanda",
 			CPURequest: resource.MustParse("100m"),
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-				Batch: 1, WarmupIterations: 20, DurationSeconds: 30, Repetitions: 1,
+				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode:     "saturated-serial-fixed-batch",
 				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
 				OutputValidation: "nonempty-shape-batch-v1",

@@ -144,7 +144,6 @@ type MeasurementContract struct {
 	SettlingDurationSeconds int           `json:"settlingDurationSeconds,omitempty"`
 	Duration                time.Duration `json:"-"`
 	DurationSeconds         int           `json:"durationSeconds"`
-	Repetitions             int           `json:"repetitions"`
 	WorkloadMode            string        `json:"workloadMode"`
 	InputGenerator          string        `json:"inputGenerator"`
 	OutputValidation        string        `json:"outputValidation"`

@@ -123,13 +123,6 @@ spec:
                     maxLength: 128
                     minLength: 1
                     type: string
-                  repetitions:
-                    description: The first path treats each ProfilingRun as one independent
-                      trial.
-                    format: int32
-                    maximum: 1
-                    minimum: 1
-                    type: integer
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
@@ -151,7 +144,6 @@ spec:
                 - durationSeconds
                 - inputGenerator
                 - outputValidation
-                - repetitions
                 - warmupIterations
                 - workloadMode
                 type: object

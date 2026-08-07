@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha3"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha10"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha3"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -329,7 +329,6 @@ def validate_request(request: dict[str, Any]) -> None:
         "batch",
         "warmupIterations",
         "durationSeconds",
-        "repetitions",
         "workloadMode",
         "inputGenerator",
         "outputValidation",
@@ -349,8 +348,6 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(
         measurement["durationSeconds"], "intent.measurement.durationSeconds", 1
     )
-    if measurement["repetitions"] != 1:
-        raise ContractError("RKNNLite requires exactly one repetition")
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         if (
             measurement["warmupIterations"] != 0
@@ -1041,7 +1038,6 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             "warmupCompletedAt": warmup_completed_at,
             "inferenceCount": len(samples),
             "measurementMode": "duration",
-            "repetitions": 1,
             "measurementStartedAt": measurement_started_at,
             "measurementEndedAt": repetition_ended_at,
             "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),

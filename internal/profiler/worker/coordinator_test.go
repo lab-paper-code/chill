@@ -434,7 +434,7 @@ func runtimeResult(intent profilingrun.Intent, podUID string) profilingrun.Runti
 		AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
 		WarmupIterations:  intent.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
-		InferenceCount:    2, MeasurementMode: "duration", Repetitions: intent.Measurement.Repetitions,
+		InferenceCount:    2, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,

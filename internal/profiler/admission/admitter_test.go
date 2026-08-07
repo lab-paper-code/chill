@@ -284,7 +284,7 @@ func admissionIntent() profilingrun.Intent {
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
-			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, Repetitions: 1,
+			Batch: 2, WarmupIterations: 20, DurationSeconds: 30,
 			WorkloadMode: "saturated", InputGenerator: "seeded", OutputValidation: "shape",
 		},
 		Metrics: profilingrun.MetricContract{

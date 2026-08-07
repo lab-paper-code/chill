@@ -47,7 +47,6 @@ type CurveProtocolContract struct {
 	WarmupIterations           int    `json:"warmupIterations"`
 	SettlingDurationSeconds    int    `json:"settlingDurationSeconds"`
 	DurationSeconds            int    `json:"durationSeconds"`
-	Repetitions                int    `json:"repetitions"`
 	MetricIntervalMilliseconds int    `json:"metricIntervalMilliseconds"`
 	MetricTimeoutMilliseconds  int    `json:"metricTimeoutMilliseconds"`
 	MetricDurationSeconds      int    `json:"metricDurationSeconds"`
@@ -376,7 +375,7 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 		}
 	}
 	if protocol.WarmupIterations < 0 || protocol.SettlingDurationSeconds < 0 ||
-		protocol.DurationSeconds < 1 || protocol.Repetitions < 1 ||
+		protocol.DurationSeconds < 1 ||
 		protocol.MetricIntervalMilliseconds < 1 || protocol.MetricTimeoutMilliseconds < 1 ||
 		protocol.MetricTimeoutMilliseconds >= protocol.MetricIntervalMilliseconds ||
 		protocol.MetricDurationSeconds < protocol.DurationSeconds ||

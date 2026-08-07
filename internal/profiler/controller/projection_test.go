@@ -238,7 +238,7 @@ func testRun() *edgev1alpha1.ProfilingRun {
 			},
 			TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-				Batch: 1, WarmupIterations: 20, DurationSeconds: 30, Repetitions: 1,
+				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-fp32-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 			},

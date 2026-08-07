@@ -19,7 +19,7 @@ from typing import Any, BinaryIO
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha10"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha10"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha3"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
@@ -326,7 +326,6 @@ def validate_request(request: dict[str, Any]) -> None:
         "batch",
         "warmupIterations",
         "durationSeconds",
-        "repetitions",
         "workloadMode",
         "inputGenerator",
         "outputValidation",
@@ -346,8 +345,6 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(
         measurement["durationSeconds"], "intent.measurement.durationSeconds", 1
     )
-    if measurement["repetitions"] != 1:
-        raise ContractError("CPU ORT runtime requires exactly one repetition")
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         if (
             measurement["batch"] != 1
@@ -855,7 +852,6 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "warmupCompletedAt": warmup_completed_at,
         "inferenceCount": len(samples),
         "measurementMode": "duration",
-        "repetitions": 1,
         "measurementStartedAt": measurement_started_at,
         "measurementEndedAt": measurement_ended_at,
         "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),

@@ -285,7 +285,7 @@ func testCurveContract(memberCount int) (CurveFamilySharedContract, []CurveFamil
 func testCurveProtocol(mode, metricImage, workloadImage string) CurveProtocolContract {
 	return CurveProtocolContract{
 		WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
-		DurationSeconds: 30, Repetitions: 1,
+		DurationSeconds:            30,
 		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
 		MetricDurationSeconds: 31, MetricObserverImage: metricImage,
 		WorkloadObserverImage: workloadImage, WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",

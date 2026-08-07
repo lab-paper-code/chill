@@ -21,7 +21,7 @@ func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
 	active := curveMemberIntent()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
@@ -78,7 +78,7 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 	active.Measurement.Batch = 2
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}

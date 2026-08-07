@@ -59,7 +59,6 @@
     "batch": 1,
     "warmupIterations": 20,
     "durationSeconds": 30,
-    "repetitions": 1,
     "workloadMode": "saturated-serial-fixed-batch",
     "inputGenerator": "numpy-default-rng-seed-0-fp32-v1",
     "outputValidation": "nonempty-shape-batch-v1"

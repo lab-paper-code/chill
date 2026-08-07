@@ -87,7 +87,7 @@ func validRuntimeResult(intent Intent) RuntimeResult {
 		Architecture: "x86_64", RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
 		AvailableProviders: []string{intent.State.Backend},
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
-		InferenceCount: 1, MeasurementMode: "duration", Repetitions: 1,
+		InferenceCount: 1, MeasurementMode: "duration",
 		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
 		OutputValidation: OutputValidation{
@@ -178,7 +178,7 @@ func TestNormalizeRuntimeArchitecture(t *testing.T) {
 func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
 	intent := validIntent()
 	intent.Measurement = MeasurementContract{
-		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
@@ -256,7 +256,7 @@ func validRKNNIntent(idle bool) Intent {
 	intent.CPU.ORTInterOpThreads = 0
 	if idle {
 		intent.Measurement = MeasurementContract{
-			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, Repetitions: 1,
+			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 			WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 			OutputValidation: NoOutputValidation,
 		}

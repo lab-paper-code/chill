@@ -229,9 +229,9 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	prepared.Intent.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
-		DurationSeconds: 30, Repetitions: 1,
-		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
-		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+		DurationSeconds: 30,
+		WorkloadMode:    profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator:  profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
 	frozen := frozenRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(

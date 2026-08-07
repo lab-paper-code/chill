@@ -39,7 +39,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				Batch:            int(spec.Measurement.Batch),
 				WarmupIterations: int(spec.Measurement.WarmupIterations),
 				DurationSeconds:  int(spec.Measurement.DurationSeconds),
-				Repetitions:      int(spec.Measurement.Repetitions),
 				WorkloadMode:     spec.Measurement.WorkloadMode,
 				InputGenerator:   spec.Measurement.InputGenerator,
 				OutputValidation: spec.Measurement.OutputValidation,
