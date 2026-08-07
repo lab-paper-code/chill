@@ -11,8 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const fixedPowerMode = "fixed"
-
 type selectedDeviceFacts struct {
 	nodeSelector     map[string]string
 	powerModes       []string
@@ -52,12 +50,12 @@ func projectSelectedActuator(
 	actuator edgev1alpha1.PowerModeActuator,
 ) (*profilingrun.ActuatorTarget, error) {
 	if actuator.Kind == edgev1alpha1.PowerModeActuatorFixed {
-		if powerMode != fixedPowerMode {
+		if powerMode != profilingrun.FixedPowerMode {
 			return nil, errors.New("Fixed actuator must use the fixed mode name")
 		}
 		return nil, nil
 	}
-	if powerMode == fixedPowerMode {
+	if powerMode == profilingrun.FixedPowerMode {
 		return nil, errors.New("fixed mode name must use the Fixed actuator")
 	}
 	target := &profilingrun.ActuatorTarget{}

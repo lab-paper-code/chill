@@ -30,6 +30,10 @@ func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
 		{name: "observe previous after safety", mutate: func(s *Snapshot) { s.Phase = PhaseCheckingSafety; s.Safety = SafetyAllowed }, want: ActionObservePrevious},
 		{name: "repeat previous observation", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious }, want: ActionObservePrevious},
 		{name: "apply retained target", mutate: func(s *Snapshot) { s.Phase = PhaseObservingPrevious; s.PreviousObservation = &previous }, want: ActionApplyTarget},
+		{name: "settle without apply when target is already active", mutate: func(s *Snapshot) {
+			s.Phase = PhaseObservingPrevious
+			s.PreviousObservation = &target
+		}, want: ActionStartSettling},
 		{name: "idempotent apply", mutate: func(s *Snapshot) { s.Phase = PhaseApplying; s.PreviousObservation = &previous }, want: ActionApplyTarget},
 		{name: "independent target readback", mutate: func(s *Snapshot) { s.Phase = PhaseVerifying; s.PreviousObservation = &previous }, want: ActionObserveTarget},
 		{name: "start settling after exact readback", mutate: func(s *Snapshot) {
@@ -68,6 +72,12 @@ func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
 			s.PreviousObservation = &previous
 			s.Request.DesiredStage = DesiredStageRestore
 		}, want: ActionRestorePrevious},
+		{name: "observe restoration without apply when CHILL did not change state", mutate: func(s *Snapshot) {
+			s.Phase = PhaseRestoring
+			s.PreviousObservation = &target
+			s.TargetObservation = &target
+			s.Request.DesiredStage = DesiredStageRestore
+		}, want: ActionObserveRestored},
 		{name: "read back restored state", mutate: func(s *Snapshot) {
 			s.Phase = PhaseVerifyingRestore
 			s.PreviousObservation = &previous
@@ -102,6 +112,23 @@ func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
 				t.Fatalf("decision = %#v, error=%v, want %s", decision, err, test.want)
 			}
 		})
+	}
+}
+
+func TestDecideCountsSettlingFromTheRecordedStart(t *testing.T) {
+	t.Parallel()
+	snapshot := validSnapshot()
+	target := observation(2, snapshot.Now.Add(-time.Hour))
+	settlingStartedAt := snapshot.Now
+	snapshot.Phase = PhaseSettling
+	snapshot.PreviousObservation = &target
+	snapshot.TargetObservation = &target
+	snapshot.VerifiedAt = &target.ObservedAt
+	snapshot.SettlingStartedAt = &settlingStartedAt
+
+	decision, err := Decide(snapshot)
+	if err != nil || decision.Action != ActionWaitForSettling {
+		t.Fatalf("decision = %#v, error=%v, want %s", decision, err, ActionWaitForSettling)
 	}
 }
 

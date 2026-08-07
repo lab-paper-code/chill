@@ -47,7 +47,7 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 	resolver := newCandidateResolver(t, objects...)
 	selection := profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
-		ExecutionPath: "rknnlite", PowerMode: fixedPowerMode,
+		ExecutionPath: "rknnlite", PowerMode: profilingrun.FixedPowerMode,
 	}
 
 	resolved, err := resolver.ResolveCandidate(context.Background(), selection)
@@ -89,7 +89,7 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 	resolver := newCandidateResolver(t, objects...)
 	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
-		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: fixedPowerMode,
+		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
 	})
 	if err == nil || !strings.Contains(err.Error(), "input tensor contract") {
 		t.Fatalf("RKNN artifact without input tensor contract was accepted: %v", err)
@@ -171,7 +171,7 @@ func TestValidateRuntimeAccessContractFailsClosed(t *testing.T) {
 
 func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
-	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != fixedPowerMode ||
+	if resolved.Verdict != "Compatible" || resolved.State.PowerMode != profilingrun.FixedPowerMode ||
 		resolved.State.HostContract != nil ||
 		resolved.State.ArtifactPath != testArtifactPath ||
 		resolved.RuntimeImage != testRuntimeImage || resolved.ArtifactImage != testArtifactImage ||
@@ -181,7 +181,7 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 		resolved.DeviceNodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass {
 		t.Fatalf("unexpected resolved candidate: %#v", resolved)
 	}
-	if len(resolved.DevicePowerModes) != 1 || resolved.DevicePowerModes[0] != fixedPowerMode {
+	if len(resolved.DevicePowerModes) != 1 || resolved.DevicePowerModes[0] != profilingrun.FixedPowerMode {
 		t.Fatalf("unexpected DeviceClass power modes: %#v", resolved.DevicePowerModes)
 	}
 }
@@ -214,7 +214,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 		report.Inputs.RuntimeDeclaration.UID != "config-uid" ||
 		report.Inputs.RuntimeDeclaration.ResourceVersion != "30" ||
 		report.Inputs.RuntimeDeclaration.Key != "execution-facts.yaml" ||
-		report.Selection.PowerMode != fixedPowerMode ||
+		report.Selection.PowerMode != profilingrun.FixedPowerMode ||
 		report.DeviceClassFacts.Architecture != testArchitecture ||
 		report.DeviceClassFacts.NodeSelector["edge.dacs.io/device-class"] != selection.DeviceClass ||
 		report.ArtifactSupply.Image != testArtifactImage ||
@@ -465,7 +465,7 @@ func candidateResolverOptions() CandidateResolverOptions {
 func validCandidateSelection() profiler.CandidateSelection {
 	return profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
-		ExecutionPath: "ort-cpu", PowerMode: fixedPowerMode,
+		ExecutionPath: "ort-cpu", PowerMode: profilingrun.FixedPowerMode,
 	}
 }
 
@@ -493,7 +493,7 @@ func validCandidateObjects() []client.Object {
 		Spec: edgev1alpha1.DeviceClassSpec{
 			NodeSelector: map[string]string{"edge.dacs.io/device-class": "lattepanda-3-delta-8g"},
 			Architecture: testArchitecture, PowerModes: []edgev1alpha1.PowerMode{{
-				Name: fixedPowerMode, Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
+				Name: profilingrun.FixedPowerMode, Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed},
 			}},
 		},
 	}

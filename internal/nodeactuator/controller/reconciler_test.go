@@ -170,6 +170,58 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	}
 }
 
+func TestHandoffReconcilerSkipsApplyAndRestoreWhenTargetIsAlreadyActive(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	handoff := testNodeActuation()
+	scheme := handoffReconcilerScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+		WithObjects(handoff).
+		Build()
+	lease := &recordingLeaseController{}
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	safety := &staticSafetyChecker{allowed: true, now: now}
+	host := &memoryHostActuator{target: nvpTarget(2)}
+	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
+
+	reconcileTimes(t, ctx, reconciler, request, 5)
+	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseSettling || len(host.applyCalls) != 0 ||
+		current.Status.PreviousObservation == nil || current.Status.TargetObservation == nil ||
+		current.Status.VerifiedAt == nil || current.Status.SettlingStartedAt == nil ||
+		current.Status.ApplyStartedAt != nil ||
+		!reflect.DeepEqual(current.Status.PreviousObservation, current.Status.TargetObservation) {
+		t.Fatalf("already-active target = phase:%s applyCalls:%d status:%#v",
+			current.Status.Phase, len(host.applyCalls), current.Status)
+	}
+
+	now = now.Add(61 * time.Second)
+	reconcileTimes(t, ctx, reconciler, request, 1)
+	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseReady {
+		t.Fatalf("settled phase = %s, status=%#v", current.Status.Phase, current.Status)
+	}
+
+	current.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
+	current.Spec.StageRequestedAt = metav1.NewTime(now)
+	if err := kubeClient.Update(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	reconcileTimes(t, ctx, reconciler, request, 3)
+	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestored || len(host.applyCalls) != 0 ||
+		current.Status.RestoredObservation == nil || current.Status.RestoreAppliedAt != nil || lease.releaseCalls != 0 {
+		t.Fatalf("no-op restoration = phase:%s applyCalls:%d releases:%d status:%#v",
+			current.Status.Phase, len(host.applyCalls), lease.releaseCalls, current.Status)
+	}
+	reconcileTimes(t, ctx, reconciler, request, 1)
+	if lease.releaseCalls != 1 || len(host.applyCalls) != 0 {
+		t.Fatalf("post-restore release = releases:%d applyCalls:%d", lease.releaseCalls, len(host.applyCalls))
+	}
+}
+
 func TestExecuteLeaseActionSchedulesLifecycleProgressAfterRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

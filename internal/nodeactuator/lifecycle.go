@@ -204,6 +204,9 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		if snapshot.PreviousObservation == nil {
 			return Decision{Action: ActionObservePrevious}, nil
 		}
+		if observationMatchesRequest(snapshot.PreviousObservation, snapshot.Request) {
+			return Decision{Action: ActionStartSettling}, nil
+		}
 		return Decision{Action: ActionApplyTarget}, nil
 	case PhaseApplying:
 		return Decision{Action: ActionApplyTarget}, nil
@@ -220,7 +223,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		}
 		return Decision{Action: ActionStartSettling}, nil
 	case PhaseSettling:
-		settledAt := snapshot.VerifiedAt.Add(time.Duration(snapshot.Request.SettlingDurationSeconds) * time.Second)
+		settledAt := snapshot.SettlingStartedAt.Add(time.Duration(snapshot.Request.SettlingDurationSeconds) * time.Second)
 		if snapshot.Now.Before(settledAt) {
 			return Decision{Action: ActionWaitForSettling, RequeueAfter: minimumPositive(
 				settledAt.Sub(snapshot.Now), snapshot.Lease.RetryAfter,
@@ -237,18 +240,12 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 			snapshot.SafetyObservedAt.Add(snapshot.SafetyValidFor).Sub(snapshot.Now),
 		)}, nil
 	case PhaseRestoring:
+		if observationsEqualState(snapshot.PreviousObservation, snapshot.TargetObservation) {
+			return decideRestoreReadBack(snapshot), nil
+		}
 		return Decision{Action: ActionRestorePrevious, Failure: snapshot.Failure}, nil
 	case PhaseVerifyingRestore:
-		if snapshot.RestoredObservation == nil {
-			return Decision{Action: ActionObserveRestored, Failure: snapshot.Failure}, nil
-		}
-		if !observationsEqualState(snapshot.RestoredObservation, snapshot.PreviousObservation) {
-			return Decision{Action: ActionMarkFailed, Failure: &Failure{
-				Stage: FailureStageRestore, Reason: "RestoreReadBackMismatch",
-				Message: "independent restoration observation does not match the retained previous state",
-			}}, nil
-		}
-		return Decision{Action: ActionMarkRestored, Failure: snapshot.Failure}, nil
+		return decideRestoreReadBack(snapshot), nil
 	}
 	return Decision{}, fmt.Errorf("unsupported actuation phase %q", snapshot.Phase)
 }
@@ -347,6 +344,23 @@ func targetsEqual(left, right Target) bool {
 
 func observationsEqualState(left, right *Observation) bool {
 	return left != nil && right != nil && left.PowerMode == right.PowerMode && targetsEqual(left.Target, right.Target)
+}
+
+func decideRestoreReadBack(snapshot Snapshot) Decision {
+	if snapshot.RestoredObservation == nil {
+		return Decision{Action: ActionObserveRestored, Failure: snapshot.Failure}
+	}
+	if !observationsEqualState(snapshot.RestoredObservation, snapshot.PreviousObservation) {
+		return Decision{Action: ActionMarkFailed, Failure: &Failure{
+			Stage: FailureStageRestore, Reason: "RestoreReadBackMismatch",
+			Message: "independent restoration observation does not match the retained previous state",
+		}}
+	}
+	return Decision{Action: ActionMarkRestored, Failure: snapshot.Failure}
+}
+
+func observationMatchesRequest(observation *Observation, request Request) bool {
+	return observation != nil && observation.PowerMode == request.PowerMode && targetsEqual(observation.Target, request.Target)
 }
 
 func safetyExpired(snapshot Snapshot) bool {

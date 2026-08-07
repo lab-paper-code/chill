@@ -341,10 +341,22 @@ func (r *HandoffReconciler) executeTargetAction(
 	case nodeactuator.ActionObserveTarget:
 		return r.executeObserveTarget(ctx, handoff, snapshot)
 	case nodeactuator.ActionStartSettling:
+		if snapshot.TargetObservation == nil && snapshot.PreviousObservation == nil {
+			return ctrl.Result{}, errors.New("settling action omitted target evidence")
+		}
 		now := metav1.NewTime(snapshot.Now)
 		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+			if snapshot.TargetObservation == nil {
+				status.TargetObservation = projectHostObservation(*snapshot.PreviousObservation)
+				verifiedAt := metav1.NewTime(snapshot.PreviousObservation.ObservedAt)
+				status.VerifiedAt = &verifiedAt
+				status.Reason = "TargetAlreadyActive"
+				status.Message = "current host state already matched the requested target; settling interval started"
+			} else {
+				status.Reason = "TargetVerified"
+				status.Message = "target read-back matched; settling interval started"
+			}
 			status.Phase, status.SettlingStartedAt = edgev1alpha1.NodeActuationPhaseSettling, &now
-			status.Reason, status.Message = "TargetVerified", "target read-back matched; settling interval started"
 		})
 		return ctrl.Result{}, err
 	case nodeactuator.ActionMarkReady:
@@ -378,7 +390,7 @@ func (r *HandoffReconciler) executeObservePrevious(
 	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Phase = edgev1alpha1.NodeActuationPhaseObservingPrevious
 		status.PreviousObservation = projectHostObservation(observation)
-		status.Reason, status.Message = "PreviousStateObserved", "previous host state is retained before mutation"
+		status.Reason, status.Message = "PreviousStateObserved", "current host state is retained before the target-state decision"
 	})
 	return ctrl.Result{}, err
 }

@@ -20,7 +20,6 @@ const (
 	firstExecutionPath    = "ort-cpu"
 	firstRuntimeFamily    = "onnxruntime"
 	firstRuntimeBackend   = "CPUExecutionProvider"
-	firstPowerMode        = "fixed"
 )
 
 var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected Node allocatable CPU")
@@ -350,7 +349,7 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if len(candidate.DevicePowerModes) == 0 || !slices.Contains(candidate.DevicePowerModes, candidate.State.PowerMode) {
 		return errors.New("resolved DeviceClass does not retain the selected power mode")
 	}
-	if candidate.State.PowerMode == firstPowerMode {
+	if candidate.State.PowerMode == profilingrun.FixedPowerMode {
 		if candidate.SelectedActuator != nil {
 			return errors.New("resolved fixed power mode cannot contain an actuator target")
 		}

@@ -234,9 +234,10 @@ from host tooling. Its Lease name is derived from exact Node UID, holder
 identity from exact handoff UID, and takeover is allowed only after a trusted
 renew/acquire timestamp plus configured duration expires. Release uses object
 preconditions and refuses a foreign holder. The pure lifecycle requires
-`observe previous -> apply -> observe target -> settle -> hold -> restore ->
-observe restored`; deadline, safety rejection, target mismatch, and primary
-failure all enter the same restore path. `VerifyingRestore` and
+`observe previous -> compare target -> apply only when different -> settle ->
+hold -> apply previous only after a CHILL mutation -> observe restored`; deadline,
+safety rejection, target mismatch, and primary failure all enter the same
+restore path. `VerifyingRestore` and
 `restoreAppliedAt` make command application and independent read-back
 reconstructable after restart. A restore read-back mismatch keeps the failure
 terminal and retains or reacquires the Lease. The internal status reconciler
