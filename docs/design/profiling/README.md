@@ -267,7 +267,6 @@ plans or competing architecture authorities:
 - [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)
 - [Step 4: compatibility and execution boundary](foundations/runtime-execution/04-compatibility-execution-boundary.md)
 - [Step 5: execution support matrix](foundations/runtime-execution/05-support-matrix.csv)
-- [Execution-support validation ledger](foundations/runtime-execution/validation-ledger.md)
 
 ## Stable ownership rules
 

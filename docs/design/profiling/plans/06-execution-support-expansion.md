@@ -3,8 +3,6 @@
 > Navigation: [Profiling design index](../README.md)
 >
 > Row status: [execution support matrix](../foundations/runtime-execution/05-support-matrix.csv)
->
-> Completed proof: [execution-support validation ledger](../foundations/runtime-execution/validation-ledger.md)
 
 ## Status
 
@@ -44,10 +42,12 @@ every TensorRT row remains below measurement-ready.
 Later slices remain deferred until their stated entry condition is met or this
 plan is explicitly revised.
 
-This file owns work order, decisions, and completion conditions. It does not
-accumulate command transcripts, immutable OCI image references, Run statistics, or historical
-live snapshots. Those belong in the validation ledger; exact row level and
-blocking reason belong in the support matrix.
+This file owns work order, decisions, and completion conditions. Exact row
+level and blocking reason belong in the support matrix. Live execution,
+verification, and admission results remain in the immutable evidence object
+referenced by `ProfilingRun.status.evidence` and in the Run status.
+`kubectl chill runs show NAME` joins those sources into an Evidence Passport at
+read time; do not copy them into design Markdown.
 
 ## Question
 
@@ -109,8 +109,8 @@ corresponding level.
 ## P1: Raspberry Pi 5 CPU ORT / fixed — paused
 
 The implementation, chart facts, metric source, thermal producer correction,
-and live L2/idle-admission proof are complete and recorded in the validation
-ledger. Do not weaken admission or pool pre-repair evidence.
+and live L2/idle-admission proof are complete. Do not weaken admission or pool
+pre-repair evidence.
 
 - [ ] Correct the `rasp5` power supply/cable condition and prove
   `get_throttled=0` throughout one 30-second active diagnostic.
@@ -453,12 +453,10 @@ uses explicitly captured snapshots and focused `ProfilingRun` objects.
 
 ## Progress discipline
 
-- A checkbox closes only when the support matrix and validation ledger point
-  to the applicable authoritative proof.
-- Keep completed checkbox text short. Put dated measurements, commands,
-  sample counts, and deployment revisions in the validation ledger.
+- A live-evidence checkbox closes only when the support matrix identifies the
+  applicable retained `ProfilingRun` and that Run references admitted evidence.
+- Keep completed checkbox text short. Do not copy measurements, object
+  identities, command output, or deployment snapshots into this plan.
 - Do not promote a row from repository configuration or package tests alone.
-- Do not copy live evidence back into this plan after it is recorded in the
-  ledger.
 - A new production package or dependency updates `.go-arch-lint.yml` and its
   owning component/design record in the same commit.

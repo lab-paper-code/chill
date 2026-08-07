@@ -13,8 +13,8 @@ The audit did not treat a value as trusted merely because a runner printed it
 under `CHILL DERIVED EXECUTION CONTRACT`. Each value was classified by the
 source snapshot and retained execution evidence examined at Step 1. The source
 labels below are historical paths from that snapshot; later implementation
-facts are owned by the runtime-execution index and validation ledger, not this
-audit:
+facts are owned by current source and the support matrix, while retained Run
+observations remain in the evidence store, not this audit:
 
 - verified declaration: immutable or versioned input checked before execution
 - run observation: read or validated from the running process, Pod, or Node
