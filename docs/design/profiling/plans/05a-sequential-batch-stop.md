@@ -4,19 +4,18 @@
 
 ## Status
 
-Completed implementation plan. The pure family-contract, family-verification,
+Completed derivation plan. The pure family-contract, family-verification,
 exact-state curve, and sequential-stop constructors are implemented in
 `internal/profilederivation`, with golden tests for every stop reason and the
-recovery/accumulation cases. The first campaign record is frozen under
-[`campaigns/rknn-mobilenet-v2-050-sequential-v1`](../campaigns/rknn-mobilenet-v2-050-sequential-v1/README.md),
-and its post-freeze live campaign is complete. All 12 Runs were retained,
-Loader-verified, admitted, and composed through exact-state baselines. The
-frozen rule selected batch one and stopped at the explicit batch-three
-capability boundary. This plan answers the same
-question as [Plan 5](05-batch-saturation-campaign.md) at a lower evidence
-strength and a much lower measurement cost. It produces a decision, not a
-statistical claim. It authorizes no API, controller, intent schema, or
-policy-catalog change.
+recovery/accumulation cases. This plan answers the same question as
+[Plan 5](05-batch-saturation-campaign.md) at a lower evidence strength and a
+much lower measurement cost. It produces a decision, not a statistical claim.
+
+This plan owns the stopping rule only. The control path that produces and
+composes the Runs it consumes belongs to
+[Plan 7](07-batch-saturation-control-path.md), which selects this rule by name
+as one measurement method. This plan authorizes no API, intent schema, or
+policy-catalog change of its own.
 
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.

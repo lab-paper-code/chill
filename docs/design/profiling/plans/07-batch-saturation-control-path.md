@@ -1,0 +1,306 @@
+# Plan 7: Batch-Saturation Control Path
+
+> Navigation: [Profiling design index](../README.md)
+>
+> Method: [Plan 5a](05a-sequential-batch-stop.md), [Plan 5](05-batch-saturation-campaign.md)
+
+## Status
+
+Approved design, not yet implemented. Plan 5a and Plan 5 own the estimand,
+acceptance rule, and sizing method; this plan owns the control path that
+executes them. It supersedes the document-driven measurement procedure those
+plans described, including the committed contract and policy files and the
+per-measurement record directory.
+
+## Question
+
+> Can one declared `BatchSaturation` object drive a whole `b_sat` measurement —
+> idle baseline, batch sweep, derivation, and a typed result — without a human
+> step between Runs?
+
+## What this plan does
+
+`ProfilingRun` is the largest unit CHILL currently understands. Deriving
+`b_sat` needs many Runs whose composition is itself a decision, so that
+composition has lived outside the system: in committed JSON, a record document,
+and a person submitting Run YAML in order and reading each result before
+writing the next one.
+
+This plan promotes that composition to a first-class object. A `BatchSaturation`
+owns the `ProfilingRun` objects it creates, decides the next measurement from
+the ones already admitted, and publishes one typed outcome. The scientific
+discipline that the documents carried does not relax; its enforcement moves from
+human diligence to types, CEL, and object identity.
+
+`ProfilingRun` remains independently submittable. It is not demoted to an
+internal execution unit.
+
+## Checkpoint 1: API surface
+
+### Shared state extraction
+
+Every trial in one measurement shares an execution state. That state is
+extracted so the parent and the child use one type instead of two declarations
+that must be kept equal.
+
+```go
+type MeasurementStateSpec struct {
+    Candidate       ProfilingRunCandidateSpec `json:"candidate"`
+    TargetNode      string                    `json:"targetNode"`
+    CPURequest      resource.Quantity         `json:"cpuRequest"`
+    AdmissionPolicy string                    `json:"admissionPolicy"`
+}
+
+type ProfilingRunSpec struct {
+    MeasurementStateSpec `json:",inline"`
+    Measurement          ProfilingRunMeasurementSpec       `json:"measurement"`
+    MetricObservation    ProfilingRunMetricObservationSpec `json:"metricObservation"`
+}
+```
+
+The embedding is inline, so field positions, the generated CRD, and all three
+existing CEL rules are unchanged. This is a refactor with no API shape change.
+
+### The BatchSaturation resource
+
+```go
+// +kubebuilder:resource:scope=Namespaced,shortName=bsat
+type BatchSaturationSpec struct {
+    State          MeasurementStateSpec  `json:"state"`
+    ActiveProtocol ActiveProtocolSpec    `json:"activeProtocol"`
+    IdleProtocol   IdleProtocolSpec      `json:"idleProtocol"`
+    Method         MeasurementMethodSpec `json:"method"`
+    RetryLimit     int32                 `json:"retryLimit"`
+}
+```
+
+`ActiveProtocolSpec` and `IdleProtocolSpec` are separate blocks rather than one
+union discriminated by workload mode. `IdleProtocolSpec` has no
+`warmupIterations`, `inputGenerator`, or `outputValidation` field at all; the
+controller supplies the required values when it assembles a Run. The union CEL
+rule that `ProfilingRunSpec` needs for standalone submission therefore has no
+counterpart here.
+
+`MeasurementMethodSpec` is a discriminated union: a method name plus exactly one
+parameter block, with CEL requiring the block to match the name.
+
+`spec` is immutable under `self == oldSelf`, as `ProfilingRunSpec` already is.
+Parent names are bounded at 200 characters so generated child names stay within
+253.
+
+### Status is not authority
+
+```go
+type BatchSaturationStatus struct {
+    ObservedGeneration int64
+    Conditions         []metav1.Condition
+    Phase              string  // Measuring | Deriving | Complete | Failed
+    AcceptedTrials     int32
+    Outcome            string  // typed terminal outcome
+    Result             *ProfilingRunEvidenceReference
+}
+```
+
+`Result` reuses the existing evidence reference type — store, key, schema
+version, and size — because the full result is an evidence-store object and is
+located exactly the way a Run locates its own evidence.
+
+Status is a derived display for operators and `kubectl get`. The decision input
+is `spec` plus the owned `ProfilingRun` objects, never status. The `Snapshot`
+type carries no status field, so reading it back is not possible rather than
+discouraged.
+
+## Checkpoint 2: Method modules
+
+### Where the split falls
+
+Progress rules that every method shares — one live Run at a time, retry within
+the declared limit, waiting — belong to one function. Only the measurement
+question is pluggable.
+
+```go
+// Shared progress rules.
+func Decide(snapshot Snapshot) (Decision, error)
+
+// What a method implements, and all it implements.
+type Method interface {
+    Plan(observed Observed) (Plan, error)
+}
+
+type Observed struct {
+    Accepted           []Trial
+    CapabilityBoundary *int
+}
+
+type Plan struct {
+    Next   *Measurement // {WorkloadMode, Batch}
+    Result *Result
+}
+```
+
+`Decide` resolves in order: a live Run yields `Wait`; an unfinished trial within
+`RetryLimit` yields a retry at the same batch with the next attempt number;
+exceeding the limit yields a typed failure; otherwise the method is asked what
+to measure next.
+
+`Plan` receives admitted trials only. A method has no way to see a failed,
+pending, or retried attempt, so preferring one measurement over another on the
+basis of its outcome is not a rule to follow but a value the signature cannot
+express. Adding a method means implementing `Plan` and adding one enum name;
+neither `Decide` nor the controller changes.
+
+### The two modules
+
+| Method name | Calls | Owns |
+|---|---|---|
+| `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk-up and stop rule |
+| `two-pass-confirmatory` | `DeriveBSatDiscovery`, sizing, `DeriveBSatConfirmatory` | Plan 5 discovery, sizing, confirmation |
+
+Both call existing pure functions in `internal/profilederivation`. This plan
+adds no estimator and changes no acceptance rule.
+
+`two-pass-confirmatory` counts its active-Run budget in admitted active trials.
+Wasted attempts are bounded separately by `RetryLimit`, so the two numbers never
+count the same thing.
+
+## Checkpoint 3: Controller loop
+
+```text
+Reconcile(BatchSaturation):
+  1. list owned ProfilingRun objects; verify each ownerRef UID
+  2. project spec and Runs into a pure Snapshot
+  3. Decide(snapshot)
+  4. execute: CreateRun | Wait | Finish | Fail
+  5. update status as derived display
+```
+
+`Owns(&ProfilingRun{})` wakes the parent on child transitions, so the requeue
+after `Wait` is a backstop rather than the primary signal.
+
+### Deterministic child names
+
+```text
+<parent>-<mode>-b<batch>-a<attempt>
+```
+
+Executing the same decision twice fails the second time with `AlreadyExists`.
+A duplicate trial is therefore not a race to be detected but a name that is
+already taken. This matters because the derivation rejects a batch whose trial
+count differs from the declared one, which would discard the whole measurement.
+
+### Evidence cache
+
+A method needs projected measurements, not verdicts, so the controller loads
+evidence for admitted Runs. Evidence objects are immutable, so caching them by
+Run UID in process is safe: the cache holds copies of immutable objects, not
+authoritative state, and losing it costs one reload.
+
+### Run assembly
+
+The controller composes `MeasurementStateSpec` from the parent with the batch,
+workload mode, and the matching protocol block. Idle Runs receive
+`warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
+The existing union CEL rule on `ProfilingRunSpec` validates the assembled
+object, so a mis-assembled Run is rejected by the API server rather than
+trusted.
+
+## Checkpoint 4: Failure handling
+
+### Two kinds
+
+| Kind | Handling |
+|---|---|
+| Capability boundary — the artifact cannot accept that batch | Not a failure. Reported to the method as an observed fact and consumed as a stop reason |
+| Everything else | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
+
+There is no separate terminal-failure classification. A misconfigured state
+exhausts `RetryLimit` and stops, which costs a small bounded number of Runs and
+removes the need for a reason-code taxonomy.
+
+The one rule that cannot be relaxed is the first: while any owned Run is live,
+the decision is `Wait`. Two concurrent measurements on one Node are rejected as
+CHILL-owned interference, and an unnoticed overlap contaminates power.
+
+### Deliberately outside the first scope
+
+These are excluded because their absence costs waste or convenience, never
+correctness.
+
+| Excluded | Why it is safe |
+|---|---|
+| Pre-checking environment identity per trial | `VerifyCurveFamily` catches drift at derivation. Pre-checking only saves Runs that would be discarded anyway |
+| No-progress timeout | A stalled measurement is visible and can be deleted |
+| Deletion finalizer | A measurement is not deleted while running. If it is, the Node power mode is restored by hand |
+
+None of these changes the `Decide` signature when added later.
+
+## Evidence store layout
+
+```text
+profiling-runs/<run-uid>/raw.json          unchanged
+profiling-runs/<run-uid>/execution.json    unchanged
+batch-saturations/<uid>/family.json        resolved family contract
+batch-saturations/<uid>/result.json        derived result
+```
+
+The aggregate layer writes nothing under `profiling-runs/`. `result.json` holds
+facts derived at this layer plus references to the input Runs; it never copies a
+measured value, so each measurement exists in exactly one place. Excluded trials
+are listed by reference with their exclusion reason.
+
+`family.json` is the output of `FreezeCurveFamilyContract` and records what the
+measurement treats as one execution state, written before the first Run. This
+mirrors the Run's own `spec` to intent record to evidence progression.
+
+## Verification boundary
+
+Pure decision and method logic is covered by table tests in the style of
+`internal/nodeactuator/lifecycle_test.go`. One test reconstructs a snapshot from
+an arbitrary set of child Runs and asserts the decision is unchanged, which is
+the claim that makes owned-Run reconstruction preferable to accumulated status.
+Controller coverage is two envtest scenarios: a completed measurement and an
+exhausted retry limit.
+
+Four invariants are enforced by construction and need no test: `Snapshot` has no
+status field; `Observed` exposes admitted trials only; child names collide on
+duplication; assembled Runs are validated by the API server.
+
+## Code boundary
+
+```text
+internal/batchsaturation/            pure; imports internal/profilederivation only
+internal/batchsaturation/controller/ Kubernetes adapter
+```
+
+`.go-arch-lint.yml` gains this boundary in the same change. An ADR records the
+aggregate measurement unit as an architectural boundary.
+
+## What this plan removes
+
+- `docs/design/profiling/campaigns/` and every file under it
+- `internal/profilederivation/campaign_artifacts_test.go`, which validates a
+  committed contract file that no longer exists
+- `docs/design/profiling/foundations/runtime-execution/05-support-matrix.csv`.
+  A measured row is read from `BatchSaturation` status. An unmeasured row then
+  has no representation at all, which is accepted: a row nobody has declared a
+  `BatchSaturation` for is a row nobody is measuring, and a hand-maintained
+  matrix of such rows drifts from the cluster rather than describing it
+- `ProfilingRunSpec.Repetitions` and the worker repetition structures behind it
+
+Removing `Repetitions` raises `batch-characterization` and
+`profiling-execution-evidence` to `v1alpha4`. Evidence written under the earlier
+versions cannot be re-verified, so measurements already completed must be run
+again to appear in the system. That is the intent: results reachable only
+through a committed document are what this plan replaces.
+
+Plan 5 and Plan 5a keep their estimand, acceptance rule, and sizing method.
+Their procedural sections — freezing by commit, committing a second policy
+before confirmation, an offline driver requesting the next member, name
+grammars, and inclusion rules — are replaced by this control path.
+
+## Not authorized by this plan
+
+- a new estimator, acceptance rule, or sizing method
+- a `DeviceProfile` API or scheduler consumption
+- measurement of anything other than batch saturation
+- parallel Runs on one Node

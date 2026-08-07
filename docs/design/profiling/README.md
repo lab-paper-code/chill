@@ -126,7 +126,7 @@ are live-verified. The scope does not orchestrate a batch
 campaign, derive `b_sat`, publish a `DeviceProfile`, or connect to the
 scheduler.
 
-### 5a. Sequential batch sweep with early stopping — implemented and live-verified
+### 5a. Sequential batch sweep with early stopping — derivation implemented
 
 [plans/05a-sequential-batch-stop.md](plans/05a-sequential-batch-stop.md)
 
@@ -136,11 +136,10 @@ Answers only:
 > to keep going?
 
 The pure family-contract, Loader-verified family, exact-state curve, and
-sequential-stop boundaries are implemented. A pre-registered two-member RKNN
-campaign retained, verified, admitted, and composed all 12 post-freeze Runs,
-selected batch one, and stopped at the batch-three capability boundary. The
-result is a decision without a confidence statement; its selected batch is the
-candidate Plan 5's confirmation pass takes as input.
+sequential-stop boundaries are implemented in `internal/profilederivation`. The
+rule produces a decision without a confidence statement; its selected batch is
+the candidate Plan 5's confirmation pass takes as input. Plan 7 owns the control
+path that produces and composes the Runs this rule consumes.
 
 ### 5. Batch-saturation campaign — pure derivation implemented
 
@@ -151,34 +150,19 @@ Answers only:
 > Under what predeclared rule does a set of Runs establish batch saturation for
 > one frozen curve family?
 
-Approved scope with pure derivation and the first frozen campaign completed.
-Plan 5a supplies the frozen family, verified family, and exact-state curve
-container. The Plan 5 point estimator and retained previous interval are
-implemented, and the global post-selection error allocation is derived and
-regression-tested. The deterministic domain-wide discovery screen is also
-implemented, as is the global-`H` confirmatory sizing rule. The final joint
-contrast/covariance estimator and typed confirmatory result are implemented.
-The discovery and confirmatory policies have strict semantic decoders and
-configured names. The second artifact is checked against the repeated discovery
-fields and realized sizing allocation, and the final result binds those names.
-The first concrete Plan 5
-campaign retained and re-verified all 12 idle and discovery Runs for the
-two-member RKNN family. Discovery selected batch one, but the pre-frozen
-three-trial cap could not meet the simultaneous 5% precision rule. Its committed
-second policy and final result therefore record
-`Unavailable: ConfirmatoryBudgetInsufficient` and allocate no confirmatory Runs.
-No statistical `b_sat` claim was made. A disjoint second campaign is frozen
-with a pilot-sized six-trial cap and 18-active-Run budget; none of the first
-campaign's evidence is pooled into it. Its own live discovery selected batch
-one and froze four confirmatory Runs at each of batches one and two before any
-of those Runs were submitted. All eight were then retained and admitted, but
-the final 6.395% remaining-improvement upper bound exceeded the frozen 5% rule.
-The typed outcome is `CandidateOnly: DomainNoImprovementNotConfirmed`, not an
-accepted `b_sat`.
-Campaign provenance is pre-registered in a committed record rather than
-machine-enforced; that boundary is stated in the plan. It does not authorize a
-`DeviceProfile` API, a campaign controller, an intent schema change, or scheduler
-consumption.
+Approved scope with pure derivation implemented. Plan 5a supplies the frozen
+family, verified family, and exact-state curve container. The Plan 5 point
+estimator and retained previous interval are implemented, and the global
+post-selection error allocation is derived and regression-tested. The
+deterministic domain-wide discovery screen is also implemented, as is the
+global-`H` confirmatory sizing rule. The final joint contrast/covariance
+estimator and typed confirmatory result are implemented. The discovery and
+confirmatory policies have strict semantic decoders and configured names, and
+the second artifact is checked against the repeated discovery fields and
+realized sizing allocation. No statistical `b_sat` has been accepted. Plan 7
+owns the control path that produces and composes the Runs this derivation
+consumes; this plan does not authorize a `DeviceProfile` API, an intent schema
+change, or scheduler consumption.
 
 ### 6. Execution-support expansion — active
 
@@ -235,12 +219,21 @@ but no multi-batch campaign or L4 claim follows from it.
 Catalog presence and historical standalone smoke are not production execution
 evidence.
 
-## Campaign records
+### 7. Batch-saturation control path — approved, not implemented
 
-[campaigns/README.md](campaigns/README.md) indexes immutable offline campaign
-inputs and concise terminal outcomes. Per-Run results remain in Run status and
-the evidence store. A record does not expand the scope of its owning plan and
-is not controller state.
+[plans/07-batch-saturation-control-path.md](plans/07-batch-saturation-control-path.md)
+
+Answers only:
+
+> Can one declared `BatchSaturation` object drive a whole `b_sat` measurement
+> without a human step between Runs?
+
+Approved design. A `BatchSaturation` resource owns the `ProfilingRun` objects it
+creates, decides the next measurement from the admitted ones, and publishes one
+typed outcome. Plan 5a and Plan 5 keep the estimand, acceptance rule, and sizing
+method; this plan owns only the control path that executes them, and supersedes
+their procedural sections. `ProfilingRun` remains independently submittable. The
+plan does not add an estimator, a `DeviceProfile` API, or scheduler consumption.
 
 ## Component contracts
 
@@ -267,7 +260,6 @@ plans or competing architecture authorities:
 - [Step 2: runtime execution commonality](foundations/runtime-execution/02-commonality.md)
 - [Step 3: runtime execution provenance](foundations/runtime-execution/03-provenance.md)
 - [Step 4: compatibility and execution boundary](foundations/runtime-execution/04-compatibility-execution-boundary.md)
-- [Step 5: execution support matrix](foundations/runtime-execution/05-support-matrix.csv)
 
 ## Stable ownership rules
 

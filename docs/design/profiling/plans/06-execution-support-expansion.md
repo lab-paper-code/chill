@@ -2,7 +2,7 @@
 
 > Navigation: [Profiling design index](../README.md)
 >
-> Row status: [execution support matrix](../foundations/runtime-execution/05-support-matrix.csv)
+> Row status: `BatchSaturation` status and the Run evidence it references
 
 ## Status
 

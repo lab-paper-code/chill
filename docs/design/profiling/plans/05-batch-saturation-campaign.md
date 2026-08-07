@@ -875,9 +875,8 @@ Plan 5 is complete when:
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, eligible member map, and `CurveFamilyName` in the
    discovery policy version. The verified `CurveFamily` follows Loader
-   verification. Implemented for
-   [the first two-member RKNN campaign](../campaigns/rknn-mobilenet-v2-050-bsat-v1/README.md),
-   which subsequently included all 12 matching idle and discovery Runs.
+   verification. [Plan 7](07-batch-saturation-control-path.md) carries these in
+   the immutable `BatchSaturation` spec instead of a committed record.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
    allocation inside the caps set at item 7, before any confirmatory Run.
    Implemented for the first campaign: sizing was budget-insufficient, so the
