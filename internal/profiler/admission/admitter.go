@@ -30,27 +30,44 @@ func Evaluate(
 	evidence profilerevidence.VerifiedEvidence,
 	frozenPolicy FrozenPolicy,
 ) (Result, error) {
+	result, _, err := EvaluateTrial(evidence, frozenPolicy)
+	return result, err
+}
+
+// EvaluateTrial validates the immutable evidence chain, applies the named
+// policy, and projects the derivation trial only for Accepted evidence.
+func EvaluateTrial(
+	evidence profilerevidence.VerifiedEvidence,
+	frozenPolicy FrozenPolicy,
+) (Result, *profilederivation.Trial, error) {
 	execution, raw, err := evidence.Records()
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
 	policy, err := frozenPolicy.AdmissionPolicy()
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
 	_, frozenRecord, err := frozenPolicy.Records()
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
 	if frozenRecord.WorkloadMode != execution.Intent.Measurement.WorkloadMode {
-		return Result{}, errors.New("admission policy workload mode does not match execution intent")
+		return Result{}, nil, errors.New("admission policy workload mode does not match execution intent")
 	}
 	trial, err := projectTrial(execution, raw)
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
 	evaluated := profilederivation.Admit(trial, policy)
-	return compactResult(evaluated.Verdict, evaluated.PolicyVersion, evaluated.Reasons)
+	compact, err := compactResult(evaluated.Verdict, evaluated.PolicyVersion, evaluated.Reasons)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	if evaluated.Verdict != profilederivation.VerdictAccepted {
+		return compact, nil, nil
+	}
+	return compact, &trial, nil
 }
 
 // EvaluateIdle validates the full immutable evidence chain, applies the named

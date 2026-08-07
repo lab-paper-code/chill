@@ -1,6 +1,11 @@
 package admission
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func TestEvaluateRequiresVerifiedEvidence(t *testing.T) {
@@ -18,6 +24,20 @@ func TestEvaluateRequiresVerifiedEvidence(t *testing.T) {
 	}
 	if _, _, err := EvaluateIdle(profilerevidence.VerifiedIdleEvidence{}, FrozenPolicy{}); err == nil {
 		t.Fatal("empty idle evidence was accepted")
+	}
+}
+
+func TestEvaluateTrialReturnsTheTrialOnlyWhenAccepted(t *testing.T) {
+	evidence, policy := acceptedActiveFixture(t)
+	result, trial, err := EvaluateTrial(evidence, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != VerdictAccepted {
+		t.Fatalf("verdict = %q, want Accepted", result.Verdict)
+	}
+	if trial == nil || trial.Batch < 1 || trial.TrialID == "" {
+		t.Fatalf("accepted evaluation returned no usable trial: %+v", trial)
 	}
 }
 
@@ -292,4 +312,241 @@ func admissionIntent() profilingrun.Intent {
 			IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 		},
 	}
+}
+
+type activeFixtureStore map[evidencestore.ObjectLocation][]byte
+
+func (s activeFixtureStore) OpenLocation(
+	_ context.Context,
+	location evidencestore.ObjectLocation,
+) (io.ReadCloser, error) {
+	payload, ok := s[location]
+	if !ok {
+		return nil, evidencestore.ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(payload)), nil
+}
+
+func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, FrozenPolicy) {
+	t.Helper()
+	intentBytes, err := os.ReadFile("../evidence/testdata/lattepanda-ort-cpu-bs1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intent profilingrun.Intent
+	if err := json.Unmarshal(intentBytes, &intent); err != nil {
+		t.Fatal(err)
+	}
+	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	intent.Workload = profilingrun.CurrentWorkloadContract()
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	candidateBytes, err := os.ReadFile("../evidence/testdata/candidate-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := profilingrun.DecodeCandidateReport(candidateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	podUID := "run-pod"
+	targetDuration := float64(intent.Measurement.DurationSeconds)
+	samples := make([]metricobserver.Sample, 30)
+	for index := range samples {
+		samples[index] = metricobserver.Sample{
+			ObservedAt: started.Add(500*time.Millisecond + time.Duration(index)*time.Second),
+			Watts:      5.2,
+			Thermal: &metricobserver.ThermalReading{
+				ObservationAvailable: admissionBool(true),
+				Active:               admissionBool(false),
+			},
+		}
+	}
+	workload := workloadobserver.Result{
+		SchemaVersion: workloadobserver.ResultSchemaVersion,
+		Target: workloadobserver.TargetIdentity{
+			NodeName: intent.TargetNode.Name,
+			NodeUID:  intent.TargetNode.UID,
+		},
+		Run: workloadobserver.RunIdentity{
+			Namespace: "chill-system",
+			JobUID:    "job-uid",
+			PodName:   "profiling-run-pod",
+			PodUID:    podUID,
+		},
+		CoverageStartedAt:      started.Add(-time.Second),
+		CoverageEndedAt:        started.Add(31 * time.Second),
+		InitialResourceVersion: "10",
+		LastResourceVersion:    "10",
+		EventLimit:             10,
+		InitialActivePods: []workloadobserver.Pod{{
+			Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
+			Phase: "Running", Images: []string{intent.Images.Runtime},
+		}},
+		FinalActivePods: []workloadobserver.Pod{{
+			Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
+			Phase: "Running", Images: []string{intent.Images.Runtime},
+		}},
+		Continuous: true,
+	}
+	raw := profilerevidence.RawMeasurement{
+		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
+		PodUID:        podUID,
+		Runtime: profilingrun.RuntimeResult{
+			SchemaVersion:             profilingrun.RuntimeResultSchemaVersion,
+			Status:                    "Succeeded",
+			ExperimentID:              podUID,
+			NodeName:                  intent.TargetNode.Name,
+			Model:                     intent.State.Model,
+			Architecture:              "x86_64",
+			Runtime:                   intent.State.RuntimeFamily,
+			RuntimeVersion:            "1.16.0",
+			Backend:                   intent.State.Backend,
+			Provider:                  intent.State.Backend,
+			AvailableProviders:        []string{intent.State.Backend},
+			BatchSize:                 intent.Measurement.Batch,
+			WarmupIterations:          intent.Measurement.WarmupIterations,
+			WarmupCompletedAt:         started.Add(-time.Second).Format(time.RFC3339Nano),
+			InferenceCount:            2,
+			MeasurementMode:           "duration",
+			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
+			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
+			MeasurementElapsedSeconds: 30,
+			TargetDurationSeconds:     &targetDuration,
+			OutputValidation: profilingrun.OutputValidation{
+				Method: intent.Measurement.OutputValidation, Passed: true,
+				OutputShapes: [][]int{{intent.Measurement.Batch, 1000}},
+			},
+			CPUContract: profilingrun.RuntimeCPU{
+				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
+				ORTInterOpThreads: intent.CPU.ORTInterOpThreads,
+				AffinityCPUCount:  intent.CPU.ORTIntraOpThreads,
+				CPUSetEffective:   "0-3",
+				CgroupCPUStatDelta: map[string]int{
+					"user_usec": 1, "system_usec": 2,
+				},
+			},
+			DerivedContract: profilingrun.DerivedContract{
+				Backend: intent.State.Backend, Provider: intent.State.Backend,
+				NodeSnapshot: intent.TargetNode,
+			},
+			RepetitionResults: []profilingrun.Repetition{{
+				Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
+				MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
+				LatencyMilliseconds: []float64{1, 2},
+			}},
+			Latency: map[string]float64{"p95": 2, "mean": 1.5},
+		},
+		Metrics: metricobserver.Result{
+			Source: metricobserver.SourceIdentity{
+				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
+				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
+				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
+					ObservationAvailable:      "device_thermal_throttle_observation_available",
+					Active:                    "device_thermal_throttle_active",
+					CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
+					CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
+					Latched:                   "device_thermal_throttle_latched",
+					MaximumTemperatureCelsius: "device_thermal_max_celsius",
+				},
+			},
+			StartedAt: started, EndedAt: started.Add(31 * time.Second), Samples: samples,
+			Summary: metricobserver.Summary{
+				Attempts: 30, SuccessfulSamples: 30, ObservationDurationSeconds: 31,
+				MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true,
+			},
+		},
+		Workload: &workload,
+	}
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawLocation := evidencestore.ObjectLocation{Store: "evidence", Key: "raw.json"}
+	rawIdentity := evidencestore.ObjectIdentity{
+		Store: rawLocation.Store, Key: rawLocation.Key, Size: int64(len(rawBytes)),
+	}
+	completed := started.Add(time.Minute)
+	container := func(name, image string) profilerevidence.ContainerTerminal {
+		return profilerevidence.ContainerTerminal{
+			Name: name, RequestedImage: image, ImageID: "containerd://" + name,
+			Reason: "Completed", StartedAt: completed.Add(-time.Minute),
+			FinishedAt: completed.Add(-time.Second),
+		}
+	}
+	execution := profilerevidence.ExecutionEvidence{
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+		Intent:        intent, CandidateReport: candidate, RawMeasurement: rawIdentity,
+		Terminal: profilerevidence.TerminalFacts{
+			Job: profilerevidence.JobTerminalFacts{
+				Namespace: "chill-system", Name: "profiling-run", UID: "job-uid",
+				Succeeded: 1, CompletionTime: completed,
+			},
+			Pod: profilerevidence.PodTerminalFacts{
+				Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
+				ControllerOwnerUID: "job-uid", NodeName: intent.TargetNode.Name, Phase: "Succeeded",
+			},
+			Node: profilerevidence.NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
+			Containers: []profilerevidence.ContainerTerminal{
+				container("metric-observer", intent.Images.MetricObserver),
+				container("workload-observer", intent.Images.WorkloadObserver),
+				container("runtime", intent.Images.Runtime),
+				container("artifact", intent.Images.Artifact),
+			},
+			NodeWorkload: profilerevidence.NodeWorkload{
+				ObservedAt: completed.Add(time.Second),
+				Pods: []profilerevidence.WorkloadPod{{
+					Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
+					Phase: "Succeeded", Images: []string{intent.Images.Runtime},
+				}},
+			},
+		},
+		FinalizedAt: completed.Add(2 * time.Second),
+	}
+	executionBytes, err := execution.CanonicalJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionLocation := evidencestore.ObjectLocation{Store: "evidence", Key: "execution.json"}
+	executionIdentity := evidencestore.ObjectIdentity{
+		Store: executionLocation.Store, Key: executionLocation.Key, Size: int64(len(executionBytes)),
+	}
+	loader, err := profilerevidence.NewLoader(activeFixtureStore{
+		rawLocation: rawBytes, executionLocation: executionBytes,
+	}, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := loader.Load(context.Background(), executionIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	policyCatalog := `
+schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
+policies:
+  - name: accepted-active
+    workloadMode: saturated-serial-fixed-batch
+    minimumSamples: 2
+    maximumGapSeconds: 2
+    maximumBoundaryDistanceSeconds: 1
+    minimumCoverage: 0.9
+    allowReceiptTimestamps: true
+    rejectConcurrentCHILLWorkloads: true
+    rejectExternalWorkloadChanges: true
+`
+	policy, err := FreezeConfiguredPolicy([]byte(policyCatalog), "accepted-active", PolicySource{
+		Kind: ConfigMapPolicySourceKind, Namespace: "chill-system", Name: "admission-policies",
+		UID: "policy-uid", ResourceVersion: "1", Key: "admission-policies.yaml",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified, policy
 }
