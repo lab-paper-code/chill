@@ -368,10 +368,10 @@ def validate_request(request: dict[str, Any]) -> None:
     ):
         raise ContractError("unsupported RKNNLite measurement implementation contract")
 
-    validate_candidate(request["candidate"], measurement["batch"])
+    validate_candidate(request["candidate"])
 
 
-def validate_candidate(value: Any, batch: int) -> None:
+def validate_candidate(value: Any) -> None:
     candidate = require_object(value, "candidate")
     require_fields(
         candidate,
@@ -394,14 +394,10 @@ def validate_candidate(value: Any, batch: int) -> None:
     ]
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
-        or capability["fixedBatch"] != batch
-        or normalized_shape[0] != batch
         or capability["inputLayout"] != SUPPORTED_INPUT_LAYOUT
         or capability["inputDataType"] != SUPPORTED_INPUT_DATA_TYPE
     ):
-        raise ContractError(
-            "candidate artifact capability is unsupported or does not match the batch"
-        )
+        raise ContractError("candidate artifact capability is unsupported")
 
     packages = candidate["runtimePackages"]
     if not isinstance(packages, list) or len(packages) != 1:
@@ -662,6 +658,11 @@ def percentile(samples: list[float], fraction: float) -> float:
 
 
 def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
+    if outputs is None:
+        raise ContractError(
+            "runtime supplied no result for the frozen batch; "
+            "the artifact does not provide this profile"
+        )
     if not outputs:
         raise ContractError("inference produced no outputs")
     shapes: list[list[int]] = []

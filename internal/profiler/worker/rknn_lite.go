@@ -207,8 +207,7 @@ func validateRKNNLiteDelivery(delivery profilingrun.CandidateRuntimeDelivery) er
 		return errors.New("RKNNLite adapter requires exactly one image-owned runtime package")
 	}
 	capability := delivery.ArtifactCapability
-	if capability.FixedBatch < 1 || len(capability.InputShape) == 0 ||
-		capability.InputShape[0] != capability.FixedBatch ||
+	if len(capability.InputShape) == 0 ||
 		capability.InputLayout != profilingrun.RKNNLiteInputLayout ||
 		capability.InputDataType != profilingrun.RKNNLiteInputDataType {
 		return errors.New("verified RKNNLite artifact input contract is unsupported")

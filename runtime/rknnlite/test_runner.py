@@ -351,6 +351,10 @@ class RunnerTest(unittest.TestCase):
             ):
                 runner.validate_request(request)
 
+    def test_validate_outputs_names_a_refused_profile(self):
+        with self.assertRaisesRegex(runner.ContractError, "does not provide this profile"):
+            runner.validate_outputs(None, 1)
+
     def test_validate_request_rejects_candidate_tensor_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"

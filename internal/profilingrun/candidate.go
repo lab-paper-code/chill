@@ -443,8 +443,6 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
 			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
-			len(report.ArtifactCapability.InputShape) == 0 ||
-			report.ArtifactCapability.InputShape[0] != report.ArtifactCapability.FixedBatch ||
 			report.ArtifactCapability.InputLayout != RKNNLiteInputLayout ||
 			report.ArtifactCapability.InputDataType != RKNNLiteInputDataType {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability does not match the measurement batch")
