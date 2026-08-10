@@ -106,24 +106,33 @@ func deriveCurvePass(
 		return curvePass{}, errors.New("discovery pass must start at batch one")
 	}
 	result := curvePass{role: input.Role}
+	eligibleBatches := family.contract.record.Shared.EligibleBatches
+	firstIneligibleBatch := 1
+	for _, eligibleBatch := range eligibleBatches {
+		if eligibleBatch != firstIneligibleBatch {
+			break
+		}
+		firstIneligibleBatch++
+	}
 	for index, batchInput := range batches {
 		if index > 0 && batchInput.Batch != batches[index-1].Batch+1 {
 			return curvePass{}, fmt.Errorf("curve pass %q batches must be consecutive", input.Role)
 		}
-		member, memberExists := family.members[batchInput.Batch]
+		batchIndex := sort.SearchInts(eligibleBatches, batchInput.Batch)
+		batchEligible := batchIndex < len(eligibleBatches) && eligibleBatches[batchIndex] == batchInput.Batch
 		if batchInput.CapabilityBoundary {
 			if len(batchInput.Runs) != 0 || index != len(batches)-1 ||
-				(!memberExists && batchInput.Batch != len(family.members)+1) {
+				(!batchEligible && batchInput.Batch != firstIneligibleBatch) {
 				return curvePass{}, errors.New("capability boundary must be an empty final batch")
 			}
 			boundary := batchInput.Batch
 			result.capabilityBoundary = &boundary
 			continue
 		}
-		if !memberExists {
+		if !batchEligible {
 			return curvePass{}, fmt.Errorf("batch %d is outside the frozen curve family", batchInput.Batch)
 		}
-		point, err := deriveCurvePoint(batchInput, member, family, baselines, policy, seenTrials)
+		point, err := deriveCurvePoint(batchInput, family.state, baselines, policy, seenTrials)
 		if err != nil {
 			return curvePass{}, err
 		}
@@ -134,8 +143,7 @@ func deriveCurvePass(
 
 func deriveCurvePoint(
 	input PassBatch,
-	member VerifiedCurveFamilyMember,
-	family CurveFamily,
+	state VerifiedCurveFamilyState,
 	baselines map[string]IdleBaseline,
 	policy PointPolicy,
 	seenTrials map[string]struct{},
@@ -143,16 +151,16 @@ func deriveCurvePoint(
 	if len(input.Runs) == 0 {
 		return Point{}, fmt.Errorf("batch %d has neither admitted Runs nor an explicit capability boundary", input.Batch)
 	}
-	baseline, exists := baselines[member.StateIdentity]
+	baseline, exists := baselines[state.StateIdentity]
 	if !exists {
 		return Point{}, fmt.Errorf("batch %d has no exact-state idle baseline", input.Batch)
 	}
 	admitted := make([]AdmittedTrial, 0, len(input.Runs))
 	for _, run := range input.Runs {
-		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != member.StateIdentity ||
-			run.Trial.EnvironmentIdentity != family.environmentIdentity ||
-			run.Trial.MeasurementProtocolIdentity != member.ActiveProtocolIdentity {
-			return Point{}, fmt.Errorf("batch %d trial does not match its verified family member", input.Batch)
+		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != state.StateIdentity ||
+			run.Trial.EnvironmentIdentity != state.EnvironmentIdentity ||
+			run.Trial.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {
+			return Point{}, fmt.Errorf("batch %d trial does not match its verified family state", input.Batch)
 		}
 		if run.Trial.TrialID == "" {
 			return Point{}, fmt.Errorf("batch %d contains an empty trial identity", input.Batch)
@@ -224,13 +232,7 @@ func (c Curve) discoveryOnly() (Curve, error) {
 }
 
 func (f CurveFamily) requireVerified() error {
-	if err := f.contract.requireFrozen(); err != nil {
-		return err
-	}
-	if f.Name() == "" || f.environmentIdentity == "" || len(f.members) != len(f.contract.record.Members) {
-		return errors.New("curve family was not verified")
-	}
-	return nil
+	return f.contract.requireFrozen()
 }
 
 func validateCurveBaselines(
@@ -238,27 +240,15 @@ func validateCurveBaselines(
 	input map[string]IdleBaseline,
 ) (map[string]IdleBaseline, error) {
 	result := make(map[string]IdleBaseline, len(input))
-	protocolByState := make(map[string]string)
-	for _, member := range family.members {
-		protocolByState[member.StateIdentity] = member.IdleProtocolIdentity
-	}
-	seenEvidence := make(map[string]string)
+	state := family.state
 	for key, baseline := range input {
-		expectedProtocol, exists := protocolByState[key]
-		if !exists || key != baseline.StateIdentity ||
-			baseline.EnvironmentIdentity != family.environmentIdentity ||
-			baseline.MeasurementProtocolIdentity != expectedProtocol {
+		if key != state.StateIdentity || key != baseline.StateIdentity ||
+			baseline.EnvironmentIdentity != state.EnvironmentIdentity ||
+			baseline.MeasurementProtocolIdentity != state.IdleProtocolIdentity {
 			return nil, fmt.Errorf("idle baseline key %q does not match the verified curve family", key)
 		}
 		if err := validateIdleBaseline(baseline); err != nil {
 			return nil, fmt.Errorf("idle baseline key %q is incomplete", key)
-		}
-		for _, trial := range baseline.Trials {
-			evidenceKey := rawEvidenceIdentityKey(trial.RawEvidence)
-			if previousState, exists := seenEvidence[evidenceKey]; exists && previousState != key {
-				return nil, errors.New("one idle raw evidence object is reused across distinct baseline states")
-			}
-			seenEvidence[evidenceKey] = key
 		}
 		result[key] = cloneIdleBaseline(baseline)
 	}

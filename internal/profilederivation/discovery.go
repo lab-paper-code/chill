@@ -25,7 +25,7 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 	if err := validateBSatPolicy(policy); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
-	if len(curve.family.members) != policy.KMax {
+	if len(curve.family.contract.record.Shared.EligibleBatches) != policy.KMax {
 		return BSatDiscoveryResult{}, errors.New("curve family does not match policy kmax")
 	}
 	if _, exists := curve.pass(PassConfirmatory); exists {

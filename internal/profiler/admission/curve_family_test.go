@@ -8,16 +8,16 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-func TestProjectVerifiedCurveFamilyMemberRequiresLoaderEvidence(t *testing.T) {
-	if _, err := ProjectVerifiedCurveFamilyMember(
-		profilederivation.CurveFamilyContract{}, 1,
+func TestProjectVerifiedCurveFamilyStateRequiresLoaderEvidence(t *testing.T) {
+	if _, err := ProjectVerifiedCurveFamilyState(
+		profilederivation.CurveFamilyContract{},
 		profilerevidence.VerifiedEvidence{}, profilerevidence.VerifiedIdleEvidence{},
 	); err == nil {
 		t.Fatal("empty Loader evidence was accepted")
 	}
 }
 
-func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
+func TestCurveFamilyIntentProjectionBindsObservableContractFacts(t *testing.T) {
 	active := curveMemberIntent()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
@@ -41,33 +41,33 @@ func TestCurveMemberIntentProjectionBindsObservableContractFacts(t *testing.T) {
 		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
+		Artifact: profilederivation.CurveArtifactContract{
+			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
+			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
+		},
+		EligibleBatches: []int{1},
 	}
-	member := profilederivation.CurveFamilyMemberContract{
-		Batch: 1, ExecutionPath: active.Candidate.ExecutionPath,
-		ArtifactName: active.State.Artifact,
-		ArtifactPath: active.State.ArtifactPath, ArtifactImage: active.Images.Artifact,
-	}
-	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err != nil {
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 	drifted := active
 	drifted.Images.Artifact = "different"
-	if err := validateCurveMemberIntents(drifted, idle, "node-uid", "node-uid", shared, member); err == nil {
+	if err := validateCurveFamilyIntents(drifted, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("artifact-supply drift was accepted")
 	}
 	drifted = idle
 	drifted.TargetNode.UID = "other-node"
-	if err := validateCurveMemberIntents(active, drifted, "node-uid", "other-node", shared, member); err == nil {
+	if err := validateCurveFamilyIntents(active, drifted, "node-uid", "other-node", shared); err == nil {
 		t.Fatal("Node drift was accepted")
 	}
 	drifted = idle
 	drifted.Candidate.ExecutionPath = "different-path"
-	if err := validateCurveMemberIntents(active, drifted, "node-uid", "node-uid", shared, member); err == nil {
+	if err := validateCurveFamilyIntents(active, drifted, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("active/idle execution-path disagreement was accepted")
 	}
 }
 
-func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
+func TestCurveFamilyUsesBatchOneIdleWitness(t *testing.T) {
 	active := curveMemberIntent()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
@@ -97,26 +97,24 @@ func TestDynamicCurveMemberUsesBatchOneIdleWitness(t *testing.T) {
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
+		Artifact: profilederivation.CurveArtifactContract{
+			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
+			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
+		},
+		EligibleBatches: []int{1, 2},
 	}
-	member := profilederivation.CurveFamilyMemberContract{
-		Batch: 2, ExecutionPath: active.Candidate.ExecutionPath,
-		ArtifactName: active.State.Artifact,
-		ArtifactPath: active.State.ArtifactPath, ArtifactImage: active.Images.Artifact,
-		FixedBatchCapability: 0,
-	}
-	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err != nil {
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 
 	idle.Measurement.Batch = 2
-	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err == nil {
-		t.Fatal("dynamic member accepted a non-canonical idle batch")
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+		t.Fatal("curve family accepted a non-canonical idle batch")
 	}
-	member.FixedBatchCapability = 2
-	shared.Conversion.Derived = true
 	idle.Measurement.Batch = 1
-	if err := validateCurveMemberIntents(active, idle, "node-uid", "node-uid", shared, member); err == nil {
-		t.Fatal("fixed-batch member accepted a different idle batch")
+	active.Measurement.Batch = 3
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+		t.Fatal("curve family accepted an ineligible active batch")
 	}
 }
 

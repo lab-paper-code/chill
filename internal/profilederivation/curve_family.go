@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	curveFamilyContractSchemaVersion = "chill.dacs.io/curve-family-contract.v1alpha2"
+	curveFamilyContractSchemaVersion = "chill.dacs.io/curve-family-contract.v1alpha3"
 )
 
-// CurveCPUContract is the execution CPU contract shared by every family
-// member. It is deliberately Kubernetes-free.
+// CurveCPUContract is the execution CPU contract shared by every family batch.
+// It is deliberately Kubernetes-free.
 type CurveCPUContract struct {
 	Policy             string `json:"policy"`
 	PolicyVersion      string `json:"policyVersion"`
@@ -38,8 +38,7 @@ type CurveMetricSourceContract struct {
 }
 
 // CurveProtocolContract contains the mode-specific protocol fields that must
-// remain fixed across members. Batch and the member artifact-supply image are
-// intentionally absent.
+// remain fixed across batches. Batch is intentionally absent.
 type CurveProtocolContract struct {
 	WorkloadMode               string `json:"workloadMode"`
 	InputGenerator             string `json:"inputGenerator"`
@@ -55,13 +54,12 @@ type CurveProtocolContract struct {
 	WorkloadSchemaVersion      string `json:"workloadSchemaVersion"`
 }
 
-// CurveConversionContract is present only when each member is a separately
-// derived immutable artifact.
+// CurveConversionContract identifies how the immutable family artifact was
+// derived.
 type CurveConversionContract struct {
-	Derived        bool   `json:"derived"`
-	TargetPlatform string `json:"targetPlatform,omitempty"`
-	Tool           string `json:"tool,omitempty"`
-	ToolVersion    string `json:"toolVersion,omitempty"`
+	TargetPlatform string `json:"targetPlatform"`
+	Tool           string `json:"tool"`
+	ToolVersion    string `json:"toolVersion"`
 }
 
 type CurveTensorContract struct {
@@ -70,62 +68,56 @@ type CurveTensorContract struct {
 	NonBatchShape []int  `json:"nonBatchShape"`
 }
 
-// CurveFamilySharedContract is the pre-measurement anchor that every planned
-// member must share.
-type CurveFamilySharedContract struct {
-	Name           string                    `json:"name"`
-	LogicalModel   string                    `json:"logicalModel"`
-	DeviceClass    string                    `json:"deviceClass"`
-	NodeUID        string                    `json:"nodeUID"`
-	RuntimeFamily  string                    `json:"runtimeFamily"`
-	Backend        string                    `json:"backend"`
-	RuntimeImage   string                    `json:"runtimeImage"`
-	PowerMode      string                    `json:"powerMode"`
-	CPU            CurveCPUContract          `json:"cpu"`
-	MetricSource   CurveMetricSourceContract `json:"metricSource"`
-	ActiveProtocol CurveProtocolContract     `json:"activeProtocol"`
-	IdleProtocol   CurveProtocolContract     `json:"idleProtocol"`
-	Conversion     CurveConversionContract   `json:"conversion"`
-	Tensor         CurveTensorContract       `json:"tensor"`
+// CurveArtifactContract binds the one immutable artifact every batch of this
+// family executes.
+type CurveArtifactContract struct {
+	ExecutionPath string `json:"executionPath"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	Image         string `json:"image"`
 }
 
-// CurveFamilyMemberContract binds every batch-varying exact artifact fact.
-type CurveFamilyMemberContract struct {
-	Batch                int    `json:"batch"`
-	ExecutionPath        string `json:"executionPath"`
-	ArtifactName         string `json:"artifactName"`
-	ArtifactPath         string `json:"artifactPath"`
-	ArtifactImage        string `json:"artifactImage"`
-	FixedBatchCapability int    `json:"fixedBatchCapability"`
-	InputShape           []int  `json:"inputShape"`
+// CurveFamilySharedContract is the pre-measurement family anchor.
+type CurveFamilySharedContract struct {
+	Name            string                    `json:"name"`
+	LogicalModel    string                    `json:"logicalModel"`
+	DeviceClass     string                    `json:"deviceClass"`
+	NodeUID         string                    `json:"nodeUID"`
+	RuntimeFamily   string                    `json:"runtimeFamily"`
+	Backend         string                    `json:"backend"`
+	RuntimeImage    string                    `json:"runtimeImage"`
+	PowerMode       string                    `json:"powerMode"`
+	CPU             CurveCPUContract          `json:"cpu"`
+	MetricSource    CurveMetricSourceContract `json:"metricSource"`
+	ActiveProtocol  CurveProtocolContract     `json:"activeProtocol"`
+	IdleProtocol    CurveProtocolContract     `json:"idleProtocol"`
+	Conversion      CurveConversionContract   `json:"conversion"`
+	Artifact        CurveArtifactContract     `json:"artifact"`
+	EligibleBatches []int                     `json:"eligibleBatches"`
+	Tensor          CurveTensorContract       `json:"tensor"`
 }
 
 type curveFamilyContractRecord struct {
-	SchemaVersion string                      `json:"schemaVersion"`
-	Shared        CurveFamilySharedContract   `json:"shared"`
-	Members       []CurveFamilyMemberContract `json:"members"`
+	SchemaVersion string                    `json:"schemaVersion"`
+	Shared        CurveFamilySharedContract `json:"shared"`
 }
 
 // CurveFamilyContract can only be constructed through
-// FreezeCurveFamilyContract, which validates and orders its members.
+// FreezeCurveFamilyContract, which validates and orders its eligible batches.
 type CurveFamilyContract struct {
 	record curveFamilyContractRecord
 }
 
-func FreezeCurveFamilyContract(
-	shared CurveFamilySharedContract,
-	members []CurveFamilyMemberContract,
-) (CurveFamilyContract, error) {
+func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
 	shared = cloneCurveFamilyShared(shared)
-	members = cloneCurveFamilyMembers(members)
-	sort.Slice(members, func(i, j int) bool { return members[i].Batch < members[j].Batch })
-	if err := validateCurveFamilyContract(shared, members); err != nil {
+	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
+	sort.Ints(shared.EligibleBatches)
+	if err := validateCurveFamilyShared(shared); err != nil {
 		return CurveFamilyContract{}, err
 	}
 	record := curveFamilyContractRecord{
 		SchemaVersion: curveFamilyContractSchemaVersion,
 		Shared:        shared,
-		Members:       members,
 	}
 	return CurveFamilyContract{record: record}, nil
 }
@@ -147,7 +139,7 @@ func DecodeCurveFamilyContract(raw []byte) (CurveFamilyContract, error) {
 	if record.SchemaVersion != curveFamilyContractSchemaVersion {
 		return CurveFamilyContract{}, fmt.Errorf("unsupported curve-family contract schema %q", record.SchemaVersion)
 	}
-	return FreezeCurveFamilyContract(record.Shared, record.Members)
+	return FreezeCurveFamilyContract(record.Shared)
 }
 
 func (c CurveFamilyContract) CanonicalJSON() ([]byte, error) {
@@ -161,8 +153,8 @@ func (c CurveFamilyContract) Shared() CurveFamilySharedContract {
 	return cloneCurveFamilyShared(c.record.Shared)
 }
 
-func (c CurveFamilyContract) Members() []CurveFamilyMemberContract {
-	return cloneCurveFamilyMembers(c.record.Members)
+func (c CurveFamilyContract) EligibleBatches() []int {
+	return append([]int(nil), c.record.Shared.EligibleBatches...)
 }
 
 // requireFrozen checks opaque type state only. The constructor and decoder own
@@ -174,99 +166,39 @@ func (c CurveFamilyContract) requireFrozen() error {
 	return nil
 }
 
-// VerifiedCurveFamilyMember is the plain projection made only after active and
-// idle frozen evidence have crossed their Loader boundaries.
-type VerifiedCurveFamilyMember struct {
+// VerifiedCurveFamilyState is the plain projection made only after active and
+// idle frozen evidence have crossed their Loader boundaries. One artifact means
+// one state, so there is one projection per family.
+type VerifiedCurveFamilyState struct {
 	Shared                 CurveFamilySharedContract `json:"shared"`
-	Member                 CurveFamilyMemberContract `json:"member"`
 	StateIdentity          string                    `json:"stateIdentity"`
 	EnvironmentIdentity    string                    `json:"environmentIdentity"`
 	ActiveProtocolIdentity string                    `json:"activeProtocolIdentity"`
 	IdleProtocolIdentity   string                    `json:"idleProtocolIdentity"`
 }
 
-// CurveFamily is a Loader-verified composition boundary. It does not make its
-// exact member states physically equivalent.
+// CurveFamily is a Loader-verified composition boundary.
 type CurveFamily struct {
-	contract            CurveFamilyContract
-	environmentIdentity string
-	members             map[int]VerifiedCurveFamilyMember
+	contract CurveFamilyContract
+	state    VerifiedCurveFamilyState
 }
 
 func VerifyCurveFamily(
 	contract CurveFamilyContract,
-	verified []VerifiedCurveFamilyMember,
+	verified VerifiedCurveFamilyState,
 ) (CurveFamily, error) {
 	if err := contract.requireFrozen(); err != nil {
 		return CurveFamily{}, err
 	}
-	if len(verified) != len(contract.record.Members) {
-		return CurveFamily{}, errors.New("verified curve-family member count does not match the contract")
+	if !reflect.DeepEqual(verified.Shared, contract.record.Shared) {
+		return CurveFamily{}, errors.New("verified curve-family state does not match the contract")
 	}
-	verified = cloneVerifiedCurveFamilyMembers(verified)
-	sort.Slice(verified, func(i, j int) bool { return verified[i].Member.Batch < verified[j].Member.Batch })
-
-	members := make(map[int]VerifiedCurveFamilyMember, len(verified))
-	environment := ""
-	type stateProtocols struct{ active, idle string }
-	byState := make(map[string]stateProtocols)
-	for index, member := range verified {
-		expected := contract.record.Members[index]
-		if !reflect.DeepEqual(member.Shared, contract.record.Shared) || !reflect.DeepEqual(member.Member, expected) {
-			return CurveFamily{}, fmt.Errorf("verified curve-family member batch %d contradicts the frozen contract", expected.Batch)
-		}
-		if !cleanCurveValue(member.StateIdentity) || !cleanCurveValue(member.EnvironmentIdentity) ||
-			!cleanCurveValue(member.ActiveProtocolIdentity) || !cleanCurveValue(member.IdleProtocolIdentity) {
-			return CurveFamily{}, fmt.Errorf("verified curve-family member batch %d has an invalid derivation identity", expected.Batch)
-		}
-		if environment == "" {
-			environment = member.EnvironmentIdentity
-		} else if member.EnvironmentIdentity != environment {
-			return CurveFamily{}, errors.New("verified curve-family members do not share one environment identity")
-		}
-		protocols := stateProtocols{active: member.ActiveProtocolIdentity, idle: member.IdleProtocolIdentity}
-		if previous, exists := byState[member.StateIdentity]; exists && previous != protocols {
-			return CurveFamily{}, errors.New("one execution state maps to inconsistent active or idle protocols")
-		}
-		byState[member.StateIdentity] = protocols
-		if _, exists := members[expected.Batch]; exists {
-			return CurveFamily{}, errors.New("verified curve-family contains a duplicate batch")
-		}
-		members[expected.Batch] = member
-	}
-	return CurveFamily{
-		contract:            contract,
-		environmentIdentity: environment, members: members,
-	}, nil
+	return CurveFamily{contract: contract, state: verified}, nil
 }
 
 func (f CurveFamily) Name() string { return f.contract.record.Shared.Name }
 
-func (f CurveFamily) EnvironmentIdentity() string { return f.environmentIdentity }
-
-func (f CurveFamily) Members() []VerifiedCurveFamilyMember {
-	result := make([]VerifiedCurveFamilyMember, 0, len(f.members))
-	for _, member := range f.members {
-		result = append(result, cloneVerifiedCurveFamilyMember(member))
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Member.Batch < result[j].Member.Batch })
-	return result
-}
-
-func validateCurveFamilyContract(shared CurveFamilySharedContract, members []CurveFamilyMemberContract) error {
-	if err := validateCurveFamilyShared(shared); err != nil {
-		return err
-	}
-	if len(members) == 0 {
-		return errors.New("curve-family requires at least one member")
-	}
-	for index, member := range members {
-		if err := validateCurveFamilyMember(shared, member, index+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+func (f CurveFamily) EnvironmentIdentity() string { return f.state.EnvironmentIdentity }
 
 func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 	for name, value := range map[string]string{
@@ -299,6 +231,33 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 	if err := validateCurveConversion(shared.Conversion); err != nil {
 		return err
 	}
+	for name, value := range map[string]string{
+		"execution path": shared.Artifact.ExecutionPath,
+		"name":           shared.Artifact.Name,
+		"path":           shared.Artifact.Path,
+		"image":          shared.Artifact.Image,
+	} {
+		if !cleanCurveValue(value) {
+			return fmt.Errorf("curve-family artifact %s is required without surrounding whitespace", name)
+		}
+	}
+	if shared.Artifact.Path == "/" || !strings.HasPrefix(shared.Artifact.Path, "/") ||
+		path.Clean(shared.Artifact.Path) != shared.Artifact.Path {
+		return errors.New("curve-family artifact path is invalid")
+	}
+	if len(shared.EligibleBatches) == 0 {
+		return errors.New("curve-family requires at least one eligible batch")
+	}
+	previousBatch := 0
+	for _, batch := range shared.EligibleBatches {
+		if batch <= 0 {
+			return errors.New("curve-family eligible batches must be positive")
+		}
+		if batch == previousBatch {
+			return fmt.Errorf("curve-family eligible batch %d is duplicated", batch)
+		}
+		previousBatch = batch
+	}
 	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
 		len(shared.Tensor.NonBatchShape) == 0 {
 		return errors.New("curve-family tensor contract is incomplete")
@@ -306,42 +265,6 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 	for _, dimension := range shared.Tensor.NonBatchShape {
 		if dimension < 1 {
 			return errors.New("curve-family tensor dimensions must be positive")
-		}
-	}
-	return nil
-}
-
-func validateCurveFamilyMember(
-	shared CurveFamilySharedContract,
-	member CurveFamilyMemberContract,
-	expectedBatch int,
-) error {
-	if member.Batch != expectedBatch {
-		return errors.New("curve-family members must form a contiguous batch domain starting at one")
-	}
-	for name, value := range map[string]string{
-		"execution path": member.ExecutionPath, "artifact name": member.ArtifactName,
-		"artifact path": member.ArtifactPath,
-	} {
-		if !cleanCurveValue(value) {
-			return fmt.Errorf("curve-family member batch %d %s is invalid", member.Batch, name)
-		}
-	}
-	if member.ArtifactPath == "/" || !strings.HasPrefix(member.ArtifactPath, "/") ||
-		path.Clean(member.ArtifactPath) != member.ArtifactPath ||
-		!cleanCurveValue(member.ArtifactImage) {
-		return fmt.Errorf("curve-family member batch %d artifact contract is invalid", member.Batch)
-	}
-	if (shared.Conversion.Derived && member.FixedBatchCapability != member.Batch) ||
-		(!shared.Conversion.Derived && member.FixedBatchCapability != 0 && member.FixedBatchCapability != member.Batch) {
-		return fmt.Errorf("curve-family member batch %d fixed capability does not match", member.Batch)
-	}
-	if len(member.InputShape) != len(shared.Tensor.NonBatchShape)+1 || member.InputShape[0] != member.Batch {
-		return fmt.Errorf("curve-family member batch %d input shape does not match", member.Batch)
-	}
-	for shapeIndex, dimension := range shared.Tensor.NonBatchShape {
-		if member.InputShape[shapeIndex+1] != dimension {
-			return fmt.Errorf("curve-family member batch %d non-batch tensor shape differs", member.Batch)
 		}
 	}
 	return nil
@@ -388,18 +311,9 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 }
 
 func validateCurveConversion(conversion CurveConversionContract) error {
-	values := []string{conversion.TargetPlatform, conversion.Tool, conversion.ToolVersion}
-	if !conversion.Derived {
-		for _, value := range values {
-			if value != "" {
-				return errors.New("non-derived curve-family conversion contract must be empty")
-			}
-		}
-		return nil
-	}
-	for _, value := range values {
+	for _, value := range []string{conversion.TargetPlatform, conversion.Tool, conversion.ToolVersion} {
 		if !cleanCurveValue(value) {
-			return errors.New("derived curve-family conversion contract is incomplete")
+			return errors.New("curve-family conversion contract is incomplete")
 		}
 	}
 	return nil
@@ -410,29 +324,7 @@ func cleanCurveValue(value string) bool {
 }
 
 func cloneCurveFamilyShared(shared CurveFamilySharedContract) CurveFamilySharedContract {
+	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
 	shared.Tensor.NonBatchShape = append([]int(nil), shared.Tensor.NonBatchShape...)
 	return shared
-}
-
-func cloneCurveFamilyMembers(members []CurveFamilyMemberContract) []CurveFamilyMemberContract {
-	result := make([]CurveFamilyMemberContract, len(members))
-	for index, member := range members {
-		result[index] = member
-		result[index].InputShape = append([]int(nil), member.InputShape...)
-	}
-	return result
-}
-
-func cloneVerifiedCurveFamilyMember(member VerifiedCurveFamilyMember) VerifiedCurveFamilyMember {
-	member.Shared = cloneCurveFamilyShared(member.Shared)
-	member.Member.InputShape = append([]int(nil), member.Member.InputShape...)
-	return member
-}
-
-func cloneVerifiedCurveFamilyMembers(members []VerifiedCurveFamilyMember) []VerifiedCurveFamilyMember {
-	result := make([]VerifiedCurveFamilyMember, len(members))
-	for index, member := range members {
-		result[index] = cloneVerifiedCurveFamilyMember(member)
-	}
-	return result
 }

@@ -46,7 +46,7 @@ func TestBSatConfirmatoryGoldenOutcomes(t *testing.T) {
 				result.ConfirmatoryEstimatorVersion != BSatConfirmatoryEstimatorVersion ||
 				result.ConfidenceLevel != .95 ||
 				len(result.DiscoveryPoints) != 4 || len(result.ConfirmatoryPoints) != 2 ||
-				len(result.IdleBaselinesByState) != 4 {
+				len(result.IdleBaselinesByState) != 1 {
 				t.Fatalf("unexpected confirmatory result: %+v", result)
 			}
 			if test.wantStatus == BSatAccepted {
@@ -175,19 +175,18 @@ func testConfirmatoryPass(
 	deviation float64,
 ) Pass {
 	t.Helper()
-	members := family.Members()
+	state := family.state
 	pass := Pass{Role: PassConfirmatory}
 	for index, mean := range means {
 		batch := startBatch + index
-		member := members[batch-1]
 		batchInput := PassBatch{Batch: batch}
 		for trialIndex := 0; trialIndex < trials; trialIndex++ {
 			trialID := idPrefix + "-b" + string(rune('0'+batch)) + "-" + string(rune('1'+trialIndex))
 			offset := (float64(trialIndex) - float64(trials-1)/2) * deviation
 			total := mean + 1 + offset
 			trial := Trial{
-				StateIdentity: member.StateIdentity, EnvironmentIdentity: member.EnvironmentIdentity,
-				MeasurementProtocolIdentity: member.ActiveProtocolIdentity,
+				StateIdentity: state.StateIdentity, EnvironmentIdentity: state.EnvironmentIdentity,
+				MeasurementProtocolIdentity: state.ActiveProtocolIdentity,
 				TrialID:                     trialID, Batch: batch, CompletedItems: 1,
 				LatencyMilliseconds: []float64{1},
 			}
