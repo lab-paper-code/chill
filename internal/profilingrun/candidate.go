@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha7"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"
 	candidateReportScope         = "StaticCompatibility"
 )
 
@@ -79,8 +80,8 @@ type CandidateReportArtifactSupply struct {
 // derived artifact. Full conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
 	TargetPlatform string  `json:"targetPlatform"`
-	FixedBatch     int32   `json:"fixedBatch"`
-	InputShape     []int32 `json:"inputShape,omitempty"`
+	BatchProfiles  []int32 `json:"batchProfiles"`
+	NonBatchShape  []int32 `json:"nonBatchShape,omitempty"`
 	InputLayout    string  `json:"inputLayout,omitempty"`
 	InputDataType  string  `json:"inputDataType,omitempty"`
 }
@@ -155,7 +156,8 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
-		capability.InputShape = append([]int32(nil), r.report.ArtifactCapability.InputShape...)
+		capability.BatchProfiles = append([]int32(nil), r.report.ArtifactCapability.BatchProfiles...)
+		capability.NonBatchShape = append([]int32(nil), r.report.ArtifactCapability.NonBatchShape...)
 		result.ArtifactCapability = &capability
 	}
 	if r.report.RuntimeAccess != nil {
@@ -188,7 +190,8 @@ func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	delivery := CandidateRuntimeDelivery{}
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
-		capability.InputShape = append([]int32(nil), capability.InputShape...)
+		capability.BatchProfiles = append([]int32(nil), capability.BatchProfiles...)
+		capability.NonBatchShape = append([]int32(nil), capability.NonBatchShape...)
 		delivery.ArtifactCapability = &capability
 	}
 	delivery.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
@@ -323,10 +326,18 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	if report.ArtifactCapability != nil {
 		if strings.TrimSpace(report.ArtifactCapability.TargetPlatform) == "" ||
 			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
-			report.ArtifactCapability.FixedBatch < 1 {
-			return errors.New("candidate report artifact target platform and fixed batch are required")
+			len(report.ArtifactCapability.BatchProfiles) == 0 {
+			return errors.New("candidate report artifact target platform and batch profiles are required")
 		}
-		for _, dimension := range report.ArtifactCapability.InputShape {
+		if len(report.ArtifactCapability.NonBatchShape) == 0 {
+			return errors.New("candidate report artifact input shape is required")
+		}
+		for _, profile := range report.ArtifactCapability.BatchProfiles {
+			if profile < 1 {
+				return errors.New("candidate report artifact batch profiles must be positive")
+			}
+		}
+		for _, dimension := range report.ArtifactCapability.NonBatchShape {
 			if dimension < 1 {
 				return errors.New("candidate report artifact input shape dimensions must be positive")
 			}
@@ -442,10 +453,14 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
-			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
 			report.ArtifactCapability.InputLayout != RKNNLiteInputLayout ||
 			report.ArtifactCapability.InputDataType != RKNNLiteInputDataType {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability does not match the measurement batch")
+		}
+		if !slices.Contains(report.ArtifactCapability.BatchProfiles, int32(intent.Measurement.Batch)) {
+			return VerifiedCandidateReport{}, errors.New(
+				"candidate RKNN artifact does not declare the measurement batch as a supported profile",
+			)
 		}
 		if report.HostContract == nil || report.RuntimeAccess == nil {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN host and runtime access contracts are required")

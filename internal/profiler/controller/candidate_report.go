@@ -114,10 +114,10 @@ func reportArtifactCapability(
 	}
 	capability := &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: derivation.TargetPlatform,
-		FixedBatch:     derivation.FixedBatch,
+		BatchProfiles:  append([]int32(nil), derivation.BatchProfiles...),
 	}
 	if derivation.Input != nil {
-		capability.InputShape = append([]int32(nil), derivation.Input.Shape...)
+		capability.NonBatchShape = append([]int32(nil), derivation.Input.NonBatchShape...)
 		capability.InputLayout = derivation.Input.Layout
 		capability.InputDataType = derivation.Input.DataType
 	}

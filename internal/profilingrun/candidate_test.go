@@ -180,6 +180,19 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	withoutShape := report
+	withoutShapeCapability := *report.ArtifactCapability
+	withoutShapeCapability.NonBatchShape = nil
+	withoutShape.ArtifactCapability = &withoutShapeCapability
+	payload, err = json.Marshal(withoutShape)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err == nil ||
+		!strings.Contains(err.Error(), "candidate report artifact input shape is required") {
+		t.Fatalf("candidate without an input shape was accepted: %v", err)
+	}
+
 	invalid := report
 	invalidContract := *report.HostContract
 	invalidContract.Allocation.ExclusivityClaimed = true
@@ -254,6 +267,58 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	}
 }
 
+func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredProfiles(t *testing.T) {
+	_, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 3)
+	if err == nil {
+		t.Fatal("expected an undeclared batch to be rejected")
+	}
+	if !strings.Contains(err.Error(), "supported profile") {
+		t.Fatalf("error = %v, want it to name the unsupported profile", err)
+	}
+}
+
+func TestVerifyCandidateReportAcceptsADeclaredProfile(t *testing.T) {
+	if _, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 4); err != nil {
+		t.Fatalf("declared profile rejected: %v", err)
+	}
+}
+
+func verifyRKNNCandidateAtBatch(
+	t *testing.T, profiles []int32, batch int,
+) (VerifiedCandidateReport, error) {
+	t.Helper()
+	report := completeCandidateReportForTest()
+	contract := rknnHostContractForTest()
+	report.HostContract = &contract
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
+	report.ArtifactCapability.BatchProfiles = profiles
+	report.RuntimeAccess = &CandidateReportRuntimeAccess{
+		Privileged: true, SupplementalGroups: []int64{44, 110},
+	}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := Intent{
+		Candidate: CandidateIdentity{
+			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
+		},
+		State: ExecutionState{
+			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
+			Artifact:     report.Selection.Artifact,
+			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
+			RuntimeFamily: "rknnlite", HostContract: cloneCandidateHostContract(report.HostContract),
+		},
+		Images: Images{
+			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,
+			MetricObserver: report.MetricObserverImage,
+		},
+		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
+		Measurement: MeasurementContract{Batch: batch},
+	}
+	return VerifyCandidateReport(payload, intent)
+}
+
 func rknnHostContractForTest() CandidateReportHostContract {
 	return CandidateReportHostContract{
 		Libraries: []CandidateReportHostLibrary{{
@@ -274,7 +339,7 @@ func rknnHostContractForTest() CandidateReportHostContract {
 
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, NonBatchShape: []int32{224, 224, 3},
 		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
 	}
 }

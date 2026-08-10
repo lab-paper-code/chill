@@ -53,6 +53,17 @@ spec:
                         Derivation binds a derived executable to its source artifact and conversion settings.
                         It is absent for canonical source artifacts.
                       properties:
+                        batchProfiles:
+                          description: |-
+                            BatchProfiles enumerates every batch size this artifact can execute.
+                            A runtime that consumes batch as a call argument declares no derivation
+                            and therefore no profiles.
+                          items:
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          minItems: 1
+                          type: array
                         conversion:
                           description: Conversion binds the converter and recipe used
                             to produce this artifact.
@@ -69,12 +80,6 @@ spec:
                           - tool
                           - version
                           type: object
-                        fixedBatch:
-                          description: FixedBatch is the only batch size encoded by
-                            this artifact.
-                          format: int32
-                          minimum: 1
-                          type: integer
                         input:
                           description: |-
                             Input freezes the tensor contract consumed by a runtime that cannot
@@ -86,7 +91,11 @@ spec:
                             layout:
                               minLength: 1
                               type: string
-                            shape:
+                            nonBatchShape:
+                              description: |-
+                                NonBatchShape is the input tensor shape without its batch axis. The batch
+                                axis is supplied by the selected profile, so a batch mismatch is not
+                                representable here.
                               items:
                                 format: int32
                                 minimum: 1
@@ -96,7 +105,7 @@ spec:
                           required:
                           - dataType
                           - layout
-                          - shape
+                          - nonBatchShape
                           type: object
                         sourceArtifact:
                           description: |-
@@ -110,8 +119,8 @@ spec:
                           minLength: 1
                           type: string
                       required:
+                      - batchProfiles
                       - conversion
-                      - fixedBatch
                       - sourceArtifact
                       - targetPlatform
                       type: object

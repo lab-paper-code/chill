@@ -6,27 +6,14 @@ spec:
   artifacts:
   - name: canonical-onnx
     format: onnx
-  - name: mobilenet-v2-050-rk3588-bs1
+  - name: mobilenet-v2-050-rk3588
     format: rknn
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
-      fixedBatch: 1
+      batchProfiles: [1, 2, 4, 8, 16]
       input:
-        shape: [1, 224, 224, 3]
-        layout: NHWC
-        dataType: float32
-      conversion:
-        tool: rknn-toolkit2
-        version: 2.3.2
-  - name: mobilenet-v2-050-rk3588-bs2
-    format: rknn
-    derivation:
-      sourceArtifact: canonical-onnx
-      targetPlatform: rk3588
-      fixedBatch: 2
-      input:
-        shape: [2, 224, 224, 3]
+        nonBatchShape: [224, 224, 3]
         layout: NHWC
         dataType: float32
       conversion:
@@ -39,12 +26,7 @@ spec:
       family: onnxruntime
       backend: CPUExecutionProvider
   - name: rknnlite
-    artifact: mobilenet-v2-050-rk3588-bs1
-    runtime:
-      family: rknnlite
-      backend: not-applicable
-  - name: rknnlite-bs2
-    artifact: mobilenet-v2-050-rk3588-bs2
+    artifact: mobilenet-v2-050-rk3588
     runtime:
       family: rknnlite
       backend: not-applicable

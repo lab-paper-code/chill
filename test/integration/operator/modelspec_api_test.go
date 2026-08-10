@@ -72,9 +72,9 @@ var _ = Describe("ModelSpec API", func() {
 			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
 			model.Spec.Artifacts[0].Derivation.TargetPlatform = ""
 		}),
-		Entry("zero fixed batch", func(model *edgev1alpha1.ModelSpec) {
+		Entry("zero batch profile", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
-			model.Spec.Artifacts[0].Derivation.FixedBatch = 0
+			model.Spec.Artifacts[0].Derivation.BatchProfiles = []int32{0}
 		}),
 		Entry("empty execution-path name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.ExecutionPaths[0].Name = ""
@@ -126,7 +126,7 @@ func validDerivedArtifact() *edgev1alpha1.ModelArtifactDerivation {
 	return &edgev1alpha1.ModelArtifactDerivation{
 		SourceArtifact: "canonical-onnx",
 		TargetPlatform: "rk3588",
-		FixedBatch:     1,
+		BatchProfiles:  []int32{1},
 		Conversion: edgev1alpha1.ModelArtifactConversion{
 			Tool:    "rknn-toolkit2",
 			Version: "2.3.2",

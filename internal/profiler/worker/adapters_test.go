@@ -705,7 +705,7 @@ func testRKNNIntent(t *testing.T, idle bool) profilingrun.Intent {
 func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
 	return profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
-			TargetPlatform: "rk3588", FixedBatch: 1, InputShape: []int32{1, 224, 224, 3},
+			TargetPlatform: "rk3588", BatchProfiles: []int32{1}, NonBatchShape: []int32{224, 224, 3},
 			InputLayout: profilingrun.RKNNLiteInputLayout, InputDataType: profilingrun.RKNNLiteInputDataType,
 		},
 		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},

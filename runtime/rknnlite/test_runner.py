@@ -188,8 +188,8 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "candidate": {
             "artifactCapability": {
                 "targetPlatform": "rk3588",
-                "fixedBatch": 1,
-                "inputShape": [1, 224, 224, 3],
+                "batchProfiles": [1, 2, 4],
+                "nonBatchShape": [224, 224, 3],
                 "inputLayout": "NHWC",
                 "inputDataType": "float32",
             },
@@ -388,9 +388,6 @@ class RunnerTest(unittest.TestCase):
             request["intent"]["candidate"]["executionPath"] = "rknnlite-bs2"
             request["intent"]["state"]["artifact"] = "mobilenet-v2-050-rk3588-bs2"
             request["intent"]["measurement"]["batch"] = 2
-            capability = request["candidate"]["artifactCapability"]
-            capability["fixedBatch"] = 2
-            capability["inputShape"][0] = 2
 
             runner.validate_request(request)
 
@@ -403,7 +400,7 @@ class RunnerTest(unittest.TestCase):
                 runner.importlib.metadata, "version", return_value="2.3.1"
             ):
                 with self.assertRaisesRegex(runner.ContractError, "package version"):
-                    runner.observe_host_contract(candidate)
+                    runner.observe_host_contract(candidate, 1)
 
     def test_execute_active_retains_rknn_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

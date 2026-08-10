@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha3"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha4"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha10"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
@@ -383,14 +383,19 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "fixedBatch", "inputShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "batchProfiles", "nonBatchShape", "inputLayout", "inputDataType"},
         "candidate.artifactCapability",
     )
-    shape = capability["inputShape"]
+    profiles = capability["batchProfiles"]
+    if not isinstance(profiles, list) or not profiles:
+        raise ContractError("candidate batchProfiles must be a non-empty array")
+    for profile in profiles:
+        require_integer(profile, "candidate batchProfiles item", 1)
+    shape = capability["nonBatchShape"]
     if not isinstance(shape, list) or not shape:
-        raise ContractError("candidate inputShape must be a non-empty array")
+        raise ContractError("candidate nonBatchShape must be a non-empty array")
     normalized_shape = [
-        require_integer(value, "candidate inputShape item", 1) for value in shape
+        require_integer(value, "candidate nonBatchShape item", 1) for value in shape
     ]
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
@@ -707,7 +712,9 @@ def measurement_complete(
     return False
 
 
-def observe_host_contract(candidate: dict[str, Any]) -> dict[str, Any]:
+def observe_host_contract(
+    candidate: dict[str, Any], selected_batch: int
+) -> dict[str, Any]:
     host = candidate["hostContract"]
     package = candidate["runtimePackages"][0]
     try:
@@ -783,7 +790,7 @@ def observe_host_contract(candidate: dict[str, Any]) -> dict[str, Any]:
         "inputLayout": SUPPORTED_INPUT_LAYOUT,
         "initSucceeded": False,
         "loadSucceeded": False,
-        "selectedBatch": candidate["artifactCapability"]["fixedBatch"],
+        "selectedBatch": selected_batch,
     }
 
 
@@ -924,7 +931,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
     ):
         raise ContractError("runtime architecture does not match the frozen Node")
     cpu_max, affinity, cpuset = validate_cpu_contract(intent)
-    evidence = observe_host_contract(candidate)
+    evidence = observe_host_contract(candidate, measurement["batch"])
 
     rknn = rknn_type()
     try:
@@ -956,7 +963,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 model_load_completed_at,
             )
 
-        shape = candidate["artifactCapability"]["inputShape"]
+        shape = [measurement["batch"], *candidate["artifactCapability"]["nonBatchShape"]]
         sample = generate_input(numpy, shape, request["maxInputBytes"])
         for ready_path in request["observerReadyPaths"]:
             wait_for_signal(

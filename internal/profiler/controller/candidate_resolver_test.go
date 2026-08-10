@@ -69,8 +69,8 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
 	}
 	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
-		report.ArtifactCapability.FixedBatch != 1 ||
-		!slices.Equal(report.ArtifactCapability.InputShape, []int32{1, 224, 224, 3}) ||
+		!slices.Equal(report.ArtifactCapability.BatchProfiles, []int32{1}) ||
+		!slices.Equal(report.ArtifactCapability.NonBatchShape, []int32{224, 224, 3}) ||
 		report.ArtifactCapability.InputLayout != profilingrun.RKNNLiteInputLayout ||
 		report.ArtifactCapability.InputDataType != profilingrun.RKNNLiteInputDataType || report.RuntimeAccess == nil ||
 		!report.RuntimeAccess.Privileged || !slices.Equal(report.RuntimeAccess.SupplementalGroups, []int64{44, 110}) {
@@ -401,9 +401,9 @@ func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivatio
 	return &edgev1alpha1.ModelArtifactDerivation{
 		SourceArtifact: source,
 		TargetPlatform: "rk3588",
-		FixedBatch:     1,
+		BatchProfiles:  []int32{1},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
-			Shape: []int32{1, 224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
+			NonBatchShape: []int32{224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
 			DataType: profilingrun.RKNNLiteInputDataType,
 		},
 		Conversion: edgev1alpha1.ModelArtifactConversion{
