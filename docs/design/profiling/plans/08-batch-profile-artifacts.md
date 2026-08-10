@@ -258,13 +258,24 @@ publication means an artifact cannot reach the cluster carrying an unchecked
 claim. This plan's own probe, recorded above, is that step performed by hand for
 the first such artifact.
 
-The measurement worker already mounts the artifact and already reports
-`CandidateReportArtifactSupply`. Carrying the record in that report lets the
-Profiler store it through the evidence path it already owns — no ModelSpec
-controller, no new API, no credentials in the build path. The record cannot be
-separated from the artifact it describes. The cost is timing: it is stored at
-the artifact's first Run admission rather than at ModelSpec admission, which is
-the first moment the cluster can observe it.
+The candidate report cannot carry them. It is built by the controller from the
+catalog (`candidate_resolver.go:111`), written to the intent record, and
+projected into the Job as a file (`execution_job_spec.go:283`); it flows
+controller to worker, so it cannot return a worker observation.
+
+The path that does flow worker to Profiler is the runtime result. The runner
+already mounts the artifact directory, so it reads the two records from that
+mount and emits them with its result, and the Profiler stores each under its
+artifact-scoped key. `PutImmutable` returns `Existing` rather than failing when
+the object is already present, so every later Run reporting the same records
+stores nothing new: the record is written once per artifact regardless of how
+many Runs carry it.
+
+This needs no ModelSpec controller, no new API, and no credentials in the build
+path, and the record cannot be separated from the artifact it describes. The
+cost is timing: the records are stored at the artifact's first Run admission
+rather than at ModelSpec admission, which is the first moment the cluster can
+observe them.
 
 The conversion record's shape changes accordingly:
 
