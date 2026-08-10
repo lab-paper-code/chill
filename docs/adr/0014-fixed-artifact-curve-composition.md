@@ -69,13 +69,14 @@ The realized projection additionally requires every verified member Run to
 match its planned contract entry and all member evidence to carry one common
 `EnvironmentIdentity`. Environment is observed evidence, not a catalog fact.
 
-The offline campaign record freezes the configured family name and eligible
-member map before measurement. The observed environment cannot be truthfully
-frozen before the WorkloadObserver records it, so a verified `CurveFamily` is
-created only after Loader verification. Plan 5 freezes the complete `1..Kmax`
-member map. Plan 5a may stop before exhausting that map, but it reports the
-family name, observed environment, and measured contiguous prefix. This adds no
-campaign CRD, controller, or Run intent field.
+The eligible member map is resolved from the catalog and frozen before the first
+Run of a measurement. Freezing binds which member identities the measurement may
+use; it does not require that their artifacts already exist. The observed
+environment cannot be truthfully frozen before the WorkloadObserver records it,
+so a verified `CurveFamily` is created only after Loader verification. Plan 5
+freezes the complete `1..Kmax` member map. Plan 5a may stop before exhausting
+that map, but it reports the family name, observed environment, and measured
+contiguous prefix.
 
 An opaque curve owns a set of admitted idle baselines keyed by exact
 `StateIdentity`:
