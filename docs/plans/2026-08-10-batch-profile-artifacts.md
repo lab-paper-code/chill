@@ -187,6 +187,7 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 - Modify: `internal/profiler/controller/catalog_facts.go:140-155`
 - Modify: `internal/profiler/worker/rknn_lite.go:18,209-215,230-240`
 - Modify: `runtime/rknnlite/runner.py:374-405,953-958`
+- Modify: `config/samples/edge_v1alpha1_modelspec.yaml`
 - Generated: `config/crd/bases/`, `charts/chill/templates/crds/`, `api/v1alpha1/zz_generated.deepcopy.go`
 
 **Interfaces:**
@@ -407,7 +408,48 @@ At `runtime/rknnlite/runner.py:957`, compose the full shape from the frozen batc
 
 Update the corresponding fixtures in `runtime/rknnlite/test_runner.py`.
 
-- [ ] **Step 9: Regenerate and inspect the drift**
+- [ ] **Step 9: Collapse the catalog sample onto one artifact**
+
+The sample declares the exact shape this plan retires: two derived artifacts and two RKNNLite execution paths for the same model. Replace `config/samples/edge_v1alpha1_modelspec.yaml` in full:
+
+```yaml
+apiVersion: edge.dacs.io/v1alpha1
+kind: ModelSpec
+metadata:
+  name: mobilenet-v2-050
+spec:
+  artifacts:
+  - name: canonical-onnx
+    format: onnx
+  - name: mobilenet-v2-050-rk3588
+    format: rknn
+    derivation:
+      sourceArtifact: canonical-onnx
+      targetPlatform: rk3588
+      batchProfiles: [1, 2, 4, 8, 16]
+      input:
+        nonBatchShape: [224, 224, 3]
+        layout: NHWC
+        dataType: float32
+      conversion:
+        tool: rknn-toolkit2
+        version: 2.3.2
+  executionPaths:
+  - name: ort-cpu
+    artifact: canonical-onnx
+    runtime:
+      family: onnxruntime
+      backend: CPUExecutionProvider
+  - name: rknnlite
+    artifact: mobilenet-v2-050-rk3588
+    runtime:
+      family: rknnlite
+      backend: not-applicable
+```
+
+The profile list matches the artifact this plan's design authority records as built and probed. The `rknnlite-bs2` path and the `-bs1`/`-bs2` artifacts are gone, not renamed.
+
+- [ ] **Step 10: Regenerate and inspect the drift**
 
 ```bash
 make manifests generate
@@ -415,14 +457,14 @@ git diff --stat config/crd/bases charts/chill/templates/crds api/v1alpha1/zz_gen
 ```
 Expected: `fixedBatch` and `shape` replaced by `batchProfiles` and `nonBatchShape` in both CRD copies, and the deepcopy functions gaining slice copies. Nothing else.
 
-- [ ] **Step 10: Full gates**
+- [ ] **Step 11: Full gates**
 
 ```bash
 make lint && make test && make arch-check
 ```
 Expected: all pass.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add api/ internal/ runtime/ config/ charts/
