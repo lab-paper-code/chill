@@ -127,19 +127,24 @@ whether the artifact actually executes the batch. Two checks that observe
 execution remain, and they are stronger than the five they replace:
 
 ```python
-# runtime/rknnlite/runner.py — the runtime refused the frozen batch
-outputs = rknn.inference(inputs=[sample])
-if outputs is None:
-    raise ContractError("runtime refused the frozen batch; artifact does not supply this profile")
+# runtime/rknnlite/runner.py:665 — the runtime supplied no result for this batch
+if not outputs:
+    raise ContractError("inference produced no outputs")
 
 # runtime/rknnlite/runner.py:670 — the executed batch was preserved
 if output.size < 1 or not shape or shape[0] != batch:
     raise ContractError("inference output shape does not preserve the frozen batch")
 ```
 
-The first guard is required by the probe's measured behavior: RKNNLite swallows
-the refusal internally and returns `None`, so without it the caller receives a
-`TypeError` instead of a typed contract error.
+Both already exist, and no new guard is required. RKNNLite swallows a refused
+profile internally and returns `None`, which `validate_outputs` catches on its
+first line because `None` is falsy. The refusal therefore already surfaces as a
+typed `ContractError` rather than a crash.
+
+What the probe does justify is naming the cause. "inference produced no outputs"
+describes the symptom of a refused profile, not the refusal, and a misbuilt
+artifact is the one case that reaches this path. Distinguishing the two is a
+diagnosability change to an existing check, not a new validation layer.
 
 This satisfies `AGENTS.md` — "verify once at that boundary, and do not
 re-validate it downstream" — by removing a standing violation rather than by
