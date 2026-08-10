@@ -96,6 +96,20 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 	}
 }
 
+func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutBatchProfiles(t *testing.T) {
+	objects := validRKNNCandidateObjects()
+	model := objects[0].(*edgev1alpha1.ModelSpec)
+	model.Spec.Artifacts[1].Derivation.BatchProfiles = nil
+	resolver := newCandidateResolver(t, objects...)
+	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
+		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
+		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
+	})
+	if err == nil || err.Error() != "RKNNLite artifact requires a matching input tensor contract" {
+		t.Fatalf("RKNN artifact without batch profiles returned %v", err)
+	}
+}
+
 func TestDecodeRuntimeDeclarationValidatesImageOwnedPackages(t *testing.T) {
 	payload := validRKNNRuntimeDeclaration()
 	declaration, err := decodeRuntimeDeclaration(runtimeDeclarationSource{

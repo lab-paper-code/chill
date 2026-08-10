@@ -394,9 +394,8 @@ def validate_candidate(value: Any) -> None:
     shape = capability["nonBatchShape"]
     if not isinstance(shape, list) or not shape:
         raise ContractError("candidate nonBatchShape must be a non-empty array")
-    normalized_shape = [
-        require_integer(value, "candidate nonBatchShape item", 1) for value in shape
-    ]
+    for value in shape:
+        require_integer(value, "candidate nonBatchShape item", 1)
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
         or capability["inputLayout"] != SUPPORTED_INPUT_LAYOUT

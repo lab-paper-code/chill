@@ -144,7 +144,7 @@ func selectModelPath(
 			artifact.Derivation.Input.Layout != profilingrun.RKNNLiteInputLayout ||
 			artifact.Derivation.Input.DataType != profilingrun.RKNNLiteInputDataType {
 			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
-				"RKNNLite artifact requires a matching fixed input tensor contract",
+				"RKNNLite artifact requires a matching input tensor contract",
 			)
 		}
 		for _, dimension := range artifact.Derivation.Input.NonBatchShape {

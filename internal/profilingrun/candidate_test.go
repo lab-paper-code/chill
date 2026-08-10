@@ -180,19 +180,6 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	withoutShape := report
-	withoutShapeCapability := *report.ArtifactCapability
-	withoutShapeCapability.NonBatchShape = nil
-	withoutShape.ArtifactCapability = &withoutShapeCapability
-	payload, err = json.Marshal(withoutShape)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil ||
-		!strings.Contains(err.Error(), "candidate report artifact input shape is required") {
-		t.Fatalf("candidate without an input shape was accepted: %v", err)
-	}
-
 	invalid := report
 	invalidContract := *report.HostContract
 	invalidContract.Allocation.ExclusivityClaimed = true
@@ -203,6 +190,34 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 	if _, err := DecodeCandidateReport(payload); err == nil {
 		t.Fatal("expected exclusivity claim without Kubernetes resource rejection")
+	}
+}
+
+func TestDecodeCandidateReportRequiresArtifactBatchProfiles(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
+	report.ArtifactCapability.BatchProfiles = nil
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DecodeCandidateReport(payload)
+	if err == nil || err.Error() != "candidate report artifact target platform and batch profiles are required" {
+		t.Fatalf("candidate without batch profiles returned %v", err)
+	}
+}
+
+func TestDecodeCandidateReportRequiresPositiveArtifactBatchProfiles(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
+	report.ArtifactCapability.BatchProfiles = []int32{1, 0, 4}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DecodeCandidateReport(payload)
+	if err == nil || err.Error() != "candidate report artifact batch profiles must be positive" {
+		t.Fatalf("candidate with a non-positive batch profile returned %v", err)
 	}
 }
 
@@ -246,6 +261,19 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		t.Fatal("verified candidate report exposed mutable internal delivery state")
 	}
 
+	withoutShape := report
+	withoutShapeCapability := *report.ArtifactCapability
+	withoutShapeCapability.NonBatchShape = nil
+	withoutShape.ArtifactCapability = &withoutShapeCapability
+	withoutShapePayload, err := json.Marshal(withoutShape)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyCandidateReport(withoutShapePayload, intent); err == nil ||
+		err.Error() != "candidate report artifact input shape is required" {
+		t.Fatalf("RKNN candidate without an input shape returned %v", err)
+	}
+
 	withoutPlatform := report
 	withoutPlatformContract := *report.HostContract
 	withoutPlatformContract.Platform = nil
@@ -263,7 +291,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 
 	intent.Measurement.Batch = 2
 	if err := ValidateCandidateReport(payload, intent); err == nil {
-		t.Fatal("expected fixed-batch artifact capability mismatch")
+		t.Fatal("expected unsupported batch profile rejection")
 	}
 }
 

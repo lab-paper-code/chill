@@ -81,7 +81,7 @@ type CandidateReportArtifactSupply struct {
 type CandidateArtifactCapability struct {
 	TargetPlatform string  `json:"targetPlatform"`
 	BatchProfiles  []int32 `json:"batchProfiles"`
-	NonBatchShape  []int32 `json:"nonBatchShape,omitempty"`
+	NonBatchShape  []int32 `json:"nonBatchShape"`
 	InputLayout    string  `json:"inputLayout,omitempty"`
 	InputDataType  string  `json:"inputDataType,omitempty"`
 }
@@ -329,9 +329,6 @@ func validateInternalCandidateReport(report CandidateReport) error {
 			len(report.ArtifactCapability.BatchProfiles) == 0 {
 			return errors.New("candidate report artifact target platform and batch profiles are required")
 		}
-		if len(report.ArtifactCapability.NonBatchShape) == 0 {
-			return errors.New("candidate report artifact input shape is required")
-		}
 		for _, profile := range report.ArtifactCapability.BatchProfiles {
 			if profile < 1 {
 				return errors.New("candidate report artifact batch profiles must be positive")
@@ -455,7 +452,10 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
 			report.ArtifactCapability.InputLayout != RKNNLiteInputLayout ||
 			report.ArtifactCapability.InputDataType != RKNNLiteInputDataType {
-			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability does not match the measurement batch")
+			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact input layout and data type are unsupported")
+		}
+		if len(report.ArtifactCapability.NonBatchShape) == 0 {
+			return VerifiedCandidateReport{}, errors.New("candidate report artifact input shape is required")
 		}
 		if !slices.Contains(report.ArtifactCapability.BatchProfiles, int32(intent.Measurement.Batch)) {
 			return VerifiedCandidateReport{}, errors.New(
