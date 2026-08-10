@@ -307,7 +307,7 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 |---|---|
 | the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
 | the point estimate plateaus but the bound is too wide | `CandidateOnly` |
-| the frozen member map ends below `Kmax` | `Censored: CapabilityBoundary` |
+| some batch produced no admissible evidence, or the runtime could not run it | `Censored: CapabilityBoundary` |
 | no candidate in `1..Kmax-1` satisfies the rule | `Censored: NoSaturationObserved` |
 | `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
 | the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
@@ -317,9 +317,9 @@ reason is itself worth reporting. `Unavailable` means the inputs never allowed
 the question to be asked.
 
 `CapabilityBoundary` has a consequence worth planning around. `R_c` is a maximum
-over every batch above `c`, so if the map ends before `Kmax`, `R_c` cannot be
-computed. That uncovered batch also sits inside the range of every smaller
-candidate, so a map that ends early censors every candidate below it.
+over every batch above `c`, so if any one of them has no usable measurement, `R_c`
+cannot be computed. That missing batch also sits inside the range of every
+smaller candidate, so a single gap censors every candidate below it.
 
 This is what makes `Kmax` a trade-off. A larger `Kmax` supports a stronger claim,
 because the campaign has looked further before declaring the curve flat. It also

@@ -193,8 +193,8 @@ best_batch  = none
 wait        = 0
 
 for b = 1, 2, 3, ...:
-    if b is not in the frozen member map:      stop, CapabilityBoundary
     measure n trials at batch b
+    if no trial at b is admissible:            stop, CapabilityBoundary
     epsilon_b = mean incremental energy per item over the admitted trials
 
     if best is none or epsilon_b < best * (1 - min_delta):
@@ -370,7 +370,7 @@ Plan 5a is complete when:
 ## Implementation sequence
 
 1. Fix `min_delta`, `patience`, `n`, and `divergence_factor`, and the rule that a
-   batch outside the frozen member map is a capability boundary rather than a
+   batch with no admissible trial is a capability boundary rather than a
    non-improving step.
 2. Implement ADR 0014's frozen family projection and exact-state baseline
    ownership in the pure derivation package.
