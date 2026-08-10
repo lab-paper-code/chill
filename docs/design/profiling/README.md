@@ -235,6 +235,23 @@ method; this plan owns only the control path that executes them, and supersedes
 their procedural sections. `ProfilingRun` remains independently submittable. The
 plan does not add an estimator, a `DeviceProfile` API, or scheduler consumption.
 
+### 8. Batch-profile artifacts — approved, not implemented
+
+[plans/08-batch-profile-artifacts.md](plans/08-batch-profile-artifacts.md)
+
+Answers only:
+
+> Is one batch size per immutable artifact a property of the runtime, or of
+> CHILL's own conversion step?
+
+It is CHILL's own. RKNN-Toolkit2 enumerates several batch shapes into one
+artifact, and an RK3588 probe confirmed one artifact executing batches 1, 2, and
+4 while refusing an undeclared batch. One artifact therefore declares a set of
+batch profiles, one execution path serves a whole sweep, and the capability
+boundary becomes a catalog fact resolved before any Run exists. The plan retires
+ADR 0014 and the per-batch artifact, path, baseline, and campaign apparatus it
+required. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
+
 ## Component contracts
 
 These documents define reusable internal subsystem boundaries. They support the
