@@ -1,6 +1,9 @@
 package batchsaturation
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestSequentialRequestsIdleBaselineFirst(t *testing.T) {
 	method, err := NewSequentialEarlyStop(SequentialConfig{
@@ -16,6 +19,42 @@ func TestSequentialRequestsIdleBaselineFirst(t *testing.T) {
 	if plan.Next == nil || *plan.Next != (Measurement{WorkloadMode: WorkloadModeIdle, Batch: 1}) {
 		t.Fatalf("first measurement = %+v, want idle batch 1", plan.Next)
 	}
+}
+
+func TestSequentialStartsAtTheFirstEligibleBatch(t *testing.T) {
+	method, err := NewSequentialEarlyStop(SequentialConfig{
+		MinDelta: 0.05, Patience: 1, TrialsPerBatch: 3, DivergenceFactor: 1.1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Run("idle baseline", func(t *testing.T) {
+		plan, err := method.Plan(Observed{EligibleBatches: []int{2, 4}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := Measurement{WorkloadMode: WorkloadModeIdle, Batch: 2}
+		if plan.Next == nil || *plan.Next != want {
+			t.Fatalf("first measurement = %+v, want %+v", plan.Next, want)
+		}
+	})
+
+	t.Run("first active point", func(t *testing.T) {
+		accepted := []Measurement{
+			{WorkloadMode: WorkloadModeIdle, Batch: 2},
+			{WorkloadMode: WorkloadModeIdle, Batch: 2},
+			{WorkloadMode: WorkloadModeIdle, Batch: 2},
+		}
+		plan, err := method.Plan(Observed{EligibleBatches: []int{2, 4}, Accepted: accepted})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}
+		if plan.Next == nil || *plan.Next != want {
+			t.Fatalf("next measurement = %+v, want %+v", plan.Next, want)
+		}
+	})
 }
 
 func TestSequentialFillsEachBatchBeforeAdvancing(t *testing.T) {
@@ -58,8 +97,58 @@ func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if plan.Next == nil || plan.Next.Batch != 4 {
-		t.Fatalf("next = %v, want the declared batch 4", plan.Next)
+	want := Measurement{WorkloadMode: WorkloadModeActive, Batch: 4}
+	if plan.Next == nil || *plan.Next != want {
+		t.Fatalf("next = %v, want %+v", plan.Next, want)
+	}
+}
+
+func TestSequentialBackfillAndCurveInputWalkPastAGap(t *testing.T) {
+	var curveBatches []int
+	method, err := NewSequentialEarlyStop(
+		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
+		func(batches []int) (CurveResult, error) {
+			curveBatches = append([]int(nil), batches...)
+			return CurveResult{Continue: false, SelectedBatch: 2, Outcome: "Stopped"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+
+	accepted := make([]Measurement, 0, 12)
+	for count := 0; count < 3; count++ {
+		accepted = append(accepted, Measurement{WorkloadMode: WorkloadModeIdle, Batch: 1})
+	}
+	for _, batch := range []int{1, 2, 4} {
+		for count := 0; count < 3; count++ {
+			accepted = append(accepted, Measurement{WorkloadMode: WorkloadModeActive, Batch: batch})
+		}
+	}
+
+	_, err = method.Plan(Observed{
+		EligibleBatches: []int{1, 2, 4},
+		Accepted:        accepted,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if want := []int{1, 2, 4}; !reflect.DeepEqual(curveBatches, want) {
+		t.Fatalf("curve batches = %v, want %v", curveBatches, want)
+	}
+}
+
+func TestSequentialRejectsAnEmptyEligibleBatchSet(t *testing.T) {
+	method, err := NewSequentialEarlyStop(SequentialConfig{
+		MinDelta: 0.05, Patience: 1, TrialsPerBatch: 3, DivergenceFactor: 1.1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = method.Plan(Observed{})
+	if err == nil || err.Error() != "a non-empty eligible batch set is required" {
+		t.Fatalf("error = %v, want %q", err, "a non-empty eligible batch set is required")
 	}
 }
 

@@ -65,7 +65,8 @@ type Decision struct {
 type Observed struct {
 	// EligibleBatches is the frozen set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
-	// exhausting it is the capability boundary.
+	// exhausting it is the capability boundary. Ascending order is a
+	// precondition of this type.
 	EligibleBatches []int
 	Accepted        []Measurement
 }
