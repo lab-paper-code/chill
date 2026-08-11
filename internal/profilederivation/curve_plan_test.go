@@ -287,17 +287,18 @@ func TestCurveRequiresExactStateBaselinesAndIndependentEvidence(t *testing.T) {
 	}
 	points := curve.Points()
 	if len(points) != 2 || points[0].Batch != 1 || points[1].Batch != 2 ||
-		math.Abs(points[0].MeanIncrementalJoulesPerItem-1) > 1e-12 ||
-		math.Abs(points[1].MeanIncrementalJoulesPerItem-.8) > 1e-12 ||
+		math.Abs(points[0].MeanIncrementalWorkJoulesPerItem-1) > 1e-12 ||
+		math.Abs(points[1].MeanIncrementalWorkJoulesPerItem-.8) > 1e-12 ||
 		points[0].Confidence.VarianceOfMean == nil || *points[0].Confidence.VarianceOfMean != 0 ||
 		points[0].Confidence.EffectiveDegreesOfFreedom != nil || points[0].Confidence.HalfWidth != 0 ||
 		len(curve.IdleBaselinesByState()) != 1 {
 		t.Fatalf("unexpected exact-baseline curve points: %+v", points)
 	}
-	points[0].Trials[0].IncrementalJoulesPerItem = 99
+	points[0].Trials[0].IncrementalWorkJoulesPerItem = 99
 	*points[0].Confidence.VarianceOfMean = 99
 	freshPoint := curve.Points()[0]
-	if freshPoint.Trials[0].IncrementalJoulesPerItem == 99 || *freshPoint.Confidence.VarianceOfMean == 99 {
+	if freshPoint.Trials[0].IncrementalWorkJoulesPerItem == 99 ||
+		*freshPoint.Confidence.VarianceOfMean == 99 {
 		t.Fatal("Curve.Points exposed mutable point statistics")
 	}
 
@@ -373,7 +374,7 @@ func TestSequentialGoldenStops(t *testing.T) {
 			}
 			if got.Status != test.wantStatus || got.StopReason != test.wantReason ||
 				got.SelectedBatch == nil || *got.SelectedBatch != test.wantSelected ||
-				len(got.EpsilonByBatch) != len(test.means) ||
+				len(got.IncrementalWorkByBatch) != len(test.means) ||
 				len(got.MeasuredBatchSizes) != len(test.means) {
 				t.Fatalf("unexpected sequential result: %+v", got)
 			}
@@ -541,7 +542,7 @@ func testCurveBaselines(t *testing.T, plan VerifiedCurvePlan) map[string]IdleBas
 			StateIdentity: state.StateIdentity, EnvironmentIdentity: state.EnvironmentIdentity,
 			MeasurementProtocolIdentity: state.IdleProtocolIdentity,
 			TrialID:                     key, RawEvidence: rawEvidence(key),
-			AdmissionPolicyVersion: "idle-admission-v1", MeanWallWatts: 1,
+			AdmissionPolicyVersion: "idle-admission-v1", ModelLoadedIdleMeanWallWatts: 1,
 		}
 	}
 	baseline, err := DeriveIdleBaseline(trials, pointPolicy("idle-point-v1"))

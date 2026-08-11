@@ -39,9 +39,10 @@ func AdmitIdle(observation IdleObservation, policy AdmissionPolicy) IdleAdmissio
 	result.Reasons = append(result.Reasons, window.Reasons...)
 	result.TotalWallJoules = window.TotalWallJoules
 	if window.TotalWallJoules != nil && result.WindowSeconds > 0 {
-		mean := *window.TotalWallJoules / result.WindowSeconds
-		if !math.IsNaN(mean) && !math.IsInf(mean, 0) && mean >= 0 {
-			result.MeanWallWatts = &mean
+		modelLoadedIdleMeanWallWatts := *window.TotalWallJoules / result.WindowSeconds
+		if !math.IsNaN(modelLoadedIdleMeanWallWatts) &&
+			!math.IsInf(modelLoadedIdleMeanWallWatts, 0) && modelLoadedIdleMeanWallWatts >= 0 {
+			result.ModelLoadedIdleMeanWallWatts = &modelLoadedIdleMeanWallWatts
 		}
 	}
 	result.Verdict = verdictFromReasons(result.Reasons)

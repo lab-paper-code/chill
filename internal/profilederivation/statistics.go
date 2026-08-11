@@ -29,27 +29,28 @@ type varianceComponent struct {
 }
 
 type pointStatistics struct {
-	meanIncrementalJoulesPerItem          float64
-	incrementalSampleVariance             float64
-	meanBaselineCoefficientSecondsPerItem float64
-	confidence                            PointConfidence
+	meanIncrementalWorkJoulesPerItem float64
+	incrementalWorkSampleVariance    float64
+	meanIdleBaselineSecondsPerItem   float64
+	confidence                       PointConfidence
 }
 
 func derivePointStatistics(
-	values []float64,
-	coefficients []float64,
+	incrementalWorkJoulesPerItem []float64,
+	idleBaselineSecondsPerItem []float64,
 	baselineVariance float64,
 	baselineDegreesOfFreedom int,
 	confidenceLevel float64,
 ) (pointStatistics, error) {
 	result := pointStatistics{}
-	result.meanIncrementalJoulesPerItem, result.incrementalSampleVariance = stat.MeanVariance(values, nil)
-	result.meanBaselineCoefficientSecondsPerItem = stat.Mean(coefficients, nil)
-	activeVariance := result.incrementalSampleVariance / float64(len(values))
-	baselinePointVariance := result.meanBaselineCoefficientSecondsPerItem *
-		result.meanBaselineCoefficientSecondsPerItem * baselineVariance
+	result.meanIncrementalWorkJoulesPerItem, result.incrementalWorkSampleVariance =
+		stat.MeanVariance(incrementalWorkJoulesPerItem, nil)
+	result.meanIdleBaselineSecondsPerItem = stat.Mean(idleBaselineSecondsPerItem, nil)
+	activeVariance := result.incrementalWorkSampleVariance / float64(len(incrementalWorkJoulesPerItem))
+	baselinePointVariance := result.meanIdleBaselineSecondsPerItem *
+		result.meanIdleBaselineSecondsPerItem * baselineVariance
 	variance, degreesOfFreedom, err := welchSatterthwaite(
-		varianceComponent{variance: activeVariance, degreesOfFreedom: float64(len(values) - 1)},
+		varianceComponent{variance: activeVariance, degreesOfFreedom: float64(len(incrementalWorkJoulesPerItem) - 1)},
 		varianceComponent{variance: baselinePointVariance, degreesOfFreedom: float64(baselineDegreesOfFreedom)},
 	)
 	if err != nil {

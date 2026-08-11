@@ -52,9 +52,9 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	baseline, err := DeriveIdleBaseline(
 		[]IdleTrial{
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", RawEvidence: rawEvidence("1"), AdmissionPolicyVersion: "v1", MeanWallWatts: 5},
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("2"), AdmissionPolicyVersion: "v1", MeanWallWatts: 5.1},
-			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("3"), AdmissionPolicyVersion: "v1", MeanWallWatts: 4.9},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", RawEvidence: rawEvidence("1"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 5},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("2"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 5.1},
+			{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("3"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 4.9},
 		},
 		pointPolicy("idle-v1"),
 	)
@@ -81,13 +81,13 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	if _, err := DeriveIdleBaseline(duplicateEvidence, pointPolicy("idle-v1")); err == nil {
 		t.Fatal("expected duplicate idle raw evidence rejection")
 	}
-	admitted, err := IncrementalTrial(trial, result, baseline)
+	admitted, err := IncrementalWorkTrial(trial, result, baseline)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(admitted.IncrementalJoulesPerItem-.5) > 1e-9 ||
-		math.Abs(admitted.ActiveWallJoulesPerItem-1) > 1e-9 ||
-		math.Abs(admitted.BaselineCoefficientSecondsPerItem-.1) > 1e-9 ||
+	if math.Abs(admitted.IncrementalWorkJoulesPerItem-.5) > 1e-9 ||
+		math.Abs(admitted.ActiveWindowWallJoulesPerItem-1) > 1e-9 ||
+		math.Abs(admitted.IdleBaselineSecondsPerItem-.1) > 1e-9 ||
 		math.Abs(admitted.BaselineMeanWallWattsVariance-baseline.MeanWallWattsVariance) > 1e-12 ||
 		admitted.BaselineDegreesOfFreedom != baseline.DegreesOfFreedom {
 		t.Fatalf("active sufficient statistics are incomplete: %#v", admitted)
@@ -98,27 +98,27 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 	mismatchedEnvironment := baseline
 	mismatchedEnvironment.EnvironmentIdentity = "other-environment"
-	if _, err := IncrementalTrial(trial, result, mismatchedEnvironment); err == nil {
+	if _, err := IncrementalWorkTrial(trial, result, mismatchedEnvironment); err == nil {
 		t.Fatal("expected active/idle environment mismatch rejection")
 	}
 	mismatchedAdmission := result
 	mismatchedAdmission.MeasurementProtocolIdentity = "other-active-protocol"
-	if _, err := IncrementalTrial(trial, mismatchedAdmission, baseline); err == nil {
+	if _, err := IncrementalWorkTrial(trial, mismatchedAdmission, baseline); err == nil {
 		t.Fatal("expected active admission protocol mismatch rejection")
 	}
 	mismatchedCount := result
 	mismatchedCount.CompletedItems--
-	if _, err := IncrementalTrial(trial, mismatchedCount, baseline); err == nil {
+	if _, err := IncrementalWorkTrial(trial, mismatchedCount, baseline); err == nil {
 		t.Fatal("expected completed-item count mismatch rejection")
 	}
 	invalidBaseline := baseline
 	invalidBaseline.ConfidenceHalfWidth = math.NaN()
-	if _, err := IncrementalTrial(trial, result, invalidBaseline); err == nil {
+	if _, err := IncrementalWorkTrial(trial, result, invalidBaseline); err == nil {
 		t.Fatal("expected invalid baseline uncertainty rejection")
 	}
 	invalidBaseline = baseline
 	invalidBaseline.MeanWallWattsVariance = math.NaN()
-	if _, err := IncrementalTrial(trial, result, invalidBaseline); err == nil {
+	if _, err := IncrementalWorkTrial(trial, result, invalidBaseline); err == nil {
 		t.Fatal("expected invalid baseline mean variance rejection")
 	}
 	trial.ConcurrentCHILLWorkloads = []string{"other-run"}
@@ -166,8 +166,10 @@ func TestIdleAdmissionUsesSharedWindowQualityAndIdleCompleteness(t *testing.T) {
 		RejectConcurrentCHILLWorkloads: true, RejectExternalWorkloadChanges: true,
 	}
 	result := AdmitIdle(observation, policy)
-	if result.Verdict != VerdictAccepted || result.TotalWallJoules == nil || result.MeanWallWatts == nil ||
-		math.Abs(*result.TotalWallJoules-50) > 1e-9 || math.Abs(*result.MeanWallWatts-5) > 1e-9 ||
+	if result.Verdict != VerdictAccepted || result.TotalWallJoules == nil ||
+		result.ModelLoadedIdleMeanWallWatts == nil ||
+		math.Abs(*result.TotalWallJoules-50) > 1e-9 ||
+		math.Abs(*result.ModelLoadedIdleMeanWallWatts-5) > 1e-9 ||
 		result.RawEvidence != observation.RawEvidence {
 		t.Fatalf("unexpected idle admission: %+v", result)
 	}
@@ -197,30 +199,30 @@ func TestAggregateRequiresIndependentTrials(t *testing.T) {
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "1", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 2, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:  0.95,
-			IncrementalJoulesPerItem: 1, LatencyP99Milliseconds: 2,
+			ActiveWindowWallJoulesPerItem: 2, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:      0.95,
+			IncrementalWorkJoulesPerItem: 1, LatencyP99Milliseconds: 2,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "2", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 2.1, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:  0.95,
-			IncrementalJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
+			ActiveWindowWallJoulesPerItem: 2.1, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:      0.95,
+			IncrementalWorkJoulesPerItem: 1.1, LatencyP99Milliseconds: 3,
 		},
 		{
 			StateIdentity: "s", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: "3", AdmissionPolicyVersion: "a", EstimatorIdentity: "e", Batch: 1,
-			ActiveWallJoulesPerItem: 1.9, BaselineCoefficientSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
-			BaselineConfidenceLevel:  0.95,
-			IncrementalJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
+			ActiveWindowWallJoulesPerItem: 1.9, IdleBaselineSecondsPerItem: 1, BaselineDegreesOfFreedom: 2,
+			BaselineConfidenceLevel:      0.95,
+			IncrementalWorkJoulesPerItem: .9, LatencyP99Milliseconds: 2.5,
 		},
 	}
 	point, err := Aggregate(trials, pointPolicy("v1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if point.MeanIncrementalJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
+	if point.MeanIncrementalWorkJoulesPerItem != 1 || point.Confidence.HalfWidth <= 0 ||
 		point.LatencyP99Milliseconds != 3 {
 		t.Fatalf("unexpected point: %+v", point)
 	}
@@ -294,7 +296,7 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 			StateIdentity: "state", EnvironmentIdentity: "environment",
 			MeasurementProtocolIdentity: "idle-protocol", TrialID: id,
 			RawEvidence: rawEvidence(id), AdmissionPolicyVersion: "idle-admission",
-			MeanWallWatts: value,
+			ModelLoadedIdleMeanWallWatts: value,
 		}
 	}
 	baseline, err := DeriveIdleBaseline(idleTrials, pointPolicy("idle-point"))
@@ -302,18 +304,19 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	incrementalValues := []float64{0.068805, 0.065637, 0.065410}
+	incrementalWorkValues := []float64{0.068805, 0.065637, 0.065410}
 	completedItems := []int{5417, 5255, 5178}
-	activeTrials := make([]AdmittedTrial, len(incrementalValues))
-	for index, incremental := range incrementalValues {
+	activeTrials := make([]AdmittedTrial, len(incrementalWorkValues))
+	for index, incrementalWork := range incrementalWorkValues {
 		trialID := []string{"active-a", "active-b", "active-c"}[index]
-		total := incremental*float64(completedItems[index]) + baseline.MeanWallWatts*30
+		total := incrementalWork*float64(completedItems[index]) +
+			baseline.ModelLoadedIdleMeanWallWatts*30
 		trial := Trial{
 			StateIdentity: "state", EnvironmentIdentity: "environment",
 			MeasurementProtocolIdentity: "active-protocol", TrialID: trialID,
 			Batch: 1, CompletedItems: completedItems[index], LatencyMilliseconds: []float64{1},
 		}
-		activeTrials[index], err = IncrementalTrial(trial, AdmissionResult{
+		activeTrials[index], err = IncrementalWorkTrial(trial, AdmissionResult{
 			Verdict: VerdictAccepted, PolicyVersion: "active-admission",
 			StateIdentity: "state", EnvironmentIdentity: "environment",
 			MeasurementProtocolIdentity: "active-protocol", TrialID: trialID,
@@ -328,8 +331,8 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(point.MeanIncrementalJoulesPerItem-0.06661733333333333) > 1e-12 {
-		t.Fatalf("live point estimate moved: %.15f", point.MeanIncrementalJoulesPerItem)
+	if math.Abs(point.MeanIncrementalWorkJoulesPerItem-0.06661733333333333) > 1e-12 {
+		t.Fatalf("live point estimate moved: %.15f", point.MeanIncrementalWorkJoulesPerItem)
 	}
 	if point.Confidence.EstimatorVersion != PointEstimatorVersion ||
 		point.Confidence.Method != PointConfidenceMethod ||
@@ -338,8 +341,8 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 		point.Confidence.HalfWidth <= 0 {
 		t.Fatalf("rebuilt confidence is incomplete: %+v", point.Confidence)
 	}
-	activeVariance := point.IncrementalSampleVariance / float64(len(activeTrials))
-	baselineVariance := math.Pow(point.MeanBaselineCoefficientSecondsPerItem, 2) *
+	activeVariance := point.IncrementalWorkSampleVariance / float64(len(activeTrials))
+	baselineVariance := math.Pow(point.MeanIdleBaselineSecondsPerItem, 2) *
 		baseline.MeanWallWattsVariance
 	wantVariance := activeVariance + baselineVariance
 	wantDegreesOfFreedom := wantVariance * wantVariance /
@@ -349,6 +352,39 @@ func TestAggregateRebuildsAndVersionsPointConfidence(t *testing.T) {
 		math.Abs(*point.Confidence.EffectiveDegreesOfFreedom-wantDegreesOfFreedom) > 1e-12 ||
 		math.Abs(point.Confidence.HalfWidth-wantHalfWidth) > 1e-12 {
 		t.Fatalf("Welch components were not preserved: %+v", point.Confidence)
+	}
+}
+
+func TestIncrementalWorkTrialPreservesWallEnergyIdentity(t *testing.T) {
+	baseline, err := DeriveIdleBaseline([]IdleTrial{
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-1", RawEvidence: rawEvidence("identity-idle-1"), AdmissionPolicyVersion: "idle-admission", ModelLoadedIdleMeanWallWatts: 4},
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-2", RawEvidence: rawEvidence("identity-idle-2"), AdmissionPolicyVersion: "idle-admission", ModelLoadedIdleMeanWallWatts: 5},
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle-protocol", TrialID: "idle-3", RawEvidence: rawEvidence("identity-idle-3"), AdmissionPolicyVersion: "idle-admission", ModelLoadedIdleMeanWallWatts: 6},
+	}, pointPolicy("idle-point"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	totalWallJoules := 100.0
+	trial, err := IncrementalWorkTrial(Trial{
+		StateIdentity: "state", EnvironmentIdentity: "environment",
+		MeasurementProtocolIdentity: "active-protocol", TrialID: "active-identity",
+		Batch: 2, CompletedItems: 100, LatencyMilliseconds: []float64{1},
+	}, AdmissionResult{
+		Verdict: VerdictAccepted, PolicyVersion: "active-admission",
+		StateIdentity: "state", EnvironmentIdentity: "environment",
+		MeasurementProtocolIdentity: "active-protocol", TrialID: "active-identity",
+		TotalWallJoules: &totalWallJoules, WindowSeconds: 10, CompletedItems: 100,
+	}, baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restoredWallJoulesPerItem := trial.IncrementalWorkJoulesPerItem +
+		baseline.ModelLoadedIdleMeanWallWatts*trial.IdleBaselineSecondsPerItem
+	if math.Abs(trial.ActiveWindowWallJoulesPerItem-restoredWallJoulesPerItem) > 1e-12 {
+		t.Fatalf("e_wall = %.12f, epsilon + P_idle*c = %.12f",
+			trial.ActiveWindowWallJoulesPerItem, restoredWallJoulesPerItem)
 	}
 }
 

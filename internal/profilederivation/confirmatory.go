@@ -98,7 +98,7 @@ func deriveBSatConfirmatory(
 	if err != nil {
 		return BSatResult{}, err
 	}
-	referenceLowerBound := reference.MeanIncrementalJoulesPerItem - referenceHalfWidth
+	referenceLowerBound := reference.MeanIncrementalWorkJoulesPerItem - referenceHalfWidth
 	referenceLowerBoundCopy := referenceLowerBound
 	result.ReferenceLowerBoundJoulesPerItem = &referenceLowerBoundCopy
 	result.ContrastCovariances, err = confirmatoryContrastCovariances(
@@ -124,7 +124,8 @@ func deriveBSatConfirmatory(
 		if err != nil {
 			return BSatResult{}, err
 		}
-		difference := reference.MeanIncrementalJoulesPerItem - later.MeanIncrementalJoulesPerItem
+		difference := reference.MeanIncrementalWorkJoulesPerItem -
+			later.MeanIncrementalWorkJoulesPerItem
 		upperDifference := difference + halfWidth
 		relativeUpperBound := 0.0
 		if upperDifference > 0 {
@@ -160,20 +161,20 @@ func confirmatoryContrastCovariances(
 	result := make([]BSatContrastCovariance, 0, len(points)*(len(points)-1)/2)
 	for firstIndex := 1; firstIndex < len(points); firstIndex++ {
 		first := points[firstIndex]
-		firstBaselineCoefficients := contrastBaselineCoefficients(reference, first)
+		firstIdleBaselineSecondsPerItem := contrastIdleBaselineSecondsPerItem(reference, first)
 		for secondIndex := firstIndex; secondIndex < len(points); secondIndex++ {
 			second := points[secondIndex]
-			secondBaselineCoefficients := contrastBaselineCoefficients(reference, second)
-			covariance := reference.IncrementalSampleVariance / float64(trials)
+			secondIdleBaselineSecondsPerItem := contrastIdleBaselineSecondsPerItem(reference, second)
+			covariance := reference.IncrementalWorkSampleVariance / float64(trials)
 			if first.Batch == second.Batch {
-				covariance += first.IncrementalSampleVariance / float64(trials)
+				covariance += first.IncrementalWorkSampleVariance / float64(trials)
 			}
-			for state, firstCoefficient := range firstBaselineCoefficients {
+			for state, firstSecondsPerItem := range firstIdleBaselineSecondsPerItem {
 				baseline, exists := baselines[state]
 				if !exists {
 					return nil, errors.New("contrast covariance lost an exact-state baseline")
 				}
-				covariance += firstCoefficient * secondBaselineCoefficients[state] *
+				covariance += firstSecondsPerItem * secondIdleBaselineSecondsPerItem[state] *
 					baseline.MeanWallWattsVariance
 			}
 			if math.IsNaN(covariance) || math.IsInf(covariance, 0) {
@@ -188,12 +189,12 @@ func confirmatoryContrastCovariances(
 	return result, nil
 }
 
-func contrastBaselineCoefficients(reference Point, later Point) map[string]float64 {
-	coefficients := map[string]float64{
-		reference.StateIdentity: -reference.MeanBaselineCoefficientSecondsPerItem,
+func contrastIdleBaselineSecondsPerItem(reference Point, later Point) map[string]float64 {
+	secondsPerItem := map[string]float64{
+		reference.StateIdentity: -reference.MeanIdleBaselineSecondsPerItem,
 	}
-	coefficients[later.StateIdentity] += later.MeanBaselineCoefficientSecondsPerItem
-	return coefficients
+	secondsPerItem[later.StateIdentity] += later.MeanIdleBaselineSecondsPerItem
+	return secondsPerItem
 }
 
 func newBSatResult(

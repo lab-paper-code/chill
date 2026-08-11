@@ -48,9 +48,9 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 	for index, point := range discovery.points {
 		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.DiscoveryTrials ||
-			point.MeanIncrementalJoulesPerItem <= 0 ||
-			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
-			math.IsInf(point.MeanIncrementalJoulesPerItem, 0) {
+			point.MeanIncrementalWorkJoulesPerItem <= 0 ||
+			math.IsNaN(point.MeanIncrementalWorkJoulesPerItem) ||
+			math.IsInf(point.MeanIncrementalWorkJoulesPerItem, 0) {
 			return BSatDiscoveryResult{}, errors.New("discovery points do not match the frozen policy")
 		}
 		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
@@ -67,10 +67,10 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 	}
 
 	for candidate := 0; candidate < len(discovery.points)-1; candidate++ {
-		candidateEnergy := discovery.points[candidate].MeanIncrementalJoulesPerItem
+		candidateEnergy := discovery.points[candidate].MeanIncrementalWorkJoulesPerItem
 		maximumImprovement := math.Inf(-1)
 		for later := candidate + 1; later < len(discovery.points); later++ {
-			laterEnergy := discovery.points[later].MeanIncrementalJoulesPerItem
+			laterEnergy := discovery.points[later].MeanIncrementalWorkJoulesPerItem
 			improvement := (candidateEnergy - laterEnergy) / candidateEnergy
 			maximumImprovement = math.Max(maximumImprovement, improvement)
 		}

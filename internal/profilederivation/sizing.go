@@ -177,7 +177,7 @@ func projectedBSatPrecision(
 	if err != nil {
 		return 0, 0, err
 	}
-	lowerBound := reference.MeanIncrementalJoulesPerItem - referenceHalfWidth
+	lowerBound := reference.MeanIncrementalWorkJoulesPerItem - referenceHalfWidth
 	if lowerBound <= 0 {
 		return lowerBound, math.Inf(1), nil
 	}
@@ -207,11 +207,11 @@ func pointHalfWidthForTrials(
 ) (float64, error) {
 	return projectedHalfWidth(quantile,
 		varianceComponent{
-			variance:         point.IncrementalSampleVariance / float64(trials),
+			variance:         point.IncrementalWorkSampleVariance / float64(trials),
 			degreesOfFreedom: float64(trials - 1),
 		},
 		varianceComponent{
-			variance: math.Pow(point.MeanBaselineCoefficientSecondsPerItem, 2) *
+			variance: math.Pow(point.MeanIdleBaselineSecondsPerItem, 2) *
 				baseline.MeanWallWattsVariance,
 			degreesOfFreedom: float64(baseline.DegreesOfFreedom),
 		},
@@ -228,19 +228,19 @@ func contrastHalfWidthForTrials(
 ) (float64, error) {
 	components := []varianceComponent{
 		{
-			variance:         reference.IncrementalSampleVariance / float64(trials),
+			variance:         reference.IncrementalWorkSampleVariance / float64(trials),
 			degreesOfFreedom: float64(trials - 1),
 		},
 		{
-			variance:         later.IncrementalSampleVariance / float64(trials),
+			variance:         later.IncrementalWorkSampleVariance / float64(trials),
 			degreesOfFreedom: float64(trials - 1),
 		},
 	}
 	if reference.StateIdentity == later.StateIdentity {
 		components = append(components, varianceComponent{
 			variance: math.Pow(
-				reference.MeanBaselineCoefficientSecondsPerItem-
-					later.MeanBaselineCoefficientSecondsPerItem,
+				reference.MeanIdleBaselineSecondsPerItem-
+					later.MeanIdleBaselineSecondsPerItem,
 				2,
 			) * referenceBaseline.MeanWallWattsVariance,
 			degreesOfFreedom: float64(referenceBaseline.DegreesOfFreedom),
@@ -248,12 +248,12 @@ func contrastHalfWidthForTrials(
 	} else {
 		components = append(components,
 			varianceComponent{
-				variance: math.Pow(reference.MeanBaselineCoefficientSecondsPerItem, 2) *
+				variance: math.Pow(reference.MeanIdleBaselineSecondsPerItem, 2) *
 					referenceBaseline.MeanWallWattsVariance,
 				degreesOfFreedom: float64(referenceBaseline.DegreesOfFreedom),
 			},
 			varianceComponent{
-				variance: math.Pow(later.MeanBaselineCoefficientSecondsPerItem, 2) *
+				variance: math.Pow(later.MeanIdleBaselineSecondsPerItem, 2) *
 					laterBaseline.MeanWallWattsVariance,
 				degreesOfFreedom: float64(laterBaseline.DegreesOfFreedom),
 			},

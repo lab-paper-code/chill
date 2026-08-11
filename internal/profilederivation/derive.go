@@ -31,9 +31,9 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 			trial.AdmissionPolicyVersion != admissionVersion ||
 			admissionVersion == "" ||
 			!validRawEvidenceIdentity(trial.RawEvidence) ||
-			trial.MeanWallWatts < 0 ||
-			math.IsNaN(trial.MeanWallWatts) ||
-			math.IsInf(trial.MeanWallWatts, 0) {
+			trial.ModelLoadedIdleMeanWallWatts < 0 ||
+			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
+			math.IsInf(trial.ModelLoadedIdleMeanWallWatts, 0) {
 			return IdleBaseline{}, errors.New("idle trial identity or value is invalid")
 		}
 		if _, exists := seen[trial.TrialID]; exists {
@@ -45,9 +45,9 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 			return IdleBaseline{}, errors.New("duplicate idle raw evidence identity")
 		}
 		seenEvidence[evidenceKey] = struct{}{}
-		values[index] = trial.MeanWallWatts
+		values[index] = trial.ModelLoadedIdleMeanWallWatts
 	}
-	baseline.MeanWallWatts, baseline.MeanWallWattsVariance = stat.MeanVariance(values, nil)
+	baseline.ModelLoadedIdleMeanWallWatts, baseline.MeanWallWattsVariance = stat.MeanVariance(values, nil)
 	baseline.MeanWallWattsVariance /= float64(len(values))
 	baseline.DegreesOfFreedom = len(values) - 1
 	baseline.ConfidenceLevel = policy.ConfidenceLevel
@@ -72,8 +72,9 @@ func validateIdleBaseline(baseline IdleBaseline) error {
 			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
 			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
 			trial.AdmissionPolicyVersion != baseline.AdmissionPolicyVersion || trial.TrialID == "" ||
-			!validRawEvidenceIdentity(trial.RawEvidence) || trial.MeanWallWatts < 0 ||
-			math.IsNaN(trial.MeanWallWatts) || math.IsInf(trial.MeanWallWatts, 0) {
+			!validRawEvidenceIdentity(trial.RawEvidence) || trial.ModelLoadedIdleMeanWallWatts < 0 ||
+			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
+			math.IsInf(trial.ModelLoadedIdleMeanWallWatts, 0) {
 			return errors.New("idle baseline trial is invalid")
 		}
 		if _, exists := seenTrials[trial.TrialID]; exists {
@@ -90,8 +91,9 @@ func validateIdleBaseline(baseline IdleBaseline) error {
 }
 
 func validateIdleBaselineSummary(baseline IdleBaseline) error {
-	if baseline.MeanWallWatts < 0 || math.IsNaN(baseline.MeanWallWatts) ||
-		math.IsInf(baseline.MeanWallWatts, 0) || baseline.MeanWallWattsVariance < 0 ||
+	if baseline.ModelLoadedIdleMeanWallWatts < 0 ||
+		math.IsNaN(baseline.ModelLoadedIdleMeanWallWatts) ||
+		math.IsInf(baseline.ModelLoadedIdleMeanWallWatts, 0) || baseline.MeanWallWattsVariance < 0 ||
 		math.IsNaN(baseline.MeanWallWattsVariance) || math.IsInf(baseline.MeanWallWattsVariance, 0) ||
 		baseline.DegreesOfFreedom != len(baseline.Trials)-1 || baseline.ConfidenceHalfWidth < 0 ||
 		!validProbability(baseline.ConfidenceLevel) ||
@@ -107,7 +109,7 @@ func validateIdleBaselineSummary(baseline IdleBaseline) error {
 	return nil
 }
 
-func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBaseline) (AdmittedTrial, error) {
+func IncrementalWorkTrial(trial Trial, admission AdmissionResult, baseline IdleBaseline) (AdmittedTrial, error) {
 	if admission.Verdict != VerdictAccepted || admission.TotalWallJoules == nil {
 		return AdmittedTrial{}, errors.New("trial is not admitted")
 	}
@@ -132,33 +134,35 @@ func IncrementalTrial(trial Trial, admission AdmissionResult, baseline IdleBasel
 	if err := validateIdleBaseline(baseline); err != nil {
 		return AdmittedTrial{}, errors.New("admitted idle baseline is invalid")
 	}
-	incremental := *admission.TotalWallJoules - baseline.MeanWallWatts*admission.WindowSeconds
-	if incremental < 0 || math.IsNaN(incremental) || math.IsInf(incremental, 0) {
+	incrementalWorkWallJoules := *admission.TotalWallJoules -
+		baseline.ModelLoadedIdleMeanWallWatts*admission.WindowSeconds
+	if incrementalWorkWallJoules < 0 || math.IsNaN(incrementalWorkWallJoules) ||
+		math.IsInf(incrementalWorkWallJoules, 0) {
 		return AdmittedTrial{}, errors.New("incremental energy is invalid")
 	}
 	completedItems := float64(trial.CompletedItems)
-	activeWallJoulesPerItem := *admission.TotalWallJoules / completedItems
-	baselineCoefficient := admission.WindowSeconds / completedItems
+	activeWindowWallJoulesPerItem := *admission.TotalWallJoules / completedItems
+	idleBaselineSecondsPerItem := admission.WindowSeconds / completedItems
 	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
 		"|idleProtocol=" + baseline.MeasurementProtocolIdentity +
 		"|activeAdmission=" + admission.PolicyVersion +
 		"|idleAdmission=" + baseline.AdmissionPolicyVersion + "|idlePoint=" + baseline.PolicyVersion
 	return AdmittedTrial{
-		StateIdentity:                     trial.StateIdentity,
-		EnvironmentIdentity:               trial.EnvironmentIdentity,
-		MeasurementProtocolIdentity:       trial.MeasurementProtocolIdentity,
-		TrialID:                           trial.TrialID,
-		AdmissionPolicyVersion:            admission.PolicyVersion,
-		EstimatorIdentity:                 estimatorIdentity,
-		BaselineMeanWallWattsVariance:     baseline.MeanWallWattsVariance,
-		BaselineDegreesOfFreedom:          baseline.DegreesOfFreedom,
-		BaselineConfidenceLevel:           baseline.ConfidenceLevel,
-		ActiveWallJoulesPerItem:           activeWallJoulesPerItem,
-		BaselineCoefficientSecondsPerItem: baselineCoefficient,
-		Batch:                             trial.Batch,
-		IncrementalJoulesPerItem:          incremental / completedItems,
-		LatencyP99Milliseconds:            percentile(trial.LatencyMilliseconds, 0.99),
+		StateIdentity:                 trial.StateIdentity,
+		EnvironmentIdentity:           trial.EnvironmentIdentity,
+		MeasurementProtocolIdentity:   trial.MeasurementProtocolIdentity,
+		TrialID:                       trial.TrialID,
+		AdmissionPolicyVersion:        admission.PolicyVersion,
+		EstimatorIdentity:             estimatorIdentity,
+		BaselineMeanWallWattsVariance: baseline.MeanWallWattsVariance,
+		BaselineDegreesOfFreedom:      baseline.DegreesOfFreedom,
+		BaselineConfidenceLevel:       baseline.ConfidenceLevel,
+		ActiveWindowWallJoulesPerItem: activeWindowWallJoulesPerItem,
+		IdleBaselineSecondsPerItem:    idleBaselineSecondsPerItem,
+		Batch:                         trial.Batch,
+		IncrementalWorkJoulesPerItem:  incrementalWorkWallJoules / completedItems,
+		LatencyP99Milliseconds:        percentile(trial.LatencyMilliseconds, 0.99),
 	}, nil
 }
 
@@ -178,8 +182,8 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		PointPolicyVersion:          policy.Version,
 		Trials:                      append([]AdmittedTrial(nil), trials...),
 	}
-	values := make([]float64, len(trials))
-	coefficients := make([]float64, len(trials))
+	incrementalWorkJoulesPerItem := make([]float64, len(trials))
+	idleBaselineSecondsPerItem := make([]float64, len(trials))
 	var latency float64
 	seen := map[string]struct{}{}
 	admissionVersion := trials[0].AdmissionPolicyVersion
@@ -198,21 +202,22 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 			return Point{}, err
 		}
 		seen[trial.TrialID] = struct{}{}
-		values[index] = trial.IncrementalJoulesPerItem
-		coefficients[index] = trial.BaselineCoefficientSecondsPerItem
+		incrementalWorkJoulesPerItem[index] = trial.IncrementalWorkJoulesPerItem
+		idleBaselineSecondsPerItem[index] = trial.IdleBaselineSecondsPerItem
 		if trial.LatencyP99Milliseconds > latency {
 			latency = trial.LatencyP99Milliseconds
 		}
 	}
 	statistics, err := derivePointStatistics(
-		values, coefficients, baselineVariance, baselineDegreesOfFreedom, policy.ConfidenceLevel,
+		incrementalWorkJoulesPerItem, idleBaselineSecondsPerItem,
+		baselineVariance, baselineDegreesOfFreedom, policy.ConfidenceLevel,
 	)
 	if err != nil {
 		return Point{}, err
 	}
-	point.MeanIncrementalJoulesPerItem = statistics.meanIncrementalJoulesPerItem
-	point.IncrementalSampleVariance = statistics.incrementalSampleVariance
-	point.MeanBaselineCoefficientSecondsPerItem = statistics.meanBaselineCoefficientSecondsPerItem
+	point.MeanIncrementalWorkJoulesPerItem = statistics.meanIncrementalWorkJoulesPerItem
+	point.IncrementalWorkSampleVariance = statistics.incrementalWorkSampleVariance
+	point.MeanIdleBaselineSecondsPerItem = statistics.meanIdleBaselineSecondsPerItem
 	point.Confidence = statistics.confidence
 	point.LatencyP99Milliseconds = latency
 	return point, nil
@@ -224,8 +229,9 @@ func validateAdmittedTrialIdentity(trial AdmittedTrial, point Point, admissionVe
 		trial.MeasurementProtocolIdentity != point.MeasurementProtocolIdentity ||
 		trial.TrialID == "" || trial.AdmissionPolicyVersion != admissionVersion || admissionVersion == "" ||
 		trial.EstimatorIdentity != point.EstimatorIdentity || point.EstimatorIdentity == "" ||
-		trial.Batch != point.Batch || trial.IncrementalJoulesPerItem <= 0 ||
-		math.IsNaN(trial.IncrementalJoulesPerItem) || math.IsInf(trial.IncrementalJoulesPerItem, 0) {
+		trial.Batch != point.Batch || trial.IncrementalWorkJoulesPerItem <= 0 ||
+		math.IsNaN(trial.IncrementalWorkJoulesPerItem) ||
+		math.IsInf(trial.IncrementalWorkJoulesPerItem, 0) {
 		return errors.New("trial state, environment, protocol, estimator, or batch mismatch")
 	}
 	return nil
@@ -245,12 +251,13 @@ func validateAdmittedTrialStatistics(
 		trial.BaselineConfidenceLevel != confidenceLevel {
 		return errors.New("baseline uncertainty contribution is invalid")
 	}
-	if trial.ActiveWallJoulesPerItem <= 0 || math.IsNaN(trial.ActiveWallJoulesPerItem) ||
-		math.IsInf(trial.ActiveWallJoulesPerItem, 0) ||
-		trial.BaselineCoefficientSecondsPerItem <= 0 ||
-		math.IsNaN(trial.BaselineCoefficientSecondsPerItem) ||
-		math.IsInf(trial.BaselineCoefficientSecondsPerItem, 0) ||
-		trial.IncrementalJoulesPerItem > trial.ActiveWallJoulesPerItem {
+	if trial.ActiveWindowWallJoulesPerItem <= 0 ||
+		math.IsNaN(trial.ActiveWindowWallJoulesPerItem) ||
+		math.IsInf(trial.ActiveWindowWallJoulesPerItem, 0) ||
+		trial.IdleBaselineSecondsPerItem <= 0 ||
+		math.IsNaN(trial.IdleBaselineSecondsPerItem) ||
+		math.IsInf(trial.IdleBaselineSecondsPerItem, 0) ||
+		trial.IncrementalWorkJoulesPerItem > trial.ActiveWindowWallJoulesPerItem {
 		return errors.New("trial sufficient statistics are invalid")
 	}
 	return nil

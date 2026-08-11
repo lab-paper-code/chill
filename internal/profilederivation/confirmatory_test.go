@@ -93,16 +93,16 @@ func TestContiguousConfirmatoryCurvePlanStillSizesAndDerives(t *testing.T) {
 func TestConfirmatoryContrastCovarianceUsesSharedActiveAndBaselineTerms(t *testing.T) {
 	points := []Point{
 		{
-			Batch: 2, StateIdentity: "shared", IncrementalSampleVariance: .03,
-			MeanBaselineCoefficientSecondsPerItem: .2,
+			Batch: 2, StateIdentity: "shared", IncrementalWorkSampleVariance: .03,
+			MeanIdleBaselineSecondsPerItem: .2,
 		},
 		{
-			Batch: 3, StateIdentity: "shared", IncrementalSampleVariance: .06,
-			MeanBaselineCoefficientSecondsPerItem: .1,
+			Batch: 3, StateIdentity: "shared", IncrementalWorkSampleVariance: .06,
+			MeanIdleBaselineSecondsPerItem: .1,
 		},
 		{
-			Batch: 4, StateIdentity: "distinct", IncrementalSampleVariance: .09,
-			MeanBaselineCoefficientSecondsPerItem: .3,
+			Batch: 4, StateIdentity: "distinct", IncrementalWorkSampleVariance: .09,
+			MeanIdleBaselineSecondsPerItem: .3,
 		},
 	}
 	baselines := map[string]IdleBaseline{

@@ -160,7 +160,7 @@ func deriveCurvePoint(
 			return Point{}, fmt.Errorf("trial %q appears in more than one curve position", run.Trial.TrialID)
 		}
 		seenTrials[run.Trial.TrialID] = struct{}{}
-		trial, err := IncrementalTrial(run.Trial, run.Admission, baseline)
+		trial, err := IncrementalWorkTrial(run.Trial, run.Admission, baseline)
 		if err != nil {
 			return Point{}, fmt.Errorf("derive batch %d trial %q: %w", input.Batch, run.Trial.TrialID, err)
 		}

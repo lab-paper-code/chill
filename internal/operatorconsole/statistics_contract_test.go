@@ -27,7 +27,7 @@ func TestLatencyP99MatchesProfileDerivationNearestRank(t *testing.T) {
 			consoleP99 := nearestRank(ordered, 0.99)
 			baseline := zeroIdleBaseline(t)
 
-			trial, err := profilederivation.IncrementalTrial(
+			trial, err := profilederivation.IncrementalWorkTrial(
 				profilederivation.Trial{
 					StateIdentity: "state", EnvironmentIdentity: "environment",
 					MeasurementProtocolIdentity: "active-protocol", TrialID: "trial",

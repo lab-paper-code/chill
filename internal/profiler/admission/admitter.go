@@ -117,14 +117,14 @@ func EvaluateIdle(
 	if evaluated.Verdict != profilederivation.VerdictAccepted {
 		return compact, nil, nil
 	}
-	if evaluated.MeanWallWatts == nil {
+	if evaluated.ModelLoadedIdleMeanWallWatts == nil {
 		return Result{}, nil, errors.New("accepted idle admission omitted mean wall power")
 	}
 	trial := &profilederivation.IdleTrial{
 		StateIdentity: evaluated.StateIdentity, EnvironmentIdentity: evaluated.EnvironmentIdentity,
 		MeasurementProtocolIdentity: evaluated.MeasurementProtocolIdentity, TrialID: evaluated.TrialID,
 		RawEvidence: evaluated.RawEvidence, AdmissionPolicyVersion: evaluated.PolicyVersion,
-		MeanWallWatts: *evaluated.MeanWallWatts,
+		ModelLoadedIdleMeanWallWatts: *evaluated.ModelLoadedIdleMeanWallWatts,
 	}
 	return compact, trial, nil
 }

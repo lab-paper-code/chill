@@ -180,12 +180,12 @@ func TestBSatGlobalStatementCountStartsAtPointPolicyMinimum(t *testing.T) {
 func TestProjectedContrastPreservesSharedBaselineCancellation(t *testing.T) {
 	baseline := IdleBaseline{MeanWallWattsVariance: .04, DegreesOfFreedom: 2}
 	reference := Point{
-		StateIdentity: "shared", IncrementalSampleVariance: 0,
-		MeanBaselineCoefficientSecondsPerItem: .2,
+		StateIdentity: "shared", IncrementalWorkSampleVariance: 0,
+		MeanIdleBaselineSecondsPerItem: .2,
 	}
 	later := Point{
-		StateIdentity: "shared", IncrementalSampleVariance: 0,
-		MeanBaselineCoefficientSecondsPerItem: .2,
+		StateIdentity: "shared", IncrementalWorkSampleVariance: 0,
+		MeanIdleBaselineSecondsPerItem: .2,
 	}
 	shared, err := contrastHalfWidthForTrials(reference, baseline, later, baseline, 3, .975)
 	if err != nil {

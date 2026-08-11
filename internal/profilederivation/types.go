@@ -76,14 +76,14 @@ type AdmittedTrial struct {
 	// Baseline sufficient statistics are copied from the admitted exact-state
 	// baseline for point aggregation. Curve retains the baseline object that
 	// owns cross-point covariance.
-	BaselineMeanWallWattsVariance     float64 `json:"baselineMeanWallWattsVariance"`
-	BaselineDegreesOfFreedom          int     `json:"baselineDegreesOfFreedom"`
-	BaselineConfidenceLevel           float64 `json:"baselineConfidenceLevel"`
-	ActiveWallJoulesPerItem           float64 `json:"activeWallJoulesPerItem"`
-	BaselineCoefficientSecondsPerItem float64 `json:"baselineCoefficientSecondsPerItem"`
-	Batch                             int     `json:"batch"`
-	IncrementalJoulesPerItem          float64 `json:"incrementalJoulesPerItem"`
-	LatencyP99Milliseconds            float64 `json:"latencyP99Milliseconds"`
+	BaselineMeanWallWattsVariance float64 `json:"baselineMeanWallWattsVariance"`
+	BaselineDegreesOfFreedom      int     `json:"baselineDegreesOfFreedom"`
+	BaselineConfidenceLevel       float64 `json:"baselineConfidenceLevel"`
+	ActiveWindowWallJoulesPerItem float64 `json:"activeWindowWallJoulesPerItem"`
+	IdleBaselineSecondsPerItem    float64 `json:"idleBaselineSecondsPerItem"`
+	Batch                         int     `json:"batch"`
+	IncrementalWorkJoulesPerItem  float64 `json:"incrementalWorkJoulesPerItem"`
+	LatencyP99Milliseconds        float64 `json:"latencyP99Milliseconds"`
 }
 type RawEvidenceIdentity struct {
 	Store string `json:"store"`
@@ -121,8 +121,9 @@ type IdleAdmissionResult struct {
 	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
 	Reasons                     []Reason            `json:"reasons"`
 	TotalWallJoules             *float64            `json:"totalWallJoules,omitempty"`
-	MeanWallWatts               *float64            `json:"meanWallWatts,omitempty"`
-	WindowSeconds               float64             `json:"windowSeconds"`
+	// The meanWallWatts wire key predates the explicit model-loaded-idle name.
+	ModelLoadedIdleMeanWallWatts *float64 `json:"meanWallWatts,omitempty"`
+	WindowSeconds                float64  `json:"windowSeconds"`
 }
 type IdleTrial struct {
 	StateIdentity               string              `json:"stateIdentity"`
@@ -131,14 +132,16 @@ type IdleTrial struct {
 	TrialID                     string              `json:"trialID"`
 	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
 	AdmissionPolicyVersion      string              `json:"admissionPolicyVersion"`
-	MeanWallWatts               float64             `json:"meanWallWatts"`
+	// Sequential result details retain this legacy meanWallWatts wire key in idle trials.
+	ModelLoadedIdleMeanWallWatts float64 `json:"meanWallWatts"`
 }
 type IdleBaseline struct {
 	StateIdentity               string      `json:"stateIdentity"`
 	EnvironmentIdentity         string      `json:"environmentIdentity"`
 	MeasurementProtocolIdentity string      `json:"measurementProtocolIdentity"`
 	Trials                      []IdleTrial `json:"trials"`
-	MeanWallWatts               float64     `json:"meanWallWatts"`
+	// Sequential result details persist this legacy meanWallWatts wire key.
+	ModelLoadedIdleMeanWallWatts float64 `json:"meanWallWatts"`
 	// MeanWallWattsVariance is the sample variance divided by the idle trial count.
 	MeanWallWattsVariance  float64 `json:"meanWallWattsVariance"`
 	DegreesOfFreedom       int     `json:"degreesOfFreedom"`
@@ -169,19 +172,19 @@ type PointConfidence struct {
 }
 
 type Point struct {
-	StateIdentity                string          `json:"stateIdentity"`
-	EnvironmentIdentity          string          `json:"environmentIdentity"`
-	MeasurementProtocolIdentity  string          `json:"measurementProtocolIdentity"`
-	Batch                        int             `json:"batch"`
-	PointPolicyVersion           string          `json:"pointPolicyVersion"`
-	EstimatorIdentity            string          `json:"estimatorIdentity"`
-	Trials                       []AdmittedTrial `json:"trials"`
-	MeanIncrementalJoulesPerItem float64         `json:"meanIncrementalJoulesPerItem"`
-	// IncrementalSampleVariance has units of squared joules per squared item.
-	IncrementalSampleVariance             float64         `json:"incrementalSampleVariance"`
-	MeanBaselineCoefficientSecondsPerItem float64         `json:"meanBaselineCoefficientSecondsPerItem"`
-	Confidence                            PointConfidence `json:"confidence"`
-	LatencyP99Milliseconds                float64         `json:"latencyP99Milliseconds"`
+	StateIdentity                    string          `json:"stateIdentity"`
+	EnvironmentIdentity              string          `json:"environmentIdentity"`
+	MeasurementProtocolIdentity      string          `json:"measurementProtocolIdentity"`
+	Batch                            int             `json:"batch"`
+	PointPolicyVersion               string          `json:"pointPolicyVersion"`
+	EstimatorIdentity                string          `json:"estimatorIdentity"`
+	Trials                           []AdmittedTrial `json:"trials"`
+	MeanIncrementalWorkJoulesPerItem float64         `json:"meanIncrementalWorkJoulesPerItem"`
+	// IncrementalWorkSampleVariance has units of squared joules per squared item.
+	IncrementalWorkSampleVariance  float64         `json:"incrementalWorkSampleVariance"`
+	MeanIdleBaselineSecondsPerItem float64         `json:"meanIdleBaselineSecondsPerItem"`
+	Confidence                     PointConfidence `json:"confidence"`
+	LatencyP99Milliseconds         float64         `json:"latencyP99Milliseconds"`
 }
 
 type BSatStatus string

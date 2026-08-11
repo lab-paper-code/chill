@@ -31,25 +31,28 @@ type SequentialPolicy struct {
 }
 
 type SequentialBatchMean struct {
-	Batch                    int     `json:"batch"`
-	IncrementalJoulesPerItem float64 `json:"incrementalJoulesPerItem"`
+	Batch int `json:"batch"`
+	// The incrementalJoulesPerItem wire key is frozen by immutable result recovery.
+	IncrementalWorkJoulesPerItem float64 `json:"incrementalJoulesPerItem"`
 }
 
 type SequentialResult struct {
-	Status                       SequentialStatus        `json:"status"`
-	StopReason                   SequentialStopReason    `json:"stopReason,omitempty"`
-	SelectedBatch                *int                    `json:"selectedBatch,omitempty"`
-	BoundaryBatch                *int                    `json:"boundaryBatch,omitempty"`
-	BestIncrementalJoulesPerItem *float64                `json:"bestIncrementalJoulesPerItem,omitempty"`
-	MeasuredBatchSizes           []int                   `json:"measuredBatchSizes"`
-	EpsilonByBatch               []SequentialBatchMean   `json:"epsilonByBatch"`
-	PolicyVersion                string                  `json:"policyVersion"`
-	MinDelta                     float64                 `json:"minDelta"`
-	Patience                     int                     `json:"patience"`
-	TrialsPerBatch               int                     `json:"trialsPerBatch"`
-	DivergenceFactor             float64                 `json:"divergenceFactor"`
-	CurvePlanName                string                  `json:"curvePlanName"`
-	IdleBaselinesByState         map[string]IdleBaseline `json:"idleBaselinesByState"`
+	Status        SequentialStatus     `json:"status"`
+	StopReason    SequentialStopReason `json:"stopReason,omitempty"`
+	SelectedBatch *int                 `json:"selectedBatch,omitempty"`
+	BoundaryBatch *int                 `json:"boundaryBatch,omitempty"`
+	// The bestIncrementalJoulesPerItem and epsilonByBatch wire keys are frozen by
+	// immutable result recovery even though the Go names use the explicit term.
+	BestIncrementalWorkJoulesPerItem *float64                `json:"bestIncrementalJoulesPerItem,omitempty"`
+	MeasuredBatchSizes               []int                   `json:"measuredBatchSizes"`
+	IncrementalWorkByBatch           []SequentialBatchMean   `json:"epsilonByBatch"`
+	PolicyVersion                    string                  `json:"policyVersion"`
+	MinDelta                         float64                 `json:"minDelta"`
+	Patience                         int                     `json:"patience"`
+	TrialsPerBatch                   int                     `json:"trialsPerBatch"`
+	DivergenceFactor                 float64                 `json:"divergenceFactor"`
+	CurvePlanName                    string                  `json:"curvePlanName"`
+	IdleBaselinesByState             map[string]IdleBaseline `json:"idleBaselinesByState"`
 }
 
 // DeriveSequentialBatchDecision applies the relative best-so-far stopping rule
@@ -86,14 +89,14 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 	for index, point := range discovery.points {
 		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||
-			point.MeanIncrementalJoulesPerItem <= 0 ||
-			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
-			math.IsInf(point.MeanIncrementalJoulesPerItem, 0) {
+			point.MeanIncrementalWorkJoulesPerItem <= 0 ||
+			math.IsNaN(point.MeanIncrementalWorkJoulesPerItem) ||
+			math.IsInf(point.MeanIncrementalWorkJoulesPerItem, 0) {
 			return SequentialResult{}, errors.New("discovery points do not match the frozen sequential policy")
 		}
 		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
-		result.EpsilonByBatch = append(result.EpsilonByBatch, SequentialBatchMean{
-			Batch: point.Batch, IncrementalJoulesPerItem: point.MeanIncrementalJoulesPerItem,
+		result.IncrementalWorkByBatch = append(result.IncrementalWorkByBatch, SequentialBatchMean{
+			Batch: point.Batch, IncrementalWorkJoulesPerItem: point.MeanIncrementalWorkJoulesPerItem,
 		})
 		if baseline, exists := curve.baselines[point.StateIdentity]; exists {
 			result.IdleBaselinesByState[point.StateIdentity] = cloneIdleBaseline(baseline)
@@ -101,7 +104,7 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 			return SequentialResult{}, errors.New("discovery point lost its exact-state idle baseline")
 		}
 
-		value := point.MeanIncrementalJoulesPerItem
+		value := point.MeanIncrementalWorkJoulesPerItem
 		if bestBatch == 0 || value < best*(1-policy.MinDelta) {
 			best = value
 			bestBatch = point.Batch
@@ -125,7 +128,7 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		selected := bestBatch
 		bestValue := best
 		result.SelectedBatch = &selected
-		result.BestIncrementalJoulesPerItem = &bestValue
+		result.BestIncrementalWorkJoulesPerItem = &bestValue
 	}
 	if result.Status == SequentialStopped && discovery.capabilityBoundary != nil {
 		return SequentialResult{}, errors.New("discovery attempted a capability boundary after its stopping condition")
