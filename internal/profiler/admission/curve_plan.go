@@ -9,6 +9,64 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
+// ProjectCurvePlanSpec builds the plan the checker in this package later
+// validates frozen intents against.
+func ProjectCurvePlanSpec(
+	name string,
+	active, idle profilingrun.Intent,
+	capability profilingrun.CandidateArtifactCapability,
+	conversion profilederivation.CurveConversionContract,
+	plannedBatchSizes []int,
+) (profilederivation.CurvePlanSpec, error) {
+	activeProtocol, err := projectCurveProtocol(active)
+	if err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project active curve protocol: %w", err)
+	}
+	idleProtocol, err := projectCurveProtocol(idle)
+	if err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project idle curve protocol: %w", err)
+	}
+
+	inputSampleShape := make([]int, len(capability.InputSampleShape))
+	for index, dimension := range capability.InputSampleShape {
+		inputSampleShape[index] = int(dimension)
+	}
+	spec := profilederivation.CurvePlanSpec{
+		Name:           name,
+		LogicalModel:   active.State.Model,
+		DeviceClass:    active.State.DeviceClass,
+		NodeUID:        active.TargetNode.UID,
+		RuntimeFamily:  active.State.RuntimeFamily,
+		Backend:        active.State.Backend,
+		RuntimeImage:   active.Images.Runtime,
+		PowerMode:      active.State.PowerMode,
+		CPU:            projectCurveCPU(active.CPU),
+		MetricSource:   projectCurveMetricSource(active.Metrics),
+		ActiveProtocol: activeProtocol,
+		IdleProtocol:   idleProtocol,
+		Conversion:     conversion,
+		Artifact: profilederivation.CurveArtifactContract{
+			ExecutionPath: active.Candidate.ExecutionPath,
+			Name:          active.State.Artifact,
+			Path:          active.State.ArtifactPath,
+			Image:         active.Images.Artifact,
+		},
+		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
+		Tensor: profilederivation.CurveTensorContract{
+			Layout:           capability.InputLayout,
+			DataType:         capability.InputDataType,
+			InputSampleShape: inputSampleShape,
+		},
+	}
+	if err := validateCurvePlanIntent(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("validate projected active curve intent: %w", err)
+	}
+	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve intents disagree: %w", err)
+	}
+	return spec, nil
+}
+
 // ProjectVerifiedCurveState consumes only evidence already sealed by the
 // active and idle Loader boundaries. Catalog-only conversion, batch capability,
 // and tensor facts remain bound through the curve plan.

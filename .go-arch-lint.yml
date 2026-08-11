@@ -71,6 +71,12 @@ deps:
     mayDependOn:
       - api
       - batch-saturation-core
+      - evidence-core
+      - profile-derivation
+      - profiler-app
+      - profiler-admission
+      - profiler-controller
+      - profiling-run
 
   # These small support packages may collaborate within this reviewed group,
   # but cannot reach upward into operators or profiler orchestration.

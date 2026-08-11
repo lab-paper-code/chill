@@ -17,6 +17,41 @@ func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {
 	}
 }
 
+func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
+	active := curvePlanIntent()
+	idle := active
+	idle.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	spec, err := ProjectCurvePlanSpec(
+		"test-curve", active, idle,
+		profilingrun.CandidateArtifactCapability{
+			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
+			InputSampleShape: []int32{224, 224, 3}, InputLayout: "NHWC", InputDataType: "uint8",
+		},
+		profilederivation.CurveConversionContract{
+			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
+		},
+		[]int{1, 2},
+	)
+	if err != nil {
+		t.Fatalf("project curve plan: %v", err)
+	}
+	plan, err := profilederivation.NewCurvePlan(spec)
+	if err != nil {
+		t.Fatalf("construct curve plan: %v", err)
+	}
+	recorded := plan.Shared()
+	if err := validateCurvePlanIntent(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
+		t.Fatalf("validate active intent against projected plan: %v", err)
+	}
+	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
+		t.Fatalf("validate idle intent against projected plan: %v", err)
+	}
+}
+
 func TestVerifiedCurvePlanIntentProjectionBindsObservableFacts(t *testing.T) {
 	active := curvePlanIntent()
 	idle := active
