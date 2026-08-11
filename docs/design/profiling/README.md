@@ -4,9 +4,9 @@
 
 Roadmap with the `ProfilingRun` path through durable execution-evidence
 verification and single-Run admission implemented. Repeated active and idle
-trials, exact-state curve derivation, and the first pre-frozen Plan 5a decision
-are also implemented and live-verified for one two-member RKNN family.
-The first frozen Plan 5 campaign closed with a typed budget-insufficient result;
+trials, exact-state curve derivation, and the first recorded Plan 5a decision
+are also implemented and live-verified for one two-artifact RKNN campaign.
+The first recorded Plan 5 campaign closed with a typed budget-insufficient result;
 an accepted statistical confirmation and profile publication remain incomplete.
 This document itself does not authorize later API or internal changes.
 
@@ -135,7 +135,7 @@ Answers only:
 > Walking batch sizes upward, when has energy per item stopped improving enough
 > to keep going?
 
-The pure family-contract, Loader-verified family, exact-state curve, and
+The pure curve-plan, Loader-verified execution-state, exact-state curve, and
 sequential-stop boundaries are implemented in `internal/profilederivation`. The
 rule produces a decision without a confidence statement; its selected batch is
 the candidate Plan 5's confirmation pass takes as input. Plan 7 owns the control
@@ -148,10 +148,10 @@ path that produces and composes the Runs this rule consumes.
 Answers only:
 
 > Under what predeclared rule does a set of Runs establish batch saturation for
-> one frozen curve family?
+> one recorded curve plan?
 
-Approved scope with pure derivation implemented. Plan 5a supplies the frozen
-family, verified family, and exact-state curve container. The Plan 5 point
+Approved scope with pure derivation implemented. Plan 5a supplies the recorded
+curve plan, verified execution state, and exact-state curve container. The Plan 5 point
 estimator and retained previous interval are implemented, and the global
 post-selection error allocation is derived and regression-tested. The
 deterministic domain-wide discovery screen is also implemented, as is the
@@ -180,8 +180,8 @@ and two RKNN rows measured with the per-batch artifacts then in use are L4.
 [ADR 0016](../../adr/0016-declared-batch-size-artifact-capability.md) governs the
 current declared-batch-size artifact capability. Batch one was rebuilt and both
 historical rows were remeasured under the same recipe, catalog, and image
-generation, so aligned L3 evidence exists. The pure Plan 5a family/stop core
-and first frozen campaign then produced and re-verified all 12 post-freeze Runs,
+generation, so aligned L3 evidence exists. The pure Plan 5a curve-plan/stop core
+and first recorded campaign then produced and re-verified all 12 post-recording Runs,
 selected batch one, and stopped at the batch-three capability boundary. That
 recorded boundary describes the two per-batch artifacts in that campaign. The
 result promotes those two exact RKNN rows to L4 and carries the evidence strength

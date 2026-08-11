@@ -90,8 +90,8 @@ These remain exact single-Run and single-point identities. A batch curve over
 one artifact's declared batch sizes retains those identities and uses the verified
 composition boundary and single-state baseline ownership fixed by
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md). The
-pre-measurement `CurveFamilyName` remains separate from the verified
-`CurveFamily`, which is constructed after evidence crosses the Loader boundary.
+pre-measurement `CurvePlanName` remains separate from the verified
+`VerifiedCurvePlan`, which is constructed after evidence crosses the Loader boundary.
 Both remain curve-level facts.
 
 Binding the actual Node UID intentionally makes this first derivation
@@ -160,7 +160,7 @@ acceptance are separate:
 
 - Plan 5 requires a consecutive planned batch size span from its candidate through
   `KMax`;
-- Plan 5a advances through the frozen eligible profile set in strictly
+- Plan 5a advances through the batch sizes recorded in the curve plan in strictly
   increasing batch order;
 - exhausting that set is the capability boundary;
 - a failed Run for a declared batch size follows the ordinary trial-failure path;

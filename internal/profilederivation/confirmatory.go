@@ -7,7 +7,7 @@ import (
 )
 
 // DeriveBSatConfirmatory evaluates the frozen domain-wide acceptance rule on
-// the confirmatory pass of one opaque exact-family Curve.
+// the confirmatory pass of one opaque Curve bound to an exact verified plan.
 func DeriveBSatConfirmatory(
 	curve Curve,
 	candidate int,
@@ -48,7 +48,7 @@ func deriveBSatConfirmatory(
 	candidate int,
 	policy BSatPolicy,
 ) (BSatResult, error) {
-	if err := curve.family.requireVerified(); err != nil {
+	if err := curve.plan.requireVerified(); err != nil {
 		return BSatResult{}, err
 	}
 	discoveryCurve, err := curve.discoveryOnly()
@@ -214,7 +214,7 @@ func newBSatResult(
 		ConfirmatoryEstimatorVersion:  BSatConfirmatoryEstimatorVersion,
 		ConfidenceLevel:               1 - policy.FamilyWiseAlpha,
 		SizingMethod:                  sizing.SizingMethod,
-		CurveFamilyName:               curve.FamilyName(),
+		CurvePlanName:                 curve.PlanName(),
 	}
 	if sizing.ConfirmatoryTrials != nil {
 		result.ConfirmatoryTrials = *sizing.ConfirmatoryTrials

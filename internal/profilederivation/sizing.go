@@ -33,14 +33,14 @@ func deriveBSatConfirmatorySizing(
 	if discoveryResult.CandidateBatch == nil || *discoveryResult.CandidateBatch != candidate {
 		return BSatSizingResult{}, errors.New("confirmatory sizing candidate does not match discovery")
 	}
-	if err := validateConfirmatoryEligibleSpan(curve, candidate, policy); err != nil {
+	if err := validateConfirmatoryPlannedBatchSizeSpan(curve, candidate, policy); err != nil {
 		return BSatSizingResult{}, err
 	}
 	discovery, exists := curve.pass(PassDiscovery)
 	if !exists {
 		return BSatSizingResult{}, errors.New("confirmatory sizing requires a discovery pass")
 	}
-	plannedBatchSizeCount := len(curve.family.contract.record.Shared.PlannedBatchSizes)
+	plannedBatchSizeCount := len(curve.plan.recorded.record.Shared.PlannedBatchSizes)
 	discoveryRuns := plannedBatchSizeCount * policy.DiscoveryTrials
 	statementCount, err := bsatGlobalStatementCount(policy, discoveryRuns)
 	if err != nil {
@@ -51,7 +51,7 @@ func deriveBSatConfirmatorySizing(
 		Status: BSatUnavailable, Code: BSatCodeConfirmatoryBudgetInsufficient,
 		CandidateBatch: candidate, MaximumFeasibleConfirmatoryTrials: maximumTrials,
 		GlobalStatementCount: statementCount, SizingMethod: BSatConfirmatorySizingMethod,
-		PolicyVersion: policy.Version, CurveFamilyName: curve.FamilyName(),
+		PolicyVersion: policy.Version, CurvePlanName: curve.PlanName(),
 		DiscoveryActiveRuns: discoveryRuns,
 	}
 	for confirmatoryBatchSize := candidate; confirmatoryBatchSize <= policy.KMax; confirmatoryBatchSize++ {
@@ -91,9 +91,9 @@ func deriveBSatConfirmatorySizing(
 	return result, nil
 }
 
-func validateConfirmatoryEligibleSpan(curve Curve, candidate int, policy BSatPolicy) error {
+func validateConfirmatoryPlannedBatchSizeSpan(curve Curve, candidate int, policy BSatPolicy) error {
 	expected := candidate
-	for _, plannedBatchSize := range curve.family.contract.record.Shared.PlannedBatchSizes {
+	for _, plannedBatchSize := range curve.plan.recorded.record.Shared.PlannedBatchSizes {
 		if plannedBatchSize < candidate {
 			continue
 		}

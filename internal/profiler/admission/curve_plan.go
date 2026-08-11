@@ -9,44 +9,44 @@ import (
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
 
-// ProjectVerifiedCurveFamilyState consumes only evidence already sealed by the
+// ProjectVerifiedCurveState consumes only evidence already sealed by the
 // active and idle Loader boundaries. Catalog-only conversion, batch capability,
-// and tensor facts remain bound through the family contract.
-func ProjectVerifiedCurveFamilyState(
-	contract profilederivation.CurveFamilyContract,
+// and tensor facts remain bound through the curve plan.
+func ProjectVerifiedCurveState(
+	plan profilederivation.CurvePlan,
 	active profilerevidence.VerifiedEvidence,
 	idle profilerevidence.VerifiedIdleEvidence,
-) (profilederivation.VerifiedCurveFamilyState, error) {
+) (profilederivation.VerifiedCurveState, error) {
 	activeExecution, activeRaw, err := active.Records()
 	if err != nil {
-		return profilederivation.VerifiedCurveFamilyState{}, fmt.Errorf("read verified active evidence: %w", err)
+		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified active evidence: %w", err)
 	}
 	idleExecution, idleRaw, err := idle.Records()
 	if err != nil {
-		return profilederivation.VerifiedCurveFamilyState{}, fmt.Errorf("read verified idle evidence: %w", err)
+		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified idle evidence: %w", err)
 	}
 	activeTrial, err := projectTrial(activeExecution, activeRaw)
 	if err != nil {
-		return profilederivation.VerifiedCurveFamilyState{}, fmt.Errorf("project verified active trial: %w", err)
+		return profilederivation.VerifiedCurveState{}, fmt.Errorf("project verified active trial: %w", err)
 	}
 	idleObservation, err := projectIdleObservation(idleExecution, idleRaw)
 	if err != nil {
-		return profilederivation.VerifiedCurveFamilyState{}, fmt.Errorf("project verified idle observation: %w", err)
+		return profilederivation.VerifiedCurveState{}, fmt.Errorf("project verified idle observation: %w", err)
 	}
-	shared := contract.Shared()
-	if err := validateCurveFamilyIntents(
+	spec := plan.Shared()
+	if err := validateCurvePlanIntents(
 		activeExecution.Intent, idleExecution.Intent,
 		activeExecution.Terminal.Node.UID, idleExecution.Terminal.Node.UID,
-		shared,
+		spec,
 	); err != nil {
-		return profilederivation.VerifiedCurveFamilyState{}, err
+		return profilederivation.VerifiedCurveState{}, err
 	}
 	if activeTrial.StateIdentity != idleObservation.StateIdentity ||
 		activeTrial.EnvironmentIdentity != idleObservation.EnvironmentIdentity {
-		return profilederivation.VerifiedCurveFamilyState{}, errors.New("active and idle evidence do not share exact state and environment identities")
+		return profilederivation.VerifiedCurveState{}, errors.New("active and idle evidence do not share exact state and environment identities")
 	}
-	return profilederivation.VerifiedCurveFamilyState{
-		Shared:                 shared,
+	return profilederivation.VerifiedCurveState{
+		Shared:                 spec,
 		StateIdentity:          activeTrial.StateIdentity,
 		EnvironmentIdentity:    activeTrial.EnvironmentIdentity,
 		ActiveProtocolIdentity: activeTrial.MeasurementProtocolIdentity,
@@ -54,69 +54,69 @@ func ProjectVerifiedCurveFamilyState(
 	}, nil
 }
 
-func validateCurveFamilyIntents(
+func validateCurvePlanIntents(
 	active, idle profilingrun.Intent,
 	activeNodeUID, idleNodeUID string,
-	shared profilederivation.CurveFamilySharedContract,
+	spec profilederivation.CurvePlanSpec,
 ) error {
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
-	if len(shared.PlannedBatchSizes) == 0 {
-		return errors.New("curve-family contract has no planned batch sizes")
+	if len(spec.PlannedBatchSizes) == 0 {
+		return errors.New("curve plan has no planned batch sizes")
 	}
-	activeBatchEligible := false
-	for _, plannedBatchSize := range shared.PlannedBatchSizes {
+	activeUsesPlannedBatchSize := false
+	for _, plannedBatchSize := range spec.PlannedBatchSizes {
 		if active.Measurement.Batch == plannedBatchSize {
-			activeBatchEligible = true
+			activeUsesPlannedBatchSize = true
 			break
 		}
 	}
-	if !activeBatchEligible {
-		return fmt.Errorf("batch %d is outside the frozen curve-family contract", active.Measurement.Batch)
+	if !activeUsesPlannedBatchSize {
+		return fmt.Errorf("batch %d is not listed in the curve plan", active.Measurement.Batch)
 	}
-	if err := validateCurveFamilyIntent(
-		active, activeNodeUID, shared, shared.ActiveProtocol,
+	if err := validateCurvePlanIntent(
+		active, activeNodeUID, spec, spec.ActiveProtocol,
 	); err != nil {
-		return fmt.Errorf("active curve-family state: %w", err)
+		return fmt.Errorf("active curve state: %w", err)
 	}
-	if idle.Measurement.Batch != shared.PlannedBatchSizes[0] {
-		return errors.New("idle curve-family state does not use the first planned batch size")
+	if idle.Measurement.Batch != spec.PlannedBatchSizes[0] {
+		return errors.New("idle curve state does not use the first planned batch size")
 	}
-	if err := validateCurveFamilyIntent(
-		idle, idleNodeUID, shared, shared.IdleProtocol,
+	if err := validateCurvePlanIntent(
+		idle, idleNodeUID, spec, spec.IdleProtocol,
 	); err != nil {
-		return fmt.Errorf("idle curve-family state: %w", err)
+		return fmt.Errorf("idle curve state: %w", err)
 	}
 	return nil
 }
 
-func validateCurveFamilyIntent(
+func validateCurvePlanIntent(
 	intent profilingrun.Intent,
 	actualNodeUID string,
-	shared profilederivation.CurveFamilySharedContract,
+	spec profilederivation.CurvePlanSpec,
 	protocol profilederivation.CurveProtocolContract,
 ) error {
-	if intent.Candidate.ExecutionPath != shared.Artifact.ExecutionPath ||
-		intent.State.DeviceClass != shared.DeviceClass || intent.State.Model != shared.LogicalModel ||
-		intent.State.Artifact != shared.Artifact.Name ||
-		intent.State.ArtifactPath != shared.Artifact.Path || intent.State.RuntimeFamily != shared.RuntimeFamily ||
-		intent.State.Backend != shared.Backend || intent.State.PowerMode != shared.PowerMode ||
-		intent.Images.Runtime != shared.RuntimeImage ||
-		intent.Images.Artifact != shared.Artifact.Image || intent.TargetNode.UID != shared.NodeUID ||
-		actualNodeUID != shared.NodeUID {
-		return errors.New("frozen intent contradicts curve-family state or artifact facts")
+	if intent.Candidate.ExecutionPath != spec.Artifact.ExecutionPath ||
+		intent.State.DeviceClass != spec.DeviceClass || intent.State.Model != spec.LogicalModel ||
+		intent.State.Artifact != spec.Artifact.Name ||
+		intent.State.ArtifactPath != spec.Artifact.Path || intent.State.RuntimeFamily != spec.RuntimeFamily ||
+		intent.State.Backend != spec.Backend || intent.State.PowerMode != spec.PowerMode ||
+		intent.Images.Runtime != spec.RuntimeImage ||
+		intent.Images.Artifact != spec.Artifact.Image || intent.TargetNode.UID != spec.NodeUID ||
+		actualNodeUID != spec.NodeUID {
+		return errors.New("frozen intent contradicts curve-plan state or artifact facts")
 	}
-	if projectCurveCPU(intent.CPU) != shared.CPU || projectCurveMetricSource(intent.Metrics) != shared.MetricSource {
-		return errors.New("frozen intent contradicts curve-family CPU or metric-source facts")
+	if projectCurveCPU(intent.CPU) != spec.CPU || projectCurveMetricSource(intent.Metrics) != spec.MetricSource {
+		return errors.New("frozen intent contradicts curve-plan CPU or metric-source facts")
 	}
 	projectedProtocol, err := projectCurveProtocol(intent)
 	if err != nil {
 		return err
 	}
 	if projectedProtocol != protocol {
-		return errors.New("frozen intent contradicts curve-family measurement-protocol facts")
+		return errors.New("frozen intent contradicts curve-plan measurement-protocol facts")
 	}
 	return nil
 }

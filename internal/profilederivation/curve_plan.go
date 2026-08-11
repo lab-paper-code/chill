@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	curveFamilyContractSchemaVersion = "chill.dacs.io/curve-family-contract.v1alpha3"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha4"
 )
 
-// CurveCPUContract is the execution CPU contract shared by every family batch.
+// CurveCPUContract is the execution CPU contract shared by every planned batch.
 // It is deliberately Kubernetes-free.
 type CurveCPUContract struct {
 	Policy             string `json:"policy"`
@@ -54,8 +54,7 @@ type CurveProtocolContract struct {
 	WorkloadSchemaVersion      string `json:"workloadSchemaVersion"`
 }
 
-// CurveConversionContract identifies how the immutable family artifact was
-// derived.
+// CurveConversionContract identifies how the immutable plan artifact was derived.
 type CurveConversionContract struct {
 	TargetPlatform string `json:"targetPlatform,omitempty"`
 	Tool           string `json:"tool,omitempty"`
@@ -68,8 +67,8 @@ type CurveTensorContract struct {
 	InputSampleShape []int  `json:"inputSampleShape"`
 }
 
-// CurveArtifactContract binds the one immutable artifact every batch of this
-// family executes.
+// CurveArtifactContract binds the one immutable artifact every planned batch
+// executes.
 type CurveArtifactContract struct {
 	ExecutionPath string `json:"executionPath"`
 	Name          string `json:"name"`
@@ -77,8 +76,8 @@ type CurveArtifactContract struct {
 	Image         string `json:"image"`
 }
 
-// CurveFamilySharedContract is the pre-measurement family anchor.
-type CurveFamilySharedContract struct {
+// CurvePlanSpec is the raw material selected for one measurement plan.
+type CurvePlanSpec struct {
 	Name              string                    `json:"name"`
 	LogicalModel      string                    `json:"logicalModel"`
 	DeviceClass       string                    `json:"deviceClass"`
@@ -97,125 +96,125 @@ type CurveFamilySharedContract struct {
 	Tensor            CurveTensorContract       `json:"tensor"`
 }
 
-type curveFamilyContractRecord struct {
-	SchemaVersion string                    `json:"schemaVersion"`
-	Shared        CurveFamilySharedContract `json:"shared"`
+type curvePlanRecord struct {
+	SchemaVersion string        `json:"schemaVersion"`
+	Shared        CurvePlanSpec `json:"shared"`
 }
 
-// CurveFamilyContract can only be constructed through
-// FreezeCurveFamilyContract, which validates and orders its planned batch sizes.
-type CurveFamilyContract struct {
-	record curveFamilyContractRecord
+// CurvePlan can only be constructed through NewCurvePlan, which validates and
+// orders its planned batch sizes.
+type CurvePlan struct {
+	record curvePlanRecord
 }
 
-func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
-	shared = cloneCurveFamilyShared(shared)
-	sort.Ints(shared.PlannedBatchSizes)
-	if err := validateCurveFamilyShared(shared); err != nil {
-		return CurveFamilyContract{}, err
+func NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error) {
+	spec = cloneCurvePlanSpec(spec)
+	sort.Ints(spec.PlannedBatchSizes)
+	if err := validateCurvePlanSpec(spec); err != nil {
+		return CurvePlan{}, err
 	}
-	record := curveFamilyContractRecord{
-		SchemaVersion: curveFamilyContractSchemaVersion,
-		Shared:        shared,
+	record := curvePlanRecord{
+		SchemaVersion: curvePlanSchemaVersion,
+		Shared:        spec,
 	}
-	return CurveFamilyContract{record: record}, nil
+	return CurvePlan{record: record}, nil
 }
 
-// DecodeCurveFamilyContract strict-decodes a persisted contract projection and
-// returns the same frozen canonical identity as structured construction. JSON
-// whitespace is not part of the contract identity.
-func DecodeCurveFamilyContract(raw []byte) (CurveFamilyContract, error) {
-	var record curveFamilyContractRecord
+// DecodeCurvePlan strict-decodes a persisted plan projection and returns the
+// same canonical identity as structured construction. JSON whitespace is not
+// part of the plan identity.
+func DecodeCurvePlan(raw []byte) (CurvePlan, error) {
+	var record curvePlanRecord
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&record); err != nil {
-		return CurveFamilyContract{}, fmt.Errorf("decode curve-family contract: %w", err)
+		return CurvePlan{}, fmt.Errorf("decode curve plan: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return CurveFamilyContract{}, errors.New("curve-family contract contains a trailing JSON value")
+		return CurvePlan{}, errors.New("curve plan contains a trailing JSON value")
 	}
-	if record.SchemaVersion != curveFamilyContractSchemaVersion {
-		return CurveFamilyContract{}, fmt.Errorf("unsupported curve-family contract schema %q", record.SchemaVersion)
+	if record.SchemaVersion != curvePlanSchemaVersion {
+		return CurvePlan{}, fmt.Errorf("unsupported curve-plan schema %q", record.SchemaVersion)
 	}
-	return FreezeCurveFamilyContract(record.Shared)
+	return NewCurvePlan(record.Shared)
 }
 
-func (c CurveFamilyContract) CanonicalJSON() ([]byte, error) {
-	if err := c.requireFrozen(); err != nil {
+func (c CurvePlan) CanonicalJSON() ([]byte, error) {
+	if err := c.requireInitialized(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(c.record)
 }
 
-func (c CurveFamilyContract) Shared() CurveFamilySharedContract {
-	return cloneCurveFamilyShared(c.record.Shared)
+func (c CurvePlan) Shared() CurvePlanSpec {
+	return cloneCurvePlanSpec(c.record.Shared)
 }
 
-func (c CurveFamilyContract) PlannedBatchSizes() []int {
+func (c CurvePlan) PlannedBatchSizes() []int {
 	return append([]int(nil), c.record.Shared.PlannedBatchSizes...)
 }
 
-// requireFrozen checks opaque type state only. The constructor and decoder own
-// all content validation.
-func (c CurveFamilyContract) requireFrozen() error {
-	if c.record.SchemaVersion != curveFamilyContractSchemaVersion {
-		return errors.New("curve-family contract was not frozen")
+// requireInitialized checks opaque type state only. The constructor and decoder
+// own all content validation.
+func (c CurvePlan) requireInitialized() error {
+	if c.record.SchemaVersion != curvePlanSchemaVersion {
+		return errors.New("curve plan is not initialized")
 	}
 	return nil
 }
 
-// VerifiedCurveFamilyState is the plain projection made only after active and
+// VerifiedCurveState is the plain projection made only after active and
 // idle frozen evidence have crossed their Loader boundaries. One artifact means
-// one state, so there is one projection per family.
-type VerifiedCurveFamilyState struct {
-	Shared                 CurveFamilySharedContract `json:"shared"`
-	StateIdentity          string                    `json:"stateIdentity"`
-	EnvironmentIdentity    string                    `json:"environmentIdentity"`
-	ActiveProtocolIdentity string                    `json:"activeProtocolIdentity"`
-	IdleProtocolIdentity   string                    `json:"idleProtocolIdentity"`
+// one state, so there is one projection per plan.
+type VerifiedCurveState struct {
+	Shared                 CurvePlanSpec `json:"shared"`
+	StateIdentity          string        `json:"stateIdentity"`
+	EnvironmentIdentity    string        `json:"environmentIdentity"`
+	ActiveProtocolIdentity string        `json:"activeProtocolIdentity"`
+	IdleProtocolIdentity   string        `json:"idleProtocolIdentity"`
 }
 
-// CurveFamily is a Loader-verified composition boundary.
-type CurveFamily struct {
-	contract CurveFamilyContract
-	state    VerifiedCurveFamilyState
+// VerifiedCurvePlan is a Loader-verified composition boundary.
+type VerifiedCurvePlan struct {
+	recorded CurvePlan
+	state    VerifiedCurveState
 }
 
-func VerifyCurveFamily(
-	contract CurveFamilyContract,
-	verified VerifiedCurveFamilyState,
-) (CurveFamily, error) {
-	if err := contract.requireFrozen(); err != nil {
-		return CurveFamily{}, err
+func VerifyCurvePlan(
+	plan CurvePlan,
+	verified VerifiedCurveState,
+) (VerifiedCurvePlan, error) {
+	if err := plan.requireInitialized(); err != nil {
+		return VerifiedCurvePlan{}, err
 	}
-	if !reflect.DeepEqual(verified.Shared, contract.record.Shared) {
-		return CurveFamily{}, errors.New("verified curve-family state does not match the contract")
+	if !reflect.DeepEqual(verified.Shared, plan.record.Shared) {
+		return VerifiedCurvePlan{}, errors.New("verified curve state does not match the plan")
 	}
 	if !cleanCurveValue(verified.StateIdentity) || !cleanCurveValue(verified.EnvironmentIdentity) ||
 		!cleanCurveValue(verified.ActiveProtocolIdentity) || !cleanCurveValue(verified.IdleProtocolIdentity) {
-		return CurveFamily{}, errors.New("verified curve-family state has an invalid derivation identity")
+		return VerifiedCurvePlan{}, errors.New("verified curve state has an invalid derivation identity")
 	}
-	verified.Shared = cloneCurveFamilyShared(verified.Shared)
-	return CurveFamily{contract: contract, state: verified}, nil
+	verified.Shared = cloneCurvePlanSpec(verified.Shared)
+	return VerifiedCurvePlan{recorded: plan, state: verified}, nil
 }
 
-func (f CurveFamily) Name() string { return f.contract.record.Shared.Name }
+func (p VerifiedCurvePlan) Name() string { return p.recorded.record.Shared.Name }
 
-func (f CurveFamily) EnvironmentIdentity() string { return f.state.EnvironmentIdentity }
+func (p VerifiedCurvePlan) EnvironmentIdentity() string { return p.state.EnvironmentIdentity }
 
-func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
+func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	for name, value := range map[string]string{
 		"name": shared.Name, "logical model": shared.LogicalModel, "device class": shared.DeviceClass,
 		"Node UID": shared.NodeUID, "runtime family": shared.RuntimeFamily,
 		"backend": shared.Backend, "power mode": shared.PowerMode,
 	} {
 		if !cleanCurveValue(value) {
-			return fmt.Errorf("curve-family shared %s is required without surrounding whitespace", name)
+			return fmt.Errorf("curve plan %s is required without surrounding whitespace", name)
 		}
 	}
 	if !cleanCurveValue(shared.RuntimeImage) {
-		return errors.New("curve-family runtime image is invalid")
+		return errors.New("curve plan runtime image is invalid")
 	}
 	if err := validateCurveCPU(shared.CPU); err != nil {
 		return err
@@ -230,7 +229,7 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 		return err
 	}
 	if shared.ActiveProtocol.WorkloadMode == shared.IdleProtocol.WorkloadMode {
-		return errors.New("curve-family active and idle workload modes must differ")
+		return errors.New("curve plan active and idle workload modes must differ")
 	}
 	if err := validateCurveConversion(shared.Conversion); err != nil {
 		return err
@@ -242,33 +241,33 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 		"image":          shared.Artifact.Image,
 	} {
 		if !cleanCurveValue(value) {
-			return fmt.Errorf("curve-family artifact %s is required without surrounding whitespace", name)
+			return fmt.Errorf("curve plan artifact %s is required without surrounding whitespace", name)
 		}
 	}
 	if shared.Artifact.Path == "/" || !strings.HasPrefix(shared.Artifact.Path, "/") ||
 		path.Clean(shared.Artifact.Path) != shared.Artifact.Path {
-		return errors.New("curve-family artifact path is invalid")
+		return errors.New("curve plan artifact path is invalid")
 	}
 	if len(shared.PlannedBatchSizes) == 0 {
-		return errors.New("curve-family requires at least one planned batch size")
+		return errors.New("curve plan requires at least one planned batch size")
 	}
 	seenBatches := make(map[int]struct{}, len(shared.PlannedBatchSizes))
 	for _, plannedBatchSize := range shared.PlannedBatchSizes {
 		if plannedBatchSize <= 0 {
-			return errors.New("curve-family planned batch sizes must be positive")
+			return errors.New("curve plan batch sizes must be positive")
 		}
 		if _, exists := seenBatches[plannedBatchSize]; exists {
-			return fmt.Errorf("curve-family planned batch size %d is duplicated", plannedBatchSize)
+			return fmt.Errorf("curve plan batch size %d is duplicated", plannedBatchSize)
 		}
 		seenBatches[plannedBatchSize] = struct{}{}
 	}
 	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
 		len(shared.Tensor.InputSampleShape) == 0 {
-		return errors.New("curve-family tensor contract is incomplete")
+		return errors.New("curve plan tensor contract is incomplete")
 	}
 	for _, dimension := range shared.Tensor.InputSampleShape {
 		if dimension < 1 {
-			return errors.New("curve-family tensor dimensions must be positive")
+			return errors.New("curve plan tensor dimensions must be positive")
 		}
 	}
 	return nil
@@ -277,11 +276,11 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 func validateCurveCPU(cpu CurveCPUContract) error {
 	for _, value := range []string{cpu.Policy, cpu.PolicyVersion, cpu.Request, cpu.Limit} {
 		if !cleanCurveValue(value) {
-			return errors.New("curve-family CPU contract is incomplete")
+			return errors.New("curve plan CPU contract is incomplete")
 		}
 	}
 	if cpu.ORTIntraOpThreads < 0 || cpu.ORTInterOpThreads < 0 {
-		return errors.New("curve-family CPU thread counts cannot be negative")
+		return errors.New("curve plan CPU thread counts cannot be negative")
 	}
 	return nil
 }
@@ -289,7 +288,7 @@ func validateCurveCPU(cpu CurveCPUContract) error {
 func validateCurveMetricSource(source CurveMetricSourceContract) error {
 	for _, value := range []string{source.SourceKind, source.NodeName, source.Endpoint, source.PowerMetric} {
 		if !cleanCurveValue(value) {
-			return errors.New("curve-family metric-source contract is incomplete")
+			return errors.New("curve plan metric-source contract is incomplete")
 		}
 	}
 	return nil
@@ -298,7 +297,7 @@ func validateCurveMetricSource(source CurveMetricSourceContract) error {
 func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 	for _, value := range []string{protocol.WorkloadMode, protocol.InputGenerator, protocol.OutputValidation} {
 		if !cleanCurveValue(value) {
-			return fmt.Errorf("curve-family %s protocol is incomplete", mode)
+			return fmt.Errorf("curve plan %s protocol is incomplete", mode)
 		}
 	}
 	if protocol.WarmupIterations < 0 || protocol.SettlingDurationSeconds < 0 ||
@@ -309,7 +308,7 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 		!cleanCurveValue(protocol.MetricObserverImage) ||
 		!cleanCurveValue(protocol.WorkloadObserverImage) ||
 		!cleanCurveValue(protocol.WorkloadSchemaVersion) {
-		return fmt.Errorf("curve-family %s protocol is invalid", mode)
+		return fmt.Errorf("curve plan %s protocol is invalid", mode)
 	}
 	return nil
 }
@@ -322,12 +321,12 @@ func validateCurveConversion(conversion CurveConversionContract) error {
 			continue
 		}
 		if !cleanCurveValue(value) {
-			return errors.New("curve-family conversion contract is invalid")
+			return errors.New("curve plan conversion contract is invalid")
 		}
 		present++
 	}
 	if present != 0 && present != len(values) {
-		return errors.New("curve-family conversion contract must be all empty or all present")
+		return errors.New("curve plan conversion contract must be all empty or all present")
 	}
 	return nil
 }
@@ -336,7 +335,7 @@ func cleanCurveValue(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
 }
 
-func cloneCurveFamilyShared(shared CurveFamilySharedContract) CurveFamilySharedContract {
+func cloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
 	shared.Tensor.InputSampleShape = append([]int(nil), shared.Tensor.InputSampleShape...)
 	return shared

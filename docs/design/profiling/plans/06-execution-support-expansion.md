@@ -13,8 +13,8 @@ have reached L4. ADR 0016 governs current declared-batch-size artifacts as one
 execution state with one exact idle baseline. The historical batch-one artifact
 was regenerated, and both historical rows have aligned three-active plus
 three-idle L3 evidence under one conversion recipe, catalog snapshot, runtime,
-and helper-image set. The pure Plan 5a family/stop campaign then produced 12 new
-post-freeze Accepted Runs, selected batch one, and recorded the next unavailable
+and helper-image set. The pure Plan 5a curve-plan/stop campaign then produced 12 new
+post-recording Accepted Runs, selected batch one, and recorded the next unavailable
 size as the batch-three capability boundary of those historical artifacts. This
 closes P7 while preserving the earlier diagnostic Runs at their recorded level.
 A read-only NVPModel audit now matches every mode on the three Ready
@@ -64,7 +64,7 @@ read time; do not copy them into design Markdown.
 | `L1 Compatible` | The exact artifact and trusted runtime-image declaration evaluate `Compatible` for the class. |
 | `L2 Executable` | A production `ProfilingRun` Job succeeds on the exact Node, runtime path, and power mode. |
 | `L3 Measurement-ready` | Both active and model-loaded-idle evidence are durably reloaded, verified, and admitted. |
-| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one verified curve family under Plan 5 or 5a, with the shared artifact execution state retained exactly. |
+| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one verified curve plan under Plan 5 or 5a, with the shared artifact execution state retained exactly. |
 
 Levels are cumulative. Catalog presence, standalone smoke tests, and successful
 Jobs without admitted active and idle evidence do not promote a row beyond the
@@ -76,9 +76,9 @@ corresponding level.
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
-| completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| active | AGX Orin CPU ORT / MODE_50W | L3 | Execute the pre-frozen Plan 5 `1..2` campaign with batch 3 outside the declared method domain. |
-| completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and recorded the historical artifacts' next unavailable size at batch 3. |
+| completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before curve-plan composition. |
+| active | AGX Orin CPU ORT / MODE_50W | L3 | Execute the recorded Plan 5 `1..2` campaign with batch 3 outside the declared method domain. |
+| completed | RKNNLite model and batch expansion | L4 | Post-recording Plan 5a campaign selected batch 1 and recorded the historical artifacts' next unavailable size at batch 3. |
 
 ## Stable decisions
 
@@ -417,21 +417,21 @@ Entry condition: the owning execution path reaches L3 for
   stable execution state and record that row independently at L3.
 - [x] Keep the batch-one and batch-two rows separate; do not promote the class,
   runtime, model family, or a multi-batch curve from either row alone.
-- [x] Preserve exact execution-state identity and define a pre-frozen
-  `CurveFamilyName`, a Loader-verified `CurveFamily`, and idle
+- [x] Preserve exact execution-state identity and define a recorded
+  `CurvePlanName`, a Loader-verified `VerifiedCurvePlan`, and idle
   baselines keyed by the historical artifact states. ADR 0016 governs current
   declared-batch-size artifact capability; Plans 5 and 5a own its consumers.
 - [x] Reconvert batch one with the current repository recipe, freeze batch one
   and batch two under one catalog/image generation, and admit three active plus
   three model-loaded-idle Runs for each historical artifact state.
-- [x] Implement Plan 5a discovery over the verified family and use Plan 5 only
+- [x] Implement Plan 5a discovery over the verified curve plan and use Plan 5 only
   for confirmatory L4 claims.
-- [x] Execute the pre-frozen campaign, retain and re-verify all 12 active/idle
+- [x] Execute the recorded campaign, retain and re-verify all 12 active/idle
   Runs, and record the selected batch and the typed boundary of the historical
   artifacts used by that campaign.
 
 Completion: the two exact Orange Pi RKNN measurements compose as one
-Loader-verified Plan 5a historical family and retain their L4 result. New RKNN
+Loader-verified Plan 5a historical curve plan and retain their L4 result. New RKNN
 campaigns use one declared-batch-size artifact, one state key, and one idle baseline.
 
 ## Common completion gate

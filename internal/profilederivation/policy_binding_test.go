@@ -133,8 +133,8 @@ func testPolicyBoundTwoPassCurve(
 	mutatePolicy func(*DiscoveryDerivationPolicySpec),
 ) (Curve, DiscoveryDerivationPolicy) {
 	t.Helper()
-	contract, family := testVerifiedFamily(t, len(discoveryMeans))
-	spec := testDiscoveryDerivationPolicySpecForFamily(contract.Shared().Name)
+	contract, plan := testVerifiedCurvePlan(t, len(discoveryMeans))
+	spec := testDiscoveryDerivationPolicySpecForPlan(contract.Shared().Name)
 	if mutatePolicy != nil {
 		mutatePolicy(&spec)
 	}
@@ -150,18 +150,18 @@ func testPolicyBoundTwoPassCurve(
 	if err != nil {
 		t.Fatal(err)
 	}
-	baselines := testFamilyBaselines(t, family)
+	baselines := testCurveBaselines(t, plan)
 	for state, baseline := range baselines {
 		baseline.PolicyVersion = idlePolicy.Version
 		baselines[state] = baseline
 	}
-	passes := []Pass{testPass(t, family, discoveryMeans, "discovery")}
+	passes := []Pass{testPass(t, plan, discoveryMeans, "discovery")}
 	if confirmationMeans != nil {
 		passes = append(passes, testConfirmatoryPass(
-			t, family, 3, confirmationMeans, "confirmation", confirmatoryTrials, 0,
+			t, plan, 3, confirmationMeans, "confirmation", confirmatoryTrials, 0,
 		))
 	}
-	curve, err := DeriveCurve(passes, family, baselines, activePolicy)
+	curve, err := DeriveCurve(passes, plan, baselines, activePolicy)
 	if err != nil {
 		t.Fatal(err)
 	}

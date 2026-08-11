@@ -62,7 +62,7 @@ func TestBSatConfirmatoryGoldenOutcomes(t *testing.T) {
 	}
 }
 
-func TestContiguousConfirmatoryFamilyStillSizesAndDerives(t *testing.T) {
+func TestContiguousConfirmatoryCurvePlanStillSizesAndDerives(t *testing.T) {
 	policy := testBSatPolicy()
 	curve := testTwoPassCurve(t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, 0)
 	discovery, err := curve.discoveryOnly()
@@ -158,13 +158,13 @@ func testTwoPassCurve(
 	deviation float64,
 ) Curve {
 	t.Helper()
-	_, family := testVerifiedFamily(t, len(discoveryMeans))
-	discovery := testPass(t, family, discoveryMeans, "discovery")
+	_, plan := testVerifiedCurvePlan(t, len(discoveryMeans))
+	discovery := testPass(t, plan, discoveryMeans, "discovery")
 	confirmation := testConfirmatoryPass(
-		t, family, 3, confirmationMeans, "confirmation", confirmatoryTrials, deviation,
+		t, plan, 3, confirmationMeans, "confirmation", confirmatoryTrials, deviation,
 	)
 	curve, err := DeriveCurve(
-		[]Pass{discovery, confirmation}, family, testFamilyBaselines(t, family), pointPolicy("point"),
+		[]Pass{discovery, confirmation}, plan, testCurveBaselines(t, plan), pointPolicy("point"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func testTwoPassCurve(
 
 func testConfirmatoryPass(
 	t *testing.T,
-	family CurveFamily,
+	plan VerifiedCurvePlan,
 	startBatch int,
 	means []float64,
 	idPrefix string,
@@ -182,7 +182,7 @@ func testConfirmatoryPass(
 	deviation float64,
 ) Pass {
 	t.Helper()
-	state := family.state
+	state := plan.state
 	pass := Pass{Role: PassConfirmatory}
 	for index, mean := range means {
 		batch := startBatch + index

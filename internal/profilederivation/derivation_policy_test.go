@@ -52,7 +52,7 @@ func TestDiscoveryDerivationPolicyCanonicalRoundTrip(t *testing.T) {
 		bsat.Version == "" || bsat.KMax != 4 ||
 		bsat.MinimumPointTrials != 3 || bsat.FamilyWiseAlpha != 0.05 ||
 		decoded.Name() != "e1-batch-saturation" ||
-		decoded.CurveFamilyName() != spec.CurveFamilyName {
+		decoded.CurvePlanName() != spec.CurvePlanName {
 		t.Fatalf("decoded policy lost configured semantics: %+v %+v %+v", idle, active, bsat)
 	}
 }
@@ -72,7 +72,7 @@ func TestDiscoveryDerivationPolicyRejectsInvalidFiles(t *testing.T) {
 		"wrong schema": bytes.Replace(
 			canonical,
 			[]byte(DiscoveryDerivationPolicySchemaVersion),
-			[]byte("chill.dacs.io/discovery-derivation-policy.v9"),
+			[]byte("chill.dacs.io/discovery-derivation-policy.v1alpha3"),
 			1,
 		),
 	}
@@ -104,7 +104,7 @@ func TestFreezeDiscoveryDerivationPolicyRejectsInvalidSemantics(t *testing.T) {
 			spec.PointPolicies[1].MinimumTrials = 4
 		},
 		"invalid curve name": func(spec *DiscoveryDerivationPolicySpec) {
-			spec.CurveFamilyName = " has-whitespace"
+			spec.CurvePlanName = " has-whitespace"
 		},
 		"invalid bsat": func(spec *DiscoveryDerivationPolicySpec) {
 			spec.BatchSaturation.KMax = 1
@@ -145,8 +145,8 @@ func TestDiscoveryDerivationPolicyOwnsInputCopies(t *testing.T) {
 }
 
 func TestFrozenDerivationTypesRejectZeroValues(t *testing.T) {
-	if _, err := (CurveFamilyContract{}).CanonicalJSON(); err == nil {
-		t.Fatal("expected zero curve-family contract rejection")
+	if _, err := (CurvePlan{}).CanonicalJSON(); err == nil {
+		t.Fatal("expected zero curve-plan rejection")
 	}
 	if _, err := (DiscoveryDerivationPolicy{}).BSatPolicy(); err == nil {
 		t.Fatal("expected zero discovery policy rejection")
@@ -158,14 +158,14 @@ func TestFrozenDerivationTypesRejectZeroValues(t *testing.T) {
 
 func testDiscoveryDerivationPolicySpec(t *testing.T) DiscoveryDerivationPolicySpec {
 	t.Helper()
-	contract, _ := testVerifiedFamily(t, 4)
-	return testDiscoveryDerivationPolicySpecForFamily(contract.Shared().Name)
+	contract, _ := testVerifiedCurvePlan(t, 4)
+	return testDiscoveryDerivationPolicySpecForPlan(contract.Shared().Name)
 }
 
-func testDiscoveryDerivationPolicySpecForFamily(familyName string) DiscoveryDerivationPolicySpec {
+func testDiscoveryDerivationPolicySpecForPlan(planName string) DiscoveryDerivationPolicySpec {
 	return DiscoveryDerivationPolicySpec{
 		Name:                 "e1-batch-saturation",
-		CurveFamilyName:      familyName,
+		CurvePlanName:        planName,
 		PointConfidenceLevel: 0.95,
 		PointPolicies: []PointPolicyEntry{
 			{Name: "idle-baseline", Stage: PointPolicyStageIdleBaseline, MinimumTrials: 3},

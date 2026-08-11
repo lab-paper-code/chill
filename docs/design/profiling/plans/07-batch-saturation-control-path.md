@@ -90,8 +90,8 @@ Parent names are bounded at 200 characters so generated child names stay within
 
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) requires the
 control path to resolve the selected artifact's declared `DeclaredBatchSizes` at
-intent freeze. One artifact and execution path serve the resulting frozen
-planned batch size set. Later decisions consume only that frozen set.
+intent freeze. One artifact and execution path serve the batch sizes recorded in
+the resulting curve plan. Later decisions consume only that recorded plan.
 
 ### Status is not authority
 
@@ -146,8 +146,9 @@ type Plan struct {
 `Decide` resolves in order: a live Run yields `Wait`; an unfinished trial within
 `RetryLimit` yields a retry at the same batch with the next attempt number;
 exceeding the limit yields a typed failure; otherwise the method is asked what
-to measure next. `Snapshot` and `Observed` both carry the frozen planned batch size
-set. A gap inside that set is skipped by advancing to the next declared batch size.
+to measure next. `Snapshot` and `Observed` both carry the batch sizes recorded in
+the curve plan. A gap inside that set is skipped by advancing to the next declared
+batch size.
 
 `Plan` receives admitted trials only. A method has no way to see a failed,
 pending, or retried attempt, so preferring one measurement over another on the
@@ -159,7 +160,7 @@ neither `Decide` nor the controller changes.
 
 | Method name | Calls | Owns |
 |---|---|---|
-| `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk through the frozen set, including sparse sets, and stop rule |
+| `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk through the batch sizes recorded in the curve plan, including sparse sets, and stop rule |
 | `two-pass-confirmatory` | `DeriveBSatDiscovery`, sizing, `DeriveBSatConfirmatory` | Plan 5 discovery, consecutive candidate-to-`KMax` sizing, confirmation |
 
 Both call existing pure functions in `internal/profilederivation`. This plan
@@ -173,9 +174,9 @@ count the same thing.
 
 ```text
 Reconcile(BatchSaturation):
-  1. resolve and freeze the artifact family and planned batch size set
+  1. resolve the artifact facts and call NewCurvePlan
   2. list owned ProfilingRun objects; verify each ownerRef UID
-  3. project spec, frozen planned batch size set, and Runs into a pure Snapshot
+  3. project spec, recorded curve plan, and Runs into a pure Snapshot
   4. Decide(snapshot)
   5. execute: CreateRun | Wait | Finish | Fail
   6. update status as derived display
@@ -208,7 +209,7 @@ The controller composes `MeasurementStateSpec` from the parent with the batch,
 workload mode, and the matching protocol block. Idle Runs receive
 `warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
 One model-loaded-idle baseline is planned for the artifact state, using the
-first declared batch. Active Runs advance through the frozen planned batch size set.
+first declared batch. Active Runs advance through the batch sizes recorded in the curve plan.
 The existing union CEL rule on `ProfilingRunSpec` validates the assembled
 object, so a mis-assembled Run is rejected by the API server rather than
 trusted.
@@ -219,7 +220,7 @@ trusted.
 
 | Kind | Handling |
 |---|---|
-| Frozen planned batch size set exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
+| Curve plan batch sizes exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
 | A created Run fails, including a declared batch size absent from the built artifact | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
 
 One terminal-failure classification covers created-Run failures. A misconfigured
@@ -237,7 +238,7 @@ correctness.
 
 | Excluded | Why it is safe |
 |---|---|
-| Pre-checking environment identity per trial | `VerifyCurveFamily` catches drift at derivation. Pre-checking only saves Runs that would be discarded anyway |
+| Pre-checking environment identity per trial | `VerifyCurvePlan` catches drift at derivation. Pre-checking only saves Runs that would be discarded anyway |
 | No-progress timeout | A stalled measurement is visible and can be deleted |
 | Deletion finalizer | A measurement is not deleted while running. If it is, the Node power mode is restored by hand |
 
@@ -246,10 +247,10 @@ None of these changes the `Decide` signature when added later.
 ## Evidence store layout
 
 ```text
-profiling-runs/<run-uid>/raw.json          unchanged
-profiling-runs/<run-uid>/execution.json    unchanged
-batch-saturations/<uid>/family.json        resolved family contract
-batch-saturations/<uid>/result.json        derived result
+profiling-runs/<run-uid>/raw.json           unchanged
+profiling-runs/<run-uid>/execution.json     unchanged
+batch-saturations/<uid>/curve-plan.json     recorded curve plan
+batch-saturations/<uid>/result.json         derived result
 ```
 
 The aggregate layer writes nothing under `profiling-runs/`. `result.json` holds
@@ -257,8 +258,8 @@ facts derived at this layer plus references to the input Runs; it never copies a
 measured value, so each measurement exists in exactly one place. Excluded trials
 are listed by reference with their exclusion reason.
 
-`family.json` is the output of `FreezeCurveFamilyContract` and records the one
-artifact execution state plus its frozen planned batch size set, written before the
+`curve-plan.json` is the output of `NewCurvePlan` and records the one
+artifact execution state plus its planned batch sizes, written before the
 first Run. This mirrors the Run's own `spec` to intent record to evidence
 progression.
 

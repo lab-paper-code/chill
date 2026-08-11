@@ -83,21 +83,21 @@ func TestBSatConfirmatorySizingRejectsCandidateAndNumericDrift(t *testing.T) {
 	}
 }
 
-func TestBSatConfirmatorySizingRejectsSparseEligibleSpan(t *testing.T) {
-	shared := validSharedContract()
+func TestBSatConfirmatorySizingRejectsSparsePlannedBatchSizeSpan(t *testing.T) {
+	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{1, 2, 4, 8}
-	contract, err := FreezeCurveFamilyContract(shared)
+	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	plan, err := VerifyCurvePlan(contract, testVerifiedState(contract))
 	if err != nil {
 		t.Fatal(err)
 	}
 	curve, err := DeriveCurve(
-		[]Pass{testPass(t, family, []float64{1, .97, .94, .90}, "sparse-sizing")},
-		family,
-		testFamilyBaselines(t, family),
+		[]Pass{testPass(t, plan, []float64{1, .97, .94, .90}, "sparse-sizing")},
+		plan,
+		testCurveBaselines(t, plan),
 		pointPolicy("sparse-sizing-point"),
 	)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestBSatConfirmatorySizingResolvesSparseCandidatePosition(t *testing.T) {
 	}
 }
 
-func TestBSatConfirmatorySizingUsesEligibleSetForDiscoveryBudget(t *testing.T) {
+func TestBSatConfirmatorySizingUsesPlannedBatchSizeSetForDiscoveryBudget(t *testing.T) {
 	curve := testSparseBelowCandidateDiscoveryCurve(t)
 	policy := testBSatPolicy()
 	policy.KMax = 6
@@ -203,8 +203,8 @@ func TestProjectedContrastPreservesSharedBaselineCancellation(t *testing.T) {
 
 func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64) Curve {
 	t.Helper()
-	_, family := testVerifiedFamily(t, len(means))
-	pass := testPass(t, family, means, "variable")
+	_, plan := testVerifiedCurvePlan(t, len(means))
+	pass := testPass(t, plan, means, "variable")
 	offsets := []float64{-deviation, 0, deviation}
 	for batchIndex := range pass.Batches {
 		for trialIndex := range pass.Batches[batchIndex].Runs {
@@ -213,7 +213,7 @@ func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64
 		}
 	}
 	curve, err := DeriveCurve(
-		[]Pass{pass}, family, testFamilyBaselines(t, family), pointPolicy("variable-point"),
+		[]Pass{pass}, plan, testCurveBaselines(t, plan), pointPolicy("variable-point"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -223,20 +223,20 @@ func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64
 
 func testSparseBelowCandidateDiscoveryCurve(t *testing.T) Curve {
 	t.Helper()
-	shared := validSharedContract()
+	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{1, 2, 4, 5, 6}
-	contract, err := FreezeCurveFamilyContract(shared)
+	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	plan, err := VerifyCurvePlan(contract, testVerifiedState(contract))
 	if err != nil {
 		t.Fatal(err)
 	}
 	curve, err := DeriveCurve(
-		[]Pass{testPass(t, family, []float64{1, .97, .94, .93, .92}, "sparse-below-candidate")},
-		family,
-		testFamilyBaselines(t, family),
+		[]Pass{testPass(t, plan, []float64{1, .97, .94, .93, .92}, "sparse-below-candidate")},
+		plan,
+		testCurveBaselines(t, plan),
 		pointPolicy("sparse-below-candidate-point"),
 	)
 	if err != nil {

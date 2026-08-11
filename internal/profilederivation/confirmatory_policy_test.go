@@ -30,7 +30,7 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.CurveFamilyName() != discovery.CurveFamilyName() ||
+	if decoded.CurvePlanName() != discovery.CurvePlanName() ||
 		decoded.CandidateBatch() != 3 || decoded.ConfirmatoryTrials() == nil ||
 		*decoded.ConfirmatoryTrials() != 3 ||
 		!slices.Equal(decoded.ConfirmatoryBatchSizes(), []int{3, 4}) ||
@@ -39,9 +39,9 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	}
 }
 
-func TestFreezeConfirmatoryDerivationPolicyAcceptsSparseFamilyBudget(t *testing.T) {
+func TestFreezeConfirmatoryDerivationPolicyAcceptsSparseBatchSizeBudget(t *testing.T) {
 	curve := testSparseBelowCandidateDiscoveryCurve(t)
-	spec := testDiscoveryDerivationPolicySpecForFamily(curve.FamilyName())
+	spec := testDiscoveryDerivationPolicySpecForPlan(curve.PlanName())
 	spec.PointPolicies[0].Name = "idle-point-v1"
 	spec.PointPolicies[1].Name = "sparse-below-candidate-point"
 	spec.BatchSaturation.KMax = 6
@@ -56,11 +56,11 @@ func TestFreezeConfirmatoryDerivationPolicyAcceptsSparseFamilyBudget(t *testing.
 	}
 	if sizing.ConfirmatoryTrials == nil || *sizing.ConfirmatoryTrials != 3 ||
 		sizing.ProjectedTotalActiveRuns == nil || *sizing.ProjectedTotalActiveRuns != 24 {
-		t.Fatalf("unexpected sparse-family sizing: %+v", sizing)
+		t.Fatalf("unexpected sparse-plan sizing: %+v", sizing)
 	}
 
 	if _, err := FreezeConfirmatoryDerivationPolicy(discovery, sizing); err != nil {
-		t.Fatalf("freeze sparse-family confirmatory policy: %v", err)
+		t.Fatalf("freeze sparse-plan confirmatory policy: %v", err)
 	}
 }
 
@@ -77,6 +77,7 @@ func TestConfirmatoryDerivationPolicyRejectsDrift(t *testing.T) {
 	tests := map[string][]byte{
 		"unknown field":    []byte(strings.Replace(string(canonical), `"confirmation":`, `"unknown":1,"confirmation":`, 1)),
 		"trailing value":   append(append([]byte(nil), canonical...), []byte(` []`)...),
+		"previous schema":  []byte(strings.Replace(string(canonical), ConfirmatoryDerivationPolicySchemaVersion, "chill.dacs.io/confirmatory-derivation-policy.v1alpha4", 1)),
 		"scientific field": []byte(strings.Replace(string(canonical), `"kmax":4`, `"kmax":5`, 1)),
 		"candidate":        []byte(strings.Replace(string(canonical), `"candidateBatch":3`, `"candidateBatch":2`, 1)),
 		"trial count":      []byte(strings.Replace(string(canonical), `"confirmatoryTrials":3`, `"confirmatoryTrials":4`, 1)),
@@ -118,7 +119,7 @@ func TestFreezeConfirmatoryDerivationPolicyRetainsBudgetInsufficientSizing(t *te
 func testSizedDiscoveryPolicy(t *testing.T) (DiscoveryDerivationPolicy, BSatSizingResult) {
 	t.Helper()
 	curve := testDiscoveryCurve(t, []float64{1, .97, .94, .90})
-	spec := testDiscoveryDerivationPolicySpecForFamily(curve.FamilyName())
+	spec := testDiscoveryDerivationPolicySpecForPlan(curve.PlanName())
 	discovery, err := FreezeDiscoveryDerivationPolicy(spec)
 	if err != nil {
 		t.Fatal(err)

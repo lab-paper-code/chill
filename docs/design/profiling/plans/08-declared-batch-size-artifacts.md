@@ -119,7 +119,7 @@ unrepresentable. Five checks lose their subject:
 | `internal/profilingrun/candidate.go:447` | same |
 | `internal/profiler/worker/rknn_lite.go:210-211` | same |
 | `runtime/rknnlite/runner.py:397-398` | same |
-| `internal/profilederivation/curve_family.go:339` | per-member tensor contract is gone |
+| `internal/profilederivation/curve_plan.go:339` | per-batch tensor contract is gone |
 
 Each compared two catalog declarations against each other, leaving execution
 unobserved. Two checks that observe execution remain, and they are stronger than
@@ -149,55 +149,54 @@ re-validate it downstream" — by removing a standing violation of that rule.
 
 ## Derivation collapse
 
-With one artifact per family, a "member" has nothing batch-varying left to hold.
-`CurveFamilyMemberContract`'s seven fields resolve to: four now shared
+With one artifact covering the whole curve plan, the former per-batch record has
+nothing batch-varying left to hold. Its seven fields resolve to: four now shared
 (`ExecutionPath`, `ArtifactName`, `ArtifactPath`, `ArtifactImage`), two derived
 (`FixedBatchCapability`, `InputShape`), one remaining (`Batch`).
 
-Deleted from `internal/profilederivation/curve_family.go`:
-`CurveFamilyMemberContract`, `VerifiedCurveFamilyMember`, `CurveFamily.members`,
-`validateCurveFamilyMember`, `cloneCurveFamilyMembers`,
-`cloneVerifiedCurveFamilyMember(s)`, the N:N contract match in
-`VerifyCurveFamily`, and `CurveConversionContract.Derived`. Conversion
-provenance (`Tool`, `ToolVersion`, `TargetPlatform`) is retained, and a family
-whose artifact went through no converter leaves all three empty together.
+Deleted from `internal/profilederivation/curve_plan.go`:
+the per-batch contract and verified-record types, their array, validation and
+clone helpers, the N:N contract match in `VerifyCurvePlan`, and
+`CurveConversionContract.Derived`. Conversion provenance (`Tool`, `ToolVersion`,
+`TargetPlatform`) is retained, and a plan whose artifact went through no
+converter leaves all three empty together.
 
-`CurveFamilySharedContract` absorbs the four artifact-identity fields and gains
-`PlannedBatchSizes []int`. The hand-written members array becomes one integer
-array. `internal/profiler/admission/curve_family.go` shrinks in proportion.
+`CurvePlanSpec` absorbs the four artifact-identity fields and gains
+`PlannedBatchSizes []int`. The hand-written per-batch array becomes one integer
+array. `internal/profiler/admission/curve_plan.go` shrinks in proportion.
 
-`VerifyCurveFamily` keeps its guard on the four derivation identities. It is the
-boundary that mints a `CurveFamily`, so a blank state, environment, active
+`VerifyCurvePlan` keeps its guard on the four derivation identities. It is the
+boundary that mints a `VerifiedCurvePlan`, so a blank state, environment, active
 protocol, or idle protocol identity is rejected there.
 
-The `CurveFamily` names are kept. They still read correctly as the family of
-measurements composing one curve, and renaming them would be churn across
-admission, derivation, documents, and tests. What is retired is the
-fixed-artifact premise, retired by deleting ADR 0014.
+The boundary is named `CurvePlanSpec -> NewCurvePlan -> CurvePlan ->
+VerifyCurvePlan -> VerifiedCurvePlan -> DeriveCurve -> Curve`, matching the
+measurement pipeline it implements. The fixed-artifact premise is retired by
+deleting ADR 0014.
 
-ADR 0014 required one admitted idle baseline per fixed-batch member state and
+ADR 0014 required one admitted idle baseline per fixed-batch artifact state and
 recorded that a dynamic-batch artifact keeps one baseline. One artifact means
 one state key, so `internal/batchsaturation/sequential.go:56` keeps planning a
 single baseline. It takes the first declared batch, so the baseline Run carries
 a batch the artifact declares.
 
-## Capability boundary: source, freeze, and failure
+## Capability boundary: source, recording, and failure
 
 The boundary moves from post-hoc inference to pre-Run resolution:
 
 ```text
 first reconcile   resolve ModelSpec.DeclaredBatchSizes
-                  freeze CurveFamilySharedContract, including PlannedBatchSizes
-                  write it to the evidence store
-later reconciles  read the frozen record, which is now the authority
+                  call NewCurvePlan with PlannedBatchSizes
+                  write curve-plan.json to the evidence store
+later reconciles  read the recorded plan, which is now the authority
 ```
 
 The declared batch size set may be sparse. Which sizes an artifact carries is a
 measurement decision that belongs in configuration, and a campaign is free to
 declare a set that skips sizes it has no interest in.
 
-Family freeze orders the declared set by strictly increasing batch value. The
-sweep advances through that frozen sequence, and the capability boundary is
+`NewCurvePlan` sorts and validates `PlannedBatchSizes`. The sweep advances
+through the recorded sequence, and the capability boundary is
 reaching its end. A gap inside the set is a size the operator chose to skip, and
 the sweep steps over it.
 
@@ -258,7 +257,7 @@ pointers only, continuing the direction of `30d7f5b` and `e787336`.
 |---|---|---|
 | Conversion record | `model-artifacts/<modelSpec>/<artifact>/conversion.json` | first Run admission |
 | Device probe | `model-artifacts/<modelSpec>/<artifact>/device-probe.json` | first Run admission |
-| Frozen family contract | `batch-saturations/<uid>/family.json` | first reconcile |
+| Recorded curve plan | `batch-saturations/<uid>/curve-plan.json` | first reconcile |
 | BatchSaturation result | `batch-saturations/<uid>/result.json` | measurement end |
 | Run raw and execution evidence | `<uid>/raw`, `<uid>/execution` | unchanged |
 
@@ -308,12 +307,13 @@ The conversion record's shape changes accordingly:
 
 ## Schema versions and preserved evidence
 
-Removing `fixedBatch` from the artifact capability changes four wire contracts:
+Removing `fixedBatch` from the artifact capability and applying the subsequent
+curve-plan vocabulary update change four wire contracts:
 
 | Contract | From | To |
 |---|---|---|
 | `chill.dacs.io/modelcompat-report` | `v1alpha7` | `v1alpha8` |
-| `chill.dacs.io/curve-family-contract` | `v1alpha2` | `v1alpha3` |
+| `chill.dacs.io/curve-plan` | `v1alpha3` | `v1alpha4` |
 | `chill.dacs.io/rknnlite-runtime-request` | `v1alpha3` | `v1alpha4` |
 | `chill.dacs.io/rknn-conversion-record` | `v1alpha2` | `v1alpha3` |
 
@@ -333,9 +333,9 @@ premise under which it was obtained.
 
 **Code.** `FixedBatch` and `Shape` in `api/v1alpha1/modelspec_types.go:49-51,65`;
 `catalog_facts.go:143`; `candidate.go:82,326,445,447`;
-`worker/rknn_lite.go:210-211`; `runner.py:397-398`; the member machinery in
-`internal/profilederivation/curve_family.go` and its adapter in
-`internal/profiler/admission/curve_family.go`;
+`worker/rknn_lite.go:210-211`; `runner.py:397-398`; the per-batch machinery in
+`internal/profilederivation/curve_plan.go` and its adapter in
+`internal/profiler/admission/curve_plan.go`;
 `batchsaturation/controller/projection.go:13-15,82,91`;
 `batchsaturation/types.go:43`; `batchsaturation/lifecycle.go:25-31`;
 `export_rknn.py:17-30,41,58-59,79-83` and its tests at
@@ -359,7 +359,7 @@ Task 2 (the `BatchSaturation` API), Task 4 (`sequential-early-stop`), and Task 5
 loop; Task 6a loses only the three `capabilityReasonCode` sites.
 
 The blocked reconciler task becomes implementable and smaller: the method's
-capability plumbing disappears, and the frozen family write replaces it.
+capability plumbing disappears, and the `curve-plan.json` write replaces it.
 `batch-saturation-controller` gains `evidence-core` and `evidence-kube`
 dependencies, updated in `.go-arch-lint.yml` in the same change per `AGENTS.md`.
 No new production package is created.
@@ -371,7 +371,7 @@ needs no test because the compared values merge into one field. What remains:
 
 - Focused unit tests at changed sites only. The suite shrinks: the
   `set_fixed_batch` tests, the `CapabilityRejected` test at
-  `internal/batchsaturation/lifecycle_test.go:98`, the curve-family member
+  `internal/batchsaturation/lifecycle_test.go:98`, the per-batch curve-plan
   validation tests, and the candidate and worker `fixedBatch` tests are deleted;
   a `dynamic_input` construction test and a `PlannedBatchSizes` boundary test are
   added. No new test category appears.

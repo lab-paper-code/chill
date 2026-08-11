@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha4"
+const ConfirmatoryDerivationPolicySchemaVersion = "chill.dacs.io/confirmatory-derivation-policy.v1alpha5"
 
 type ConfirmatoryBatchAllocation struct {
 	Batch  int `json:"batch"`
@@ -115,8 +115,8 @@ func (p ConfirmatoryDerivationPolicy) CanonicalJSON() ([]byte, error) {
 
 func (p ConfirmatoryDerivationPolicy) Name() string { return p.record.Name }
 
-func (p ConfirmatoryDerivationPolicy) CurveFamilyName() string {
-	return p.record.CurveFamilyName
+func (p ConfirmatoryDerivationPolicy) CurvePlanName() string {
+	return p.record.CurvePlanName
 }
 
 func (p ConfirmatoryDerivationPolicy) CandidateBatch() int {

@@ -6,7 +6,8 @@ import (
 )
 
 // DeriveBSatDiscovery deterministically screens the discovery pass of one
-// exact-family Curve. It proposes a candidate but makes no confidence claim.
+// Curve bound to an exact verified plan. It proposes a candidate but makes no
+// confidence claim.
 func DeriveBSatDiscovery(
 	curve Curve,
 	policy DiscoveryDerivationPolicy,
@@ -19,15 +20,15 @@ func DeriveBSatDiscovery(
 }
 
 func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, error) {
-	if err := curve.family.requireVerified(); err != nil {
+	if err := curve.plan.requireVerified(); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
 	if err := validateBSatPolicy(policy); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
-	plannedBatchSizes := curve.family.contract.record.Shared.PlannedBatchSizes
+	plannedBatchSizes := curve.plan.recorded.record.Shared.PlannedBatchSizes
 	if len(plannedBatchSizes) < 2 || plannedBatchSizes[len(plannedBatchSizes)-1] != policy.KMax {
-		return BSatDiscoveryResult{}, errors.New("curve family does not match policy kmax")
+		return BSatDiscoveryResult{}, errors.New("curve plan does not match policy kmax")
 	}
 	if _, exists := curve.pass(PassConfirmatory); exists {
 		return BSatDiscoveryResult{}, errors.New("discovery screen accepts the discovery pass only")
@@ -42,7 +43,7 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		PolicyVersion: policy.Version, KMax: policy.KMax,
 		RelativeImprovementTolerance: policy.RelativeImprovementTolerance,
 		DiscoveryTrials:              policy.DiscoveryTrials,
-		CurveFamilyName:              curve.FamilyName(),
+		CurvePlanName:                curve.PlanName(),
 	}
 	for index, point := range discovery.points {
 		expectedBatch := plannedBatchSizes[index]

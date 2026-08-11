@@ -4,7 +4,7 @@
 
 ## Status
 
-Approved implementation plan. The reusable frozen-family, verified-family, and
+Approved implementation plan. The reusable recorded-plan, verified-state, and
 opaque exact-state curve boundaries are implemented under Plan 5a, and its live
 sequential result supplies one discovery candidate. They do not implement Plan
 5's joint estimator or statistical claim. The derivation path now retains each
@@ -40,8 +40,8 @@ change, cross-model pooling, or scheduler consumption.
 
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) defines one
 immutable artifact with a declared-batch-size set. Exact execution-state and
-protocol identities remain unchanged. An opaque curve owns one pre-frozen
-family contract, one Loader-verified family, and one admitted idle baseline for
+protocol identities remain unchanged. An opaque curve owns one recorded curve
+plan, one Loader-verified execution state, and one admitted idle baseline for
 the artifact's single state key.
 
 Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
@@ -53,7 +53,7 @@ exactly what that guarantees.
 ## Question
 
 > Under what predeclared rule does a set of Runs establish batch saturation for
-> one frozen curve family?
+> one recorded curve plan?
 
 ## What this plan does
 
@@ -62,7 +62,8 @@ point. Past that point, larger batches stop helping while still costing latency
 and memory. `b_sat` is the batch size at that point. This plan defines how a
 campaign of profiling Runs decides where it is.
 
-The whole procedure runs in two passes over the same frozen curve family.
+The whole procedure runs in two passes over the same curve plan and verified
+execution state.
 
 **Before anything runs**, two files are written and fixed. One is the derivation
 policy: how far up the batch domain we will measure, how much remaining
@@ -94,9 +95,10 @@ confirmation tests, on evidence discovery never saw.
 ### The batch domain
 
 The catalog supplies the artifact's planned batch size set contents before
-execution. Family freeze canonicalizes those contents into ascending order, and
-the discovery pass follows that sequence. `Kmax >= 2` is fixed before execution
-and must equal the largest planned batch size value. The profile set may be sparse.
+execution. `NewCurvePlan` sorts and validates `PlannedBatchSizes`, and the
+discovery pass follows that sequence. `Kmax >= 2` is fixed before execution and
+must equal the largest planned batch size value. The planned batch size set may
+be sparse.
 
 Plan 5's confirmatory estimand ranges over every integer batch above candidate
 `c` through `Kmax`. Confirmatory sizing therefore requires the planned batch size span
@@ -113,7 +115,7 @@ Choosing `Kmax` is a real trade-off, described under
 
 ### The quantity
 
-For an eligible candidate batch `c` below `Kmax`, look at every larger integer
+For a planned candidate batch `c` below `Kmax`, look at every larger integer
 batch through `Kmax` and ask how much better the best of them is, as a fraction:
 
 ```text
@@ -188,8 +190,8 @@ idle-baseline error. The allocation must cover every statement that could enter
 the result after that selection.
 
 For calibration, the implementation ranges over the full integer candidate
-superset `c in 1..Kmax-1`, including integers absent from a sparse declared
-profile set. That family contains
+superset `c in 1..Kmax-1`, including integers absent from a sparse planned batch
+size set. That family contains
 
 ```text
 S = sum_c (Kmax - c + 1)
@@ -265,7 +267,7 @@ return. The global allocation gives:
 
 The simulation checks the implemented marginal formulas at the smallest
 allowed trial count. The distinct-state row is retained estimator regression
-coverage; ADR 0016's current artifact family uses the shared-baseline rows. This
+coverage; ADR 0016's current curve plan uses the shared-baseline rows. This
 deterministic Gaussian working-model simulation is regression coverage of the
 implemented formulas. The union-bound derivation above supplies the proof of the
 simultaneous guarantee under the stated marginal model.
@@ -290,7 +292,7 @@ approximation.
 ### What an accepted result claims
 
 An accepted result says: *under the declared independent-Gaussian Run model, at
-an eligible candidate batch `c`, no later integer batch in `c+1..Kmax` improves
+a planned candidate batch `c`, no later integer batch in `c+1..Kmax` improves
 energy per item by more than `tau`, at the declared nominal confidence.*
 
 It does not say that `c` is the smallest batch for which that is true. The
@@ -315,7 +317,7 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 | the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
 | the point estimate plateaus but the bound is too wide | `CandidateOnly` |
 | an explicit capability boundary lies at or below `Kmax` | retained case `Censored: CapabilityBoundary` |
-| no eligible candidate below `Kmax` satisfies the rule | `Censored: NoSaturationObserved` |
+| no planned candidate below `Kmax` satisfies the rule | `Censored: NoSaturationObserved` |
 | `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
 | the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
 
@@ -324,7 +326,7 @@ reason is itself worth reporting. `Unavailable` means the inputs never allowed
 the question to be asked.
 
 `BSatCodeCapabilityBoundary` describes an explicit boundary at or below
-`Kmax`. The frozen-set boundary is derived as one greater than the largest
+`Kmax`. The curve-plan boundary is derived as one greater than the largest
 planned batch size, while `Kmax` equals that largest planned batch size value. A Run failure
 for a declared batch size follows the campaign's ordinary trial-failure path.
 
@@ -469,9 +471,9 @@ V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
 
 The observed `a` coefficients are conditioned-on design quantities. Active Run
 sets are independent. The distinct-state form remains a retained estimator
-branch. ADR 0016's current family construction gives every point the same
+branch. ADR 0016's current curve-plan construction gives every point the same
 baseline key, so the shared-state form is the one that applies to current
-declared-batch-size artifact families. Each projected variance uses
+declared-batch-size curve plans. Each projected variance uses
 Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
 components: prospective active components use `n-1`, and retained baseline
 components use their admitted degrees of freedom. With the global
@@ -558,22 +560,22 @@ key, and its curve owns one shared idle baseline.
 
 ### How it is guaranteed
 
-The curve family and curve are opaque types with one construction path:
+The verified curve plan and curve are opaque types with one construction path:
 
 ```text
 type Curve struct { /* unexported fields */ }
-type CurveFamily struct { /* unexported fields */ }
+type VerifiedCurvePlan struct { /* unexported fields */ }
 
 type Pass struct {
     Role    discovery | confirmatory
     Batches admitted trials of that pass, grouped by batch
 }
 
-FreezeCurveFamilyContract(shared contract with planned batch sizes)
-    (CurveFamilyContract, error)
-VerifyCurveFamily(contract CurveFamilyContract,
-                  verified frozen state) (CurveFamily, error)
-DeriveCurve(passes []Pass, family CurveFamily,
+NewCurvePlan(spec CurvePlanSpec)
+    (CurvePlan, error)
+VerifyCurvePlan(plan CurvePlan,
+                verified VerifiedCurveState) (VerifiedCurvePlan, error)
+DeriveCurve(passes []Pass, plan VerifiedCurvePlan,
             baselinesByState map[string]IdleBaseline,
             policy PointPolicy) (Curve, error)
 Curve.Points() []Point                      // copies, for reporting
@@ -581,29 +583,30 @@ DeriveBSatConfirmatory(curve Curve, candidate int,
                        policy ConfirmatoryDerivationPolicy) BSatResult
 ```
 
-`FreezeCurveFamilyContract` fixes ADR 0016's shared artifact contract and
-planned batch size set before measurement. `VerifyCurveFamily` compares
-Loader-verified frozen Run facts with that contract and binds their common
-observed environment before constructing the verified family. `DeriveCurve`
-resolves each trial to the frozen planned batch size sequence, selects the family's
-single baseline with the same `StateIdentity`, and
+`NewCurvePlan` records ADR 0016's shared artifact contract and sorts and
+validates `PlannedBatchSizes` before measurement. `VerifyCurvePlan` compares
+Loader-verified frozen Run facts with that plan and binds their common observed
+environment before constructing the verified plan. `DeriveCurve` resolves each
+trial to the batch sizes recorded in the curve plan, selects the plan's single
+baseline with the same `StateIdentity`, and
 performs the per-trial incremental step and per-batch aggregation internally.
 Since `Curve` has no exported fields and no other constructor, every point that
-reaches the decision boundary has the exact family state and baseline.
+reaches the decision boundary has the plan's verified execution state and exact
+baseline.
 `Points()` hands out copies for reporting, and those copies cannot re-enter the
 decision.
 
 Both passes go into the same call:
 
 ```text
-discoveryCurve = DeriveCurve([discovery], family, baselinesByState,
+discoveryCurve = DeriveCurve([discovery], plan, baselinesByState,
                              discoveryPolicy.PointPolicy(incremental-point))
 candidate      = DeriveBSatDiscovery(discoveryCurve, discoveryPolicy)
 sizing         = DeriveBSatConfirmatorySizing(discoveryCurve, candidate,
                                                discoveryPolicy)
 confirmPolicy  = FreezeConfirmatoryDerivationPolicy(discoveryPolicy, sizing)
 
-campaignCurve  = DeriveCurve([discovery, confirmatory], family,
+campaignCurve  = DeriveCurve([discovery, confirmatory], plan,
                              baselinesByState,
                              discoveryPolicy.PointPolicy(incremental-point))
 result         = DeriveBSatConfirmatory(campaignCurve, candidate, confirmPolicy)
@@ -618,7 +621,7 @@ A single-pass curve cannot hold them together.
 the discovery/confirmatory separation mechanical, reusing the trial-uniqueness
 check that aggregation already applies within a batch.
 
-The constructor requires exactly one baseline keyed by the family's state and
+The constructor requires exactly one baseline keyed by the plan's state and
 rejects a state or environment mismatch or a different baseline object between
 passes.
 
@@ -694,10 +697,10 @@ versions so each remains reproducible. The rebuilt interval is
 
 ### Discovery
 
-Discovery measures every batch in the frozen planned batch size sequence at `n_disc`
-trials and proposes the smallest eligible `c < Kmax` whose point estimate
+Discovery measures every batch recorded in the curve plan at `n_disc` trials
+and proposes the smallest planned `c < Kmax` whose point estimate
 satisfies `R_c_hat <= tau`, using the `tau` already fixed in the discovery
-policy version. `Kmax` remains in every eligible candidate's comparison set and
+policy version. `Kmax` remains in every candidate's comparison set and
 is the largest planned batch size value.
 
 ```text
@@ -706,7 +709,7 @@ DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
 ```
 
 The implemented screen accepts only an opaque discovery-only `Curve`, requires
-the largest batch of its frozen family to equal policy `Kmax`, and checks
+the largest batch recorded in its curve plan to equal policy `Kmax`, and checks
 exactly `n_disc` independent trials at every planned batch size. The retained typed
 capability-boundary case describes an explicit boundary at or below `Kmax`;
 silent truncation is an invalid input.
@@ -732,7 +735,7 @@ evidence is what the two-pass split exists to prevent.
 
 The implemented boundary internally reconstructs a discovery-only view of the
 opaque two-pass `Curve`, rechecks the candidate and sizing allocation, verifies
-the curve-family contract and both stage-scoped point-policy versions, requires
+the recorded curve plan and both stage-scoped point-policy versions, requires
 exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
 lower bound and every contrast upper bound at the frozen global-`H` quantile.
 `DeriveBSatConfirmatorySizing` first verifies that every integer batch in
@@ -740,14 +743,14 @@ lower bound and every contrast upper bound at the frozen global-`H` quantile.
 span is sparse.
 Its result retains both pass point sets, all exact-state idle baselines, bounds
 for every later batch, estimator and sizing versions, both policy names, and
-the family contract and realized identities. A later measured improvement above
+the curve plan and verified execution-state identities. A later measured improvement above
 tolerance returns `CandidateOnly: DomainNoImprovementNotConfirmed`; there is no
 `Ambiguous` outcome in the Plan 5 boundary. A budget-insufficient sizing outcome
 is frozen as a confirmatory policy without a Run allocation, so its typed final
 result also retains both policy names without pretending confirmation ran.
 
 Confirmation still validates that the discovery pass starts at the first
-planned batch size. Candidate search therefore includes every earlier eligible
+planned batch size. Candidate search therefore includes every earlier planned
 batch below `c`. Those earlier batches need no re-measurement in the
 confirmatory pass unless the candidate search is repeated.
 
@@ -756,7 +759,7 @@ confirmatory pass unless the candidate search is repeated.
 A fixed table based on one batch's coefficient of variation would discard the
 exact-state baseline floor, shared-baseline covariance, candidate-dependent
 number of statements, and per-batch active variance. The sizing method therefore
-evaluates every integer `n` against the frozen family and discovery sufficient
+evaluates every integer `n` against the recorded curve plan and discovery sufficient
 statistics. A concrete campaign policy records only the cap and budget; its
 post-discovery policy records the resulting `n_conf` before confirmation starts.
 
@@ -772,11 +775,11 @@ What the code guarantees, and what a reader has to check:
 
 | Guarantee | Mechanism |
 |---|---|
-| every point belongs to the frozen family and uses its exact-state idle baseline | opaque `CurveFamily` and `Curve`; `DeriveCurve` takes the family and baseline map |
+| every point uses a batch size listed in the curve plan and matches the plan's verified execution-state identities | opaque `VerifiedCurvePlan` and `Curve`; `DeriveCurve` takes the plan and baseline map |
 | a hand-assembled `Point` cannot reach the decision | `DeriveBSatConfirmatory` accepts `Curve`, not `[]Point` |
 | discovery and confirmatory evidence do not overlap | `DeriveCurve` rejects a `TrialID` present in more than one pass |
 | the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
-| a published number identifies its planned and realized family and rule | curve-family name, observed environment, and both policy names recorded in the result |
+| a published number identifies its curve plan, verified execution state, and rule | curve plan name, observed environment, and both policy names recorded in the result |
 | the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
 | every eligible trial was included | **enumerate the campaign's frozen Run-name prefix and compare the admitted set with the derivation input — read, not enforced** |
 
@@ -814,7 +817,7 @@ import no Kubernetes, CHILL API, controller-runtime, or transport package.
 - any intent schema change
 - machine-enforced campaign assignment or eligible-population closure
 - a per-pass baseline change for the same state, inferred per-engine idle
-  equivalence, or comparison across two curve-family identities
+  equivalence, or comparison across two curve-plan identities
 - confirming at confidence that the accepted batch is the smallest one
 - batch selection outside the campaign record's generating rule
 - a doubling or otherwise non-consecutive batch sweep
@@ -845,14 +848,14 @@ Plan 5 is complete when:
   through a separate outcome;
 - `Curve` has no exported field and no constructor besides `DeriveCurve`, so a
   hand-assembled `Point` cannot reach `DeriveBSatConfirmatory` and no curve mixes
-  curve families or mismatches a point with its exact-state baseline;
-- family freezing and verification reject drift in the shared artifact,
-  execution-path, eligible-batch, tensor, and execution-state facts fixed by
+  curve plans or mismatches a point with its exact-state baseline;
+- `NewCurvePlan` and `VerifyCurvePlan` reject drift in the shared artifact,
+  execution-path, planned-batch-size, tensor, and execution-state facts fixed by
   ADR 0016;
 - `DeriveCurve` rejects a `TrialID` appearing in more than one pass;
 - `DeriveBSatConfirmatory` rejects a candidate its curve does not span;
 - confirmatory sizing rejects a gap from the candidate through `Kmax`;
-- discovery and confirmation reject `Kmax < 2` and require an eligible candidate
+- discovery and confirmation reject `Kmax < 2` and require a planned candidate
   below `Kmax`, so the accepted result always has at least one larger witness
   batch;
 - the rebuilt estimator reproduces the live batch-one point estimate and produces
@@ -864,14 +867,14 @@ Plan 5 is complete when:
 
 ## Implementation sequence
 
-1. Fix the eligible discovery-candidate domain below `Kmax`, the full integer
+1. Fix the planned discovery-candidate domain below `Kmax`, the full integer
    calibration superset `1..Kmax-1`, `R_c`, Bonferroni allocation, positivity
    condition, conditional-coefficient variance model, confirmatory sizing
    method, minimality boundary, and the rule that observed throughput never
    removes evidence. Implemented in this plan.
 2. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
    freedom reachable from the derivation path. Implemented.
-3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`
+3. Extend the implemented opaque `VerifiedCurvePlan`, `Curve`, and `DeriveCurve`
    boundary to retain one exact-state baseline across both passes. Rebuild
    aggregation and the point-confidence construction; the previous construction
    combined Student-t half-widths at differing degrees of freedom, so the live
@@ -895,8 +898,8 @@ Plan 5 is complete when:
    strict decoding and source object identities, the confirmatory allocation is
    checked against sizing, and the final result records both policy names.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
-   campaign record, eligible profile set, and `CurveFamilyName` in the
-   discovery policy version. The verified `CurveFamily` follows Loader
+   campaign record, planned batch size set, and `CurvePlanName` in the
+   discovery policy version. The `VerifiedCurvePlan` follows Loader
    verification. [Plan 7](07-batch-saturation-control-path.md) carries these in
    the immutable `BatchSaturation` spec instead of a committed record.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
@@ -923,5 +926,5 @@ transition plan. They do not gate this campaign. ADR 0016 gives one
 declared-batch-size artifact one state key and one admitted model-loaded-idle
 baseline. Batch remains excluded from the exact state and protocol projections
 as an axis value, while the artifact name, path, declared batch sizes, and supply
-image remain bound. The verified `CurveFamily` is the composition boundary for
+image remain bound. The verified `VerifiedCurvePlan` is the composition boundary for
 that state.

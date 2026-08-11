@@ -39,21 +39,21 @@ type curvePass struct {
 	capabilityBoundary *int
 }
 
-// Curve is opaque so only exact-family, exact-baseline points can reach a
-// campaign decision.
+// Curve is opaque so only points matching one verified plan and its exact
+// baseline can reach a campaign decision.
 type Curve struct {
-	family    CurveFamily
+	plan      VerifiedCurvePlan
 	passes    []curvePass
 	baselines map[string]IdleBaseline
 }
 
 func DeriveCurve(
 	passes []Pass,
-	family CurveFamily,
+	plan VerifiedCurvePlan,
 	baselinesByState map[string]IdleBaseline,
 	policy PointPolicy,
 ) (Curve, error) {
-	if err := family.requireVerified(); err != nil {
+	if err := plan.requireVerified(); err != nil {
 		return Curve{}, err
 	}
 	if err := validatePointPolicy(policy); err != nil {
@@ -62,12 +62,12 @@ func DeriveCurve(
 	if len(passes) == 0 {
 		return Curve{}, errors.New("curve requires at least one pass")
 	}
-	baselines, err := validateCurveBaselines(family, baselinesByState)
+	baselines, err := validateCurveBaselines(plan, baselinesByState)
 	if err != nil {
 		return Curve{}, err
 	}
 
-	curve := Curve{family: family, baselines: baselines}
+	curve := Curve{plan: plan, baselines: baselines}
 	seenRoles := make(map[PassRole]struct{}, len(passes))
 	seenTrials := make(map[string]struct{})
 	for _, inputPass := range passes {
@@ -75,7 +75,7 @@ func DeriveCurve(
 			return Curve{}, fmt.Errorf("duplicate curve pass role %q", inputPass.Role)
 		}
 		seenRoles[inputPass.Role] = struct{}{}
-		derivedPass, err := deriveCurvePass(inputPass, family, baselines, policy, seenTrials)
+		derivedPass, err := deriveCurvePass(inputPass, plan, baselines, policy, seenTrials)
 		if err != nil {
 			return Curve{}, err
 		}
@@ -89,7 +89,7 @@ func DeriveCurve(
 
 func deriveCurvePass(
 	input Pass,
-	family CurveFamily,
+	plan VerifiedCurvePlan,
 	baselines map[string]IdleBaseline,
 	policy PointPolicy,
 	seenTrials map[string]struct{},
@@ -102,7 +102,7 @@ func deriveCurvePass(
 	}
 	batches := append([]PassBatch(nil), input.Batches...)
 	sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
-	plannedBatchSizes := family.contract.record.Shared.PlannedBatchSizes
+	plannedBatchSizes := plan.recorded.record.Shared.PlannedBatchSizes
 	if input.Role == PassDiscovery && batches[0].Batch != plannedBatchSizes[0] {
 		return curvePass{}, errors.New("discovery pass must start at the first planned batch size")
 	}
@@ -120,9 +120,9 @@ func deriveCurvePass(
 			continue
 		}
 		if plannedBatchIndex >= len(plannedBatchSizes) || batchInput.Batch != plannedBatchSizes[plannedBatchIndex] {
-			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the frozen planned batch size sequence", input.Role)
+			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the batch sizes recorded in the curve plan", input.Role)
 		}
-		point, err := deriveCurvePoint(batchInput, family.state, baselines, policy, seenTrials)
+		point, err := deriveCurvePoint(batchInput, plan.state, baselines, policy, seenTrials)
 		if err != nil {
 			return curvePass{}, err
 		}
@@ -134,7 +134,7 @@ func deriveCurvePass(
 
 func deriveCurvePoint(
 	input PassBatch,
-	state VerifiedCurveFamilyState,
+	state VerifiedCurveState,
 	baselines map[string]IdleBaseline,
 	policy PointPolicy,
 	seenTrials map[string]struct{},
@@ -151,7 +151,7 @@ func deriveCurvePoint(
 		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != state.StateIdentity ||
 			run.Trial.EnvironmentIdentity != state.EnvironmentIdentity ||
 			run.Trial.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {
-			return Point{}, fmt.Errorf("batch %d trial does not match its verified family state", input.Batch)
+			return Point{}, fmt.Errorf("batch %d trial does not match the plan's verified execution state", input.Batch)
 		}
 		if run.Trial.TrialID == "" {
 			return Point{}, fmt.Errorf("batch %d contains an empty trial identity", input.Batch)
@@ -173,7 +173,7 @@ func deriveCurvePoint(
 	return point, nil
 }
 
-func (c Curve) FamilyName() string { return c.family.Name() }
+func (c Curve) PlanName() string { return c.plan.Name() }
 
 func (c Curve) Points() []Point {
 	var result []Point
@@ -219,24 +219,24 @@ func (c Curve) discoveryOnly() (Curve, error) {
 	for state, baseline := range c.baselines {
 		baselines[state] = cloneIdleBaseline(baseline)
 	}
-	return Curve{family: c.family, passes: []curvePass{discovery}, baselines: baselines}, nil
+	return Curve{plan: c.plan, passes: []curvePass{discovery}, baselines: baselines}, nil
 }
 
-func (f CurveFamily) requireVerified() error {
-	return f.contract.requireFrozen()
+func (p VerifiedCurvePlan) requireVerified() error {
+	return p.recorded.requireInitialized()
 }
 
 func validateCurveBaselines(
-	family CurveFamily,
+	plan VerifiedCurvePlan,
 	input map[string]IdleBaseline,
 ) (map[string]IdleBaseline, error) {
 	result := make(map[string]IdleBaseline, len(input))
-	state := family.state
+	state := plan.state
 	for key, baseline := range input {
 		if key != state.StateIdentity || key != baseline.StateIdentity ||
 			baseline.EnvironmentIdentity != state.EnvironmentIdentity ||
 			baseline.MeasurementProtocolIdentity != state.IdleProtocolIdentity {
-			return nil, fmt.Errorf("idle baseline key %q does not match the verified curve family", key)
+			return nil, fmt.Errorf("idle baseline key %q does not match the plan's verified execution state", key)
 		}
 		if err := validateIdleBaseline(baseline); err != nil {
 			return nil, fmt.Errorf("idle baseline key %q is incomplete", key)

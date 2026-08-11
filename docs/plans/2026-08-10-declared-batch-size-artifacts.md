@@ -4,7 +4,7 @@
 
 **Goal:** One immutable artifact declares the set of batch sizes it can execute, so one execution path serves a whole batch sweep and the capability boundary becomes a catalog fact resolved before any Run is created.
 
-**Architecture:** `ModelArtifactDerivation.FixedBatch int32` becomes `DeclaredBatchSizes []int32`, and the declared input contract drops its batch axis. Checks that compared two catalog declarations of the same fact lose their subject and are deleted; the one surviving batch check becomes a set-membership test at intent freeze. The per-batch curve-family member contract collapses into the shared contract.
+**Architecture:** `ModelArtifactDerivation.FixedBatch int32` becomes `DeclaredBatchSizes []int32`, and the declared input contract drops its batch axis. Checks that compared two catalog declarations of the same fact lose their subject and are deleted; the one surviving batch check becomes a set-membership test at intent freeze. The former per-batch record collapses into `CurvePlanSpec`.
 
 **Tech Stack:** Go, kubebuilder/controller-runtime, CEL validation, Python 3 (`runtime/rknnlite`, `build/model-artifacts/rknn`), RKNN-Toolkit2 2.3.2.
 
@@ -27,7 +27,7 @@
 Two follow-on plans depend on this one and must not be started inside it:
 
 - Carrying the conversion and device-probe records into the evidence store.
-- The `BatchSaturation` reconciler and its frozen family write.
+- The `BatchSaturation` reconciler and its `curve-plan.json` write.
 
 ---
 
@@ -473,67 +473,67 @@ git commit -m "feat: declare a declared-batch-size set per artifact"
 
 ---
 
-### Task 3: Collapse the curve-family member contract
+### Task 3: Record one curve plan for the shared artifact
 
-One artifact per family leaves a member with nothing batch-varying to hold: four of its seven fields become shared, two become derived, one is the batch itself.
+One artifact covers every planned batch size, so the former per-batch record has nothing batch-varying to hold: four of its seven fields become shared, two become derived, one is the batch itself.
 
 **Files:**
-- Modify: `internal/profilederivation/curve_family.go`
-- Modify: `internal/profilederivation/curve_family_test.go`
-- Modify: `internal/profiler/admission/curve_family.go`
-- Modify: `internal/profiler/admission/curve_family_test.go`
+- Modify: `internal/profilederivation/curve_plan.go`
+- Modify: `internal/profilederivation/curve_plan_test.go`
+- Modify: `internal/profiler/admission/curve_plan.go`
+- Modify: `internal/profiler/admission/curve_plan_test.go`
 - Modify: `internal/profilederivation/curve.go` call sites the compiler reports
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-2
-- Produces: `CurveFamilySharedContract` with `Artifact CurveArtifactContract` and `PlannedBatchSizes []int`; `FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error)`; `CurveFamilyContract.PlannedBatchSizes() []int`; `VerifyCurveFamily(contract CurveFamilyContract, verified VerifiedCurveFamilyState) (CurveFamily, error)`
+- Produces: `CurvePlanSpec` with `Artifact CurveArtifactContract` and `PlannedBatchSizes []int`; `NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error)`; `CurvePlan.PlannedBatchSizes() []int`; `VerifyCurvePlan(plan CurvePlan, verified VerifiedCurveState) (VerifiedCurvePlan, error)`
 
-- [ ] **Step 1: Write the failing contract test**
+- [ ] **Step 1: Write the failing curve-plan test**
 
-Replace the member-oriented freeze test in `internal/profilederivation/curve_family_test.go` with:
+Replace the former per-batch test in `internal/profilederivation/curve_plan_test.go` with:
 
 ```go
-func TestFreezeCurveFamilyContractCarriesThePlannedBatchSizes(t *testing.T) {
-	shared := validSharedContract()
-	shared.PlannedBatchSizes = []int{4, 1, 2}
+func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
+	spec := validCurvePlanSpec()
+	spec.PlannedBatchSizes = []int{4, 1, 2}
 
-	contract, err := FreezeCurveFamilyContract(shared)
+	plan, err := NewCurvePlan(spec)
 	if err != nil {
-		t.Fatalf("freeze: %v", err)
+		t.Fatalf("construct: %v", err)
 	}
 
-	got := contract.PlannedBatchSizes()
+	got := plan.PlannedBatchSizes()
 	if !reflect.DeepEqual(got, []int{1, 2, 4}) {
 		t.Fatalf("planned batch sizes = %v, want sorted [1 2 4]", got)
 	}
 }
 
-func TestFreezeCurveFamilyContractRejectsAnEmptyEligibleSet(t *testing.T) {
-	shared := validSharedContract()
-	shared.PlannedBatchSizes = nil
+func TestNewCurvePlanRejectsAnEmptyPlannedBatchSizeSet(t *testing.T) {
+	spec := validCurvePlanSpec()
+	spec.PlannedBatchSizes = nil
 
-	if _, err := FreezeCurveFamilyContract(shared); err == nil {
+	if _, err := NewCurvePlan(spec); err == nil {
 		t.Fatal("expected an empty planned batch size set to be rejected")
 	}
 }
 ```
 
-Add `validSharedContract()` to that file, returning a fully populated `CurveFamilySharedContract` including `Artifact` and `Tensor`.
+Add `validCurvePlanSpec()` to that file, returning a fully populated `CurvePlanSpec` including `Artifact` and `Tensor`.
 
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-go test ./internal/profilederivation/ -run TestFreezeCurveFamilyContract -v
+go test ./internal/profilederivation/ -run TestNewCurvePlan -v
 ```
-Expected: FAIL to compile — `PlannedBatchSizes` is undefined and `FreezeCurveFamilyContract` takes two arguments.
+Expected: FAIL to compile — `PlannedBatchSizes` is undefined and `NewCurvePlan` takes two arguments.
 
 - [ ] **Step 3: Move the artifact facts into the shared contract**
 
-In `internal/profilederivation/curve_family.go`, add:
+In `internal/profilederivation/curve_plan.go`, add:
 
 ```go
-// CurveArtifactContract binds the one immutable artifact every batch of this
-// family executes.
+// CurveArtifactContract binds the one immutable artifact every planned batch
+// executes.
 type CurveArtifactContract struct {
 	ExecutionPath string `json:"executionPath"`
 	Name          string `json:"name"`
@@ -542,7 +542,7 @@ type CurveArtifactContract struct {
 }
 ```
 
-Add two fields to `CurveFamilySharedContract`:
+Add two fields to `CurvePlanSpec`:
 
 ```go
 	Artifact        CurveArtifactContract `json:"artifact"`
@@ -554,70 +554,66 @@ Delete `CurveConversionContract.Derived`. Keep `TargetPlatform`, `Tool`, and `To
 Raise the schema constant:
 
 ```go
-	curveFamilyContractSchemaVersion = "chill.dacs.io/curve-family-contract.v1alpha3"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha4"
 ```
 
-- [ ] **Step 4: Delete the member machinery**
+- [ ] **Step 4: Delete the per-batch machinery**
 
-Delete from `internal/profilederivation/curve_family.go`:
+Delete from `internal/profilederivation/curve_plan.go`:
 
-`CurveFamilyMemberContract`, `curveFamilyContractRecord.Members`,
-`CurveFamilyContract.Members`, `VerifiedCurveFamilyMember`,
-`CurveFamily.members`, `CurveFamily.Members`, `validateCurveFamilyMember`,
-`cloneCurveFamilyMembers`, `cloneVerifiedCurveFamilyMember`, and
-`cloneVerifiedCurveFamilyMembers`.
+the per-batch contract and verified-record types, their arrays, validation
+function, and clone helpers.
 
-Replace the freeze and verify entry points:
+Replace the construction and verification entry points:
 
 ```go
-func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
-	shared = cloneCurveFamilyShared(shared)
-	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
-	sort.Ints(shared.PlannedBatchSizes)
-	if err := validateCurveFamilyShared(shared); err != nil {
-		return CurveFamilyContract{}, err
+func NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error) {
+	spec = cloneCurvePlanSpec(spec)
+	sort.Ints(spec.PlannedBatchSizes)
+	if err := validateCurvePlanSpec(spec); err != nil {
+		return CurvePlan{}, err
 	}
-	record := curveFamilyContractRecord{
-		SchemaVersion: curveFamilyContractSchemaVersion,
-		Shared:        shared,
+	record := curvePlanRecord{
+		SchemaVersion: curvePlanSchemaVersion,
+		Shared:        spec,
 	}
-	return CurveFamilyContract{record: record}, nil
+	return CurvePlan{record: record}, nil
 }
 
-func (c CurveFamilyContract) PlannedBatchSizes() []int {
+func (c CurvePlan) PlannedBatchSizes() []int {
 	return append([]int(nil), c.record.Shared.PlannedBatchSizes...)
 }
 ```
 
 ```go
-// VerifiedCurveFamilyState is the plain projection made only after active and
+// VerifiedCurveState is the plain projection made only after active and
 // idle frozen evidence have crossed their Loader boundaries. One artifact means
-// one state, so there is one projection per family.
-type VerifiedCurveFamilyState struct {
-	Shared                 CurveFamilySharedContract `json:"shared"`
+// one state, so there is one projection per plan.
+type VerifiedCurveState struct {
+	Shared                 CurvePlanSpec `json:"shared"`
 	StateIdentity          string                    `json:"stateIdentity"`
 	EnvironmentIdentity    string                    `json:"environmentIdentity"`
 	ActiveProtocolIdentity string                    `json:"activeProtocolIdentity"`
 	IdleProtocolIdentity   string                    `json:"idleProtocolIdentity"`
 }
 
-func VerifyCurveFamily(
-	contract CurveFamilyContract,
-	verified VerifiedCurveFamilyState,
-) (CurveFamily, error) {
-	if err := contract.requireFrozen(); err != nil {
-		return CurveFamily{}, err
+func VerifyCurvePlan(
+	plan CurvePlan,
+	verified VerifiedCurveState,
+) (VerifiedCurvePlan, error) {
+	if err := plan.requireInitialized(); err != nil {
+		return VerifiedCurvePlan{}, err
 	}
-	if !reflect.DeepEqual(verified.Shared, contract.record.Shared) {
-		return CurveFamily{}, errors.New("verified curve-family state does not match the contract")
+	if !reflect.DeepEqual(verified.Shared, plan.record.Shared) {
+		return VerifiedCurvePlan{}, errors.New("verified curve state does not match the plan")
 	}
-	return CurveFamily{contract: contract, state: verified}, nil
+	return VerifiedCurvePlan{recorded: plan, state: verified}, nil
 }
 ```
 
-`CurveFamily` holds `contract CurveFamilyContract` and `state VerifiedCurveFamilyState`. Keep `Name()` and `EnvironmentIdentity()`, reading the latter from `state.EnvironmentIdentity`.
+`VerifiedCurvePlan` holds `recorded CurvePlan` and `state VerifiedCurveState`. Keep `Name()` and `EnvironmentIdentity()`, reading the latter from `state.EnvironmentIdentity`.
 
-Extend `validateCurveFamilyShared` to reject an empty `PlannedBatchSizes`, a non-positive or duplicate batch, and an `Artifact` with any empty field.
+Extend `validateCurvePlanSpec` to reject an empty `PlannedBatchSizes`, a non-positive or duplicate batch, and an `Artifact` with any empty field.
 
 - [ ] **Step 5: Follow the compiler through the adapter and curve**
 
@@ -625,7 +621,7 @@ Extend `validateCurveFamilyShared` to reject an empty `PlannedBatchSizes`, a non
 go build ./... 2>&1 | head -40
 ```
 
-`internal/profiler/admission/curve_family.go` projects one verified state instead of a member list. `internal/profilederivation/curve.go` keys its admitted idle baselines by the single `StateIdentity` rather than per member. Make no behavior change beyond removing the per-member dimension.
+`internal/profiler/admission/curve_plan.go` projects one verified state. `internal/profilederivation/curve.go` keys its admitted idle baselines by the single `StateIdentity`. Make no behavior change beyond removing the former per-batch dimension.
 
 - [ ] **Step 6: Run to verify the contract tests pass**
 
@@ -645,7 +641,7 @@ Expected: all pass.
 
 ```bash
 git add internal/
-git commit -m "refactor: collapse the curve family onto one artifact"
+git commit -m "refactor: record one curve plan per artifact"
 ```
 
 ---
@@ -654,7 +650,10 @@ git commit -m "refactor: collapse the curve family onto one artifact"
 
 `Trial.CapabilityRejected` is set from a condition reason no component emits, so the boundary is unreachable. It becomes an input to the snapshot instead of an inference from trial outcomes.
 
-The declared set may be sparse. Family freeze orders it by strictly increasing batch value, and the sweep advances through that frozen sequence. The capability boundary is exhausting the set. A gap inside the set is a size the operator chose to skip, and the sweep steps over it.
+The declared set may be sparse. `NewCurvePlan` sorts and validates
+`PlannedBatchSizes`, and the sweep advances through that recorded sequence. The
+capability boundary is exhausting the set. A gap inside the set is a size the
+operator chose to skip, and the sweep steps over it.
 
 **Files:**
 - Modify: `internal/batchsaturation/types.go:43,64`
@@ -698,7 +697,7 @@ func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 Add to `internal/batchsaturation/sequential_test.go`, replacing `TestSequentialStopsAtACapabilityBoundary`:
 
 ```go
-func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
+func TestSequentialStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 	method, err := NewSequentialEarlyStop(
 		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
 		func(batches []int) (CurveResult, error) {
@@ -721,7 +720,7 @@ func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
 	}
 }
 
-func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
+func TestSequentialStopsWhenThePlannedBatchSizeSetIsExhausted(t *testing.T) {
 	method, err := NewSequentialEarlyStop(
 		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
 		func(batches []int) (CurveResult, error) {
@@ -759,7 +758,7 @@ Expected: FAIL to compile — `Snapshot.PlannedBatchSizes` and `Observed.Planned
 In `internal/batchsaturation/types.go`, delete `Trial.CapabilityRejected`, delete `Observed.CapabilityBoundary *int`, and add to both `Snapshot` and `Observed`:
 
 ```go
-	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
 	PlannedBatchSizes []int
@@ -820,7 +819,7 @@ The backfill loop and the derivation input both walk the declared prefix:
 And the continue decision asks the set for a next batch:
 
 ```go
-		next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive)
+	next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive)
 	if !found {
 		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
 	}
@@ -862,12 +861,12 @@ func ProjectSnapshot(
 		return batchsaturation.Snapshot{}, errors.New("a parent BatchSaturation is required")
 	}
 	snapshot := batchsaturation.Snapshot{
-		RetryLimit:      int(parent.Spec.RetryLimit),
+		RetryLimit:        int(parent.Spec.RetryLimit),
 		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
 	}
 ```
 
-Update `internal/batchsaturation/controller/projection_test.go` to pass an planned batch size set to every call.
+Update `internal/batchsaturation/controller/projection_test.go` to pass a planned batch size set to every call.
 
 - [ ] **Step 8: Run and gate**
 
@@ -949,8 +948,8 @@ def input_sample_shape(shape):
 def build_dynamic_input(input_sample, declared_batch_sizes):
     if not declared_batch_sizes:
         raise ValueError("at least one declared batch size is required")
-	for declared_batch_size in declared_batch_sizes:
-		if declared_batch_size <= 0:
+    for declared_batch_size in declared_batch_sizes:
+        if declared_batch_size <= 0:
             raise ValueError("declared batch sizes must be positive")
     return [[[declared_batch_size, *input_sample]] for declared_batch_size in sorted(set(declared_batch_sizes))]
 ```
@@ -1075,10 +1074,10 @@ In `docs/design/profiling/README.md:175-186`, keep the completed measurement and
 - [ ] **Step 4: Remove the premise from Plans 5, 5a, 6, and 7**
 
 ```bash
-grep -rn "fixed-batch\|fixed artifact\|fixedBatch\|per-batch artifact\|member map" docs/design/profiling/plans/
+grep -rn "fixed-batch\|fixed artifact\|fixedBatch\|per-batch artifact\|per-batch map" docs/design/profiling/plans/
 ```
 
-Rewrite each hit so it describes one artifact declaring a declared batch size set. In Plan 5a, the capability boundary is a batch outside the frozen planned batch size set, decided before the batch is measured. Do not change the estimand, the acceptance rule, or the sizing method in Plans 5 and 5a.
+Rewrite each hit so it describes one artifact declaring a declared batch size set. In Plan 5a, the capability boundary follows exhaustion of the batch sizes recorded in the curve plan, before any outside-plan batch is measured. Do not change the estimand, the acceptance rule, or the sizing method in Plans 5 and 5a.
 
 - [ ] **Step 5: Verify no stale reference survives**
 
@@ -1099,5 +1098,5 @@ git commit -m "docs: retire the fixed-artifact curve composition decision"
 ## Deferred, with the reason each is safe
 
 - **Conversion and device-probe records reaching the evidence store.** They are written as files today and continue to be. The carrier is the runtime result, which is a separate contract change with its own storage keys; folding it in here would mix a premise correction with an evidence-path change.
-- **The `BatchSaturation` reconciler.** Task 4 leaves `ProjectSnapshot` taking the planned batch size set as a parameter, so the reconciler supplies it from the frozen family. Nothing in this plan wires the controller up, and nothing in this plan depends on it.
+- **The `BatchSaturation` reconciler.** Task 4 leaves `ProjectSnapshot` taking the planned batch size set as a parameter, so the reconciler supplies it from the recorded curve plan. Nothing in this plan wires the controller up, and nothing in this plan depends on it.
 - **Removing `SaturatedSerialFixedBatchWorkloadMode`.** Its name describes the workload holding batch fixed within one Run, which stays true. Renaming it would change the runtime contract string, execution policies, and evidence for no behavioral gain.

@@ -4,8 +4,8 @@
 
 ## Status
 
-Completed derivation plan. The pure family-contract, family-verification,
-exact-state curve, and sequential-stop constructors are implemented in
+Completed derivation plan. The pure curve-plan construction, verified-state
+projection, exact-state curve, and sequential-stop constructors are implemented in
 `internal/profilederivation`, with golden tests for every stop reason and the
 recovery/accumulation cases. This plan answers the same question as
 [Plan 5](05-batch-saturation-campaign.md) at a lower evidence strength and a
@@ -26,7 +26,7 @@ admitted idle baseline. Exact point identities remain unchanged. The retained
 RKNN batch-one and batch-two measurements were collected with the separate
 artifacts then in use and have aligned L3 evidence under the same catalog,
 recipe, runtime, and helper-image generation. Those diagnostic Runs preceded a
-committed `CurveFamilyName`; the later pre-registered campaign produced fresh
+recorded `CurvePlanName`; the later pre-registered campaign produced fresh
 Runs and closed the recorded L4 gate.
 
 ## Question
@@ -50,8 +50,9 @@ measure costs cluster time for nothing.
 
 So this plan takes the early-stopping rule as it is actually implemented in those
 frameworks, adapts the two things that differ for energy measurement, and runs it
-over the frozen planned batch size set. The set may be sparse; family freeze orders
-it by strictly increasing batch value, and the sweep follows that sequence.
+over the batch sizes recorded in the curve plan. The set may be sparse;
+`NewCurvePlan` sorts and validates `PlannedBatchSizes`, and the sweep follows
+that sequence.
 Exhausting the set is the typed capability boundary.
 
 ## Where the rule comes from
@@ -212,7 +213,8 @@ report best_batch
 
 A Run failure at a declared batch size follows the control path's retry limit and
 terminal failure handling. The sequential rule receives admitted trials and
-derives the capability boundary from exhaustion of the frozen set.
+derives the capability boundary from exhaustion of the batch sizes recorded in
+the curve plan.
 
 `divergence_factor` is Lightning's `divergence_threshold` in relative form: a
 batch whose energy per item is far above the best seen is not going to recover,
@@ -242,11 +244,11 @@ substantive parameter rather than a convenience.
 
 ### Cost
 
-The sweep measures each visited profile at `n` trials. The worked example above
-visits five profiles, for 15 active Runs at three trials per profile. One
+The sweep measures each visited batch size at `n` trials. The worked example above
+visits five batch sizes, for 15 active Runs at three trials per batch size. One
 artifact adds one idle baseline set.
 
-The sweep discovers its stopping point within the frozen eligible profile set
+The sweep discovers its stopping point within the batch sizes recorded in the curve plan
 and reports exhaustion of that set as `CapabilityBoundary`. Its boundary batch
 is one greater than the largest planned batch size.
 
@@ -254,25 +256,25 @@ is one greater than the largest planned batch size.
 
 | Boundary | Status |
 |---|---|
-| frozen family contract and strict persisted-contract decoder | implemented |
-| post-Loader plain member verification and verified family construction | implemented with no Kubernetes dependency |
+| recorded curve plan and strict persisted-plan decoder | implemented |
+| post-Loader verified execution-state projection and verified plan construction | implemented with no Kubernetes dependency |
 | exact-state baseline ownership and pass/trial uniqueness | implemented |
 | relative best-so-far rule and typed stop reasons | implemented and golden-tested |
-| first policy/family/inclusion record | frozen before measurement and preserved |
+| first policy/plan/inclusion record | recorded before measurement and preserved |
 | live sequential result | completed under the separate artifacts then in use; selected batch 1, with their next unavailable size recorded as `CapabilityBoundary` at batch 3 |
 
 ## What this plan reports
 
 ```text
-SelectedBatch      = the profile with the best admitted energy per item
-StopReason         = NoFurtherImprovement | CapabilityBoundary | EnergyDivergence
-MeasuredBatchSizes    = the ascending frozen profiles actually measured
-MinDelta           = 0.05
-Patience           = 2
-TrialsPerBatch     = 3
-EpsilonByBatch     = the mean at every measured batch
-CurveFamilyName = the pre-frozen shared artifact family
-ObservedEnvironment = the Loader-verified shared environment
+SelectedBatch        = the batch size with the best admitted energy per item
+StopReason           = NoFurtherImprovement | CapabilityBoundary | EnergyDivergence
+MeasuredBatchSizes   = the ascending planned batch sizes actually measured
+MinDelta             = 0.05
+Patience             = 2
+TrialsPerBatch       = 3
+EpsilonByBatch       = the mean at every measured batch
+CurvePlanName        = the recorded shared-artifact curve plan
+ObservedEnvironment  = the Loader-verified shared environment
 IdleBaselinesByState = every exact baseline used by the measured prefix
 ```
 
@@ -313,7 +315,7 @@ produce and what they cost.
 | | Plan 5a | Plan 5 |
 |---|---|---|
 | output | a decision: stop at this batch | a claim with a stated confidence |
-| batch domain | frozen profile set, including sparse sets | consecutive candidate-to-`Kmax` span |
+| batch domain | planned batch size set, including sparse sets | consecutive candidate-to-`Kmax` span |
 | passes | one | discovery, then confirmation on fresh Runs |
 | confidence construction | none | one bound covering every larger batch at once |
 | illustrative Run count | 15 | 42 to 90 |
@@ -330,7 +332,7 @@ Plan 5's confirmation pass takes as its input.
 internal/profilederivation/   the stopping rule over a sequence of batch means
 ```
 
-The rule consumes per-batch means after ADR 0016's family constructor has
+The rule consumes per-batch means after ADR 0016's curve-plan constructor has
 matched every point to the artifact's single exact-state baseline. Its stopping
 comparison uses means. Plan 5 owns the confidence intervals and their
 reconstruction. Nothing changes in
@@ -346,7 +348,7 @@ worker, or single-Run admission.
 - `DeviceProfile` or `ClusterEnergyModel` schema, persistence, or status
 - a campaign CRD, controller, or orchestrator
 - any intent schema change
-- mutation of the frozen eligible profile set during a sweep
+- mutation of the batch sizes recorded in the curve plan during a sweep
 - cross-node or cross-model pooling
 - throughput, latency, or SLO feasibility derivation
 - scheduler or enumerator consumption
@@ -357,8 +359,8 @@ Plan 5a is complete when:
 
 - `min_delta`, `patience`, `n`, and `divergence_factor` are fixed before the
   sweep starts and are reported with the result;
-- every batch belongs to the frozen family, uses its exact-state idle baseline,
-  and the sweep names the family and all baselines in its output;
+- every point uses a batch size listed in the curve plan, matches the plan's
+  verified execution-state identities, and uses its exact-state idle baseline;
 - a sparse planned batch size set advances directly from one declared batch size to the next;
 - golden sequences close the no-further-improvement, capability-boundary, and
   energy-divergence stops;
@@ -374,8 +376,8 @@ Plan 5a is complete when:
 ## Implementation sequence
 
 1. Fix `min_delta`, `patience`, `n`, and `divergence_factor`, and derive the
-   capability boundary from exhaustion of the frozen eligible profile set.
-2. Implement ADR 0016's frozen shared-artifact family projection and
+   capability boundary from exhaustion of the batch sizes recorded in the curve plan.
+2. Implement ADR 0016's recorded shared-artifact curve plan and
    single-state baseline ownership in the pure derivation package.
 3. Implement the rule over a sequence of per-batch means, with the improvement
    test in its relative form and the reference updated only on improvement.

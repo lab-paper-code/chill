@@ -79,7 +79,7 @@ func TestSequentialFillsEachBatchBeforeAdvancing(t *testing.T) {
 	}
 }
 
-func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
+func TestSequentialStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 	method, err := NewSequentialEarlyStop(
 		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
 		func(batches []int) (CurveResult, error) {
@@ -152,7 +152,7 @@ func TestSequentialRejectsAnEmptyPlannedBatchSizeSet(t *testing.T) {
 	}
 }
 
-func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
+func TestSequentialStopsWhenThePlannedBatchSizeSetIsExhausted(t *testing.T) {
 	method, err := NewSequentialEarlyStop(
 		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
 		func(batches []int) (CurveResult, error) {

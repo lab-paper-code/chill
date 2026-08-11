@@ -21,11 +21,12 @@ a finite declared batch size set.
 
 Every derived artifact declares its executable batch set as `DeclaredBatchSizes`.
 One execution path, artifact identity, and runtime path serve every declared
-profile. The profile set may be sparse. Its contents are catalog configuration;
-family freeze canonicalizes those contents into strictly increasing batch order.
+batch size. The declared batch size set may be sparse. Its contents are catalog
+configuration; `NewCurvePlan` sorts and validates `PlannedBatchSizes`.
 
 The capability boundary is resolved when measurement intent is frozen. The
-selected artifact's declared batch size set becomes the frozen planned batch size set.
+selected artifact's declared batch size set becomes the batch sizes recorded in
+the curve plan.
 The sweep advances through that set in ascending order, steps over sizes the
 operator omitted, and reaches the capability boundary when the set is
 exhausted. `KMax` is compared with the largest planned batch size.
@@ -40,7 +41,7 @@ A runtime that enumerates one batch per artifact requires a per-batch execution
 path introduced by a new architectural decision and supported by its own
 conversion, device, state-identity, and baseline evidence.
 
-A catalog entry may declare a profile that the selected artifact was built
+A catalog entry may declare a batch size that the selected artifact was built
 without. A Run created for that declared batch size follows the ordinary trial
 failure and retry path. The frozen capability boundary remains derived from the
 declared set.

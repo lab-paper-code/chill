@@ -295,7 +295,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	}
 }
 
-func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredProfiles(t *testing.T) {
+func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredBatchSizes(t *testing.T) {
 	_, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 3)
 	if err == nil {
 		t.Fatal("expected an undeclared batch to be rejected")

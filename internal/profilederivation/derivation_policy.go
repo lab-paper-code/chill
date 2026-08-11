@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha3"
+const DiscoveryDerivationPolicySchemaVersion = "chill.dacs.io/discovery-derivation-policy.v1alpha4"
 
 type PointPolicyStage string
 
@@ -43,7 +43,7 @@ type BSatPolicyEntry struct {
 
 type DiscoveryDerivationPolicySpec struct {
 	Name                 string             `json:"name"`
-	CurveFamilyName      string             `json:"curveFamilyName"`
+	CurvePlanName        string             `json:"curvePlanName"`
 	PointConfidenceLevel float64            `json:"pointConfidenceLevel"`
 	PointPolicies        []PointPolicyEntry `json:"pointPolicies"`
 	BatchSaturation      BSatPolicyEntry    `json:"batchSaturation"`
@@ -115,8 +115,8 @@ func (p DiscoveryDerivationPolicy) CanonicalJSON() ([]byte, error) {
 
 func (p DiscoveryDerivationPolicy) Name() string { return p.record.Name }
 
-func (p DiscoveryDerivationPolicy) CurveFamilyName() string {
-	return p.record.CurveFamilyName
+func (p DiscoveryDerivationPolicy) CurvePlanName() string {
+	return p.record.CurvePlanName
 }
 
 func (p DiscoveryDerivationPolicy) spec() DiscoveryDerivationPolicySpec {
@@ -163,14 +163,14 @@ func validateDiscoveryPolicyCurve(
 	curve Curve,
 	policy DiscoveryDerivationPolicy,
 ) (BSatPolicy, error) {
-	if err := curve.family.requireVerified(); err != nil {
+	if err := curve.plan.requireVerified(); err != nil {
 		return BSatPolicy{}, err
 	}
 	if err := policy.requireFrozen(); err != nil {
 		return BSatPolicy{}, err
 	}
-	if policy.CurveFamilyName() != curve.FamilyName() {
-		return BSatPolicy{}, errors.New("curve family does not match the discovery policy")
+	if policy.CurvePlanName() != curve.PlanName() {
+		return BSatPolicy{}, errors.New("curve plan does not match the discovery policy")
 	}
 	idlePolicy, err := policy.PointPolicy(PointPolicyStageIdleBaseline)
 	if err != nil {
@@ -217,8 +217,8 @@ func validateDiscoveryDerivationPolicyRecord(record discoveryDerivationPolicyRec
 	if !validDerivationPolicyName(spec.Name) {
 		return errors.New("discovery derivation-policy name must be a lowercase DNS-style name of at most 63 characters")
 	}
-	if !validDerivationPolicyName(spec.CurveFamilyName) {
-		return errors.New("discovery derivation policy has an invalid curve-family name")
+	if !validDerivationPolicyName(spec.CurvePlanName) {
+		return errors.New("discovery derivation policy has an invalid curve-plan name")
 	}
 	if len(spec.PointPolicies) != 2 {
 		return errors.New("discovery derivation policy requires exactly two point policies")

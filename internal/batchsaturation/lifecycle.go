@@ -6,7 +6,8 @@ import (
 )
 
 // Decide resolves the shared progress rules and delegates only the measurement
-// question. The frozen planned batch size set is passed through to the method.
+// question. The planned batch sizes recorded for the measurement are passed
+// through to the method.
 func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if method == nil {
 		return Decision{}, errors.New("a measurement method is required")

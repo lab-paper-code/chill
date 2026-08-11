@@ -48,15 +48,16 @@ type SequentialResult struct {
 	Patience                     int                     `json:"patience"`
 	TrialsPerBatch               int                     `json:"trialsPerBatch"`
 	DivergenceFactor             float64                 `json:"divergenceFactor"`
-	CurveFamilyName              string                  `json:"curveFamilyName"`
+	CurvePlanName                string                  `json:"curvePlanName"`
 	IdleBaselinesByState         map[string]IdleBaseline `json:"idleBaselinesByState"`
 }
 
 // DeriveSequentialBatchDecision applies the relative best-so-far stopping rule
-// to the discovery pass of an exact-family Curve. A prefix without a stop
-// condition returns Continue so an offline driver can request the next member.
+// to the discovery pass of a Curve bound to an exact verified plan. A prefix
+// without a stop condition returns Continue so an offline driver can request
+// the next planned batch size.
 func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (SequentialResult, error) {
-	if err := curve.family.requireVerified(); err != nil {
+	if err := curve.plan.requireVerified(); err != nil {
 		return SequentialResult{}, err
 	}
 	if err := validateSequentialPolicy(policy); err != nil {
@@ -75,13 +76,13 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		PolicyVersion: policy.Version, MinDelta: policy.MinDelta,
 		Patience: policy.Patience, TrialsPerBatch: policy.TrialsPerBatch,
 		DivergenceFactor:     policy.DivergenceFactor,
-		CurveFamilyName:      curve.FamilyName(),
+		CurvePlanName:        curve.PlanName(),
 		IdleBaselinesByState: make(map[string]IdleBaseline),
 	}
 	best := math.Inf(1)
 	bestBatch := 0
 	wait := 0
-	plannedBatchSizes := curve.family.contract.record.Shared.PlannedBatchSizes
+	plannedBatchSizes := curve.plan.recorded.record.Shared.PlannedBatchSizes
 	for index, point := range discovery.points {
 		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||

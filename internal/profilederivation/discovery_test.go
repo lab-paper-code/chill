@@ -16,26 +16,26 @@ func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 		result.CandidateBatch == nil || *result.CandidateBatch != 3 ||
 		result.CandidateMaximumRemainingImprovement == nil ||
 		math.Abs(*result.CandidateMaximumRemainingImprovement-(.04/.94)) > 1e-12 ||
-		len(result.MeasuredBatchSizes) != 4 || result.CurveFamilyName == "" {
+		len(result.MeasuredBatchSizes) != 4 || result.CurvePlanName == "" {
 		t.Fatalf("unexpected discovery result: %+v", result)
 	}
 }
 
 func TestBSatDiscoveryTreatsKMaxAsLargestPlannedBatchSize(t *testing.T) {
-	shared := validSharedContract()
+	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{1, 2, 4, 8}
-	contract, err := FreezeCurveFamilyContract(shared)
+	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	plan, err := VerifyCurvePlan(contract, testVerifiedState(contract))
 	if err != nil {
 		t.Fatal(err)
 	}
 	curve, err := DeriveCurve(
-		[]Pass{testPass(t, family, []float64{1, .97, .94, .90}, "sparse-discovery")},
-		family,
-		testFamilyBaselines(t, family),
+		[]Pass{testPass(t, plan, []float64{1, .97, .94, .90}, "sparse-discovery")},
+		plan,
+		testCurveBaselines(t, plan),
 		pointPolicy("discovery-point"),
 	)
 	if err != nil {
@@ -81,11 +81,11 @@ func TestBSatDiscoveryRejectsUnfrozenOrMixedScope(t *testing.T) {
 	if _, err := deriveBSatDiscovery(curve, invalid); err == nil {
 		t.Fatal("expected invalid kmax rejection")
 	}
-	mismatchedFamily := policy
-	mismatchedFamily.KMax = 3
-	mismatchedFamily.MaximumActiveRunBudget = 30
-	if _, err := deriveBSatDiscovery(curve, mismatchedFamily); err == nil {
-		t.Fatal("expected curve-family domain mismatch rejection")
+	mismatchedPlanPolicy := policy
+	mismatchedPlanPolicy.KMax = 3
+	mismatchedPlanPolicy.MaximumActiveRunBudget = 30
+	if _, err := deriveBSatDiscovery(curve, mismatchedPlanPolicy); err == nil {
+		t.Fatal("expected curve-plan domain mismatch rejection")
 	}
 	mismatchedTrials := policy
 	mismatchedTrials.DiscoveryTrials = 4
@@ -93,12 +93,12 @@ func TestBSatDiscoveryRejectsUnfrozenOrMixedScope(t *testing.T) {
 		t.Fatal("expected discovery trial-count mismatch rejection")
 	}
 
-	_, family := testVerifiedFamily(t, 4)
-	discovery := testPass(t, family, []float64{1, .9, .89, .88}, "discovery")
-	confirmation := testPass(t, family, []float64{1, .9, .89, .88}, "confirmation")
+	_, plan := testVerifiedCurvePlan(t, 4)
+	discovery := testPass(t, plan, []float64{1, .9, .89, .88}, "discovery")
+	confirmation := testPass(t, plan, []float64{1, .9, .89, .88}, "confirmation")
 	confirmation.Role = PassConfirmatory
 	twoPass, err := DeriveCurve(
-		[]Pass{discovery, confirmation}, family, testFamilyBaselines(t, family), pointPolicy("point"),
+		[]Pass{discovery, confirmation}, plan, testCurveBaselines(t, plan), pointPolicy("point"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +110,11 @@ func TestBSatDiscoveryRejectsUnfrozenOrMixedScope(t *testing.T) {
 
 func testDiscoveryCurve(t *testing.T, means []float64) Curve {
 	t.Helper()
-	_, family := testVerifiedFamily(t, len(means))
+	_, plan := testVerifiedCurvePlan(t, len(means))
 	curve, err := DeriveCurve(
-		[]Pass{testPass(t, family, means, "discovery")},
-		family,
-		testFamilyBaselines(t, family),
+		[]Pass{testPass(t, plan, means, "discovery")},
+		plan,
+		testCurveBaselines(t, plan),
 		pointPolicy("discovery-point"),
 	)
 	if err != nil {

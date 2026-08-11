@@ -226,7 +226,7 @@ type BSatDiscoveryResult struct {
 	KMax                                 int        `json:"kmax"`
 	RelativeImprovementTolerance         float64    `json:"relativeImprovementTolerance"`
 	DiscoveryTrials                      int        `json:"discoveryTrials"`
-	CurveFamilyName                      string     `json:"curveFamilyName"`
+	CurvePlanName                        string     `json:"curvePlanName"`
 	BoundaryBatch                        *int       `json:"boundaryBatch,omitempty"`
 }
 
@@ -245,7 +245,7 @@ type BSatSizingResult struct {
 	ProjectedTotalActiveRuns          *int       `json:"projectedTotalActiveRuns,omitempty"`
 	SizingMethod                      string     `json:"sizingMethod"`
 	PolicyVersion                     string     `json:"policyVersion"`
-	CurveFamilyName                   string     `json:"curveFamilyName"`
+	CurvePlanName                     string     `json:"curvePlanName"`
 }
 
 type BSatContrastBound struct {
@@ -287,5 +287,5 @@ type BSatResult struct {
 	ConfidenceLevel                       float64                  `json:"confidenceLevel"`
 	SizingMethod                          string                   `json:"sizingMethod"`
 	PolicyName                            string                   `json:"policyName"`
-	CurveFamilyName                       string                   `json:"curveFamilyName"`
+	CurvePlanName                         string                   `json:"curvePlanName"`
 }
