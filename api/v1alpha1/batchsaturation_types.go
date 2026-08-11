@@ -20,6 +20,12 @@ type BatchSaturationSpec struct {
 
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type ActiveProtocolSpec struct {
+	// AdmissionPolicy identifies the configured admission policy for active Runs.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
+	AdmissionPolicy string `json:"admissionPolicy"`
+
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
 
@@ -39,6 +45,12 @@ type ActiveProtocolSpec struct {
 
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type IdleProtocolSpec struct {
+	// AdmissionPolicy identifies the configured admission policy for idle Runs.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
+	AdmissionPolicy string `json:"admissionPolicy"`
+
 	// +kubebuilder:validation:Minimum=1
 	SettlingDurationSeconds int32 `json:"settlingDurationSeconds"`
 

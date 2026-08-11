@@ -28,12 +28,6 @@ type MeasurementStateSpec struct {
 
 	// CPURequest is the non-exclusive scheduling request for the runtime container.
 	CPURequest resource.Quantity `json:"cpuRequest"`
-
-	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
-	AdmissionPolicy string `json:"admissionPolicy"`
 }
 
 // ProfilingRunSpec requests exactly one immutable profiling execution.
@@ -43,6 +37,12 @@ type MeasurementStateSpec struct {
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
 type ProfilingRunSpec struct {
 	MeasurementStateSpec `json:",inline"`
+
+	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
+	AdmissionPolicy string `json:"admissionPolicy"`
 
 	// Measurement fixes the single-Run workload and measurement window.
 	Measurement ProfilingRunMeasurementSpec `json:"measurement"`

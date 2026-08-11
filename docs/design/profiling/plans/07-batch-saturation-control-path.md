@@ -46,21 +46,27 @@ that must be kept equal.
 
 ```go
 type MeasurementStateSpec struct {
-    Candidate       ProfilingRunCandidateSpec `json:"candidate"`
-    TargetNode      string                    `json:"targetNode"`
-    CPURequest      resource.Quantity         `json:"cpuRequest"`
-    AdmissionPolicy string                    `json:"admissionPolicy"`
+    Candidate  ProfilingRunCandidateSpec `json:"candidate"`
+    TargetNode string                    `json:"targetNode"`
+    CPURequest resource.Quantity         `json:"cpuRequest"`
 }
 
 type ProfilingRunSpec struct {
     MeasurementStateSpec `json:",inline"`
+    AdmissionPolicy      string                                `json:"admissionPolicy"`
     Measurement          ProfilingRunMeasurementSpec       `json:"measurement"`
     MetricObservation    ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }
 ```
 
-The embedding is inline, so field positions, the generated CRD, and all three
-existing CEL rules are unchanged. This is a refactor with no API shape change.
+The execution state embedding is inline, and `ProfilingRunSpec` retains
+`admissionPolicy` as its own top-level field, so its field positions, generated
+CRD, and all three existing CEL rules are unchanged.
+
+The earlier shared placement of `AdmissionPolicy` was wrong. An admission
+policy is per workload mode, while the active and idle child Runs of one
+measurement have different workload modes. Each protocol block therefore owns
+the admission policy for the child Run it defines.
 
 ### The BatchSaturation resource
 
@@ -76,7 +82,8 @@ type BatchSaturationSpec struct {
 ```
 
 `ActiveProtocolSpec` and `IdleProtocolSpec` are separate blocks rather than one
-union discriminated by workload mode. `IdleProtocolSpec` has no
+union discriminated by workload mode, and each requires its own
+`admissionPolicy`. `IdleProtocolSpec` has no
 `warmupIterations`, `inputGenerator`, or `outputValidation` field at all; the
 controller supplies the required values when it assembles a Run. The union CEL
 rule that `ProfilingRunSpec` needs for standalone submission therefore has no
@@ -213,7 +220,8 @@ authoritative state, and losing it costs one reload.
 ### Run assembly
 
 The controller composes `MeasurementStateSpec` from the parent with the batch,
-workload mode, and the matching protocol block. Idle Runs receive
+workload mode, and the admission policy and measurement settings from the
+matching protocol block. Idle Runs receive
 `warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
 One model-loaded-idle baseline is planned for the artifact state, using the
 first declared batch. Active Runs advance through the batch sizes recorded in the curve plan.

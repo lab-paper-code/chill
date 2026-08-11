@@ -296,9 +296,9 @@ func createBatchSaturation(
 					ExecutionPath: "ort-cpu", PowerMode: "fixed",
 				},
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
-				AdmissionPolicy: "wall-power-v2",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
+				AdmissionPolicy:  "wall-power-v2",
 				WarmupIterations: 20, DurationSeconds: 30,
 				InputGenerator: "numpy-default-rng-seed-0-fp32-v1", OutputValidation: "nonempty-shape-batch-v1",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
@@ -306,6 +306,7 @@ func createBatchSaturation(
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
+				AdmissionPolicy:         "idle-wall-power-v1",
 				SettlingDurationSeconds: 5, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,

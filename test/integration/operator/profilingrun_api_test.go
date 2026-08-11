@@ -157,10 +157,10 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 					ExecutionPath: "ort-cpu",
 					PowerMode:     "fixed",
 				},
-				TargetNode:      "lattepanda",
-				CPURequest:      resource.MustParse("100m"),
-				AdmissionPolicy: "wall-power-v2",
+				TargetNode: "lattepanda",
+				CPURequest: resource.MustParse("100m"),
 			},
+			AdmissionPolicy: "wall-power-v2",
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode:     "saturated-serial-fixed-batch",

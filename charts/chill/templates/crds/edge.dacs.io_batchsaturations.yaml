@@ -59,6 +59,13 @@ spec:
             properties:
               activeProtocol:
                 properties:
+                  admissionPolicy:
+                    description: AdmissionPolicy identifies the configured admission
+                      policy for active Runs.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -100,6 +107,7 @@ spec:
                     minimum: 0
                     type: integer
                 required:
+                - admissionPolicy
                 - durationSeconds
                 - inputGenerator
                 - metricObservation
@@ -111,6 +119,13 @@ spec:
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
               idleProtocol:
                 properties:
+                  admissionPolicy:
+                    description: AdmissionPolicy identifies the configured admission
+                      policy for idle Runs.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -144,6 +159,7 @@ spec:
                     minimum: 1
                     type: integer
                 required:
+                - admissionPolicy
                 - durationSeconds
                 - metricObservation
                 - settlingDurationSeconds
@@ -206,13 +222,6 @@ spec:
                   MeasurementStateSpec fixes the execution state every trial of one
                   measurement shares.
                 properties:
-                  admissionPolicy:
-                    description: AdmissionPolicy identifies the configured single-Run
-                      scientific admission policy.
-                    maxLength: 63
-                    minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    type: string
                   candidate:
                     description: Candidate selects one static catalog execution path.
                     properties:
@@ -260,7 +269,6 @@ spec:
                     minLength: 1
                     type: string
                 required:
-                - admissionPolicy
                 - candidate
                 - cpuRequest
                 - targetNode

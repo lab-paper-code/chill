@@ -62,6 +62,7 @@ func BuildRun(
 	switch measurement.WorkloadMode {
 	case batchsaturation.WorkloadModeActive:
 		protocol := parent.Spec.ActiveProtocol
+		spec.AdmissionPolicy = protocol.AdmissionPolicy
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:            int32(measurement.Batch),
 			WarmupIterations: protocol.WarmupIterations,
@@ -73,6 +74,7 @@ func BuildRun(
 		spec.MetricObservation = protocol.MetricObservation
 	case batchsaturation.WorkloadModeIdle:
 		protocol := parent.Spec.IdleProtocol
+		spec.AdmissionPolicy = protocol.AdmissionPolicy
 		settling := protocol.SettlingDurationSeconds
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:                   int32(measurement.Batch),

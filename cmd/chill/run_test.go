@@ -417,11 +417,11 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 					Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 						ModelSpec: "yolov8n", DeviceClass: "lattepanda", ExecutionPath: "ort-cpu", PowerMode: "fixed",
 					},
-					TargetNode:      "lattepanda",
-					CPURequest:      resource.MustParse("4"),
-					AdmissionPolicy: "single-run-v1",
+					TargetNode: "lattepanda",
+					CPURequest: resource.MustParse("4"),
 				},
-				Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4},
+				AdmissionPolicy: "single-run-v1",
+				Measurement:     edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4},
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 200, DurationSeconds: 60,
 				},
