@@ -8,15 +8,16 @@
 
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
 physical power-supply correction. Orange Pi CPU ORT is L3, while the batch-one
-and batch-two RKNNLite rows have reached L4. ADR 0014 preserves those distinct execution states
-and composes them through a frozen curve family with one exact idle baseline per
-member state. Batch one has now been regenerated, and both members have aligned
-three-active plus three-idle L3 evidence under one conversion recipe, catalog
-snapshot, runtime, and helper-image set. The pure Plan 5a family/stop campaign
-then produced 12 new post-freeze Accepted Runs, reproduced both exact-state
-baselines, selected batch one, and stopped at the batch-three capability
-boundary. This closes P7 without retroactively promoting the earlier diagnostic
-Runs. A read-only NVPModel audit now matches every mode on the three Ready
+and batch-two RKNNLite rows measured with the separate artifacts then in use
+have reached L4. ADR 0016 governs current batch-profile artifacts as one
+execution state with one exact idle baseline. The historical batch-one artifact
+was regenerated, and both historical rows have aligned three-active plus
+three-idle L3 evidence under one conversion recipe, catalog snapshot, runtime,
+and helper-image set. The pure Plan 5a family/stop campaign then produced 12 new
+post-freeze Accepted Runs, selected batch one, and recorded the next unavailable
+size as the batch-three capability boundary of those historical artifacts. This
+closes P7 while preserving the earlier diagnostic Runs at their recorded level.
+A read-only NVPModel audit now matches every mode on the three Ready
 Jetsons after correcting the Jetson Nano ID 0 name from `10W` to the host's
 `MAXN`; the unreachable `orin-nano` row remains unverified. ADR 0015 selects a
 dedicated per-Node actuator as the sole host-state writer while retaining the
@@ -63,7 +64,7 @@ read time; do not copy them into design Markdown.
 | `L1 Compatible` | The exact artifact and trusted runtime-image declaration evaluate `Compatible` for the class. |
 | `L2 Executable` | A production `ProfilingRun` Job succeeds on the exact Node, runtime path, and power mode. |
 | `L3 Measurement-ready` | Both active and model-loaded-idle evidence are durably reloaded, verified, and admitted. |
-| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one verified curve family under Plan 5 or 5a, while each member retains its exact execution state. |
+| `L4 Campaign-ready` | Repeated trials and multiple batches can be produced for one verified curve family under Plan 5 or 5a, with the shared artifact execution state retained exactly. |
 
 Levels are cumulative. Catalog presence, standalone smoke tests, and successful
 Jobs without admitted active and idle evidence do not promote a row beyond the
@@ -76,8 +77,8 @@ corresponding level.
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
 | completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The execution path independently admits active and model-loaded-idle evidence before family composition. |
-| active | AGX Orin CPU ORT / MODE_50W | L3 | Execute the pre-frozen Plan 5 `1..2` campaign without treating batch 3 as a capability boundary. |
-| completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and stopped at the batch-3 capability boundary. |
+| active | AGX Orin CPU ORT / MODE_50W | L3 | Execute the pre-frozen Plan 5 `1..2` campaign with batch 3 outside the declared method domain. |
+| completed | RKNNLite model and batch expansion | L4 | Post-freeze Plan 5a campaign selected batch 1 and recorded the historical artifacts' next unavailable size at batch 3. |
 
 ## Stable decisions
 
@@ -97,9 +98,10 @@ corresponding level.
 - Exact runnable child OCI image references, not manifest-list references, are frozen into
   runtime, artifact, MetricObserver, and WorkloadObserver facts.
 - Execution-path names select catalog entries and configured envelopes; the
-  realized runtime family/backend selects the production adapter. A fixed-batch
-  artifact retains its positive batch capability in active and model-loaded-idle
-  intents, while idle still performs no inference.
+  realized runtime family/backend selects the production adapter. A
+  batch-profile artifact declares its eligible set for active intents and uses
+  the first declared batch for its model-loaded-idle intent, while idle still
+  performs no inference.
 - Installed facts are configuration. A row advances only from retained
   production evidence at the applicable level.
 - The AGX Orin CPU ORT MODE_50W rows are a bounded actuation-proof substrate.
@@ -316,7 +318,7 @@ that result.
 Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
 - [x] Bind an immutable RKNN artifact to its source ONNX, target platform,
-  conversion identity, and fixed-batch capability.
+  conversion identity, and declared batch profiles.
 - [x] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.
 - [x] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
@@ -328,13 +330,14 @@ Execution-facts v1alpha5 and candidate-report v1alpha7 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
-and the report also retains target platform, fixed batch, and the explicit
-runtime input tensor. Their decoders accept the current schemas only.
+and the report also retains target platform, batch profiles, and the explicit
+non-batch runtime tensor contract. Their decoders accept the current schemas
+only.
 Intent v1alpha10 retains the normalized physical host contract,
 omits ORT-only thread settings from RKNNLite's common CPU quota, and adds the
 optional typed actuation binding. Host-bound derivation identities use
 execution-state-identity v1alpha4. The installed RKNN declaration pins the
-arm64-only runtime image, fixed-batch artifact supply image and path, exact
+arm64-only runtime image, batch-profile artifact supply image and path, exact
 host ABI/device contract, and runtime access contract.
 The production Job now consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
@@ -408,27 +411,28 @@ Entry condition: Node-wide GPU clock ownership and restoration are proven.
 Entry condition: the owning execution path reaches L3 for
 `mobilenet-v2-050`.
 
-- [x] Bind the RKNN batch-two capability to a separately converted immutable
-  artifact and execution path; do not infer it from ONNX shape flexibility.
+- [x] Record the RKNN batch-two measurement from the separately converted
+  immutable artifact and execution path then in use.
 - [x] Admit three active and three model-loaded-idle batch-two Runs under one
   stable execution state and record that row independently at L3.
 - [x] Keep the batch-one and batch-two rows separate; do not promote the class,
   runtime, model family, or a multi-batch curve from either row alone.
 - [x] Preserve exact execution-state identity and define a pre-frozen
   `CurveFamilyName`, a Loader-verified `CurveFamily`, and idle
-  baselines keyed by member state. ADR 0014 owns the cross-plan contract; Plans
-  5 and 5a own its consumers.
+  baselines keyed by the historical artifact states. ADR 0016 governs current
+  batch-profile artifact capability; Plans 5 and 5a own its consumers.
 - [x] Reconvert batch one with the current repository recipe, freeze batch one
   and batch two under one catalog/image generation, and admit three active plus
-  three model-loaded-idle Runs for each member state.
+  three model-loaded-idle Runs for each historical artifact state.
 - [x] Implement Plan 5a discovery over the verified family and use Plan 5 only
   for confirmatory L4 claims.
 - [x] Execute the pre-frozen campaign, retain and re-verify all 12 active/idle
-  Runs, and record the selected batch and typed capability-boundary stop.
+  Runs, and record the selected batch and the typed boundary of the historical
+  artifacts used by that campaign.
 
-Completion: the two exact Orange Pi RKNN fixed-artifact rows compose as one
-Loader-verified Plan 5a family and reach L4 while retaining distinct execution
-states and idle baselines.
+Completion: the two exact Orange Pi RKNN measurements compose as one
+Loader-verified Plan 5a historical family and retain their L4 result. New RKNN
+campaigns use one batch-profile artifact, one state key, and one idle baseline.
 
 ## Common completion gate
 

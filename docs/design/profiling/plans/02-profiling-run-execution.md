@@ -61,9 +61,9 @@ declared warm-up, input generation, output validation, and measured inference
 calls. Model-loaded idle uses `warmupIterations=0`,
 `workloadMode=idle-model-loaded`, `inputGenerator=none`, and
 `outputValidation=none`, plus a positive settling duration. CPU ORT retains the
-canonical `batch=1`; a fixed-batch derived runtime instead freezes the loaded
-artifact's positive batch capability even though the idle window issues no
-inference. These are frozen protocol facts, not delivery defaults.
+canonical `batch=1`; a batch-profile artifact freezes its first declared batch
+for the model-loaded-idle Run even though the idle window issues no inference.
+These are frozen protocol facts, not delivery defaults.
 
 The first CPU policy is deliberately concrete: under the existing one-serving-
 Pod-per-Node profiling assumption, integer allocatable CPU becomes the runtime

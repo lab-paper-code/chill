@@ -12,13 +12,14 @@ active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
 baseline's mean variance and degrees of freedom. `Aggregate` now emits the
 versioned Welch--Satterthwaite point interval and retains the previous interval
 under its own version. The post-selection error allocation is also fixed and
-regression-tested across shared- and distinct-baseline regimes, and the
+regression-tested with exact baseline covariance, and the
 deterministic domain-wide discovery screen is implemented. The joint contrast
 estimator, global-`H` confirmatory sizing, and typed confirmatory result are
 implemented. Both policy files have strict semantic decoders and configured
 names; the confirmatory file repeats the discovery fields and is checked against
 the realized sizing allocation. The final result binds both names. A concrete
-two-member RKNN campaign is also closed. All 12 idle and discovery Runs were
+RKNN campaign measured with the two separate artifacts then in use is also
+closed. All 12 idle and discovery Runs were
 retained, Loader-verified, admitted, and included. Discovery selected batch one,
 but the frozen three-trial cap could not meet the 5% confirmatory precision rule.
 The committed second policy and typed final result therefore record
@@ -32,18 +33,16 @@ were retained and admitted, but the final remaining-improvement upper bound was
 `CandidateOnly: DomainNoImprovementNotConfirmed`. This plan fixes the quantity
 that decides `b_sat` — the largest
 remaining energy improvement any larger measured batch still offers — gives curve derivation
-ownership of the exact idle baseline set, rebuilds the point-confidence
+ownership of the exact idle baseline, rebuilds the point-confidence
 construction, and separates candidate discovery from confirmation. It does not
 authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
 change, cross-model pooling, or scheduler consumption.
 
-[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) amends the
-original one-state assumption for runtimes with one immutable artifact per
-fixed batch. Exact execution-state and protocol identities remain unchanged.
-An opaque curve instead owns one pre-frozen family contract, one
-Loader-verified family, and an admitted idle baseline for
-every distinct member state. A dynamic-batch artifact remains the one-state,
-one-baseline special case.
+[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) defines one
+immutable artifact with a declared batch-profile set. Exact execution-state and
+protocol identities remain unchanged. An opaque curve owns one pre-frozen
+family contract, one Loader-verified family, and one admitted idle baseline for
+the artifact's single state key.
 
 Plan 3 requires a campaign driver to predeclare an evidence-inclusion rule. Plan
 4 leaves batch selection and repeated trials to a later campaign planner. This
@@ -94,16 +93,20 @@ confirmation tests, on evidence discovery never saw.
 
 ### The batch domain
 
-The campaign measures batches `1` through `Kmax`, with `Kmax >= 2`. `Kmax` is
-fixed before execution, and it is part of what gets claimed: the accepted
-statement is that saturation occurs somewhere within `1..Kmax`. Nothing is
-claimed about batch sizes above `Kmax`.
+The catalog freezes the artifact's eligible batch set before execution, and the
+discovery pass follows that set in its own order. `Kmax >= 2` is fixed before
+execution and must equal the largest eligible batch value. The profile set may
+be sparse.
 
-Candidate batches are restricted to `1..Kmax-1`. `Kmax` is the required final
-witness batch, not a candidate. Allowing `c = Kmax` would make the set of larger
-batches empty and would accept the upper endpoint without making a comparison.
-If no candidate below `Kmax` satisfies the discovery rule, the typed outcome is
-`Censored: NoSaturationObserved`.
+Plan 5's confirmatory estimand ranges over every integer batch above candidate
+`c` through `Kmax`. Confirmatory sizing therefore requires the eligible span
+`c..Kmax` to be consecutive and returns an explicit error for the first gap.
+Plan 5a owns sequential decisions over sparse spans.
+
+Candidate batches are eligible values below `Kmax`. `Kmax` is the required
+final witness batch. A candidate equal to `Kmax` would have an empty comparison
+set. If no candidate below `Kmax` satisfies the discovery rule, the typed
+outcome is `Censored: NoSaturationObserved`.
 
 Choosing `Kmax` is a real trade-off, described under
 [typed outcomes](#typed-outcomes) below.
@@ -259,9 +262,9 @@ return. The global allocation gives:
 | distinct exact-state baselines | 18,245 | 1.625% |
 
 The simulation checks the implemented marginal formulas at the smallest
-allowed trial count and both baseline-sharing extremes. It is regression
-evidence, not a distribution-free proof or a replacement for the union-bound
-derivation above.
+allowed trial count. The distinct-state row is retained estimator regression
+coverage; ADR 0016's current artifact family uses the shared-baseline rows. The
+simulation is regression evidence for the union-bound derivation above.
 
 The fixed construction does not estimate a ratio interval directly. For
 each larger batch `b`, define the linear contrast
@@ -307,7 +310,7 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 |---|---|
 | the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
 | the point estimate plateaus but the bound is too wide | `CandidateOnly` |
-| some batch produced no admissible evidence, or the runtime could not run it | `Censored: CapabilityBoundary` |
+| an explicit capability boundary lies at or below `Kmax` | retained case `Censored: CapabilityBoundary` |
 | no candidate in `1..Kmax-1` satisfies the rule | `Censored: NoSaturationObserved` |
 | `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
 | the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
@@ -316,10 +319,14 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 reason is itself worth reporting. `Unavailable` means the inputs never allowed
 the question to be asked.
 
-`CapabilityBoundary` has a consequence worth planning around. `R_c` is a maximum
-over every batch above `c`, so if any one of them has no usable measurement, `R_c`
-cannot be computed. That missing batch also sits inside the range of every
-smaller candidate, so a single gap censors every candidate below it.
+`BSatCodeCapabilityBoundary` describes an explicit boundary at or below
+`Kmax`. The frozen-set boundary is derived as one greater than the largest
+eligible batch, while `Kmax` equals that largest eligible value. A Run failure
+for a declared profile follows the campaign's ordinary trial-failure path.
+
+`R_c` remains a maximum over every integer batch above `c`. A gap in the
+eligible span `c..Kmax` leaves that estimand undefined, so confirmatory sizing
+returns an error naming the first missing batch.
 
 This is what makes `Kmax` a trade-off. A larger `Kmax` supports a stronger claim,
 because the campaign has looked further before declaring the curve flat. It also
@@ -432,34 +439,31 @@ For discovery trial `i` at batch `b`, retain
 ```text
 x_b,i = total active wall joules / completed items
 a_b,i = window seconds / completed items
-z_b,i = x_b,i - a_b,i * Pbar_q(b)
+z_b,i = x_b,i - a_b,i * Pbar_q
 ```
 
-where `Pbar_q(b)` is the exact-state idle-baseline mean. Let `s_z,b^2` be the
+where `Pbar_q` is the artifact's exact-state idle-baseline mean. Let `s_z,b^2` be the
 discovery sample variance of `z_b,i`, `abar_b` the mean coefficient, and
 `V_P,q` the variance of the idle-baseline mean with its own degrees of freedom.
 For a prospective common confirmatory count `n`, the projected point variance is
 
 ```text
-V_b(n) = s_z,b^2 / n + abar_b^2 * V_P,q(b)
+V_b(n) = s_z,b^2 / n + abar_b^2 * V_P,q
 ```
 
 and the projected contrast variance is
 
 ```text
 V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
-             + (abar_c - abar_b)^2 * V_P,q       when q(c) = q(b)
-
-V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
-             + abar_c^2 * V_P,q(c) + abar_b^2 * V_P,q(b)
-                                                    otherwise
+             + (abar_c - abar_b)^2 * V_P,q
 ```
 
 The observed `a` coefficients are conditioned-on design quantities. Active Run
-sets and distinct idle-baseline sets are independent. Each projected variance
-uses Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
-components: prospective active components use `n-1`, and retained baseline
-components use their admitted baseline degrees of freedom. With the global
+sets are independent, and every profile shares the artifact's idle baseline.
+Each projected variance uses Welch--Satterthwaite degrees of freedom over its
+nonzero active and baseline components: prospective active components use
+`n-1`, and the retained baseline component uses its admitted degrees of freedom.
+With the global
 post-selection count `H` fixed from both policy caps and the configured
 `familyWiseAlpha = alpha`, let
 `h_c(n)` and `h_D(c,b,n)` be their Student-t half-widths at quantile
@@ -506,7 +510,7 @@ retained `ProfilingRun` objects. Before measurement it fixes:
 - the evidence-inclusion rule, in prose: every identity-compatible admitted trial
   produced under this campaign is included, and none is excluded;
 - the rule that generates confirmatory batches `c..Kmax` from whatever candidate
-  discovery proposes; and
+  discovery proposes, after the consecutive-span check; and
 - whether idle-baseline Runs count against the policy file's Run budget.
 
 The record is not amended with Run identities or measurement values. Readers
@@ -524,6 +528,9 @@ R_active = Kmax * n_disc + (Kmax - c + 1) * n_conf
 R_max    = Kmax * (n_disc + n_conf)              when c = 1
 ```
 
+`Kmax` in these sizing formulas is the largest eligible batch value. The sizing
+method and its predeclared conservative budget remain fixed.
+
 The cost depends on where the candidate lands, and the worst case is `c = 1`:
 if batching turns out to help nothing at all, confirmation has to re-measure the
 entire domain. The physically simplest outcome is the most expensive to confirm.
@@ -535,9 +542,8 @@ The budget cap in the policy file is set against this worst case.
 
 `epsilon` is energy above idle, so every point on a curve is computed by
 subtracting an idle-power estimate. That estimate belongs to an exact execution
-state. Reusing it for another fixed-batch engine would erase a material state
-difference; treating several estimates as if they were one shared random
-quantity would make the confidence bound wrong.
+state. One batch-profile artifact supplies every eligible point under one state
+key, and its curve owns one shared idle baseline.
 
 ### How it is guaranteed
 
@@ -552,9 +558,10 @@ type Pass struct {
     Batches admitted trials of that pass, grouped by batch
 }
 
-FreezeCurveFamilyContract(resolved member contracts) (CurveFamilyContract, error)
+FreezeCurveFamilyContract(shared contract with eligible batches)
+    (CurveFamilyContract, error)
 VerifyCurveFamily(contract CurveFamilyContract,
-                  verified frozen members) (CurveFamily, error)
+                  verified frozen state) (CurveFamily, error)
 DeriveCurve(passes []Pass, family CurveFamily,
             baselinesByState map[string]IdleBaseline,
             policy PointPolicy) (Curve, error)
@@ -563,14 +570,15 @@ DeriveBSatConfirmatory(curve Curve, candidate int,
                        policy ConfirmatoryDerivationPolicy) BSatResult
 ```
 
-`FreezeCurveFamilyContract` fixes ADR 0014's shared anchor and exact
-batch-member map before measurement. `VerifyCurveFamily` compares Loader-verified
-frozen Run facts with that contract and binds their common observed environment
-before constructing the verified family. `DeriveCurve` resolves each
-trial to that map, selects the baseline with the same `StateIdentity`, and
+`FreezeCurveFamilyContract` fixes ADR 0016's shared artifact contract and
+eligible batch set before measurement. `VerifyCurveFamily` compares
+Loader-verified frozen Run facts with that contract and binds their common
+observed environment before constructing the verified family. `DeriveCurve`
+resolves each trial to the frozen eligible sequence, selects the family's
+single baseline with the same `StateIdentity`, and
 performs the per-trial incremental step and per-batch aggregation internally.
 Since `Curve` has no exported fields and no other constructor, every point that
-reaches the decision boundary has an exact family member and baseline.
+reaches the decision boundary has the exact family state and baseline.
 `Points()` hands out copies for reporting, and those copies cannot re-enter the
 decision.
 
@@ -592,31 +600,28 @@ result         = DeriveBSatConfirmatory(campaignCurve, candidate, confirmPolicy)
 
 The confirmatory decision needs all three at once: the confirmatory points to
 compute `R_c`, the discovery points to establish that lower batches were
-measured, and the same baseline set to relate every occurrence of each exact
-state. A single-pass curve cannot hold them together.
+measured, and the same baseline to relate every occurrence of the exact state.
+A single-pass curve cannot hold them together.
 
 `DeriveCurve` rejects a `TrialID` that appears in more than one pass. This makes
 the discovery/confirmatory separation mechanical, reusing the trial-uniqueness
 check that aggregation already applies within a batch.
 
-The constructor rejects a missing member baseline, a state or environment
-mismatch, duplicate idle raw evidence across distinct baseline keys, and a
-different baseline object for the same state between passes. A dynamic-batch
-family has one map entry. A fixed-artifact family normally has one entry per
-batch. The distinction is determined by exact state identity, not runtime
-naming.
+The constructor requires exactly one baseline keyed by the family's state and
+rejects a state or environment mismatch or a different baseline object between
+passes.
 
 ### The estimator
 
 Use the trial-level `x_b,i`, `a_b,i`, and `z_b,i` defined by the sizing method.
 With `n_b` active Runs at batch `b`, `abar_b` their mean observed coefficient,
-and `q(b)` the exact baseline key:
+and `q` the artifact's exact baseline key:
 
 ```text
 epsilon_bar_b      = mean_i(z_b,i)
 
 Var(epsilon_bar_b) = s_z,b^2 / n_b
-                      + abar_b^2 * V_P,q(b)
+                      + abar_b^2 * V_P,q
 ```
 
 The point estimate is algebraically the same as subtracting the exact baseline
@@ -628,13 +633,10 @@ Welch--Satterthwaite effective degrees of freedom; it is not taken from either
 component alone.
 
 For a contrast `D_j,k = epsilon_j - epsilon_k`, the active components are
-independent across batches. Its baseline component is
-`(abar_j-abar_k)^2 * V_P,q` when the state is shared, or
-`abar_j^2 * V_P,q(j) + abar_k^2 * V_P,q(k)` otherwise. Reuse of one raw idle
-evidence object across distinct keys is rejected. Shared-state subtraction thus
-retains partial baseline cancellation; distinct states retain both baseline
-variances. Every coefficient comes from observed `T_i/N_i`, and no throughput
-monotonicity is assumed.
+independent across batches. Every point has the same baseline key, so the
+baseline component is `(abar_j-abar_k)^2 * V_P,q`. Shared-state subtraction
+retains partial baseline cancellation. Every coefficient comes from observed
+`T_i/N_i`, and no throughput monotonicity is assumed.
 
 Two contrasts can share both an active reference point and idle baselines. Let
 `w_D,r` be `+1` or `-1` when point `r` enters contrast `D`, and zero otherwise.
@@ -648,13 +650,13 @@ Cov(D_1, D_2)
 
 Active terms are zero across discovery and confirmation because their Runs are
 disjoint; baseline terms remain because both passes reuse the same exact-state
-baseline set. This covariance model links the differences inside one acceptance
+baseline. This covariance model links the differences inside one acceptance
 decision, discovery selection, and the two passes. Showing that the complete
 procedure holds its stated confidence is what Checkpoint 1 requires.
 
-So the design is best described as **discovery and confirmation measured on
-separate Runs, sharing the same exact-state baseline set**. The active evidence
-is disjoint; each baseline estimate is reused wherever its state recurs.
+Discovery and confirmation use separate active Runs and share the artifact's
+one exact-state baseline. The baseline estimate is reused at every batch in
+both passes.
 
 ### What each trial must retain
 
@@ -681,11 +683,11 @@ versions so each remains reproducible. The rebuilt interval is
 
 ### Discovery
 
-Discovery measures batches `1..Kmax` at `n_disc` trials each and proposes the
-smallest `c` in `1..Kmax-1` whose point estimate satisfies
-`R_c_hat <= tau`, using the `tau` already fixed in the discovery policy
-version. `Kmax` remains in every eligible candidate's comparison set but can
-never be returned as the candidate.
+Discovery measures every batch in the frozen eligible sequence at `n_disc`
+trials and proposes the smallest eligible `c < Kmax` whose point estimate
+satisfies `R_c_hat <= tau`, using the `tau` already fixed in the discovery
+policy version. `Kmax` remains in every eligible candidate's comparison set and
+is the largest eligible batch value.
 
 ```text
 DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
@@ -693,9 +695,10 @@ DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
 ```
 
 The implemented screen accepts only an opaque discovery-only `Curve`, requires
-its frozen family and complete measured domain to equal policy `Kmax`, and
-checks exactly `n_disc` independent trials at every batch. A declared capability
-boundary is a typed censored result; silent truncation is an invalid input.
+the largest batch of its frozen family to equal policy `Kmax`, and checks
+exactly `n_disc` independent trials at every eligible batch. The retained typed
+capability-boundary case describes an explicit boundary at or below `Kmax`;
+silent truncation is an invalid input.
 
 This is a screen. It makes no confidence statement, and it is the sole basis for
 the minimality noted in Checkpoint 1. Its one requirement is determinism, so that
@@ -721,6 +724,9 @@ opaque two-pass `Curve`, rechecks the candidate and sizing allocation, verifies
 the curve-family contract and both stage-scoped point-policy versions, requires
 exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
 lower bound and every contrast upper bound at the frozen global-`H` quantile.
+`DeriveBSatConfirmatorySizing` first verifies that every integer batch in
+`c..Kmax` belongs to the eligible set and returns an explicit gap error when the
+span is sparse.
 Its result retains both pass point sets, all exact-state idle baselines, bounds
 for every later batch, estimator and sizing versions, both policy names, and
 the family contract and realized identities. A later measured improvement above
@@ -821,19 +827,23 @@ Plan 5 is complete when:
 - the sizing rule selects the smallest trial count satisfying its simultaneous
   relative-precision inequalities and returns budget-insufficient when the
   baseline floor or either cap prevents one;
-- synthetic golden curves close the accepted, candidate-only, capability-boundary,
-  no-saturation, non-positive-reference, and budget-insufficient cases, and a
+- synthetic golden curves close the accepted, candidate-only, no-saturation,
+  non-positive-reference, and budget-insufficient cases; retained coverage
+  represents the capability-boundary code as schema-compatibility coverage,
+  with current-path reachability unspecified; and a
   later batch that improves too much fails acceptance through `R_c` rather than
   through a separate outcome;
 - `Curve` has no exported field and no constructor besides `DeriveCurve`, so a
   hand-assembled `Point` cannot reach `DeriveBSatConfirmatory` and no curve mixes
   curve families or mismatches a point with its exact-state baseline;
-- family freezing and verification reject drift outside the explicitly member-specific
-  artifact, execution-path, and batch fields fixed by ADR 0014;
+- family freezing and verification reject drift in the shared artifact,
+  execution-path, eligible-batch, tensor, and execution-state facts fixed by
+  ADR 0016;
 - `DeriveCurve` rejects a `TrialID` appearing in more than one pass;
 - `DeriveBSatConfirmatory` rejects a candidate its curve does not span;
-- discovery and confirmation reject `Kmax < 2` and a candidate outside
-  `1..Kmax-1`, so the accepted result always has at least one larger witness
+- confirmatory sizing rejects a gap from the candidate through `Kmax`;
+- discovery and confirmation reject `Kmax < 2` and require an eligible candidate
+  below `Kmax`, so the accepted result always has at least one larger witness
   batch;
 - the rebuilt estimator reproduces the live batch-one point estimate and produces
   a separately versioned interval, with the earlier interval retained;
@@ -851,7 +861,7 @@ Plan 5 is complete when:
 2. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
    freedom reachable from the derivation path. Implemented.
 3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`
-   boundary to retain one exact-state baseline set across both passes. Rebuild
+   boundary to retain one exact-state baseline across both passes. Rebuild
    aggregation and the point-confidence construction; the previous construction
    combined Student-t half-widths at differing degrees of freedom, so the live
    batch-one interval is recomputed and the earlier one retained under its own
@@ -867,13 +877,14 @@ Plan 5 is complete when:
 6. Decode the policy file and record its configured name. Rename
    `RelativeEquivalenceTolerance` to `RelativeImprovementTolerance` and
    `AdjacentEquivalenceConfirmed` to `DomainNoImprovementConfirmed`, and add
-   `Censored: CapabilityBoundary`; confirm first that no `b_sat` result has been
-   persisted to the evidence store, since these are a JSON field name and a
-   reason-code value. Add golden tests. Implemented: both policy artifacts have
+   the retained `Censored: CapabilityBoundary` representation; confirm first
+   that no `b_sat` result has been persisted to the evidence store, since these
+   are a JSON field name and a reason-code value. Add golden tests. Implemented:
+   both policy artifacts have
    strict decoding and source object identities, the confirmatory allocation is
    checked against sizing, and the final result records both policy names.
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
-   campaign record, eligible member map, and `CurveFamilyName` in the
+   campaign record, eligible profile set, and `CurveFamilyName` in the
    discovery policy version. The verified `CurveFamily` follows Loader
    verification. [Plan 7](07-batch-saturation-control-path.md) carries these in
    the immutable `BatchSaturation` spec instead of a committed record.
@@ -897,9 +908,9 @@ the machine-enforced provenance described under
 controller creating Runs unattended is the condition those mechanisms exist for.
 
 Standby-versus-model-loaded idle and transition-cost decomposition belong to a
-transition plan. They do not gate this campaign. Per-engine model-loaded idle is
-not deferred: ADR 0014 requires an admitted baseline for every distinct member
-state. Batch remains excluded from the exact state and protocol projections as
-an axis value, but a fixed-batch artifact's name, path, capability, and supply
-image remain bound. The verified `CurveFamily` is the only boundary allowed to
-compose those exact states.
+transition plan. They do not gate this campaign. ADR 0016 gives one
+batch-profile artifact one state key and one admitted model-loaded-idle
+baseline. Batch remains excluded from the exact state and protocol projections
+as an axis value, while the artifact name, path, declared profiles, and supply
+image remain bound. The verified `CurveFamily` is the composition boundary for
+that state.

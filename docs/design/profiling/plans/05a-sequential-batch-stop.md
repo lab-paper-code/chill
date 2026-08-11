@@ -20,15 +20,14 @@ policy-catalog change of its own.
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.
 
-[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md) closes the
-identity decision for a runtime that uses one immutable artifact per fixed
-batch. Exact point identities remain unchanged; the sweep consumes one frozen
-curve family and one admitted idle baseline per distinct member state. The
-RKNN batch-one and batch-two members now have aligned retained L3 evidence under
-the same catalog, recipe, runtime, and helper-image generation. Those diagnostic
-Runs preceded a committed `CurveFamilyName`, so they validate the
-input boundary but are not retroactive Plan 5a campaign evidence. The new
-pre-registered campaign produced those fresh Runs and closed the L4 gate.
+[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) defines one
+immutable artifact with a declared profile set, one execution-state key, and one
+admitted idle baseline. Exact point identities remain unchanged. The retained
+RKNN batch-one and batch-two measurements were collected with the separate
+artifacts then in use and have aligned L3 evidence under the same catalog,
+recipe, runtime, and helper-image generation. Those diagnostic Runs preceded a
+committed `CurveFamilyName`; the later pre-registered campaign produced fresh
+Runs and closed the recorded L4 gate.
 
 ## Question
 
@@ -51,9 +50,8 @@ measure costs cluster time for nothing.
 
 So this plan takes the early-stopping rule as it is actually implemented in those
 frameworks, adapts the two things that differ for energy measurement, and runs it
-over batch sizes. It does not preselect a statistical `Kmax` or stopping batch.
-ADR 0014 still requires the catalog-resolved eligible member map to be frozen
-before measurement; exhausting that map is a typed capability boundary.
+over the frozen eligible batch set. The set may be sparse, and the sweep follows
+its declared order. Exhausting the set is the typed capability boundary.
 
 ## Where the rule comes from
 
@@ -192,9 +190,8 @@ best        = none
 best_batch  = none
 wait        = 0
 
-for b = 1, 2, 3, ...:
+for b in frozen_eligible_batches:
     measure n trials at batch b
-    if no trial at b is admissible:            stop, CapabilityBoundary
     epsilon_b = mean incremental energy per item over the admitted trials
 
     if best is none or epsilon_b < best * (1 - min_delta):
@@ -207,8 +204,14 @@ for b = 1, 2, 3, ...:
     if wait >= patience:                       stop, NoFurtherImprovement
     if epsilon_b > best * divergence_factor:   stop, EnergyDivergence
 
+if frozen_eligible_batches is exhausted:       stop, CapabilityBoundary
+
 report best_batch
 ```
+
+A Run failure at a declared profile follows the control path's retry limit and
+terminal failure handling. The sequential rule receives admitted trials and
+derives the capability boundary from exhaustion of the frozen set.
 
 `divergence_factor` is Lightning's `divergence_threshold` in relative form: a
 batch whose energy per item is far above the best seen is not going to recover,
@@ -238,14 +241,13 @@ substantive parameter rather than a convenience.
 
 ### Cost
 
-The sweep measures `best_batch + patience` batch sizes, at `n` trials each. The
-worked example above cost 5 batch sizes. At three trials per batch that is 15
-active Runs, plus one idle baseline set per distinct member state. A
-dynamic-batch artifact still needs only one set.
+The sweep measures each visited profile at `n` trials. The worked example above
+visits five profiles, for 15 active Runs at three trials per profile. One
+artifact adds one idle baseline set.
 
-No statistical `Kmax` is selected. The sweep discovers its stopping point within
-the frozen eligible member map, or reports exhaustion of that map as
-`CapabilityBoundary`.
+The sweep discovers its stopping point within the frozen eligible profile set
+and reports exhaustion of that set as `CapabilityBoundary`. Its boundary batch
+is one greater than the largest eligible batch.
 
 ## Implementation status
 
@@ -256,19 +258,19 @@ the frozen eligible member map, or reports exhaustion of that map as
 | exact-state baseline ownership and pass/trial uniqueness | implemented |
 | relative best-so-far rule and typed stop reasons | implemented and golden-tested |
 | first policy/family/inclusion record | frozen before measurement and preserved |
-| live sequential result | completed; selected batch 1, `CapabilityBoundary` at batch 3 |
+| live sequential result | completed under the separate artifacts then in use; selected batch 1, with their next unavailable size recorded as `CapabilityBoundary` at batch 3 |
 
 ## What this plan reports
 
 ```text
-SelectedBatch      = 3        the batch with the best admitted energy per item
+SelectedBatch      = the profile with the best admitted energy per item
 StopReason         = NoFurtherImprovement | CapabilityBoundary | EnergyDivergence
-MeasuredBatches    = 1..5     every batch actually measured
+MeasuredBatches    = the frozen-order profiles actually measured
 MinDelta           = 0.05
 Patience           = 2
 TrialsPerBatch     = 3
 EpsilonByBatch     = the mean at every measured batch
-CurveFamilyName = the pre-frozen eligible member map
+CurveFamilyName = the pre-frozen shared artifact family
 ObservedEnvironment = the Loader-verified shared environment
 IdleBaselinesByState = every exact baseline used by the measured prefix
 ```
@@ -310,7 +312,7 @@ produce and what they cost.
 | | Plan 5a | Plan 5 |
 |---|---|---|
 | output | a decision: stop at this batch | a claim with a stated confidence |
-| batch domain | discovered by the sweep | declared as `1..Kmax` before starting |
+| batch domain | frozen profile set, including sparse sets | consecutive candidate-to-`Kmax` span |
 | passes | one | discovery, then confirmation on fresh Runs |
 | confidence construction | none | one bound covering every larger batch at once |
 | illustrative Run count | 15 | 42 to 90 |
@@ -327,10 +329,10 @@ Plan 5's confirmation pass takes as its input.
 internal/profilederivation/   the stopping rule over a sequence of batch means
 ```
 
-The rule consumes per-batch means only after ADR 0014's family constructor has
-matched every point to its exact-state baseline. It does not use confidence
-intervals, so its stopping comparison is unaffected by the interval
-reconstruction that Plan 5 requires. Nothing changes in
+The rule consumes per-batch means after ADR 0016's family constructor has
+matched every point to the artifact's single exact-state baseline. Its stopping
+comparison uses means. Plan 5 owns the confidence intervals and their
+reconstruction. Nothing changes in
 `api/v1alpha1`, the intent schema, the Profiler controller, the measurement
 worker, or single-Run admission.
 
@@ -338,12 +340,12 @@ worker, or single-Run admission.
 
 - any statement of confidence, of how often the result would be right, or of an
   error rate
-- a declared batch domain, a confirmation pass, or a second policy version
+- a statistical `Kmax` domain, a confirmation pass, or a second policy version
 - the interval reconstruction Plan 5 specifies
 - `DeviceProfile` or `ClusterEnergyModel` schema, persistence, or status
 - a campaign CRD, controller, or orchestrator
 - any intent schema change
-- non-consecutive batch steps
+- mutation of the frozen eligible profile set during a sweep
 - cross-node or cross-model pooling
 - throughput, latency, or SLO feasibility derivation
 - scheduler or enumerator consumption
@@ -356,6 +358,7 @@ Plan 5a is complete when:
   sweep starts and are reported with the result;
 - every batch belongs to the frozen family, uses its exact-state idle baseline,
   and the sweep names the family and all baselines in its output;
+- a sparse eligible set advances directly from one declared profile to the next;
 - golden sequences close the no-further-improvement, capability-boundary, and
   energy-divergence stops;
 - a sequence with a single worse batch followed by a recovering one does not stop
@@ -369,18 +372,18 @@ Plan 5a is complete when:
 
 ## Implementation sequence
 
-1. Fix `min_delta`, `patience`, `n`, and `divergence_factor`, and the rule that a
-   batch with no admissible trial is a capability boundary rather than a
-   non-improving step.
-2. Implement ADR 0014's frozen family projection and exact-state baseline
-   ownership in the pure derivation package.
+1. Fix `min_delta`, `patience`, `n`, and `divergence_factor`, and derive the
+   capability boundary from exhaustion of the frozen eligible profile set.
+2. Implement ADR 0016's frozen shared-artifact family projection and
+   single-state baseline ownership in the pure derivation package.
 3. Implement the rule over a sequence of per-batch means, with the improvement
    test in its relative form and the reference updated only on improvement.
 4. Add the typed stop reasons and the reported fields.
 5. Add golden sequences for each stop reason and for the non-monotonic and
    accumulating cases.
 6. Run the sweep on the live path and record the measured batches, the per-batch
-   means, and the selected batch.
+   means, the selected batch, and the campaign artifact premise associated with
+   its capability-boundary result.
 
 ## Follow-on boundary
 

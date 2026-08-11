@@ -176,14 +176,16 @@ Answers only:
 
 P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
 ORT remains paused at L2 on a physical electrical blocker. Orange Pi CPU ORT
-and two immutable RKNN fixed-batch rows are L4. ADR 0014 closes the
-fixed-artifact curve-composition decision. Batch one was rebuilt and both
-members were remeasured under the same recipe, catalog, and image generation,
-so aligned L3 evidence exists. The pure Plan 5a family/stop core and first
-frozen campaign then produced and re-verified all 12 post-freeze Runs, selected
-batch one, and stopped at the batch-three capability boundary. That result
-promotes only the two exact RKNN rows to L4; it is not a statistical `b_sat`
-claim.
+and two RKNN rows measured with the per-batch artifacts then in use are L4.
+[ADR 0016](../../adr/0016-batch-profile-artifact-capability.md) governs the
+current batch-profile artifact capability. Batch one was rebuilt and both
+historical rows were remeasured under the same recipe, catalog, and image
+generation, so aligned L3 evidence exists. The pure Plan 5a family/stop core
+and first frozen campaign then produced and re-verified all 12 post-freeze Runs,
+selected batch one, and stopped at the batch-three capability boundary. That
+recorded boundary describes the two per-batch artifacts in that campaign. The
+result promotes those two exact RKNN rows to L4 and carries the evidence strength
+of a sequential Plan 5a decision.
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
 assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
 The Profiler now creates the durable `NodeActuation` handoff from frozen Run
@@ -235,7 +237,7 @@ method; this plan owns only the control path that executes them, and supersedes
 their procedural sections. `ProfilingRun` remains independently submittable. The
 plan does not add an estimator, a `DeviceProfile` API, or scheduler consumption.
 
-### 8. Batch-profile artifacts — approved, not implemented
+### 8. Batch-profile artifacts — approved, under implementation
 
 [plans/08-batch-profile-artifacts.md](plans/08-batch-profile-artifacts.md)
 
@@ -248,9 +250,9 @@ It is CHILL's own. RKNN-Toolkit2 enumerates several batch shapes into one
 artifact, and an RK3588 probe confirmed one artifact executing batches 1, 2, and
 4 while refusing an undeclared batch. One artifact therefore declares a set of
 batch profiles, one execution path serves a whole sweep, and the capability
-boundary becomes a catalog fact resolved before any Run exists. The plan retires
-ADR 0014 and the per-batch artifact, path, baseline, and campaign apparatus it
-required. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
+boundary becomes a catalog fact resolved before any Run exists. One artifact
+defines one state key and one model-loaded-idle baseline. ADR 0016 records this
+decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
 ## Component contracts
 

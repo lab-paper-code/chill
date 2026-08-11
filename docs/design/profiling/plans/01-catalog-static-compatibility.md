@@ -54,7 +54,7 @@ the selected campaign batches do not establish an artifact batch
 capability. Those fields remain absent rather than being guessed from one CPU
 Run or added for future runtimes.
 
-### Plan 6 extension: one fixed-batch RKNN artifact
+### Plan 6 extension: one batch-profile RKNN artifact
 
 The first Orange Pi RKNN slice exercises one optional artifact derivation
 group:
@@ -62,14 +62,15 @@ group:
 ```text
 source artifact reference     canonical ONNX artifact in the same ModelSpec
 target platform               rk3588
-fixed batch                   one positive encoded batch
-runtime input tensor          shape + layout + data type
+batch profiles                finite declared set of positive batches
+runtime input tensor          non-batch shape + layout + data type
 conversion identity           tool + version
 ```
 
 The derived artifact is selected by its catalog name and immutable carrier
-image. Conversion fields describe how it was produced; they are not a second
-content-verification system.
+image. One execution path serves every declared profile. Conversion fields
+describe how it was produced; they are not a second content-verification
+system.
 
 The source reference is resolved semantically by the candidate adapter. The
 OpenAPI schema validates only structure. Runtime image,

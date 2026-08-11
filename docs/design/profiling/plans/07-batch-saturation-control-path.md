@@ -88,6 +88,11 @@ parameter block, with CEL requiring the block to match the name.
 Parent names are bounded at 200 characters so generated child names stay within
 253.
 
+[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) requires the
+control path to resolve the selected artifact's declared `BatchProfiles` at
+intent freeze. One artifact and execution path serve the resulting frozen
+eligible batch set. Later decisions consume only that frozen set.
+
 ### Status is not authority
 
 ```go
@@ -128,8 +133,8 @@ type Method interface {
 }
 
 type Observed struct {
-    Accepted           []Trial
-    CapabilityBoundary *int
+    EligibleBatches []int
+    Accepted        []Trial
 }
 
 type Plan struct {
@@ -141,7 +146,8 @@ type Plan struct {
 `Decide` resolves in order: a live Run yields `Wait`; an unfinished trial within
 `RetryLimit` yields a retry at the same batch with the next attempt number;
 exceeding the limit yields a typed failure; otherwise the method is asked what
-to measure next.
+to measure next. `Snapshot` and `Observed` both carry the frozen eligible batch
+set. A gap inside that set is skipped by advancing to the next declared profile.
 
 `Plan` receives admitted trials only. A method has no way to see a failed,
 pending, or retried attempt, so preferring one measurement over another on the
@@ -153,8 +159,8 @@ neither `Decide` nor the controller changes.
 
 | Method name | Calls | Owns |
 |---|---|---|
-| `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk-up and stop rule |
-| `two-pass-confirmatory` | `DeriveBSatDiscovery`, sizing, `DeriveBSatConfirmatory` | Plan 5 discovery, sizing, confirmation |
+| `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk through the frozen set, including sparse sets, and stop rule |
+| `two-pass-confirmatory` | `DeriveBSatDiscovery`, sizing, `DeriveBSatConfirmatory` | Plan 5 discovery, consecutive candidate-to-`KMax` sizing, confirmation |
 
 Both call existing pure functions in `internal/profilederivation`. This plan
 adds no estimator and changes no acceptance rule.
@@ -167,11 +173,12 @@ count the same thing.
 
 ```text
 Reconcile(BatchSaturation):
-  1. list owned ProfilingRun objects; verify each ownerRef UID
-  2. project spec and Runs into a pure Snapshot
-  3. Decide(snapshot)
-  4. execute: CreateRun | Wait | Finish | Fail
-  5. update status as derived display
+  1. resolve and freeze the artifact family and eligible batch set
+  2. list owned ProfilingRun objects; verify each ownerRef UID
+  3. project spec, frozen eligible set, and Runs into a pure Snapshot
+  4. Decide(snapshot)
+  5. execute: CreateRun | Wait | Finish | Fail
+  6. update status as derived display
 ```
 
 `Owns(&ProfilingRun{})` wakes the parent on child transitions, so the requeue
@@ -200,6 +207,8 @@ authoritative state, and losing it costs one reload.
 The controller composes `MeasurementStateSpec` from the parent with the batch,
 workload mode, and the matching protocol block. Idle Runs receive
 `warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
+One model-loaded-idle baseline is planned for the artifact state, using the
+first declared batch. Active Runs advance through the frozen eligible set.
 The existing union CEL rule on `ProfilingRunSpec` validates the assembled
 object, so a mis-assembled Run is rejected by the API server rather than
 trusted.
@@ -210,12 +219,12 @@ trusted.
 
 | Kind | Handling |
 |---|---|
-| Capability boundary — the artifact cannot accept that batch | Not a failure. Reported to the method as an observed fact and consumed as a stop reason |
-| Everything else | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
+| Frozen eligible set exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
+| A created Run fails, including a declared profile absent from the built artifact | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
 
-There is no separate terminal-failure classification. A misconfigured state
-exhausts `RetryLimit` and stops, which costs a small bounded number of Runs and
-removes the need for a reason-code taxonomy.
+One terminal-failure classification covers created-Run failures. A misconfigured
+state exhausts `RetryLimit` and stops, which costs a small bounded number of
+Runs and keeps the failure path uniform.
 
 The one rule that cannot be relaxed is the first: while any owned Run is live,
 the decision is `Wait`. Two concurrent measurements on one Node are rejected as
@@ -248,9 +257,10 @@ facts derived at this layer plus references to the input Runs; it never copies a
 measured value, so each measurement exists in exactly one place. Excluded trials
 are listed by reference with their exclusion reason.
 
-`family.json` is the output of `FreezeCurveFamilyContract` and records what the
-measurement treats as one execution state, written before the first Run. This
-mirrors the Run's own `spec` to intent record to evidence progression.
+`family.json` is the output of `FreezeCurveFamilyContract` and records the one
+artifact execution state plus its frozen eligible batch set, written before the
+first Run. This mirrors the Run's own `spec` to intent record to evidence
+progression.
 
 ## Verification boundary
 
@@ -295,7 +305,7 @@ through a committed document are what this plan replaces.
 
 Plan 5 and Plan 5a keep their estimand, acceptance rule, and sizing method.
 Their procedural sections — freezing by commit, committing a second policy
-before confirmation, an offline driver requesting the next member, name
+before confirmation, an offline driver requesting the next declared profile, name
 grammars, and inclusion rules — are replaced by this control path.
 
 ## Not authorized by this plan

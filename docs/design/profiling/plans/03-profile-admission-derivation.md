@@ -17,7 +17,7 @@ API or status write is authorized by this plan.
 
 ## Question
 
-> Is exact Run evidence scientifically usable, and what fixed-batch energy
+> Is exact Run evidence scientifically usable, and what batch-energy
 > curve and `b_sat` conclusion follow without overstating the evidence?
 
 ## Checkpoint 1: quantity and estimator contract
@@ -86,13 +86,13 @@ The derivation boundary uses three independently versioned identities:
 | `EnvironmentIdentity` | stable external workload authorities, active phase, images, selected labels, and replica multiplicity | profiling Run Pod; owner-controlled Pod name and Pod UID |
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
 
-These remain exact single-Run and single-point identities. A batch curve that
-uses different fixed-batch artifacts does not weaken or normalize them. It uses
-the separate verified composition boundary and per-state baseline ownership fixed by
-[ADR 0014](../../../adr/0014-fixed-artifact-curve-composition.md). That
-ADR separates the pre-measurement `CurveFamilyName` from the verified
-`CurveFamily`, which is constructed only after evidence crosses the Loader
-boundary. Neither is stored in or recomputed from one Run.
+These remain exact single-Run and single-point identities. A batch curve over
+one artifact's declared profiles retains those identities and uses the verified
+composition boundary and single-state baseline ownership fixed by
+[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md). The
+pre-measurement `CurveFamilyName` remains separate from the verified
+`CurveFamily`, which is constructed after evidence crosses the Loader boundary.
+Both remain curve-level facts.
 
 Binding the actual Node UID intentionally makes this first derivation
 node-instance-scoped; it does not assert within-type homogeneity or authorize
@@ -120,10 +120,8 @@ the typed target and actuation-policy name; those facts do not enter the
 measurement-protocol identity.
 
 Consequently, a model-loaded-idle baseline is reusable only by active trials
-with its exact state identity. Curves over one dynamic-batch artifact may have
-one such baseline. Curves over several fixed-batch artifacts retain one
-baseline per member state; curve-level covariance is owned by Plans 5 and 5a,
-not by single-Run admission.
+with its exact state identity. One batch-profile artifact has one state key and
+one such baseline. Curve-level covariance is owned by Plans 5 and 5a.
 
 Observer timestamps are receipt timestamps. The first implementation uses a
 declared nearest-boundary, piecewise-linear integration rule and rejects windows
@@ -160,9 +158,12 @@ confidence interval.
 The measured batch domain remains explicit. Candidate search and scientific
 acceptance are separate:
 
-- a missing adjacent `b+1` cannot accept `b_sat`;
-- a failed or unsupported next batch is a capability boundary, not saturation;
-- no plateau in the measured range is `Censored`, not `b_sat=max`;
+- Plan 5 requires a consecutive eligible span from its candidate through
+  `KMax`;
+- Plan 5a advances through the frozen eligible profile set in its own order;
+- exhausting that set is the capability boundary;
+- a failed Run for a declared profile follows the ordinary trial-failure path;
+- a measured range without a plateau yields `Censored`;
 - a mean-only plateau with overlapping uncertainty is `CandidateOnly`;
 - accepted saturation requires the declared equivalence tolerance to hold at
   trial-level confidence and no later measured contradiction; and
