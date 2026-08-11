@@ -37,17 +37,20 @@ type Measurement struct {
 // Trial is one owned ProfilingRun projected into the progress rules. A trial
 // carries no measured value; the method receives values separately.
 type Trial struct {
-	Measurement        Measurement
-	Attempt            int
-	Verdict            Verdict
-	CapabilityRejected bool
+	Measurement Measurement
+	Attempt     int
+	Verdict     Verdict
 }
 
 // Snapshot is built from the immutable spec and the owned Runs only. It has no
 // status field, so a decision cannot depend on previously reported progress.
 type Snapshot struct {
 	RetryLimit int
-	Trials     []Trial
+	// EligibleBatches is the frozen set of batch sizes the selected artifact
+	// declares, in ascending order. The sweep advances through it, and
+	// exhausting it is the capability boundary.
+	EligibleBatches []int
+	Trials          []Trial
 }
 
 type Decision struct {
@@ -60,8 +63,11 @@ type Decision struct {
 // Observed is everything a method may see. Failed, pending, and retried
 // attempts are absent by construction.
 type Observed struct {
-	Accepted           []Measurement
-	CapabilityBoundary *int
+	// EligibleBatches is the frozen set of batch sizes the selected artifact
+	// declares, in ascending order. The sweep advances through it, and
+	// exhausting it is the capability boundary.
+	EligibleBatches []int
+	Accepted        []Measurement
 }
 
 type Plan struct {
@@ -93,6 +99,19 @@ func (m Measurement) Validate() error {
 func (s Snapshot) Validate() error {
 	if s.RetryLimit < 0 {
 		return errors.New("retry limit must not be negative")
+	}
+	if len(s.EligibleBatches) == 0 {
+		return errors.New("a non-empty eligible batch set is required")
+	}
+	previous := 0
+	for _, batch := range s.EligibleBatches {
+		if batch < 1 {
+			return errors.New("eligible batches must be positive")
+		}
+		if batch <= previous {
+			return errors.New("eligible batches must be strictly increasing")
+		}
+		previous = batch
 	}
 	seen := make(map[Measurement]map[int]struct{}, len(s.Trials))
 	for _, trial := range s.Trials {

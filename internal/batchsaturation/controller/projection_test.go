@@ -19,7 +19,7 @@ func TestProjectSnapshotReadsValuesFromTheRunSpecNotLabels(t *testing.T) {
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "v1",
 	}
-	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run})
+	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, []int{1, 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
 	}, 1)
 	run.OwnerReferences[0].UID = "someone-else"
-	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}); err == nil {
+	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, []int{1}); err == nil {
 		t.Fatal("a Run owned by another object was accepted")
 	}
 }

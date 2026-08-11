@@ -6,8 +6,7 @@ import (
 )
 
 // Decide resolves the shared progress rules and delegates only the measurement
-// question. A capability rejection is not a failure: it is reported to the
-// method as an observed boundary and never retried.
+// question. The frozen eligible batch set is passed through to the method.
 func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if method == nil {
 		return Decision{}, errors.New("a measurement method is required")
@@ -15,19 +14,12 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if err := snapshot.Validate(); err != nil {
 		return Decision{}, fmt.Errorf("validate snapshot: %w", err)
 	}
-	observed := Observed{}
+	observed := Observed{EligibleBatches: append([]int(nil), snapshot.EligibleBatches...)}
 	attempts := make(map[Measurement]int)
 	accepted := make(map[Measurement]struct{})
 	for _, trial := range snapshot.Trials {
 		if trial.Verdict == VerdictPending {
 			return Decision{Action: ActionWait, Reason: "TrialInFlight"}, nil
-		}
-		if trial.CapabilityRejected {
-			batch := trial.Measurement.Batch
-			if observed.CapabilityBoundary == nil || batch < *observed.CapabilityBoundary {
-				observed.CapabilityBoundary = &batch
-			}
-			continue
 		}
 		if trial.Attempt > attempts[trial.Measurement] {
 			attempts[trial.Measurement] = trial.Attempt
@@ -41,7 +33,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	}
 
 	for _, trial := range snapshot.Trials {
-		if trial.Verdict != VerdictFailed || trial.CapabilityRejected {
+		if trial.Verdict != VerdictFailed {
 			continue
 		}
 		if _, admitted := accepted[trial.Measurement]; admitted {

@@ -10,20 +10,20 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// capabilityReasonCode is the brief's unverified placeholder; the current
-// Profiler emits no condition reason for an artifact rejecting one batch.
-const capabilityReasonCode = "ArtifactBatchUnsupported"
-
 // ProjectSnapshot verifies ownership and reads every value from the child spec.
 // Labels select Runs; they are never the source of a projected value.
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchSaturation,
 	runs []edgev1alpha1.ProfilingRun,
+	eligibleBatches []int,
 ) (batchsaturation.Snapshot, error) {
 	if parent == nil {
 		return batchsaturation.Snapshot{}, errors.New("a parent BatchSaturation is required")
 	}
-	snapshot := batchsaturation.Snapshot{RetryLimit: int(parent.Spec.RetryLimit)}
+	snapshot := batchsaturation.Snapshot{
+		RetryLimit:      int(parent.Spec.RetryLimit),
+		EligibleBatches: append([]int(nil), eligibleBatches...),
+	}
 	for index := range runs {
 		run := &runs[index]
 		owner := metav1.GetControllerOf(run)
@@ -79,7 +79,6 @@ func projectTrial(run *edgev1alpha1.ProfilingRun) (batchsaturation.Trial, error)
 		}
 		if isTerminalReason(condition.Reason) {
 			trial.Verdict = batchsaturation.VerdictFailed
-			trial.CapabilityRejected = condition.Reason == capabilityReasonCode
 			return trial, nil
 		}
 	}
@@ -88,8 +87,7 @@ func projectTrial(run *edgev1alpha1.ProfilingRun) (batchsaturation.Trial, error)
 
 func isTerminalReason(reason string) bool {
 	switch reason {
-	case capabilityReasonCode,
-		"InvalidRunSpec",
+	case "InvalidRunSpec",
 		"AdmissionPolicyInvalid",
 		"ExecutionPolicyInvalid",
 		"ActuationPolicyInvalid",
