@@ -14,7 +14,7 @@ from pathlib import Path
 RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha3"
 
 
-def non_batch_shape(shape):
+def input_sample_shape(shape):
     if not shape or len(shape) < 2:
         raise ValueError("input shape must carry a batch axis and at least one more")
     if isinstance(shape[0], int):
@@ -25,13 +25,13 @@ def non_batch_shape(shape):
     return list(shape[1:])
 
 
-def build_dynamic_input(non_batch, profiles):
+def build_dynamic_input(input_sample, profiles):
     if not profiles:
         raise ValueError("at least one batch profile is required")
     for profile in profiles:
         if profile <= 0:
             raise ValueError("batch profiles must be positive")
-    return [[[profile, *non_batch]] for profile in sorted(set(profiles))]
+    return [[[profile, *input_sample]] for profile in sorted(set(profiles))]
 
 
 def parse_args():
@@ -83,8 +83,8 @@ def main():
         declared = [
             dimension.dim_param or dimension.dim_value for dimension in graph_input
         ]
-        non_batch = non_batch_shape(declared)
-        dynamic_input = build_dynamic_input(non_batch, args.batch_profile)
+        input_sample = input_sample_shape(declared)
+        dynamic_input = build_dynamic_input(input_sample, args.batch_profile)
 
         converter = RKNN(verbose=False)
         try:
@@ -119,7 +119,7 @@ def main():
             "onnxVersion": onnx.__version__,
             "targetPlatform": args.target_platform,
             "batchProfiles": sorted(set(args.batch_profile)),
-            "nonBatchShape": non_batch,
+            "inputSampleShape": input_sample,
             "quantized": False,
         },
         "output": {

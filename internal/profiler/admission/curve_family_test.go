@@ -103,7 +103,7 @@ func TestCurveFamilyUsesFirstEligibleBatchIdleWitness(t *testing.T) {
 		},
 		EligibleBatches: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
-			Layout: "NCHW", DataType: "float32", NonBatchShape: []int{3, 224, 224},
+			Layout: "NCHW", DataType: "float32", InputSampleShape: []int{3, 224, 224},
 		},
 	}
 	if _, err := profilederivation.FreezeCurveFamilyContract(shared); err != nil {

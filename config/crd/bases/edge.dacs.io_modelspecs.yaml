@@ -86,12 +86,9 @@ spec:
                             dataType:
                               minLength: 1
                               type: string
-                            layout:
-                              minLength: 1
-                              type: string
-                            nonBatchShape:
+                            inputSampleShape:
                               description: |-
-                                NonBatchShape is the input tensor shape without its batch axis. The batch
+                                InputSampleShape is the input tensor shape without its batch axis. The batch
                                 axis is supplied by the selected profile, so a batch mismatch is not
                                 representable here.
                               items:
@@ -100,10 +97,13 @@ spec:
                                 type: integer
                               minItems: 1
                               type: array
+                            layout:
+                              minLength: 1
+                              type: string
                           required:
                           - dataType
+                          - inputSampleShape
                           - layout
-                          - nonBatchShape
                           type: object
                         sourceArtifact:
                           description: |-

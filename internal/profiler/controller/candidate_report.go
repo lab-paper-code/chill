@@ -117,7 +117,7 @@ func reportArtifactCapability(
 		BatchProfiles:  append([]int32(nil), derivation.BatchProfiles...),
 	}
 	if derivation.Input != nil {
-		capability.NonBatchShape = append([]int32(nil), derivation.Input.NonBatchShape...)
+		capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)
 		capability.InputLayout = derivation.Input.Layout
 		capability.InputDataType = derivation.Input.DataType
 	}

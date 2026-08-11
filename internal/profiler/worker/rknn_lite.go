@@ -207,7 +207,7 @@ func validateRKNNLiteDelivery(delivery profilingrun.CandidateRuntimeDelivery) er
 		return errors.New("RKNNLite adapter requires exactly one image-owned runtime package")
 	}
 	capability := delivery.ArtifactCapability
-	if len(capability.NonBatchShape) == 0 ||
+	if len(capability.InputSampleShape) == 0 ||
 		capability.InputLayout != profilingrun.RKNNLiteInputLayout ||
 		capability.InputDataType != profilingrun.RKNNLiteInputDataType {
 		return errors.New("verified RKNNLite artifact input contract is unsupported")
@@ -232,7 +232,7 @@ func (r *RKNNLiteRuntime) validateObservedContract(
 	}
 	if inputShape != nil {
 		capability := delivery.ArtifactCapability
-		expectedShape := append([]int32{int32(batch)}, capability.NonBatchShape...)
+		expectedShape := append([]int32{int32(batch)}, capability.InputSampleShape...)
 		if len(inputShape) != len(expectedShape) {
 			return errors.New("observed RKNNLite input shape does not match the verified artifact")
 		}
@@ -285,7 +285,7 @@ func copyRuntimeDelivery(delivery profilingrun.CandidateRuntimeDelivery) profili
 	if delivery.ArtifactCapability != nil {
 		capability := *delivery.ArtifactCapability
 		capability.BatchProfiles = append([]int32(nil), capability.BatchProfiles...)
-		capability.NonBatchShape = append([]int32(nil), capability.NonBatchShape...)
+		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
 		copy.ArtifactCapability = &capability
 	}
 	copy.RuntimePackages = append([]profilingrun.CandidateReportRuntimePackage(nil), delivery.RuntimePackages...)

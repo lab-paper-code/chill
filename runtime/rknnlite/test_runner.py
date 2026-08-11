@@ -189,7 +189,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
             "artifactCapability": {
                 "targetPlatform": "rk3588",
                 "batchProfiles": [1, 2, 4],
-                "nonBatchShape": [224, 224, 3],
+                "inputSampleShape": [224, 224, 3],
                 "inputLayout": "NHWC",
                 "inputDataType": "float32",
             },

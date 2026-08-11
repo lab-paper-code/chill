@@ -20,12 +20,12 @@ class ExportRKNNTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "positive"):
             EXPORT_RKNN.build_dynamic_input([3, 224, 224], [1, 0])
 
-    def test_non_batch_shape_drops_the_leading_axis(self):
-        self.assertEqual(EXPORT_RKNN.non_batch_shape(["batch", 3, 224, 224]), [3, 224, 224])
+    def test_input_sample_shape_drops_the_leading_axis(self):
+        self.assertEqual(EXPORT_RKNN.input_sample_shape(["batch", 3, 224, 224]), [3, 224, 224])
 
-    def test_non_batch_shape_rejects_a_concrete_batch_axis(self):
+    def test_input_sample_shape_rejects_a_concrete_batch_axis(self):
         with self.assertRaisesRegex(ValueError, "symbolic"):
-            EXPORT_RKNN.non_batch_shape([1, 3, 224, 224])
+            EXPORT_RKNN.input_sample_shape([1, 3, 224, 224])
 
 
 if __name__ == "__main__":

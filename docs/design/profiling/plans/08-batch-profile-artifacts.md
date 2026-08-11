@@ -28,7 +28,7 @@ serves a whole batch sweep. The capability boundary becomes a catalog fact known
 before any Run is created.
 
 The batch-invariant tensor truth already exists one layer down as
-`CurveTensorContract.NonBatchShape`. This plan promotes it to the catalog and
+`CurveTensorContract.InputSampleShape`. This plan promotes it to the catalog and
 deletes every place that restated it per batch.
 
 ## Measured evidence
@@ -91,7 +91,7 @@ type ModelArtifactDerivation struct {
 }
 
 type ModelArtifactInputContract struct {
-	NonBatchShape []int32 `json:"nonBatchShape"`
+	InputSampleShape []int32 `json:"inputSampleShape"`
 	Layout        string  `json:"layout"`
 	DataType      string  `json:"dataType"`
 }
@@ -233,8 +233,8 @@ needs.
 # deleted: set_fixed_batch() (17-30), --batch-size, the temporary batch-fixed.onnx
 parser.add_argument("--batch-profile", required=True, action="append", type=int)
 
-non_batch = onnx_input_shape(model)[1:]      # read from the model
-dynamic_input = [[[batch, *non_batch]] for batch in sorted(set(args.batch_profile))]
+input_sample = onnx_input_shape(model)[1:]      # read from the model
+dynamic_input = [[[batch, *input_sample]] for batch in sorted(set(args.batch_profile))]
 converter.config(target_platform=args.target_platform, dynamic_input=dynamic_input)
 ```
 
@@ -298,7 +298,7 @@ The conversion record's shape changes accordingly:
 "conversion": {
   "tool": "rknn-toolkit2", "version": "2.3.2", "targetPlatform": "rk3588",
   "batchProfiles": [ ... ],
-  "nonBatchShape": [ ... ],
+  "inputSampleShape": [ ... ],
   "quantized": false
 }
 ```

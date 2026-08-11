@@ -140,14 +140,14 @@ func selectModelPath(
 	if selected.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily {
 		if artifact.Derivation == nil || artifact.Derivation.Input == nil ||
 			len(artifact.Derivation.BatchProfiles) == 0 ||
-			len(artifact.Derivation.Input.NonBatchShape) == 0 ||
+			len(artifact.Derivation.Input.InputSampleShape) == 0 ||
 			artifact.Derivation.Input.Layout != profilingrun.RKNNLiteInputLayout ||
 			artifact.Derivation.Input.DataType != profilingrun.RKNNLiteInputDataType {
 			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
 				"RKNNLite artifact requires a matching input tensor contract",
 			)
 		}
-		for _, dimension := range artifact.Derivation.Input.NonBatchShape {
+		for _, dimension := range artifact.Derivation.Input.InputSampleShape {
 			if dimension < 1 {
 				return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
 					"RKNNLite artifact input dimensions must be positive",

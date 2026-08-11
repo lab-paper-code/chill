@@ -13,7 +13,7 @@ spec:
       targetPlatform: rk3588
       batchProfiles: [1, 2, 4, 8, 16]
       input:
-        nonBatchShape: [224, 224, 3]
+        inputSampleShape: [224, 224, 3]
         layout: NHWC
         dataType: float32
       conversion:

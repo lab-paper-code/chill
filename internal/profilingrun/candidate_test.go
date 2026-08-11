@@ -263,7 +263,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 
 	withoutShape := report
 	withoutShapeCapability := *report.ArtifactCapability
-	withoutShapeCapability.NonBatchShape = nil
+	withoutShapeCapability.InputSampleShape = nil
 	withoutShape.ArtifactCapability = &withoutShapeCapability
 	withoutShapePayload, err := json.Marshal(withoutShape)
 	if err != nil {
@@ -367,7 +367,7 @@ func rknnHostContractForTest() CandidateReportHostContract {
 
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, NonBatchShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, InputSampleShape: []int32{224, 224, 3},
 		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
 	}
 }

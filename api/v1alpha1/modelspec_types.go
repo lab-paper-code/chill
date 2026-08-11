@@ -63,12 +63,12 @@ type ModelArtifactDerivation struct {
 }
 
 type ModelArtifactInputContract struct {
-	// NonBatchShape is the input tensor shape without its batch axis. The batch
+	// InputSampleShape is the input tensor shape without its batch axis. The batch
 	// axis is supplied by the selected profile, so a batch mismatch is not
 	// representable here.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	NonBatchShape []int32 `json:"nonBatchShape"`
+	InputSampleShape []int32 `json:"inputSampleShape"`
 
 	// +kubebuilder:validation:MinLength=1
 	Layout string `json:"layout"`

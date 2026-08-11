@@ -136,12 +136,12 @@ func TestFreezeAndVerifyCurveFamilyState(t *testing.T) {
 
 	// Inputs and projections are copies, not mutation paths into the frozen record.
 	shared.EligibleBatches[0] = 99
-	shared.Tensor.NonBatchShape[0] = 99
+	shared.Tensor.InputSampleShape[0] = 99
 	projected := contract.Shared()
 	projected.EligibleBatches[0] = 99
-	projected.Tensor.NonBatchShape[0] = 99
+	projected.Tensor.InputSampleShape[0] = 99
 	if !reflect.DeepEqual(contract.EligibleBatches(), []int{1, 2, 4}) ||
-		contract.Shared().Tensor.NonBatchShape[0] != 224 {
+		contract.Shared().Tensor.InputSampleShape[0] != 224 {
 		t.Fatal("frozen curve-family contract was mutable through a caller slice")
 	}
 
@@ -197,8 +197,8 @@ func TestVerifyCurveFamilyOwnsTheVerifiedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	verified.Shared.EligibleBatches[0] = 99
-	verified.Shared.Tensor.NonBatchShape[0] = 99
-	if family.state.Shared.EligibleBatches[0] == 99 || family.state.Shared.Tensor.NonBatchShape[0] == 99 {
+	verified.Shared.Tensor.InputSampleShape[0] = 99
+	if family.state.Shared.EligibleBatches[0] == 99 || family.state.Shared.Tensor.InputSampleShape[0] == 99 {
 		t.Fatal("verified curve-family state was mutable through caller slices")
 	}
 }
@@ -471,7 +471,7 @@ func validSharedContract() CurveFamilySharedContract {
 			Path: "/artifact/model.rknn", Image: testImage("artifact", "c"),
 		},
 		EligibleBatches: []int{1, 2, 4},
-		Tensor:          CurveTensorContract{Layout: "NHWC", DataType: "float32", NonBatchShape: []int{224, 224, 3}},
+		Tensor:          CurveTensorContract{Layout: "NHWC", DataType: "float32", InputSampleShape: []int{224, 224, 3}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
 	shared.IdleProtocol.InputGenerator = "none"

@@ -383,7 +383,7 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "batchProfiles", "nonBatchShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "batchProfiles", "inputSampleShape", "inputLayout", "inputDataType"},
         "candidate.artifactCapability",
     )
     profiles = capability["batchProfiles"]
@@ -391,11 +391,11 @@ def validate_candidate(value: Any) -> None:
         raise ContractError("candidate batchProfiles must be a non-empty array")
     for profile in profiles:
         require_integer(profile, "candidate batchProfiles item", 1)
-    shape = capability["nonBatchShape"]
+    shape = capability["inputSampleShape"]
     if not isinstance(shape, list) or not shape:
-        raise ContractError("candidate nonBatchShape must be a non-empty array")
+        raise ContractError("candidate inputSampleShape must be a non-empty array")
     for value in shape:
-        require_integer(value, "candidate nonBatchShape item", 1)
+        require_integer(value, "candidate inputSampleShape item", 1)
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
         or capability["inputLayout"] != SUPPORTED_INPUT_LAYOUT
@@ -962,7 +962,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 model_load_completed_at,
             )
 
-        shape = [measurement["batch"], *candidate["artifactCapability"]["nonBatchShape"]]
+        shape = [measurement["batch"], *candidate["artifactCapability"]["inputSampleShape"]]
         sample = generate_input(numpy, shape, request["maxInputBytes"])
         for ready_path in request["observerReadyPaths"]:
             wait_for_signal(

@@ -63,7 +63,7 @@ group:
 source artifact reference     canonical ONNX artifact in the same ModelSpec
 target platform               rk3588
 batch profiles                finite declared set of positive batches
-runtime input tensor          non-batch shape + layout + data type
+runtime input tensor          input sample shape + layout + data type
 conversion identity           tool + version
 ```
 

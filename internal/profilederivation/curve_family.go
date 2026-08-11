@@ -63,9 +63,9 @@ type CurveConversionContract struct {
 }
 
 type CurveTensorContract struct {
-	Layout        string `json:"layout"`
-	DataType      string `json:"dataType"`
-	NonBatchShape []int  `json:"nonBatchShape"`
+	Layout           string `json:"layout"`
+	DataType         string `json:"dataType"`
+	InputSampleShape []int  `json:"inputSampleShape"`
 }
 
 // CurveArtifactContract binds the one immutable artifact every batch of this
@@ -263,10 +263,10 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 		seenBatches[batch] = struct{}{}
 	}
 	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
-		len(shared.Tensor.NonBatchShape) == 0 {
+		len(shared.Tensor.InputSampleShape) == 0 {
 		return errors.New("curve-family tensor contract is incomplete")
 	}
-	for _, dimension := range shared.Tensor.NonBatchShape {
+	for _, dimension := range shared.Tensor.InputSampleShape {
 		if dimension < 1 {
 			return errors.New("curve-family tensor dimensions must be positive")
 		}
@@ -338,6 +338,6 @@ func cleanCurveValue(value string) bool {
 
 func cloneCurveFamilyShared(shared CurveFamilySharedContract) CurveFamilySharedContract {
 	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
-	shared.Tensor.NonBatchShape = append([]int(nil), shared.Tensor.NonBatchShape...)
+	shared.Tensor.InputSampleShape = append([]int(nil), shared.Tensor.InputSampleShape...)
 	return shared
 }

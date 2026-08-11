@@ -192,7 +192,7 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 
 **Interfaces:**
 - Consumes: `validate_candidate(value)` from Task 1
-- Produces: `ModelArtifactDerivation.BatchProfiles []int32`; `ModelArtifactInputContract.NonBatchShape []int32`; `profilingrun.CandidateArtifactCapability{TargetPlatform string, BatchProfiles []int32, NonBatchShape []int32, InputLayout string, InputDataType string}`; `CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"`; `rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha4"`
+- Produces: `ModelArtifactDerivation.BatchProfiles []int32`; `ModelArtifactInputContract.InputSampleShape []int32`; `profilingrun.CandidateArtifactCapability{TargetPlatform string, BatchProfiles []int32, InputSampleShape []int32, InputLayout string, InputDataType string}`; `CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"`; `rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha4"`
 
 - [ ] **Step 1: Write the failing eligibility test**
 
@@ -277,12 +277,12 @@ In `api/v1alpha1/modelspec_types.go`, replace the `FixedBatch` field of `ModelAr
 and replace `Shape` in `ModelArtifactInputContract`:
 
 ```go
-	// NonBatchShape is the input tensor shape without its batch axis. The batch
+	// InputSampleShape is the input tensor shape without its batch axis. The batch
 	// axis is supplied by the selected profile, so a batch mismatch is not
 	// representable here.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	NonBatchShape []int32 `json:"nonBatchShape"`
+	InputSampleShape []int32 `json:"inputSampleShape"`
 ```
 
 - [ ] **Step 4: Change the candidate capability contract**
@@ -299,7 +299,7 @@ In `internal/profilingrun/candidate.go`, raise the schema constant and replace t
 type CandidateArtifactCapability struct {
 	TargetPlatform string  `json:"targetPlatform"`
 	BatchProfiles  []int32 `json:"batchProfiles"`
-	NonBatchShape  []int32 `json:"nonBatchShape,omitempty"`
+	InputSampleShape  []int32 `json:"inputSampleShape,omitempty"`
 	InputLayout    string  `json:"inputLayout,omitempty"`
 	InputDataType  string  `json:"inputDataType,omitempty"`
 }
@@ -319,7 +319,7 @@ In `validateInternalCandidateReport`, replace the artifact block:
 				return errors.New("candidate report artifact batch profiles must be positive")
 			}
 		}
-		for _, dimension := range report.ArtifactCapability.NonBatchShape {
+		for _, dimension := range report.ArtifactCapability.InputSampleShape {
 			if dimension < 1 {
 				return errors.New("candidate report artifact input shape dimensions must be positive")
 			}
@@ -332,7 +332,7 @@ Update the fixture at `internal/profilingrun/candidate_test.go:275` to the new f
 ```go
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, NonBatchShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, InputSampleShape: []int32{224, 224, 3},
 		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
 	}
 }
@@ -373,9 +373,9 @@ go build ./... 2>&1 | head -40
 
 Fix each break with the corresponding rename, changing nothing else:
 
-- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `BatchProfiles: append([]int32(nil), derivation.BatchProfiles...)` and `capability.NonBatchShape = append([]int32(nil), derivation.Input.NonBatchShape...)`.
-- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Derivation.Input.NonBatchShape) == 0` and its dimension loop iterates `NonBatchShape`. Add `len(artifact.Derivation.BatchProfiles) == 0` to that condition so a derived RKNNLite artifact must declare at least one profile.
-- `internal/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.NonBatchShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.NonBatchShape...)`.
+- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `BatchProfiles: append([]int32(nil), derivation.BatchProfiles...)` and `capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)`.
+- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Derivation.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.BatchProfiles) == 0` to that condition so a derived RKNNLite artifact must declare at least one profile.
+- `internal/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
 
 - [ ] **Step 8: Change the runtime contract**
 
@@ -384,7 +384,7 @@ In `runtime/rknnlite/runner.py`, `validate_candidate` requires the new field nam
 ```python
     require_fields(
         capability,
-        {"targetPlatform", "batchProfiles", "nonBatchShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "batchProfiles", "inputSampleShape", "inputLayout", "inputDataType"},
         "candidate.artifactCapability",
     )
     profiles = capability["batchProfiles"]
@@ -392,18 +392,18 @@ In `runtime/rknnlite/runner.py`, `validate_candidate` requires the new field nam
         raise ContractError("candidate batchProfiles must be a non-empty array")
     for profile in profiles:
         require_integer(profile, "candidate batchProfiles item", 1)
-    shape = capability["nonBatchShape"]
+    shape = capability["inputSampleShape"]
     if not isinstance(shape, list) or not shape:
-        raise ContractError("candidate nonBatchShape must be a non-empty array")
+        raise ContractError("candidate inputSampleShape must be a non-empty array")
     normalized_shape = [
-        require_integer(value, "candidate nonBatchShape item", 1) for value in shape
+        require_integer(value, "candidate inputSampleShape item", 1) for value in shape
     ]
 ```
 
 At `runtime/rknnlite/runner.py:957`, compose the full shape from the frozen batch:
 
 ```python
-        shape = [measurement["batch"], *candidate["artifactCapability"]["nonBatchShape"]]
+        shape = [measurement["batch"], *candidate["artifactCapability"]["inputSampleShape"]]
 ```
 
 Update the corresponding fixtures in `runtime/rknnlite/test_runner.py`.
@@ -428,7 +428,7 @@ spec:
       targetPlatform: rk3588
       batchProfiles: [1, 2, 4, 8, 16]
       input:
-        nonBatchShape: [224, 224, 3]
+        inputSampleShape: [224, 224, 3]
         layout: NHWC
         dataType: float32
       conversion:
@@ -455,7 +455,7 @@ The profile list matches the artifact this plan's design authority records as bu
 make manifests generate
 git diff --stat config/crd/bases charts/chill/templates/crds api/v1alpha1/zz_generated.deepcopy.go
 ```
-Expected: `fixedBatch` and `shape` replaced by `batchProfiles` and `nonBatchShape` in both CRD copies, and the deepcopy functions gaining slice copies. Nothing else.
+Expected: `fixedBatch` and `shape` replaced by `batchProfiles` and `inputSampleShape` in both CRD copies, and the deepcopy functions gaining slice copies. Nothing else.
 
 - [ ] **Step 11: Full gates**
 
@@ -896,7 +896,7 @@ git commit -m "refactor: resolve the capability boundary from the eligible batch
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `export_rknn.py --batch-profile` (repeatable); conversion record schema `chill.dacs.io/rknn-conversion-record.v1alpha3` with `batchProfiles` and `nonBatchShape`
+- Produces: `export_rknn.py --batch-profile` (repeatable); conversion record schema `chill.dacs.io/rknn-conversion-record.v1alpha3` with `batchProfiles` and `inputSampleShape`
 
 - [ ] **Step 1: Write the failing build test**
 
@@ -913,12 +913,12 @@ Replace both `set_fixed_batch` tests in `build/model-artifacts/rknn/test_export_
         with self.assertRaisesRegex(ValueError, "positive"):
             EXPORT_RKNN.build_dynamic_input([3, 224, 224], [1, 0])
 
-    def test_non_batch_shape_drops_the_leading_axis(self):
-        self.assertEqual(EXPORT_RKNN.non_batch_shape(["batch", 3, 224, 224]), [3, 224, 224])
+    def test_input_sample_shape_drops_the_leading_axis(self):
+        self.assertEqual(EXPORT_RKNN.input_sample_shape(["batch", 3, 224, 224]), [3, 224, 224])
 
-    def test_non_batch_shape_rejects_a_concrete_batch_axis(self):
+    def test_input_sample_shape_rejects_a_concrete_batch_axis(self):
         with self.assertRaisesRegex(ValueError, "symbolic"):
-            EXPORT_RKNN.non_batch_shape([1, 3, 224, 224])
+            EXPORT_RKNN.input_sample_shape([1, 3, 224, 224])
 ```
 
 The `FakeDimension`, `FakeTensorType`, and `fake_value_info` helpers exist only for `set_fixed_batch` and are deleted with it.
@@ -928,14 +928,14 @@ The `FakeDimension`, `FakeTensorType`, and `fake_value_info` helpers exist only 
 ```bash
 python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
 ```
-Expected: FAIL — `build_dynamic_input` and `non_batch_shape` are undefined.
+Expected: FAIL — `build_dynamic_input` and `input_sample_shape` are undefined.
 
 - [ ] **Step 3: Replace the conversion entry points**
 
 In `build/model-artifacts/rknn/export_rknn.py`, delete `set_fixed_batch` and add:
 
 ```python
-def non_batch_shape(shape):
+def input_sample_shape(shape):
     if not shape or len(shape) < 2:
         raise ValueError("input shape must carry a batch axis and at least one more")
     if isinstance(shape[0], int):
@@ -946,13 +946,13 @@ def non_batch_shape(shape):
     return list(shape[1:])
 
 
-def build_dynamic_input(non_batch, profiles):
+def build_dynamic_input(input_sample, profiles):
     if not profiles:
         raise ValueError("at least one batch profile is required")
     for profile in profiles:
         if profile <= 0:
             raise ValueError("batch profiles must be positive")
-    return [[[profile, *non_batch]] for profile in sorted(set(profiles))]
+    return [[[profile, *input_sample]] for profile in sorted(set(profiles))]
 ```
 
 Change the argument:
@@ -973,8 +973,8 @@ Replace the conversion block so it reads the shape from the model and never rewr
         declared = [
             dimension.dim_param or dimension.dim_value for dimension in graph_input
         ]
-        non_batch = non_batch_shape(declared)
-        dynamic_input = build_dynamic_input(non_batch, args.batch_profile)
+        input_sample = input_sample_shape(declared)
+        dynamic_input = build_dynamic_input(input_sample, args.batch_profile)
 
         converter = RKNN(verbose=False)
         try:
@@ -998,7 +998,7 @@ In the record's `conversion` object, replace `"fixedBatch": args.batch_size` wit
 
 ```python
             "batchProfiles": sorted(set(args.batch_profile)),
-            "nonBatchShape": non_batch,
+            "inputSampleShape": input_sample,
 ```
 
 - [ ] **Step 6: Run to verify the tests pass**
