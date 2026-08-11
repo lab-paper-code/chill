@@ -93,10 +93,10 @@ confirmation tests, on evidence discovery never saw.
 
 ### The batch domain
 
-The catalog freezes the artifact's eligible batch set before execution, and the
-discovery pass follows that set in its own order. `Kmax >= 2` is fixed before
-execution and must equal the largest eligible batch value. The profile set may
-be sparse.
+The catalog supplies the artifact's eligible batch-set contents before
+execution. Family freeze canonicalizes those contents into ascending order, and
+the discovery pass follows that sequence. `Kmax >= 2` is fixed before execution
+and must equal the largest eligible batch value. The profile set may be sparse.
 
 Plan 5's confirmatory estimand ranges over every integer batch above candidate
 `c` through `Kmax`. Confirmatory sizing therefore requires the eligible span
@@ -113,8 +113,8 @@ Choosing `Kmax` is a real trade-off, described under
 
 ### The quantity
 
-For a candidate batch `c` in `1..Kmax-1`, look at every larger batch in the
-domain and ask how much better the best of them is, as a fraction:
+For an eligible candidate batch `c` below `Kmax`, look at every larger integer
+batch through `Kmax` and ask how much better the best of them is, as a fraction:
 
 ```text
 R_c = max over b in {c+1, ..., Kmax} of  (epsilon_c - epsilon_b) / epsilon_c
@@ -187,7 +187,9 @@ discovery selected `c` after seeing every point estimate, including the shared
 idle-baseline error. The allocation must cover every statement that could enter
 the result after that selection.
 
-Across all possible candidates `c in 1..Kmax-1`, that family contains
+For calibration, the implementation ranges over the full integer candidate
+superset `c in 1..Kmax-1`, including integers absent from a sparse declared
+profile set. That family contains
 
 ```text
 S = sum_c (Kmax - c + 1)
@@ -263,8 +265,10 @@ return. The global allocation gives:
 
 The simulation checks the implemented marginal formulas at the smallest
 allowed trial count. The distinct-state row is retained estimator regression
-coverage; ADR 0016's current artifact family uses the shared-baseline rows. The
-simulation is regression evidence for the union-bound derivation above.
+coverage; ADR 0016's current artifact family uses the shared-baseline rows. This
+deterministic Gaussian working-model simulation is regression coverage of the
+implemented formulas. The union-bound derivation above supplies the proof of the
+simultaneous guarantee under the stated marginal model.
 
 The fixed construction does not estimate a ratio interval directly. For
 each larger batch `b`, define the linear contrast
@@ -286,8 +290,8 @@ approximation.
 ### What an accepted result claims
 
 An accepted result says: *under the declared independent-Gaussian Run model, at
-batch `c`, no larger batch within `1..Kmax` improves energy per item by more than
-`tau`, at the declared nominal confidence.*
+an eligible candidate batch `c`, no later integer batch in `c+1..Kmax` improves
+energy per item by more than `tau`, at the declared nominal confidence.*
 
 It does not say that `c` is the smallest batch for which that is true. The
 candidate came from discovery's point estimates, which carry no confidence
@@ -311,7 +315,7 @@ MinimalityConfidenceConfirmed = false   no confidence statement about batch 3
 | the acceptance rule holds at `c` | `Accepted: DomainNoImprovementConfirmed` |
 | the point estimate plateaus but the bound is too wide | `CandidateOnly` |
 | an explicit capability boundary lies at or below `Kmax` | retained case `Censored: CapabilityBoundary` |
-| no candidate in `1..Kmax-1` satisfies the rule | `Censored: NoSaturationObserved` |
+| no eligible candidate below `Kmax` satisfies the rule | `Censored: NoSaturationObserved` |
 | `LCB(epsilon_c) <= 0` | `Unavailable: NonPositiveReferenceLowerBound` |
 | the required trial count exceeds the declared cap | `Unavailable: ConfirmatoryBudgetInsufficient` |
 
@@ -451,19 +455,26 @@ For a prospective common confirmatory count `n`, the projected point variance is
 V_b(n) = s_z,b^2 / n + abar_b^2 * V_P,q
 ```
 
-and the projected contrast variance is
+and the projected contrast variance uses one of the two exact-state branches
+retained by the sizing helper:
 
 ```text
 V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
-             + (abar_c - abar_b)^2 * V_P,q
+             + (abar_c - abar_b)^2 * V_P,q       when q(c) = q(b)
+
+V_D(c,b,n) = s_z,c^2 / n + s_z,b^2 / n
+             + abar_c^2 * V_P,q(c) + abar_b^2 * V_P,q(b)
+                                                    otherwise
 ```
 
 The observed `a` coefficients are conditioned-on design quantities. Active Run
-sets are independent, and every profile shares the artifact's idle baseline.
-Each projected variance uses Welch--Satterthwaite degrees of freedom over its
-nonzero active and baseline components: prospective active components use
-`n-1`, and the retained baseline component uses its admitted degrees of freedom.
-With the global
+sets are independent. The distinct-state form remains a retained estimator
+branch. ADR 0016's current family construction gives every point the same
+baseline key, so the shared-state form is the one that applies to current
+batch-profile artifact families. Each projected variance uses
+Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
+components: prospective active components use `n-1`, and retained baseline
+components use their admitted degrees of freedom. With the global
 post-selection count `H` fixed from both policy caps and the configured
 `familyWiseAlpha = alpha`, let
 `h_c(n)` and `h_D(c,b,n)` be their Student-t half-widths at quantile
@@ -735,11 +746,10 @@ tolerance returns `CandidateOnly: DomainNoImprovementNotConfirmed`; there is no
 is frozen as a confirmatory policy without a Run allocation, so its typed final
 result also retains both policy names without pretending confirmation ran.
 
-Confirmation still validates that the domain runs from batch 1. Accepting
-saturation at `c` without evidence that batches below `c` were measured would not
-establish that a smaller batch is not equally good. Those lower batches do not
-need re-measuring in the confirmatory pass unless the candidate search is
-repeated.
+Confirmation still validates that the discovery pass starts at the first
+eligible batch. Candidate search therefore includes every earlier eligible
+batch below `c`. Those earlier batches need no re-measurement in the
+confirmatory pass unless the candidate search is repeated.
 
 ### Why there is no universal sizing table
 
@@ -854,10 +864,11 @@ Plan 5 is complete when:
 
 ## Implementation sequence
 
-1. Fix the candidate domain `1..Kmax-1`, `R_c`, Bonferroni allocation,
-   positivity condition, conditional-coefficient variance model, confirmatory
-   sizing method, minimality boundary, and the rule that observed throughput
-   never removes evidence. Implemented in this plan.
+1. Fix the eligible discovery-candidate domain below `Kmax`, the full integer
+   calibration superset `1..Kmax-1`, `R_c`, Bonferroni allocation, positivity
+   condition, conditional-coefficient variance model, confirmatory sizing
+   method, minimality boundary, and the rule that observed throughput never
+   removes evidence. Implemented in this plan.
 2. Preserve `T_i / N_i` per trial and make the baseline's variance and degrees of
    freedom reachable from the derivation path. Implemented.
 3. Extend the implemented opaque `CurveFamily`, `Curve`, and `DeriveCurve`

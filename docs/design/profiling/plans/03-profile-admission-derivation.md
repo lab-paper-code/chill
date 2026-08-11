@@ -160,7 +160,8 @@ acceptance are separate:
 
 - Plan 5 requires a consecutive eligible span from its candidate through
   `KMax`;
-- Plan 5a advances through the frozen eligible profile set in its own order;
+- Plan 5a advances through the frozen eligible profile set in strictly
+  increasing batch order;
 - exhausting that set is the capability boundary;
 - a failed Run for a declared profile follows the ordinary trial-failure path;
 - a measured range without a plateau yields `Censored`;

@@ -21,12 +21,12 @@ a finite declared profile set.
 
 Every derived artifact declares its executable batch set as `BatchProfiles`.
 One execution path, artifact identity, and runtime path serve every declared
-profile. The profile set may be sparse; its contents and order are catalog
-configuration.
+profile. The profile set may be sparse. Its contents are catalog configuration;
+intent freeze canonicalizes those contents into strictly increasing batch order.
 
 The capability boundary is resolved when measurement intent is frozen. The
 selected artifact's declared profile set becomes the frozen eligible batch set.
-The sweep advances through that set in its declared order, steps over sizes the
+The sweep advances through that set in ascending order, steps over sizes the
 operator omitted, and reaches the capability boundary when the set is
 exhausted. `KMax` is compared with the largest eligible batch.
 

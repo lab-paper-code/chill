@@ -654,7 +654,7 @@ git commit -m "refactor: collapse the curve family onto one artifact"
 
 `Trial.CapabilityRejected` is set from a condition reason no component emits, so the boundary is unreachable. It becomes an input to the snapshot instead of an inference from trial outcomes.
 
-The declared set may be sparse. The sweep advances through the declared set in its own order, and the capability boundary is exhausting that set. A gap inside the set is a size the operator chose to skip, and the sweep steps over it.
+The declared set may be sparse. Family freeze orders it by strictly increasing batch value, and the sweep advances through that frozen sequence. The capability boundary is exhausting the set. A gap inside the set is a size the operator chose to skip, and the sweep steps over it.
 
 **Files:**
 - Modify: `internal/batchsaturation/types.go:43,64`

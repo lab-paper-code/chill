@@ -196,9 +196,10 @@ The declared profile set may be sparse. Which sizes an artifact carries is a
 measurement decision that belongs in configuration, and a campaign is free to
 declare a set that skips sizes it has no interest in.
 
-The sweep therefore advances through the declared set in its own order, and the
-capability boundary is reaching the end of that set. A gap inside the set is a
-size the operator chose to skip, and the sweep steps over it.
+Family freeze orders the declared set by strictly increasing batch value. The
+sweep advances through that frozen sequence, and the capability boundary is
+reaching its end. A gap inside the set is a size the operator chose to skip, and
+the sweep steps over it.
 
 `Observed` carries the eligible set, and the method asks whether an eligible
 batch larger than the highest measured one exists. Deleted:

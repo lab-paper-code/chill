@@ -50,8 +50,9 @@ measure costs cluster time for nothing.
 
 So this plan takes the early-stopping rule as it is actually implemented in those
 frameworks, adapts the two things that differ for energy measurement, and runs it
-over the frozen eligible batch set. The set may be sparse, and the sweep follows
-its declared order. Exhausting the set is the typed capability boundary.
+over the frozen eligible batch set. The set may be sparse; family freeze orders
+it by strictly increasing batch value, and the sweep follows that sequence.
+Exhausting the set is the typed capability boundary.
 
 ## Where the rule comes from
 
@@ -265,7 +266,7 @@ is one greater than the largest eligible batch.
 ```text
 SelectedBatch      = the profile with the best admitted energy per item
 StopReason         = NoFurtherImprovement | CapabilityBoundary | EnergyDivergence
-MeasuredBatches    = the frozen-order profiles actually measured
+MeasuredBatches    = the ascending frozen profiles actually measured
 MinDelta           = 0.05
 Patience           = 2
 TrialsPerBatch     = 3
