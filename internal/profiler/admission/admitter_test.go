@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/profilederivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
@@ -38,6 +40,35 @@ func TestEvaluateTrialReturnsTheTrialOnlyWhenAccepted(t *testing.T) {
 	}
 	if trial == nil || trial.Batch < 1 || trial.TrialID == "" {
 		t.Fatalf("accepted evaluation returned no usable trial: %+v", trial)
+	}
+}
+
+func TestEvaluateCurveRunRetainsTheAdmissionThatAuthorizedTheTrial(t *testing.T) {
+	evidence, policy := acceptedActiveFixture(t)
+	compact, curveRun, err := EvaluateCurveRun(evidence, policy)
+	if err != nil {
+		t.Fatalf("EvaluateCurveRun() error = %v", err)
+	}
+	trialCompact, trial, err := EvaluateTrial(evidence, policy)
+	if err != nil {
+		t.Fatalf("EvaluateTrial() error = %v", err)
+	}
+	if curveRun == nil || trial == nil {
+		t.Fatalf("accepted evaluation omitted projections: curveRun=%+v trial=%+v", curveRun, trial)
+	}
+	if !reflect.DeepEqual(compact, trialCompact) || !reflect.DeepEqual(curveRun.Trial, *trial) {
+		t.Fatalf("evaluation projections drifted: curve=(%+v, %+v) trial=(%+v, %+v)",
+			compact, curveRun.Trial, trialCompact, *trial)
+	}
+	admissionPolicy, err := policy.AdmissionPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAdmission := profilederivation.Admit(curveRun.Trial, admissionPolicy)
+	if wantAdmission.Verdict != profilederivation.VerdictAccepted ||
+		!reflect.DeepEqual(curveRun.Admission, wantAdmission) {
+		t.Fatalf("retained admission did not authorize the trial: got=%+v want=%+v",
+			curveRun.Admission, wantAdmission)
 	}
 }
 

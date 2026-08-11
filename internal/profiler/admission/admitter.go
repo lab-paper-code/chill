@@ -40,6 +40,20 @@ func EvaluateTrial(
 	evidence profilerevidence.VerifiedEvidence,
 	frozenPolicy FrozenPolicy,
 ) (Result, *profilederivation.Trial, error) {
+	result, run, err := EvaluateCurveRun(evidence, frozenPolicy)
+	if err != nil || run == nil {
+		return result, nil, err
+	}
+	trial := run.Trial
+	return result, &trial, nil
+}
+
+// EvaluateCurveRun validates the immutable evidence chain, applies the named
+// policy, and retains the admission result beside its Accepted trial.
+func EvaluateCurveRun(
+	evidence profilerevidence.VerifiedEvidence,
+	frozenPolicy FrozenPolicy,
+) (Result, *profilederivation.CurveRun, error) {
 	execution, raw, err := evidence.Records()
 	if err != nil {
 		return Result{}, nil, err
@@ -67,7 +81,7 @@ func EvaluateTrial(
 	if evaluated.Verdict != profilederivation.VerdictAccepted {
 		return compact, nil, nil
 	}
-	return compact, &trial, nil
+	return compact, &profilederivation.CurveRun{Trial: trial, Admission: evaluated}, nil
 }
 
 // EvaluateIdle validates the full immutable evidence chain, applies the named

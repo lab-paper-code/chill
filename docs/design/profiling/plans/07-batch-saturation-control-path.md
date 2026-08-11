@@ -283,13 +283,15 @@ duplication; assembled Runs are validated by the API server.
 internal/batchsaturation/            pure; no CHILL-internal imports
 internal/batchsaturation/controller/ Kubernetes adapter; imports batch-saturation-core
                                       plus api, evidence-core, profile-derivation,
-                                      profiler-app/admission/controller, and profiling-run
+                                      profiler-app/admission/controller/evidence,
+                                      and profiling-run
 ```
 
 The control adapter owns the upward composition needed to resolve candidates,
-freeze prepared intents, and record or recover the plan. Those dependencies do
-not flow back into the pure core. `.go-arch-lint.yml` records the allowed edges;
-an ADR records the aggregate measurement unit as an architectural boundary.
+freeze prepared intents, record or recover the plan, and derive a curve from
+Loader-verified evidence. Those dependencies do not flow back into the pure
+core. `.go-arch-lint.yml` records the allowed edges; an ADR records the
+aggregate measurement unit as an architectural boundary.
 
 ## What this plan removes
 

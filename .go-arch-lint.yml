@@ -76,6 +76,7 @@ deps:
       - profiler-app
       - profiler-admission
       - profiler-controller
+      - profiler-evidence
       - profiling-run
 
   # These small support packages may collaborate within this reviewed group,
