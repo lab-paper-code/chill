@@ -10,7 +10,7 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-5e04002"
+    tag: "sha-fd1d391"
     pullPolicy: Always
 
 profiling:
@@ -54,42 +54,9 @@ profiling:
         payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
-        image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs1-artifact@sha256:9ae0055465f024c9ae1c7264c0d5311b8dfc2141458414350a555fa9e62223ce"
+        image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
         architecture: arm64
-        path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
-      host:
-        libraries:
-          - name: librknnrt
-            hostPath: /usr/lib/librknnrt.so
-            containerPath: /usr/lib/librknnrt.so
-        driver:
-          name: rknpu
-          versionPath: /sys/module/rknpu/version
-          version: 0.9.6
-        devices:
-          - path: /dev/dri/card0
-          - path: /dev/dri/card1
-          - path: /dev/dri/renderD128
-          - path: /dev/dri/renderD129
-        platform:
-          compatiblePath: /proc/device-tree/compatible
-          compatibleToken: rockchip,rk3588
-        allocation:
-          resourceName: ""
-          exclusivityClaimed: false
-      access:
-        privileged: true
-        supplementalGroups: [44, 110]
-    - modelSpec: mobilenet-v2-050
-      deviceClass: orangepi-5-plus-16g
-      executionPath: rknnlite-bs2
-      runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:94cb0627bc8bc6837c27f65438d29b1967cd0af68ea0ae0a5d3a15808c19aff3","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
-      artifact:
-        schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
-        image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-bs2-artifact@sha256:c8cb0ac52e441377b5c7eed40c1db14995eadbac539ce6fd1dc51138e5c74bed"
-        architecture: arm64
-        path: /artifact/mobilenet-v2-050-rk3588-bs2.rknn
+        path: /artifact/mobilenet-v2-050-rk3588.rknn
       host:
         libraries:
           - name: librknnrt
