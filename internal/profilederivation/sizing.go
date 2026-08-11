@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"errors"
+	"fmt"
 	"math"
 )
 
@@ -31,6 +32,9 @@ func deriveBSatConfirmatorySizing(
 	}
 	if discoveryResult.CandidateBatch == nil || *discoveryResult.CandidateBatch != candidate {
 		return BSatSizingResult{}, errors.New("confirmatory sizing candidate does not match discovery")
+	}
+	if err := validateConfirmatoryEligibleSpan(curve, candidate, policy); err != nil {
+		return BSatSizingResult{}, err
 	}
 	discovery, exists := curve.pass(PassDiscovery)
 	if !exists {
@@ -82,6 +86,26 @@ func deriveBSatConfirmatorySizing(
 		return result, nil
 	}
 	return result, nil
+}
+
+func validateConfirmatoryEligibleSpan(curve Curve, candidate int, policy BSatPolicy) error {
+	expected := candidate
+	for _, batch := range curve.family.contract.record.Shared.EligibleBatches {
+		if batch < candidate {
+			continue
+		}
+		if batch != expected {
+			break
+		}
+		if batch == policy.KMax {
+			return nil
+		}
+		expected++
+	}
+	return fmt.Errorf(
+		"confirmatory method %q requires consecutive eligible batches from candidate %d through KMax %d; gap at batch %d",
+		BSatConfirmatorySizingMethod, candidate, policy.KMax, expected,
+	)
 }
 
 func bsatGlobalStatementCount(policy BSatPolicy) (int, error) {

@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"math"
+	"slices"
 	"testing"
 )
 
@@ -58,6 +59,34 @@ func TestBSatConfirmatoryGoldenOutcomes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestContiguousConfirmatoryFamilyStillSizesAndDerives(t *testing.T) {
+	policy := testBSatPolicy()
+	curve := testTwoPassCurve(t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, 0)
+	discovery, err := curve.discoveryOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sizing, err := deriveBSatConfirmatorySizing(discovery, 3, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizing.ConfirmatoryTrials == nil || *sizing.ConfirmatoryTrials != 3 ||
+		!slices.Equal(sizing.ConfirmatoryBatches, []int{3, 4}) ||
+		sizing.ProjectedTotalActiveRuns == nil || *sizing.ProjectedTotalActiveRuns != 18 {
+		t.Fatalf("contiguous confirmatory sizing changed: %+v", sizing)
+	}
+
+	result, err := deriveBSatConfirmatory(curve, 3, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != BSatAccepted || result.Code != BSatCodeDomainNoImprovementConfirmed ||
+		!result.DomainNoImprovementConfirmed ||
+		!slices.Equal(result.ConfirmatoryMeasuredBatches, []int{3, 4}) {
+		t.Fatalf("contiguous confirmatory derivation changed: %+v", result)
 	}
 }
 

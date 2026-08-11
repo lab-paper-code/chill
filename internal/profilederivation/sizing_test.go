@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,39 @@ func TestBSatConfirmatorySizingRejectsCandidateAndNumericDrift(t *testing.T) {
 	overflow.MaximumActiveRunBudget = math.MaxInt
 	if _, err := deriveBSatConfirmatorySizing(curve, 3, overflow); err == nil {
 		t.Fatal("expected global statement overflow rejection")
+	}
+}
+
+func TestBSatConfirmatorySizingRejectsSparseEligibleSpan(t *testing.T) {
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{1, 2, 4, 8}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	curve, err := DeriveCurve(
+		[]Pass{testPass(t, family, []float64{1, .97, .94, .90}, "sparse-sizing")},
+		family,
+		testFamilyBaselines(t, family),
+		pointPolicy("sparse-sizing-point"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := testBSatPolicy()
+	policy.KMax = 8
+
+	_, err = deriveBSatConfirmatorySizing(curve, 4, policy)
+	if err == nil {
+		t.Fatal("expected the sparse confirmatory span to be rejected")
+	}
+	want := `confirmatory method "bonferroni-welch-relative-precision-v1" requires consecutive eligible batches from candidate 4 through KMax 8; gap at batch 5`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("sparse confirmatory error = %q, want it to contain %q", err, want)
 	}
 }
 
