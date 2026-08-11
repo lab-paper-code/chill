@@ -192,7 +192,7 @@ best        = none
 best_batch  = none
 wait        = 0
 
-for b in frozen_planned_batch_sizes:
+for b in planned_batch_sizes:
     measure n trials at batch b
     epsilon_b = mean incremental energy per item over the admitted trials
 
@@ -206,7 +206,7 @@ for b in frozen_planned_batch_sizes:
     if wait >= patience:                       stop, NoFurtherImprovement
     if epsilon_b > best * divergence_factor:   stop, EnergyDivergence
 
-if frozen_planned_batch_sizes is exhausted:       stop, CapabilityBoundary
+if planned_batch_sizes is exhausted:       stop, CapabilityBoundary
 
 report best_batch
 ```

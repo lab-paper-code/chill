@@ -136,7 +136,7 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	previousSchema := bytes.Replace(
 		canonical,
 		[]byte(curvePlanSchemaVersion),
-		[]byte("chill.dacs.io/curve-plan.v1alpha3"),
+		[]byte("chill.dacs.io/curve-family-contract.v1alpha3"),
 		1,
 	)
 	if _, err := DecodeCurvePlan(previousSchema); err == nil {

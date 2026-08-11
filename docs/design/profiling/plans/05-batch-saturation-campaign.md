@@ -779,7 +779,7 @@ What the code guarantees, and what a reader has to check:
 | a hand-assembled `Point` cannot reach the decision | `DeriveBSatConfirmatory` accepts `Curve`, not `[]Point` |
 | discovery and confirmatory evidence do not overlap | `DeriveCurve` rejects a `TrialID` present in more than one pass |
 | the candidate was not chosen from the evidence that judges it | `DeriveBSatConfirmatory` takes the candidate as an input |
-| a published number identifies its curve plan, verified execution state, and rule | curve plan name, observed environment, and both policy names recorded in the result |
+| a published number identifies its curve plan and rule, and its verified execution-state identities are recoverable | curve plan and policy names are recorded directly; identities are retained in the baseline-map keys and each `Point.StateIdentity` |
 | the tolerance was fixed before the evidence that judges it | **the two policy versions are separate artifacts fixed at separate points — recorded, not enforced** |
 | every eligible trial was included | **enumerate the campaign's frozen Run-name prefix and compare the admitted set with the derivation input — read, not enforced** |
 
@@ -926,5 +926,5 @@ transition plan. They do not gate this campaign. ADR 0016 gives one
 declared-batch-size artifact one state key and one admitted model-loaded-idle
 baseline. Batch remains excluded from the exact state and protocol projections
 as an axis value, while the artifact name, path, declared batch sizes, and supply
-image remain bound. The verified `VerifiedCurvePlan` is the composition boundary for
+image remain bound. The `VerifiedCurvePlan` is the composition boundary for
 that state.

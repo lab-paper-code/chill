@@ -308,14 +308,20 @@ The conversion record's shape changes accordingly:
 ## Schema versions and preserved evidence
 
 Removing `fixedBatch` from the artifact capability and applying the subsequent
-curve-plan vocabulary update change four wire contracts:
+curve-plan vocabulary update change six wire contracts:
 
 | Contract | From | To |
 |---|---|---|
 | `chill.dacs.io/modelcompat-report` | `v1alpha7` | `v1alpha8` |
-| `chill.dacs.io/curve-plan` | `v1alpha3` | `v1alpha4` |
+| curve-plan contract | `chill.dacs.io/curve-family-contract.v1alpha2` | `chill.dacs.io/curve-plan.v1alpha4` |
+| `chill.dacs.io/discovery-derivation-policy` | `v1alpha3` | `v1alpha4` |
+| `chill.dacs.io/confirmatory-derivation-policy` | `v1alpha4` | `v1alpha5` |
 | `chill.dacs.io/rknnlite-runtime-request` | `v1alpha3` | `v1alpha4` |
 | `chill.dacs.io/rknn-conversion-record` | `v1alpha2` | `v1alpha3` |
+
+An operator-authored discovery policy carrying the old `curveFamilyName` key
+must be re-authored with `curvePlanName` under
+`chill.dacs.io/discovery-derivation-policy.v1alpha4`.
 
 `internal/profilingrun/candidate.go:335` decodes on exact version match, so the
 new code reads evidence produced under the new versions. The stored objects and

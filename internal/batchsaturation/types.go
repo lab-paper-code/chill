@@ -46,7 +46,7 @@ type Trial struct {
 // status field, so a decision cannot depend on previously reported progress.
 type Snapshot struct {
 	RetryLimit int
-	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
 	PlannedBatchSizes []int
@@ -63,7 +63,7 @@ type Decision struct {
 // Observed is everything a method may see. Failed, pending, and retried
 // attempts are absent by construction.
 type Observed struct {
-	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary. Ascending order is a
 	// precondition of this type.
