@@ -55,8 +55,8 @@ func main() {
 		setupLog.Error(err, "unable to start Profiler manager")
 		os.Exit(1)
 	}
-	if err := setupRunController(mgr, opts); err != nil {
-		setupLog.Error(err, "unable to register reconciler", "resource", "ProfilingRun")
+	if err := setupProfilerControllers(mgr, opts); err != nil {
+		setupLog.Error(err, "unable to register Profiler controllers")
 		os.Exit(1)
 	}
 

@@ -13,6 +13,7 @@ rules:
     resources:
       - profilingruns
     verbs:
+      - create
       - get
       - list
       - watch
@@ -20,6 +21,21 @@ rules:
       - edge.dacs.io
     resources:
       - profilingruns/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - batchsaturations
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - batchsaturations/status
     verbs:
       - get
       - patch

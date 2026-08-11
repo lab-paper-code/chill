@@ -6,11 +6,12 @@
 
 ## Status
 
-Approved design, not yet implemented. Plan 5a and Plan 5 own the estimand,
-acceptance rule, and sizing method; this plan owns the control path that
-executes them. It supersedes the document-driven measurement procedure those
-plans described, including the committed contract and policy files and the
-per-measurement record directory.
+Implemented for the `sequential-early-stop` control path. The
+`two-pass-confirmatory` method remains design work. Plan 5a and Plan 5 own the
+estimand, acceptance rule, and sizing method; this plan owns the control path
+that executes them. It supersedes the document-driven measurement procedure
+those plans described, including the committed contract and policy files and
+the per-measurement record directory.
 
 ## Question
 

@@ -6,14 +6,14 @@ change when the underlying implementation intentionally changes.
 
 ## Q1. How does a ProfilingRun reach reconciliation?
 
-`cmd/profiler/controller_setup.go` constructs the dependencies and calls
-`IntentReconciler.SetupWithManager`. Registration in
+`cmd/profiler/controller_setup.go` constructs the shared dependencies and calls
+`RunReconciler.SetupWithManager`. Registration in
 `internal/profiler/controller/intent_setup.go` uses:
 
 ```text
-For(ProfilingRun) + Owns(ConfigMap)
+For(ProfilingRun) + Owns(ConfigMap, NodeActuation, Job)
   -> controller-runtime event delivery
-  -> IntentReconciler.Reconcile
+  -> RunReconciler.Reconcile
 ```
 
 Required evidence: setup source and focused reconciler tests. The event edge is
@@ -82,6 +82,24 @@ Required evidence: two validated Helm renders using the same release and
 namespace, followed by a resource-set comparison. The optional
 `make deployment-graph-check` command verifies the review view without
 replacing that evidence.
+
+## Q7. How does a BatchSaturation campaign advance?
+
+`cmd/profiler/controller_setup.go` reuses the Profiler's candidate, preparation,
+intent-record, Evidence Store, and retained-evidence dependencies and calls the
+batch-saturation reconciler's `SetupWithManager`. Registration in
+`internal/batchsaturation/controller/setup.go` uses:
+
+```text
+For(BatchSaturation) + Owns(ProfilingRun)
+  -> controller-runtime event delivery
+  -> BatchSaturationReconciler.Reconcile
+```
+
+The reconciler lists labeled child Runs and the projection verifies the exact
+controller-owner UID before pure decision logic is called. Required evidence:
+setup and projection source plus the two focused Profiler envtest campaigns.
+The event edge is `framework-derived`, not a direct Go call.
 
 ## Regression commands
 

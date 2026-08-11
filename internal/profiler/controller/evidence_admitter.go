@@ -48,6 +48,17 @@ func NewKubernetesEvidenceAdmitter(
 	if err != nil {
 		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
 	}
+	return NewKubernetesEvidenceAdmitterWithRetainedLoader(loader)
+}
+
+// NewKubernetesEvidenceAdmitterWithRetainedLoader reuses a composition-root
+// loader whose Run-binding checks are also needed by aggregate derivation.
+func NewKubernetesEvidenceAdmitterWithRetainedLoader(
+	loader *evidencekube.RetainedLoader,
+) (*KubernetesEvidenceAdmitter, error) {
+	if loader == nil {
+		return nil, errors.New("retained evidence loader is required")
+	}
 	return &KubernetesEvidenceAdmitter{loader: loader}, nil
 }
 
