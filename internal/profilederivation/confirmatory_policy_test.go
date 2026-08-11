@@ -33,7 +33,7 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	if decoded.CurveFamilyName() != discovery.CurveFamilyName() ||
 		decoded.CandidateBatch() != 3 || decoded.ConfirmatoryTrials() == nil ||
 		*decoded.ConfirmatoryTrials() != 3 ||
-		!slices.Equal(decoded.ConfirmatoryBatches(), []int{3, 4}) ||
+		!slices.Equal(decoded.ConfirmatoryBatchSizes(), []int{3, 4}) ||
 		bsat.Version != discovery.spec().BatchSaturation.Name {
 		t.Fatalf("confirmatory policy lost its frozen allocation: %+v", decoded.record)
 	}
@@ -108,7 +108,7 @@ func TestFreezeConfirmatoryDerivationPolicyRetainsBudgetInsufficientSizing(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.ConfirmatoryTrials() != nil || len(policy.ConfirmatoryBatches()) != 0 ||
+	if policy.ConfirmatoryTrials() != nil || len(policy.ConfirmatoryBatchSizes()) != 0 ||
 		decoded.record.Confirmation.Status != BSatUnavailable ||
 		decoded.record.Confirmation.Code != BSatCodeConfirmatoryBudgetInsufficient {
 		t.Fatalf("budget-insufficient policy has a Run allocation: %+v", policy.record.Confirmation)

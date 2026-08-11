@@ -373,7 +373,7 @@ not accepted in `ProfilingRun`.
 `ProfilingRun.spec.measurement.workloadMode` is the only execution-mode
 discriminator. `idle-model-loaded` requires zero warm-up, a positive settling
 duration, and `none` input/output protocols; CPU ORT keeps `batch=1`, while a
-batch-profile artifact binds the first batch in its declared profile set. Idle
+declared-batch-size artifact binds the first batch in its declared batch size set. Idle
 is accepted only with `idle-wall-power-v1`. Active fields and
 `wall-power-v2` remain unchanged. The controller projects these frozen facts
 but does not implement runtime or raw-schema behavior itself.

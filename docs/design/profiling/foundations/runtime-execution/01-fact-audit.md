@@ -36,7 +36,7 @@ and both `Unknown` and `Incompatible` fail closed for enumeration.
 A successful smoke run proves that one artifact/runtime/Pod combination loaded
 and produced valid output at that time. It does not by itself prove reusable
 static compatibility, current schedulability, SLO feasibility, or support for
-unmeasured batches.
+unmeasured batch sizes.
 
 ## CPU ONNX Runtime path
 

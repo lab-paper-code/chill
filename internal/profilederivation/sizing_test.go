@@ -85,7 +85,7 @@ func TestBSatConfirmatorySizingRejectsCandidateAndNumericDrift(t *testing.T) {
 
 func TestBSatConfirmatorySizingRejectsSparseEligibleSpan(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{1, 2, 4, 8}
+	shared.PlannedBatchSizes = []int{1, 2, 4, 8}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestBSatConfirmatorySizingRejectsSparseEligibleSpan(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the sparse confirmatory span to be rejected")
 	}
-	want := `confirmatory method "bonferroni-welch-relative-precision-v1" requires consecutive eligible batches from candidate 4 through KMax 8; gap at batch 5`
+	want := `confirmatory method "bonferroni-welch-relative-precision-v1" requires consecutive planned batch sizes from candidate 4 through KMax 8; gap at batch 5`
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("sparse confirmatory error = %q, want it to contain %q", err, want)
 	}
@@ -224,7 +224,7 @@ func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64
 func testSparseBelowCandidateDiscoveryCurve(t *testing.T) Curve {
 	t.Helper()
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{1, 2, 4, 5, 6}
+	shared.PlannedBatchSizes = []int{1, 2, 4, 5, 6}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)

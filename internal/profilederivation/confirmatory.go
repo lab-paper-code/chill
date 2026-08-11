@@ -75,7 +75,7 @@ func deriveBSatConfirmatory(
 	result.ConfirmatoryPoints = make([]Point, len(confirmation.points))
 	for index, point := range confirmation.points {
 		result.ConfirmatoryPoints[index] = clonePoint(point)
-		result.ConfirmatoryMeasuredBatches = append(result.ConfirmatoryMeasuredBatches, point.Batch)
+		result.ConfirmatoryMeasuredBatchSizes = append(result.ConfirmatoryMeasuredBatchSizes, point.Batch)
 	}
 	if err := validateConfirmatoryPass(
 		confirmation, candidate, policy.KMax, *sizing.ConfirmatoryTrials,
@@ -223,8 +223,8 @@ func newBSatResult(
 	for index, point := range discovery.points {
 		result.DiscoveryPoints[index] = clonePoint(point)
 	}
-	result.DiscoveryMeasuredBatches = append(
-		[]int(nil), discoveryResult.MeasuredBatches...,
+	result.DiscoveryMeasuredBatchSizes = append(
+		[]int(nil), discoveryResult.MeasuredBatchSizes...,
 	)
 	return result
 }

@@ -1,4 +1,4 @@
-# 0016 Batch-Profile Artifact Capability
+# 0016 Declared-Batch-Size Artifact Capability
 
 ## Status
 
@@ -15,20 +15,20 @@ several batch shapes into one immutable artifact. An RK3588 probe loaded one
 such artifact and executed several declared batches through the same RKNNLite
 path. The runtime refused an undeclared batch and reported the shapes carried by
 the artifact. The converter and device probe together provide the evidence for
-a finite declared profile set.
+a finite declared batch size set.
 
 ## Decision
 
-Every derived artifact declares its executable batch set as `BatchProfiles`.
+Every derived artifact declares its executable batch set as `DeclaredBatchSizes`.
 One execution path, artifact identity, and runtime path serve every declared
 profile. The profile set may be sparse. Its contents are catalog configuration;
 family freeze canonicalizes those contents into strictly increasing batch order.
 
 The capability boundary is resolved when measurement intent is frozen. The
-selected artifact's declared profile set becomes the frozen eligible batch set.
+selected artifact's declared batch size set becomes the frozen planned batch size set.
 The sweep advances through that set in ascending order, steps over sizes the
 operator omitted, and reaches the capability boundary when the set is
-exhausted. `KMax` is compared with the largest eligible batch.
+exhausted. `KMax` is compared with the largest planned batch size.
 
 One artifact defines one execution-state key. The curve therefore owns one
 admitted model-loaded-idle baseline for that state. The baseline Run uses the
@@ -41,11 +41,11 @@ path introduced by a new architectural decision and supported by its own
 conversion, device, state-identity, and baseline evidence.
 
 A catalog entry may declare a profile that the selected artifact was built
-without. A Run created for that declared profile follows the ordinary trial
+without. A Run created for that declared batch size follows the ordinary trial
 failure and retry path. The frozen capability boundary remains derived from the
 declared set.
 
 Plan 5's confirmatory estimand ranges over every batch above its candidate
 through `KMax`. Its confirmatory sizing boundary therefore accepts only a
-consecutive eligible span from the candidate through `KMax` and returns an
-explicit error for a gap. Plan 5a follows sparse eligible sets directly.
+consecutive planned batch size span from the candidate through `KMax` and returns an
+explicit error for a gap. Plan 5a follows sparse planned batch size sets directly.

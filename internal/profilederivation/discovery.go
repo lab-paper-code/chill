@@ -25,8 +25,8 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 	if err := validateBSatPolicy(policy); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
-	eligibleBatches := curve.family.contract.record.Shared.EligibleBatches
-	if len(eligibleBatches) < 2 || eligibleBatches[len(eligibleBatches)-1] != policy.KMax {
+	plannedBatchSizes := curve.family.contract.record.Shared.PlannedBatchSizes
+	if len(plannedBatchSizes) < 2 || plannedBatchSizes[len(plannedBatchSizes)-1] != policy.KMax {
 		return BSatDiscoveryResult{}, errors.New("curve family does not match policy kmax")
 	}
 	if _, exists := curve.pass(PassConfirmatory); exists {
@@ -45,14 +45,14 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		CurveFamilyName:              curve.FamilyName(),
 	}
 	for index, point := range discovery.points {
-		expectedBatch := eligibleBatches[index]
+		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.DiscoveryTrials ||
 			point.MeanIncrementalJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
 			math.IsInf(point.MeanIncrementalJoulesPerItem, 0) {
 			return BSatDiscoveryResult{}, errors.New("discovery points do not match the frozen policy")
 		}
-		result.MeasuredBatches = append(result.MeasuredBatches, point.Batch)
+		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
 	}
 	if discovery.capabilityBoundary != nil && *discovery.capabilityBoundary <= policy.KMax {
 		boundary := *discovery.capabilityBoundary
@@ -61,7 +61,7 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		result.BoundaryBatch = &boundary
 		return result, nil
 	}
-	if len(discovery.points) != len(eligibleBatches) {
+	if len(discovery.points) != len(plannedBatchSizes) {
 		return BSatDiscoveryResult{}, errors.New("discovery pass does not cover kmax")
 	}
 

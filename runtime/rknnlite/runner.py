@@ -383,14 +383,14 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "batchProfiles", "inputSampleShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "declaredBatchSizes", "inputSampleShape", "inputLayout", "inputDataType"},
         "candidate.artifactCapability",
     )
-    profiles = capability["batchProfiles"]
-    if not isinstance(profiles, list) or not profiles:
-        raise ContractError("candidate batchProfiles must be a non-empty array")
-    for profile in profiles:
-        require_integer(profile, "candidate batchProfiles item", 1)
+    declared_batch_sizes = capability["declaredBatchSizes"]
+    if not isinstance(declared_batch_sizes, list) or not declared_batch_sizes:
+        raise ContractError("candidate declaredBatchSizes must be a non-empty array")
+    for declared_batch_size in declared_batch_sizes:
+        require_integer(declared_batch_size, "candidate declaredBatchSizes item", 1)
     shape = capability["inputSampleShape"]
     if not isinstance(shape, list) or not shape:
         raise ContractError("candidate inputSampleShape must be a non-empty array")
@@ -665,7 +665,7 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     if outputs is None:
         raise ContractError(
             "runtime supplied no result for the frozen batch; "
-            "the artifact does not provide this profile"
+            "the artifact does not provide this declared batch size"
         )
     if not outputs:
         raise ContractError("inference produced no outputs")

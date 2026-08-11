@@ -46,12 +46,12 @@ type ModelArtifactDerivation struct {
 	// +kubebuilder:validation:MinLength=1
 	TargetPlatform string `json:"targetPlatform"`
 
-	// BatchProfiles enumerates every batch size this artifact can execute.
+	// DeclaredBatchSizes enumerates every batch size value this artifact can execute.
 	// A runtime that consumes batch as a call argument declares no derivation
-	// and therefore no profiles.
+	// and therefore no declared batch sizes.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	BatchProfiles []int32 `json:"batchProfiles"`
+	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
 
 	// Input freezes the tensor contract consumed by a runtime that cannot
 	// discover it safely from the derived executable.
@@ -63,8 +63,8 @@ type ModelArtifactDerivation struct {
 }
 
 type ModelArtifactInputContract struct {
-	// InputSampleShape is the input tensor shape without its batch axis. The batch
-	// axis is supplied by the selected profile, so a batch mismatch is not
+	// InputSampleShape is the input tensor shape without its batch axis. The
+	// batch axis is supplied by the selected declared batch size, so a mismatch is not
 	// representable here.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1

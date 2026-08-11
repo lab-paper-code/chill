@@ -12,7 +12,7 @@ func TestSequentialRequestsIdleBaselineFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	plan, err := method.Plan(Observed{EligibleBatches: []int{1}})
+	plan, err := method.Plan(Observed{PlannedBatchSizes: []int{1}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestSequentialRequestsIdleBaselineFirst(t *testing.T) {
 	}
 }
 
-func TestSequentialStartsAtTheFirstEligibleBatch(t *testing.T) {
+func TestSequentialStartsAtTheFirstPlannedBatchSize(t *testing.T) {
 	method, err := NewSequentialEarlyStop(SequentialConfig{
 		MinDelta: 0.05, Patience: 1, TrialsPerBatch: 3, DivergenceFactor: 1.1,
 	}, nil)
@@ -30,7 +30,7 @@ func TestSequentialStartsAtTheFirstEligibleBatch(t *testing.T) {
 	}
 
 	t.Run("idle baseline", func(t *testing.T) {
-		plan, err := method.Plan(Observed{EligibleBatches: []int{2, 4}})
+		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -46,7 +46,7 @@ func TestSequentialStartsAtTheFirstEligibleBatch(t *testing.T) {
 			{WorkloadMode: WorkloadModeIdle, Batch: 2},
 			{WorkloadMode: WorkloadModeIdle, Batch: 2},
 		}
-		plan, err := method.Plan(Observed{EligibleBatches: []int{2, 4}, Accepted: accepted})
+		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}, Accepted: accepted})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -64,7 +64,7 @@ func TestSequentialFillsEachBatchBeforeAdvancing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	observed := Observed{EligibleBatches: []int{1}, Accepted: []Measurement{
+	observed := Observed{PlannedBatchSizes: []int{1}, Accepted: []Measurement{
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
@@ -91,8 +91,8 @@ func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
 	}
 
 	plan, err := method.Plan(Observed{
-		EligibleBatches: []int{1, 2, 4},
-		Accepted:        acceptedThrough(2, 3),
+		PlannedBatchSizes: []int{1, 2, 4},
+		Accepted:          acceptedThrough(2, 3),
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -127,8 +127,8 @@ func TestSequentialBackfillAndCurveInputWalkPastAGap(t *testing.T) {
 	}
 
 	_, err = method.Plan(Observed{
-		EligibleBatches: []int{1, 2, 4},
-		Accepted:        accepted,
+		PlannedBatchSizes: []int{1, 2, 4},
+		Accepted:          accepted,
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -138,7 +138,7 @@ func TestSequentialBackfillAndCurveInputWalkPastAGap(t *testing.T) {
 	}
 }
 
-func TestSequentialRejectsAnEmptyEligibleBatchSet(t *testing.T) {
+func TestSequentialRejectsAnEmptyPlannedBatchSizeSet(t *testing.T) {
 	method, err := NewSequentialEarlyStop(SequentialConfig{
 		MinDelta: 0.05, Patience: 1, TrialsPerBatch: 3, DivergenceFactor: 1.1,
 	}, nil)
@@ -147,8 +147,8 @@ func TestSequentialRejectsAnEmptyEligibleBatchSet(t *testing.T) {
 	}
 
 	_, err = method.Plan(Observed{})
-	if err == nil || err.Error() != "a non-empty eligible batch set is required" {
-		t.Fatalf("error = %v, want %q", err, "a non-empty eligible batch set is required")
+	if err == nil || err.Error() != "a non-empty planned batch size set is required" {
+		t.Fatalf("error = %v, want %q", err, "a non-empty planned batch size set is required")
 	}
 }
 
@@ -164,8 +164,8 @@ func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
 	}
 
 	plan, err := method.Plan(Observed{
-		EligibleBatches: []int{1, 2},
-		Accepted:        acceptedThrough(2, 3),
+		PlannedBatchSizes: []int{1, 2},
+		Accepted:          acceptedThrough(2, 3),
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)

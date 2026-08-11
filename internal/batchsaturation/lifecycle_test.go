@@ -33,27 +33,27 @@ func TestDecide(t *testing.T) {
 	}{
 		{
 			name:     "ask the method when nothing has run",
-			snapshot: Snapshot{RetryLimit: 2, EligibleBatches: []int{1}},
+			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}},
 			plan:     Plan{Next: &first},
 			want:     ActionCreateRun, wantRun: &first,
 		},
 		{
 			name: "wait while a trial is live",
-			snapshot: Snapshot{RetryLimit: 2, EligibleBatches: []int{1}, Trials: []Trial{
+			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
 				{Measurement: idle(1), Attempt: 1, Verdict: VerdictPending},
 			}},
 			want: ActionWait,
 		},
 		{
 			name: "retry a failed attempt within the limit",
-			snapshot: Snapshot{RetryLimit: 2, EligibleBatches: []int{1}, Trials: []Trial{
+			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
 				{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 			}},
 			want: ActionCreateRun, wantRun: &first,
 		},
 		{
 			name: "fail once the retry limit is exhausted",
-			snapshot: Snapshot{RetryLimit: 1, EligibleBatches: []int{1}, Trials: []Trial{
+			snapshot: Snapshot{RetryLimit: 1, PlannedBatchSizes: []int{1}, Trials: []Trial{
 				{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 				{Measurement: idle(1), Attempt: 2, Verdict: VerdictFailed},
 			}},
@@ -61,7 +61,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "finish when the method returns a result",
-			snapshot: Snapshot{RetryLimit: 2, EligibleBatches: []int{1}, Trials: []Trial{
+			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
 				{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
 			}},
 			plan: Plan{Result: &Result{Outcome: "Stopped/NoFurtherImprovement"}},
@@ -85,7 +85,7 @@ func TestDecide(t *testing.T) {
 
 func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
 	method := &stubMethod{plan: Plan{Next: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 1}}}
-	_, err := Decide(Snapshot{RetryLimit: 2, EligibleBatches: []int{1}, Trials: []Trial{
+	_, err := Decide(Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
 		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 		{Measurement: idle(1), Attempt: 2, Verdict: VerdictAccepted},
 		{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
@@ -98,11 +98,11 @@ func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
 	}
 }
 
-func TestDecideGivesTheMethodTheEligibleBatches(t *testing.T) {
+func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	method := &stubMethod{plan: Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}}
 	snapshot := Snapshot{
-		RetryLimit:      1,
-		EligibleBatches: []int{1, 2, 4},
+		RetryLimit:        1,
+		PlannedBatchSizes: []int{1, 2, 4},
 		Trials: []Trial{
 			{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
 			{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
@@ -113,7 +113,7 @@ func TestDecideGivesTheMethodTheEligibleBatches(t *testing.T) {
 		t.Fatalf("decide: %v", err)
 	}
 
-	if !reflect.DeepEqual(method.seen.EligibleBatches, []int{1, 2, 4}) {
-		t.Fatalf("eligible batches = %v, want [1 2 4]", method.seen.EligibleBatches)
+	if !reflect.DeepEqual(method.seen.PlannedBatchSizes, []int{1, 2, 4}) {
+		t.Fatalf("planned batch sizes = %v, want [1 2 4]", method.seen.PlannedBatchSizes)
 	}
 }

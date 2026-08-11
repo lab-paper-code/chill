@@ -53,17 +53,6 @@ spec:
                         Derivation binds a derived executable to its source artifact and conversion settings.
                         It is absent for canonical source artifacts.
                       properties:
-                        batchProfiles:
-                          description: |-
-                            BatchProfiles enumerates every batch size this artifact can execute.
-                            A runtime that consumes batch as a call argument declares no derivation
-                            and therefore no profiles.
-                          items:
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          minItems: 1
-                          type: array
                         conversion:
                           description: Conversion binds the converter and recipe used
                             to produce this artifact.
@@ -80,6 +69,17 @@ spec:
                           - tool
                           - version
                           type: object
+                        declaredBatchSizes:
+                          description: |-
+                            DeclaredBatchSizes enumerates every batch size value this artifact can execute.
+                            A runtime that consumes batch as a call argument declares no derivation
+                            and therefore no declared batch sizes.
+                          items:
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          minItems: 1
+                          type: array
                         input:
                           description: |-
                             Input freezes the tensor contract consumed by a runtime that cannot
@@ -90,8 +90,8 @@ spec:
                               type: string
                             inputSampleShape:
                               description: |-
-                                InputSampleShape is the input tensor shape without its batch axis. The batch
-                                axis is supplied by the selected profile, so a batch mismatch is not
+                                InputSampleShape is the input tensor shape without its batch axis. The
+                                batch axis is supplied by the selected declared batch size, so a mismatch is not
                                 representable here.
                               items:
                                 format: int32
@@ -119,8 +119,8 @@ spec:
                           minLength: 1
                           type: string
                       required:
-                      - batchProfiles
                       - conversion
+                      - declaredBatchSizes
                       - sourceArtifact
                       - targetPlatform
                       type: object

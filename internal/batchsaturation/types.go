@@ -46,11 +46,11 @@ type Trial struct {
 // status field, so a decision cannot depend on previously reported progress.
 type Snapshot struct {
 	RetryLimit int
-	// EligibleBatches is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
-	EligibleBatches []int
-	Trials          []Trial
+	PlannedBatchSizes []int
+	Trials            []Trial
 }
 
 type Decision struct {
@@ -63,12 +63,12 @@ type Decision struct {
 // Observed is everything a method may see. Failed, pending, and retried
 // attempts are absent by construction.
 type Observed struct {
-	// EligibleBatches is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary. Ascending order is a
 	// precondition of this type.
-	EligibleBatches []int
-	Accepted        []Measurement
+	PlannedBatchSizes []int
+	Accepted          []Measurement
 }
 
 type Plan struct {
@@ -101,16 +101,16 @@ func (s Snapshot) Validate() error {
 	if s.RetryLimit < 0 {
 		return errors.New("retry limit must not be negative")
 	}
-	if len(s.EligibleBatches) == 0 {
-		return errors.New("a non-empty eligible batch set is required")
+	if len(s.PlannedBatchSizes) == 0 {
+		return errors.New("a non-empty planned batch size set is required")
 	}
 	previous := 0
-	for _, batch := range s.EligibleBatches {
+	for _, batch := range s.PlannedBatchSizes {
 		if batch < 1 {
-			return errors.New("eligible batches must be positive")
+			return errors.New("planned batch sizes must be positive")
 		}
 		if batch <= previous {
-			return errors.New("eligible batches must be strictly increasing")
+			return errors.New("planned batch sizes must be strictly increasing")
 		}
 		previous = batch
 	}

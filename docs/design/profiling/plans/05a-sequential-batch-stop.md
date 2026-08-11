@@ -20,8 +20,8 @@ policy-catalog change of its own.
 The two plans compose rather than compete. This one is the default path, and its
 output is exactly the candidate Plan 5 would confirm.
 
-[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) defines one
-immutable artifact with a declared profile set, one execution-state key, and one
+[ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) defines one
+immutable artifact with a declared batch size set, one execution-state key, and one
 admitted idle baseline. Exact point identities remain unchanged. The retained
 RKNN batch-one and batch-two measurements were collected with the separate
 artifacts then in use and have aligned L3 evidence under the same catalog,
@@ -50,7 +50,7 @@ measure costs cluster time for nothing.
 
 So this plan takes the early-stopping rule as it is actually implemented in those
 frameworks, adapts the two things that differ for energy measurement, and runs it
-over the frozen eligible batch set. The set may be sparse; family freeze orders
+over the frozen planned batch size set. The set may be sparse; family freeze orders
 it by strictly increasing batch value, and the sweep follows that sequence.
 Exhausting the set is the typed capability boundary.
 
@@ -191,7 +191,7 @@ best        = none
 best_batch  = none
 wait        = 0
 
-for b in frozen_eligible_batches:
+for b in frozen_planned_batch_sizes:
     measure n trials at batch b
     epsilon_b = mean incremental energy per item over the admitted trials
 
@@ -205,12 +205,12 @@ for b in frozen_eligible_batches:
     if wait >= patience:                       stop, NoFurtherImprovement
     if epsilon_b > best * divergence_factor:   stop, EnergyDivergence
 
-if frozen_eligible_batches is exhausted:       stop, CapabilityBoundary
+if frozen_planned_batch_sizes is exhausted:       stop, CapabilityBoundary
 
 report best_batch
 ```
 
-A Run failure at a declared profile follows the control path's retry limit and
+A Run failure at a declared batch size follows the control path's retry limit and
 terminal failure handling. The sequential rule receives admitted trials and
 derives the capability boundary from exhaustion of the frozen set.
 
@@ -248,7 +248,7 @@ artifact adds one idle baseline set.
 
 The sweep discovers its stopping point within the frozen eligible profile set
 and reports exhaustion of that set as `CapabilityBoundary`. Its boundary batch
-is one greater than the largest eligible batch.
+is one greater than the largest planned batch size.
 
 ## Implementation status
 
@@ -266,7 +266,7 @@ is one greater than the largest eligible batch.
 ```text
 SelectedBatch      = the profile with the best admitted energy per item
 StopReason         = NoFurtherImprovement | CapabilityBoundary | EnergyDivergence
-MeasuredBatches    = the ascending frozen profiles actually measured
+MeasuredBatchSizes    = the ascending frozen profiles actually measured
 MinDelta           = 0.05
 Patience           = 2
 TrialsPerBatch     = 3
@@ -359,7 +359,7 @@ Plan 5a is complete when:
   sweep starts and are reported with the result;
 - every batch belongs to the frozen family, uses its exact-state idle baseline,
   and the sweep names the family and all baselines in its output;
-- a sparse eligible set advances directly from one declared profile to the next;
+- a sparse planned batch size set advances directly from one declared batch size to the next;
 - golden sequences close the no-further-improvement, capability-boundary, and
   energy-divergence stops;
 - a sequence with a single worse batch followed by a recovering one does not stop
@@ -382,7 +382,7 @@ Plan 5a is complete when:
 4. Add the typed stop reasons and the reported fields.
 5. Add golden sequences for each stop reason and for the non-monotonic and
    accumulating cases.
-6. Run the sweep on the live path and record the measured batches, the per-batch
+6. Run the sweep on the live path and record the measured batch sizes, the per-batch
    means, the selected batch, and the campaign artifact premise associated with
    its capability-boundary result.
 

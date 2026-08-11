@@ -188,7 +188,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "candidate": {
             "artifactCapability": {
                 "targetPlatform": "rk3588",
-                "batchProfiles": [1, 2, 4],
+                "declaredBatchSizes": [1, 2, 4],
                 "inputSampleShape": [224, 224, 3],
                 "inputLayout": "NHWC",
                 "inputDataType": "float32",
@@ -352,30 +352,32 @@ class RunnerTest(unittest.TestCase):
                 runner.validate_request(request)
 
     def test_validate_outputs_names_a_refused_profile(self):
-        with self.assertRaisesRegex(runner.ContractError, "does not provide this profile"):
+        with self.assertRaisesRegex(
+            runner.ContractError, "does not provide this declared batch size"
+        ):
             runner.validate_outputs(None, 1)
 
-    def test_validate_request_requires_candidate_batch_profiles(self) -> None:
+    def test_validate_request_requires_candidate_declared_batch_sizes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["batchProfiles"] = []
+            request["candidate"]["artifactCapability"]["declaredBatchSizes"] = []
             with self.assertRaisesRegex(
                 runner.ContractError,
-                "^candidate batchProfiles must be a non-empty array$",
+                "^candidate declaredBatchSizes must be a non-empty array$",
             ):
                 runner.validate_request(request)
 
-    def test_validate_request_requires_positive_candidate_batch_profiles(self) -> None:
+    def test_validate_request_requires_positive_candidate_declared_batch_sizes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["batchProfiles"] = [1, 0, 4]
+            request["candidate"]["artifactCapability"]["declaredBatchSizes"] = [1, 0, 4]
             with self.assertRaisesRegex(
                 runner.ContractError,
-                "^candidate batchProfiles item must be an integer >= 1$",
+                "^candidate declaredBatchSizes item must be an integer >= 1$",
             ):
                 runner.validate_request(request)
 

@@ -74,7 +74,7 @@ func TestContiguousConfirmatoryFamilyStillSizesAndDerives(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sizing.ConfirmatoryTrials == nil || *sizing.ConfirmatoryTrials != 3 ||
-		!slices.Equal(sizing.ConfirmatoryBatches, []int{3, 4}) ||
+		!slices.Equal(sizing.ConfirmatoryBatchSizes, []int{3, 4}) ||
 		sizing.ProjectedTotalActiveRuns == nil || *sizing.ProjectedTotalActiveRuns != 18 {
 		t.Fatalf("contiguous confirmatory sizing changed: %+v", sizing)
 	}
@@ -85,7 +85,7 @@ func TestContiguousConfirmatoryFamilyStillSizesAndDerives(t *testing.T) {
 	}
 	if result.Status != BSatAccepted || result.Code != BSatCodeDomainNoImprovementConfirmed ||
 		!result.DomainNoImprovementConfirmed ||
-		!slices.Equal(result.ConfirmatoryMeasuredBatches, []int{3, 4}) {
+		!slices.Equal(result.ConfirmatoryMeasuredBatchSizes, []int{3, 4}) {
 		t.Fatalf("contiguous confirmatory derivation changed: %+v", result)
 	}
 }

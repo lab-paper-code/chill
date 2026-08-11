@@ -9,7 +9,7 @@
 Active implementation plan. Raspberry Pi 5 CPU ORT remains at L2 pending a
 physical power-supply correction. Orange Pi CPU ORT is L3, while the batch-one
 and batch-two RKNNLite rows measured with the separate artifacts then in use
-have reached L4. ADR 0016 governs current batch-profile artifacts as one
+have reached L4. ADR 0016 governs current declared-batch-size artifacts as one
 execution state with one exact idle baseline. The historical batch-one artifact
 was regenerated, and both historical rows have aligned three-active plus
 three-idle L3 evidence under one conversion recipe, catalog snapshot, runtime,
@@ -99,7 +99,7 @@ corresponding level.
   runtime, artifact, MetricObserver, and WorkloadObserver facts.
 - Execution-path names select catalog entries and configured envelopes; the
   realized runtime family/backend selects the production adapter. A
-  batch-profile artifact declares its eligible set for active intents and uses
+  declared-batch-size artifact declares its planned batch size set for active intents and uses
   the first declared batch for its model-loaded-idle intent, while idle still
   performs no inference.
 - Installed facts are configuration. A row advances only from retained
@@ -318,7 +318,7 @@ that result.
 Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 
 - [x] Bind an immutable RKNN artifact to its source ONNX, target platform,
-  conversion identity, and declared batch profiles.
+  conversion identity, and declared batch sizes.
 - [x] Keep host `librknnrt`, driver, image-owned package, device visibility, and
   NPU allocation/exclusivity as separate facts.
 - [x] Add an explicit RKNN adapter, artifact projection, `/dev/dri`/host-library
@@ -330,14 +330,14 @@ Execution-facts v1alpha5 and candidate-report v1alpha7 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
-and the report also retains target platform, batch profiles, and the explicit
+and the report also retains target platform, declared batch sizes, and the explicit
 non-batch runtime tensor contract. Their decoders accept the current schemas
 only.
 Intent v1alpha10 retains the normalized physical host contract,
 omits ORT-only thread settings from RKNNLite's common CPU quota, and adds the
 optional typed actuation binding. Host-bound derivation identities use
 execution-state-identity v1alpha4. The installed RKNN declaration pins the
-arm64-only runtime image, batch-profile artifact supply image and path, exact
+arm64-only runtime image, declared-batch-size artifact supply image and path, exact
 host ABI/device contract, and runtime access contract.
 The production Job now consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
@@ -420,7 +420,7 @@ Entry condition: the owning execution path reaches L3 for
 - [x] Preserve exact execution-state identity and define a pre-frozen
   `CurveFamilyName`, a Loader-verified `CurveFamily`, and idle
   baselines keyed by the historical artifact states. ADR 0016 governs current
-  batch-profile artifact capability; Plans 5 and 5a own its consumers.
+  declared-batch-size artifact capability; Plans 5 and 5a own its consumers.
 - [x] Reconvert batch one with the current repository recipe, freeze batch one
   and batch two under one catalog/image generation, and admit three active plus
   three model-loaded-idle Runs for each historical artifact state.
@@ -432,7 +432,7 @@ Entry condition: the owning execution path reaches L3 for
 
 Completion: the two exact Orange Pi RKNN measurements compose as one
 Loader-verified Plan 5a historical family and retain their L4 result. New RKNN
-campaigns use one batch-profile artifact, one state key, and one idle baseline.
+campaigns use one declared-batch-size artifact, one state key, and one idle baseline.
 
 ## Common completion gate
 

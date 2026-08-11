@@ -79,22 +79,22 @@ type CurveArtifactContract struct {
 
 // CurveFamilySharedContract is the pre-measurement family anchor.
 type CurveFamilySharedContract struct {
-	Name            string                    `json:"name"`
-	LogicalModel    string                    `json:"logicalModel"`
-	DeviceClass     string                    `json:"deviceClass"`
-	NodeUID         string                    `json:"nodeUID"`
-	RuntimeFamily   string                    `json:"runtimeFamily"`
-	Backend         string                    `json:"backend"`
-	RuntimeImage    string                    `json:"runtimeImage"`
-	PowerMode       string                    `json:"powerMode"`
-	CPU             CurveCPUContract          `json:"cpu"`
-	MetricSource    CurveMetricSourceContract `json:"metricSource"`
-	ActiveProtocol  CurveProtocolContract     `json:"activeProtocol"`
-	IdleProtocol    CurveProtocolContract     `json:"idleProtocol"`
-	Conversion      CurveConversionContract   `json:"conversion"`
-	Artifact        CurveArtifactContract     `json:"artifact"`
-	EligibleBatches []int                     `json:"eligibleBatches"`
-	Tensor          CurveTensorContract       `json:"tensor"`
+	Name              string                    `json:"name"`
+	LogicalModel      string                    `json:"logicalModel"`
+	DeviceClass       string                    `json:"deviceClass"`
+	NodeUID           string                    `json:"nodeUID"`
+	RuntimeFamily     string                    `json:"runtimeFamily"`
+	Backend           string                    `json:"backend"`
+	RuntimeImage      string                    `json:"runtimeImage"`
+	PowerMode         string                    `json:"powerMode"`
+	CPU               CurveCPUContract          `json:"cpu"`
+	MetricSource      CurveMetricSourceContract `json:"metricSource"`
+	ActiveProtocol    CurveProtocolContract     `json:"activeProtocol"`
+	IdleProtocol      CurveProtocolContract     `json:"idleProtocol"`
+	Conversion        CurveConversionContract   `json:"conversion"`
+	Artifact          CurveArtifactContract     `json:"artifact"`
+	PlannedBatchSizes []int                     `json:"plannedBatchSizes"`
+	Tensor            CurveTensorContract       `json:"tensor"`
 }
 
 type curveFamilyContractRecord struct {
@@ -103,14 +103,14 @@ type curveFamilyContractRecord struct {
 }
 
 // CurveFamilyContract can only be constructed through
-// FreezeCurveFamilyContract, which validates and orders its eligible batches.
+// FreezeCurveFamilyContract, which validates and orders its planned batch sizes.
 type CurveFamilyContract struct {
 	record curveFamilyContractRecord
 }
 
 func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
 	shared = cloneCurveFamilyShared(shared)
-	sort.Ints(shared.EligibleBatches)
+	sort.Ints(shared.PlannedBatchSizes)
 	if err := validateCurveFamilyShared(shared); err != nil {
 		return CurveFamilyContract{}, err
 	}
@@ -152,8 +152,8 @@ func (c CurveFamilyContract) Shared() CurveFamilySharedContract {
 	return cloneCurveFamilyShared(c.record.Shared)
 }
 
-func (c CurveFamilyContract) EligibleBatches() []int {
-	return append([]int(nil), c.record.Shared.EligibleBatches...)
+func (c CurveFamilyContract) PlannedBatchSizes() []int {
+	return append([]int(nil), c.record.Shared.PlannedBatchSizes...)
 }
 
 // requireFrozen checks opaque type state only. The constructor and decoder own
@@ -249,18 +249,18 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 		path.Clean(shared.Artifact.Path) != shared.Artifact.Path {
 		return errors.New("curve-family artifact path is invalid")
 	}
-	if len(shared.EligibleBatches) == 0 {
-		return errors.New("curve-family requires at least one eligible batch")
+	if len(shared.PlannedBatchSizes) == 0 {
+		return errors.New("curve-family requires at least one planned batch size")
 	}
-	seenBatches := make(map[int]struct{}, len(shared.EligibleBatches))
-	for _, batch := range shared.EligibleBatches {
-		if batch <= 0 {
-			return errors.New("curve-family eligible batches must be positive")
+	seenBatches := make(map[int]struct{}, len(shared.PlannedBatchSizes))
+	for _, plannedBatchSize := range shared.PlannedBatchSizes {
+		if plannedBatchSize <= 0 {
+			return errors.New("curve-family planned batch sizes must be positive")
 		}
-		if _, exists := seenBatches[batch]; exists {
-			return fmt.Errorf("curve-family eligible batch %d is duplicated", batch)
+		if _, exists := seenBatches[plannedBatchSize]; exists {
+			return fmt.Errorf("curve-family planned batch size %d is duplicated", plannedBatchSize)
 		}
-		seenBatches[batch] = struct{}{}
+		seenBatches[plannedBatchSize] = struct{}{}
 	}
 	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
 		len(shared.Tensor.InputSampleShape) == 0 {
@@ -337,7 +337,7 @@ func cleanCurveValue(value string) bool {
 }
 
 func cloneCurveFamilyShared(shared CurveFamilySharedContract) CurveFamilySharedContract {
-	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
+	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
 	shared.Tensor.InputSampleShape = append([]int(nil), shared.Tensor.InputSampleShape...)
 	return shared
 }

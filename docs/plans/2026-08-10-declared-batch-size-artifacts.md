@@ -1,14 +1,14 @@
-# Batch-Profile Artifacts Implementation Plan
+# Declared-Batch-Size Artifacts Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** One immutable artifact declares the set of batch sizes it can execute, so one execution path serves a whole batch sweep and the capability boundary becomes a catalog fact resolved before any Run is created.
 
-**Architecture:** `ModelArtifactDerivation.FixedBatch int32` becomes `BatchProfiles []int32`, and the declared input contract drops its batch axis. Checks that compared two catalog declarations of the same fact lose their subject and are deleted; the one surviving batch check becomes a set-membership test at intent freeze. The per-batch curve-family member contract collapses into the shared contract.
+**Architecture:** `ModelArtifactDerivation.FixedBatch int32` becomes `DeclaredBatchSizes []int32`, and the declared input contract drops its batch axis. Checks that compared two catalog declarations of the same fact lose their subject and are deleted; the one surviving batch check becomes a set-membership test at intent freeze. The per-batch curve-family member contract collapses into the shared contract.
 
 **Tech Stack:** Go, kubebuilder/controller-runtime, CEL validation, Python 3 (`runtime/rknnlite`, `build/model-artifacts/rknn`), RKNN-Toolkit2 2.3.2.
 
-**Design authority:** `docs/design/profiling/plans/08-batch-profile-artifacts.md`
+**Design authority:** `docs/design/profiling/plans/08-declared-batch-size-artifacts.md`
 
 ## Global Constraints
 
@@ -54,7 +54,7 @@ Add to `runtime/rknnlite/test_runner.py`, inside the existing test class:
 
 ```python
     def test_validate_outputs_names_a_refused_profile(self):
-        with self.assertRaisesRegex(RUNNER.ContractError, "does not provide this profile"):
+        with self.assertRaisesRegex(RUNNER.ContractError, "does not provide this declared batch size"):
             RUNNER.validate_outputs(None, 1)
 ```
 
@@ -69,7 +69,7 @@ Expected: FAIL. `validate_outputs(None, 1)` currently raises `ContractError("inf
 
 - [ ] **Step 3: Name the refusal in `validate_outputs`**
 
-RKNNLite returns `None` when the runtime refuses a batch profile. `if not outputs` already catches it, so this is a message change, not a new guard. In `runtime/rknnlite/runner.py:664-666`, replace:
+RKNNLite returns `None` when the runtime refuses a declared batch size. `if not outputs` already catches it, so this is a message change, not a new guard. In `runtime/rknnlite/runner.py:664-666`, replace:
 
 ```python
 def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
@@ -84,7 +84,7 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     if outputs is None:
         raise ContractError(
             "runtime supplied no result for the frozen batch; "
-            "the artifact does not provide this profile"
+            "the artifact does not provide this declared batch size"
         )
     if not outputs:
         raise ContractError("inference produced no outputs")
@@ -178,7 +178,7 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 
 ---
 
-### Task 2: Replace the fixed batch with a declared batch-profile set
+### Task 2: Replace the fixed batch with a declared-batch-size set
 
 **Files:**
 - Modify: `api/v1alpha1/modelspec_types.go:49-51,62-70`
@@ -192,38 +192,38 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 
 **Interfaces:**
 - Consumes: `validate_candidate(value)` from Task 1
-- Produces: `ModelArtifactDerivation.BatchProfiles []int32`; `ModelArtifactInputContract.InputSampleShape []int32`; `profilingrun.CandidateArtifactCapability{TargetPlatform string, BatchProfiles []int32, InputSampleShape []int32, InputLayout string, InputDataType string}`; `CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"`; `rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha4"`
+- Produces: `ModelArtifactDerivation.DeclaredBatchSizes []int32`; `ModelArtifactInputContract.InputSampleShape []int32`; `profilingrun.CandidateArtifactCapability{TargetPlatform string, DeclaredBatchSizes []int32, InputSampleShape []int32, InputLayout string, InputDataType string}`; `CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"`; `rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha4"`
 
 - [ ] **Step 1: Write the failing eligibility test**
 
-Add to `internal/profilingrun/candidate_test.go`. The helper mirrors the fixture already used by `TestCandidateReportValidatesHostContractDelivery` at `:196-223`, varying only the declared profiles and the measured batch:
+Add to `internal/profilingrun/candidate_test.go`. The helper mirrors the fixture already used by `TestCandidateReportValidatesHostContractDelivery` at `:196-223`, varying only the declared batch sizes and the measured batch:
 
 ```go
-func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredProfiles(t *testing.T) {
+func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredBatchSizes(t *testing.T) {
 	_, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 3)
 	if err == nil {
 		t.Fatal("expected an undeclared batch to be rejected")
 	}
-	if !strings.Contains(err.Error(), "supported profile") {
-		t.Fatalf("error = %v, want it to name the unsupported profile", err)
+	if !strings.Contains(err.Error(), "supported batch size") {
+		t.Fatalf("error = %v, want it to name the unsupported batch size", err)
 	}
 }
 
-func TestVerifyCandidateReportAcceptsADeclaredProfile(t *testing.T) {
+func TestVerifyCandidateReportAcceptsADeclaredBatchSize(t *testing.T) {
 	if _, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 4); err != nil {
-		t.Fatalf("declared profile rejected: %v", err)
+		t.Fatalf("declared batch size rejected: %v", err)
 	}
 }
 
 func verifyRKNNCandidateAtBatch(
-	t *testing.T, profiles []int32, batch int,
+	t *testing.T, declaredBatchSizes []int32, batch int,
 ) (VerifiedCandidateReport, error) {
 	t.Helper()
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.BatchProfiles = profiles
+	report.ArtifactCapability.DeclaredBatchSizes = declaredBatchSizes
 	report.RuntimeAccess = &CandidateReportRuntimeAccess{
 		Privileged: true, SupplementalGroups: []int64{44, 110},
 	}
@@ -259,26 +259,26 @@ Add `"strings"` to the test file's imports if it is not already there.
 ```bash
 go test ./internal/profilingrun/ -run TestVerifyCandidateReport -v
 ```
-Expected: FAIL to compile — `BatchProfiles` is undefined.
+Expected: FAIL to compile — `DeclaredBatchSizes` is undefined.
 
 - [ ] **Step 3: Change the catalog API**
 
 In `api/v1alpha1/modelspec_types.go`, replace the `FixedBatch` field of `ModelArtifactDerivation`:
 
 ```go
-	// BatchProfiles enumerates every batch size this artifact can execute.
+	// DeclaredBatchSizes enumerates every batch size value this artifact can execute.
 	// A runtime that consumes batch as a call argument declares no derivation
-	// and therefore no profiles.
+	// and therefore no declared batch sizes.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	BatchProfiles []int32 `json:"batchProfiles"`
+	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
 ```
 
 and replace `Shape` in `ModelArtifactInputContract`:
 
 ```go
-	// InputSampleShape is the input tensor shape without its batch axis. The batch
-	// axis is supplied by the selected profile, so a batch mismatch is not
+	// InputSampleShape is the input tensor shape without its batch axis. The
+	// batch axis is supplied by the selected declared batch size, so a mismatch is not
 	// representable here.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
@@ -298,7 +298,7 @@ In `internal/profilingrun/candidate.go`, raise the schema constant and replace t
 // derived artifact. Full conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
 	TargetPlatform string  `json:"targetPlatform"`
-	BatchProfiles  []int32 `json:"batchProfiles"`
+	DeclaredBatchSizes  []int32 `json:"declaredBatchSizes"`
 	InputSampleShape  []int32 `json:"inputSampleShape,omitempty"`
 	InputLayout    string  `json:"inputLayout,omitempty"`
 	InputDataType  string  `json:"inputDataType,omitempty"`
@@ -311,12 +311,12 @@ In `validateInternalCandidateReport`, replace the artifact block:
 	if report.ArtifactCapability != nil {
 		if strings.TrimSpace(report.ArtifactCapability.TargetPlatform) == "" ||
 			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
-			len(report.ArtifactCapability.BatchProfiles) == 0 {
-			return errors.New("candidate report artifact target platform and batch profiles are required")
+			len(report.ArtifactCapability.DeclaredBatchSizes) == 0 {
+			return errors.New("candidate report artifact target platform and declared batch sizes are required")
 		}
-		for _, profile := range report.ArtifactCapability.BatchProfiles {
-			if profile < 1 {
-				return errors.New("candidate report artifact batch profiles must be positive")
+		for _, declaredBatchSize := range report.ArtifactCapability.DeclaredBatchSizes {
+			if declaredBatchSize < 1 {
+				return errors.New("candidate report artifact declared batch sizes must be positive")
 			}
 		}
 		for _, dimension := range report.ArtifactCapability.InputSampleShape {
@@ -332,7 +332,7 @@ Update the fixture at `internal/profilingrun/candidate_test.go:275` to the new f
 ```go
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, InputSampleShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
 		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
 	}
 }
@@ -349,9 +349,9 @@ This is the capability boundary. `internal/profiler/preparation.go:203` calls `V
 with nothing, and add a dedicated check with its own message immediately after that condition closes:
 
 ```go
-		if !slices.Contains(report.ArtifactCapability.BatchProfiles, int32(intent.Measurement.Batch)) {
+		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(intent.Measurement.Batch)) {
 			return VerifiedCandidateReport{}, errors.New(
-				"candidate RKNN artifact does not declare the measurement batch as a supported profile",
+				"candidate RKNN artifact does not declare the measurement batch as a supported batch size",
 			)
 		}
 ```
@@ -373,8 +373,8 @@ go build ./... 2>&1 | head -40
 
 Fix each break with the corresponding rename, changing nothing else:
 
-- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `BatchProfiles: append([]int32(nil), derivation.BatchProfiles...)` and `capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)`.
-- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Derivation.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.BatchProfiles) == 0` to that condition so a derived RKNNLite artifact must declare at least one profile.
+- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)`.
+- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Derivation.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
 - `internal/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
 
 - [ ] **Step 8: Change the runtime contract**
@@ -384,14 +384,14 @@ In `runtime/rknnlite/runner.py`, `validate_candidate` requires the new field nam
 ```python
     require_fields(
         capability,
-        {"targetPlatform", "batchProfiles", "inputSampleShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "declaredBatchSizes", "inputSampleShape", "inputLayout", "inputDataType"},
         "candidate.artifactCapability",
     )
-    profiles = capability["batchProfiles"]
-    if not isinstance(profiles, list) or not profiles:
-        raise ContractError("candidate batchProfiles must be a non-empty array")
-    for profile in profiles:
-        require_integer(profile, "candidate batchProfiles item", 1)
+    declared_batch_sizes = capability["declaredBatchSizes"]
+    if not isinstance(declared_batch_sizes, list) or not declared_batch_sizes:
+        raise ContractError("candidate declaredBatchSizes must be a non-empty array")
+    for declared_batch_size in declared_batch_sizes:
+        require_integer(declared_batch_size, "candidate declaredBatchSizes item", 1)
     shape = capability["inputSampleShape"]
     if not isinstance(shape, list) or not shape:
         raise ContractError("candidate inputSampleShape must be a non-empty array")
@@ -426,7 +426,7 @@ spec:
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
-      batchProfiles: [1, 2, 4, 8, 16]
+      declaredBatchSizes: [1, 2, 4, 8, 16]
       input:
         inputSampleShape: [224, 224, 3]
         layout: NHWC
@@ -447,7 +447,7 @@ spec:
       backend: not-applicable
 ```
 
-The profile list matches the artifact this plan's design authority records as built and probed. The `rknnlite-bs2` path and the `-bs1`/`-bs2` artifacts are gone, not renamed.
+The declared batch size list matches the artifact this plan's design authority records as built and probed. The `rknnlite-bs2` path and the `-bs1`/`-bs2` artifacts are gone, not renamed.
 
 - [ ] **Step 10: Regenerate and inspect the drift**
 
@@ -455,7 +455,7 @@ The profile list matches the artifact this plan's design authority records as bu
 make manifests generate
 git diff --stat config/crd/bases charts/chill/templates/crds api/v1alpha1/zz_generated.deepcopy.go
 ```
-Expected: `fixedBatch` and `shape` replaced by `batchProfiles` and `inputSampleShape` in both CRD copies, and the deepcopy functions gaining slice copies. Nothing else.
+Expected: `fixedBatch` and `shape` replaced by `declaredBatchSizes` and `inputSampleShape` in both CRD copies, and the deepcopy functions gaining slice copies. Nothing else.
 
 - [ ] **Step 11: Full gates**
 
@@ -468,7 +468,7 @@ Expected: all pass.
 
 ```bash
 git add api/ internal/ runtime/ config/ charts/
-git commit -m "feat: declare a batch-profile set per artifact"
+git commit -m "feat: declare a declared-batch-size set per artifact"
 ```
 
 ---
@@ -486,34 +486,34 @@ One artifact per family leaves a member with nothing batch-varying to hold: four
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-2
-- Produces: `CurveFamilySharedContract` with `Artifact CurveArtifactContract` and `EligibleBatches []int`; `FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error)`; `CurveFamilyContract.EligibleBatches() []int`; `VerifyCurveFamily(contract CurveFamilyContract, verified VerifiedCurveFamilyState) (CurveFamily, error)`
+- Produces: `CurveFamilySharedContract` with `Artifact CurveArtifactContract` and `PlannedBatchSizes []int`; `FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error)`; `CurveFamilyContract.PlannedBatchSizes() []int`; `VerifyCurveFamily(contract CurveFamilyContract, verified VerifiedCurveFamilyState) (CurveFamily, error)`
 
 - [ ] **Step 1: Write the failing contract test**
 
 Replace the member-oriented freeze test in `internal/profilederivation/curve_family_test.go` with:
 
 ```go
-func TestFreezeCurveFamilyContractCarriesTheEligibleBatches(t *testing.T) {
+func TestFreezeCurveFamilyContractCarriesThePlannedBatchSizes(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{4, 1, 2}
+	shared.PlannedBatchSizes = []int{4, 1, 2}
 
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatalf("freeze: %v", err)
 	}
 
-	got := contract.EligibleBatches()
+	got := contract.PlannedBatchSizes()
 	if !reflect.DeepEqual(got, []int{1, 2, 4}) {
-		t.Fatalf("eligible batches = %v, want sorted [1 2 4]", got)
+		t.Fatalf("planned batch sizes = %v, want sorted [1 2 4]", got)
 	}
 }
 
 func TestFreezeCurveFamilyContractRejectsAnEmptyEligibleSet(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = nil
+	shared.PlannedBatchSizes = nil
 
 	if _, err := FreezeCurveFamilyContract(shared); err == nil {
-		t.Fatal("expected an empty eligible batch set to be rejected")
+		t.Fatal("expected an empty planned batch size set to be rejected")
 	}
 }
 ```
@@ -525,7 +525,7 @@ Add `validSharedContract()` to that file, returning a fully populated `CurveFami
 ```bash
 go test ./internal/profilederivation/ -run TestFreezeCurveFamilyContract -v
 ```
-Expected: FAIL to compile — `EligibleBatches` is undefined and `FreezeCurveFamilyContract` takes two arguments.
+Expected: FAIL to compile — `PlannedBatchSizes` is undefined and `FreezeCurveFamilyContract` takes two arguments.
 
 - [ ] **Step 3: Move the artifact facts into the shared contract**
 
@@ -546,7 +546,7 @@ Add two fields to `CurveFamilySharedContract`:
 
 ```go
 	Artifact        CurveArtifactContract `json:"artifact"`
-	EligibleBatches []int                 `json:"eligibleBatches"`
+	PlannedBatchSizes []int                 `json:"plannedBatchSizes"`
 ```
 
 Delete `CurveConversionContract.Derived`. Keep `TargetPlatform`, `Tool`, and `ToolVersion`, and make them unconditional rather than `omitempty`-on-derived.
@@ -572,8 +572,8 @@ Replace the freeze and verify entry points:
 ```go
 func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
 	shared = cloneCurveFamilyShared(shared)
-	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
-	sort.Ints(shared.EligibleBatches)
+	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
+	sort.Ints(shared.PlannedBatchSizes)
 	if err := validateCurveFamilyShared(shared); err != nil {
 		return CurveFamilyContract{}, err
 	}
@@ -584,8 +584,8 @@ func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyCon
 	return CurveFamilyContract{record: record}, nil
 }
 
-func (c CurveFamilyContract) EligibleBatches() []int {
-	return append([]int(nil), c.record.Shared.EligibleBatches...)
+func (c CurveFamilyContract) PlannedBatchSizes() []int {
+	return append([]int(nil), c.record.Shared.PlannedBatchSizes...)
 }
 ```
 
@@ -617,7 +617,7 @@ func VerifyCurveFamily(
 
 `CurveFamily` holds `contract CurveFamilyContract` and `state VerifiedCurveFamilyState`. Keep `Name()` and `EnvironmentIdentity()`, reading the latter from `state.EnvironmentIdentity`.
 
-Extend `validateCurveFamilyShared` to reject an empty `EligibleBatches`, a non-positive or duplicate batch, and an `Artifact` with any empty field.
+Extend `validateCurveFamilyShared` to reject an empty `PlannedBatchSizes`, a non-positive or duplicate batch, and an `Artifact` with any empty field.
 
 - [ ] **Step 5: Follow the compiler through the adapter and curve**
 
@@ -650,7 +650,7 @@ git commit -m "refactor: collapse the curve family onto one artifact"
 
 ---
 
-### Task 4: Read the capability boundary from the eligible batch set
+### Task 4: Read the capability boundary from the planned batch size set
 
 `Trial.CapabilityRejected` is set from a condition reason no component emits, so the boundary is unreachable. It becomes an input to the snapshot instead of an inference from trial outcomes.
 
@@ -667,18 +667,18 @@ The declared set may be sparse. Family freeze orders it by strictly increasing b
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-3
-- Produces: `batchsaturation.Snapshot` with `EligibleBatches []int`; `batchsaturation.Observed` with `EligibleBatches []int` replacing `CapabilityBoundary *int`; `controller.ProjectSnapshot(parent *edgev1alpha1.BatchSaturation, runs []edgev1alpha1.ProfilingRun, eligibleBatches []int) (batchsaturation.Snapshot, error)`
+- Produces: `batchsaturation.Snapshot` with `PlannedBatchSizes []int`; `batchsaturation.Observed` with `PlannedBatchSizes []int` replacing `CapabilityBoundary *int`; `controller.ProjectSnapshot(parent *edgev1alpha1.BatchSaturation, runs []edgev1alpha1.ProfilingRun, plannedBatchSizes []int) (batchsaturation.Snapshot, error)`
 
 - [ ] **Step 1: Write the failing sweep test**
 
 Replace `TestDecideReportsCapabilityBoundaryToTheMethod` in `internal/batchsaturation/lifecycle_test.go` with:
 
 ```go
-func TestDecideGivesTheMethodTheEligibleBatches(t *testing.T) {
+func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	method := &stubMethod{plan: Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}}
 	snapshot := Snapshot{
 		RetryLimit:      1,
-		EligibleBatches: []int{1, 2, 4},
+		PlannedBatchSizes: []int{1, 2, 4},
 		Trials: []Trial{
 			{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
 			{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
@@ -689,8 +689,8 @@ func TestDecideGivesTheMethodTheEligibleBatches(t *testing.T) {
 		t.Fatalf("decide: %v", err)
 	}
 
-	if !reflect.DeepEqual(method.seen.EligibleBatches, []int{1, 2, 4}) {
-		t.Fatalf("eligible batches = %v, want [1 2 4]", method.seen.EligibleBatches)
+	if !reflect.DeepEqual(method.seen.PlannedBatchSizes, []int{1, 2, 4}) {
+		t.Fatalf("planned batch sizes = %v, want [1 2 4]", method.seen.PlannedBatchSizes)
 	}
 }
 ```
@@ -710,7 +710,7 @@ func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
 	}
 
 	plan, err := method.Plan(Observed{
-		EligibleBatches: []int{1, 2, 4},
+		PlannedBatchSizes: []int{1, 2, 4},
 		Accepted:        acceptedThrough(2, 3),
 	})
 	if err != nil {
@@ -733,7 +733,7 @@ func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
 	}
 
 	plan, err := method.Plan(Observed{
-		EligibleBatches: []int{1, 2},
+		PlannedBatchSizes: []int{1, 2},
 		Accepted:        acceptedThrough(2, 3),
 	})
 	if err != nil {
@@ -752,27 +752,27 @@ func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
 ```bash
 go test ./internal/batchsaturation/ -run 'TestDecideGives|TestSequentialSteps|TestSequentialStops' -v
 ```
-Expected: FAIL to compile — `Snapshot.EligibleBatches` and `Observed.EligibleBatches` are undefined.
+Expected: FAIL to compile — `Snapshot.PlannedBatchSizes` and `Observed.PlannedBatchSizes` are undefined.
 
 - [ ] **Step 3: Change the pure types**
 
 In `internal/batchsaturation/types.go`, delete `Trial.CapabilityRejected`, delete `Observed.CapabilityBoundary *int`, and add to both `Snapshot` and `Observed`:
 
 ```go
-	// EligibleBatches is the frozen set of batch sizes the selected artifact
+	// PlannedBatchSizes is the frozen set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
-	EligibleBatches []int
+	PlannedBatchSizes []int
 ```
 
-Extend `Snapshot.Validate()` to require a non-empty `EligibleBatches` with positive, strictly increasing values.
+Extend `Snapshot.Validate()` to require a non-empty `PlannedBatchSizes` with positive, strictly increasing values.
 
 - [ ] **Step 4: Pass the set through `Decide`**
 
 In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected` branch from the first loop, delete `|| trial.CapabilityRejected` from the retry loop's guard, and seed `observed` from the snapshot:
 
 ```go
-	observed := Observed{EligibleBatches: append([]int(nil), snapshot.EligibleBatches...)}
+	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
 ```
 
 - [ ] **Step 5: Advance the sweep through the declared set**
@@ -780,21 +780,21 @@ In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected
 In `internal/batchsaturation/sequential.go`, `Plan` currently walks consecutive integers. Replace the four places that assume that. Guard the set first:
 
 ```go
-	if len(observed.EligibleBatches) == 0 {
-		return Plan{}, errors.New("a non-empty eligible batch set is required")
+	if len(observed.PlannedBatchSizes) == 0 {
+		return Plan{}, errors.New("a non-empty planned batch size set is required")
 	}
 ```
 
 The idle baseline takes the first declared batch, so the baseline Run carries a batch the artifact declares:
 
 ```go
-	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.EligibleBatches[0]}
+	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.PlannedBatchSizes[0]}
 ```
 
 The backfill loop and the derivation input both walk the declared prefix:
 
 ```go
-	for _, batch := range observed.EligibleBatches {
+	for _, batch := range observed.PlannedBatchSizes {
 		if batch > highestActive {
 			break
 		}
@@ -804,12 +804,12 @@ The backfill loop and the derivation input both walk the declared prefix:
 		}
 	}
 	if highestActive == 0 {
-		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.EligibleBatches[0]}
+		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.PlannedBatchSizes[0]}
 		return Plan{Next: &first}, nil
 	}
 
-	batches := make([]int, 0, len(observed.EligibleBatches))
-	for _, batch := range observed.EligibleBatches {
+	batches := make([]int, 0, len(observed.PlannedBatchSizes))
+	for _, batch := range observed.PlannedBatchSizes {
 		if batch > highestActive {
 			break
 		}
@@ -820,7 +820,7 @@ The backfill loop and the derivation input both walk the declared prefix:
 And the continue decision asks the set for a next batch:
 
 ```go
-	next, found := nextEligibleBatch(observed.EligibleBatches, highestActive)
+		next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive)
 	if !found {
 		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
 	}
@@ -829,12 +829,12 @@ And the continue decision asks the set for a next batch:
 ```
 
 ```go
-// nextEligibleBatch returns the smallest declared batch above the highest one
+// nextPlannedBatchSize returns the smallest planned batch size above the highest one
 // already measured. Exhausting the declared set is the capability boundary.
-func nextEligibleBatch(eligible []int, highest int) (int, bool) {
-	for _, batch := range eligible {
-		if batch > highest {
-			return batch, true
+func nextPlannedBatchSize(plannedBatchSizes []int, highest int) (int, bool) {
+	for _, plannedBatchSize := range plannedBatchSizes {
+		if plannedBatchSize > highest {
+			return plannedBatchSize, true
 		}
 	}
 	return 0, false
@@ -850,24 +850,24 @@ Expected: PASS.
 
 - [ ] **Step 7: Delete the unreachable reason code from the projection**
 
-In `internal/batchsaturation/controller/projection.go`, delete the `capabilityReasonCode` constant and its doc comment, delete the `trial.CapabilityRejected` assignment, and delete `capabilityReasonCode` from the `isTerminalReason` switch. Add the eligible set as a projection input:
+In `internal/batchsaturation/controller/projection.go`, delete the `capabilityReasonCode` constant and its doc comment, delete the `trial.CapabilityRejected` assignment, and delete `capabilityReasonCode` from the `isTerminalReason` switch. Add the planned batch size set as a projection input:
 
 ```go
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchSaturation,
 	runs []edgev1alpha1.ProfilingRun,
-	eligibleBatches []int,
+	plannedBatchSizes []int,
 ) (batchsaturation.Snapshot, error) {
 	if parent == nil {
 		return batchsaturation.Snapshot{}, errors.New("a parent BatchSaturation is required")
 	}
 	snapshot := batchsaturation.Snapshot{
 		RetryLimit:      int(parent.Spec.RetryLimit),
-		EligibleBatches: append([]int(nil), eligibleBatches...),
+		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
 	}
 ```
 
-Update `internal/batchsaturation/controller/projection_test.go` to pass an eligible set to every call.
+Update `internal/batchsaturation/controller/projection_test.go` to pass an planned batch size set to every call.
 
 - [ ] **Step 8: Run and gate**
 
@@ -880,12 +880,12 @@ Expected: all pass.
 
 ```bash
 git add internal/batchsaturation
-git commit -m "refactor: resolve the capability boundary from the eligible batches"
+git commit -m "refactor: resolve the capability boundary from the planned batch sizes"
 ```
 
 ---
 
-### Task 5: Convert one artifact for every batch profile
+### Task 5: Convert one artifact for every declared batch size
 
 `set_fixed_batch` overwrites the ONNX symbolic batch axis immediately before conversion, destroying the prerequisite `dynamic_input` needs.
 
@@ -896,7 +896,7 @@ git commit -m "refactor: resolve the capability boundary from the eligible batch
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `export_rknn.py --batch-profile` (repeatable); conversion record schema `chill.dacs.io/rknn-conversion-record.v1alpha3` with `batchProfiles` and `inputSampleShape`
+- Produces: `export_rknn.py --declared-batch-size` (repeatable); conversion record schema `chill.dacs.io/rknn-conversion-record.v1alpha3` with `declaredBatchSizes` and `inputSampleShape`
 
 - [ ] **Step 1: Write the failing build test**
 
@@ -946,19 +946,25 @@ def input_sample_shape(shape):
     return list(shape[1:])
 
 
-def build_dynamic_input(input_sample, profiles):
-    if not profiles:
-        raise ValueError("at least one batch profile is required")
-    for profile in profiles:
-        if profile <= 0:
-            raise ValueError("batch profiles must be positive")
-    return [[[profile, *input_sample]] for profile in sorted(set(profiles))]
+def build_dynamic_input(input_sample, declared_batch_sizes):
+    if not declared_batch_sizes:
+        raise ValueError("at least one declared batch size is required")
+	for declared_batch_size in declared_batch_sizes:
+		if declared_batch_size <= 0:
+            raise ValueError("declared batch sizes must be positive")
+    return [[[declared_batch_size, *input_sample]] for declared_batch_size in sorted(set(declared_batch_sizes))]
 ```
 
 Change the argument:
 
 ```python
-    parser.add_argument("--batch-profile", required=True, action="append", type=int)
+    parser.add_argument(
+        "--declared-batch-size",
+        dest="declared_batch_sizes",
+        required=True,
+        action="append",
+        type=int,
+    )
 ```
 
 Delete the `args.batch_size <= 0` guard; `build_dynamic_input` owns that rejection.
@@ -974,7 +980,7 @@ Replace the conversion block so it reads the shape from the model and never rewr
             dimension.dim_param or dimension.dim_value for dimension in graph_input
         ]
         input_sample = input_sample_shape(declared)
-        dynamic_input = build_dynamic_input(input_sample, args.batch_profile)
+        dynamic_input = build_dynamic_input(input_sample, args.declared_batch_sizes)
 
         converter = RKNN(verbose=False)
         try:
@@ -997,7 +1003,7 @@ RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha3"
 In the record's `conversion` object, replace `"fixedBatch": args.batch_size` with:
 
 ```python
-            "batchProfiles": sorted(set(args.batch_profile)),
+            "declaredBatchSizes": sorted(set(args.declared_batch_sizes)),
             "inputSampleShape": input_sample,
 ```
 
@@ -1010,10 +1016,10 @@ Expected: PASS.
 
 - [ ] **Step 7: Change the Makefile target**
 
-In `Makefile`, rename the help text to "Build one RKNN artifact covering every declared batch profile", replace `test -n "$(RKNN_FIXED_BATCH)"` with `test -n "$(RKNN_BATCH_PROFILES)"`, and replace the `--batch-size` argument with a repeated flag:
+In `Makefile`, rename the help text to "Build one RKNN artifact covering every declared batch size", replace `test -n "$(RKNN_FIXED_BATCH)"` with `test -n "$(RKNN_DECLARED_BATCH_SIZES)"`, and replace the `--batch-size` argument with a repeated flag:
 
 ```make
-		$(foreach profile,$(RKNN_BATCH_PROFILES),--batch-profile "$(profile)") \
+		$(foreach declared_batch_size,$(RKNN_DECLARED_BATCH_SIZES),--declared-batch-size "$(declared_batch_size)") \
 ```
 
 - [ ] **Step 8: Full gates**
@@ -1027,7 +1033,7 @@ Expected: both pass. `make test` runs the build-tool suite.
 
 ```bash
 git add build/ Makefile
-git commit -m "feat: convert one RKNN artifact for every batch profile"
+git commit -m "feat: convert one RKNN artifact for every declared batch size"
 ```
 
 ---
@@ -1036,7 +1042,7 @@ git commit -m "feat: convert one RKNN artifact for every batch profile"
 
 **Files:**
 - Delete: `docs/adr/0014-fixed-artifact-curve-composition.md`
-- Create: `docs/adr/0016-batch-profile-artifact-capability.md`
+- Create: `docs/adr/0016-declared-batch-size-artifact-capability.md`
 - Modify: `docs/design/profiling/README.md:175-186`
 - Modify: `docs/design/profiling/plans/05-batch-saturation-campaign.md`
 - Modify: `docs/design/profiling/plans/05a-sequential-batch-stop.md`
@@ -1049,9 +1055,9 @@ git commit -m "feat: convert one RKNN artifact for every batch profile"
 
 - [ ] **Step 1: Write the replacement ADR**
 
-Create `docs/adr/0016-batch-profile-artifact-capability.md` following the section order of the existing ADRs — `# 0016 Batch-Profile Artifact Capability`, then `## Status` (`Accepted. Supersedes and replaces 0014, which is deleted.`), `## Context`, `## Decision`, `## Consequences`.
+Create `docs/adr/0016-declared-batch-size-artifact-capability.md` following the section order of the existing ADRs — `# 0016 Declared-Batch-Size Artifact Capability`, then `## Status` (`Accepted. Supersedes and replaces 0014, which is deleted.`), `## Context`, `## Decision`, `## Consequences`.
 
-Context states the measured facts: `export_rknn.py` overwrote the ONNX symbolic batch axis before conversion, RKNN-Toolkit2 2.3.2 enumerates several batch shapes into one artifact through `dynamic_input`, and an RK3588 probe executed batches 1, 2, and 4 from one artifact while the runtime refused an undeclared batch 3. Decision states that a derived artifact declares `BatchProfiles`, that one execution path serves every profile, that the capability boundary is resolved at intent freeze, and that one artifact means one state key and therefore one idle baseline. Consequences state that a runtime unable to enumerate profiles at conversion time would need a new decision with its own evidence, and that a declared profile set the artifact does not honour surfaces as a trial failure rather than a boundary.
+Context states the measured facts: `export_rknn.py` overwrote the ONNX symbolic batch axis before conversion, RKNN-Toolkit2 2.3.2 enumerates several batch shapes into one artifact through `dynamic_input`, and an RK3588 probe executed batches 1, 2, and 4 from one artifact while the runtime refused an undeclared batch 3. Decision states that a derived artifact declares `DeclaredBatchSizes`, that one execution path serves every declared batch size, that the capability boundary is resolved at intent freeze, and that one artifact means one state key and therefore one idle baseline. Consequences state that a runtime unable to enumerate declared batch sizes at conversion time would need a new decision with its own evidence, and that a declared batch size set the artifact does not honour surfaces as a trial failure rather than a boundary.
 
 - [ ] **Step 2: Delete ADR 0014 and leave its number vacant**
 
@@ -1072,7 +1078,7 @@ In `docs/design/profiling/README.md:175-186`, keep the completed measurement and
 grep -rn "fixed-batch\|fixed artifact\|fixedBatch\|per-batch artifact\|member map" docs/design/profiling/plans/
 ```
 
-Rewrite each hit so it describes one artifact declaring a profile set. In Plan 5a, the capability boundary is a batch outside the frozen eligible set, decided before the batch is measured. Do not change the estimand, the acceptance rule, or the sizing method in Plans 5 and 5a.
+Rewrite each hit so it describes one artifact declaring a declared batch size set. In Plan 5a, the capability boundary is a batch outside the frozen planned batch size set, decided before the batch is measured. Do not change the estimand, the acceptance rule, or the sizing method in Plans 5 and 5a.
 
 - [ ] **Step 5: Verify no stale reference survives**
 
@@ -1093,5 +1099,5 @@ git commit -m "docs: retire the fixed-artifact curve composition decision"
 ## Deferred, with the reason each is safe
 
 - **Conversion and device-probe records reaching the evidence store.** They are written as files today and continue to be. The carrier is the runtime result, which is a separate contract change with its own storage keys; folding it in here would mix a premise correction with an evidence-path change.
-- **The `BatchSaturation` reconciler.** Task 4 leaves `ProjectSnapshot` taking the eligible set as a parameter, so the reconciler supplies it from the frozen family. Nothing in this plan wires the controller up, and nothing in this plan depends on it.
+- **The `BatchSaturation` reconciler.** Task 4 leaves `ProjectSnapshot` taking the planned batch size set as a parameter, so the reconciler supplies it from the frozen family. Nothing in this plan wires the controller up, and nothing in this plan depends on it.
 - **Removing `SaturatedSerialFixedBatchWorkloadMode`.** Its name describes the workload holding batch fixed within one Run, which stays true. Renaming it would change the runtime contract string, execution policies, and evidence for no behavioral gain.

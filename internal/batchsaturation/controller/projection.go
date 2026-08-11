@@ -15,14 +15,14 @@ import (
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchSaturation,
 	runs []edgev1alpha1.ProfilingRun,
-	eligibleBatches []int,
+	plannedBatchSizes []int,
 ) (batchsaturation.Snapshot, error) {
 	if parent == nil {
 		return batchsaturation.Snapshot{}, errors.New("a parent BatchSaturation is required")
 	}
 	snapshot := batchsaturation.Snapshot{
-		RetryLimit:      int(parent.Spec.RetryLimit),
-		EligibleBatches: append([]int(nil), eligibleBatches...),
+		RetryLimit:        int(parent.Spec.RetryLimit),
+		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
 	}
 	for index := range runs {
 		run := &runs[index]

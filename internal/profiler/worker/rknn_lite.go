@@ -284,7 +284,7 @@ func copyRuntimeDelivery(delivery profilingrun.CandidateRuntimeDelivery) profili
 	copy := delivery
 	if delivery.ArtifactCapability != nil {
 		capability := *delivery.ArtifactCapability
-		capability.BatchProfiles = append([]int32(nil), capability.BatchProfiles...)
+		capability.DeclaredBatchSizes = append([]int32(nil), capability.DeclaredBatchSizes...)
 		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
 		copy.ArtifactCapability = &capability
 	}

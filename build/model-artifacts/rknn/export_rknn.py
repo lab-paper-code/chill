@@ -1,4 +1,4 @@
-"""Build one batch-profiled RKNN artifact and semantic conversion record."""
+"""Build one declared-batch-size RKNN artifact and semantic conversion record."""
 
 from __future__ import annotations
 
@@ -25,24 +25,33 @@ def input_sample_shape(shape):
     return list(shape[1:])
 
 
-def build_dynamic_input(input_sample, profiles):
-    if not profiles:
-        raise ValueError("at least one batch profile is required")
-    for profile in profiles:
-        if profile <= 0:
-            raise ValueError("batch profiles must be positive")
-    return [[[profile, *input_sample]] for profile in sorted(set(profiles))]
+def build_dynamic_input(input_sample, declared_batch_sizes):
+    if not declared_batch_sizes:
+        raise ValueError("at least one declared batch size is required")
+    for declared_batch_size in declared_batch_sizes:
+        if declared_batch_size <= 0:
+            raise ValueError("declared batch sizes must be positive")
+    return [
+        [[declared_batch_size, *input_sample]]
+        for declared_batch_size in sorted(set(declared_batch_sizes))
+    ]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build a batch-profiled RKNN artifact from a selected ONNX model"
+        description="Build a declared-batch-size RKNN artifact from a selected ONNX model"
     )
     parser.add_argument("--source-onnx", required=True)
     parser.add_argument("--tool-wheel", required=True)
     parser.add_argument("--tool-version", required=True)
     parser.add_argument("--target-platform", required=True)
-    parser.add_argument("--batch-profile", required=True, action="append", type=int)
+    parser.add_argument(
+        "--declared-batch-size",
+        dest="declared_batch_sizes",
+        required=True,
+        action="append",
+        type=int,
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--record", required=True)
     return parser.parse_args()
@@ -84,7 +93,7 @@ def main():
             dimension.dim_param or dimension.dim_value for dimension in graph_input
         ]
         input_sample = input_sample_shape(declared)
-        dynamic_input = build_dynamic_input(input_sample, args.batch_profile)
+        dynamic_input = build_dynamic_input(input_sample, args.declared_batch_sizes)
 
         converter = RKNN(verbose=False)
         try:
@@ -118,7 +127,7 @@ def main():
             "pythonVersion": platform.python_version(),
             "onnxVersion": onnx.__version__,
             "targetPlatform": args.target_platform,
-            "batchProfiles": sorted(set(args.batch_profile)),
+            "declaredBatchSizes": sorted(set(args.declared_batch_sizes)),
             "inputSampleShape": input_sample,
             "quantized": False,
         },

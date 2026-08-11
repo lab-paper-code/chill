@@ -139,7 +139,7 @@ func selectModelPath(
 	}
 	if selected.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily {
 		if artifact.Derivation == nil || artifact.Derivation.Input == nil ||
-			len(artifact.Derivation.BatchProfiles) == 0 ||
+			len(artifact.Derivation.DeclaredBatchSizes) == 0 ||
 			len(artifact.Derivation.Input.InputSampleShape) == 0 ||
 			artifact.Derivation.Input.Layout != profilingrun.RKNNLiteInputLayout ||
 			artifact.Derivation.Input.DataType != profilingrun.RKNNLiteInputDataType {

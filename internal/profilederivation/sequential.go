@@ -41,7 +41,7 @@ type SequentialResult struct {
 	SelectedBatch                *int                    `json:"selectedBatch,omitempty"`
 	BoundaryBatch                *int                    `json:"boundaryBatch,omitempty"`
 	BestIncrementalJoulesPerItem *float64                `json:"bestIncrementalJoulesPerItem,omitempty"`
-	MeasuredBatches              []int                   `json:"measuredBatches"`
+	MeasuredBatchSizes           []int                   `json:"measuredBatchSizes"`
 	EpsilonByBatch               []SequentialBatchMean   `json:"epsilonByBatch"`
 	PolicyVersion                string                  `json:"policyVersion"`
 	MinDelta                     float64                 `json:"minDelta"`
@@ -81,16 +81,16 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 	best := math.Inf(1)
 	bestBatch := 0
 	wait := 0
-	eligibleBatches := curve.family.contract.record.Shared.EligibleBatches
+	plannedBatchSizes := curve.family.contract.record.Shared.PlannedBatchSizes
 	for index, point := range discovery.points {
-		expectedBatch := eligibleBatches[index]
+		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||
 			point.MeanIncrementalJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
 			math.IsInf(point.MeanIncrementalJoulesPerItem, 0) {
 			return SequentialResult{}, errors.New("discovery points do not match the frozen sequential policy")
 		}
-		result.MeasuredBatches = append(result.MeasuredBatches, point.Batch)
+		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
 		result.EpsilonByBatch = append(result.EpsilonByBatch, SequentialBatchMean{
 			Batch: point.Batch, IncrementalJoulesPerItem: point.MeanIncrementalJoulesPerItem,
 		})
@@ -130,7 +130,7 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		return SequentialResult{}, errors.New("discovery attempted a capability boundary after its stopping condition")
 	}
 	if result.Status != SequentialStopped && discovery.capabilityBoundary != nil {
-		expectedBoundary := eligibleBatches[len(eligibleBatches)-1] + 1
+		expectedBoundary := plannedBatchSizes[len(plannedBatchSizes)-1] + 1
 		if *discovery.capabilityBoundary != expectedBoundary {
 			return SequentialResult{}, errors.New("capability boundary does not follow the measured prefix")
 		}

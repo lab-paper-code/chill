@@ -221,7 +221,7 @@ type BSatDiscoveryResult struct {
 	Code                                 string     `json:"code"`
 	CandidateBatch                       *int       `json:"candidateBatch,omitempty"`
 	CandidateMaximumRemainingImprovement *float64   `json:"candidateMaximumRemainingImprovement,omitempty"`
-	MeasuredBatches                      []int      `json:"measuredBatches"`
+	MeasuredBatchSizes                   []int      `json:"measuredBatchSizes"`
 	PolicyVersion                        string     `json:"policyVersion"`
 	KMax                                 int        `json:"kmax"`
 	RelativeImprovementTolerance         float64    `json:"relativeImprovementTolerance"`
@@ -235,7 +235,7 @@ type BSatSizingResult struct {
 	Code                              string     `json:"code"`
 	CandidateBatch                    int        `json:"candidateBatch"`
 	ConfirmatoryTrials                *int       `json:"confirmatoryTrials,omitempty"`
-	ConfirmatoryBatches               []int      `json:"confirmatoryBatches"`
+	ConfirmatoryBatchSizes            []int      `json:"confirmatoryBatchSizes"`
 	MaximumFeasibleConfirmatoryTrials int        `json:"maximumFeasibleConfirmatoryTrials"`
 	GlobalStatementCount              int        `json:"globalStatementCount"`
 	OneSidedQuantile                  float64    `json:"oneSidedQuantile"`
@@ -275,8 +275,8 @@ type BSatResult struct {
 	DiscoveryPoints                       []Point                  `json:"discoveryPoints"`
 	ConfirmatoryPoints                    []Point                  `json:"confirmatoryPoints"`
 	IdleBaselinesByState                  map[string]IdleBaseline  `json:"idleBaselinesByState"`
-	DiscoveryMeasuredBatches              []int                    `json:"discoveryMeasuredBatches"`
-	ConfirmatoryMeasuredBatches           []int                    `json:"confirmatoryMeasuredBatches"`
+	DiscoveryMeasuredBatchSizes           []int                    `json:"discoveryMeasuredBatchSizes"`
+	ConfirmatoryMeasuredBatchSizes        []int                    `json:"confirmatoryMeasuredBatchSizes"`
 	BoundaryBatch                         *int                     `json:"boundaryBatch,omitempty"`
 	ConfirmatoryTrials                    int                      `json:"confirmatoryTrials"`
 	GlobalStatementCount                  int                      `json:"globalStatementCount"`

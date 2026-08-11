@@ -8,31 +8,31 @@ import (
 	"testing"
 )
 
-func TestFreezeCurveFamilyContractCarriesTheEligibleBatches(t *testing.T) {
+func TestFreezeCurveFamilyContractCarriesThePlannedBatchSizes(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{4, 1, 2}
+	shared.PlannedBatchSizes = []int{4, 1, 2}
 
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatalf("freeze: %v", err)
 	}
 
-	got := contract.EligibleBatches()
+	got := contract.PlannedBatchSizes()
 	if !reflect.DeepEqual(got, []int{1, 2, 4}) {
-		t.Fatalf("eligible batches = %v, want sorted [1 2 4]", got)
+		t.Fatalf("planned batch sizes = %v, want sorted [1 2 4]", got)
 	}
 }
 
 func TestFreezeCurveFamilyContractRejectsAnEmptyEligibleSet(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = nil
+	shared.PlannedBatchSizes = nil
 
 	if _, err := FreezeCurveFamilyContract(shared); err == nil {
-		t.Fatal("expected an empty eligible batch set to be rejected")
+		t.Fatal("expected an empty planned batch size set to be rejected")
 	}
 }
 
-func TestFreezeCurveFamilyContractRejectsInvalidArtifactAndEligibleBatches(t *testing.T) {
+func TestFreezeCurveFamilyContractRejectsInvalidArtifactAndPlannedBatchSizes(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*CurveFamilySharedContract)
@@ -59,10 +59,10 @@ func TestFreezeCurveFamilyContractRejectsInvalidArtifactAndEligibleBatches(t *te
 			shared.Artifact.Path = "/artifact/../model.rknn"
 		}},
 		{name: "non-positive batch", mutate: func(shared *CurveFamilySharedContract) {
-			shared.EligibleBatches = []int{0, 1}
+			shared.PlannedBatchSizes = []int{0, 1}
 		}},
 		{name: "duplicate batch", mutate: func(shared *CurveFamilySharedContract) {
-			shared.EligibleBatches = []int{1, 2, 1}
+			shared.PlannedBatchSizes = []int{1, 2, 1}
 		}},
 	}
 	for _, test := range tests {
@@ -123,7 +123,7 @@ func TestFreezeAndVerifyCurveFamilyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(decoded.Shared(), contract.Shared()) ||
-		!reflect.DeepEqual(decoded.EligibleBatches(), contract.EligibleBatches()) {
+		!reflect.DeepEqual(decoded.PlannedBatchSizes(), contract.PlannedBatchSizes()) {
 		t.Fatal("decoded contract lost configured semantics")
 	}
 	unknown := bytes.Replace(canonical, []byte(`"schemaVersion":`), []byte(`"unknown":1,"schemaVersion":`), 1)
@@ -135,12 +135,12 @@ func TestFreezeAndVerifyCurveFamilyState(t *testing.T) {
 	}
 
 	// Inputs and projections are copies, not mutation paths into the frozen record.
-	shared.EligibleBatches[0] = 99
+	shared.PlannedBatchSizes[0] = 99
 	shared.Tensor.InputSampleShape[0] = 99
 	projected := contract.Shared()
-	projected.EligibleBatches[0] = 99
+	projected.PlannedBatchSizes[0] = 99
 	projected.Tensor.InputSampleShape[0] = 99
-	if !reflect.DeepEqual(contract.EligibleBatches(), []int{1, 2, 4}) ||
+	if !reflect.DeepEqual(contract.PlannedBatchSizes(), []int{1, 2, 4}) ||
 		contract.Shared().Tensor.InputSampleShape[0] != 224 {
 		t.Fatal("frozen curve-family contract was mutable through a caller slice")
 	}
@@ -196,16 +196,16 @@ func TestVerifyCurveFamilyOwnsTheVerifiedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified.Shared.EligibleBatches[0] = 99
+	verified.Shared.PlannedBatchSizes[0] = 99
 	verified.Shared.Tensor.InputSampleShape[0] = 99
-	if family.state.Shared.EligibleBatches[0] == 99 || family.state.Shared.Tensor.InputSampleShape[0] == 99 {
+	if family.state.Shared.PlannedBatchSizes[0] == 99 || family.state.Shared.Tensor.InputSampleShape[0] == 99 {
 		t.Fatal("verified curve-family state was mutable through caller slices")
 	}
 }
 
 func TestDeriveCurveFollowsSparseEligibleSequence(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{2, 4, 8}
+	shared.PlannedBatchSizes = []int{2, 4, 8}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -232,9 +232,9 @@ func TestDeriveCurveFollowsSparseEligibleSequence(t *testing.T) {
 	}
 }
 
-func TestDeriveCurveRejectsSkippedEligibleBatchAndEarlyBoundary(t *testing.T) {
+func TestDeriveCurveRejectsSkippedPlannedBatchSizeAndEarlyBoundary(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{2, 4, 8}
+	shared.PlannedBatchSizes = []int{2, 4, 8}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestDeriveCurveRejectsSkippedEligibleBatchAndEarlyBoundary(t *testing.T) {
 	skipped := testPass(t, family, []float64{1, .8, .7}, "skipped")
 	skipped.Batches = append(skipped.Batches[:1], skipped.Batches[2:]...)
 	if _, err := DeriveCurve([]Pass{skipped}, family, baselines, pointPolicy("sparse-point")); err == nil {
-		t.Fatal("expected a skipped eligible batch to be rejected")
+		t.Fatal("expected a skipped planned batch size to be rejected")
 	}
 
 	earlyBoundary := testPass(t, family, []float64{1}, "boundary")
@@ -256,7 +256,7 @@ func TestDeriveCurveRejectsSkippedEligibleBatchAndEarlyBoundary(t *testing.T) {
 	if _, err := DeriveCurve(
 		[]Pass{earlyBoundary}, family, baselines, pointPolicy("sparse-point"),
 	); err == nil {
-		t.Fatal("expected a gap inside the eligible set not to count as exhaustion")
+		t.Fatal("expected a gap inside the planned batch size set not to count as exhaustion")
 	}
 
 	wrongStart := testPass(t, family, []float64{1, .8}, "start")
@@ -264,7 +264,7 @@ func TestDeriveCurveRejectsSkippedEligibleBatchAndEarlyBoundary(t *testing.T) {
 	if _, err := DeriveCurve(
 		[]Pass{wrongStart}, family, baselines, pointPolicy("sparse-point"),
 	); err == nil {
-		t.Fatal("expected discovery not starting at the first eligible batch to be rejected")
+		t.Fatal("expected discovery not starting at the first planned batch size to be rejected")
 	}
 }
 
@@ -365,7 +365,7 @@ func TestSequentialGoldenStops(t *testing.T) {
 			if got.Status != test.wantStatus || got.StopReason != test.wantReason ||
 				got.SelectedBatch == nil || *got.SelectedBatch != test.wantSelected ||
 				len(got.EpsilonByBatch) != len(test.means) ||
-				len(got.MeasuredBatches) != len(test.means) {
+				len(got.MeasuredBatchSizes) != len(test.means) {
 				t.Fatalf("unexpected sequential result: %+v", got)
 			}
 			if test.wantBoundary == 0 && got.BoundaryBatch != nil {
@@ -382,9 +382,9 @@ func TestSequentialGoldenStops(t *testing.T) {
 	}
 }
 
-func TestSequentialFollowsSparseEligibleBatches(t *testing.T) {
+func TestSequentialFollowsSparsePlannedBatchSizes(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{2, 4, 8}
+	shared.PlannedBatchSizes = []int{2, 4, 8}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +411,7 @@ func TestSequentialFollowsSparseEligibleBatches(t *testing.T) {
 	if result.Status != SequentialStopped || result.StopReason != StopCapabilityBoundary ||
 		result.SelectedBatch == nil || *result.SelectedBatch != 4 ||
 		result.BoundaryBatch == nil || *result.BoundaryBatch != 9 ||
-		!reflect.DeepEqual(result.MeasuredBatches, []int{2, 4, 8}) {
+		!reflect.DeepEqual(result.MeasuredBatchSizes, []int{2, 4, 8}) {
 		t.Fatalf("unexpected sparse sequential result: %+v", result)
 	}
 }
@@ -470,8 +470,8 @@ func validSharedContract() CurveFamilySharedContract {
 			ExecutionPath: "rknnlite", Name: "artifact",
 			Path: "/artifact/model.rknn", Image: testImage("artifact", "c"),
 		},
-		EligibleBatches: []int{1, 2, 4},
-		Tensor:          CurveTensorContract{Layout: "NHWC", DataType: "float32", InputSampleShape: []int{224, 224, 3}},
+		PlannedBatchSizes: []int{1, 2, 4},
+		Tensor:            CurveTensorContract{Layout: "NHWC", DataType: "float32", InputSampleShape: []int{224, 224, 3}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
 	shared.IdleProtocol.InputGenerator = "none"
@@ -482,9 +482,9 @@ func validSharedContract() CurveFamilySharedContract {
 
 func testCurveContract(batchCount int) CurveFamilySharedContract {
 	shared := validSharedContract()
-	shared.EligibleBatches = make([]int, batchCount)
-	for index := range shared.EligibleBatches {
-		shared.EligibleBatches[index] = index + 1
+	shared.PlannedBatchSizes = make([]int, batchCount)
+	for index := range shared.PlannedBatchSizes {
+		shared.PlannedBatchSizes[index] = index + 1
 	}
 	return shared
 }
@@ -545,21 +545,21 @@ func testFamilyBaselines(t *testing.T, family CurveFamily) map[string]IdleBaseli
 func testPass(t *testing.T, family CurveFamily, means []float64, idPrefix string) Pass {
 	t.Helper()
 	state := family.state
-	eligibleBatches := family.contract.record.Shared.EligibleBatches
-	if len(means) > len(eligibleBatches) {
-		t.Fatalf("means = %d, eligible batches = %d", len(means), len(eligibleBatches))
+	plannedBatchSizes := family.contract.record.Shared.PlannedBatchSizes
+	if len(means) > len(plannedBatchSizes) {
+		t.Fatalf("means = %d, planned batch sizes = %d", len(means), len(plannedBatchSizes))
 	}
 	pass := Pass{Role: PassDiscovery}
 	for index, mean := range means {
-		batch := eligibleBatches[index]
-		batchInput := PassBatch{Batch: batch}
+		plannedBatchSize := plannedBatchSizes[index]
+		batchInput := PassBatch{Batch: plannedBatchSize}
 		for trialIndex := 0; trialIndex < 3; trialIndex++ {
-			trialID := idPrefix + "-b" + string(rune('0'+batch)) + "-" + string(rune('1'+trialIndex))
+			trialID := idPrefix + "-b" + string(rune('0'+plannedBatchSize)) + "-" + string(rune('1'+trialIndex))
 			total := mean + 1
 			trial := Trial{
 				StateIdentity: state.StateIdentity, EnvironmentIdentity: state.EnvironmentIdentity,
 				MeasurementProtocolIdentity: state.ActiveProtocolIdentity,
-				TrialID:                     trialID, Batch: batch, CompletedItems: 1,
+				TrialID:                     trialID, Batch: plannedBatchSize, CompletedItems: 1,
 				LatencyMilliseconds: []float64{1},
 			}
 			admission := AdmissionResult{

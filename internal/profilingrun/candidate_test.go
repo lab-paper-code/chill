@@ -193,31 +193,31 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 }
 
-func TestDecodeCandidateReportRequiresArtifactBatchProfiles(t *testing.T) {
+func TestDecodeCandidateReportRequiresArtifactDeclaredBatchSizes(t *testing.T) {
 	report := completeCandidateReportForTest()
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.BatchProfiles = nil
+	report.ArtifactCapability.DeclaredBatchSizes = nil
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = DecodeCandidateReport(payload)
-	if err == nil || err.Error() != "candidate report artifact target platform and batch profiles are required" {
-		t.Fatalf("candidate without batch profiles returned %v", err)
+	if err == nil || err.Error() != "candidate report artifact target platform and declared batch sizes are required" {
+		t.Fatalf("candidate without declared batch sizes returned %v", err)
 	}
 }
 
-func TestDecodeCandidateReportRequiresPositiveArtifactBatchProfiles(t *testing.T) {
+func TestDecodeCandidateReportRequiresPositiveArtifactDeclaredBatchSizes(t *testing.T) {
 	report := completeCandidateReportForTest()
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.BatchProfiles = []int32{1, 0, 4}
+	report.ArtifactCapability.DeclaredBatchSizes = []int32{1, 0, 4}
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = DecodeCandidateReport(payload)
-	if err == nil || err.Error() != "candidate report artifact batch profiles must be positive" {
-		t.Fatalf("candidate with a non-positive batch profile returned %v", err)
+	if err == nil || err.Error() != "candidate report artifact declared batch sizes must be positive" {
+		t.Fatalf("candidate with a non-positive declared batch size returned %v", err)
 	}
 }
 
@@ -291,7 +291,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 
 	intent.Measurement.Batch = 2
 	if err := ValidateCandidateReport(payload, intent); err == nil {
-		t.Fatal("expected unsupported batch profile rejection")
+		t.Fatal("expected unsupported declared batch size rejection")
 	}
 }
 
@@ -300,26 +300,26 @@ func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredProfiles(t *testing
 	if err == nil {
 		t.Fatal("expected an undeclared batch to be rejected")
 	}
-	if !strings.Contains(err.Error(), "supported profile") {
-		t.Fatalf("error = %v, want it to name the unsupported profile", err)
+	if !strings.Contains(err.Error(), "supported batch size") {
+		t.Fatalf("error = %v, want it to name the unsupported batch size", err)
 	}
 }
 
-func TestVerifyCandidateReportAcceptsADeclaredProfile(t *testing.T) {
+func TestVerifyCandidateReportAcceptsADeclaredBatchSize(t *testing.T) {
 	if _, err := verifyRKNNCandidateAtBatch(t, []int32{1, 2, 4}, 4); err != nil {
-		t.Fatalf("declared profile rejected: %v", err)
+		t.Fatalf("declared batch size rejected: %v", err)
 	}
 }
 
 func verifyRKNNCandidateAtBatch(
-	t *testing.T, profiles []int32, batch int,
+	t *testing.T, declaredBatchSizes []int32, batch int,
 ) (VerifiedCandidateReport, error) {
 	t.Helper()
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
 	report.HostContract = &contract
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.BatchProfiles = profiles
+	report.ArtifactCapability.DeclaredBatchSizes = declaredBatchSizes
 	report.RuntimeAccess = &CandidateReportRuntimeAccess{
 		Privileged: true, SupplementalGroups: []int64{44, 110},
 	}
@@ -367,7 +367,7 @@ func rknnHostContractForTest() CandidateReportHostContract {
 
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", BatchProfiles: []int32{1}, InputSampleShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
 		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
 	}
 }

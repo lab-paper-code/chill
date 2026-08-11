@@ -45,7 +45,7 @@ func TestCurveFamilyIntentProjectionBindsObservableContractFacts(t *testing.T) {
 			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
 			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
 		},
-		EligibleBatches: []int{1},
+		PlannedBatchSizes: []int{1},
 	}
 	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestCurveFamilyIntentProjectionBindsObservableContractFacts(t *testing.T) {
 	}
 }
 
-func TestCurveFamilyUsesFirstEligibleBatchIdleWitness(t *testing.T) {
+func TestCurveFamilyUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 	active := curveFamilyIntent()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
@@ -101,7 +101,7 @@ func TestCurveFamilyUsesFirstEligibleBatchIdleWitness(t *testing.T) {
 			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
 			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
 		},
-		EligibleBatches: []int{1, 2},
+		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
 			Layout: "NCHW", DataType: "float32", InputSampleShape: []int{3, 224, 224},
 		},
@@ -123,15 +123,15 @@ func TestCurveFamilyUsesFirstEligibleBatchIdleWitness(t *testing.T) {
 		t.Fatal("curve family accepted an ineligible active batch")
 	}
 
-	shared.EligibleBatches = []int{2, 4}
+	shared.PlannedBatchSizes = []int{2, 4}
 	active.Measurement.Batch = 4
 	idle.Measurement.Batch = 2
 	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
-		t.Fatalf("first eligible batch was not accepted as the idle witness: %v", err)
+		t.Fatalf("first planned batch size was not accepted as the idle witness: %v", err)
 	}
 	idle.Measurement.Batch = 1
 	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("curve family accepted an idle batch before the first eligible batch")
+		t.Fatal("curve family accepted an idle batch before the first planned batch size")
 	}
 }
 

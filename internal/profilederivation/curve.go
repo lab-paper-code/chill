@@ -102,32 +102,32 @@ func deriveCurvePass(
 	}
 	batches := append([]PassBatch(nil), input.Batches...)
 	sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
-	eligibleBatches := family.contract.record.Shared.EligibleBatches
-	if input.Role == PassDiscovery && batches[0].Batch != eligibleBatches[0] {
-		return curvePass{}, errors.New("discovery pass must start at the first eligible batch")
+	plannedBatchSizes := family.contract.record.Shared.PlannedBatchSizes
+	if input.Role == PassDiscovery && batches[0].Batch != plannedBatchSizes[0] {
+		return curvePass{}, errors.New("discovery pass must start at the first planned batch size")
 	}
 	result := curvePass{role: input.Role}
-	eligibleIndex := sort.SearchInts(eligibleBatches, batches[0].Batch)
-	exhaustedBoundary := eligibleBatches[len(eligibleBatches)-1] + 1
+	plannedBatchIndex := sort.SearchInts(plannedBatchSizes, batches[0].Batch)
+	exhaustedBoundary := plannedBatchSizes[len(plannedBatchSizes)-1] + 1
 	for index, batchInput := range batches {
 		if batchInput.CapabilityBoundary {
 			if len(batchInput.Runs) != 0 || index != len(batches)-1 ||
-				eligibleIndex != len(eligibleBatches) || batchInput.Batch != exhaustedBoundary {
-				return curvePass{}, errors.New("capability boundary must follow exhaustion of the eligible batch set")
+				plannedBatchIndex != len(plannedBatchSizes) || batchInput.Batch != exhaustedBoundary {
+				return curvePass{}, errors.New("capability boundary must follow exhaustion of the planned batch size set")
 			}
 			boundary := batchInput.Batch
 			result.capabilityBoundary = &boundary
 			continue
 		}
-		if eligibleIndex >= len(eligibleBatches) || batchInput.Batch != eligibleBatches[eligibleIndex] {
-			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the frozen eligible sequence", input.Role)
+		if plannedBatchIndex >= len(plannedBatchSizes) || batchInput.Batch != plannedBatchSizes[plannedBatchIndex] {
+			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the frozen planned batch size sequence", input.Role)
 		}
 		point, err := deriveCurvePoint(batchInput, family.state, baselines, policy, seenTrials)
 		if err != nil {
 			return curvePass{}, err
 		}
 		result.points = append(result.points, point)
-		eligibleIndex++
+		plannedBatchIndex++
 	}
 	return result, nil
 }

@@ -88,10 +88,10 @@ parameter block, with CEL requiring the block to match the name.
 Parent names are bounded at 200 characters so generated child names stay within
 253.
 
-[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) requires the
-control path to resolve the selected artifact's declared `BatchProfiles` at
+[ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) requires the
+control path to resolve the selected artifact's declared `DeclaredBatchSizes` at
 intent freeze. One artifact and execution path serve the resulting frozen
-eligible batch set. Later decisions consume only that frozen set.
+planned batch size set. Later decisions consume only that frozen set.
 
 ### Status is not authority
 
@@ -133,7 +133,7 @@ type Method interface {
 }
 
 type Observed struct {
-    EligibleBatches []int
+    PlannedBatchSizes []int
     Accepted        []Trial
 }
 
@@ -146,8 +146,8 @@ type Plan struct {
 `Decide` resolves in order: a live Run yields `Wait`; an unfinished trial within
 `RetryLimit` yields a retry at the same batch with the next attempt number;
 exceeding the limit yields a typed failure; otherwise the method is asked what
-to measure next. `Snapshot` and `Observed` both carry the frozen eligible batch
-set. A gap inside that set is skipped by advancing to the next declared profile.
+to measure next. `Snapshot` and `Observed` both carry the frozen planned batch size
+set. A gap inside that set is skipped by advancing to the next declared batch size.
 
 `Plan` receives admitted trials only. A method has no way to see a failed,
 pending, or retried attempt, so preferring one measurement over another on the
@@ -173,9 +173,9 @@ count the same thing.
 
 ```text
 Reconcile(BatchSaturation):
-  1. resolve and freeze the artifact family and eligible batch set
+  1. resolve and freeze the artifact family and planned batch size set
   2. list owned ProfilingRun objects; verify each ownerRef UID
-  3. project spec, frozen eligible set, and Runs into a pure Snapshot
+  3. project spec, frozen planned batch size set, and Runs into a pure Snapshot
   4. Decide(snapshot)
   5. execute: CreateRun | Wait | Finish | Fail
   6. update status as derived display
@@ -208,7 +208,7 @@ The controller composes `MeasurementStateSpec` from the parent with the batch,
 workload mode, and the matching protocol block. Idle Runs receive
 `warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
 One model-loaded-idle baseline is planned for the artifact state, using the
-first declared batch. Active Runs advance through the frozen eligible set.
+first declared batch. Active Runs advance through the frozen planned batch size set.
 The existing union CEL rule on `ProfilingRunSpec` validates the assembled
 object, so a mis-assembled Run is rejected by the API server rather than
 trusted.
@@ -219,8 +219,8 @@ trusted.
 
 | Kind | Handling |
 |---|---|
-| Frozen eligible set exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
-| A created Run fails, including a declared profile absent from the built artifact | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
+| Frozen planned batch size set exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
+| A created Run fails, including a declared batch size absent from the built artifact | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
 
 One terminal-failure classification covers created-Run failures. A misconfigured
 state exhausts `RetryLimit` and stops, which costs a small bounded number of
@@ -258,7 +258,7 @@ measured value, so each measurement exists in exactly one place. Excluded trials
 are listed by reference with their exclusion reason.
 
 `family.json` is the output of `FreezeCurveFamilyContract` and records the one
-artifact execution state plus its frozen eligible batch set, written before the
+artifact execution state plus its frozen planned batch size set, written before the
 first Run. This mirrors the Run's own `spec` to intent record to evidence
 progression.
 
@@ -305,7 +305,7 @@ through a committed document are what this plan replaces.
 
 Plan 5 and Plan 5a keep their estimand, acceptance rule, and sizing method.
 Their procedural sections — freezing by commit, committing a second policy
-before confirmation, an offline driver requesting the next declared profile, name
+before confirmation, an offline driver requesting the next declared batch size, name
 grammars, and inclusion rules — are replaced by this control path.
 
 ## Not authorized by this plan

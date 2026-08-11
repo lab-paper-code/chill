@@ -63,12 +63,12 @@ func validateCurveFamilyIntents(
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
-	if len(shared.EligibleBatches) == 0 {
-		return errors.New("curve-family contract has no eligible batches")
+	if len(shared.PlannedBatchSizes) == 0 {
+		return errors.New("curve-family contract has no planned batch sizes")
 	}
 	activeBatchEligible := false
-	for _, eligibleBatch := range shared.EligibleBatches {
-		if active.Measurement.Batch == eligibleBatch {
+	for _, plannedBatchSize := range shared.PlannedBatchSizes {
+		if active.Measurement.Batch == plannedBatchSize {
 			activeBatchEligible = true
 			break
 		}
@@ -81,8 +81,8 @@ func validateCurveFamilyIntents(
 	); err != nil {
 		return fmt.Errorf("active curve-family state: %w", err)
 	}
-	if idle.Measurement.Batch != shared.EligibleBatches[0] {
-		return errors.New("idle curve-family state does not use the first eligible batch")
+	if idle.Measurement.Batch != shared.PlannedBatchSizes[0] {
+		return errors.New("idle curve-family state does not use the first planned batch size")
 	}
 	if err := validateCurveFamilyIntent(
 		idle, idleNodeUID, shared, shared.IdleProtocol,

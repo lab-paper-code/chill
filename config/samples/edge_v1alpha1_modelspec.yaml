@@ -11,7 +11,7 @@ spec:
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
-      batchProfiles: [1, 2, 4, 8, 16]
+      declaredBatchSizes: [1, 2, 4, 8, 16]
       input:
         inputSampleShape: [224, 224, 3]
         layout: NHWC

@@ -87,9 +87,9 @@ The derivation boundary uses three independently versioned identities:
 | `MeasurementProtocolIdentity` | workload mode, input/output protocol, warm-up and duration, sampling bounds, artifact-supply and observer images, workload-observation contract | batch, because batch remains the explicit curve axis |
 
 These remain exact single-Run and single-point identities. A batch curve over
-one artifact's declared profiles retains those identities and uses the verified
+one artifact's declared batch sizes retains those identities and uses the verified
 composition boundary and single-state baseline ownership fixed by
-[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md). The
+[ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md). The
 pre-measurement `CurveFamilyName` remains separate from the verified
 `CurveFamily`, which is constructed after evidence crosses the Loader boundary.
 Both remain curve-level facts.
@@ -120,7 +120,7 @@ the typed target and actuation-policy name; those facts do not enter the
 measurement-protocol identity.
 
 Consequently, a model-loaded-idle baseline is reusable only by active trials
-with its exact state identity. One batch-profile artifact has one state key and
+with its exact state identity. One declared-batch-size artifact has one state key and
 one such baseline. Curve-level covariance is owned by Plans 5 and 5a.
 
 Observer timestamps are receipt timestamps. The first implementation uses a
@@ -158,12 +158,12 @@ confidence interval.
 The measured batch domain remains explicit. Candidate search and scientific
 acceptance are separate:
 
-- Plan 5 requires a consecutive eligible span from its candidate through
+- Plan 5 requires a consecutive planned batch size span from its candidate through
   `KMax`;
 - Plan 5a advances through the frozen eligible profile set in strictly
   increasing batch order;
 - exhausting that set is the capability boundary;
-- a failed Run for a declared profile follows the ordinary trial-failure path;
+- a failed Run for a declared batch size follows the ordinary trial-failure path;
 - a measured range without a plateau yields `Censored`;
 - a mean-only plateau with overlapping uncertainty is `CandidateOnly`;
 - accepted saturation requires the declared equivalence tolerance to hold at

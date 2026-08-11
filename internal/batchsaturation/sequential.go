@@ -46,8 +46,8 @@ func NewSequentialEarlyStop(config SequentialConfig, curve CurveSource) (Method,
 }
 
 func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
-	if len(observed.EligibleBatches) == 0 {
-		return Plan{}, errors.New("a non-empty eligible batch set is required")
+	if len(observed.PlannedBatchSizes) == 0 {
+		return Plan{}, errors.New("a non-empty planned batch size set is required")
 	}
 	counts := make(map[Measurement]int, len(observed.Accepted))
 	highestActive := 0
@@ -58,12 +58,12 @@ func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
 		}
 	}
 
-	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.EligibleBatches[0]}
+	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.PlannedBatchSizes[0]}
 	if counts[baseline] < s.config.TrialsPerBatch {
 		return Plan{Next: &baseline}, nil
 	}
 
-	for _, batch := range observed.EligibleBatches {
+	for _, batch := range observed.PlannedBatchSizes {
 		if batch > highestActive {
 			break
 		}
@@ -73,12 +73,12 @@ func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
 		}
 	}
 	if highestActive == 0 {
-		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.EligibleBatches[0]}
+		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.PlannedBatchSizes[0]}
 		return Plan{Next: &first}, nil
 	}
 
-	batches := make([]int, 0, len(observed.EligibleBatches))
-	for _, batch := range observed.EligibleBatches {
+	batches := make([]int, 0, len(observed.PlannedBatchSizes))
+	for _, batch := range observed.PlannedBatchSizes {
 		if batch > highestActive {
 			break
 		}
@@ -94,7 +94,7 @@ func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
 	if !result.Continue {
 		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
 	}
-	next, found := nextEligibleBatch(observed.EligibleBatches, highestActive)
+	next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive)
 	if !found {
 		return Plan{Result: &Result{
 			Outcome: sequentialCapabilityBoundaryOutcome,
@@ -105,12 +105,12 @@ func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
 	return Plan{Next: &measurement}, nil
 }
 
-// nextEligibleBatch returns the smallest declared batch above the highest one
+// nextPlannedBatchSize returns the smallest planned batch size above the highest one
 // already measured. Exhausting the declared set is the capability boundary.
-func nextEligibleBatch(eligible []int, highest int) (int, bool) {
-	for _, batch := range eligible {
-		if batch > highest {
-			return batch, true
+func nextPlannedBatchSize(plannedBatchSizes []int, highest int) (int, bool) {
+	for _, plannedBatchSize := range plannedBatchSizes {
+		if plannedBatchSize > highest {
+			return plannedBatchSize, true
 		}
 	}
 	return 0, false

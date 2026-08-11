@@ -52,9 +52,9 @@ func FreezeConfirmatoryDerivationPolicy(
 		sizing.ConfirmatoryTrials != nil {
 		trials := *sizing.ConfirmatoryTrials
 		allocation.ConfirmatoryTrials = &trials
-		for _, batch := range sizing.ConfirmatoryBatches {
+		for _, confirmatoryBatchSize := range sizing.ConfirmatoryBatchSizes {
 			allocation.Batches = append(allocation.Batches, ConfirmatoryBatchAllocation{
-				Batch: batch, Trials: trials,
+				Batch: confirmatoryBatchSize, Trials: trials,
 			})
 		}
 	} else if sizing.Status != BSatUnavailable ||
@@ -131,7 +131,7 @@ func (p ConfirmatoryDerivationPolicy) ConfirmatoryTrials() *int {
 	return &trials
 }
 
-func (p ConfirmatoryDerivationPolicy) ConfirmatoryBatches() []int {
+func (p ConfirmatoryDerivationPolicy) ConfirmatoryBatchSizes() []int {
 	result := make([]int, len(p.record.Confirmation.Batches))
 	for index, allocation := range p.record.Confirmation.Batches {
 		result[index] = allocation.Batch

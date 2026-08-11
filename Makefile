@@ -18,7 +18,7 @@ RKNN_SOURCE_ONNX ?=
 RKNN_TOOL_WHEEL ?=
 RKNN_TOOL_VERSION ?=
 RKNN_TARGET_PLATFORM ?=
-RKNN_BATCH_PROFILES ?=
+RKNN_DECLARED_BATCH_SIZES ?=
 RKNN_OUTPUT ?=
 RKNN_CONVERSION_RECORD ?=
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
@@ -271,12 +271,12 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 ##@ Build
 
 .PHONY: rknn-convert-artifact
-rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch profile.
+rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch size.
 	test -n "$(RKNN_SOURCE_ONNX)"
 	test -n "$(RKNN_TOOL_WHEEL)"
 	test -n "$(RKNN_TOOL_VERSION)"
 	test -n "$(RKNN_TARGET_PLATFORM)"
-	test -n "$(RKNN_BATCH_PROFILES)"
+	test -n "$(RKNN_DECLARED_BATCH_SIZES)"
 	test -n "$(RKNN_OUTPUT)"
 	test -n "$(RKNN_CONVERSION_RECORD)"
 	$(RKNN_CONVERTER_PYTHON) build/model-artifacts/rknn/export_rknn.py \
@@ -284,7 +284,7 @@ rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch 
 		--tool-wheel "$(RKNN_TOOL_WHEEL)" \
 		--tool-version "$(RKNN_TOOL_VERSION)" \
 		--target-platform "$(RKNN_TARGET_PLATFORM)" \
-		$(foreach profile,$(RKNN_BATCH_PROFILES),--batch-profile "$(profile)") \
+		$(foreach declared_batch_size,$(RKNN_DECLARED_BATCH_SIZES),--declared-batch-size "$(declared_batch_size)") \
 		--output "$(RKNN_OUTPUT)" \
 		--record "$(RKNN_CONVERSION_RECORD)"
 

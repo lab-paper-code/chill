@@ -69,7 +69,7 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 		t.Fatalf("host facts or allocation claim were conflated: %#v", report.HostContract)
 	}
 	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
-		!slices.Equal(report.ArtifactCapability.BatchProfiles, []int32{1}) ||
+		!slices.Equal(report.ArtifactCapability.DeclaredBatchSizes, []int32{1}) ||
 		!slices.Equal(report.ArtifactCapability.InputSampleShape, []int32{224, 224, 3}) ||
 		report.ArtifactCapability.InputLayout != profilingrun.RKNNLiteInputLayout ||
 		report.ArtifactCapability.InputDataType != profilingrun.RKNNLiteInputDataType || report.RuntimeAccess == nil ||
@@ -96,17 +96,17 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 	}
 }
 
-func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutBatchProfiles(t *testing.T) {
+func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutDeclaredBatchSizes(t *testing.T) {
 	objects := validRKNNCandidateObjects()
 	model := objects[0].(*edgev1alpha1.ModelSpec)
-	model.Spec.Artifacts[1].Derivation.BatchProfiles = nil
+	model.Spec.Artifacts[1].Derivation.DeclaredBatchSizes = nil
 	resolver := newCandidateResolver(t, objects...)
 	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
 		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
 	})
 	if err == nil || err.Error() != "RKNNLite artifact requires a matching input tensor contract" {
-		t.Fatalf("RKNN artifact without batch profiles returned %v", err)
+		t.Fatalf("RKNN artifact without declared batch sizes returned %v", err)
 	}
 }
 
@@ -413,9 +413,9 @@ func TestKubernetesCandidateResolverProjectsExactSelectedActuator(t *testing.T) 
 
 func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivation {
 	return &edgev1alpha1.ModelArtifactDerivation{
-		SourceArtifact: source,
-		TargetPlatform: "rk3588",
-		BatchProfiles:  []int32{1},
+		SourceArtifact:     source,
+		TargetPlatform:     "rk3588",
+		DeclaredBatchSizes: []int32{1},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
 			InputSampleShape: []int32{224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
 			DataType: profilingrun.RKNNLiteInputDataType,

@@ -16,14 +16,14 @@ func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 		result.CandidateBatch == nil || *result.CandidateBatch != 3 ||
 		result.CandidateMaximumRemainingImprovement == nil ||
 		math.Abs(*result.CandidateMaximumRemainingImprovement-(.04/.94)) > 1e-12 ||
-		len(result.MeasuredBatches) != 4 || result.CurveFamilyName == "" {
+		len(result.MeasuredBatchSizes) != 4 || result.CurveFamilyName == "" {
 		t.Fatalf("unexpected discovery result: %+v", result)
 	}
 }
 
-func TestBSatDiscoveryTreatsKMaxAsLargestEligibleBatch(t *testing.T) {
+func TestBSatDiscoveryTreatsKMaxAsLargestPlannedBatchSize(t *testing.T) {
 	shared := validSharedContract()
-	shared.EligibleBatches = []int{1, 2, 4, 8}
+	shared.PlannedBatchSizes = []int{1, 2, 4, 8}
 	contract, err := FreezeCurveFamilyContract(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +48,13 @@ func TestBSatDiscoveryTreatsKMaxAsLargestEligibleBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.KMax != 8 || result.CandidateBatch == nil || *result.CandidateBatch != 4 ||
-		!reflect.DeepEqual(result.MeasuredBatches, []int{1, 2, 4, 8}) {
+		!reflect.DeepEqual(result.MeasuredBatchSizes, []int{1, 2, 4, 8}) {
 		t.Fatalf("unexpected sparse discovery result: %+v", result)
 	}
 
 	policy.KMax = 4
 	if _, err := deriveBSatDiscovery(curve, policy); err == nil {
-		t.Fatal("expected KMax equal to eligible cardinality but not its largest batch to be rejected")
+		t.Fatal("expected KMax equal to planned batch size count but not its largest batch to be rejected")
 	}
 }
 

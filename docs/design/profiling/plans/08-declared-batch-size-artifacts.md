@@ -1,4 +1,4 @@
-# Plan 8: Batch-Profile Artifacts
+# Plan 8: Declared-Batch-Size Artifacts
 
 > Navigation: [Profiling design index](../README.md)
 >
@@ -37,7 +37,7 @@ Two independent results establish the premise.
 
 **Conversion (workstation).** `mobilenet-v2-050.onnx` carries a symbolic batch
 axis (`["batch", 3, 224, 224]`), satisfying `dynamic_input`'s documented
-prerequisite. RKNN-Toolkit2 2.3.2 built one artifact holding profiles
+prerequisite. RKNN-Toolkit2 2.3.2 built one artifact holding declared batch sizes
 `1, 2, 4, 8, 16`:
 
 ```text
@@ -65,7 +65,7 @@ version 6, target `RKNPU v2 / rk3588`, `model inference type: dynamic_shape`.
 
 Three facts follow, and each is load-bearing below:
 
-1. The Lite API selects the profile from the input array shape. The runner's
+1. The Lite API selects the declared batch size from the input array shape. The runner's
    existing `inference(inputs=[sample])` call is sufficient as written.
 2. `init_runtime(core_mask=NPU_CORE_0)` works against a dynamic artifact.
 3. The runtime refuses an undeclared batch and enumerates the shapes it holds.
@@ -81,10 +81,10 @@ type ModelArtifactDerivation struct {
 	SourceArtifact string
 	TargetPlatform string
 
-	// BatchProfiles enumerates every batch size this artifact can execute.
+	// DeclaredBatchSizes enumerates every batch size value this artifact can execute.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	BatchProfiles []int32 `json:"batchProfiles"`
+	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
 
 	Input      *ModelArtifactInputContract
 	Conversion ModelArtifactConversion
@@ -97,11 +97,11 @@ type ModelArtifactInputContract struct {
 }
 ```
 
-An artifact without a `Derivation` declares no profiles and accepts any batch.
+An artifact without a `Derivation` declares no declared batch sizes and accepts any batch.
 That covers the source ONNX and the ONNX Runtime CPU path, which consume batch
 as a call argument.
 
-The capability boundary is a requested batch outside a declared `BatchProfiles`.
+The capability boundary is a requested batch outside `DeclaredBatchSizes`.
 It is resolved from the catalog, before a Run exists.
 
 `ProfilingRunSpec` is unchanged: one Run measures one batch.
@@ -135,12 +135,12 @@ if output.size < 1 or not shape or shape[0] != batch:
     raise ContractError("inference output shape does not preserve the frozen batch")
 ```
 
-Both already exist. RKNNLite swallows a refused profile internally and returns
+Both already exist. RKNNLite swallows a refused declared batch size internally and returns
 `None`, which `validate_outputs` catches on its first line because `None` is
 falsy, so the refusal surfaces as a typed `ContractError`.
 
 What the probe justifies is naming the cause. "inference produced no outputs"
-states the symptom; the refused profile is the cause, and a misbuilt artifact is
+states the symptom; the refused declared batch size is the cause, and a misbuilt artifact is
 the one case that reaches this path. Naming it is a diagnosability change to an
 existing check.
 
@@ -163,7 +163,7 @@ provenance (`Tool`, `ToolVersion`, `TargetPlatform`) is retained, and a family
 whose artifact went through no converter leaves all three empty together.
 
 `CurveFamilySharedContract` absorbs the four artifact-identity fields and gains
-`EligibleBatches []int`. The hand-written members array becomes one integer
+`PlannedBatchSizes []int`. The hand-written members array becomes one integer
 array. `internal/profiler/admission/curve_family.go` shrinks in proportion.
 
 `VerifyCurveFamily` keeps its guard on the four derivation identities. It is the
@@ -186,13 +186,13 @@ a batch the artifact declares.
 The boundary moves from post-hoc inference to pre-Run resolution:
 
 ```text
-first reconcile   resolve ModelSpec.BatchProfiles
-                  freeze CurveFamilySharedContract, including EligibleBatches
+first reconcile   resolve ModelSpec.DeclaredBatchSizes
+                  freeze CurveFamilySharedContract, including PlannedBatchSizes
                   write it to the evidence store
 later reconciles  read the frozen record, which is now the authority
 ```
 
-The declared profile set may be sparse. Which sizes an artifact carries is a
+The declared batch size set may be sparse. Which sizes an artifact carries is a
 measurement decision that belongs in configuration, and a campaign is free to
 declare a set that skips sizes it has no interest in.
 
@@ -201,8 +201,8 @@ sweep advances through that frozen sequence, and the capability boundary is
 reaching its end. A gap inside the set is a size the operator chose to skip, and
 the sweep steps over it.
 
-`Observed` carries the eligible set, and the method asks whether an eligible
-batch larger than the highest measured one exists. Deleted:
+`Observed` carries the planned batch size set, and the method asks whether a
+planned batch size larger than the highest measured one exists. Deleted:
 `capabilityReasonCode` and its uses
 (`internal/batchsaturation/controller/projection.go:13-15,82,91`),
 `Trial.CapabilityRejected` (`internal/batchsaturation/types.go:43`), the
@@ -210,12 +210,12 @@ boundary-inference loop (`internal/batchsaturation/lifecycle.go:25-31`), and
 `Observed.CapabilityBoundary *int` itself.
 
 Two consequences reach the derivation layer. A curve pass's batches follow the
-eligible sequence (`internal/profilederivation/curve.go`), and a discovery
-policy's `KMax` is compared against the largest eligible batch. Under a
+planned batch size sequence (`internal/profilederivation/curve.go`), and a discovery
+policy's `KMax` is compared against the largest planned batch size. Under a
 contiguous domain starting at one those were the same number, which is why the
 distinction stayed hidden.
 
-A catalog that declares a profile its artifact was built without produces an
+A catalog that declares a declared batch size its artifact was built without produces an
 ordinary trial failure. The boundary is decided before the Run from the declared
 set, so every Run that was created carried a batch that set contained; its
 failure is retried and then terminal through the existing path at
@@ -231,17 +231,20 @@ needs.
 
 ```python
 # deleted: set_fixed_batch() (17-30), --batch-size, the temporary batch-fixed.onnx
-parser.add_argument("--batch-profile", required=True, action="append", type=int)
+parser.add_argument(
+    "--declared-batch-size", dest="declared_batch_sizes",
+    required=True, action="append", type=int,
+)
 
 input_sample = onnx_input_shape(model)[1:]      # read from the model
-dynamic_input = [[[batch, *input_sample]] for batch in sorted(set(args.batch_profile))]
+dynamic_input = [[[batch, *input_sample]] for batch in sorted(set(args.declared_batch_sizes))]
 converter.config(target_platform=args.target_platform, dynamic_input=dynamic_input)
 ```
 
 `load_onnx` receives the original ONNX. `Makefile`'s `RKNN_FIXED_BATCH` becomes
-`RKNN_BATCH_PROFILES` and the target runs once per model.
+`RKNN_DECLARED_BATCH_SIZES` and the target runs once per model.
 `build/docker/derived-model-artifact.Dockerfile` keeps its single artifact copy,
-which now covers every profile.
+which now covers every declared batch size.
 
 Per model, a sweep over N batches costs one conversion, one image build and
 push, and one catalog execution path.
@@ -269,10 +272,10 @@ COPY conversion.json /artifact/conversion.json
 COPY device-probe.json /artifact/device-probe.json
 ```
 
-The device probe is a build step. Conversion declares the profiles; the probe
+The device probe is a build step. Conversion records the declared batch sizes; the probe
 executes them once on the target device class and records which ones the runtime
 accepted; the image is published after both records exist. The probe is the one
-confirmation of a declared profile set available before measurement, and placing
+confirmation of a declared batch size set available before measurement, and placing
 it before publication means every artifact reaching the cluster carries a
 checked claim. This plan's own probe, recorded above, is that step performed by
 hand for the first such artifact.
@@ -297,7 +300,7 @@ The conversion record's shape changes accordingly:
 ```json
 "conversion": {
   "tool": "rknn-toolkit2", "version": "2.3.2", "targetPlatform": "rk3588",
-  "batchProfiles": [ ... ],
+  "declaredBatchSizes": [ ... ],
   "inputSampleShape": [ ... ],
   "quantized": false
 }
@@ -370,14 +373,14 @@ needs no test because the compared values merge into one field. What remains:
   `set_fixed_batch` tests, the `CapabilityRejected` test at
   `internal/batchsaturation/lifecycle_test.go:98`, the curve-family member
   validation tests, and the candidate and worker `fixedBatch` tests are deleted;
-  a `dynamic_input` construction test and an `EligibleBatches` boundary test are
+  a `dynamic_input` construction test and a `PlannedBatchSizes` boundary test are
   added. No new test category appears.
 - Repository gates selected by changed surface, per `AGENTS.md`:
   `make manifests generate` for the API types, `make arch-check` for the
   component map, and `make lint` and `make test` before handoff. The Python
   runtime suite runs inside `make test`.
 - e2e stays off the testbed kubeconfig.
-- The first BatchSaturation measurement sweeps the declared profiles from one
+- The first BatchSaturation measurement sweeps the declared batch sizes from one
   artifact, which is the end-to-end check, and its record is the validation
   record. No separate validation campaign is created.
 
@@ -386,6 +389,6 @@ needs no test because the compared values merge into one field. What remains:
 A runtime that enumerates one batch per artifact would need a per-batch path
 restored. Reintroducing it would be a new decision carrying its own evidence.
 
-The declared profile set is a catalog claim about a built artifact. Execution
+The declared batch size set is a catalog claim about a built artifact. Execution
 confirms it: the runtime refuses a batch its artifact was built without, and the
 resulting failure is reported as a failure.

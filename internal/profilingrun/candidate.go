@@ -79,11 +79,11 @@ type CandidateReportArtifactSupply struct {
 // CandidateArtifactCapability carries only runtime-consumed facts of one
 // derived artifact. Full conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
-	TargetPlatform   string  `json:"targetPlatform"`
-	BatchProfiles    []int32 `json:"batchProfiles"`
-	InputSampleShape []int32 `json:"inputSampleShape"`
-	InputLayout      string  `json:"inputLayout,omitempty"`
-	InputDataType    string  `json:"inputDataType,omitempty"`
+	TargetPlatform     string  `json:"targetPlatform"`
+	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
+	InputSampleShape   []int32 `json:"inputSampleShape"`
+	InputLayout        string  `json:"inputLayout,omitempty"`
+	InputDataType      string  `json:"inputDataType,omitempty"`
 }
 
 // CandidateReportRuntimePackage is one image-owned package fact from the
@@ -156,7 +156,7 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
-		capability.BatchProfiles = append([]int32(nil), r.report.ArtifactCapability.BatchProfiles...)
+		capability.DeclaredBatchSizes = append([]int32(nil), r.report.ArtifactCapability.DeclaredBatchSizes...)
 		capability.InputSampleShape = append([]int32(nil), r.report.ArtifactCapability.InputSampleShape...)
 		result.ArtifactCapability = &capability
 	}
@@ -190,7 +190,7 @@ func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	delivery := CandidateRuntimeDelivery{}
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
-		capability.BatchProfiles = append([]int32(nil), capability.BatchProfiles...)
+		capability.DeclaredBatchSizes = append([]int32(nil), capability.DeclaredBatchSizes...)
 		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
 		delivery.ArtifactCapability = &capability
 	}
@@ -326,12 +326,12 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	if report.ArtifactCapability != nil {
 		if strings.TrimSpace(report.ArtifactCapability.TargetPlatform) == "" ||
 			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
-			len(report.ArtifactCapability.BatchProfiles) == 0 {
-			return errors.New("candidate report artifact target platform and batch profiles are required")
+			len(report.ArtifactCapability.DeclaredBatchSizes) == 0 {
+			return errors.New("candidate report artifact target platform and declared batch sizes are required")
 		}
-		for _, profile := range report.ArtifactCapability.BatchProfiles {
-			if profile < 1 {
-				return errors.New("candidate report artifact batch profiles must be positive")
+		for _, declaredBatchSize := range report.ArtifactCapability.DeclaredBatchSizes {
+			if declaredBatchSize < 1 {
+				return errors.New("candidate report artifact declared batch sizes must be positive")
 			}
 		}
 		for _, dimension := range report.ArtifactCapability.InputSampleShape {
@@ -457,9 +457,9 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 		if len(report.ArtifactCapability.InputSampleShape) == 0 {
 			return VerifiedCandidateReport{}, errors.New("candidate report artifact input shape is required")
 		}
-		if !slices.Contains(report.ArtifactCapability.BatchProfiles, int32(intent.Measurement.Batch)) {
+		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(intent.Measurement.Batch)) {
 			return VerifiedCandidateReport{}, errors.New(
-				"candidate RKNN artifact does not declare the measurement batch as a supported profile",
+				"candidate RKNN artifact does not declare the measurement batch as a supported batch size",
 			)
 		}
 		if report.HostContract == nil || report.RuntimeAccess == nil {

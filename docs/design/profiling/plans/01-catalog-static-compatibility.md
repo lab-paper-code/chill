@@ -54,7 +54,7 @@ the selected campaign batches do not establish an artifact batch
 capability. Those fields remain absent rather than being guessed from one CPU
 Run or added for future runtimes.
 
-### Plan 6 extension: one batch-profile RKNN artifact
+### Plan 6 extension: one declared-batch-size RKNN artifact
 
 The first Orange Pi RKNN slice exercises one optional artifact derivation
 group:
@@ -62,13 +62,13 @@ group:
 ```text
 source artifact reference     canonical ONNX artifact in the same ModelSpec
 target platform               rk3588
-batch profiles                finite declared set of positive batches
+declared batch sizes                finite declared set of positive batches
 runtime input tensor          input sample shape + layout + data type
 conversion identity           tool + version
 ```
 
 The derived artifact is selected by its catalog name and immutable carrier
-image. One execution path serves every declared profile. Conversion fields
+image. One execution path serves every declared batch size. Conversion fields
 describe how it was produced; they are not a second content-verification
 system.
 
@@ -123,7 +123,7 @@ platform-compatible token, device-path, and Kubernetes allocation contract.
 It also keeps privileged mode and supplemental groups in a distinct runtime-
 access contract because those are delivery requirements, not physical state.
 Candidate-report v1alpha8 freezes these groups plus the selected derived
-artifact's target platform, batch profiles, runtime input tensor contract, and
+artifact's target platform, declared batch sizes, runtime input tensor contract, and
 the exact typed actuator target for a non-fixed selection into the immutable
 Run input. Intent v1alpha9 retains the order-normalized physical
 host contract in state and defines the optional typed actuation binding

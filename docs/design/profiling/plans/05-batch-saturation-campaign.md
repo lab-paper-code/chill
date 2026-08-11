@@ -38,8 +38,8 @@ construction, and separates candidate discovery from confirmation. It does not
 authorize a `DeviceProfile` API, a campaign CRD or controller, an intent schema
 change, cross-model pooling, or scheduler consumption.
 
-[ADR 0016](../../../adr/0016-batch-profile-artifact-capability.md) defines one
-immutable artifact with a declared batch-profile set. Exact execution-state and
+[ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) defines one
+immutable artifact with a declared-batch-size set. Exact execution-state and
 protocol identities remain unchanged. An opaque curve owns one pre-frozen
 family contract, one Loader-verified family, and one admitted idle baseline for
 the artifact's single state key.
@@ -93,17 +93,17 @@ confirmation tests, on evidence discovery never saw.
 
 ### The batch domain
 
-The catalog supplies the artifact's eligible batch-set contents before
+The catalog supplies the artifact's planned batch size set contents before
 execution. Family freeze canonicalizes those contents into ascending order, and
 the discovery pass follows that sequence. `Kmax >= 2` is fixed before execution
-and must equal the largest eligible batch value. The profile set may be sparse.
+and must equal the largest planned batch size value. The profile set may be sparse.
 
 Plan 5's confirmatory estimand ranges over every integer batch above candidate
-`c` through `Kmax`. Confirmatory sizing therefore requires the eligible span
+`c` through `Kmax`. Confirmatory sizing therefore requires the planned batch size span
 `c..Kmax` to be consecutive and returns an explicit error for the first gap.
 Plan 5a owns sequential decisions over sparse spans.
 
-Candidate batches are eligible values below `Kmax`. `Kmax` is the required
+Candidate batches are planned batch size values below `Kmax`. `Kmax` is the required
 final witness batch. A candidate equal to `Kmax` would have an empty comparison
 set. If no candidate below `Kmax` satisfies the discovery rule, the typed
 outcome is `Censored: NoSaturationObserved`.
@@ -325,11 +325,11 @@ the question to be asked.
 
 `BSatCodeCapabilityBoundary` describes an explicit boundary at or below
 `Kmax`. The frozen-set boundary is derived as one greater than the largest
-eligible batch, while `Kmax` equals that largest eligible value. A Run failure
-for a declared profile follows the campaign's ordinary trial-failure path.
+planned batch size, while `Kmax` equals that largest planned batch size value. A Run failure
+for a declared batch size follows the campaign's ordinary trial-failure path.
 
 `R_c` remains a maximum over every integer batch above `c`. A gap in the
-eligible span `c..Kmax` leaves that estimand undefined, so confirmatory sizing
+planned batch size span `c..Kmax` leaves that estimand undefined, so confirmatory sizing
 returns an error naming the first missing batch.
 
 This is what makes `Kmax` a trade-off. A larger `Kmax` supports a stronger claim,
@@ -471,7 +471,7 @@ The observed `a` coefficients are conditioned-on design quantities. Active Run
 sets are independent. The distinct-state form remains a retained estimator
 branch. ADR 0016's current family construction gives every point the same
 baseline key, so the shared-state form is the one that applies to current
-batch-profile artifact families. Each projected variance uses
+declared-batch-size artifact families. Each projected variance uses
 Welch--Satterthwaite degrees of freedom over its nonzero active and baseline
 components: prospective active components use `n-1`, and retained baseline
 components use their admitted degrees of freedom. With the global
@@ -520,7 +520,7 @@ retained `ProfilingRun` objects. Before measurement it fixes:
 - the namespace and Run-name prefix;
 - the evidence-inclusion rule, in prose: every identity-compatible admitted trial
   produced under this campaign is included, and none is excluded;
-- the rule that generates confirmatory batches `c..Kmax` from whatever candidate
+- the rule that generates confirmatory batch sizes `c..Kmax` from whatever candidate
   discovery proposes, after the consecutive-span check; and
 - whether idle-baseline Runs count against the policy file's Run budget.
 
@@ -539,7 +539,7 @@ R_active = Kmax * n_disc + (Kmax - c + 1) * n_conf
 R_max    = Kmax * (n_disc + n_conf)              when c = 1
 ```
 
-`Kmax` in these sizing formulas is the largest eligible batch value. The sizing
+`Kmax` in these sizing formulas is the largest planned batch size value. The sizing
 method and its predeclared conservative budget remain fixed.
 
 The cost depends on where the candidate lands, and the worst case is `c = 1`:
@@ -553,7 +553,7 @@ The budget cap in the policy file is set against this worst case.
 
 `epsilon` is energy above idle, so every point on a curve is computed by
 subtracting an idle-power estimate. That estimate belongs to an exact execution
-state. One batch-profile artifact supplies every eligible point under one state
+state. One declared-batch-size artifact supplies every planned batch size point under one state
 key, and its curve owns one shared idle baseline.
 
 ### How it is guaranteed
@@ -569,7 +569,7 @@ type Pass struct {
     Batches admitted trials of that pass, grouped by batch
 }
 
-FreezeCurveFamilyContract(shared contract with eligible batches)
+FreezeCurveFamilyContract(shared contract with planned batch sizes)
     (CurveFamilyContract, error)
 VerifyCurveFamily(contract CurveFamilyContract,
                   verified frozen state) (CurveFamily, error)
@@ -582,10 +582,10 @@ DeriveBSatConfirmatory(curve Curve, candidate int,
 ```
 
 `FreezeCurveFamilyContract` fixes ADR 0016's shared artifact contract and
-eligible batch set before measurement. `VerifyCurveFamily` compares
+planned batch size set before measurement. `VerifyCurveFamily` compares
 Loader-verified frozen Run facts with that contract and binds their common
 observed environment before constructing the verified family. `DeriveCurve`
-resolves each trial to the frozen eligible sequence, selects the family's
+resolves each trial to the frozen planned batch size sequence, selects the family's
 single baseline with the same `StateIdentity`, and
 performs the per-trial incremental step and per-batch aggregation internally.
 Since `Curve` has no exported fields and no other constructor, every point that
@@ -694,11 +694,11 @@ versions so each remains reproducible. The rebuilt interval is
 
 ### Discovery
 
-Discovery measures every batch in the frozen eligible sequence at `n_disc`
+Discovery measures every batch in the frozen planned batch size sequence at `n_disc`
 trials and proposes the smallest eligible `c < Kmax` whose point estimate
 satisfies `R_c_hat <= tau`, using the `tau` already fixed in the discovery
 policy version. `Kmax` remains in every eligible candidate's comparison set and
-is the largest eligible batch value.
+is the largest planned batch size value.
 
 ```text
 DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
@@ -707,7 +707,7 @@ DeriveBSatDiscovery(discoveryCurve Curve, policy DiscoveryDerivationPolicy)
 
 The implemented screen accepts only an opaque discovery-only `Curve`, requires
 the largest batch of its frozen family to equal policy `Kmax`, and checks
-exactly `n_disc` independent trials at every eligible batch. The retained typed
+exactly `n_disc` independent trials at every planned batch size. The retained typed
 capability-boundary case describes an explicit boundary at or below `Kmax`;
 silent truncation is an invalid input.
 
@@ -736,7 +736,7 @@ the curve-family contract and both stage-scoped point-policy versions, requires
 exactly `n_conf` new Runs at every batch `c..Kmax`, and evaluates the reference
 lower bound and every contrast upper bound at the frozen global-`H` quantile.
 `DeriveBSatConfirmatorySizing` first verifies that every integer batch in
-`c..Kmax` belongs to the eligible set and returns an explicit gap error when the
+`c..Kmax` belongs to the planned batch size set and returns an explicit gap error when the
 span is sparse.
 Its result retains both pass point sets, all exact-state idle baselines, bounds
 for every later batch, estimator and sizing versions, both policy names, and
@@ -747,7 +747,7 @@ is frozen as a confirmatory policy without a Run allocation, so its typed final
 result also retains both policy names without pretending confirmation ran.
 
 Confirmation still validates that the discovery pass starts at the first
-eligible batch. Candidate search therefore includes every earlier eligible
+planned batch size. Candidate search therefore includes every earlier eligible
 batch below `c`. Those earlier batches need no re-measurement in the
 confirmatory pass unless the candidate search is repeated.
 
@@ -920,8 +920,8 @@ controller creating Runs unattended is the condition those mechanisms exist for.
 
 Standby-versus-model-loaded idle and transition-cost decomposition belong to a
 transition plan. They do not gate this campaign. ADR 0016 gives one
-batch-profile artifact one state key and one admitted model-loaded-idle
+declared-batch-size artifact one state key and one admitted model-loaded-idle
 baseline. Batch remains excluded from the exact state and protocol projections
-as an axis value, while the artifact name, path, declared profiles, and supply
+as an axis value, while the artifact name, path, declared batch sizes, and supply
 image remain bound. The verified `CurveFamily` is the composition boundary for
 that state.

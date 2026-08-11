@@ -6,7 +6,7 @@ import (
 )
 
 // Decide resolves the shared progress rules and delegates only the measurement
-// question. The frozen eligible batch set is passed through to the method.
+// question. The frozen planned batch size set is passed through to the method.
 func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if method == nil {
 		return Decision{}, errors.New("a measurement method is required")
@@ -14,7 +14,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if err := snapshot.Validate(); err != nil {
 		return Decision{}, fmt.Errorf("validate snapshot: %w", err)
 	}
-	observed := Observed{EligibleBatches: append([]int(nil), snapshot.EligibleBatches...)}
+	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
 	attempts := make(map[Measurement]int)
 	accepted := make(map[Measurement]struct{})
 	for _, trial := range snapshot.Trials {
