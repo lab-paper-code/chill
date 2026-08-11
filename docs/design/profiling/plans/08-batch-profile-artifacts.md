@@ -8,28 +8,28 @@
 
 ## Status
 
-Approved design, not yet implemented. It replaces the premise beneath Plan 7 and
-retires ADR 0014. Plans 5 and 5a keep the estimand, acceptance rule, and sizing
-method unchanged.
+Approved design, under implementation. It replaces the premise beneath Plan 7
+and retires ADR 0014. Plans 5 and 5a keep the estimand, acceptance rule, and
+sizing method unchanged.
 
 ## Question
 
 > CHILL assumes one immutable artifact encodes exactly one batch size. Is that a
 > property of the runtime, or a property of CHILL's own conversion step?
 
-It is CHILL's own. The assumption is false for RKNN, and correcting it removes
-the manual per-batch apparatus built to accommodate it.
+It is CHILL's own conversion step. RKNN carries several batch shapes in one
+artifact, and correcting the assumption removes the manual per-batch apparatus
+built to accommodate it.
 
 ## What this plan does
 
 One artifact declares the set of batch sizes it can execute. One execution path
 serves a whole batch sweep. The capability boundary becomes a catalog fact known
-before any Run is created, rather than a runtime condition inferred after one
-fails.
+before any Run is created.
 
-Nothing new is introduced. The batch-invariant tensor truth already exists one
-layer down as `CurveTensorContract.NonBatchShape`; this plan promotes it to the
-catalog and deletes every place that restated it per batch.
+The batch-invariant tensor truth already exists one layer down as
+`CurveTensorContract.NonBatchShape`. This plan promotes it to the catalog and
+deletes every place that restated it per batch.
 
 ## Measured evidence
 
@@ -65,15 +65,14 @@ version 6, target `RKNPU v2 / rk3588`, `model inference type: dynamic_shape`.
 
 Three facts follow, and each is load-bearing below:
 
-1. The Lite API selects the profile from the input array shape. No
-   `data_format` argument and no `set_input_shapes` call are needed, so the
-   runner's inference calls need no change.
+1. The Lite API selects the profile from the input array shape. The runner's
+   existing `inference(inputs=[sample])` call is sufficient as written.
 2. `init_runtime(core_mask=NPU_CORE_0)` works against a dynamic artifact.
-3. An undeclared batch cannot execute. The capability boundary is an observed
-   runtime property, not an assumption.
+3. The runtime refuses an undeclared batch and enumerates the shapes it holds.
+   The capability boundary is an observed runtime property.
 
 The runtime reports its shapes as NHWC while the framework layout is NCHW. That
-asymmetry already exists in CHILL and is preserved, not introduced.
+asymmetry already exists in CHILL and is preserved.
 
 ## The single declaration point
 
@@ -102,8 +101,8 @@ An artifact without a `Derivation` declares no profiles and accepts any batch.
 That covers the source ONNX and the ONNX Runtime CPU path, which consume batch
 as a call argument.
 
-The capability boundary is `BatchProfiles` being present and not containing the
-requested batch. It is resolved from the catalog, before a Run exists.
+The capability boundary is a requested batch outside a declared `BatchProfiles`.
+It is resolved from the catalog, before a Run exists.
 
 `ProfilingRunSpec` is unchanged: one Run measures one batch.
 `BatchSaturationSpec.State` is unchanged: one candidate now covers a whole
@@ -112,7 +111,7 @@ sweep, which is what its shape already assumed.
 ## Verification collapses to execution evidence
 
 Removing the batch axis from the declared shape makes a batch mismatch
-unrepresentable rather than merely detected. Five checks lose their subject:
+unrepresentable. Five checks lose their subject:
 
 | Deleted | Why it has nothing left to compare |
 |---|---|
@@ -122,9 +121,9 @@ unrepresentable rather than merely detected. Five checks lose their subject:
 | `runtime/rknnlite/runner.py:397-398` | same |
 | `internal/profilederivation/curve_family.go:339` | per-member tensor contract is gone |
 
-Each compared two catalog declarations against each other. None could observe
-whether the artifact actually executes the batch. Two checks that observe
-execution remain, and they are stronger than the five they replace:
+Each compared two catalog declarations against each other, leaving execution
+unobserved. Two checks that observe execution remain, and they are stronger than
+the five they replace:
 
 ```python
 # runtime/rknnlite/runner.py:665 — the runtime supplied no result for this batch
@@ -136,19 +135,17 @@ if output.size < 1 or not shape or shape[0] != batch:
     raise ContractError("inference output shape does not preserve the frozen batch")
 ```
 
-Both already exist, and no new guard is required. RKNNLite swallows a refused
-profile internally and returns `None`, which `validate_outputs` catches on its
-first line because `None` is falsy. The refusal therefore already surfaces as a
-typed `ContractError` rather than a crash.
+Both already exist. RKNNLite swallows a refused profile internally and returns
+`None`, which `validate_outputs` catches on its first line because `None` is
+falsy, so the refusal surfaces as a typed `ContractError`.
 
-What the probe does justify is naming the cause. "inference produced no outputs"
-describes the symptom of a refused profile, not the refusal, and a misbuilt
-artifact is the one case that reaches this path. Distinguishing the two is a
-diagnosability change to an existing check, not a new validation layer.
+What the probe justifies is naming the cause. "inference produced no outputs"
+states the symptom; the refused profile is the cause, and a misbuilt artifact is
+the one case that reaches this path. Naming it is a diagnosability change to an
+existing check.
 
 This satisfies `AGENTS.md` — "verify once at that boundary, and do not
-re-validate it downstream" — by removing a standing violation rather than by
-adding a rule.
+re-validate it downstream" — by removing a standing violation of that rule.
 
 ## Derivation collapse
 
@@ -162,21 +159,27 @@ Deleted from `internal/profilederivation/curve_family.go`:
 `validateCurveFamilyMember`, `cloneCurveFamilyMembers`,
 `cloneVerifiedCurveFamilyMember(s)`, the N:N contract match in
 `VerifyCurveFamily`, and `CurveConversionContract.Derived`. Conversion
-provenance (`Tool`, `ToolVersion`, `TargetPlatform`) is retained.
+provenance (`Tool`, `ToolVersion`, `TargetPlatform`) is retained, and a family
+whose artifact went through no converter leaves all three empty together.
 
 `CurveFamilySharedContract` absorbs the four artifact-identity fields and gains
 `EligibleBatches []int`. The hand-written members array becomes one integer
 array. `internal/profiler/admission/curve_family.go` shrinks in proportion.
 
+`VerifyCurveFamily` keeps its guard on the four derivation identities. It is the
+boundary that mints a `CurveFamily`, so a blank state, environment, active
+protocol, or idle protocol identity is rejected there.
+
 The `CurveFamily` names are kept. They still read correctly as the family of
 measurements composing one curve, and renaming them would be churn across
 admission, derivation, documents, and tests. What is retired is the
-fixed-artifact premise, and that is retired by deleting ADR 0014.
+fixed-artifact premise, retired by deleting ADR 0014.
 
 ADR 0014 required one admitted idle baseline per fixed-batch member state and
 recorded that a dynamic-batch artifact keeps one baseline. One artifact means
-one state key, so the single baseline is correct and
-`internal/batchsaturation/sequential.go:56` needs no change.
+one state key, so `internal/batchsaturation/sequential.go:56` keeps planning a
+single baseline. It takes the first declared batch, so the baseline Run carries
+a batch the artifact declares.
 
 ## Capability boundary: source, freeze, and failure
 
@@ -186,46 +189,61 @@ The boundary moves from post-hoc inference to pre-Run resolution:
 first reconcile   resolve ModelSpec.BatchProfiles
                   freeze CurveFamilySharedContract, including EligibleBatches
                   write it to the evidence store
-later reconciles  read the frozen record; never re-read the catalog
+later reconciles  read the frozen record, which is now the authority
 ```
 
-`Observed.CapabilityBoundary` and the stop decision at
-`internal/batchsaturation/sequential.go:86` are unchanged; only the value's
-source changes. Deleted: `capabilityReasonCode` and its uses
-(`internal/batchsaturation/controller/projection.go:13-15,82,91`),
-`Trial.CapabilityRejected` (`internal/batchsaturation/types.go:43`), and the
-boundary-inference loop (`internal/batchsaturation/lifecycle.go:25-31`).
+The declared profile set may be sparse. Which sizes an artifact carries is a
+measurement decision that belongs in configuration, and a campaign is free to
+declare a set that skips sizes it has no interest in.
 
-A declared profile set that the artifact does not honour — declared
-`[1,2,4,8,16]`, built `[1,2]` — is **not** a capability boundary. The boundary is
-decided before the Run; a Run that was created had an eligible batch. Its
-failure is an ordinary trial failure, retried and then terminal via the existing
-path at `internal/batchsaturation/lifecycle.go:43-56`. Promoting it to a
-boundary would let a misbuilt artifact end a measurement as a clean stop.
+The sweep therefore advances through the declared set in its own order, and the
+capability boundary is reaching the end of that set. A gap inside the set is a
+size the operator chose to skip, and the sweep steps over it.
+
+`Observed` carries the eligible set, and the method asks whether an eligible
+batch larger than the highest measured one exists. Deleted:
+`capabilityReasonCode` and its uses
+(`internal/batchsaturation/controller/projection.go:13-15,82,91`),
+`Trial.CapabilityRejected` (`internal/batchsaturation/types.go:43`), the
+boundary-inference loop (`internal/batchsaturation/lifecycle.go:25-31`), and
+`Observed.CapabilityBoundary *int` itself.
+
+Two consequences reach the derivation layer. A curve pass's batches follow the
+eligible sequence (`internal/profilederivation/curve.go`), and a discovery
+policy's `KMax` is compared against the largest eligible batch. Under a
+contiguous domain starting at one those were the same number, which is why the
+distinction stayed hidden.
+
+A catalog that declares a profile its artifact was built without produces an
+ordinary trial failure. The boundary is decided before the Run from the declared
+set, so every Run that was created carried a batch that set contained; its
+failure is retried and then terminal through the existing path at
+`internal/batchsaturation/lifecycle.go:43-56`. The measurement ends as a
+failure, which is what a configuration error is.
 
 ## Build pipeline
 
 `build/model-artifacts/rknn/export_rknn.py:82` calls `set_fixed_batch()`, which
 overwrites the ONNX symbolic batch axis with a constant immediately before
-conversion. The prerequisite for `dynamic_input` was being destroyed by the
-converter itself.
+conversion. The converter itself destroyed the prerequisite `dynamic_input`
+needs.
 
 ```python
 # deleted: set_fixed_batch() (17-30), --batch-size, the temporary batch-fixed.onnx
 parser.add_argument("--batch-profile", required=True, action="append", type=int)
 
-non_batch = onnx_input_shape(model)[1:]      # read from the model, not declared by hand
+non_batch = onnx_input_shape(model)[1:]      # read from the model
 dynamic_input = [[[batch, *non_batch]] for batch in sorted(set(args.batch_profile))]
 converter.config(target_platform=args.target_platform, dynamic_input=dynamic_input)
 ```
 
 `load_onnx` receives the original ONNX. `Makefile`'s `RKNN_FIXED_BATCH` becomes
 `RKNN_BATCH_PROFILES` and the target runs once per model.
-`build/docker/derived-model-artifact.Dockerfile` needs no change to its artifact
-copy: one file still, now covering every profile.
+`build/docker/derived-model-artifact.Dockerfile` keeps its single artifact copy,
+which now covers every profile.
 
-Per model, the cost of a five-batch sweep falls from five conversions, five
-image builds and pushes, and five catalog execution paths to one of each.
+Per model, a sweep over N batches costs one conversion, one image build and
+push, and one catalog execution path.
 
 ## Records
 
@@ -240,8 +258,9 @@ pointers only, continuing the direction of `30d7f5b` and `e787336`.
 | BatchSaturation result | `batch-saturations/<uid>/result.json` | measurement end |
 | Run raw and execution evidence | `<uid>/raw`, `<uid>/execution` | unchanged |
 
-The offline build cannot reach the store, and the Profiler controller cannot
-read an OCI image. The record therefore travels inside the artifact image:
+The offline build runs outside the cluster, and the Profiler controller reads
+Kubernetes objects rather than OCI image contents. The records therefore travel
+inside the artifact image:
 
 ```dockerfile
 COPY artifact /artifact/${ARTIFACT_NAME}
@@ -249,41 +268,36 @@ COPY conversion.json /artifact/conversion.json
 COPY device-probe.json /artifact/device-probe.json
 ```
 
-The device probe is a build step, not a separate campaign. Conversion declares
-the profiles; the probe executes them once on the target device class and
-records which ones the runtime actually accepted; the image is published only
-after both records exist. The probe is the only confirmation of a declared
-profile set that is possible before measurement, and placing it before
-publication means an artifact cannot reach the cluster carrying an unchecked
-claim. This plan's own probe, recorded above, is that step performed by hand for
-the first such artifact.
+The device probe is a build step. Conversion declares the profiles; the probe
+executes them once on the target device class and records which ones the runtime
+accepted; the image is published after both records exist. The probe is the one
+confirmation of a declared profile set available before measurement, and placing
+it before publication means every artifact reaching the cluster carries a
+checked claim. This plan's own probe, recorded above, is that step performed by
+hand for the first such artifact.
 
-The candidate report cannot carry them. It is built by the controller from the
-catalog (`candidate_resolver.go:111`), written to the intent record, and
-projected into the Job as a file (`execution_job_spec.go:283`); it flows
-controller to worker, so it cannot return a worker observation.
+The candidate report flows controller to worker: it is built by the controller
+from the catalog (`candidate_resolver.go:111`), written to the intent record,
+and projected into the Job as a file (`execution_job_spec.go:283`).
 
-The path that does flow worker to Profiler is the runtime result. The runner
-already mounts the artifact directory, so it reads the two records from that
-mount and emits them with its result, and the Profiler stores each under its
-artifact-scoped key. `PutImmutable` returns `Existing` rather than failing when
-the object is already present, so every later Run reporting the same records
-stores nothing new: the record is written once per artifact regardless of how
-many Runs carry it.
+The runtime result is the path that flows worker to Profiler. The runner already
+mounts the artifact directory, so it reads the two records from that mount and
+emits them with its result, and the Profiler stores each under its
+artifact-scoped key. `PutImmutable` returns `Existing` for an object already
+present, so the record is written once per artifact however many Runs carry it.
 
-This needs no ModelSpec controller, no new API, and no credentials in the build
-path, and the record cannot be separated from the artifact it describes. The
-cost is timing: the records are stored at the artifact's first Run admission
-rather than at ModelSpec admission, which is the first moment the cluster can
-observe them.
+This reuses the evidence path the Profiler already owns, and the record travels
+bound to the artifact it describes. The cost is timing: the records are stored
+at the artifact's first Run admission, the first moment the cluster can observe
+them.
 
 The conversion record's shape changes accordingly:
 
 ```json
 "conversion": {
   "tool": "rknn-toolkit2", "version": "2.3.2", "targetPlatform": "rk3588",
-  "batchProfiles": [1, 2, 4, 8, 16],
-  "nonBatchShape": [3, 224, 224],
+  "batchProfiles": [ ... ],
+  "nonBatchShape": [ ... ],
   "quantized": false
 }
 ```
@@ -299,17 +313,17 @@ Removing `fixedBatch` from the artifact capability changes four wire contracts:
 | `chill.dacs.io/rknnlite-runtime-request` | `v1alpha3` | `v1alpha4` |
 | `chill.dacs.io/rknn-conversion-record` | `v1alpha2` | `v1alpha3` |
 
-`internal/profilingrun/candidate.go:335` decodes on exact version match, so
-evidence produced under the current versions cannot be re-derived by the new
-code. The stored objects and the recorded claims persist; re-derivation does
-not. This repository has accepted that trade before — the same reasoning
+`internal/profilingrun/candidate.go:335` decodes on exact version match, so the
+new code reads evidence produced under the new versions. The stored objects and
+the recorded claims persist; re-derivation applies to evidence produced from
+here on. This repository has accepted that trade before — the same reasoning
 governed the `v1alpha3` to `v1alpha4` raise — and maintaining multi-version
 decoders is the class of machinery this plan exists to remove. Where
 re-derivation is genuinely needed, re-measurement produces better evidence.
 
 The completed RKNN measurement is preserved. Its record in
 `docs/design/profiling/README.md` is rewritten to attribute the result to the
-premise under which it was obtained, not deleted.
+premise under which it was obtained.
 
 ## What is deleted
 
@@ -325,12 +339,12 @@ premise under which it was obtained, not deleted.
 
 **Documents.** `docs/adr/0014-fixed-artifact-curve-composition.md` is deleted and
 its number left vacant. The fixed-batch premise is removed from Plans 5, 5a, 6,
-and 7. `docs/spec/` contains no fixed-batch premise and is untouched.
+and 7. `docs/spec/` carries the estimand only and is untouched.
 
 **Kept deliberately.** `SaturatedSerialFixedBatchWorkloadMode` describes the
 workload — one Run holds its batch fixed and executes serially — which remains
-true and is unrelated to artifact capability; renaming it would change the
-runtime contract string, execution policies, and evidence for no gain.
+true of the workload; renaming it would change the runtime contract string,
+execution policies, and evidence.
 
 ## What survives
 
@@ -361,19 +375,16 @@ needs no test because the compared values merge into one field. What remains:
   `make manifests generate` for the API types, `make arch-check` for the
   component map, and `make lint` and `make test` before handoff. The Python
   runtime suite runs inside `make test`.
-- No e2e against the testbed kubeconfig.
-- No separate validation campaign. The first BatchSaturation measurement sweeps
-  batch 1, 2, 4 from one artifact, which is the end-to-end check; its record is
-  the validation record.
+- e2e stays off the testbed kubeconfig.
+- The first BatchSaturation measurement sweeps the declared profiles from one
+  artifact, which is the end-to-end check, and its record is the validation
+  record. No separate validation campaign is created.
 
 ## Consequences
 
-A runtime that genuinely cannot enumerate batch profiles at conversion time
-would need a per-batch path restored. No such runtime is in CHILL's support
-matrix, and reintroducing it would be a new decision with its own evidence
-rather than a regression to this one.
+A runtime that enumerates one batch per artifact would need a per-batch path
+restored. Reintroducing it would be a new decision carrying its own evidence.
 
-The declared profile set is a catalog claim about a built artifact. Nothing
-before execution can confirm it. That gap is closed at the only place it can be
-closed — the runtime refusing the batch — and the resulting failure is reported
-as a failure rather than absorbed as a boundary.
+The declared profile set is a catalog claim about a built artifact. Execution
+confirms it: the runtime refuses a batch its artifact was built without, and the
+resulting failure is reported as a failure.

@@ -654,31 +654,34 @@ git commit -m "refactor: collapse the curve family onto one artifact"
 
 `Trial.CapabilityRejected` is set from a condition reason no component emits, so the boundary is unreachable. It becomes an input to the snapshot instead of an inference from trial outcomes.
 
+The declared set may be sparse. The sweep advances through the declared set in its own order, and the capability boundary is exhausting that set. A gap inside the set is a size the operator chose to skip, and the sweep steps over it.
+
 **Files:**
 - Modify: `internal/batchsaturation/types.go:43,64`
 - Modify: `internal/batchsaturation/lifecycle.go:18-41`
 - Modify: `internal/batchsaturation/lifecycle_test.go:98-109`
+- Modify: `internal/batchsaturation/sequential.go:46-91`
+- Modify: `internal/batchsaturation/sequential_test.go`
 - Modify: `internal/batchsaturation/controller/projection.go:13-15,19-22,73-107`
 - Modify: `internal/batchsaturation/controller/projection_test.go`
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-3
-- Produces: `batchsaturation.Snapshot` with `EligibleBatches []int`; `controller.ProjectSnapshot(parent *edgev1alpha1.BatchSaturation, runs []edgev1alpha1.ProfilingRun, eligibleBatches []int) (batchsaturation.Snapshot, error)`
+- Produces: `batchsaturation.Snapshot` with `EligibleBatches []int`; `batchsaturation.Observed` with `EligibleBatches []int` replacing `CapabilityBoundary *int`; `controller.ProjectSnapshot(parent *edgev1alpha1.BatchSaturation, runs []edgev1alpha1.ProfilingRun, eligibleBatches []int) (batchsaturation.Snapshot, error)`
 
-- [ ] **Step 1: Write the failing boundary test**
+- [ ] **Step 1: Write the failing sweep test**
 
 Replace `TestDecideReportsCapabilityBoundaryToTheMethod` in `internal/batchsaturation/lifecycle_test.go` with:
 
 ```go
-func TestDecideReportsTheBoundaryFromTheEligibleBatches(t *testing.T) {
+func TestDecideGivesTheMethodTheEligibleBatches(t *testing.T) {
 	method := &stubMethod{plan: Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}}
 	snapshot := Snapshot{
 		RetryLimit:      1,
-		EligibleBatches: []int{1, 2},
+		EligibleBatches: []int{1, 2, 4},
 		Trials: []Trial{
 			{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
 			{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
-			{Measurement: active(2), Attempt: 1, Verdict: VerdictAccepted},
 		},
 	}
 
@@ -686,68 +689,166 @@ func TestDecideReportsTheBoundaryFromTheEligibleBatches(t *testing.T) {
 		t.Fatalf("decide: %v", err)
 	}
 
-	if method.seen.CapabilityBoundary == nil || *method.seen.CapabilityBoundary != 3 {
-		t.Fatalf("capability boundary = %v, want 3", method.seen.CapabilityBoundary)
+	if !reflect.DeepEqual(method.seen.EligibleBatches, []int{1, 2, 4}) {
+		t.Fatalf("eligible batches = %v, want [1 2 4]", method.seen.EligibleBatches)
 	}
 }
 ```
 
-The expected value is 3: the smallest batch above the contiguous eligible prefix.
+Add to `internal/batchsaturation/sequential_test.go`, replacing `TestSequentialStopsAtACapabilityBoundary`:
+
+```go
+func TestSequentialStepsOverAGapInTheEligibleSet(t *testing.T) {
+	method, err := NewSequentialEarlyStop(
+		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
+		func(batches []int) (CurveResult, error) {
+			return CurveResult{Continue: true, SelectedBatch: 2}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+
+	plan, err := method.Plan(Observed{
+		EligibleBatches: []int{1, 2, 4},
+		Accepted:        acceptedThrough(2, 3),
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.Next == nil || plan.Next.Batch != 4 {
+		t.Fatalf("next = %v, want the declared batch 4", plan.Next)
+	}
+}
+
+func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
+	method, err := NewSequentialEarlyStop(
+		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
+		func(batches []int) (CurveResult, error) {
+			return CurveResult{Continue: true, SelectedBatch: 2, Outcome: "Stopped/CapabilityBoundary"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+
+	plan, err := method.Plan(Observed{
+		EligibleBatches: []int{1, 2},
+		Accepted:        acceptedThrough(2, 3),
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.Result == nil || plan.Result.Outcome != "Stopped/CapabilityBoundary" {
+		t.Fatalf("result = %v, want a capability-boundary stop", plan.Result)
+	}
+}
+```
+
+`acceptedThrough` already exists in that file. Keep its existing meaning: accepted idle plus active trials for every batch up to the first argument, at the trial count given by the second.
 
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-go test ./internal/batchsaturation/ -run TestDecideReports -v
+go test ./internal/batchsaturation/ -run 'TestDecideGives|TestSequentialSteps|TestSequentialStops' -v
 ```
-Expected: FAIL to compile — `Snapshot.EligibleBatches` is undefined.
+Expected: FAIL to compile — `Snapshot.EligibleBatches` and `Observed.EligibleBatches` are undefined.
 
 - [ ] **Step 3: Change the pure types**
 
-In `internal/batchsaturation/types.go`, delete `Trial.CapabilityRejected` and add to `Snapshot`:
+In `internal/batchsaturation/types.go`, delete `Trial.CapabilityRejected`, delete `Observed.CapabilityBoundary *int`, and add to both `Snapshot` and `Observed`:
 
 ```go
 	// EligibleBatches is the frozen set of batch sizes the selected artifact
-	// declares. A batch outside it cannot be measured and is the capability
-	// boundary.
+	// declares, in ascending order. The sweep advances through it, and
+	// exhausting it is the capability boundary.
 	EligibleBatches []int
 ```
 
 Extend `Snapshot.Validate()` to require a non-empty `EligibleBatches` with positive, strictly increasing values.
 
-- [ ] **Step 4: Compute the boundary in `Decide`**
+- [ ] **Step 4: Pass the set through `Decide`**
 
-In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected` branch from the first loop, and delete `|| trial.CapabilityRejected` from the retry loop's guard. Set the boundary from the eligible set before the loops:
+In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected` branch from the first loop, delete `|| trial.CapabilityRejected` from the retry loop's guard, and seed `observed` from the snapshot:
 
 ```go
-	boundary := firstIneligibleBatch(snapshot.EligibleBatches)
-	observed := Observed{CapabilityBoundary: &boundary}
+	observed := Observed{EligibleBatches: append([]int(nil), snapshot.EligibleBatches...)}
+```
+
+- [ ] **Step 5: Advance the sweep through the declared set**
+
+In `internal/batchsaturation/sequential.go`, `Plan` currently walks consecutive integers. Replace the four places that assume that. Guard the set first:
+
+```go
+	if len(observed.EligibleBatches) == 0 {
+		return Plan{}, errors.New("a non-empty eligible batch set is required")
+	}
+```
+
+The idle baseline takes the first declared batch, so the baseline Run carries a batch the artifact declares:
+
+```go
+	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.EligibleBatches[0]}
+```
+
+The backfill loop and the derivation input both walk the declared prefix:
+
+```go
+	for _, batch := range observed.EligibleBatches {
+		if batch > highestActive {
+			break
+		}
+		point := Measurement{WorkloadMode: WorkloadModeActive, Batch: batch}
+		if counts[point] < s.config.TrialsPerBatch {
+			return Plan{Next: &point}, nil
+		}
+	}
+	if highestActive == 0 {
+		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.EligibleBatches[0]}
+		return Plan{Next: &first}, nil
+	}
+
+	batches := make([]int, 0, len(observed.EligibleBatches))
+	for _, batch := range observed.EligibleBatches {
+		if batch > highestActive {
+			break
+		}
+		batches = append(batches, batch)
+	}
+```
+
+And the continue decision asks the set for a next batch:
+
+```go
+	next, found := nextEligibleBatch(observed.EligibleBatches, highestActive)
+	if !found {
+		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
+	}
+	measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
+	return Plan{Next: &measurement}, nil
 ```
 
 ```go
-// firstIneligibleBatch returns the smallest batch above the contiguous prefix
-// of the eligible set. A sweep advances by one batch at a time, so that is the
-// first batch the sweep can reach and the artifact cannot execute. The set is
-// finite, so this batch always exists.
-func firstIneligibleBatch(eligible []int) int {
-	expected := 1
+// nextEligibleBatch returns the smallest declared batch above the highest one
+// already measured. Exhausting the declared set is the capability boundary.
+func nextEligibleBatch(eligible []int, highest int) (int, bool) {
 	for _, batch := range eligible {
-		if batch != expected {
-			break
+		if batch > highest {
+			return batch, true
 		}
-		expected++
 	}
-	return expected
+	return 0, false
 }
 ```
 
-- [ ] **Step 5: Run to verify it passes**
+- [ ] **Step 6: Run to verify it passes**
 
 ```bash
 go test ./internal/batchsaturation/ -v
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Delete the unreachable reason code from the projection**
+- [ ] **Step 7: Delete the unreachable reason code from the projection**
 
 In `internal/batchsaturation/controller/projection.go`, delete the `capabilityReasonCode` constant and its doc comment, delete the `trial.CapabilityRejected` assignment, and delete `capabilityReasonCode` from the `isTerminalReason` switch. Add the eligible set as a projection input:
 
@@ -768,14 +869,14 @@ func ProjectSnapshot(
 
 Update `internal/batchsaturation/controller/projection_test.go` to pass an eligible set to every call.
 
-- [ ] **Step 7: Run and gate**
+- [ ] **Step 8: Run and gate**
 
 ```bash
 go test ./internal/batchsaturation/... -v && make lint && make test
 ```
 Expected: all pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add internal/batchsaturation
