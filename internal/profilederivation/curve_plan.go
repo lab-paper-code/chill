@@ -147,6 +147,14 @@ func (c CurvePlan) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(c.record)
 }
 
+// SchemaVersion returns the exact curve-plan schema identifier.
+func (c CurvePlan) SchemaVersion() string {
+	if c.requireInitialized() != nil {
+		return ""
+	}
+	return c.record.SchemaVersion
+}
+
 func (c CurvePlan) Shared() CurvePlanSpec {
 	return cloneCurvePlanSpec(c.record.Shared)
 }

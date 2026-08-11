@@ -29,8 +29,9 @@ type StoredObjectReference struct {
 // RunReference identifies one owned ProfilingRun without importing Kubernetes
 // API types into the pure package.
 type RunReference struct {
-	Name string `json:"name"`
-	UID  string `json:"uid"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
 }
 
 // ResultMeasurement is the wire projection of a trial measurement.
@@ -70,7 +71,8 @@ type resultRecord struct {
 }
 
 // ResultRecord can only be constructed from a structurally valid result
-// projection. Detail remains uninterpreted raw JSON.
+// projection. Detail is not schema-interpreted; its canonical JSON encoding is
+// stable and preserves the decoded value rather than arbitrary caller bytes.
 type ResultRecord struct {
 	record resultRecord
 }
@@ -234,8 +236,9 @@ func validateStoredObjectReference(name string, reference StoredObjectReference)
 }
 
 func validateRunReference(reference RunReference) error {
-	if !cleanResultValue(reference.Name) || !cleanResultValue(reference.UID) {
-		return errors.New("Run name and UID are required without surrounding whitespace")
+	if !cleanResultValue(reference.Namespace) || !cleanResultValue(reference.Name) ||
+		!cleanResultValue(reference.UID) {
+		return errors.New("Run namespace, name, and UID are required without surrounding whitespace")
 	}
 	return nil
 }

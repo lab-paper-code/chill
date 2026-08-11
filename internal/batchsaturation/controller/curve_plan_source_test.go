@@ -20,6 +20,8 @@ import (
 )
 
 func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
+	const storeName = "evidence"
+
 	parent := testParent()
 	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
 	reportBytes, report := curvePlanCandidateReport(t, parent)
@@ -31,13 +33,13 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	store := newFakeCurvePlanStore()
 	source, err := NewCurvePlanSource(
 		modelReader, resolver, preparer, store,
-		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+		CurvePlanSourceOptions{Store: storeName, MaxObjectBytes: 1 << 20},
 	)
 	if err != nil {
 		t.Fatalf("construct curve-plan source: %v", err)
 	}
 
-	first, err := source.Resolve(context.Background(), parent)
+	first, firstReference, err := source.Resolve(context.Background(), parent)
 	if err != nil {
 		t.Fatalf("record curve plan: %v", err)
 	}
@@ -52,6 +54,12 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	if store.puts != 1 || store.opens != 0 || store.lastIdentity.Key != wantKey {
 		t.Fatalf("first record calls = puts %d, opens %d, identity %+v", store.puts, store.opens, store.lastIdentity)
 	}
+	storedPayload := store.objects[store.lastIdentity.Location()]
+	if firstReference.Store != storeName || firstReference.Key != wantKey ||
+		firstReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha4" ||
+		firstReference.Size != int64(len(storedPayload)) {
+		t.Fatalf("created curve-plan reference = %+v, payload bytes = %d", firstReference, len(storedPayload))
+	}
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
 		preparer.requests[0].Measurement.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode ||
 		preparer.requests[1].Measurement.Batch != 1 ||
@@ -59,15 +67,24 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatalf("projected preparation requests = %+v", preparer.requests)
 	}
 
-	if _, err := source.Resolve(context.Background(), parent); err != nil {
+	// Recovery returns the stored object's observed size, not the recomputed
+	// canonical length.
+	storedPayload = append([]byte(" \n"), storedPayload...)
+	store.objects[store.lastIdentity.Location()] = storedPayload
+	_, recoveredReference, err := source.Resolve(context.Background(), parent)
+	if err != nil {
 		t.Fatalf("recover existing curve plan: %v", err)
 	}
-	if store.puts != 2 || store.opens != 1 {
-		t.Fatalf("recovery calls = puts %d, opens %d", store.puts, store.opens)
+	if store.puts != 2 || store.opens != 1 || recoveredReference.Store != storeName ||
+		recoveredReference.Key != wantKey ||
+		recoveredReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha4" ||
+		recoveredReference.Size != int64(len(storedPayload)) ||
+		recoveredReference.Size == firstReference.Size {
+		t.Fatalf("recovery = reference %+v, puts %d, opens %d", recoveredReference, store.puts, store.opens)
 	}
 
 	preparer.nodeUID = "replacement-node-uid"
-	if _, err := source.Resolve(context.Background(), parent); err == nil ||
+	if _, _, err := source.Resolve(context.Background(), parent); err == nil ||
 		!strings.Contains(err.Error(), "stored curve plan disagrees") {
 		t.Fatalf("recomputed plan drift error = %v", err)
 	}
@@ -135,7 +152,7 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("construct curve-plan source: %v", err)
 			}
-			if _, err := source.Resolve(context.Background(), parent); err == nil ||
+			if _, _, err := source.Resolve(context.Background(), parent); err == nil ||
 				!strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
 			}
@@ -316,10 +333,11 @@ func (p *fakeCurvePlanPreparer) Prepare(
 }
 
 type fakeCurvePlanStore struct {
-	objects      map[evidencestore.ObjectLocation][]byte
-	puts         int
-	opens        int
-	lastIdentity evidencestore.ObjectIdentity
+	objects        map[evidencestore.ObjectLocation][]byte
+	puts           int
+	opens          int
+	lastIdentity   evidencestore.ObjectIdentity
+	receiptMutator func(evidencestore.Receipt) evidencestore.Receipt
 }
 
 func newFakeCurvePlanStore() *fakeCurvePlanStore {
@@ -346,9 +364,13 @@ func (s *fakeCurvePlanStore) PutImmutable(
 	} else {
 		s.objects[identity.Location()] = bytes.Clone(payload)
 	}
-	return evidencestore.Receipt{
+	receipt := evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome,
-	}, nil
+	}
+	if s.receiptMutator != nil {
+		receipt = s.receiptMutator(receipt)
+	}
+	return receipt, nil
 }
 
 func (s *fakeCurvePlanStore) OpenLocation(

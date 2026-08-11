@@ -10,8 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ProjectSnapshot verifies ownership and reads every value from the child spec.
-// Labels select Runs; they are never the source of a projected value.
+// ProjectSnapshot verifies ownership and projects each child. Measurement values
+// come from the Run spec; the attempt currently comes from its mutable label.
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchSaturation,
 	runs []edgev1alpha1.ProfilingRun,
@@ -75,19 +75,26 @@ func projectTrial(run *edgev1alpha1.ProfilingRun) (batchsaturation.Trial, error)
 		trial.Verdict = batchsaturation.VerdictFailed
 		return trial, nil
 	}
-	for _, condition := range run.Status.Conditions {
-		if condition.Type != "IntentFrozen" && condition.Type != "ExecutionComplete" {
-			continue
-		}
-		if condition.Status != metav1.ConditionFalse || condition.Reason == "" {
-			continue
-		}
-		if isTerminalReason(condition.Reason) {
-			trial.Verdict = batchsaturation.VerdictFailed
-			return trial, nil
-		}
+	if len(terminalFailureReasons(run.Status.Conditions)) > 0 {
+		trial.Verdict = batchsaturation.VerdictFailed
 	}
 	return trial, nil
+}
+
+func terminalFailureReasons(conditions []metav1.Condition) []string {
+	reasons := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		if !isTrialProjectionConditionType(condition.Type) ||
+			condition.Status != metav1.ConditionFalse || !isTerminalReason(condition.Reason) {
+			continue
+		}
+		reasons = append(reasons, condition.Reason)
+	}
+	return reasons
+}
+
+func isTrialProjectionConditionType(conditionType string) bool {
+	return conditionType == "IntentFrozen" || conditionType == "ExecutionComplete"
 }
 
 func isTerminalReason(reason string) bool {

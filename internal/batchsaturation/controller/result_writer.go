@@ -11,7 +11,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -96,7 +95,12 @@ func projectResultTrials(
 		if err != nil {
 			return nil, nil, fmt.Errorf("project ProfilingRun %q: %w", run.Name, err)
 		}
-		reference := batchsaturation.RunReference{Name: run.Name, UID: string(run.UID)}
+		if trial.Verdict == batchsaturation.VerdictPending {
+			return nil, nil, fmt.Errorf("ProfilingRun %q is still pending", run.Name)
+		}
+		reference := batchsaturation.RunReference{
+			Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
+		}
 		measurement := batchsaturation.ResultMeasurement{
 			WorkloadMode: trial.Measurement.WorkloadMode,
 			Batch:        trial.Measurement.Batch,
@@ -112,7 +116,7 @@ func projectResultTrials(
 			})
 			continue
 		}
-		reasons, err := exclusionReasons(run, trial.Verdict)
+		reasons, err := exclusionReasons(run)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -123,28 +127,22 @@ func projectResultTrials(
 	return admitted, excluded, nil
 }
 
-func exclusionReasons(run *edgev1alpha1.ProfilingRun, verdict batchsaturation.Verdict) ([]string, error) {
+func exclusionReasons(run *edgev1alpha1.ProfilingRun) ([]string, error) {
 	if run.Status.Admission != nil {
+		if strings.TrimSpace(run.Status.Admission.Verdict) == "" {
+			return nil, fmt.Errorf("excluded ProfilingRun %q has an empty admission verdict", run.Name)
+		}
 		reasons := append([]string(nil), run.Status.Admission.ReasonCodes...)
 		if len(reasons) == 0 {
 			reasons = []string{"Admission" + run.Status.Admission.Verdict}
 		}
 		return reasons, nil
 	}
-	if verdict == batchsaturation.VerdictPending {
-		return []string{"Pending"}, nil
-	}
-	var reasons []string
-	for _, condition := range run.Status.Conditions {
-		if condition.Type != "IntentFrozen" && condition.Type != "ExecutionComplete" {
-			continue
-		}
-		if condition.Status == metav1.ConditionFalse && isTerminalReason(condition.Reason) {
-			reasons = append(reasons, condition.Reason)
-		}
-	}
+	reasons := terminalFailureReasons(run.Status.Conditions)
 	if len(reasons) == 0 {
-		return nil, fmt.Errorf("excluded ProfilingRun %q has no exclusion reason", run.Name)
+		return nil, fmt.Errorf(
+			"failed ProfilingRun %q violates the terminal-reason projection invariant", run.Name,
+		)
 	}
 	return reasons, nil
 }

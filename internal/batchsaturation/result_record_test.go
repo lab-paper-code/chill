@@ -2,33 +2,13 @@ package batchsaturation
 
 import (
 	"bytes"
-	"reflect"
 	"testing"
 )
 
-func TestResultRecordRoundTripsWithoutInterpretingDetail(t *testing.T) {
-	detail := []byte(`{"selected":2,"method":{"z":1,"a":[3,2,1]}}`)
-	record, err := NewResultRecord(ResultRecordSpec{
-		Outcome: "Stopped/NoFurtherImprovement",
-		CurvePlan: StoredObjectReference{
-			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 1024,
-		},
-		AdmittedTrials: []AdmittedTrialReference{{
-			Run:         RunReference{Name: "active-b2-a2", UID: "active-uid"},
-			Measurement: ResultMeasurement{WorkloadMode: WorkloadModeActive, Batch: 2},
-			Evidence: StoredObjectReference{
-				Store: "evidence", Key: "profiling-runs/active-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha2", Size: 2048,
-			},
-		}},
-		ExcludedTrials: []ExcludedTrialReference{{
-			Run:         RunReference{Name: "active-b2-a1", UID: "failed-uid"},
-			Measurement: ResultMeasurement{WorkloadMode: WorkloadModeActive, Batch: 2},
-			Attempt:     1, Reasons: []string{"JobFailed"},
-		}},
-		Detail: detail,
-	})
+func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing.T) {
+	spec := validResultRecordSpec()
+	spec.Detail = []byte(` { "selected": 2, "note": "a<b && c>d" } `)
+	record, err := NewResultRecord(spec)
 	if err != nil {
 		t.Fatalf("construct result record: %v", err)
 	}
@@ -40,11 +20,23 @@ func TestResultRecordRoundTripsWithoutInterpretingDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode result record: %v", err)
 	}
-	if !reflect.DeepEqual(decoded.Spec(), record.Spec()) {
-		t.Fatalf("round trip changed record:\n got: %+v\nwant: %+v", decoded.Spec(), record.Spec())
+	if !record.SemanticallyEqual(decoded) {
+		t.Fatalf("round trip changed decoded record value:\n got: %+v\nwant: %+v", decoded.Spec(), record.Spec())
 	}
-	if got := decoded.Spec().Detail; !bytes.Equal(got, detail) {
-		t.Fatalf("detail = %s, want byte-identical %s", got, detail)
+	if got := decoded.Spec().Detail; bytes.Equal(got, spec.Detail) || !equalJSONValues(got, spec.Detail) {
+		t.Fatalf("detail encoding = %s, original = %s", got, spec.Detail)
+	}
+	reencoded, err := decoded.CanonicalJSON()
+	if err != nil {
+		t.Fatalf("re-encode result record: %v", err)
+	}
+	if !bytes.Equal(reencoded, payload) {
+		t.Fatalf("canonical encoding is not idempotent:\n got: %s\nwant: %s", reencoded, payload)
+	}
+	decodedSpec := decoded.Spec()
+	if decodedSpec.AdmittedTrials[0].Run.Namespace != "chill-system" ||
+		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
+		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
 	}
 	if decoded.SchemaVersion() != "chill.dacs.io/batch-saturation-result.v1alpha1" {
 		t.Fatalf("schema version = %q", decoded.SchemaVersion())
@@ -52,14 +44,7 @@ func TestResultRecordRoundTripsWithoutInterpretingDetail(t *testing.T) {
 }
 
 func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
-	record, err := NewResultRecord(ResultRecordSpec{
-		Outcome: "Stopped/CapabilityBoundary",
-		CurvePlan: StoredObjectReference{
-			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 1024,
-		},
-		Detail: []byte(`null`),
-	})
+	record, err := NewResultRecord(validResultRecordSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,5 +65,65 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 		if _, err := DecodeResultRecord(mutated); err == nil {
 			t.Fatalf("schema version %q was accepted", schema)
 		}
+	}
+}
+
+func TestResultRecordRejectsDuplicateRunUID(t *testing.T) {
+	spec := validResultRecordSpec()
+	spec.ExcludedTrials[0].Run.UID = spec.AdmittedTrials[0].Run.UID
+	if _, err := NewResultRecord(spec); err == nil {
+		t.Fatal("duplicate ProfilingRun UID was accepted")
+	}
+}
+
+func TestResultRecordRejectsInvalidDetail(t *testing.T) {
+	spec := validResultRecordSpec()
+	spec.Detail = []byte(`{"unfinished":`)
+	if _, err := NewResultRecord(spec); err == nil {
+		t.Fatal("invalid result detail was accepted")
+	}
+}
+
+func TestResultRecordRejectsNonPositiveExcludedAttempt(t *testing.T) {
+	spec := validResultRecordSpec()
+	spec.ExcludedTrials[0].Attempt = 0
+	if _, err := NewResultRecord(spec); err == nil {
+		t.Fatal("non-positive excluded attempt was accepted")
+	}
+}
+
+func TestResultRecordRequiresRunNamespace(t *testing.T) {
+	spec := validResultRecordSpec()
+	spec.AdmittedTrials[0].Run.Namespace = ""
+	if _, err := NewResultRecord(spec); err == nil {
+		t.Fatal("Run reference without a namespace was accepted")
+	}
+}
+
+func validResultRecordSpec() ResultRecordSpec {
+	return ResultRecordSpec{
+		Outcome: "Stopped/NoFurtherImprovement",
+		CurvePlan: StoredObjectReference{
+			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 1024,
+		},
+		AdmittedTrials: []AdmittedTrialReference{{
+			Run: RunReference{
+				Namespace: "chill-system", Name: "active-b2-a2", UID: "active-uid",
+			},
+			Measurement: ResultMeasurement{WorkloadMode: WorkloadModeActive, Batch: 2},
+			Evidence: StoredObjectReference{
+				Store: "evidence", Key: "profiling-runs/active-uid/execution.json",
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha2", Size: 2048,
+			},
+		}},
+		ExcludedTrials: []ExcludedTrialReference{{
+			Run: RunReference{
+				Namespace: "chill-system", Name: "active-b2-a1", UID: "failed-uid",
+			},
+			Measurement: ResultMeasurement{WorkloadMode: WorkloadModeActive, Batch: 2},
+			Attempt:     1, Reasons: []string{"JobFailed"},
+		}},
+		Detail: []byte(`null`),
 	}
 }
