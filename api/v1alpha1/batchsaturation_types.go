@@ -5,6 +5,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 const MethodSequentialEarlyStop = "sequential-early-stop"
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="BatchSaturation spec is immutable"
+// +kubebuilder:validation:XValidation:rule="!has(self.activeProtocol.admissionPolicy) || !has(self.idleProtocol.admissionPolicy) || self.activeProtocol.admissionPolicy != self.idleProtocol.admissionPolicy",message="active and idle Runs require policies for different workload modes"
 type BatchSaturationSpec struct {
 	State          MeasurementStateSpec  `json:"state"`
 	ActiveProtocol ActiveProtocolSpec    `json:"activeProtocol"`

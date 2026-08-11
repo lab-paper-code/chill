@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	idleAdmissionPolicy = "idle-wall-power-v1"
-	noProtocol          = "none"
+	idleAdmissionPolicy    = "idle-wall-power-v1"
+	invalidAdmissionPolicy = "Invalid Policy"
+	noProtocol             = "none"
 )
 
 var _ = Describe("ProfilingRun API", func() {
@@ -88,7 +89,7 @@ var _ = Describe("ProfilingRun API", func() {
 			run.Spec.AdmissionPolicy = ""
 		}),
 		Entry("malformed admission policy name", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.AdmissionPolicy = "Invalid Policy"
+			run.Spec.AdmissionPolicy = invalidAdmissionPolicy
 		}),
 		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.WarmupIterations = 0

@@ -53,7 +53,7 @@ type MeasurementStateSpec struct {
 
 type ProfilingRunSpec struct {
     MeasurementStateSpec `json:",inline"`
-    AdmissionPolicy      string                                `json:"admissionPolicy"`
+    AdmissionPolicy      string                            `json:"admissionPolicy"`
     Measurement          ProfilingRunMeasurementSpec       `json:"measurement"`
     MetricObservation    ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }
@@ -83,7 +83,8 @@ type BatchSaturationSpec struct {
 
 `ActiveProtocolSpec` and `IdleProtocolSpec` are separate blocks rather than one
 union discriminated by workload mode, and each requires its own
-`admissionPolicy`. `IdleProtocolSpec` has no
+`admissionPolicy`. A spec-level CEL rule rejects equal names because one policy
+is configured for exactly one workload mode. `IdleProtocolSpec` has no
 `warmupIterations`, `inputGenerator`, or `outputValidation` field at all; the
 controller supplies the required values when it assembles a Run. The union CEL
 rule that `ProfilingRunSpec` needs for standalone submission therefore has no
@@ -221,8 +222,8 @@ authoritative state, and losing it costs one reload.
 
 The controller composes `MeasurementStateSpec` from the parent with the batch,
 workload mode, and the admission policy and measurement settings from the
-matching protocol block. Idle Runs receive
-`warmupIterations: 0`, `inputGenerator: none`, and `outputValidation: none`.
+matching protocol block. Idle Runs receive `warmupIterations: 0`,
+`inputGenerator: none`, and `outputValidation: none`.
 One model-loaded-idle baseline is planned for the artifact state, using the
 first declared batch. Active Runs advance through the batch sizes recorded in the curve plan.
 The existing union CEL rule on `ProfilingRunSpec` validates the assembled

@@ -281,6 +281,10 @@ spec:
             x-kubernetes-validations:
             - message: BatchSaturation spec is immutable
               rule: self == oldSelf
+            - message: active and idle Runs require policies for different workload
+                modes
+              rule: '!has(self.activeProtocol.admissionPolicy) || !has(self.idleProtocol.admissionPolicy)
+                || self.activeProtocol.admissionPolicy != self.idleProtocol.admissionPolicy'
           status:
             properties:
               acceptedTrials:
