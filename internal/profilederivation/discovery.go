@@ -25,7 +25,8 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 	if err := validateBSatPolicy(policy); err != nil {
 		return BSatDiscoveryResult{}, err
 	}
-	if len(curve.family.contract.record.Shared.EligibleBatches) != policy.KMax {
+	eligibleBatches := curve.family.contract.record.Shared.EligibleBatches
+	if len(eligibleBatches) < 2 || eligibleBatches[len(eligibleBatches)-1] != policy.KMax {
 		return BSatDiscoveryResult{}, errors.New("curve family does not match policy kmax")
 	}
 	if _, exists := curve.pass(PassConfirmatory); exists {
@@ -44,7 +45,7 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		CurveFamilyName:              curve.FamilyName(),
 	}
 	for index, point := range discovery.points {
-		expectedBatch := index + 1
+		expectedBatch := eligibleBatches[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.DiscoveryTrials ||
 			point.MeanIncrementalJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
@@ -60,20 +61,20 @@ func deriveBSatDiscovery(curve Curve, policy BSatPolicy) (BSatDiscoveryResult, e
 		result.BoundaryBatch = &boundary
 		return result, nil
 	}
-	if len(discovery.points) != policy.KMax {
+	if len(discovery.points) != len(eligibleBatches) {
 		return BSatDiscoveryResult{}, errors.New("discovery pass does not cover kmax")
 	}
 
-	for candidate := 0; candidate < policy.KMax-1; candidate++ {
+	for candidate := 0; candidate < len(discovery.points)-1; candidate++ {
 		candidateEnergy := discovery.points[candidate].MeanIncrementalJoulesPerItem
 		maximumImprovement := math.Inf(-1)
-		for later := candidate + 1; later < policy.KMax; later++ {
+		for later := candidate + 1; later < len(discovery.points); later++ {
 			laterEnergy := discovery.points[later].MeanIncrementalJoulesPerItem
 			improvement := (candidateEnergy - laterEnergy) / candidateEnergy
 			maximumImprovement = math.Max(maximumImprovement, improvement)
 		}
 		if maximumImprovement <= policy.RelativeImprovementTolerance {
-			batch := candidate + 1
+			batch := discovery.points[candidate].Batch
 			result.CandidateBatch = &batch
 			result.CandidateMaximumRemainingImprovement = &maximumImprovement
 			return result, nil

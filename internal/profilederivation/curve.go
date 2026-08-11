@@ -102,41 +102,32 @@ func deriveCurvePass(
 	}
 	batches := append([]PassBatch(nil), input.Batches...)
 	sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
-	if input.Role == PassDiscovery && batches[0].Batch != 1 {
-		return curvePass{}, errors.New("discovery pass must start at batch one")
+	eligibleBatches := family.contract.record.Shared.EligibleBatches
+	if input.Role == PassDiscovery && batches[0].Batch != eligibleBatches[0] {
+		return curvePass{}, errors.New("discovery pass must start at the first eligible batch")
 	}
 	result := curvePass{role: input.Role}
-	eligibleBatches := family.contract.record.Shared.EligibleBatches
-	firstIneligibleBatch := 1
-	for _, eligibleBatch := range eligibleBatches {
-		if eligibleBatch != firstIneligibleBatch {
-			break
-		}
-		firstIneligibleBatch++
-	}
+	eligibleIndex := sort.SearchInts(eligibleBatches, batches[0].Batch)
+	exhaustedBoundary := eligibleBatches[len(eligibleBatches)-1] + 1
 	for index, batchInput := range batches {
-		if index > 0 && batchInput.Batch != batches[index-1].Batch+1 {
-			return curvePass{}, fmt.Errorf("curve pass %q batches must be consecutive", input.Role)
-		}
-		batchIndex := sort.SearchInts(eligibleBatches, batchInput.Batch)
-		batchEligible := batchIndex < len(eligibleBatches) && eligibleBatches[batchIndex] == batchInput.Batch
 		if batchInput.CapabilityBoundary {
 			if len(batchInput.Runs) != 0 || index != len(batches)-1 ||
-				(!batchEligible && batchInput.Batch != firstIneligibleBatch) {
-				return curvePass{}, errors.New("capability boundary must be an empty final batch")
+				eligibleIndex != len(eligibleBatches) || batchInput.Batch != exhaustedBoundary {
+				return curvePass{}, errors.New("capability boundary must follow exhaustion of the eligible batch set")
 			}
 			boundary := batchInput.Batch
 			result.capabilityBoundary = &boundary
 			continue
 		}
-		if !batchEligible {
-			return curvePass{}, fmt.Errorf("batch %d is outside the frozen curve family", batchInput.Batch)
+		if eligibleIndex >= len(eligibleBatches) || batchInput.Batch != eligibleBatches[eligibleIndex] {
+			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the frozen eligible sequence", input.Role)
 		}
 		point, err := deriveCurvePoint(batchInput, family.state, baselines, policy, seenTrials)
 		if err != nil {
 			return curvePass{}, err
 		}
 		result.points = append(result.points, point)
+		eligibleIndex++
 	}
 	return result, nil
 }

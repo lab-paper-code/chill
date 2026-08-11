@@ -37,8 +37,26 @@ func TestFreezeCurveFamilyContractRejectsInvalidArtifactAndEligibleBatches(t *te
 		name   string
 		mutate func(*CurveFamilySharedContract)
 	}{
-		{name: "empty artifact field", mutate: func(shared *CurveFamilySharedContract) {
+		{name: "empty execution path", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.ExecutionPath = ""
+		}},
+		{name: "empty artifact name", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.Name = ""
+		}},
+		{name: "empty artifact path", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.Path = ""
+		}},
+		{name: "empty artifact image", mutate: func(shared *CurveFamilySharedContract) {
 			shared.Artifact.Image = ""
+		}},
+		{name: "root artifact path", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.Path = "/"
+		}},
+		{name: "relative artifact path", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.Path = "artifact/model.rknn"
+		}},
+		{name: "unclean artifact path", mutate: func(shared *CurveFamilySharedContract) {
+			shared.Artifact.Path = "/artifact/../model.rknn"
 		}},
 		{name: "non-positive batch", mutate: func(shared *CurveFamilySharedContract) {
 			shared.EligibleBatches = []int{0, 1}
@@ -53,6 +71,38 @@ func TestFreezeCurveFamilyContractRejectsInvalidArtifactAndEligibleBatches(t *te
 			test.mutate(&shared)
 			if _, err := FreezeCurveFamilyContract(shared); err == nil {
 				t.Fatal("expected invalid curve-family contract to be rejected")
+			}
+		})
+	}
+}
+
+func TestFreezeCurveFamilyContractAllowsAllOrNoConversionProvenance(t *testing.T) {
+	withoutConverter := validSharedContract()
+	withoutConverter.Conversion = CurveConversionContract{}
+	if _, err := FreezeCurveFamilyContract(withoutConverter); err != nil {
+		t.Fatalf("freeze converter-free family: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		conversion CurveConversionContract
+	}{
+		{name: "target only", conversion: CurveConversionContract{TargetPlatform: "rk3588"}},
+		{name: "tool only", conversion: CurveConversionContract{Tool: "rknn-toolkit2"}},
+		{name: "version only", conversion: CurveConversionContract{ToolVersion: "2.3.2"}},
+		{name: "target and tool", conversion: CurveConversionContract{TargetPlatform: "rk3588", Tool: "rknn-toolkit2"}},
+		{name: "target and version", conversion: CurveConversionContract{TargetPlatform: "rk3588", ToolVersion: "2.3.2"}},
+		{name: "tool and version", conversion: CurveConversionContract{Tool: "rknn-toolkit2", ToolVersion: "2.3.2"}},
+		{name: "whitespace", conversion: CurveConversionContract{
+			TargetPlatform: "rk3588", Tool: " ", ToolVersion: "2.3.2",
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			shared := validSharedContract()
+			shared.Conversion = test.conversion
+			if _, err := FreezeCurveFamilyContract(shared); err == nil {
+				t.Fatal("expected partial or invalid conversion provenance to be rejected")
 			}
 		})
 	}
@@ -106,6 +156,115 @@ func TestFreezeAndVerifyCurveFamilyState(t *testing.T) {
 	verified.Shared.Conversion.ToolVersion = "other-version"
 	if _, err := VerifyCurveFamily(contract, verified); err == nil {
 		t.Fatal("expected verified conversion drift rejection")
+	}
+}
+
+func TestVerifyCurveFamilyRejectsInvalidDerivationIdentities(t *testing.T) {
+	shared := validSharedContract()
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*VerifiedCurveFamilyState)
+	}{
+		{name: "state", mutate: func(state *VerifiedCurveFamilyState) { state.StateIdentity = "" }},
+		{name: "environment", mutate: func(state *VerifiedCurveFamilyState) { state.EnvironmentIdentity = "" }},
+		{name: "active protocol", mutate: func(state *VerifiedCurveFamilyState) { state.ActiveProtocolIdentity = "" }},
+		{name: "idle protocol", mutate: func(state *VerifiedCurveFamilyState) { state.IdleProtocolIdentity = "" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			verified := testVerifiedState(contract)
+			test.mutate(&verified)
+			if _, err := VerifyCurveFamily(contract, verified); err == nil {
+				t.Fatal("expected invalid derivation identity to be rejected")
+			}
+		})
+	}
+}
+
+func TestVerifyCurveFamilyOwnsTheVerifiedState(t *testing.T) {
+	shared := validSharedContract()
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := testVerifiedState(contract)
+	family, err := VerifyCurveFamily(contract, verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified.Shared.EligibleBatches[0] = 99
+	verified.Shared.Tensor.NonBatchShape[0] = 99
+	if family.state.Shared.EligibleBatches[0] == 99 || family.state.Shared.Tensor.NonBatchShape[0] == 99 {
+		t.Fatal("verified curve-family state was mutable through caller slices")
+	}
+}
+
+func TestDeriveCurveFollowsSparseEligibleSequence(t *testing.T) {
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{2, 4, 8}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := testPass(t, family, []float64{1, .8, .7}, "sparse")
+	pass.Batches = append(pass.Batches, PassBatch{Batch: 9, CapabilityBoundary: true})
+	curve, err := DeriveCurve(
+		[]Pass{pass}, family, testFamilyBaselines(t, family), pointPolicy("sparse-point"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	points := curve.Points()
+	if len(points) != 3 || points[0].Batch != 2 || points[1].Batch != 4 || points[2].Batch != 8 {
+		t.Fatalf("sparse points = %+v, want batches [2 4 8]", points)
+	}
+	discovery, _ := curve.pass(PassDiscovery)
+	if discovery.capabilityBoundary == nil || *discovery.capabilityBoundary != 9 {
+		t.Fatalf("boundary = %+v, want exhausted-set boundary 9", discovery.capabilityBoundary)
+	}
+}
+
+func TestDeriveCurveRejectsSkippedEligibleBatchAndEarlyBoundary(t *testing.T) {
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{2, 4, 8}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselines := testFamilyBaselines(t, family)
+
+	skipped := testPass(t, family, []float64{1, .8, .7}, "skipped")
+	skipped.Batches = append(skipped.Batches[:1], skipped.Batches[2:]...)
+	if _, err := DeriveCurve([]Pass{skipped}, family, baselines, pointPolicy("sparse-point")); err == nil {
+		t.Fatal("expected a skipped eligible batch to be rejected")
+	}
+
+	earlyBoundary := testPass(t, family, []float64{1}, "boundary")
+	earlyBoundary.Batches = append(earlyBoundary.Batches, PassBatch{Batch: 5, CapabilityBoundary: true})
+	if _, err := DeriveCurve(
+		[]Pass{earlyBoundary}, family, baselines, pointPolicy("sparse-point"),
+	); err == nil {
+		t.Fatal("expected a gap inside the eligible set not to count as exhaustion")
+	}
+
+	wrongStart := testPass(t, family, []float64{1, .8}, "start")
+	wrongStart.Batches = wrongStart.Batches[1:]
+	if _, err := DeriveCurve(
+		[]Pass{wrongStart}, family, baselines, pointPolicy("sparse-point"),
+	); err == nil {
+		t.Fatal("expected discovery not starting at the first eligible batch to be rejected")
 	}
 }
 
@@ -223,6 +382,40 @@ func TestSequentialGoldenStops(t *testing.T) {
 	}
 }
 
+func TestSequentialFollowsSparseEligibleBatches(t *testing.T) {
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{2, 4, 8}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := testPass(t, family, []float64{1, .8, .79}, "sparse-sequential")
+	pass.Batches = append(pass.Batches, PassBatch{Batch: 9, CapabilityBoundary: true})
+	curve, err := DeriveCurve(
+		[]Pass{pass}, family, testFamilyBaselines(t, family), pointPolicy("sparse-point"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := DeriveSequentialBatchDecision(curve, SequentialPolicy{
+		Version: "sequential-v1", MinDelta: .05, Patience: 3,
+		TrialsPerBatch: 3, DivergenceFactor: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != SequentialStopped || result.StopReason != StopCapabilityBoundary ||
+		result.SelectedBatch == nil || *result.SelectedBatch != 4 ||
+		result.BoundaryBatch == nil || *result.BoundaryBatch != 9 ||
+		!reflect.DeepEqual(result.MeasuredBatches, []int{2, 4, 8}) {
+		t.Fatalf("unexpected sparse sequential result: %+v", result)
+	}
+}
+
 func TestSequentialRejectsPostStopAndPolicyDrift(t *testing.T) {
 	curve := testSequentialCurve(t, []float64{1, .99, .98, .97}, false)
 	policy := SequentialPolicy{
@@ -241,12 +434,12 @@ func TestSequentialRejectsPostStopAndPolicyDrift(t *testing.T) {
 
 func testSequentialCurve(t *testing.T, means []float64, boundary bool) Curve {
 	t.Helper()
-	memberCount := len(means)
-	_, family := testVerifiedFamily(t, memberCount)
+	batchCount := len(means)
+	_, family := testVerifiedFamily(t, batchCount)
 	baselines := testFamilyBaselines(t, family)
 	pass := testPass(t, family, means, "sequential")
 	if boundary {
-		pass.Batches = append(pass.Batches, PassBatch{Batch: memberCount + 1, CapabilityBoundary: true})
+		pass.Batches = append(pass.Batches, PassBatch{Batch: batchCount + 1, CapabilityBoundary: true})
 	}
 	curve, err := DeriveCurve([]Pass{pass}, family, baselines, pointPolicy("curve-point-v1"))
 	if err != nil {
@@ -352,9 +545,13 @@ func testFamilyBaselines(t *testing.T, family CurveFamily) map[string]IdleBaseli
 func testPass(t *testing.T, family CurveFamily, means []float64, idPrefix string) Pass {
 	t.Helper()
 	state := family.state
+	eligibleBatches := family.contract.record.Shared.EligibleBatches
+	if len(means) > len(eligibleBatches) {
+		t.Fatalf("means = %d, eligible batches = %d", len(means), len(eligibleBatches))
+	}
 	pass := Pass{Role: PassDiscovery}
 	for index, mean := range means {
-		batch := index + 1
+		batch := eligibleBatches[index]
 		batchInput := PassBatch{Batch: batch}
 		for trialIndex := 0; trialIndex < 3; trialIndex++ {
 			trialID := idPrefix + "-b" + string(rune('0'+batch)) + "-" + string(rune('1'+trialIndex))

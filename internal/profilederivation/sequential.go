@@ -81,8 +81,9 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 	best := math.Inf(1)
 	bestBatch := 0
 	wait := 0
+	eligibleBatches := curve.family.contract.record.Shared.EligibleBatches
 	for index, point := range discovery.points {
-		expectedBatch := index + 1
+		expectedBatch := eligibleBatches[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||
 			point.MeanIncrementalJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalJoulesPerItem) ||
@@ -129,7 +130,7 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		return SequentialResult{}, errors.New("discovery attempted a capability boundary after its stopping condition")
 	}
 	if result.Status != SequentialStopped && discovery.capabilityBoundary != nil {
-		expectedBoundary := len(discovery.points) + 1
+		expectedBoundary := eligibleBatches[len(eligibleBatches)-1] + 1
 		if *discovery.capabilityBoundary != expectedBoundary {
 			return SequentialResult{}, errors.New("capability boundary does not follow the measured prefix")
 		}

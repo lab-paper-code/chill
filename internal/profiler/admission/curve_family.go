@@ -63,6 +63,9 @@ func validateCurveFamilyIntents(
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
+	if len(shared.EligibleBatches) == 0 {
+		return errors.New("curve-family contract has no eligible batches")
+	}
 	activeBatchEligible := false
 	for _, eligibleBatch := range shared.EligibleBatches {
 		if active.Measurement.Batch == eligibleBatch {
@@ -74,12 +77,15 @@ func validateCurveFamilyIntents(
 		return fmt.Errorf("batch %d is outside the frozen curve-family contract", active.Measurement.Batch)
 	}
 	if err := validateCurveFamilyIntent(
-		active, activeNodeUID, shared, shared.ActiveProtocol, active.Measurement.Batch,
+		active, activeNodeUID, shared, shared.ActiveProtocol,
 	); err != nil {
 		return fmt.Errorf("active curve-family state: %w", err)
 	}
+	if idle.Measurement.Batch != shared.EligibleBatches[0] {
+		return errors.New("idle curve-family state does not use the first eligible batch")
+	}
 	if err := validateCurveFamilyIntent(
-		idle, idleNodeUID, shared, shared.IdleProtocol, 1,
+		idle, idleNodeUID, shared, shared.IdleProtocol,
 	); err != nil {
 		return fmt.Errorf("idle curve-family state: %w", err)
 	}
@@ -91,7 +97,6 @@ func validateCurveFamilyIntent(
 	actualNodeUID string,
 	shared profilederivation.CurveFamilySharedContract,
 	protocol profilederivation.CurveProtocolContract,
-	expectedBatch int,
 ) error {
 	if intent.Candidate.ExecutionPath != shared.Artifact.ExecutionPath ||
 		intent.State.DeviceClass != shared.DeviceClass || intent.State.Model != shared.LogicalModel ||
@@ -100,7 +105,7 @@ func validateCurveFamilyIntent(
 		intent.State.Backend != shared.Backend || intent.State.PowerMode != shared.PowerMode ||
 		intent.Images.Runtime != shared.RuntimeImage ||
 		intent.Images.Artifact != shared.Artifact.Image || intent.TargetNode.UID != shared.NodeUID ||
-		actualNodeUID != shared.NodeUID || intent.Measurement.Batch != expectedBatch {
+		actualNodeUID != shared.NodeUID {
 		return errors.New("frozen intent contradicts curve-family state or artifact facts")
 	}
 	if projectCurveCPU(intent.CPU) != shared.CPU || projectCurveMetricSource(intent.Metrics) != shared.MetricSource {

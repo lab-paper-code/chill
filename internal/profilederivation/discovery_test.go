@@ -2,6 +2,7 @@ package profilederivation
 
 import (
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -20,7 +21,44 @@ func TestBSatDiscoverySelectsSmallestDomainWideCandidate(t *testing.T) {
 	}
 }
 
-func TestBSatDiscoveryReturnsTypedCensoring(t *testing.T) {
+func TestBSatDiscoveryTreatsKMaxAsLargestEligibleBatch(t *testing.T) {
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{1, 2, 4, 8}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	curve, err := DeriveCurve(
+		[]Pass{testPass(t, family, []float64{1, .97, .94, .90}, "sparse-discovery")},
+		family,
+		testFamilyBaselines(t, family),
+		pointPolicy("discovery-point"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := testBSatPolicy()
+	policy.KMax = 8
+	result, err := deriveBSatDiscovery(curve, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.KMax != 8 || result.CandidateBatch == nil || *result.CandidateBatch != 4 ||
+		!reflect.DeepEqual(result.MeasuredBatches, []int{1, 2, 4, 8}) {
+		t.Fatalf("unexpected sparse discovery result: %+v", result)
+	}
+
+	policy.KMax = 4
+	if _, err := deriveBSatDiscovery(curve, policy); err == nil {
+		t.Fatal("expected KMax equal to eligible cardinality but not its largest batch to be rejected")
+	}
+}
+
+func TestBSatDiscoveryReturnsNoSaturationCensoring(t *testing.T) {
 	noCandidate, err := deriveBSatDiscovery(
 		testDiscoveryCurve(t, []float64{1, .8, .6, .4}),
 		testBSatPolicy(),
@@ -31,25 +69,6 @@ func TestBSatDiscoveryReturnsTypedCensoring(t *testing.T) {
 	if noCandidate.Status != BSatCensored || noCandidate.Code != BSatCodeNoSaturationObserved ||
 		noCandidate.CandidateBatch != nil {
 		t.Fatalf("unexpected no-candidate result: %+v", noCandidate)
-	}
-
-	_, family := testVerifiedFamily(t, 4)
-	pass := testPass(t, family, []float64{1, .8}, "boundary")
-	pass.Batches = append(pass.Batches, PassBatch{Batch: 3, CapabilityBoundary: true})
-	curve, err := DeriveCurve(
-		[]Pass{pass}, family, testFamilyBaselines(t, family), pointPolicy("discovery-point"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	boundary, err := deriveBSatDiscovery(curve, testBSatPolicy())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if boundary.Status != BSatCensored || boundary.Code != BSatCodeCapabilityBoundary ||
-		boundary.BoundaryBatch == nil || *boundary.BoundaryBatch != 3 ||
-		len(boundary.MeasuredBatches) != 2 {
-		t.Fatalf("unexpected capability result: %+v", boundary)
 	}
 }
 

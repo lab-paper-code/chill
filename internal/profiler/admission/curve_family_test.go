@@ -18,7 +18,7 @@ func TestProjectVerifiedCurveFamilyStateRequiresLoaderEvidence(t *testing.T) {
 }
 
 func TestCurveFamilyIntentProjectionBindsObservableContractFacts(t *testing.T) {
-	active := curveMemberIntent()
+	active := curveFamilyIntent()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -67,8 +67,8 @@ func TestCurveFamilyIntentProjectionBindsObservableContractFacts(t *testing.T) {
 	}
 }
 
-func TestCurveFamilyUsesBatchOneIdleWitness(t *testing.T) {
-	active := curveMemberIntent()
+func TestCurveFamilyUsesFirstEligibleBatchIdleWitness(t *testing.T) {
+	active := curveFamilyIntent()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
 	active.State.ArtifactPath = "/artifact/model.onnx"
@@ -102,6 +102,12 @@ func TestCurveFamilyUsesBatchOneIdleWitness(t *testing.T) {
 			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
 		},
 		EligibleBatches: []int{1, 2},
+		Tensor: profilederivation.CurveTensorContract{
+			Layout: "NCHW", DataType: "float32", NonBatchShape: []int{3, 224, 224},
+		},
+	}
+	if _, err := profilederivation.FreezeCurveFamilyContract(shared); err != nil {
+		t.Fatalf("freeze converter-free ORT family: %v", err)
 	}
 	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
@@ -116,9 +122,20 @@ func TestCurveFamilyUsesBatchOneIdleWitness(t *testing.T) {
 	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve family accepted an ineligible active batch")
 	}
+
+	shared.EligibleBatches = []int{2, 4}
+	active.Measurement.Batch = 4
+	idle.Measurement.Batch = 2
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
+		t.Fatalf("first eligible batch was not accepted as the idle witness: %v", err)
+	}
+	idle.Measurement.Batch = 1
+	if err := validateCurveFamilyIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+		t.Fatal("curve family accepted an idle batch before the first eligible batch")
+	}
 }
 
-func curveMemberIntent() profilingrun.Intent {
+func curveFamilyIntent() profilingrun.Intent {
 	intent := admissionIntentWithWorkloadContract()
 	intent.Candidate = profilingrun.CandidateIdentity{
 		Inputs: profilingrun.CandidateReportInputs{

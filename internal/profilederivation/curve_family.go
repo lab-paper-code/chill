@@ -57,9 +57,9 @@ type CurveProtocolContract struct {
 // CurveConversionContract identifies how the immutable family artifact was
 // derived.
 type CurveConversionContract struct {
-	TargetPlatform string `json:"targetPlatform"`
-	Tool           string `json:"tool"`
-	ToolVersion    string `json:"toolVersion"`
+	TargetPlatform string `json:"targetPlatform,omitempty"`
+	Tool           string `json:"tool,omitempty"`
+	ToolVersion    string `json:"toolVersion,omitempty"`
 }
 
 type CurveTensorContract struct {
@@ -110,7 +110,6 @@ type CurveFamilyContract struct {
 
 func FreezeCurveFamilyContract(shared CurveFamilySharedContract) (CurveFamilyContract, error) {
 	shared = cloneCurveFamilyShared(shared)
-	shared.EligibleBatches = append([]int(nil), shared.EligibleBatches...)
 	sort.Ints(shared.EligibleBatches)
 	if err := validateCurveFamilyShared(shared); err != nil {
 		return CurveFamilyContract{}, err
@@ -193,6 +192,11 @@ func VerifyCurveFamily(
 	if !reflect.DeepEqual(verified.Shared, contract.record.Shared) {
 		return CurveFamily{}, errors.New("verified curve-family state does not match the contract")
 	}
+	if !cleanCurveValue(verified.StateIdentity) || !cleanCurveValue(verified.EnvironmentIdentity) ||
+		!cleanCurveValue(verified.ActiveProtocolIdentity) || !cleanCurveValue(verified.IdleProtocolIdentity) {
+		return CurveFamily{}, errors.New("verified curve-family state has an invalid derivation identity")
+	}
+	verified.Shared = cloneCurveFamilyShared(verified.Shared)
 	return CurveFamily{contract: contract, state: verified}, nil
 }
 
@@ -248,15 +252,15 @@ func validateCurveFamilyShared(shared CurveFamilySharedContract) error {
 	if len(shared.EligibleBatches) == 0 {
 		return errors.New("curve-family requires at least one eligible batch")
 	}
-	previousBatch := 0
+	seenBatches := make(map[int]struct{}, len(shared.EligibleBatches))
 	for _, batch := range shared.EligibleBatches {
 		if batch <= 0 {
 			return errors.New("curve-family eligible batches must be positive")
 		}
-		if batch == previousBatch {
+		if _, exists := seenBatches[batch]; exists {
 			return fmt.Errorf("curve-family eligible batch %d is duplicated", batch)
 		}
-		previousBatch = batch
+		seenBatches[batch] = struct{}{}
 	}
 	if !cleanCurveValue(shared.Tensor.Layout) || !cleanCurveValue(shared.Tensor.DataType) ||
 		len(shared.Tensor.NonBatchShape) == 0 {
@@ -311,10 +315,19 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 }
 
 func validateCurveConversion(conversion CurveConversionContract) error {
-	for _, value := range []string{conversion.TargetPlatform, conversion.Tool, conversion.ToolVersion} {
-		if !cleanCurveValue(value) {
-			return errors.New("curve-family conversion contract is incomplete")
+	values := []string{conversion.TargetPlatform, conversion.Tool, conversion.ToolVersion}
+	present := 0
+	for _, value := range values {
+		if value == "" {
+			continue
 		}
+		if !cleanCurveValue(value) {
+			return errors.New("curve-family conversion contract is invalid")
+		}
+		present++
+	}
+	if present != 0 && present != len(values) {
+		return errors.New("curve-family conversion contract must be all empty or all present")
 	}
 	return nil
 }

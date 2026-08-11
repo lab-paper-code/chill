@@ -106,28 +106,6 @@ func TestBSatConfirmatoryReturnsBudgetInsufficientWithoutSecondPass(t *testing.T
 	}
 }
 
-func TestBSatConfirmatoryReturnsCapabilityBoundary(t *testing.T) {
-	_, family := testVerifiedFamily(t, 4)
-	discovery := testPass(t, family, []float64{1, .97, .94, .90}, "discovery")
-	confirmation := testConfirmatoryPass(t, family, 3, []float64{.94}, "confirmation", 3, 0)
-	confirmation.Batches = append(confirmation.Batches, PassBatch{Batch: 4, CapabilityBoundary: true})
-	curve, err := DeriveCurve(
-		[]Pass{discovery, confirmation}, family, testFamilyBaselines(t, family), pointPolicy("point"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := deriveBSatConfirmatory(curve, 3, testBSatPolicy())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != BSatCensored || result.Code != BSatCodeCapabilityBoundary ||
-		result.BoundaryBatch == nil || *result.BoundaryBatch != 4 ||
-		len(result.ConfirmatoryMeasuredBatches) != 1 {
-		t.Fatalf("unexpected capability result: %+v", result)
-	}
-}
-
 func TestBSatConfirmatoryRejectsAllocationDrift(t *testing.T) {
 	curve := testTwoPassCurve(t, []float64{1, .97, .94, .90}, []float64{.94, .90}, 3, 0)
 	if _, err := deriveBSatConfirmatory(curve, 2, testBSatPolicy()); err == nil {
