@@ -1,4 +1,4 @@
-"""Build one batch-fixed RKNN artifact and semantic conversion record."""
+"""Build one batch-profiled RKNN artifact and semantic conversion record."""
 
 from __future__ import annotations
 
@@ -11,34 +11,38 @@ import tempfile
 from pathlib import Path
 
 
-RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha2"
+RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha3"
 
 
-def set_fixed_batch(model, batch_size):
-    if batch_size <= 0:
-        raise ValueError("batch size must be positive")
-    value_infos = (
-        list(model.graph.input)
-        + list(model.graph.output)
-        + list(model.graph.value_info)
-    )
-    for value_info in value_infos:
-        tensor_type = value_info.type.tensor_type
-        if tensor_type.HasField("shape") and tensor_type.shape.dim:
-            first_dimension = tensor_type.shape.dim[0]
-            first_dimension.ClearField("dim_param")
-            first_dimension.dim_value = batch_size
+def non_batch_shape(shape):
+    if not shape or len(shape) < 2:
+        raise ValueError("input shape must carry a batch axis and at least one more")
+    if isinstance(shape[0], int):
+        raise ValueError("input batch axis must be symbolic, not a concrete size")
+    for dimension in shape[1:]:
+        if not isinstance(dimension, int) or dimension < 1:
+            raise ValueError("non-batch dimensions must be positive integers")
+    return list(shape[1:])
+
+
+def build_dynamic_input(non_batch, profiles):
+    if not profiles:
+        raise ValueError("at least one batch profile is required")
+    for profile in profiles:
+        if profile <= 0:
+            raise ValueError("batch profiles must be positive")
+    return [[[profile, *non_batch]] for profile in sorted(set(profiles))]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build a batch-fixed RKNN artifact from a selected ONNX model"
+        description="Build a batch-profiled RKNN artifact from a selected ONNX model"
     )
     parser.add_argument("--source-onnx", required=True)
     parser.add_argument("--tool-wheel", required=True)
     parser.add_argument("--tool-version", required=True)
     parser.add_argument("--target-platform", required=True)
-    parser.add_argument("--batch-size", required=True, type=int)
+    parser.add_argument("--batch-profile", required=True, action="append", type=int)
     parser.add_argument("--output", required=True)
     parser.add_argument("--record", required=True)
     return parser.parse_args()
@@ -55,9 +59,6 @@ def main():
         raise SystemExit("refusing to overwrite an existing artifact or record")
     if not source.is_file() or not wheel.is_file():
         raise SystemExit("source ONNX and RKNN Toolkit2 wheel must be regular files")
-    if args.batch_size <= 0:
-        raise SystemExit("batch size must be positive")
-
     try:
         import onnx
         from rknn.api import RKNN
@@ -76,17 +77,22 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     record.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="chill-rknn-export-") as directory:
-        fixed_onnx = Path(directory) / "batch-fixed.onnx"
         temporary_output = Path(directory) / "artifact.rknn"
         model = onnx.load(str(source))
-        set_fixed_batch(model, args.batch_size)
-        onnx.save(model, str(fixed_onnx))
+        graph_input = model.graph.input[0].type.tensor_type.shape.dim
+        declared = [
+            dimension.dim_param or dimension.dim_value for dimension in graph_input
+        ]
+        non_batch = non_batch_shape(declared)
+        dynamic_input = build_dynamic_input(non_batch, args.batch_profile)
 
         converter = RKNN(verbose=False)
         try:
-            if converter.config(target_platform=args.target_platform) != 0:
+            if converter.config(
+                target_platform=args.target_platform, dynamic_input=dynamic_input
+            ) != 0:
                 raise SystemExit("RKNN config failed")
-            if converter.load_onnx(model=str(fixed_onnx)) != 0:
+            if converter.load_onnx(model=str(source)) != 0:
                 raise SystemExit("RKNN ONNX load failed")
             if converter.build(do_quantization=False) != 0:
                 raise SystemExit("RKNN build failed")
@@ -112,7 +118,8 @@ def main():
             "pythonVersion": platform.python_version(),
             "onnxVersion": onnx.__version__,
             "targetPlatform": args.target_platform,
-            "fixedBatch": args.batch_size,
+            "batchProfiles": sorted(set(args.batch_profile)),
+            "nonBatchShape": non_batch,
             "quantized": False,
         },
         "output": {

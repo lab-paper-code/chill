@@ -271,12 +271,12 @@ helm-purge-crds: ## Delete CHILL CRDs; requires CONFIRM_PURGE_CRDS=$(HELM_RELEAS
 ##@ Build
 
 .PHONY: rknn-convert-artifact
-rknn-convert-artifact: ## Build one batch-fixed RKNN artifact and semantic conversion record.
+rknn-convert-artifact: ## Build one RKNN artifact covering every declared batch profile.
 	test -n "$(RKNN_SOURCE_ONNX)"
 	test -n "$(RKNN_TOOL_WHEEL)"
 	test -n "$(RKNN_TOOL_VERSION)"
 	test -n "$(RKNN_TARGET_PLATFORM)"
-	test -n "$(RKNN_FIXED_BATCH)"
+	test -n "$(RKNN_BATCH_PROFILES)"
 	test -n "$(RKNN_OUTPUT)"
 	test -n "$(RKNN_CONVERSION_RECORD)"
 	$(RKNN_CONVERTER_PYTHON) build/model-artifacts/rknn/export_rknn.py \
@@ -284,7 +284,7 @@ rknn-convert-artifact: ## Build one batch-fixed RKNN artifact and semantic conve
 		--tool-wheel "$(RKNN_TOOL_WHEEL)" \
 		--tool-version "$(RKNN_TOOL_VERSION)" \
 		--target-platform "$(RKNN_TARGET_PLATFORM)" \
-		--batch-size "$(RKNN_FIXED_BATCH)" \
+		$(foreach profile,$(RKNN_BATCH_PROFILES),--batch-profile "$(profile)") \
 		--output "$(RKNN_OUTPUT)" \
 		--record "$(RKNN_CONVERSION_RECORD)"
 
