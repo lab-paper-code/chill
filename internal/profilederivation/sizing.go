@@ -41,16 +41,18 @@ func deriveBSatConfirmatorySizing(
 		return BSatSizingResult{}, errors.New("confirmatory sizing requires a discovery pass")
 	}
 	eligibleBatchCount := len(curve.family.contract.record.Shared.EligibleBatches)
-	statementCount, err := bsatGlobalStatementCount(policy, eligibleBatchCount)
+	discoveryRuns := eligibleBatchCount * policy.DiscoveryTrials
+	statementCount, err := bsatGlobalStatementCount(policy, discoveryRuns)
 	if err != nil {
 		return BSatSizingResult{}, err
 	}
-	maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, eligibleBatchCount)
+	maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, discoveryRuns)
 	result := BSatSizingResult{
 		Status: BSatUnavailable, Code: BSatCodeConfirmatoryBudgetInsufficient,
 		CandidateBatch: candidate, MaximumFeasibleConfirmatoryTrials: maximumTrials,
 		GlobalStatementCount: statementCount, SizingMethod: BSatConfirmatorySizingMethod,
 		PolicyVersion: policy.Version, CurveFamilyName: curve.FamilyName(),
+		DiscoveryActiveRuns: discoveryRuns,
 	}
 	for batch := candidate; batch <= policy.KMax; batch++ {
 		result.ConfirmatoryBatches = append(result.ConfirmatoryBatches, batch)
@@ -74,7 +76,7 @@ func deriveBSatConfirmatorySizing(
 			continue
 		}
 		trialCount := trials
-		totalRuns := eligibleBatchCount*policy.DiscoveryTrials +
+		totalRuns := discoveryRuns +
 			(policy.KMax-candidate+1)*trials
 		lowerBoundCopy := lowerBound
 		maximumRelativeHalfWidthCopy := maximumRelativeHalfWidth
@@ -109,10 +111,10 @@ func validateConfirmatoryEligibleSpan(curve Curve, candidate int, policy BSatPol
 	)
 }
 
-func bsatGlobalStatementCount(policy BSatPolicy, eligibleBatchCount int) (int, error) {
+func bsatGlobalStatementCount(policy BSatPolicy, discoveryRuns int) (int, error) {
 	var total int
 	for candidate := 1; candidate < policy.KMax; candidate++ {
-		maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, eligibleBatchCount)
+		maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, discoveryRuns)
 		if maximumTrials < policy.MinimumPointTrials {
 			continue
 		}
@@ -133,9 +135,9 @@ func bsatGlobalStatementCount(policy BSatPolicy, eligibleBatchCount int) (int, e
 func bsatMaximumFeasibleConfirmatoryTrials(
 	policy BSatPolicy,
 	candidate int,
-	eligibleBatchCount int,
+	discoveryRuns int,
 ) int {
-	remainingBudget := policy.MaximumActiveRunBudget - eligibleBatchCount*policy.DiscoveryTrials
+	remainingBudget := policy.MaximumActiveRunBudget - discoveryRuns
 	confirmatoryBatches := policy.KMax - candidate + 1
 	budgetMaximum := remainingBudget / confirmatoryBatches
 	return min(policy.MaximumConfirmatoryTrials, budgetMaximum)

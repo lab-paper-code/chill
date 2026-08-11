@@ -241,6 +241,7 @@ type BSatSizingResult struct {
 	OneSidedQuantile                  float64    `json:"oneSidedQuantile"`
 	ProjectedReferenceLowerBound      *float64   `json:"projectedReferenceLowerBound,omitempty"`
 	ProjectedMaximumRelativeHalfWidth *float64   `json:"projectedMaximumRelativeHalfWidth,omitempty"`
+	DiscoveryActiveRuns               int        `json:"discoveryActiveRuns"`
 	ProjectedTotalActiveRuns          *int       `json:"projectedTotalActiveRuns,omitempty"`
 	SizingMethod                      string     `json:"sizingMethod"`
 	PolicyVersion                     string     `json:"policyVersion"`

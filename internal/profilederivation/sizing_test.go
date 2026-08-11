@@ -150,6 +150,7 @@ func TestBSatConfirmatorySizingUsesEligibleSetForDiscoveryBudget(t *testing.T) {
 	}
 	if result.Status != BSatCandidateOnly || result.ConfirmatoryTrials == nil ||
 		*result.ConfirmatoryTrials != 3 || result.MaximumFeasibleConfirmatoryTrials != 3 ||
+		result.DiscoveryActiveRuns != 15 ||
 		result.ProjectedTotalActiveRuns == nil || *result.ProjectedTotalActiveRuns != 24 {
 		t.Fatalf("unexpected sparse-budget sizing: %+v", result)
 	}
@@ -167,7 +168,7 @@ func TestBSatGlobalStatementCountStartsAtPointPolicyMinimum(t *testing.T) {
 	policy := testBSatPolicy()
 	policy.MinimumPointTrials = 4
 	policy.DiscoveryTrials = 4
-	count, err := bsatGlobalStatementCount(policy, policy.KMax)
+	count, err := bsatGlobalStatementCount(policy, policy.KMax*policy.DiscoveryTrials)
 	if err != nil {
 		t.Fatal(err)
 	}

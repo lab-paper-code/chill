@@ -39,6 +39,31 @@ func TestConfirmatoryDerivationPolicyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFreezeConfirmatoryDerivationPolicyAcceptsSparseFamilyBudget(t *testing.T) {
+	curve := testSparseBelowCandidateDiscoveryCurve(t)
+	spec := testDiscoveryDerivationPolicySpecForFamily(curve.FamilyName())
+	spec.PointPolicies[0].Name = "idle-point-v1"
+	spec.PointPolicies[1].Name = "sparse-below-candidate-point"
+	spec.BatchSaturation.KMax = 6
+	spec.BatchSaturation.MaximumActiveRunBudget = 24
+	discovery, err := FreezeDiscoveryDerivationPolicy(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sizing, err := DeriveBSatConfirmatorySizing(curve, 4, discovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizing.ConfirmatoryTrials == nil || *sizing.ConfirmatoryTrials != 3 ||
+		sizing.ProjectedTotalActiveRuns == nil || *sizing.ProjectedTotalActiveRuns != 24 {
+		t.Fatalf("unexpected sparse-family sizing: %+v", sizing)
+	}
+
+	if _, err := FreezeConfirmatoryDerivationPolicy(discovery, sizing); err != nil {
+		t.Fatalf("freeze sparse-family confirmatory policy: %v", err)
+	}
+}
+
 func TestConfirmatoryDerivationPolicyRejectsDrift(t *testing.T) {
 	discovery, sizing := testSizedDiscoveryPolicy(t)
 	policy, err := FreezeConfirmatoryDerivationPolicy(discovery, sizing)

@@ -127,10 +127,12 @@ artifact's target platform, batch profiles, runtime input tensor contract, and
 the exact typed actuator target for a non-fixed selection into the immutable
 Run input. Intent v1alpha9 retains the order-normalized physical
 host contract in state and defines the optional typed actuation binding
-consumed by Plan 6. Existing v1alpha1 runtime declarations, v1alpha2/v1alpha3 execution
-facts, and v1alpha2-v1alpha5 candidate reports remain readable but cannot carry
-the later fields. These are expected contracts, not proof that a particular
-Job observed or satisfied them.
+consumed by Plan 6. Existing v1alpha1 runtime declarations and v1alpha2/v1alpha3
+execution facts remain readable but cannot carry the later fields.
+Candidate-report v1alpha2 through v1alpha7 were historical generations; the
+current decoder accepts only v1alpha8 and rejects every earlier version. These
+are expected contracts, not proof that a particular Job observed or satisfied
+them.
 
 ## Checkpoint 3 decision: first read-only consumer
 

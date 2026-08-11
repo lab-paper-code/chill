@@ -66,7 +66,7 @@ func FreezeConfirmatoryDerivationPolicy(
 		DiscoveryDerivationPolicySpec: discovery.spec(),
 		Confirmation:                  allocation,
 	}
-	return freezeConfirmatoryDerivationPolicyRecord(record)
+	return freezeConfirmatoryDerivationPolicyRecord(record, sizing.DiscoveryActiveRuns)
 }
 
 // DecodeConfirmatoryDerivationPolicy strict-decodes exactly one JSON policy
@@ -92,7 +92,7 @@ func DecodeConfirmatoryDerivationPolicy(
 			"unsupported confirmatory derivation-policy schema %q", record.SchemaVersion,
 		)
 	}
-	parsed, err := freezeConfirmatoryDerivationPolicyRecord(record)
+	parsed, err := freezeConfirmatoryDerivationPolicyRecord(record, sizing.DiscoveryActiveRuns)
 	if err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
@@ -176,6 +176,7 @@ func validateConfirmatoryPolicyCurve(
 
 func freezeConfirmatoryDerivationPolicyRecord(
 	record confirmatoryDerivationPolicyRecord,
+	discoveryActiveRuns int,
 ) (ConfirmatoryDerivationPolicy, error) {
 	if record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
 		return ConfirmatoryDerivationPolicy{}, fmt.Errorf(
@@ -201,7 +202,9 @@ func freezeConfirmatoryDerivationPolicyRecord(
 	sort.Slice(record.Confirmation.Batches, func(i, j int) bool {
 		return record.Confirmation.Batches[i].Batch < record.Confirmation.Batches[j].Batch
 	})
-	if err := validateConfirmatoryDerivationPolicyRecord(record, discovery); err != nil {
+	if err := validateConfirmatoryDerivationPolicyRecord(
+		record, discovery, discoveryActiveRuns,
+	); err != nil {
 		return ConfirmatoryDerivationPolicy{}, err
 	}
 	return ConfirmatoryDerivationPolicy{record: record}, nil
@@ -210,6 +213,7 @@ func freezeConfirmatoryDerivationPolicyRecord(
 func validateConfirmatoryDerivationPolicyRecord(
 	record confirmatoryDerivationPolicyRecord,
 	discovery DiscoveryDerivationPolicy,
+	discoveryActiveRuns int,
 ) error {
 	if record.SchemaVersion != ConfirmatoryDerivationPolicySchemaVersion {
 		return fmt.Errorf("unsupported confirmatory derivation-policy schema %q", record.SchemaVersion)
@@ -246,7 +250,7 @@ func validateConfirmatoryDerivationPolicyRecord(
 	}
 	confirmatoryTrials := *allocation.ConfirmatoryTrials
 	confirmatoryRuns := len(allocation.Batches) * confirmatoryTrials
-	totalRuns := bsat.KMax*bsat.DiscoveryTrials + confirmatoryRuns
+	totalRuns := discoveryActiveRuns + confirmatoryRuns
 	if totalRuns > bsat.MaximumActiveRunBudget {
 		return errors.New("confirmatory derivation policy allocation exceeds the active-Run budget")
 	}
