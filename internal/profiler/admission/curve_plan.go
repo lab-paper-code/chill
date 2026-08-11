@@ -58,8 +58,8 @@ func ProjectCurvePlanSpec(
 			InputSampleShape: inputSampleShape,
 		},
 	}
-	if err := validateCurvePlanIntent(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("validate projected active curve intent: %w", err)
+	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve intents disagree: %w", err)
 	}
 	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve intents disagree: %w", err)
@@ -117,9 +117,8 @@ func validateCurvePlanIntents(
 	activeNodeUID, idleNodeUID string,
 	spec profilederivation.CurvePlanSpec,
 ) error {
-	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
-		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
-		return errors.New("active and idle frozen candidate or Node snapshots disagree")
+	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
+		return err
 	}
 	if len(spec.PlannedBatchSizes) == 0 {
 		return errors.New("curve plan has no planned batch sizes")
@@ -146,6 +145,14 @@ func validateCurvePlanIntents(
 		idle, idleNodeUID, spec, spec.IdleProtocol,
 	); err != nil {
 		return fmt.Errorf("idle curve state: %w", err)
+	}
+	return nil
+}
+
+func validateCurvePlanNodeFacts(active, idle profilingrun.Intent) error {
+	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
+		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
+		return errors.New("active and idle frozen candidate or Node snapshots disagree")
 	}
 	return nil
 }

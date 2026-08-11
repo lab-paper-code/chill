@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profilederivation"
@@ -39,6 +40,10 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project curve plan: %v", err)
 	}
+	if spec.Tensor.Layout != "NHWC" || spec.Tensor.DataType != "uint8" ||
+		!slices.Equal(spec.Tensor.InputSampleShape, []int{224, 224, 3}) {
+		t.Fatalf("projected tensor contract = %+v", spec.Tensor)
+	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
 		t.Fatalf("construct curve plan: %v", err)
@@ -49,6 +54,57 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 	}
 	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
 		t.Fatalf("validate idle intent against projected plan: %v", err)
+	}
+}
+
+func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*profilingrun.Intent)
+	}{
+		{
+			name: "artifact image",
+			mutate: func(idle *profilingrun.Intent) {
+				idle.Images.Artifact = "different-artifact-image"
+			},
+		},
+		{
+			name: "Node architecture",
+			mutate: func(idle *profilingrun.Intent) {
+				idle.TargetNode.Architecture = "different-architecture"
+			},
+		},
+		{
+			name: "Node allocatable CPU",
+			mutate: func(idle *profilingrun.Intent) {
+				idle.TargetNode.AllocatableCPU = "different-allocatable-cpu"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			active := curvePlanIntent()
+			idle := active
+			idle.Measurement = profilingrun.MeasurementContract{
+				Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
+				WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+				InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+			}
+			test.mutate(&idle)
+			if _, err := ProjectCurvePlanSpec(
+				"test-curve", active, idle,
+				profilingrun.CandidateArtifactCapability{
+					TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
+					InputSampleShape: []int32{224, 224, 3}, InputLayout: "NHWC", InputDataType: "uint8",
+				},
+				profilederivation.CurveConversionContract{
+					TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
+				},
+				[]int{1, 2},
+			); err == nil {
+				t.Fatal("active/idle disagreement was accepted")
+			}
+		})
 	}
 }
 

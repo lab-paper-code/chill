@@ -35,6 +35,7 @@ type CurvePlanStore interface {
 	evidencestore.LocationReader
 }
 
+// CurvePlanSourceOptions configures immutable plan storage and bounded recovery.
 type CurvePlanSourceOptions struct {
 	Store          string
 	MaxObjectBytes int64
@@ -101,7 +102,10 @@ func (s *CurvePlanSource) Resolve(
 		return profilederivation.CurvePlan{}, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
 	if report.ArtifactCapability == nil {
-		return profilederivation.CurvePlan{}, errors.New("curve-plan candidate report has no artifact capability")
+		return profilederivation.CurvePlan{}, errors.New(
+			"a batch-saturation campaign requires an artifact that declares its batch sizes; " +
+				"a runtime that consumes batch as a call argument is not supported here",
+		)
 	}
 	plannedBatchSizes := make([]int, len(report.ArtifactCapability.DeclaredBatchSizes))
 	for index, batchSize := range report.ArtifactCapability.DeclaredBatchSizes {
@@ -115,6 +119,9 @@ func (s *CurvePlanSource) Resolve(
 	})
 	if err != nil {
 		return profilederivation.CurvePlan{}, fmt.Errorf("prepare active curve-plan intent: %w", err)
+	}
+	if active.Intent.State.Artifact != report.Selection.Artifact {
+		return profilederivation.CurvePlan{}, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
 	}
 	idle, err := s.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeIdle,
@@ -193,7 +200,13 @@ func (s *CurvePlanSource) resolveConversion(
 		)
 	}
 	if selected.Derivation == nil {
-		return profilederivation.CurveConversionContract{}, nil
+		return profilederivation.CurveConversionContract{}, errors.New("resolve conversion requires a derived artifact")
+	}
+	if selected.Derivation.Input == nil {
+		return profilederivation.CurveConversionContract{}, errors.New(
+			"a batch-saturation campaign requires a derived artifact that declares its input tensor contract; " +
+				"a derived artifact without that contract is not supported here",
+		)
 	}
 	return profilederivation.CurveConversionContract{
 		TargetPlatform: report.ArtifactCapability.TargetPlatform,

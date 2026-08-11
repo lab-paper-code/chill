@@ -241,6 +241,7 @@ correctness.
 | Pre-checking environment identity per trial | `VerifyCurvePlan` catches drift at derivation. Pre-checking only saves Runs that would be discarded anyway |
 | No-progress timeout | A stalled measurement is visible and can be deleted |
 | Deletion finalizer | A measurement is not deleted while running. If it is, the Node power mode is restored by hand |
+| Runtime-call batch or a derived artifact without an input tensor contract | No finite declared batch set and tensor contract exists to freeze, so the source fails before creating a Run |
 
 None of these changes the `Decide` signature when added later.
 
@@ -279,12 +280,16 @@ duplication; assembled Runs are validated by the API server.
 ## Code boundary
 
 ```text
-internal/batchsaturation/            pure; imports internal/profilederivation only
-internal/batchsaturation/controller/ Kubernetes adapter
+internal/batchsaturation/            pure; no CHILL-internal imports
+internal/batchsaturation/controller/ Kubernetes adapter; imports batch-saturation-core
+                                      plus api, evidence-core, profile-derivation,
+                                      profiler-app/admission/controller, and profiling-run
 ```
 
-`.go-arch-lint.yml` gains this boundary in the same change. An ADR records the
-aggregate measurement unit as an architectural boundary.
+The control adapter owns the upward composition needed to resolve candidates,
+freeze prepared intents, and record or recover the plan. Those dependencies do
+not flow back into the pure core. `.go-arch-lint.yml` records the allowed edges;
+an ADR records the aggregate measurement unit as an architectural boundary.
 
 ## What this plan removes
 
