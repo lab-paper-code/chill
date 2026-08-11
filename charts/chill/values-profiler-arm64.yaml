@@ -1,6 +1,19 @@
 # Opt-in Profiler facts for the current CHILL testbed arm64 execution paths.
 # The runtime, artifact, and observer images are runnable arm64 child manifests;
 # Node-specific metric sources remain explicit entries in the same frozen facts.
+#
+# The Operator image is pinned here even though this file is about Profiler
+# facts. Applying this file without that pin resolves the chart default
+# daclab/chill-operator, which rolls the cluster back to a published release
+# that predates the Profiler and Evidence Store operands. The rolled-back
+# Operator still runs, so the symptom is a missing EvidenceStoreAvailable
+# condition rather than a missing Pod.
+operator:
+  image:
+    repository: "155.230.35.213:5000/chill/chill-operator"
+    tag: "sha-0deb6ff"
+    pullPolicy: Always
+
 evidenceStore:
   enabled: true
   configRef:
@@ -10,7 +23,7 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-fd1d391"
+    tag: "sha-0deb6ff"
     pullPolicy: Always
 
 profiling:
