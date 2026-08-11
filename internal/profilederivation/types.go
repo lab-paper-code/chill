@@ -112,36 +112,33 @@ type IdleObservation struct {
 	ThermallyThrottled           bool                `json:"thermallyThrottled"`
 }
 type IdleAdmissionResult struct {
-	Verdict                     Verdict             `json:"verdict"`
-	PolicyVersion               string              `json:"policyVersion"`
-	StateIdentity               string              `json:"stateIdentity"`
-	EnvironmentIdentity         string              `json:"environmentIdentity"`
-	MeasurementProtocolIdentity string              `json:"measurementProtocolIdentity"`
-	TrialID                     string              `json:"trialID"`
-	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
-	Reasons                     []Reason            `json:"reasons"`
-	TotalWallJoules             *float64            `json:"totalWallJoules,omitempty"`
-	// The meanWallWatts wire key predates the explicit model-loaded-idle name.
-	ModelLoadedIdleMeanWallWatts *float64 `json:"meanWallWatts,omitempty"`
-	WindowSeconds                float64  `json:"windowSeconds"`
+	Verdict                      Verdict             `json:"verdict"`
+	PolicyVersion                string              `json:"policyVersion"`
+	StateIdentity                string              `json:"stateIdentity"`
+	EnvironmentIdentity          string              `json:"environmentIdentity"`
+	MeasurementProtocolIdentity  string              `json:"measurementProtocolIdentity"`
+	TrialID                      string              `json:"trialID"`
+	RawEvidence                  RawEvidenceIdentity `json:"rawEvidence"`
+	Reasons                      []Reason            `json:"reasons"`
+	TotalWallJoules              *float64            `json:"totalWallJoules,omitempty"`
+	ModelLoadedIdleMeanWallWatts *float64            `json:"modelLoadedIdleMeanWallWatts,omitempty"`
+	WindowSeconds                float64             `json:"windowSeconds"`
 }
 type IdleTrial struct {
-	StateIdentity               string              `json:"stateIdentity"`
-	EnvironmentIdentity         string              `json:"environmentIdentity"`
-	MeasurementProtocolIdentity string              `json:"measurementProtocolIdentity"`
-	TrialID                     string              `json:"trialID"`
-	RawEvidence                 RawEvidenceIdentity `json:"rawEvidence"`
-	AdmissionPolicyVersion      string              `json:"admissionPolicyVersion"`
-	// Sequential result details retain this legacy meanWallWatts wire key in idle trials.
-	ModelLoadedIdleMeanWallWatts float64 `json:"meanWallWatts"`
+	StateIdentity                string              `json:"stateIdentity"`
+	EnvironmentIdentity          string              `json:"environmentIdentity"`
+	MeasurementProtocolIdentity  string              `json:"measurementProtocolIdentity"`
+	TrialID                      string              `json:"trialID"`
+	RawEvidence                  RawEvidenceIdentity `json:"rawEvidence"`
+	AdmissionPolicyVersion       string              `json:"admissionPolicyVersion"`
+	ModelLoadedIdleMeanWallWatts float64             `json:"modelLoadedIdleMeanWallWatts"`
 }
 type IdleBaseline struct {
-	StateIdentity               string      `json:"stateIdentity"`
-	EnvironmentIdentity         string      `json:"environmentIdentity"`
-	MeasurementProtocolIdentity string      `json:"measurementProtocolIdentity"`
-	Trials                      []IdleTrial `json:"trials"`
-	// Sequential result details persist this legacy meanWallWatts wire key.
-	ModelLoadedIdleMeanWallWatts float64 `json:"meanWallWatts"`
+	StateIdentity                string      `json:"stateIdentity"`
+	EnvironmentIdentity          string      `json:"environmentIdentity"`
+	MeasurementProtocolIdentity  string      `json:"measurementProtocolIdentity"`
+	Trials                       []IdleTrial `json:"trials"`
+	ModelLoadedIdleMeanWallWatts float64     `json:"modelLoadedIdleMeanWallWatts"`
 	// MeanWallWattsVariance is the sample variance divided by the idle trial count.
 	MeanWallWattsVariance  float64 `json:"meanWallWattsVariance"`
 	DegreesOfFreedom       int     `json:"degreesOfFreedom"`

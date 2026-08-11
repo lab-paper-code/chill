@@ -217,7 +217,7 @@ func assertCreatedResultReference(
 	wantKey := "batch-saturations/parent-uid/result.json"
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if reference.Store != "evidence" || reference.Key != wantKey ||
-		reference.SchemaVersion != "chill.dacs.io/batch-saturation-result.v1alpha1" ||
+		reference.SchemaVersion != "chill.dacs.io/batch-saturation-result.v1alpha2" ||
 		reference.Size != int64(len(storedPayload)) || reference.Size != store.lastIdentity.Size {
 		t.Fatalf("created reference = %+v, identity = %+v, payload bytes = %d", reference, store.lastIdentity, len(storedPayload))
 	}

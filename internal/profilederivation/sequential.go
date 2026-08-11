@@ -31,21 +31,18 @@ type SequentialPolicy struct {
 }
 
 type SequentialBatchMean struct {
-	Batch int `json:"batch"`
-	// The incrementalJoulesPerItem wire key is frozen by immutable result recovery.
-	IncrementalWorkJoulesPerItem float64 `json:"incrementalJoulesPerItem"`
+	Batch                        int     `json:"batch"`
+	IncrementalWorkJoulesPerItem float64 `json:"incrementalWorkJoulesPerItem"`
 }
 
 type SequentialResult struct {
-	Status        SequentialStatus     `json:"status"`
-	StopReason    SequentialStopReason `json:"stopReason,omitempty"`
-	SelectedBatch *int                 `json:"selectedBatch,omitempty"`
-	BoundaryBatch *int                 `json:"boundaryBatch,omitempty"`
-	// The bestIncrementalJoulesPerItem and epsilonByBatch wire keys are frozen by
-	// immutable result recovery even though the Go names use the explicit term.
-	BestIncrementalWorkJoulesPerItem *float64                `json:"bestIncrementalJoulesPerItem,omitempty"`
+	Status                           SequentialStatus        `json:"status"`
+	StopReason                       SequentialStopReason    `json:"stopReason,omitempty"`
+	SelectedBatch                    *int                    `json:"selectedBatch,omitempty"`
+	BoundaryBatch                    *int                    `json:"boundaryBatch,omitempty"`
+	BestIncrementalWorkJoulesPerItem *float64                `json:"bestIncrementalWorkJoulesPerItem,omitempty"`
 	MeasuredBatchSizes               []int                   `json:"measuredBatchSizes"`
-	IncrementalWorkByBatch           []SequentialBatchMean   `json:"epsilonByBatch"`
+	IncrementalWorkByBatch           []SequentialBatchMean   `json:"incrementalWorkByBatch"`
 	PolicyVersion                    string                  `json:"policyVersion"`
 	MinDelta                         float64                 `json:"minDelta"`
 	Patience                         int                     `json:"patience"`
