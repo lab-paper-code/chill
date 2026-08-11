@@ -254,10 +254,12 @@ batch-saturations/<uid>/curve-plan.json     recorded curve plan
 batch-saturations/<uid>/result.json         derived result
 ```
 
-The aggregate layer writes nothing under `profiling-runs/`. `result.json` holds
-facts derived at this layer plus references to the input Runs; it never copies a
-measured value, so each measurement exists in exactly one place. Excluded trials
-are listed by reference with their exclusion reason.
+The aggregate layer writes nothing under `profiling-runs/`; the aggregate in
+`result.json` is derived at this layer and the record references its input Runs.
+A method's retained per-trial statistics are references-plus-values whose source
+Run and raw evidence identity are identified, so the copy remains traceable and
+falsifiable. No raw sample or execution record is copied; excluded trials are
+listed by reference with their exclusion reason.
 
 `curve-plan.json` is the output of `NewCurvePlan` and records the one
 artifact execution state plus its planned batch sizes, written before the

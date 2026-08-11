@@ -240,7 +240,9 @@ func (s *CurvePlanSource) record(
 		return plan, nil
 	}
 
-	storedBytes, err := readCurvePlan(ctx, s.store, identity.Location(), s.options.MaxObjectBytes)
+	storedBytes, err := readStoredObject(
+		ctx, s.store, identity.Location(), s.options.MaxObjectBytes, "curve-plan object",
+	)
 	if err != nil {
 		return profilederivation.CurvePlan{}, fmt.Errorf("read existing curve plan: %w", err)
 	}
@@ -254,11 +256,12 @@ func (s *CurvePlanSource) record(
 	return stored, nil
 }
 
-func readCurvePlan(
+func readStoredObject(
 	ctx context.Context,
 	reader evidencestore.LocationReader,
 	location evidencestore.ObjectLocation,
 	maximumBytes int64,
+	objectName string,
 ) ([]byte, error) {
 	stream, err := reader.OpenLocation(ctx, location)
 	if err != nil {
@@ -273,7 +276,7 @@ func readCurvePlan(
 		return nil, closeErr
 	}
 	if int64(len(payload)) > maximumBytes {
-		return nil, fmt.Errorf("curve-plan object exceeds %d-byte limit", maximumBytes)
+		return nil, fmt.Errorf("%s exceeds %d-byte limit", objectName, maximumBytes)
 	}
 	return payload, nil
 }

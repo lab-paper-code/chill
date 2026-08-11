@@ -26,15 +26,7 @@ func ProjectSnapshot(
 	}
 	for index := range runs {
 		run := &runs[index]
-		owner := metav1.GetControllerOf(run)
-		if owner == nil || owner.Kind != "BatchSaturation" ||
-			owner.APIVersion != edgev1alpha1.GroupVersion.String() ||
-			string(owner.UID) != string(parent.UID) {
-			return batchsaturation.Snapshot{}, fmt.Errorf(
-				"ProfilingRun %q is not controller-owned by this BatchSaturation", run.Name,
-			)
-		}
-		trial, err := projectTrial(run)
+		trial, err := projectOwnedTrial(parent, run)
 		if err != nil {
 			return batchsaturation.Snapshot{}, fmt.Errorf("project ProfilingRun %q: %w", run.Name, err)
 		}
@@ -44,6 +36,19 @@ func ProjectSnapshot(
 		return batchsaturation.Snapshot{}, fmt.Errorf("validate projected snapshot: %w", err)
 	}
 	return snapshot, nil
+}
+
+func projectOwnedTrial(
+	parent *edgev1alpha1.BatchSaturation,
+	run *edgev1alpha1.ProfilingRun,
+) (batchsaturation.Trial, error) {
+	owner := metav1.GetControllerOf(run)
+	if owner == nil || owner.Kind != "BatchSaturation" ||
+		owner.APIVersion != edgev1alpha1.GroupVersion.String() ||
+		string(owner.UID) != string(parent.UID) {
+		return batchsaturation.Trial{}, errors.New("Run is not controller-owned by this BatchSaturation")
+	}
+	return projectTrial(run)
 }
 
 func projectTrial(run *edgev1alpha1.ProfilingRun) (batchsaturation.Trial, error) {
