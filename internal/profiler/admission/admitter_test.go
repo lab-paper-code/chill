@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -41,6 +42,33 @@ func TestEvaluateTrialReturnsTheTrialOnlyWhenAccepted(t *testing.T) {
 	if trial == nil || trial.Batch < 1 || trial.TrialID == "" {
 		t.Fatalf("accepted evaluation returned no usable trial: %+v", trial)
 	}
+}
+
+func TestEvaluateTrialPreservesNonAcceptedAndErrorReturns(t *testing.T) {
+	t.Run("non-Accepted", func(t *testing.T) {
+		evidence, _ := acceptedActiveFixture(t)
+		policy := activeFixturePolicy(t, "insufficient-active", 31)
+
+		result, trial, err := EvaluateTrial(evidence, policy)
+		if err != nil {
+			t.Fatalf("EvaluateTrial() error = %v", err)
+		}
+		if result.Verdict != VerdictInsufficient || result.PolicyVersion == "" ||
+			len(result.ReasonCodes) == 0 || trial != nil {
+			t.Fatalf("EvaluateTrial() = (%+v, %+v, nil), want populated Insufficient result and nil trial",
+				result, trial)
+		}
+	})
+
+	t.Run("error", func(t *testing.T) {
+		_, policy := acceptedActiveFixture(t)
+
+		result, trial, err := EvaluateTrial(profilerevidence.VerifiedEvidence{}, policy)
+		if err == nil || !reflect.DeepEqual(result, Result{}) || trial != nil {
+			t.Fatalf("EvaluateTrial() = (%+v, %+v, %v), want zero result, nil trial, and error",
+				result, trial, err)
+		}
+	})
 }
 
 func TestEvaluateCurveRunRetainsTheAdmissionThatAuthorizedTheTrial(t *testing.T) {
@@ -559,25 +587,30 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 		t.Fatal(err)
 	}
 
-	policyCatalog := `
+	return verified, activeFixturePolicy(t, "accepted-active", 2)
+}
+
+func activeFixturePolicy(t *testing.T, name string, minimumSamples int) FrozenPolicy {
+	t.Helper()
+	policyCatalog := fmt.Sprintf(`
 schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
 policies:
-  - name: accepted-active
+  - name: %s
     workloadMode: saturated-serial-fixed-batch
-    minimumSamples: 2
+    minimumSamples: %d
     maximumGapSeconds: 2
     maximumBoundaryDistanceSeconds: 1
     minimumCoverage: 0.9
     allowReceiptTimestamps: true
     rejectConcurrentCHILLWorkloads: true
     rejectExternalWorkloadChanges: true
-`
-	policy, err := FreezeConfiguredPolicy([]byte(policyCatalog), "accepted-active", PolicySource{
+`, name, minimumSamples)
+	policy, err := FreezeConfiguredPolicy([]byte(policyCatalog), name, PolicySource{
 		Kind: ConfigMapPolicySourceKind, Namespace: "chill-system", Name: "admission-policies",
 		UID: "policy-uid", ResourceVersion: "1", Key: "admission-policies.yaml",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return verified, policy
+	return policy
 }

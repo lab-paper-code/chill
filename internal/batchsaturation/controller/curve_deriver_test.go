@@ -47,7 +47,7 @@ func TestCurveDeriverMapsTheSequentialDecision(t *testing.T) {
 	}
 	if detail.Status != profilederivation.SequentialStopped ||
 		detail.StopReason != profilederivation.StopNoFurtherImprovement ||
-		result.Outcome != sequentialNoFurtherImprovementOutcome {
+		result.Outcome != "Stopped/NoFurtherImprovement" {
 		t.Fatalf("terminal mapping = continue=%t outcome=%q detail=%+v", result.Continue, result.Outcome, detail)
 	}
 	baseline, exists := detail.IdleBaselinesByState[fixture.stateIdentity]
@@ -58,19 +58,59 @@ func TestCurveDeriverMapsTheSequentialDecision(t *testing.T) {
 	}
 }
 
-func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
+func TestCurveDeriverUsesParentTrialCountForIdleMinimum(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
-	runName := fixture.activeRuns[0].Name
-	frozen := fixture.intents.byRun[runName]
-	frozen.AdmissionPolicy = fixture.insufficientPolicy
-	fixture.intents.byRun[runName] = frozen
+	shortIdleRuns := fixture.idleRuns[:fixture.policy.TrialsPerBatch-1]
 
 	_, err := fixture.deriver.Derive(
-		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
+		context.Background(), fixture.plan, fixture.activeRuns, shortIdleRuns,
 		[]int{1, 2}, fixture.policy,
 	)
-	if err == nil || !strings.Contains(err.Error(), runName) || !strings.Contains(err.Error(), "Insufficient") {
-		t.Fatalf("Derive() error = %v, want named non-Accepted Run", err)
+	if err == nil || !strings.Contains(err.Error(), "derive idle baseline") {
+		t.Fatalf("Derive() error = %v, want parent-derived idle minimum rejection", err)
+	}
+}
+
+func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*curveDeriverFixture) string
+	}{
+		{
+			name: "active",
+			mutate: func(fixture *curveDeriverFixture) string {
+				runName := fixture.activeRuns[0].Name
+				frozen := fixture.intents.byRun[runName]
+				frozen.AdmissionPolicy = fixture.insufficientActivePolicy
+				fixture.intents.byRun[runName] = frozen
+				return runName
+			},
+		},
+		{
+			name: "idle",
+			mutate: func(fixture *curveDeriverFixture) string {
+				runName := fixture.idleRuns[0].Name
+				frozen := fixture.intents.byRun[runName]
+				frozen.AdmissionPolicy = fixture.insufficientIdlePolicy
+				fixture.intents.byRun[runName] = frozen
+				return runName
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCurveDeriverFixture(t)
+			runName := test.mutate(&fixture)
+
+			_, err := fixture.deriver.Derive(
+				context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
+				[]int{1, 2}, fixture.policy,
+			)
+			if err == nil || !strings.Contains(err.Error(), runName) ||
+				!strings.Contains(err.Error(), "Insufficient") {
+				t.Fatalf("Derive() error = %v, want named non-Accepted Run", err)
+			}
+		})
 	}
 }
 
@@ -79,7 +119,7 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 
 	_, err := fixture.deriver.Derive(
 		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
-		[]int{2}, fixture.policy,
+		[]int{2, 1}, fixture.policy,
 	)
 	if err == nil || !strings.Contains(err.Error(), "contiguous prefix") {
 		t.Fatalf("Derive() error = %v, want recorded-prefix rejection", err)
@@ -90,7 +130,13 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	}
 }
 
-func TestProjectSequentialCurveResultNamesEveryOutcome(t *testing.T) {
+func TestValidateCurvePrefixRejectsEmptyBatches(t *testing.T) {
+	if err := validateCurvePrefix([]int{1, 2}, nil); err == nil {
+		t.Fatal("validateCurvePrefix() accepted an empty batch set")
+	}
+}
+
+func TestProjectSequentialCurveResultMapsEveryReachableOutcome(t *testing.T) {
 	selected := 2
 	tests := []struct {
 		name         string
@@ -100,20 +146,16 @@ func TestProjectSequentialCurveResultNamesEveryOutcome(t *testing.T) {
 		wantOutcome  string
 	}{
 		{
-			name: "completed selection", status: profilederivation.SequentialContinue,
-			wantContinue: true, wantOutcome: sequentialSelectionOutcome,
+			name: "continue", status: profilederivation.SequentialContinue,
+			wantContinue: true, wantOutcome: "",
 		},
 		{
 			name: "no further improvement", status: profilederivation.SequentialStopped,
-			reason: profilederivation.StopNoFurtherImprovement, wantOutcome: sequentialNoFurtherImprovementOutcome,
-		},
-		{
-			name: "capability boundary", status: profilederivation.SequentialStopped,
-			reason: profilederivation.StopCapabilityBoundary, wantOutcome: sequentialCapabilityBoundaryOutcome,
+			reason: profilederivation.StopNoFurtherImprovement, wantOutcome: "Stopped/NoFurtherImprovement",
 		},
 		{
 			name: "energy divergence", status: profilederivation.SequentialStopped,
-			reason: profilederivation.StopEnergyDivergence, wantOutcome: sequentialEnergyDivergenceOutcome,
+			reason: profilederivation.StopEnergyDivergence, wantOutcome: "Stopped/EnergyDivergence",
 		},
 	}
 	for _, test := range tests {
@@ -133,16 +175,29 @@ func TestProjectSequentialCurveResultNamesEveryOutcome(t *testing.T) {
 	}
 }
 
+func TestProjectSequentialCurveResultRejectsUnreachableCapabilityBoundary(t *testing.T) {
+	selected := 2
+	_, err := projectSequentialCurveResult(profilederivation.SequentialResult{
+		Status:        profilederivation.SequentialStopped,
+		StopReason:    profilederivation.StopCapabilityBoundary,
+		SelectedBatch: &selected,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unreachable capability boundary") {
+		t.Fatalf("projectSequentialCurveResult() error = %v, want unreachable-state rejection", err)
+	}
+}
+
 type curveDeriverFixture struct {
-	deriver            *CurveDeriver
-	intents            *fakeCurveIntentLoader
-	evidence           *fakeCurveEvidenceLoader
-	plan               profilederivation.CurvePlan
-	activeRuns         []edgev1alpha1.ProfilingRun
-	idleRuns           []edgev1alpha1.ProfilingRun
-	policy             profilederivation.SequentialPolicy
-	insufficientPolicy profileradmission.FrozenPolicy
-	stateIdentity      string
+	deriver                  *CurveDeriver
+	intents                  *fakeCurveIntentLoader
+	evidence                 *fakeCurveEvidenceLoader
+	plan                     profilederivation.CurvePlan
+	activeRuns               []edgev1alpha1.ProfilingRun
+	idleRuns                 []edgev1alpha1.ProfilingRun
+	policy                   profilederivation.SequentialPolicy
+	insufficientActivePolicy profileradmission.FrozenPolicy
+	insufficientIdlePolicy   profileradmission.FrozenPolicy
+	stateIdentity            string
 }
 
 func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
@@ -175,17 +230,20 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 
 	activePolicy := curveFixturePolicy(t, profileradmission.WallPowerPolicyV2)
 	idlePolicy := curveFixturePolicy(t, profileradmission.IdleWallPowerPolicyV1)
-	insufficientPolicy := curveFixturePolicy(t, "insufficient-active")
+	insufficientActivePolicy := curveFixturePolicy(t, "insufficient-active")
+	insufficientIdlePolicy := curveFixturePolicy(t, "insufficient-idle")
 	intents := &fakeCurveIntentLoader{byRun: map[string]profilercontroller.FrozenRun{}}
 	evidence := &fakeCurveEvidenceLoader{
 		active: make(map[string]profilerevidence.VerifiedEvidence),
 		idle:   make(map[string]profilerevidence.VerifiedIdleEvidence),
 	}
 	fixture := curveDeriverFixture{
-		intents: intents, evidence: evidence, plan: plan, insufficientPolicy: insufficientPolicy,
+		intents: intents, evidence: evidence, plan: plan,
+		insufficientActivePolicy: insufficientActivePolicy,
+		insufficientIdlePolicy:   insufficientIdlePolicy,
 		policy: profilederivation.SequentialPolicy{
 			Version: "sequential-v1", MinDelta: 0.05, Patience: 1,
-			TrialsPerBatch: 3, DivergenceFactor: 2,
+			TrialsPerBatch: 4, DivergenceFactor: 2,
 		},
 	}
 	for _, batch := range []int{1, 2} {
@@ -310,6 +368,15 @@ policies:
     rejectExternalWorkloadChanges: true
   - name: insufficient-active
     workloadMode: saturated-serial-fixed-batch
+    minimumSamples: 31
+    maximumGapSeconds: 1.5
+    maximumBoundaryDistanceSeconds: 1
+    minimumCoverage: 0.95
+    allowReceiptTimestamps: true
+    rejectConcurrentCHILLWorkloads: true
+    rejectExternalWorkloadChanges: true
+  - name: insufficient-idle
+    workloadMode: idle-model-loaded
     minimumSamples: 31
     maximumGapSeconds: 1.5
     maximumBoundaryDistanceSeconds: 1

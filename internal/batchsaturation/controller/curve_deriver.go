@@ -23,9 +23,7 @@ const (
 )
 
 const (
-	sequentialSelectionOutcome            = "Completed/Selection"
 	sequentialNoFurtherImprovementOutcome = "Stopped/" + string(profilederivation.StopNoFurtherImprovement)
-	sequentialCapabilityBoundaryOutcome   = "Stopped/" + string(profilederivation.StopCapabilityBoundary)
 	sequentialEnergyDivergenceOutcome     = "Stopped/" + string(profilederivation.StopEnergyDivergence)
 )
 
@@ -34,8 +32,10 @@ type CurveIntentLoader interface {
 	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.FrozenRun, error)
 }
 
-// CurveEvidenceLoader retrieves evidence only after its retained immutable
-// objects and ProfilingRun binding have crossed the verification boundary.
+// CurveEvidenceLoader retrieves evidence whose immutable objects have crossed
+// the profile-evidence verification boundary. Its return types do not encode a
+// binding to the supplied ProfilingRun; the composition-root adapter must
+// validate that binding before returning them.
 type CurveEvidenceLoader interface {
 	Load(
 		context.Context,
@@ -254,13 +254,14 @@ func projectSequentialCurveResult(
 	switch result.Status {
 	case profilederivation.SequentialContinue:
 		projected.Continue = true
-		projected.Outcome = sequentialSelectionOutcome
 	case profilederivation.SequentialStopped:
 		switch result.StopReason {
 		case profilederivation.StopNoFurtherImprovement:
 			projected.Outcome = sequentialNoFurtherImprovementOutcome
 		case profilederivation.StopCapabilityBoundary:
-			projected.Outcome = sequentialCapabilityBoundaryOutcome
+			return batchsaturation.CurveResult{}, errors.New(
+				"sequential derivation returned an unreachable capability boundary",
+			)
 		case profilederivation.StopEnergyDivergence:
 			projected.Outcome = sequentialEnergyDivergenceOutcome
 		default:
