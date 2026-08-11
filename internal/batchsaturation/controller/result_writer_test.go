@@ -33,7 +33,7 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 	assertCreatedResultReference(t, first, store)
 
 	storedPayload := store.objects[store.lastIdentity.Location()]
-	stored := assertStoredResult(t, storedPayload, detail, curvePlan)
+	stored := assertStoredResult(t, parent, storedPayload, detail, curvePlan)
 
 	// Equivalent stored bytes deliberately have a different size. Recovery must
 	// return their observed reference, not the recomputed payload's reference.
@@ -71,7 +71,7 @@ func TestResultWriterRejectsPendingRun(t *testing.T) {
 	parent := testParent()
 	run := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
-	}, 1, "pending-run", "pending-uid")
+	}, 1, "pending-uid")
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
 
@@ -79,7 +79,7 @@ func TestResultWriterRejectsPendingRun(t *testing.T) {
 		context.Background(), parent, resultWriterCurvePlanReference(),
 		[]edgev1alpha1.ProfilingRun{*run}, resultWriterResult(),
 	)
-	if err == nil || !strings.Contains(err.Error(), `ProfilingRun "pending-run" is still pending`) {
+	if err == nil || !strings.Contains(err.Error(), `ProfilingRun "`+run.Name+`" is still pending`) {
 		t.Fatalf("pending Run error = %v", err)
 	}
 	if store.puts != 0 {
@@ -91,7 +91,7 @@ func TestResultWriterRejectsEmptyAdmissionVerdict(t *testing.T) {
 	parent := testParent()
 	run := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
-	}, 1, "empty-verdict-run", "empty-verdict-uid")
+	}, 1, "empty-verdict-uid")
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{}
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
@@ -100,7 +100,7 @@ func TestResultWriterRejectsEmptyAdmissionVerdict(t *testing.T) {
 		context.Background(), parent, resultWriterCurvePlanReference(),
 		[]edgev1alpha1.ProfilingRun{*run}, resultWriterResult(),
 	)
-	if err == nil || !strings.Contains(err.Error(), `ProfilingRun "empty-verdict-run" has an empty admission verdict`) {
+	if err == nil || !strings.Contains(err.Error(), `ProfilingRun "`+run.Name+`" has an empty admission verdict`) {
 		t.Fatalf("empty admission verdict error = %v", err)
 	}
 	if store.puts != 0 {
@@ -112,7 +112,7 @@ func TestResultWriterRejectsAdmittedRunWithoutEvidence(t *testing.T) {
 	parent := testParent()
 	run := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
-	}, 1, "missing-evidence-run", "missing-evidence-uid")
+	}, 1, "missing-evidence-uid")
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
 	}
@@ -123,7 +123,7 @@ func TestResultWriterRejectsAdmittedRunWithoutEvidence(t *testing.T) {
 		context.Background(), parent, resultWriterCurvePlanReference(),
 		[]edgev1alpha1.ProfilingRun{*run}, resultWriterResult(),
 	)
-	if err == nil || !strings.Contains(err.Error(), `admitted ProfilingRun "missing-evidence-run" has no evidence reference`) {
+	if err == nil || !strings.Contains(err.Error(), `admitted ProfilingRun "`+run.Name+`" has no evidence reference`) {
 		t.Fatalf("missing evidence error = %v", err)
 	}
 	if store.puts != 0 {
@@ -135,7 +135,7 @@ func TestResultWriterRecordsTerminalConditionReason(t *testing.T) {
 	parent := testParent()
 	run := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 4,
-	}, 2, "terminal-condition-run", "terminal-condition-uid")
+	}, 2, "terminal-condition-uid")
 	run.Status.Conditions = []metav1.Condition{{
 		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed",
 	}}
@@ -228,6 +228,7 @@ func assertCreatedResultReference(
 
 func assertStoredResult(
 	t *testing.T,
+	parent *edgev1alpha1.BatchSaturation,
 	payload []byte,
 	detail json.RawMessage,
 	curvePlan batchsaturation.StoredObjectReference,
@@ -246,14 +247,15 @@ func assertStoredResult(
 	}
 	failed := spec.ExcludedTrials[0]
 	acceptedRetry := spec.AdmittedTrials[0]
-	if failed.Run.Namespace != "chill-system" || failed.Run.Name != "active-b2-a2" ||
+	active := batchsaturation.Measurement{WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2}
+	if failed.Run.Namespace != "chill-system" || failed.Run.Name != RunName(parent.Name, active, 2) ||
 		failed.Run.UID != "failed-uid" || failed.Attempt != 2 ||
 		failed.Measurement != (batchsaturation.ResultMeasurement{
 			WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
 		}) || len(failed.Reasons) != 1 || failed.Reasons[0] != "QualityGateFailed" {
 		t.Fatalf("failed attempt projection = %+v", failed)
 	}
-	if acceptedRetry.Run.Namespace != "chill-system" || acceptedRetry.Run.Name != "active-b2-a3" ||
+	if acceptedRetry.Run.Namespace != "chill-system" || acceptedRetry.Run.Name != RunName(parent.Name, active, 3) ||
 		acceptedRetry.Run.UID != "accepted-uid" ||
 		acceptedRetry.Measurement != failed.Measurement || acceptedRetry.Evidence.Key !=
 		"profiling-runs/accepted-uid/execution.json" {
@@ -279,7 +281,7 @@ func resultWriterRuns(
 	t.Helper()
 	failed := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
-	}, 2, "active-b2-a2", "failed-uid")
+	}, 2, "failed-uid")
 	failed.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Rejected", PolicyVersion: "wall-power-v1", ReasonCodes: []string{"QualityGateFailed"},
 	}
@@ -287,7 +289,7 @@ func resultWriterRuns(
 
 	accepted := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
-	}, 3, "active-b2-a3", "accepted-uid")
+	}, 3, "accepted-uid")
 	accepted.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
 	}
@@ -295,7 +297,7 @@ func resultWriterRuns(
 
 	idle := resultWriterRun(t, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
-	}, 1, "idle-b1-a1", "idle-uid")
+	}, 1, "idle-uid")
 	idle.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
 	}
@@ -308,7 +310,6 @@ func resultWriterRun(
 	parent *edgev1alpha1.BatchSaturation,
 	measurement batchsaturation.Measurement,
 	attempt int,
-	name string,
 	uid types.UID,
 ) *edgev1alpha1.ProfilingRun {
 	t.Helper()
@@ -316,7 +317,6 @@ func resultWriterRun(
 	if err != nil {
 		t.Fatal(err)
 	}
-	run.Name = name
 	run.UID = uid
 	return run
 }

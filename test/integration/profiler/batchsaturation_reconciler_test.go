@@ -39,12 +39,13 @@ func (s *fakeCurvePlanSource) Resolve(
 }
 
 type fakeCurveDeriver struct {
-	result     batchsaturation.CurveResult
-	calls      int
-	activeRuns []edgev1alpha1.ProfilingRun
-	idleRuns   []edgev1alpha1.ProfilingRun
-	batches    []int
-	policy     profilederivation.SequentialPolicy
+	result        batchsaturation.CurveResult
+	continueUntil int
+	calls         int
+	activeRuns    []edgev1alpha1.ProfilingRun
+	idleRuns      []edgev1alpha1.ProfilingRun
+	batches       []int
+	policy        profilederivation.SequentialPolicy
 }
 
 func (d *fakeCurveDeriver) Derive(
@@ -60,7 +61,11 @@ func (d *fakeCurveDeriver) Derive(
 	d.idleRuns = append([]edgev1alpha1.ProfilingRun(nil), idleRuns...)
 	d.batches = append([]int(nil), batches...)
 	d.policy = policy
-	return d.result, nil
+	result := d.result
+	if len(batches) < d.continueUntil {
+		result.Continue = true
+	}
+	return result, nil
 }
 
 type fakeResultWriter struct {
@@ -135,6 +140,7 @@ func TestBatchSaturationReconcilerCompletesAcrossCollisionWaitRetryAndRestart(t 
 	if currentParent.Status.AcceptedTrials != 0 || currentParent.Status.Phase != "Measuring" {
 		t.Fatalf("recomputed live status = %#v, want Measuring with zero accepted trials", currentParent.Status)
 	}
+	measuringSince := currentParent.Status.Conditions[0].LastTransitionTime
 
 	setCampaignRunVerdict(t, ctx, kube, parent, idle, 1, "Rejected")
 	reconcileBatch(t, ctx, restarted, request)
@@ -148,17 +154,18 @@ func TestBatchSaturationReconcilerCompletesAcrossCollisionWaitRetryAndRestart(t 
 	requireCampaignRun(t, ctx, kube, parent, idle, 4)
 	setCampaignRunVerdict(t, ctx, kube, parent, idle, 4, "Accepted")
 
-	active := batchsaturation.Measurement{WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1}
-	for attempt := 1; attempt <= 3; attempt++ {
-		reconcileBatch(t, ctx, restarted, request)
-		requireCampaignRun(t, ctx, kube, parent, active, attempt)
-		setCampaignRunVerdict(t, ctx, kube, parent, active, attempt, "Accepted")
-	}
+	activeBatchOne := batchsaturation.Measurement{WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1}
+	activeBatchTwo := batchsaturation.Measurement{WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2}
+	acceptActiveCampaignRuns(
+		t, ctx, kube, parent, restarted, request, []batchsaturation.Measurement{activeBatchOne, activeBatchTwo},
+		measuringSince,
+	)
 	reconcileBatch(t, ctx, restarted, request)
 
 	finished := getBatchSaturation(t, ctx, kube, client.ObjectKeyFromObject(parent))
 	if finished.Status.Phase != "Complete" || finished.Status.Outcome != "Stopped/NoFurtherImprovement" ||
-		finished.Status.AcceptedTrials != 6 || finished.Status.Result == nil {
+		finished.Status.ObservedGeneration != finished.Generation || finished.Status.AcceptedTrials != 9 ||
+		finished.Status.Result == nil {
 		t.Fatalf("terminal BatchSaturation status = %#v", finished.Status)
 	}
 	wantReference := results.reference
@@ -167,12 +174,26 @@ func TestBatchSaturationReconcilerCompletesAcrossCollisionWaitRetryAndRestart(t 
 		gotReference.SchemaVersion != wantReference.SchemaVersion || gotReference.Size != wantReference.Size {
 		t.Fatalf("terminal result reference = %#v, want writer reference %+v", gotReference, wantReference)
 	}
-	if curves.calls != 1 || len(curves.activeRuns) != 3 || len(curves.idleRuns) != 3 ||
-		len(curves.batches) != 1 || curves.batches[0] != 1 || curves.policy.TrialsPerBatch != 3 {
+	wantActiveNames := []string{
+		batchcontroller.RunName(parent.Name, activeBatchOne, 1),
+		batchcontroller.RunName(parent.Name, activeBatchOne, 2),
+		batchcontroller.RunName(parent.Name, activeBatchOne, 3),
+		batchcontroller.RunName(parent.Name, activeBatchTwo, 1),
+		batchcontroller.RunName(parent.Name, activeBatchTwo, 2),
+		batchcontroller.RunName(parent.Name, activeBatchTwo, 3),
+	}
+	wantIdleNames := []string{
+		batchcontroller.RunName(parent.Name, idle, 2),
+		batchcontroller.RunName(parent.Name, idle, 3),
+		batchcontroller.RunName(parent.Name, idle, 4),
+	}
+	if curves.calls != 2 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
+		!runNamesEqual(curves.idleRuns, wantIdleNames) || len(curves.batches) != 2 ||
+		curves.batches[0] != 1 || curves.batches[1] != 2 || curves.policy.TrialsPerBatch != 3 {
 		t.Fatalf("curve derivation calls = %d, active=%d idle=%d batches=%v policy=%+v",
 			curves.calls, len(curves.activeRuns), len(curves.idleRuns), curves.batches, curves.policy)
 	}
-	if results.calls != 1 || results.curvePlan != plans.reference || len(results.runs) != 7 ||
+	if results.calls != 1 || results.curvePlan != plans.reference || len(results.runs) != 10 ||
 		results.result.Outcome != "Stopped/NoFurtherImprovement" {
 		t.Fatalf("result writer calls = %d, plan=%+v runs=%d result=%+v",
 			results.calls, results.curvePlan, len(results.runs), results.result)
@@ -229,10 +250,13 @@ func completedBatchFakes(
 			SchemaVersion: "source-plan-schema", Size: 701,
 		},
 	}
-	curves := &fakeCurveDeriver{result: batchsaturation.CurveResult{
-		SelectedBatch: 1, Outcome: "Stopped/NoFurtherImprovement",
-		Detail: map[string]any{"selectedBatch": 1},
-	}}
+	curves := &fakeCurveDeriver{
+		continueUntil: 2,
+		result: batchsaturation.CurveResult{
+			SelectedBatch: 2, Outcome: "Stopped/NoFurtherImprovement",
+			Detail: map[string]any{"selectedBatch": 2},
+		},
+	}
 	results := &fakeResultWriter{reference: batchsaturation.StoredObjectReference{
 		Store: "writer-store", Key: "writer-returned/result-object.json",
 		SchemaVersion: "writer-returned-schema", Size: 9876,
@@ -303,6 +327,45 @@ func createBatchSaturation(
 		t.Fatal(err)
 	}
 	return parent
+}
+
+func runNamesEqual(runs []edgev1alpha1.ProfilingRun, want []string) bool {
+	if len(runs) != len(want) {
+		return false
+	}
+	for index := range runs {
+		if runs[index].Name != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func acceptActiveCampaignRuns(
+	t *testing.T,
+	ctx context.Context,
+	kube client.Client,
+	parent *edgev1alpha1.BatchSaturation,
+	reconciler *batchcontroller.BatchSaturationReconciler,
+	request ctrl.Request,
+	measurements []batchsaturation.Measurement,
+	measuringSince metav1.Time,
+) {
+	t.Helper()
+	for measurementIndex, measurement := range measurements {
+		for attempt := 1; attempt <= 3; attempt++ {
+			reconcileBatch(t, ctx, reconciler, request)
+			requireCampaignRun(t, ctx, kube, parent, measurement, attempt)
+			setCampaignRunVerdict(t, ctx, kube, parent, measurement, attempt, "Accepted")
+			if measurementIndex == 0 && attempt == 1 {
+				measuring := getBatchSaturation(t, ctx, kube, client.ObjectKeyFromObject(parent))
+				if !measuring.Status.Conditions[0].LastTransitionTime.Equal(&measuringSince) {
+					t.Fatalf("measuring transition time moved from %s to %s",
+						measuringSince, measuring.Status.Conditions[0].LastTransitionTime)
+				}
+			}
+		}
+	}
 }
 
 func buildCampaignRun(
@@ -498,7 +561,7 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 			ExecutionPath: "ort-cpu", Name: "mobilenet", Path: "/models/mobilenet.onnx",
 			Image: image("artifact", "d"),
 		},
-		PlannedBatchSizes: []int{1},
+		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
 			Layout: "NCHW", DataType: "float32", InputSampleShape: []int{3, 224, 224},
 		},

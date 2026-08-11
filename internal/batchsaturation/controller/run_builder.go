@@ -5,6 +5,8 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
@@ -27,6 +29,19 @@ const (
 // creating a duplicate trial.
 func RunName(parent string, measurement batchsaturation.Measurement, attempt int) string {
 	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
+}
+
+func attemptFromRunName(parent string, measurement batchsaturation.Measurement, name string) (int, error) {
+	prefix := strings.TrimSuffix(RunName(parent, measurement, 0), "0")
+	encoded, found := strings.CutPrefix(name, prefix)
+	if !found {
+		return 0, errors.New("Run name does not match its BatchSaturation measurement")
+	}
+	attempt, err := strconv.Atoi(encoded)
+	if err != nil || attempt < 1 || RunName(parent, measurement, attempt) != name {
+		return 0, errors.New("Run name has no usable attempt")
+	}
+	return attempt, nil
 }
 
 func BuildRun(

@@ -3,17 +3,14 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type RunEvidenceAdmitter interface {
@@ -30,25 +27,6 @@ type RunEvidenceAdmitter interface {
 // evidence loading and scientific evaluation remain in Kubernetes-free packages.
 type KubernetesEvidenceAdmitter struct {
 	loader *evidencekube.RetainedLoader
-}
-
-func NewKubernetesEvidenceAdmitter(
-	reader client.Reader,
-	storeFactory EvidenceObjectStoreFactory,
-) (*KubernetesEvidenceAdmitter, error) {
-	if reader == nil || storeFactory == nil {
-		return nil, errors.New("Kubernetes API reader and evidence object-store factory are required")
-	}
-	loader, err := evidencekube.NewRetainedLoader(
-		reader,
-		func(binding storekube.Binding, credentials storekube.Credentials) (evidencestore.LocationReader, error) {
-			return storeFactory(binding, credentials.AccessKeyID, credentials.SecretAccessKey)
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
-	}
-	return NewKubernetesEvidenceAdmitterWithRetainedLoader(loader)
 }
 
 // NewKubernetesEvidenceAdmitterWithRetainedLoader reuses a composition-root

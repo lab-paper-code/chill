@@ -348,7 +348,6 @@ spec:
               phase:
                 enum:
                 - Measuring
-                - Deriving
                 - Complete
                 - Failed
                 type: string

@@ -85,7 +85,7 @@ type BatchSaturationStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// +optional
-	// +kubebuilder:validation:Enum=Measuring;Deriving;Complete;Failed
+	// +kubebuilder:validation:Enum=Measuring;Complete;Failed
 	Phase string `json:"phase,omitempty"`
 
 	// +optional

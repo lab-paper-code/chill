@@ -7,7 +7,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
 )
 
-func TestProjectSnapshotReadsValuesFromTheRunSpecNotLabels(t *testing.T) {
+func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T) {
 	parent := testParent()
 	run, err := BuildRun(parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
@@ -16,6 +16,7 @@ func TestProjectSnapshotReadsValuesFromTheRunSpecNotLabels(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	run.Labels[labelBatch] = "99"
+	run.Labels[labelAttempt] = "99"
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "v1",
 	}
@@ -23,7 +24,8 @@ func TestProjectSnapshotReadsValuesFromTheRunSpecNotLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(snapshot.Trials) != 1 || snapshot.Trials[0].Measurement.Batch != 2 {
+	if len(snapshot.Trials) != 1 || snapshot.Trials[0].Measurement.Batch != 2 ||
+		snapshot.Trials[0].Attempt != 1 {
 		t.Fatalf("projection trusted the label instead of the spec: %+v", snapshot.Trials)
 	}
 	if snapshot.Trials[0].Verdict != batchsaturation.VerdictAccepted {

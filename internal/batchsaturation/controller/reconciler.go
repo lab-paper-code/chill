@@ -111,7 +111,10 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	activeRuns, idleRuns := acceptedRuns(snapshot, runs)
+	activeRuns, idleRuns, err := acceptedRuns(parent.Name, snapshot, runs)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	curveSource := func(batches []int) (batchsaturation.CurveResult, error) {
 		return r.curves.Derive(ctx, curvePlan, activeRuns, idleRuns, batches, policy)
 	}
@@ -159,7 +162,7 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 		return ctrl.Result{}, fmt.Errorf("unsupported BatchSaturation action %q", decision.Action)
 	}
 
-	status := deriveStatus(parent.Generation, snapshot, decision, resultReference)
+	status := deriveStatus(parent.Generation, snapshot, decision, resultReference, parent.Status.Conditions)
 	if err := r.patchStatus(ctx, parent, status); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -222,12 +225,24 @@ func projectSequentialPolicy(
 }
 
 func acceptedRuns(
+	parentName string,
 	snapshot batchsaturation.Snapshot,
 	runs []edgev1alpha1.ProfilingRun,
-) ([]edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun) {
+) ([]edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, error) {
+	if len(snapshot.Trials) != len(runs) {
+		return nil, nil, fmt.Errorf(
+			"projected trial/Run count invariant failed: %d trials for %d Runs",
+			len(snapshot.Trials), len(runs),
+		)
+	}
 	active := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	idle := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	for index, trial := range snapshot.Trials {
+		if runs[index].Name != RunName(parentName, trial.Measurement, trial.Attempt) {
+			return nil, nil, fmt.Errorf(
+				"projected trial/Run order invariant failed at index %d", index,
+			)
+		}
 		if trial.Verdict != batchsaturation.VerdictAccepted {
 			continue
 		}
@@ -237,7 +252,7 @@ func acceptedRuns(
 		}
 		active = append(active, runs[index])
 	}
-	return active, idle
+	return active, idle, nil
 }
 
 func nextAttempt(measurement batchsaturation.Measurement, trials []batchsaturation.Trial) int {
@@ -255,6 +270,7 @@ func deriveStatus(
 	snapshot batchsaturation.Snapshot,
 	decision batchsaturation.Decision,
 	resultReference *batchsaturation.StoredObjectReference,
+	previousConditions []metav1.Condition,
 ) edgev1alpha1.BatchSaturationStatus {
 	accepted := int32(0)
 	for _, trial := range snapshot.Trials {
@@ -268,7 +284,6 @@ func deriveStatus(
 	}
 	condition := metav1.Condition{
 		Type: batchSaturationConditionDone, ObservedGeneration: generation,
-		LastTransitionTime: metav1.Now(),
 	}
 	switch decision.Action {
 	case batchsaturation.ActionCreateRun, batchsaturation.ActionWait:
@@ -290,8 +305,18 @@ func deriveStatus(
 		condition.Reason = decision.Reason
 		condition.Message = "batch-saturation measurement failed"
 	}
+	condition.LastTransitionTime = conditionTransitionTime(previousConditions, condition)
 	status.Conditions = []metav1.Condition{condition}
 	return status
+}
+
+func conditionTransitionTime(previous []metav1.Condition, desired metav1.Condition) metav1.Time {
+	for _, condition := range previous {
+		if condition.Type == desired.Type && condition.Status == desired.Status {
+			return condition.LastTransitionTime
+		}
+	}
+	return metav1.Now()
 }
 
 func projectResultReference(

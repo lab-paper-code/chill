@@ -100,7 +100,7 @@ the resulting curve plan. Later decisions consume only that recorded plan.
 type BatchSaturationStatus struct {
     ObservedGeneration int64
     Conditions         []metav1.Condition
-    Phase              string  // Measuring | Deriving | Complete | Failed
+    Phase              string  // Measuring | Complete | Failed
     AcceptedTrials     int32
     Outcome            string  // typed terminal outcome
     Result             *ProfilingRunEvidenceReference
@@ -185,6 +185,12 @@ Reconcile(BatchSaturation):
 
 `Owns(&ProfilingRun{})` wakes the parent on child transitions, so the requeue
 after `Wait` is a backstop rather than the primary signal.
+
+A completed campaign still re-derives its result and recovers the immutable
+result write on every reconcile, so periodic resync causes safe but unbounded
+repeated work. A terminal short-circuit needs its own change because status
+cannot become decision authority and an early stored-result read would make the
+object store a dependency before the first Run can be created.
 
 ### Deterministic child names
 
