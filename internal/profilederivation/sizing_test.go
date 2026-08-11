@@ -1,6 +1,7 @@
 package profilederivation
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -115,11 +116,58 @@ func TestBSatConfirmatorySizingRejectsSparseEligibleSpan(t *testing.T) {
 	}
 }
 
+func TestBSatConfirmatorySizingResolvesSparseCandidatePosition(t *testing.T) {
+	curve := testSparseBelowCandidateDiscoveryCurve(t)
+	policy := testBSatPolicy()
+	policy.KMax = 6
+
+	result, err := deriveBSatConfirmatorySizing(curve, 4, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ProjectedReferenceLowerBound == nil ||
+		!equalWithinTolerance(*result.ProjectedReferenceLowerBound, .94) {
+		var got any = result.ProjectedReferenceLowerBound
+		if result.ProjectedReferenceLowerBound != nil {
+			got = *result.ProjectedReferenceLowerBound
+		}
+		t.Fatalf(
+			"projected reference lower bound = %v, want batch 4 lower bound 0.94",
+			got,
+		)
+	}
+}
+
+func TestBSatConfirmatorySizingUsesEligibleSetForDiscoveryBudget(t *testing.T) {
+	curve := testSparseBelowCandidateDiscoveryCurve(t)
+	policy := testBSatPolicy()
+	policy.KMax = 6
+	policy.MaximumActiveRunBudget = 24
+
+	result, err := deriveBSatConfirmatorySizing(curve, 4, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != BSatCandidateOnly || result.ConfirmatoryTrials == nil ||
+		*result.ConfirmatoryTrials != 3 || result.MaximumFeasibleConfirmatoryTrials != 3 ||
+		result.ProjectedTotalActiveRuns == nil || *result.ProjectedTotalActiveRuns != 24 {
+		t.Fatalf("unexpected sparse-budget sizing: %+v", result)
+	}
+}
+
+func TestProjectedBSatPrecisionReturnsTypedErrorForMissingCandidate(t *testing.T) {
+	_, _, err := projectedBSatPrecision([]Point{{Batch: 1}}, nil, 2, 3, .975)
+	var missing *candidatePointNotFoundError
+	if !errors.As(err, &missing) || missing.Candidate != 2 {
+		t.Fatalf("error = %v, want typed missing-candidate error for batch 2", err)
+	}
+}
+
 func TestBSatGlobalStatementCountStartsAtPointPolicyMinimum(t *testing.T) {
 	policy := testBSatPolicy()
 	policy.MinimumPointTrials = 4
 	policy.DiscoveryTrials = 4
-	count, err := bsatGlobalStatementCount(policy)
+	count, err := bsatGlobalStatementCount(policy, policy.KMax)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +213,30 @@ func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64
 	}
 	curve, err := DeriveCurve(
 		[]Pass{pass}, family, testFamilyBaselines(t, family), pointPolicy("variable-point"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return curve
+}
+
+func testSparseBelowCandidateDiscoveryCurve(t *testing.T) Curve {
+	t.Helper()
+	shared := validSharedContract()
+	shared.EligibleBatches = []int{1, 2, 4, 5, 6}
+	contract, err := FreezeCurveFamilyContract(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, err := VerifyCurveFamily(contract, testVerifiedState(contract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	curve, err := DeriveCurve(
+		[]Pass{testPass(t, family, []float64{1, .97, .94, .93, .92}, "sparse-below-candidate")},
+		family,
+		testFamilyBaselines(t, family),
+		pointPolicy("sparse-below-candidate-point"),
 	)
 	if err != nil {
 		t.Fatal(err)

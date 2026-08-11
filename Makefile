@@ -18,7 +18,7 @@ RKNN_SOURCE_ONNX ?=
 RKNN_TOOL_WHEEL ?=
 RKNN_TOOL_VERSION ?=
 RKNN_TARGET_PLATFORM ?=
-RKNN_FIXED_BATCH ?=
+RKNN_BATCH_PROFILES ?=
 RKNN_OUTPUT ?=
 RKNN_CONVERSION_RECORD ?=
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.

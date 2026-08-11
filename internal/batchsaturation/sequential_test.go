@@ -156,7 +156,7 @@ func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
 	method, err := NewSequentialEarlyStop(
 		SequentialConfig{MinDelta: 0.05, Patience: 2, TrialsPerBatch: 3, DivergenceFactor: 2},
 		func(batches []int) (CurveResult, error) {
-			return CurveResult{Continue: true, SelectedBatch: 2, Outcome: "Stopped/CapabilityBoundary"}, nil
+			return CurveResult{Continue: true, SelectedBatch: 2, Detail: "curve detail"}, nil
 		},
 	)
 	if err != nil {
@@ -172,6 +172,9 @@ func TestSequentialStopsWhenTheEligibleSetIsExhausted(t *testing.T) {
 	}
 	if plan.Result == nil || plan.Result.Outcome != "Stopped/CapabilityBoundary" {
 		t.Fatalf("result = %v, want a capability-boundary stop", plan.Result)
+	}
+	if plan.Result.Detail != "curve detail" {
+		t.Fatalf("detail = %v, want curve detail to be preserved", plan.Result.Detail)
 	}
 }
 

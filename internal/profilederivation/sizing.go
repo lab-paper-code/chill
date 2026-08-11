@@ -40,11 +40,12 @@ func deriveBSatConfirmatorySizing(
 	if !exists {
 		return BSatSizingResult{}, errors.New("confirmatory sizing requires a discovery pass")
 	}
-	statementCount, err := bsatGlobalStatementCount(policy)
+	eligibleBatchCount := len(curve.family.contract.record.Shared.EligibleBatches)
+	statementCount, err := bsatGlobalStatementCount(policy, eligibleBatchCount)
 	if err != nil {
 		return BSatSizingResult{}, err
 	}
-	maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate)
+	maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, eligibleBatchCount)
 	result := BSatSizingResult{
 		Status: BSatUnavailable, Code: BSatCodeConfirmatoryBudgetInsufficient,
 		CandidateBatch: candidate, MaximumFeasibleConfirmatoryTrials: maximumTrials,
@@ -73,7 +74,7 @@ func deriveBSatConfirmatorySizing(
 			continue
 		}
 		trialCount := trials
-		totalRuns := policy.KMax*policy.DiscoveryTrials +
+		totalRuns := eligibleBatchCount*policy.DiscoveryTrials +
 			(policy.KMax-candidate+1)*trials
 		lowerBoundCopy := lowerBound
 		maximumRelativeHalfWidthCopy := maximumRelativeHalfWidth
@@ -108,10 +109,10 @@ func validateConfirmatoryEligibleSpan(curve Curve, candidate int, policy BSatPol
 	)
 }
 
-func bsatGlobalStatementCount(policy BSatPolicy) (int, error) {
+func bsatGlobalStatementCount(policy BSatPolicy, eligibleBatchCount int) (int, error) {
 	var total int
 	for candidate := 1; candidate < policy.KMax; candidate++ {
-		maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate)
+		maximumTrials := bsatMaximumFeasibleConfirmatoryTrials(policy, candidate, eligibleBatchCount)
 		if maximumTrials < policy.MinimumPointTrials {
 			continue
 		}
@@ -129,11 +130,23 @@ func bsatGlobalStatementCount(policy BSatPolicy) (int, error) {
 	return total, nil
 }
 
-func bsatMaximumFeasibleConfirmatoryTrials(policy BSatPolicy, candidate int) int {
-	remainingBudget := policy.MaximumActiveRunBudget - policy.KMax*policy.DiscoveryTrials
+func bsatMaximumFeasibleConfirmatoryTrials(
+	policy BSatPolicy,
+	candidate int,
+	eligibleBatchCount int,
+) int {
+	remainingBudget := policy.MaximumActiveRunBudget - eligibleBatchCount*policy.DiscoveryTrials
 	confirmatoryBatches := policy.KMax - candidate + 1
 	budgetMaximum := remainingBudget / confirmatoryBatches
 	return min(policy.MaximumConfirmatoryTrials, budgetMaximum)
+}
+
+type candidatePointNotFoundError struct {
+	Candidate int
+}
+
+func (e *candidatePointNotFoundError) Error() string {
+	return fmt.Sprintf("candidate batch %d is absent from discovery points", e.Candidate)
 }
 
 func projectedBSatPrecision(
@@ -143,7 +156,17 @@ func projectedBSatPrecision(
 	trials int,
 	quantile float64,
 ) (float64, float64, error) {
-	reference := points[candidate-1]
+	candidateIndex := -1
+	for index, point := range points {
+		if point.Batch == candidate {
+			candidateIndex = index
+			break
+		}
+	}
+	if candidateIndex == -1 {
+		return 0, 0, &candidatePointNotFoundError{Candidate: candidate}
+	}
+	reference := points[candidateIndex]
 	referenceBaseline, exists := baselines[reference.StateIdentity]
 	if !exists {
 		return 0, 0, errors.New("reference point lost its exact-state baseline")
@@ -157,7 +180,7 @@ func projectedBSatPrecision(
 		return lowerBound, math.Inf(1), nil
 	}
 	var maximumRelativeHalfWidth float64
-	for later := candidate; later < len(points); later++ {
+	for later := candidateIndex + 1; later < len(points); later++ {
 		laterPoint := points[later]
 		laterBaseline, exists := baselines[laterPoint.StateIdentity]
 		if !exists {

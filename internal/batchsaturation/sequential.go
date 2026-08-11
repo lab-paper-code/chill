@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+const sequentialCapabilityBoundaryOutcome = "Stopped/CapabilityBoundary"
+
 // CurveSource derives the sequential decision over the admitted active batches
 // it is given. The controller supplies it because building a Curve needs
 // evidence the progress rules never see.
@@ -94,7 +96,10 @@ func (s *sequentialEarlyStop) Plan(observed Observed) (Plan, error) {
 	}
 	next, found := nextEligibleBatch(observed.EligibleBatches, highestActive)
 	if !found {
-		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
+		return Plan{Result: &Result{
+			Outcome: sequentialCapabilityBoundaryOutcome,
+			Detail:  result.Detail,
+		}}, nil
 	}
 	measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
 	return Plan{Next: &measurement}, nil

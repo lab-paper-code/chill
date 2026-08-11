@@ -22,7 +22,7 @@ a finite declared profile set.
 Every derived artifact declares its executable batch set as `BatchProfiles`.
 One execution path, artifact identity, and runtime path serve every declared
 profile. The profile set may be sparse. Its contents are catalog configuration;
-intent freeze canonicalizes those contents into strictly increasing batch order.
+family freeze canonicalizes those contents into strictly increasing batch order.
 
 The capability boundary is resolved when measurement intent is frozen. The
 selected artifact's declared profile set becomes the frozen eligible batch set.
