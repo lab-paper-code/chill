@@ -86,6 +86,8 @@ not replaced by code-intelligence checks.
 
 ## Verification boundaries
 
+- Changes to durable CHILL objects or stored evidence must follow
+  [ADR 0019](docs/adr/0019-durable-stored-contract-compatibility.md).
 - Do not add digest format, recomputation, or comparison as a validation gate.
 - Do not add byte-for-byte equality or canonical re-encoding comparisons as a
   validation gate.
