@@ -2,13 +2,22 @@
 
 ## Status
 
-Roadmap with the `ProfilingRun` path through durable execution-evidence
-verification and single-Run admission implemented. Repeated active and idle
-trials, exact-state curve derivation, and the first recorded Plan 5a decision
-are also implemented and live-verified for one two-artifact RKNN campaign.
-The first recorded Plan 5 campaign closed with a typed budget-insufficient result;
-an accepted statistical confirmation and profile publication remain incomplete.
-This document itself does not authorize later API or internal changes.
+Roadmap for the implemented `ProfilingRun` path through durable
+execution-evidence verification and single-Run admission. Execution evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha5`; actuated evidence
+retains the boot identity of each state observation and rejects a Run whose
+previous, target, and restored observations do not share one boot. Permanently
+invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
+Repeated active and idle trials, exact-state curve derivation, and the pure Plan
+5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
+reached an L4 sequential Plan 5a result, but its superseded-schema objects are
+archived outside the testbed Evidence Store and cannot be reloaded by the
+current readers; the result is a scientific record, not current live or
+re-verifiable evidence. The first recorded Plan 5 campaign closed with a typed
+budget-insufficient result; an accepted statistical confirmation and profile
+publication remain incomplete. Plan 9 is design only, with no approved or
+implemented scope. This document itself does not authorize later API or
+internal changes.
 
 ## How to use this directory
 
@@ -174,59 +183,36 @@ Answers only:
 > does production support, and which smallest vertical slice raises the next
 > row to measurement-ready?
 
-P0 records the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
-ORT remains paused at L2 on a physical electrical blocker. Orange Pi CPU ORT
-and two RKNN rows measured with the per-batch artifacts then in use are L4.
-[ADR 0016](../../adr/0016-declared-batch-size-artifact-capability.md) governs the
-current declared-batch-size artifact capability. Batch one was rebuilt and both
-historical rows were remeasured under the same recipe, catalog, and image
-generation, so aligned L3 evidence exists. The pure Plan 5a curve-plan/stop core
-and first recorded campaign then produced and re-verified all 12 post-recording Runs,
-selected batch one, and stopped at the batch-three capability boundary. That
-recorded boundary describes the two per-batch artifacts in that campaign. The
-result promotes those two exact RKNN rows to L4 and carries the evidence strength
-of a sequential Plan 5a decision.
+P0 defines the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
+ORT is paused at L2 on a physical electrical blocker. Orange Pi CPU ORT has an
+L3 result. The separately artifacted Orange Pi RKNN batch-one and batch-two
+rows reached L4 through a recorded sequential Plan 5a campaign that selected
+batch one and stopped at the batch-three capability boundary. Those RKNN
+measurements remain an archived scientific result: their superseded-schema
+campaign and Run objects are outside the testbed Evidence Store and the strict
+current readers cannot reload them. [ADR 0016](../../adr/0016-declared-batch-size-artifact-capability.md)
+governs the declared-batch-size artifact capability used by future campaigns.
+
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
-assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
-[ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) records
-the tested AGX Orin boundary between catalogued modes and the in-place-reachable
-subset authorized by actuation policies.
-[ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md)
-separates durable transition evidence from the Runs that consume an established
-state, and requires an external witness for a transition its actor cannot
-survive.
-The Profiler now creates the durable `NodeActuation` handoff from frozen Run
-inputs, and the actuator boundary strictly projects only an exact local
-Node name/UID match. The pure apply/read-back/settle/restore decision core and
-exact Node-UID Lease primitive are implemented. An internal status reconciler
-now drives those primitives against the durable handoff, and a fail-closed
-workload-safety adapter reports exact active Pod blockers outside explicit
-namespace and Pod-UID allowances. The reconciler also rejects an uninstalled
-actuation-policy name before any Lease, safety, or host port and enters the
-same restoration path if policy authorization drifts after state was retained.
-The opt-in command and Operator/Helm DaemonSet lifecycle are now implemented,
-with exact Node and self-Pod identity supplied through the downward API, shared
-Go policy canonicalization, namespaced Lease/handoff RBAC, and a deletion gate
-that retains the operand while any handoff remains unfinished or unrestored.
-The first Jetson NVPModel host adapter now executes only a configured argv,
-parses an independent name/ID query, and keeps command completion distinct from
-controller read-back. Helm declares the exact binary, library, configuration,
-state, and sysfs mounts without privileged mode or added capabilities. The
-Profiler now creates a non-fixed Run's measurement Job only after verified and
-settled target state, advances the handoff to restoration after a terminal Job,
-and withholds evidence finalization until ordered restoration is proven.
-Actuated finalization retains the exact Run/handoff identities, typed
-previous/target/restored observations, and lifecycle timestamps in execution
-evidence v1alpha2 while fixed Runs remain on v1alpha1. The chart remains
-disabled by default. The opt-in AGX Orin CPU ORT MODE_50W slice has now produced
-three sequential accepted active Runs and three sequential accepted
-model-loaded-idle Runs on current images. Retained reload and the production
-projections proved one shared execution-state identity and one shared
-owner-bound environment identity across all six, so both exact rows are L3. A
-read-only derivation produced the first batch-one incremental-energy estimate,
-but no multi-batch campaign or L4 claim follows from it.
-Catalog presence and historical standalone smoke are not production execution
-evidence.
+governs the Run-owned actuation path, and
+[ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
+the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
+`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha5
+retains boot identity across the three actuation observations, rejects
+cross-boot execution evidence, and gives permanently invalid evidence the
+terminal `EvidenceInvalid` outcome. [ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md)
+governs the witness boundary.
+
+One `jetson-agx-orin-64g` CPU ORT comparison measured
+`mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
+three admitted model-loaded-idle Runs in each authorized state. The exact
+aggregates are recorded in ADR 0017. From those aggregates, `MAXN` provides
+1.326x the throughput at 1.714x the incremental energy per item; the two idle
+means differ by 0.0334 W, so idle observations alone do not characterize the
+knob. Both power-mode slices have recorded L3 results. The experiment does not
+establish another Node, model, execution path, batch size, RKNN path, GPU path,
+or L4 campaign result. Catalog presence and standalone smoke are not production
+execution evidence.
 
 ### 7. Batch-saturation control path — approved, not implemented
 
