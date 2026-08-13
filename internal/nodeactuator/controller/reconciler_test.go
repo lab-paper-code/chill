@@ -116,7 +116,7 @@ func (a *memoryHostActuator) Apply(
 	return nil
 }
 
-func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T) {
+func TestHandoffReconcilerFencesApplyRecordsBootIdentityAndRestoresBeforeLeaseRelease(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	handoff := testNodeActuation()
@@ -130,6 +130,16 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	safety := &staticSafetyChecker{allowed: true, now: now}
 	host := &memoryHostActuator{target: nvpTarget(1)}
 	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+	bootIdentities := []string{"previous-boot-id", "target-boot-id", "restored-boot-id"}
+	bootIdentityReads := 0
+	reconciler.readBootIdentity = func() (string, error) {
+		if bootIdentityReads >= len(bootIdentities) {
+			return "", errors.New("unexpected boot identity read")
+		}
+		bootID := bootIdentities[bootIdentityReads]
+		bootIdentityReads++
+		return bootID, nil
+	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
 
 	reconcileTimes(t, ctx, reconciler, request, 5)
@@ -141,7 +151,10 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	reconcileTimes(t, ctx, reconciler, request, 3)
 	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseSettling || len(host.applyCalls) != 1 ||
-		current.Status.TargetObservation == nil || current.Status.VerifiedAt == nil {
+		current.Status.PreviousObservation == nil || current.Status.TargetObservation == nil ||
+		current.Status.PreviousObservation.BootID != bootIdentities[0] ||
+		current.Status.TargetObservation.BootID != bootIdentities[1] ||
+		current.Status.VerifiedAt == nil || bootIdentityReads != 2 {
 		t.Fatalf("target verification = phase:%s applyCalls:%d status:%#v", current.Status.Phase, len(host.applyCalls), current.Status)
 	}
 	now = now.Add(62 * time.Second)
@@ -159,7 +172,9 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	reconcileTimes(t, ctx, reconciler, request, 4)
 	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestored || len(host.applyCalls) != 2 ||
-		current.Status.RestoredObservation == nil || lease.releaseCalls != 0 {
+		current.Status.RestoredObservation == nil ||
+		current.Status.RestoredObservation.BootID != bootIdentities[2] ||
+		bootIdentityReads != 3 || lease.releaseCalls != 0 {
 		t.Fatalf("restoration = phase:%s applyCalls:%d releases:%d status:%#v",
 			current.Status.Phase, len(host.applyCalls), lease.releaseCalls, current.Status)
 	}
@@ -474,6 +489,7 @@ func newTestHandoffReconciler(
 	if err != nil {
 		t.Fatal(err)
 	}
+	reconciler.readBootIdentity = func() (string, error) { return "test-boot-id", nil }
 	reconciler.now = func() time.Time { return *now }
 	return reconciler
 }
@@ -529,10 +545,12 @@ func readyNodeActuation(now time.Time) *edgev1alpha1.NodeActuation {
 			Verdict: edgev1alpha1.NodeActuationSafetyAllowed, ObservedAt: timestamp,
 		},
 		PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-			PowerMode: "mode-1", Actuator: projectAPITarget(nvpTarget(1)), ObservedAt: timestamp,
+			PowerMode: "mode-1", Actuator: projectAPITarget(nvpTarget(1)),
+			BootID: "test-boot-id", ObservedAt: timestamp,
 		},
 		TargetObservation: &edgev1alpha1.NodeActuationObservation{
-			PowerMode: "mode-2", Actuator: projectAPITarget(nvpTarget(2)), ObservedAt: timestamp,
+			PowerMode: "mode-2", Actuator: projectAPITarget(nvpTarget(2)),
+			BootID: "test-boot-id", ObservedAt: timestamp,
 		},
 		ApplyStartedAt: &timestamp, VerifiedAt: &timestamp,
 		SettlingStartedAt: &timestamp, ReadyAt: &timestamp,

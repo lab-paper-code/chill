@@ -117,6 +117,11 @@ type NodeActuationObservation struct {
 
 	Actuator PowerModeActuator `json:"actuator"`
 
+	// BootID is the host boot identity retained with this state observation.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	BootID string `json:"bootID"`
+
 	ObservedAt metav1.Time `json:"observedAt"`
 }
 

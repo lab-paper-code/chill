@@ -72,11 +72,12 @@ func (o HandoffReconcilerOptions) Validate() error {
 // port. The Profiler owns desired stage; this reconciler owns observed status.
 type HandoffReconciler struct {
 	client.Client
-	lease    LeaseController
-	safety   WorkloadSafetyChecker
-	actuator HostActuator
-	options  HandoffReconcilerOptions
-	now      func() time.Time
+	lease            LeaseController
+	safety           WorkloadSafetyChecker
+	actuator         HostActuator
+	readBootIdentity func() (string, error)
+	options          HandoffReconcilerOptions
+	now              func() time.Time
 }
 
 func NewHandoffReconciler(
@@ -94,6 +95,7 @@ func NewHandoffReconciler(
 	}
 	return &HandoffReconciler{
 		Client: kubeClient, lease: lease, safety: safety, actuator: actuator,
+		readBootIdentity: readBootIdentity,
 		options: HandoffReconcilerOptions{
 			AssignedNode:    options.AssignedNode,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), options.AllowedPolicies...),
@@ -376,7 +378,7 @@ func (r *HandoffReconciler) executeObservePrevious(
 	handoff *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
-	observation, err := r.actuator.Observe(ctx, snapshot.Request)
+	observation, err := r.observeHost(ctx, snapshot.Request)
 	if err != nil {
 		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageObservePrevious, Reason: "PreviousObservationFailed", Message: err.Error(),
@@ -428,7 +430,7 @@ func (r *HandoffReconciler) executeObserveTarget(
 	handoff *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
-	observation, err := r.actuator.Observe(ctx, snapshot.Request)
+	observation, err := r.observeHost(ctx, snapshot.Request)
 	if err != nil {
 		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationFailed", Message: err.Error(),
@@ -494,7 +496,7 @@ func (r *HandoffReconciler) executeObserveRestored(
 	handoff *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
-	observation, err := r.actuator.Observe(ctx, snapshot.Request)
+	observation, err := r.observeHost(ctx, snapshot.Request)
 	if err != nil {
 		return r.markFailed(ctx, handoff, snapshot.Now, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageRestore, Reason: "RestoreObservationFailed", Message: err.Error(),
@@ -625,6 +627,7 @@ func projectHostObservation(observation nodeactuator.Observation) *edgev1alpha1.
 	return &edgev1alpha1.NodeActuationObservation{
 		PowerMode:  observation.PowerMode,
 		Actuator:   projectAPITarget(observation.Target),
+		BootID:     observation.BootID,
 		ObservedAt: metav1.NewTime(observation.ObservedAt),
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha5"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
@@ -46,6 +46,7 @@ type NamespacedObjectFacts struct {
 type ActuationObservation struct {
 	PowerMode  string                      `json:"powerMode"`
 	Actuator   profilingrun.ActuatorTarget `json:"actuator"`
+	BootID     string                      `json:"bootID"`
 	ObservedAt time.Time                   `json:"observedAt"`
 }
 

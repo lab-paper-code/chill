@@ -306,6 +306,7 @@ func observation(id int32, observedAt time.Time) Observation {
 	return Observation{
 		PowerMode:  powerMode,
 		Target:     Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: id}},
+		BootID:     "test-boot-id",
 		ObservedAt: observedAt,
 	}
 }

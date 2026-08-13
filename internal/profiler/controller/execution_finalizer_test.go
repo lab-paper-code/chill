@@ -113,7 +113,8 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRestoredOwnedActuation(t *testi
 	handoff.Spec.StageRequestedAt = metav1.NewTime(base.Add(time.Minute))
 	observation := func(at time.Time) *edgev1alpha1.NodeActuationObservation {
 		return &edgev1alpha1.NodeActuationObservation{
-			PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: metav1.NewTime(at),
+			PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator,
+			BootID: "test-boot-id", ObservedAt: metav1.NewTime(at),
 		}
 	}
 	readyAt := metav1.NewTime(base.Add(30 * time.Second))
@@ -140,7 +141,8 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRestoredOwnedActuation(t *testi
 		t.Fatal(err)
 	}
 	if facts == nil || facts.Run.UID != string(run.UID) || facts.Handoff.UID != string(handoff.UID) ||
-		facts.Target.PowerMode != handoff.Spec.PowerMode || !facts.RestoredAt.Equal(restoredAt.Time) {
+		facts.Target.PowerMode != handoff.Spec.PowerMode || facts.Target.BootID != "test-boot-id" ||
+		!facts.RestoredAt.Equal(restoredAt.Time) {
 		t.Fatalf("actuation facts = %#v", facts)
 	}
 

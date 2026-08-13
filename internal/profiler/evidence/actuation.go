@@ -46,6 +46,12 @@ func (a ActuationFacts) validate(
 	if err := a.Restored.validate("restored"); err != nil {
 		return err
 	}
+	if a.Previous.BootID != a.Target.BootID || a.Previous.BootID != a.Restored.BootID {
+		return fmt.Errorf(
+			"actuation boot identity differs across previous %q, target %q, and restored %q observations",
+			a.Previous.BootID, a.Target.BootID, a.Restored.BootID,
+		)
+	}
 	if intent.Actuation == nil || a.Target.PowerMode != intent.Actuation.PowerMode ||
 		!reflect.DeepEqual(a.Target.Actuator, intent.Actuation.Actuator) {
 		return errors.New("actuation target observation does not match frozen intent")
@@ -78,6 +84,9 @@ func (a ActuationFacts) validate(
 func (o ActuationObservation) validate(label string) error {
 	if strings.TrimSpace(o.PowerMode) == "" || strings.TrimSpace(o.PowerMode) != o.PowerMode {
 		return fmt.Errorf("%s actuation power mode is required without surrounding whitespace", label)
+	}
+	if strings.TrimSpace(o.BootID) == "" || strings.TrimSpace(o.BootID) != o.BootID {
+		return fmt.Errorf("%s actuation boot identity is required without surrounding whitespace", label)
 	}
 	if err := o.Actuator.Validate(); err != nil {
 		return fmt.Errorf("validate %s actuation target: %w", label, err)

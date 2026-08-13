@@ -138,6 +138,10 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 
 func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T) {
 	t.Parallel()
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha5"
+	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
+		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
+	}
 	intent, raw, execution := validActuatedExecutionEvidence(t)
 	payload, err := execution.CanonicalJSON(raw)
 	if err != nil {
@@ -156,11 +160,15 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 	tests := []struct {
 		name   string
 		mutate func(*ExecutionEvidence)
+		match  string
 	}{
-		{name: "unsupported schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = "foreign"
-		}},
+		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
+		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }},
+		{name: "target boot identity drift", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.Target.BootID = "other-boot-id"
+		}, match: "actuation boot identity differs across previous \"test-boot-id\", target \"other-boot-id\", and restored \"test-boot-id\" observations"},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
 		}},
@@ -182,6 +190,8 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 			test.mutate(&candidate)
 			if err := candidate.Validate(raw); err == nil {
 				t.Fatalf("%s drift was accepted", test.name)
+			} else if test.match != "" && !strings.Contains(err.Error(), test.match) {
+				t.Fatalf("Validate() error = %q, want %q", err, test.match)
 			}
 		})
 	}
@@ -726,13 +736,16 @@ func validActuatedExecutionEvidence(
 			Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
 		},
 		Previous: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(-2 * time.Minute),
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
+			BootID: "test-boot-id", ObservedAt: completed.Add(-2 * time.Minute),
 		},
 		Target: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(-90 * time.Second),
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
+			BootID: "test-boot-id", ObservedAt: completed.Add(-90 * time.Second),
 		},
 		Restored: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(), ObservedAt: completed.Add(2 * time.Second),
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
+			BootID: "test-boot-id", ObservedAt: completed.Add(2 * time.Second),
 		},
 		ReadyAt:            completed.Add(-70 * time.Second),
 		RestoreRequestedAt: completed.Add(time.Second),

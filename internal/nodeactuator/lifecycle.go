@@ -82,6 +82,7 @@ const (
 type Observation struct {
 	PowerMode  string
 	Target     Target
+	BootID     string
 	ObservedAt time.Time
 }
 
@@ -91,6 +92,9 @@ func (o Observation) Validate() error {
 	}
 	if strings.TrimSpace(o.PowerMode) != o.PowerMode {
 		return errors.New("observation power mode cannot contain surrounding whitespace")
+	}
+	if strings.TrimSpace(o.BootID) == "" || strings.TrimSpace(o.BootID) != o.BootID {
+		return errors.New("observation boot identity is required without surrounding whitespace")
 	}
 	if o.ObservedAt.IsZero() {
 		return errors.New("observation time is required")
