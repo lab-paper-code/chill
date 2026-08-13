@@ -8,6 +8,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,17 +22,13 @@ func (r *RunReconciler) reconcileRequiredState(
 	run *edgev1alpha1.ProfilingRun,
 	frozen FrozenRun,
 ) (bool, error) {
-	transition, err := r.findConfirmingTransition(ctx, run, frozen.Prepared.Intent)
+	transition, unconfirmed, err := r.findConfirmingTransition(ctx, run, frozen.Prepared.Intent)
 	if err != nil {
 		return true, err
 	}
 	if transition == nil {
 		return true, r.publishExecutionOutcome(
-			ctx,
-			run,
-			metav1.ConditionFalse,
-			requiredStateNotConfirmedReason,
-			"the most recent successful Node transition does not confirm the Run's required state",
+			ctx, run, metav1.ConditionFalse, requiredStateNotConfirmedReason, unconfirmed,
 		)
 	}
 	if err := r.publishActuationReference(ctx, run, transition); err != nil {
@@ -43,29 +40,37 @@ func (r *RunReconciler) reconcileRequiredState(
 	return false, nil
 }
 
+// findConfirmingTransition returns the transition that confirms the frozen
+// required state. A nil transition with a non-empty reason is permanent: the
+// recorded reference and a terminal NodeActuation are both immutable, so no
+// retry can turn one into a confirmation. Only a transient API failure returns
+// an error, which requeues.
 func (r *RunReconciler) findConfirmingTransition(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	intent profilingrun.Intent,
-) (*edgev1alpha1.NodeActuation, error) {
+) (*edgev1alpha1.NodeActuation, string, error) {
 	if run.Status.Actuation != nil {
 		transition := &edgev1alpha1.NodeActuation{}
 		key := client.ObjectKey{Namespace: run.Namespace, Name: run.Status.Actuation.Name}
 		if err := r.Get(ctx, key, transition); err != nil {
-			return nil, fmt.Errorf("get recorded confirming NodeActuation %s: %w", key, err)
+			if apierrors.IsNotFound(err) {
+				return nil, "the recorded confirming Node transition no longer exists", nil
+			}
+			return nil, "", fmt.Errorf("get recorded confirming NodeActuation %s: %w", key, err)
 		}
 		if string(transition.UID) != run.Status.Actuation.UID {
-			return nil, errors.New("recorded confirming NodeActuation UID does not match the observed object")
+			return nil, "the recorded confirming Node transition was replaced by a different object", nil
 		}
 		if err := validateConfirmingTransition(intent, transition); err != nil {
-			return nil, fmt.Errorf("validate recorded confirming NodeActuation: %w", err)
+			return nil, "the recorded Node transition does not confirm the Run's required state", nil
 		}
-		return transition, nil
+		return transition, "", nil
 	}
 
 	transitions := &edgev1alpha1.NodeActuationList{}
 	if err := r.List(ctx, transitions, client.InNamespace(run.Namespace)); err != nil {
-		return nil, fmt.Errorf("list NodeActuations for state confirmation: %w", err)
+		return nil, "", fmt.Errorf("list NodeActuations for state confirmation: %w", err)
 	}
 	var latest *edgev1alpha1.NodeActuation
 	for index := range transitions.Items {
@@ -79,9 +84,9 @@ func (r *RunReconciler) findConfirmingTransition(
 		}
 	}
 	if latest == nil || validateConfirmingTransition(intent, latest) != nil {
-		return nil, nil
+		return nil, "the most recent successful Node transition does not confirm the Run's required state", nil
 	}
-	return latest.DeepCopy(), nil
+	return latest.DeepCopy(), "", nil
 }
 
 func successfullyCompletedOnNode(
