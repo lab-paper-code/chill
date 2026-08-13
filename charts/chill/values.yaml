@@ -179,18 +179,6 @@ powerActuation:
       actuatorKind: JetsonNVPModel
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900
-    - name: orin-mode-15w-v1
-      deviceClass: jetson-agx-orin-64g
-      powerMode: MODE_15W
-      actuatorKind: JetsonNVPModel
-      settlingDurationSeconds: 60
-      maxActuationDurationSeconds: 900
-    - name: orin-mode-30w-v1
-      deviceClass: jetson-agx-orin-64g
-      powerMode: MODE_30W
-      actuatorKind: JetsonNVPModel
-      settlingDurationSeconds: 60
-      maxActuationDurationSeconds: 900
     - name: orin-mode-50w-v1
       deviceClass: jetson-agx-orin-64g
       powerMode: MODE_50W

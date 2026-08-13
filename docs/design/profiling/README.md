@@ -188,6 +188,9 @@ result promotes those two exact RKNN rows to L4 and carries the evidence strengt
 of a sequential Plan 5a decision.
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
 assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
+[ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) records
+the tested AGX Orin boundary between catalogued modes and the in-place-reachable
+subset authorized by actuation policies.
 The Profiler now creates the durable `NodeActuation` handoff from frozen Run
 inputs, and the actuator boundary strictly projects only an exact local
 Node name/UID match. The pure apply/read-back/settle/restore decision core and
