@@ -7,14 +7,16 @@
 ## Status
 
 Active implementation plan. Raspberry Pi 5 CPU ORT is L2 pending a physical
-power-supply correction, and Orange Pi CPU ORT is L3. The separately artifacted
-Orange Pi RKNNLite batch-one and batch-two rows reached L4 through three active
-and three model-loaded-idle Runs per row and a recorded sequential Plan 5a
-campaign. That campaign selected batch one and recorded batch three as the
-capability boundary of those artifacts. Its campaign and Run objects use
-superseded schemas, are archived outside the testbed Evidence Store, and cannot
-be reloaded by the strict current readers. The L4 result records what the
-experiment established; it is not current live or re-verifiable evidence.
+power-supply correction, and Orange Pi CPU ORT is L3. The recorded Orange Pi
+RKNNLite campaign used one artifact for three active Runs at each of batches
+one, two, and four plus three batch-one model-loaded-idle Runs. All 12 trials
+were accepted, and the campaign produced `Stopped/NoFurtherImprovement`;
+production reconstruction matched every stored incremental-work value exactly.
+Its execution evidence uses v1alpha4, and the campaign and Run objects are
+archived outside the testbed Evidence Store and cannot be reloaded by the
+strict current readers. The recorded L4 result is not current live or
+re-verifiable evidence and does not establish a universal `b_sat=1` or
+statistical confirmation.
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) governs
 the declared-batch-size artifact capability used by future campaigns.
 
@@ -34,17 +36,28 @@ governs the witness boundary.
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
 three admitted model-loaded-idle Runs in each authorized state. ADR 0017
-records the exact power and throughput aggregates. They give `MAXN` 1.326x the
-throughput at 1.714x the incremental energy per item relative to `MODE_50W`.
-The idle means differ by 0.0334 W, so the knob is not characterizable without
-load. Both exact power-mode slices have recorded L3 results; neither has the
-multiple-batch evidence required for L4. No result transfers to another Node,
-model, execution path, batch size, RKNN path, GPU path, or TensorRT row.
+records these aggregates:
+
+| Power mode | `P_idle` (W) | `P_act` (W) | Throughput (items/s) | Incremental energy (J/item) |
+|---|---:|---:|---:|---:|
+| `MODE_50W` | 10.3989 ± 0.0015 | 19.151 ± 0.072 | 200.18 ± 0.33 | 0.04372 |
+| `MAXN` | 10.4323 ± 0.0147 | 30.326 ± 0.078 | 265.50 ± 0.49 | 0.07493 |
+
+They give `MAXN` 1.326x the throughput at 1.714x the incremental energy per
+item relative to `MODE_50W`, while mean and p99 latency fall to 0.754x and
+0.763x. The idle means differ by 0.0334 W, so the knob is not characterizable
+without load. Both exact power-mode slices have recorded L3 results; their
+source Runs use superseded v1alpha4 and are archival rather than
+current-code-reloadable proof. They do not prove boot continuity under the
+v1alpha5 contract, and neither slice has the multiple-batch evidence required
+for L4. No result transfers to another Node, model, execution path, batch size,
+RKNN path, GPU path, or TensorRT row.
 
 The testbed Evidence Store holds current-schema objects only. Measurements
 whose source objects use superseded schemas remain archival scientific records,
 not live or current-code-reloadable proof. Later slices remain deferred until
-their stated entry condition is met or this plan is explicitly revised.
+their stated entry condition is met or a separately approved scope authorizes
+them.
 
 This file owns work order, decisions, and completion conditions. Exact row
 level and blocking reason belong in the support matrix. Live execution,
@@ -79,10 +92,10 @@ corresponding level.
 |---|---|---|---|
 | paused | Raspberry Pi 5 CPU ORT / fixed | L2 | Correct the electrical condition before collecting new campaign evidence. |
 | completed | Orange Pi CPU ORT / fixed | L3 | Retained active and model-loaded-idle evidence is admitted under stable derivation identities. |
-| completed | Orange Pi RKNNLite / fixed base slice | L3 foundation | The admitted active and model-loaded-idle result is archival; its superseded-schema objects are not reloadable by current code. |
-| completed | AGX Orin CPU ORT / MODE_50W | L3 | Three active and three model-loaded-idle Runs were admitted at batch one; multiple-batch evidence would be required for L4. |
-| completed | AGX Orin CPU ORT / MAXN | L3 | Three active and three model-loaded-idle Runs were admitted at batch one; multiple-batch evidence would be required for L4. |
-| completed | RKNNLite model and batch expansion | L4 | The archived Plan 5a campaign selected batch one and stopped at the historical artifacts' batch-three boundary; a current-schema campaign is required for live re-verification. |
+| completed | Orange Pi RKNNLite / declared-batch-size base slice | L3 foundation | The admitted active and model-loaded-idle result is archival; its superseded-schema objects are not reloadable by current code. |
+| completed | AGX Orin CPU ORT / MODE_50W | L3 | Three active and three model-loaded-idle Runs were admitted at batch one; their v1alpha4 evidence is archival, and multiple-batch evidence would be required for L4. |
+| completed | AGX Orin CPU ORT / MAXN | L3 | Three active and three model-loaded-idle Runs were admitted at batch one; their v1alpha4 evidence is archival, and multiple-batch evidence would be required for L4. |
+| completed | RKNNLite model and batch expansion | L4 | One artifact produced 12 accepted trials across active batches one, two, and four and batch-one model-loaded idle, ending `Stopped/NoFurtherImprovement`; a current-schema campaign is required for live re-verification. |
 
 ## Stable decisions
 

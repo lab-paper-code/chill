@@ -10,14 +10,17 @@ previous, target, and restored observations do not share one boot. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
 Repeated active and idle trials, exact-state curve derivation, and the pure Plan
 5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
-reached an L4 sequential Plan 5a result, but its superseded-schema objects are
-archived outside the testbed Evidence Store and cannot be reloaded by the
-current readers; the result is a scientific record, not current live or
-re-verifiable evidence. The first recorded Plan 5 campaign closed with a typed
-budget-insufficient result; an accepted statistical confirmation and profile
-publication remain incomplete. Plan 9 is design only, with no approved or
-implemented scope. This document itself does not authorize later API or
-internal changes.
+used one artifact at batches one, two, and four, completed 12 accepted trials,
+and produced `Stopped/NoFurtherImprovement`; production reconstruction matched
+the retained incremental-work values exactly. Its execution evidence uses
+v1alpha4, and the campaign and Run objects are archived outside the testbed
+Evidence Store and cannot be reloaded by the current readers. The L4 result is
+an archival scientific record, not current live or re-verifiable evidence, and
+does not establish a universal `b_sat=1` or statistical confirmation. The first
+recorded Plan 5 campaign closed with a typed budget-insufficient result; an
+accepted statistical confirmation and profile publication remain incomplete.
+Plan 9 is design only, with no approved or implemented scope. This document
+itself does not authorize later API or internal changes.
 
 ## How to use this directory
 
@@ -185,12 +188,15 @@ Answers only:
 
 P0 defines the L0--L4 vocabulary and exact support matrix. Raspberry Pi 5 CPU
 ORT is paused at L2 on a physical electrical blocker. Orange Pi CPU ORT has an
-L3 result. The separately artifacted Orange Pi RKNN batch-one and batch-two
-rows reached L4 through a recorded sequential Plan 5a campaign that selected
-batch one and stopped at the batch-three capability boundary. Those RKNN
-measurements remain an archived scientific result: their superseded-schema
-campaign and Run objects are outside the testbed Evidence Store and the strict
-current readers cannot reload them. [ADR 0016](../../adr/0016-declared-batch-size-artifact-capability.md)
+L3 result. The recorded Orange Pi RKNN campaign used one artifact for three
+active Runs at each of batches one, two, and four plus three batch-one
+model-loaded-idle Runs. All 12 trials were accepted, and the campaign produced
+`Stopped/NoFurtherImprovement`; production reconstruction matched every stored
+incremental-work value exactly. This is a recorded L4 result, but its execution
+evidence uses v1alpha4, and the campaign and Run objects are outside the testbed
+Evidence Store. The strict current readers cannot reload them. It does not
+establish a universal `b_sat=1` or statistical confirmation.
+[ADR 0016](../../adr/0016-declared-batch-size-artifact-capability.md)
 governs the declared-batch-size artifact capability used by future campaigns.
 
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
@@ -207,11 +213,14 @@ One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
 three admitted model-loaded-idle Runs in each authorized state. The exact
 aggregates are recorded in ADR 0017. From those aggregates, `MAXN` provides
-1.326x the throughput at 1.714x the incremental energy per item; the two idle
-means differ by 0.0334 W, so idle observations alone do not characterize the
-knob. Both power-mode slices have recorded L3 results. The experiment does not
-establish another Node, model, execution path, batch size, RKNN path, GPU path,
-or L4 campaign result. Catalog presence and standalone smoke are not production
+1.326x the throughput at 1.714x the incremental energy per item, while mean
+and p99 latency fall to 0.754x and 0.763x. The two idle means differ by 0.0334
+W, so idle observations alone do not characterize the knob. Both power-mode
+slices have recorded L3 results. Their source Runs use superseded v1alpha4 and
+are archival rather than current-code-reloadable proof; they do not prove boot
+continuity under the v1alpha5 contract. The experiment does not establish
+another Node, model, execution path, batch size, RKNN path, GPU path, or L4
+campaign result. Catalog presence and standalone smoke are not production
 execution evidence.
 
 ### 7. Batch-saturation control path — approved, not implemented
