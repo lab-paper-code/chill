@@ -15,17 +15,38 @@ const (
 	VerdictAccepted Verdict = "Accepted"
 	VerdictFailed   Verdict = "Failed"
 
-	ActionCreateRun Action = "CreateRun"
-	ActionWait      Action = "Wait"
-	ActionFinish    Action = "Finish"
-	ActionFail      Action = "Fail"
+	TransitionInFlight    TransitionOutcome = "InFlight"
+	TransitionEstablished TransitionOutcome = "Established"
+	TransitionFailed      TransitionOutcome = "Failed"
+
+	ActionCreateTransition Action = "CreateTransition"
+	ActionCreateRun        Action = "CreateRun"
+	ActionWait             Action = "Wait"
+	ActionFinish           Action = "Finish"
+	ActionFail             Action = "Fail"
 )
 
 type (
-	WorkloadMode string
-	Verdict      string
-	Action       string
+	WorkloadMode      string
+	Verdict           string
+	TransitionOutcome string
+	Action            string
 )
+
+// State is the smallest immutable campaign state needed to decide whether its
+// sweep may begin.
+type State struct {
+	TargetNode  string
+	DeviceClass string
+	PowerMode   string
+}
+
+// Transition is one owned NodeActuation projected into the progress rules.
+// EstablishedState is present only after that transition reaches Ready.
+type Transition struct {
+	Outcome          TransitionOutcome
+	EstablishedState *State
+}
 
 // Measurement names one trial to run. Batch is meaningful for both modes: the
 // idle baseline is measured at the batch whose state it belongs to.
@@ -42,10 +63,14 @@ type Trial struct {
 	Verdict     Verdict
 }
 
-// Snapshot is built from the immutable spec and the owned Runs only. It has no
-// status field, so a decision cannot depend on previously reported progress.
+// Snapshot is built from the immutable spec and owned NodeActuation and Run
+// objects only. It has no status field, so a decision cannot depend on
+// previously reported progress.
 type Snapshot struct {
-	RetryLimit int
+	RequiredState      State
+	TransitionRequired bool
+	Transition         *Transition
+	RetryLimit         int
 	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
@@ -97,6 +122,19 @@ func (m Measurement) Validate() error {
 	return nil
 }
 
+func (s State) Validate() error {
+	if s.TargetNode == "" {
+		return errors.New("required state target Node is empty")
+	}
+	if s.DeviceClass == "" {
+		return errors.New("required state DeviceClass is empty")
+	}
+	if s.PowerMode == "" {
+		return errors.New("required state power mode is empty")
+	}
+	return nil
+}
+
 func (s Snapshot) Validate() error {
 	if s.RetryLimit < 0 {
 		return errors.New("retry limit must not be negative")
@@ -113,6 +151,32 @@ func (s Snapshot) Validate() error {
 			return errors.New("planned batch sizes must be strictly increasing")
 		}
 		previous = batch
+	}
+	if err := s.RequiredState.Validate(); err != nil {
+		return err
+	}
+	if !s.TransitionRequired && s.Transition != nil {
+		return errors.New("a campaign without actuation cannot own a transition")
+	}
+	if s.Transition != nil {
+		switch s.Transition.Outcome {
+		case TransitionInFlight, TransitionFailed:
+			if s.Transition.EstablishedState != nil {
+				return errors.New("an incomplete transition cannot establish state")
+			}
+		case TransitionEstablished:
+			if s.Transition.EstablishedState == nil {
+				return errors.New("an established transition must project its state")
+			}
+			if err := s.Transition.EstablishedState.Validate(); err != nil {
+				return fmt.Errorf("validate established state: %w", err)
+			}
+			if *s.Transition.EstablishedState != s.RequiredState {
+				return errors.New("owned transition established a different state")
+			}
+		default:
+			return fmt.Errorf("unsupported transition outcome %q", s.Transition.Outcome)
+		}
 	}
 	seen := make(map[Measurement]map[int]struct{}, len(s.Trials))
 	for _, trial := range s.Trials {

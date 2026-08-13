@@ -36,6 +36,11 @@ human diligence to types, CEL, and object identity.
 `ProfilingRun` remains independently submittable. It is not demoted to an
 internal execution unit.
 
+The campaign also owns the one `NodeActuation` that establishes its declared
+state before the first Run. State establishment is a shared progress rule, not
+a method concern: `sequential-early-stop` receives admitted measurements only.
+A selection without an actuation policy enters the Run rules directly.
+
 ## Checkpoint 1: API surface
 
 ### Shared state extraction
@@ -120,17 +125,17 @@ version, and size — because the full result is an evidence-store object and is
 located exactly the way a Run locates its own evidence.
 
 Status is a derived display for operators and `kubectl get`. The decision input
-is `spec` plus the owned `ProfilingRun` objects, never status. The `Snapshot`
-type carries no status field, so reading it back is not possible rather than
-discouraged.
+is `spec` plus the owned `NodeActuation` and `ProfilingRun` objects, never
+status. The `Snapshot` type carries no status field, so reading it back is not
+possible rather than discouraged.
 
 ## Checkpoint 2: Method modules
 
 ### Where the split falls
 
-Progress rules that every method shares — one live Run at a time, retry within
-the declared limit, waiting — belong to one function. Only the measurement
-question is pluggable.
+Progress rules that every method shares — establish the declared state, one
+live Run at a time, retry within the declared limit, waiting — belong to one
+function. Only the measurement question is pluggable.
 
 ```go
 // Shared progress rules.
@@ -152,12 +157,15 @@ type Plan struct {
 }
 ```
 
-`Decide` resolves in order: a live Run yields `Wait`; an unfinished trial within
-`RetryLimit` yields a retry at the same batch with the next attempt number;
-exceeding the limit yields a typed failure; otherwise the method is asked what
-to measure next. `Snapshot` and `Observed` both carry the batch sizes recorded in
-the curve plan. A gap inside that set is skipped by advancing to the next declared
-batch size.
+`Decide` first requires the campaign state: an absent required transition yields
+`CreateTransition`, an in-flight transition yields `Wait`, and a failed
+transition yields `TransitionFailed`. Once the owned transition establishes the
+required state, or no actuation policy applies, the Run rules resolve in order:
+a live Run yields `Wait`; an unfinished trial within `RetryLimit` yields a retry
+at the same batch with the next attempt number; exceeding the limit yields a
+typed failure; otherwise the method is asked what to measure next. `Snapshot`
+and `Observed` both carry the batch sizes recorded in the curve plan. A gap
+inside that set is skipped by advancing to the next declared batch size.
 
 `Plan` receives admitted trials only. A method has no way to see a failed,
 pending, or retried attempt, so preferring one measurement over another on the
@@ -184,15 +192,21 @@ count the same thing.
 ```text
 Reconcile(BatchSaturation):
   1. resolve the artifact facts and call NewCurvePlan
-  2. list owned ProfilingRun objects; verify each ownerRef UID
-  3. project spec, recorded curve plan, and Runs into a pure Snapshot
+  2. list owned NodeActuation and ProfilingRun objects; verify each ownerRef UID
+  3. project spec, recorded curve plan, transition, and Runs into a pure Snapshot
   4. Decide(snapshot)
-  5. execute: CreateRun | Wait | Finish | Fail
+  5. execute: CreateTransition | CreateRun | Wait | Finish | Fail
   6. update status as derived display
 ```
 
-`Owns(&ProfilingRun{})` wakes the parent on child transitions, so the requeue
-after `Wait` is a backstop rather than the primary signal.
+`Owns(&NodeActuation{})` and `Owns(&ProfilingRun{})` wake the parent on child
+transitions, so the requeue after `Wait` is a backstop rather than the primary
+signal.
+
+One campaign operates on a Node at a time. The testbed records this operating
+assumption without a concurrent-campaign guard, epoch, fence, claim, successor
+protocol, or tenure mechanism. The NodeActuator Lease serializes concurrent
+transition applies, not whole measurement sweeps.
 
 A completed campaign still re-derives its result and recovers the immutable
 result write on every reconcile, so periodic resync causes safe but unbounded
@@ -236,6 +250,7 @@ trusted.
 
 | Kind | Handling |
 |---|---|
+| An owned transition fails | End the campaign with `TransitionFailed`; trial retry limits do not retry transitions |
 | Curve plan batch sizes exhausted | The method returns the capability-boundary stop before creating an outside-set Run |
 | A created Run fails, including a declared batch size absent from the built artifact | Retry within `RetryLimit`; exceeding it ends the measurement with a typed failure |
 
@@ -285,11 +300,14 @@ progression.
 ## Verification boundary
 
 Pure decision and method logic is covered by table tests in the style of
-`internal/nodeactuator/lifecycle_test.go`. One test reconstructs a snapshot from
-an arbitrary set of child Runs and asserts the decision is unchanged, which is
-the claim that makes owned-Run reconstruction preferable to accumulated status.
-Controller coverage is two envtest scenarios: a completed measurement and an
-exhausted retry limit.
+`internal/nodeactuator/lifecycle_test.go`. One test drives an absent state
+through one in-flight and then established transition and counts exactly one
+`CreateTransition` while three Runs complete the sweep. Another reconstructs a
+snapshot from an arbitrary set of child Runs and asserts the decision is
+unchanged, which is the claim that makes owned-object reconstruction preferable
+to accumulated status. Controller coverage includes completed-measurement and
+exhausted-retry envtest scenarios plus focused transition builder and projection
+tests.
 
 Four invariants are enforced by construction and need no test: `Snapshot` has no
 status field; `Observed` exposes admitted trials only; child names collide on

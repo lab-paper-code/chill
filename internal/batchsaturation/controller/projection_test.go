@@ -2,6 +2,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
@@ -21,7 +22,7 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "v1",
 	}
-	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, []int{1, 2})
+	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1, 2}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
 	}, 1)
 	run.OwnerReferences[0].UID = "someone-else"
-	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, []int{1}); err == nil {
+	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false); err == nil {
 		t.Fatal("a Run owned by another object was accepted")
 	}
 }
@@ -64,7 +65,7 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 		runs = append(runs, *run)
 	}
 
-	snapshot, err := ProjectSnapshot(parent, runs, []int{1})
+	snapshot, err := ProjectSnapshot(parent, runs, nil, []int{1}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +79,49 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	status := deriveStatus(parent.Generation, snapshot, decision, nil, nil)
 	if status.Phase != batchSaturationPhaseFailed || status.Outcome != "RetryLimitExhausted" {
 		t.Fatalf("campaign status = %#v, want Failed/RetryLimitExhausted", status)
+	}
+}
+
+func TestProjectSnapshotProjectsEstablishedStateFromTheOwnedTransition(t *testing.T) {
+	parent := testParent()
+	material := &TransitionMaterial{
+		Node:        edgev1alpha1.ProfilingRunObjectReference{Name: parent.Spec.State.TargetNode, UID: "node-uid"},
+		DeviceClass: parent.Spec.State.Candidate.DeviceClass,
+		PowerMode:   parent.Spec.State.Candidate.PowerMode,
+		Actuator: edgev1alpha1.PowerModeActuator{
+			Kind:           edgev1alpha1.PowerModeActuatorJetsonNVPModel,
+			JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 4},
+		},
+		PolicyName: "jetson-mode", SettlingDurationSeconds: 30, MaxActuationDurationSeconds: 300,
+	}
+	transition, err := BuildTransition(parent, material, time.Unix(1000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition.Generation = 1
+	readyAt := metav1.NewTime(time.Unix(1100, 0))
+	transition.Status = edgev1alpha1.NodeActuationStatus{
+		ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady,
+		TargetObservation: &edgev1alpha1.NodeActuationObservation{
+			PowerMode: material.PowerMode, Actuator: material.Actuator,
+			ObservedAt: metav1.NewTime(time.Unix(1090, 0)),
+		},
+		ReadyAt: &readyAt,
+	}
+
+	snapshot, err := ProjectSnapshot(parent, nil, []edgev1alpha1.NodeActuation{*transition}, []int{1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := batchsaturation.State{
+		TargetNode:  parent.Spec.State.TargetNode,
+		DeviceClass: parent.Spec.State.Candidate.DeviceClass,
+		PowerMode:   parent.Spec.State.Candidate.PowerMode,
+	}
+	if snapshot.RequiredState != want || snapshot.Transition == nil ||
+		snapshot.Transition.Outcome != batchsaturation.TransitionEstablished ||
+		snapshot.Transition.EstablishedState == nil || *snapshot.Transition.EstablishedState != want {
+		t.Fatalf("projected campaign state = %#v", snapshot)
 	}
 }
 

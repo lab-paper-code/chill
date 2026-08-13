@@ -15,6 +15,18 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	if err := snapshot.Validate(); err != nil {
 		return Decision{}, fmt.Errorf("validate snapshot: %w", err)
 	}
+	if snapshot.TransitionRequired {
+		if snapshot.Transition == nil {
+			return Decision{Action: ActionCreateTransition, Reason: "RequiredStateNotEstablished"}, nil
+		}
+		switch snapshot.Transition.Outcome {
+		case TransitionInFlight:
+			return Decision{Action: ActionWait, Reason: "TransitionInFlight"}, nil
+		case TransitionFailed:
+			return Decision{Action: ActionFail, Reason: "TransitionFailed"}, nil
+		case TransitionEstablished:
+		}
+	}
 	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
 	attempts := make(map[Measurement]int)
 	accepted := make(map[Measurement]struct{})

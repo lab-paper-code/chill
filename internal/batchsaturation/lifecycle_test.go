@@ -22,6 +22,13 @@ func active(batch int) Measurement {
 //nolint:unparam // Keep the active and idle test builders symmetric for later batch cases.
 func idle(batch int) Measurement { return Measurement{WorkloadMode: WorkloadModeIdle, Batch: batch} }
 
+func directSnapshot() Snapshot {
+	return Snapshot{
+		RequiredState: State{TargetNode: "orangepi5", DeviceClass: "orangepi-5-plus-16g", PowerMode: "fixed"},
+		RetryLimit:    2, PlannedBatchSizes: []int{1},
+	}
+}
+
 func TestDecide(t *testing.T) {
 	first := idle(1)
 	for _, testCase := range []struct {
@@ -33,37 +40,54 @@ func TestDecide(t *testing.T) {
 	}{
 		{
 			name:     "ask the method when nothing has run",
-			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}},
+			snapshot: directSnapshot(),
 			plan:     Plan{Next: &first},
 			want:     ActionCreateRun, wantRun: &first,
 		},
 		{
 			name: "wait while a trial is live",
-			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
-				{Measurement: idle(1), Attempt: 1, Verdict: VerdictPending},
-			}},
+			snapshot: func() Snapshot {
+				s := directSnapshot()
+				s.Trials = []Trial{
+					{Measurement: idle(1), Attempt: 1, Verdict: VerdictPending},
+				}
+				return s
+			}(),
 			want: ActionWait,
 		},
 		{
 			name: "retry a failed attempt within the limit",
-			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
-				{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
-			}},
+			snapshot: func() Snapshot {
+				s := directSnapshot()
+				s.Trials = []Trial{
+					{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
+				}
+				return s
+			}(),
 			want: ActionCreateRun, wantRun: &first,
 		},
 		{
 			name: "fail once the retry limit is exhausted",
-			snapshot: Snapshot{RetryLimit: 1, PlannedBatchSizes: []int{1}, Trials: []Trial{
-				{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
-				{Measurement: idle(1), Attempt: 2, Verdict: VerdictFailed},
-			}},
+			snapshot: func() Snapshot {
+				s := directSnapshot()
+				s.RetryLimit = 1
+				s.Trials = []Trial{
+					{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
+					{Measurement: idle(1), Attempt: 2, Verdict: VerdictFailed},
+				}
+				return s
+			}(),
 			want: ActionFail,
 		},
 		{
 			name: "finish when the method returns a result",
-			snapshot: Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
-				{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
-			}},
+			snapshot: func() Snapshot {
+				s := directSnapshot()
+				s.Trials = []Trial{
+					{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
+				}
+				return s
+			}(),
 			plan: Plan{Result: &Result{Outcome: "Stopped/NoFurtherImprovement"}},
 			want: ActionFinish,
 		},
@@ -85,11 +109,13 @@ func TestDecide(t *testing.T) {
 
 func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
 	method := &stubMethod{plan: Plan{Next: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 1}}}
-	_, err := Decide(Snapshot{RetryLimit: 2, PlannedBatchSizes: []int{1}, Trials: []Trial{
+	snapshot := directSnapshot()
+	snapshot.Trials = []Trial{
 		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 		{Measurement: idle(1), Attempt: 2, Verdict: VerdictAccepted},
 		{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
-	}}, method)
+	}
+	_, err := Decide(snapshot, method)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,13 +126,12 @@ func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
 
 func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	method := &stubMethod{plan: Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}}
-	snapshot := Snapshot{
-		RetryLimit:        1,
-		PlannedBatchSizes: []int{1, 2, 4},
-		Trials: []Trial{
-			{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
-			{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
-		},
+	snapshot := directSnapshot()
+	snapshot.RetryLimit = 1
+	snapshot.PlannedBatchSizes = []int{1, 2, 4}
+	snapshot.Trials = []Trial{
+		{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
+		{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
 	}
 
 	if _, err := Decide(snapshot, method); err != nil {
@@ -116,4 +141,89 @@ func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	if !reflect.DeepEqual(method.seen.PlannedBatchSizes, []int{1, 2, 4}) {
 		t.Fatalf("planned batch sizes = %v, want [1 2 4]", method.seen.PlannedBatchSizes)
 	}
+}
+
+func TestDecideEmitsOneTransitionForAWholeSweep(t *testing.T) {
+	required := State{TargetNode: "jetsono", DeviceClass: "jetson-agx-orin-64g", PowerMode: "MODE_50W"}
+	snapshot := Snapshot{
+		RequiredState: required, TransitionRequired: true,
+		RetryLimit: 1, PlannedBatchSizes: []int{1, 2},
+	}
+	measurements := []Measurement{idle(1), active(1), active(2)}
+	method := &sweepMethod{measurements: measurements}
+	transitionCount := 0
+	runCount := 0
+
+	decision, err := Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionCreateTransition {
+		t.Fatalf("first action = %q, want %q", decision.Action, ActionCreateTransition)
+	}
+	transitionCount++
+
+	snapshot.Transition = &Transition{Outcome: TransitionInFlight}
+	decision, err = Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionWait {
+		t.Fatalf("in-flight action = %q, want %q", decision.Action, ActionWait)
+	}
+
+	snapshot.Transition = &Transition{Outcome: TransitionEstablished, EstablishedState: &required}
+	for {
+		decision, err = Decide(snapshot, method)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch decision.Action {
+		case ActionCreateTransition:
+			transitionCount++
+		case ActionCreateRun:
+			runCount++
+			snapshot.Trials = append(snapshot.Trials, Trial{
+				Measurement: *decision.Run, Attempt: 1, Verdict: VerdictAccepted,
+			})
+		case ActionFinish:
+			if transitionCount != 1 || runCount != len(measurements) {
+				t.Fatalf("created %d transitions and %d Runs, want 1 and %d", transitionCount, runCount, len(measurements))
+			}
+			return
+		default:
+			t.Fatalf("unexpected sweep action %q", decision.Action)
+		}
+	}
+}
+
+func TestDecideMakesAFailedTransitionTerminalBeforeTrialRules(t *testing.T) {
+	snapshot := directSnapshot()
+	snapshot.TransitionRequired = true
+	snapshot.Transition = &Transition{Outcome: TransitionFailed}
+	snapshot.Trials = []Trial{{Measurement: idle(1), Attempt: 1, Verdict: VerdictPending}}
+	method := &stubMethod{plan: Plan{Next: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 1}}}
+
+	decision, err := Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionFail || decision.Reason != "TransitionFailed" {
+		t.Fatalf("decision = %#v, want Fail/TransitionFailed", decision)
+	}
+	if len(method.seen.PlannedBatchSizes) != 0 {
+		t.Fatal("failed transition reached the measurement method")
+	}
+}
+
+type sweepMethod struct {
+	measurements []Measurement
+}
+
+func (m *sweepMethod) Plan(observed Observed) (Plan, error) {
+	if len(observed.Accepted) == len(m.measurements) {
+		return Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}, nil
+	}
+	next := m.measurements[len(observed.Accepted)]
+	return Plan{Next: &next}, nil
 }

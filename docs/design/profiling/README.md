@@ -19,11 +19,11 @@ an archival scientific record, not current live or re-verifiable evidence, and
 does not establish a universal `b_sat=1` or statistical confirmation. The first
 recorded Plan 5 campaign closed with a typed budget-insufficient result; an
 accepted statistical confirmation and profile publication remain incomplete.
-Plan 9 is partially implemented: `NodeActuation` is a one-way transition
-independent of every Run, and a non-fixed Run executes only when the newest
-successful transition on its target Node confirms its frozen state. Campaign
-assembly remains design work. This document itself does not authorize later
-API or internal changes.
+Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
+every Run, a `BatchSaturation` creates and owns the one transition that
+establishes its declared state, and a non-fixed Run executes only when the
+newest successful transition on its target Node confirms its frozen state.
+This document itself does not authorize later API or internal changes.
 
 ## How to use this directory
 
@@ -237,10 +237,12 @@ Answers only:
 > without a human step between Runs?
 
 The `sequential-early-stop` control path is implemented. A `BatchSaturation`
-resource owns the `ProfilingRun` objects it creates, reconstructs progress from
-those Runs, decides the next measurement from admitted evidence, and publishes
-one typed outcome. The recorded Orange Pi RKNN campaign exercised this path
-with one artifact at batches one, two, and four and produced
+resource owns the one `NodeActuation` that establishes its declared state and
+the `ProfilingRun` objects in its sweep, reconstructs progress from those owned
+objects, decides one next action from current evidence, and publishes one typed
+outcome. A fixed selection creates no transition. The recorded Orange Pi RKNN
+campaign exercised this direct path with one artifact at batches one, two, and
+four and produced
 `Stopped/NoFurtherImprovement`. The `two-pass-confirmatory` method remains
 design work. Plan 5a and Plan 5 keep the estimand, acceptance rule, and sizing
 method; this plan owns only the control path that executes them, and supersedes
@@ -265,7 +267,7 @@ boundary becomes a catalog fact resolved before any Run exists. One artifact
 defines one state key and one model-loaded-idle baseline. ADR 0016 records this
 decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
-### 9. Transition extraction — Run boundary implemented
+### 9. Transition extraction — implemented
 
 [plans/09-transition-extraction.md](plans/09-transition-extraction.md)
 
@@ -277,19 +279,20 @@ Answers only:
 `NodeActuation` is a one-way operation toward a declared target, with an
 immutable deadline bounding the transition through verified settling. `Ready`
 is terminal and releases the Node Lease while leaving the established state in
-place. A non-fixed Run selects the most recent successfully completed
+place. One `BatchSaturation` owns one `NodeActuation` and emits its creation as
+one step of the campaign decision before creating any Run. A non-fixed Run
+selects the most recent successfully completed
 `NodeActuation` on its exact target Node and records that transition before it
 creates a Job. If no completed transition exists, or the newest one established
 a different mode, the Run ends with `RequiredStateNotConfirmed` and creates no
 Job. Fixed Runs execute directly. The Run never creates, owns, or repairs a
-transition. Until campaign assembly is implemented, transitions are submitted
-manually.
+transition.
 
 Confirmation is intentionally allowed to be stale. Nothing else changes Node
-power state on this testbed, and the operating procedure permits no transition
-during a measurement sweep. No epoch, fence, claim, re-observation, or tenure
-protocol enforces that assumption. Campaign-emitted transition steps remain in
-this plan's implementation scope.
+power state on this testbed, the operating procedure permits no transition
+during a measurement sweep, and only one campaign operates on a Node at a time.
+No epoch, fence, claim, re-observation, concurrent-campaign guard, or tenure
+protocol enforces those assumptions.
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
 protocols, recovery state machines, compatibility readers, reboot capability,

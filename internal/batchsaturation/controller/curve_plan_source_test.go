@@ -39,9 +39,12 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatalf("construct curve-plan source: %v", err)
 	}
 
-	first, firstReference, err := source.Resolve(context.Background(), parent)
+	first, firstReference, transition, err := source.Resolve(context.Background(), parent)
 	if err != nil {
 		t.Fatalf("record curve plan: %v", err)
+	}
+	if transition != nil {
+		t.Fatalf("fixed campaign projected transition material: %+v", transition)
 	}
 	wantBatches := []int{1, 2, 4}
 	shared := first.Shared()
@@ -71,7 +74,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	// canonical length.
 	storedPayload = append([]byte(" \n"), storedPayload...)
 	store.objects[store.lastIdentity.Location()] = storedPayload
-	_, recoveredReference, err := source.Resolve(context.Background(), parent)
+	_, recoveredReference, _, err := source.Resolve(context.Background(), parent)
 	if err != nil {
 		t.Fatalf("recover existing curve plan: %v", err)
 	}
@@ -84,7 +87,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 
 	preparer.nodeUID = "replacement-node-uid"
-	if _, _, err := source.Resolve(context.Background(), parent); err == nil ||
+	if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
 		!strings.Contains(err.Error(), "stored curve plan disagrees") {
 		t.Fatalf("recomputed plan drift error = %v", err)
 	}
@@ -152,7 +155,7 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("construct curve-plan source: %v", err)
 			}
-			if _, _, err := source.Resolve(context.Background(), parent); err == nil ||
+			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
 				!strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
 			}

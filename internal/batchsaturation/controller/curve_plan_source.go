@@ -80,12 +80,12 @@ func NewCurvePlanSource(
 func (s *CurvePlanSource) Resolve(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchSaturation,
-) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, error) {
+) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *TransitionMaterial, error) {
 	if parent == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New("a parent BatchSaturation is required")
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("a parent BatchSaturation is required")
 	}
 	if parent.UID == "" {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New("BatchSaturation UID is required")
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("BatchSaturation UID is required")
 	}
 
 	selection := profiler.CandidateSelection{
@@ -96,14 +96,14 @@ func (s *CurvePlanSource) Resolve(
 	}
 	resolved, err := s.resolver.ResolveCandidate(ctx, selection)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("resolve curve-plan candidate: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
 	}
 	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("decode curve-plan candidate report: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
 	if report.ArtifactCapability == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New(
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New(
 			"a batch-saturation campaign requires an artifact that declares its batch sizes; " +
 				"a runtime that consumes batch as a call argument is not supported here",
 		)
@@ -119,21 +119,25 @@ func (s *CurvePlanSource) Resolve(
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("prepare active curve-plan intent: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
 	}
 	if active.Intent.State.Artifact != report.Selection.Artifact {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
+	}
+	transition, err := projectTransitionMaterial(active)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("project campaign transition: %w", err)
 	}
 	idle, err := s.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("prepare idle curve-plan intent: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
 	}
 	conversion, err := s.resolveConversion(ctx, parent.Spec.State.Candidate.ModelSpec, report)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, err
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
 	}
 	spec, err := admission.ProjectCurvePlanSpec(
 		parent.Name,
@@ -144,13 +148,14 @@ func (s *CurvePlanSource) Resolve(
 		plannedBatchSizes,
 	)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("project curve-plan specification: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("project curve-plan specification: %w", err)
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("construct curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("construct curve plan: %w", err)
 	}
-	return s.record(ctx, parent.UID, plan)
+	recorded, reference, err := s.record(ctx, parent.UID, plan)
+	return recorded, reference, transition, err
 }
 
 func (s *CurvePlanSource) prepare(

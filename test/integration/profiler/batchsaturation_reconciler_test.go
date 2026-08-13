@@ -21,21 +21,22 @@ import (
 )
 
 type fakeCurvePlanSource struct {
-	plan      profilederivation.CurvePlan
-	reference batchsaturation.StoredObjectReference
-	calls     int
+	plan       profilederivation.CurvePlan
+	reference  batchsaturation.StoredObjectReference
+	transition *batchcontroller.TransitionMaterial
+	calls      int
 }
 
 func (s *fakeCurvePlanSource) Resolve(
 	_ context.Context,
 	parent *edgev1alpha1.BatchSaturation,
-) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, error) {
+) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *batchcontroller.TransitionMaterial, error) {
 	s.calls++
 	if parent == nil || parent.UID == "" {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{},
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil,
 			fmt.Errorf("parent identity is missing")
 	}
-	return s.plan, s.reference, nil
+	return s.plan, s.reference, s.transition, nil
 }
 
 type fakeCurveDeriver struct {

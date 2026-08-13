@@ -35,7 +35,7 @@ type ReconcileCurvePlanSource interface {
 	Resolve(
 		context.Context,
 		*edgev1alpha1.BatchSaturation,
-	) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, error)
+	) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *TransitionMaterial, error)
 }
 
 // ReconcileCurveDeriver derives the method result from accepted owned Runs.
@@ -69,6 +69,7 @@ type BatchSaturationReconciler struct {
 	curvePlans   ReconcileCurvePlanSource
 	curves       ReconcileCurveDeriver
 	resultWriter ReconcileResultWriter
+	now          func() time.Time
 }
 
 func NewBatchSaturationReconciler(
@@ -82,6 +83,7 @@ func NewBatchSaturationReconciler(
 	}
 	return &BatchSaturationReconciler{
 		client: kubeClient, curvePlans: curvePlans, curves: curves, resultWriter: resultWriter,
+		now: time.Now,
 	}, nil
 }
 
@@ -94,7 +96,7 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 		return ctrl.Result{}, nil
 	}
 
-	curvePlan, curvePlanReference, err := r.curvePlans.Resolve(ctx, parent)
+	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans.Resolve(ctx, parent)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("resolve BatchSaturation curve plan: %w", err)
 	}
@@ -102,7 +104,13 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	snapshot, err := ProjectSnapshot(parent, runs, curvePlan.PlannedBatchSizes())
+	transitions, err := r.listTransitions(ctx, parent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	snapshot, err := ProjectSnapshot(
+		parent, runs, transitions, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
+	)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -130,6 +138,17 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 	var resultReference *batchsaturation.StoredObjectReference
 	alreadyExists := false
 	switch decision.Action {
+	case batchsaturation.ActionCreateTransition:
+		transition, buildErr := BuildTransition(parent, transitionMaterial, r.now())
+		if buildErr != nil {
+			return ctrl.Result{}, fmt.Errorf("build NodeActuation: %w", buildErr)
+		}
+		if createErr := r.client.Create(ctx, transition); createErr != nil {
+			if !apierrors.IsAlreadyExists(createErr) {
+				return ctrl.Result{}, fmt.Errorf("create NodeActuation %q: %w", transition.Name, createErr)
+			}
+			alreadyExists = true
+		}
 	case batchsaturation.ActionCreateRun:
 		if decision.Run == nil {
 			return ctrl.Result{}, errors.New("CreateRun decision omitted its measurement")
@@ -173,6 +192,22 @@ func (r *BatchSaturationReconciler) Reconcile(ctx context.Context, request ctrl.
 		return ctrl.Result{RequeueAfter: waitBackstop}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+func (r *BatchSaturationReconciler) listTransitions(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchSaturation,
+) ([]edgev1alpha1.NodeActuation, error) {
+	list := &edgev1alpha1.NodeActuationList{}
+	if err := r.client.List(
+		ctx,
+		list,
+		client.InNamespace(parent.Namespace),
+		client.MatchingLabels{labelBatchSaturation: parent.Name},
+	); err != nil {
+		return nil, fmt.Errorf("list BatchSaturation NodeActuations: %w", err)
+	}
+	return list.Items, nil
 }
 
 func (r *BatchSaturationReconciler) listRuns(
@@ -286,7 +321,7 @@ func deriveStatus(
 		Type: batchSaturationConditionDone, ObservedGeneration: generation,
 	}
 	switch decision.Action {
-	case batchsaturation.ActionCreateRun, batchsaturation.ActionWait:
+	case batchsaturation.ActionCreateTransition, batchsaturation.ActionCreateRun, batchsaturation.ActionWait:
 		status.Phase = batchSaturationPhaseMeasuring
 		condition.Status = metav1.ConditionUnknown
 		condition.Reason = decision.Reason

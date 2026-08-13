@@ -9,11 +9,11 @@
 
 ## Status
 
-Partially implemented. `NodeActuation` is a one-way transition with a single
-terminal outcome and no Run owner. A non-fixed Run confirms its frozen state
+Implemented. `NodeActuation` is a one-way transition with a single terminal
+outcome and no Run owner. A `BatchSaturation` creates and owns the transition
+that establishes its declared state. A non-fixed Run confirms its frozen state
 from the newest successful transition on its target Node, records that
-transition, and only then creates its Job. Campaign assembly remains in this
-plan. ADR 0018 owns the boundary.
+transition, and only then creates its Job. ADR 0018 owns the boundary.
 
 ## Question
 
@@ -72,9 +72,10 @@ immutable spec and owned objects, and delegates the measurement question to the
 method, which returns exactly one next measurement or a terminal result. Because
 the next step follows from the previous result, no precomputed step list exists.
 
-A transition therefore joins the decision's action vocabulary rather than a
-list. When the required state is not established, the decision emits one
-transition atom and waits; otherwise it proceeds to measurements as before.
+A transition therefore joins the decision's action vocabulary as
+`CreateTransition` rather than joining a list. When the required state is not
+established, the decision emits one transition atom and waits; otherwise it
+proceeds to measurements.
 
 The observed Node state is projected from the owned transition atom, not from
 reported status, so `Snapshot` keeps its property that a decision cannot depend
@@ -82,8 +83,15 @@ on previously reported progress.
 
 One `BatchSaturation` measures one state. A two-state comparison is two objects.
 A campaign therefore emits at most one transition before its sweep and none
-during it, and `sequential-early-stop` is unchanged. A failed transition is a
-terminal campaign outcome; the retry limit governs trials, not transitions.
+during it, and `sequential-early-stop` has no state input. A failed transition
+produces the terminal campaign outcome `TransitionFailed`; the retry limit
+governs trials, not transitions.
+
+The campaign controller watches its owned `NodeActuation` alongside its owned
+Runs. It projects transition progress from that object, creates the transition
+with the campaign as controller owner, and creates no transition for a
+selection without an actuation policy. Fixed Orange Pi RKNN campaigns therefore
+enter the Run rules directly.
 
 ## Scope boundary
 
@@ -93,13 +101,8 @@ recovery state machines; stored-schema compatibility readers; reboot-class
 actuation; and the transition-cost measurement itself, which is a separate unit
 that consumes the atom this plan produces.
 
-The stored contract changes once, when the extraction is complete. Objects
-written under the prior contract are deleted rather than migrated, per
+Stored objects from another contract are deleted rather than migrated, per
 [ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md).
-
-Until the campaign action vocabulary emits transition atoms, an operator
-submits each required `NodeActuation` manually. There is no automatic Run
-fallback when confirmation is absent.
 
 ## Verification
 
@@ -107,5 +110,8 @@ The Run boundary is verified when an unconfirmed Run reaches terminal
 `RequiredStateNotConfirmed` without creating a transition or Job, a confirmed
 Run records the newest successful matching transition before Job creation, and
 evidence rejects a Job container that started before that transition completed.
-The extraction is complete when a `BatchSaturation` sweep of N Runs in one state
-performs one transition rather than 2N.
+The campaign boundary is verified by driving a pure sweep from absent state,
+through one in-flight and then established owned transition, to three accepted
+Runs and a terminal method result. The test counts `CreateTransition` decisions
+and requires exactly one for the whole sweep. Controller projection tests bind
+the established state to the campaign-owned transition object.

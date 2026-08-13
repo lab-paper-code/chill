@@ -6,11 +6,12 @@ import (
 )
 
 // SetupWithManager registers direct BatchSaturation events and
-// framework-derived wakeups from its owned ProfilingRuns.
+// framework-derived wakeups from its owned transitions and ProfilingRuns.
 func (r *BatchSaturationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("batchsaturation").
 		For(&edgev1alpha1.BatchSaturation{}).
+		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&edgev1alpha1.ProfilingRun{}).
 		Complete(r)
 }
