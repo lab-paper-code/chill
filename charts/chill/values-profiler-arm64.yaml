@@ -38,7 +38,7 @@ nodeActuator:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-node-actuator"
-    tag: "sha-8923ca9"
+    tag: "sha-6619649"
     pullPolicy: Always
   # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
   # node-role.kubernetes.io/edge:NoSchedule. The chart default
@@ -66,7 +66,7 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-0556453"
+    tag: "sha-6619649"
     pullPolicy: Always
 
 profiling:
