@@ -235,12 +235,6 @@ nodeActuator:
         mountPath: /host/usr/sbin/nvpmodel
         type: File
         readOnly: true
-      # nvpmodel reads this file to identify the platform and errors without it.
-      - name: host-device-tree-compatible
-        hostPath: /proc/device-tree/compatible
-        mountPath: /proc/device-tree/compatible
-        type: File
-        readOnly: true
       - name: host-lib
         hostPath: /lib/aarch64-linux-gnu
         mountPath: /host/lib/aarch64-linux-gnu
