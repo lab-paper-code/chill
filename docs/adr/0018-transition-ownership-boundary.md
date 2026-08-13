@@ -95,6 +95,15 @@ State is not restored automatically. A Node holds its last established state
 until another transition changes it, which is what allows consecutive Runs to
 share one state and what removes the 2N-transition cost.
 
+The Node Lease covers the transition rather than the measurement that follows
+it, since holding it for a measurement is the Run ownership this decision
+removes. Workload safety refuses to mutate a Node under a Pod outside the
+configured allowed namespaces, but a measurement Job runs in a namespace that
+configuration allows, so it does not by itself prevent a transition during a
+measurement. What prevents one is that a campaign emits a transition before its
+sweep and none during it, and that one campaign operates on a Node at a time.
+That is an operating assumption of the testbed, recorded rather than enforced.
+
 This decision does not authorize CHILL to reboot a Node. Reboot-class actuation
 remains outside the actuator contract, and ADR 0017's fail-closed refusal of an
 interactive reboot request is unchanged.

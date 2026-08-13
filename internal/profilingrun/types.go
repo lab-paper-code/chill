@@ -113,7 +113,7 @@ type CPUContract struct {
 
 // ActuationContract binds a non-fixed selected power mode to the typed target
 // and configured policy entry that must converge before execution.
-// Mutable observations and restoration state remain outside the intent.
+// Mutable observations remain outside the intent.
 type ActuationContract struct {
 	PowerMode  string         `json:"powerMode"`
 	Actuator   ActuatorTarget `json:"actuator"`

@@ -108,10 +108,6 @@ func isTerminalReason(reason string) bool {
 		"ExecutionLost",
 		"JobFailed",
 		"NodeActuationFailed",
-		"NodeRestoreFailed",
-		"NodeActuationEndedBeforeExecution",
-		"NodeActuationInterruptedExecution",
-		"NodeActuationOrderingInvalid",
 		"EvidenceInvalid":
 		return true
 	default:
