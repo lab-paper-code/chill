@@ -246,7 +246,7 @@ their procedural sections. `ProfilingRun` remains independently submittable.
 The plan does not add an estimator, a `DeviceProfile` API, or scheduler
 consumption.
 
-### 8. Declared-batch-size artifacts — approved, under implementation
+### 8. Declared-batch-size artifacts — implemented
 
 [plans/08-declared-batch-size-artifacts.md](plans/08-declared-batch-size-artifacts.md)
 

@@ -8,9 +8,11 @@
 
 ## Status
 
-Approved design, under implementation. It replaces the premise beneath Plan 7
-and retires ADR 0014. Plans 5 and 5a keep the estimand, acceptance rule, and
-sizing method unchanged.
+Implemented for the declared-batch-size artifact path. Derived RKNN artifacts
+declare a finite batch-size set and batch-invariant input shape, one execution
+path serves that set, and the recorded curve plan drives the sweep. It replaces
+the premise beneath Plan 7 and retires ADR 0014. Plans 5 and 5a keep the
+estimand, acceptance rule, and sizing method unchanged.
 
 ## Question
 
