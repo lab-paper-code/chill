@@ -31,8 +31,8 @@ requeue.
 [ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
 bounds the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN`
 states; `MODE_30W` and `MODE_15W` are not authorized.
-[ADR 0018](../../../adr/0018-state-transition-operation-and-witness-boundary.md)
-governs the witness boundary.
+[ADR 0018](../../../adr/0018-transition-ownership-boundary.md) separates
+transition ownership from the Run.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and

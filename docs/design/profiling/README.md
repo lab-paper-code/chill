@@ -20,8 +20,8 @@ an archival scientific record, not current live or re-verifiable evidence, and
 does not establish a universal `b_sat=1` or statistical confirmation. The first
 recorded Plan 5 campaign closed with a typed budget-insufficient result; an
 accepted statistical confirmation and profile publication remain incomplete.
-Plan 9 is design only, with no approved or implemented scope. This document
-itself does not authorize later API or internal changes.
+Plan 9 is approved in scope and not yet implemented. This document itself does
+not authorize later API or internal changes.
 
 ## How to use this directory
 
@@ -201,15 +201,15 @@ establish a universal `b_sat=1` or statistical confirmation.
 governs the declared-batch-size artifact capability used by future campaigns.
 
 Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)
-governs the Run-owned actuation path, and
+governs the actuation safety boundary,
+[ADR 0018](../../adr/0018-transition-ownership-boundary.md) separates transition
+ownership from the Run, and
 [ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
 the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
 `MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha6
 binds the independent previous, target, and restored observations to the Run,
 checks the target and restoration facts, and gives permanently invalid evidence
-the terminal `EvidenceInvalid` outcome. Boot identity belongs to the separate
-transition-evidence witness boundary governed by
-[ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md).
+the terminal `EvidenceInvalid` outcome.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
@@ -263,23 +263,27 @@ boundary becomes a catalog fact resolved before any Run exists. One artifact
 defines one state key and one model-loaded-idle baseline. ADR 0016 records this
 decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
-### 9. Durable Node state-transition control path — design only
+### 9. Transition extraction — approved, not implemented
 
-[plans/09-durable-node-state-transition-control-path.md](plans/09-durable-node-state-transition-control-path.md)
+[plans/09-transition-extraction.md](plans/09-transition-extraction.md)
 
 Answers only:
 
-> Can a Node state transition be established, witnessed, and then consumed by
-> many `ProfilingRun` objects, without any single Run owning, holding, or
-> restoring it?
+> A `ProfilingRun` owns the transition that establishes its own state, so no
+> window exists in which transition duration, transition energy, and the
+> survival flag can be observed. What is the smallest change that makes a
+> transition separately observable and separately assemblable?
 
-Design only. No scope is approved and nothing is implemented. The plan proposes
-a durable transition owner, per-Node serialization and consumer fencing,
-failure recovery, one-time state-precondition binding, separate transition
-evidence admission, bounded stored-schema incompatibility, and a
-drain-and-cutover migration from Run-owned actuation. It does not authorize
-reboot capability or any API, controller, RBAC, deployment, evidence-schema, or
-migration change.
+Transition ownership leaves the Run. `NodeActuation` becomes a one-way operation
+toward a declared target, returning to an earlier state is another operation
+rather than a restore phase, and a Run declares a required state it confirms by
+read-back but never establishes. A campaign emits a transition as one step of
+the same decision loop that emits its measurements, so one sweep of N Runs in
+one state performs one transition rather than 2N.
+[ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
+The plan excludes a new resource kind, epochs, fences, tenure, successor
+protocols, recovery state machines, compatibility readers, reboot capability,
+and the transition-cost measurement that later consumes the extracted operation.
 
 ## Component contracts
 

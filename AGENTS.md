@@ -4,6 +4,25 @@ These instructions apply to the whole repository. Keep this file short; the
 linked design documents own detailed rationale and changing implementation
 facts.
 
+## What this repository is for
+
+CHILL is a research prototype. Its purpose is to fill the measurement tables in
+`docs/spec/`. Code earns its place by running an experiment or producing a table
+or figure; if it does neither, defer it.
+
+- Do not generalize for compatibility or failure modes that have not occurred.
+  No epoch, fence, tenure, multi-version reader, or recovery state machine
+  without a measurement that requires one.
+- Abstraction that standardizes a repeatedly measured quantity is the welcome
+  exception. It maps to a spec variable, repeats across device, model, and state,
+  applies one measurement window and exclusion rule, retains raw trials, and
+  feeds a table directly.
+- A behavior that must itself be measured does not live inside the lifecycle of
+  the thing measuring it. Extract it as an atomic operation a campaign emits as
+  one step, so a new experiment becomes a new assembly instead of a new
+  mechanism.
+- Prefer deleting to generalizing. The testbed is cleaned deliberately.
+
 ## Start and scope
 
 - Inspect `git status --short` before editing and preserve unrelated user work.
@@ -86,8 +105,10 @@ not replaced by code-intelligence checks.
 
 ## Verification boundaries
 
-- Changes to durable CHILL objects or stored evidence must follow
-  [ADR 0019](docs/adr/0019-durable-stored-contract-compatibility.md).
+- Do not change a stored evidence or object contract while a measurement
+  campaign depends on it. Change it once per work unit, and delete the stranded
+  objects rather than building a reader for them
+  ([ADR 0019](docs/adr/0019-durable-stored-contract-compatibility.md)).
 - Do not add digest format, recomputation, or comparison as a validation gate.
 - Do not add byte-for-byte equality or canonical re-encoding comparisons as a
   validation gate.
