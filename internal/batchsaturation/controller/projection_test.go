@@ -5,6 +5,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T) {
@@ -42,4 +43,46 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, []int{1}); err == nil {
 		t.Fatal("a Run owned by another object was accepted")
 	}
+}
+
+func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
+	parent := testParent()
+	parent.Spec.RetryLimit = 1
+	measurement := batchsaturation.Measurement{
+		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
+	}
+	runs := make([]edgev1alpha1.ProfilingRun, 0, 2)
+	for attempt := 1; attempt <= 2; attempt++ {
+		run, err := BuildRun(parent, measurement, attempt)
+		if err != nil {
+			t.Fatalf("build attempt %d: %v", attempt, err)
+		}
+		run.Status.Conditions = []metav1.Condition{{
+			Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
+			Status: metav1.ConditionFalse, Reason: "EvidenceInvalid",
+		}}
+		runs = append(runs, *run)
+	}
+
+	snapshot, err := ProjectSnapshot(parent, runs, []int{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := batchsaturation.Decide(snapshot, terminalTrialMethod{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != batchsaturation.ActionFail || decision.Reason != "RetryLimitExhausted" {
+		t.Fatalf("decision = %#v, want Fail/RetryLimitExhausted", decision)
+	}
+	status := deriveStatus(parent.Generation, snapshot, decision, nil, nil)
+	if status.Phase != batchSaturationPhaseFailed || status.Outcome != "RetryLimitExhausted" {
+		t.Fatalf("campaign status = %#v, want Failed/RetryLimitExhausted", status)
+	}
+}
+
+type terminalTrialMethod struct{}
+
+func (terminalTrialMethod) Plan(batchsaturation.Observed) (batchsaturation.Plan, error) {
+	return batchsaturation.Plan{Result: &batchsaturation.Result{Outcome: "unused"}}, nil
 }

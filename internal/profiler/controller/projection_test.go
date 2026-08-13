@@ -111,6 +111,23 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 			want: profiler.ActionFinalizeEvidence,
 		},
 		{
+			name: "complete after terminal evidence invalidity",
+			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
+				recordIntentAndJob(run)
+				run.Status.Conditions = []metav1.Condition{{
+					Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
+					Status: metav1.ConditionFalse, Reason: evidenceReasonInvalid,
+				}}
+				return ownedJob(run, &batchv1.JobStatus{
+					Succeeded: 1,
+					Conditions: []batchv1.JobCondition{{
+						Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+					}},
+				})
+			},
+			want: profiler.ActionComplete,
+		},
+		{
 			name: "do not recreate missing recorded Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
 				recordIntentAndJob(run)

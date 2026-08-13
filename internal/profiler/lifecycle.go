@@ -48,6 +48,7 @@ type Snapshot struct {
 	JobReference      string
 	Job               JobObservation
 	EvidenceReference *evidencestore.ObjectIdentity
+	EvidenceInvalid   bool
 	AdmissionRecorded bool
 }
 
@@ -70,6 +71,9 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	}
 	if snapshot.Intent == nil {
 		return Decision{Action: ActionFreezeIntent}, nil
+	}
+	if snapshot.EvidenceInvalid {
+		return Decision{Action: ActionComplete}, nil
 	}
 	if snapshot.EvidenceReference != nil {
 		reference := *snapshot.EvidenceReference
@@ -99,7 +103,8 @@ func Decide(snapshot Snapshot) (Decision, error) {
 
 func (s Snapshot) Validate() error {
 	if s.Intent == nil {
-		if s.JobReference != "" || s.Job != JobNotObserved || s.EvidenceReference != nil || s.AdmissionRecorded {
+		if s.JobReference != "" || s.Job != JobNotObserved || s.EvidenceReference != nil ||
+			s.EvidenceInvalid || s.AdmissionRecorded {
 			return errors.New("Run facts exist before intent is frozen")
 		}
 		return nil
@@ -118,6 +123,14 @@ func (s Snapshot) Validate() error {
 	}
 	if s.AdmissionRecorded && s.EvidenceReference == nil {
 		return errors.New("admission cannot be recorded without verified evidence")
+	}
+	if s.EvidenceInvalid {
+		if s.EvidenceReference != nil {
+			return errors.New("terminally invalid evidence contradicts a verified evidence reference")
+		}
+		if s.Job != JobSucceeded && s.Job != JobMissing {
+			return errors.New("terminally invalid evidence contradicts observed Job outcome")
+		}
 	}
 	if s.EvidenceReference != nil {
 		if err := s.EvidenceReference.Validate(); err != nil {

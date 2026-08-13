@@ -37,6 +37,14 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 			want: ActionFinalizeEvidence,
 		},
 		{
+			name: "complete after evidence is terminally invalid",
+			snapshot: Snapshot{
+				Intent: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				EvidenceInvalid: true,
+			},
+			want: ActionComplete,
+		},
+		{
 			name: "report failed execution without retry",
 			snapshot: Snapshot{
 				Intent: &intent, JobReference: "job-uid", Job: JobFailed,
@@ -134,6 +142,14 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 				EvidenceReference: &evidencestore.ObjectIdentity{Store: "store"},
 			},
 			match: "validate evidence reference",
+		},
+		{
+			name: "terminal evidence invalidity contradicts active Job",
+			snapshot: Snapshot{
+				Intent: &intent, JobReference: "job-uid", Job: JobActive,
+				EvidenceInvalid: true,
+			},
+			match: "contradicts observed Job outcome",
 		},
 	}
 

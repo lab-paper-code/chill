@@ -367,7 +367,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	}
 }
 
-func TestRunReconcilerPublishesPermanentTargetMismatchWithoutRequeue(t *testing.T) {
+func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
@@ -419,6 +419,13 @@ func TestRunReconcilerPublishesPermanentTargetMismatchWithoutRequeue(t *testing.
 		evidence.Reason != evidenceReasonInvalid ||
 		!strings.Contains(evidence.Message, "actuation target observation does not match frozen intent") {
 		t.Fatalf("terminal target mismatch status = %#v", actual.Status)
+	}
+	result, err = reconciler.Reconcile(context.Background(), request)
+	if err != nil || result != (ctrl.Result{}) {
+		t.Fatalf("terminal target mismatch re-entry result = %#v, error = %v", result, err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("finalizer calls after terminal re-entry = %d, want 1", finalizer.calls)
 	}
 }
 

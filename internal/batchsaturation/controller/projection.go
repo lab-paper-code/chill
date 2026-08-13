@@ -95,7 +95,8 @@ func terminalFailureReasons(conditions []metav1.Condition) []string {
 }
 
 func isTrialProjectionConditionType(conditionType string) bool {
-	return conditionType == "IntentFrozen" || conditionType == "ExecutionComplete"
+	return conditionType == "IntentFrozen" || conditionType == "ExecutionComplete" ||
+		conditionType == edgev1alpha1.ProfilingRunConditionEvidenceVerified
 }
 
 func isTerminalReason(reason string) bool {
@@ -110,7 +111,8 @@ func isTerminalReason(reason string) bool {
 		"NodeRestoreFailed",
 		"NodeActuationEndedBeforeExecution",
 		"NodeActuationInterruptedExecution",
-		"NodeActuationOrderingInvalid":
+		"NodeActuationOrderingInvalid",
+		"EvidenceInvalid":
 		return true
 	default:
 		return false

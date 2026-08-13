@@ -91,11 +91,22 @@ func ProjectSnapshot(
 	if err := projectEvidence(run.Status.Evidence, &snapshot); err != nil {
 		return profiler.Snapshot{}, err
 	}
+	snapshot.EvidenceInvalid = evidenceIsTerminallyInvalid(run.Status.Conditions)
 	snapshot.AdmissionRecorded = run.Status.Admission != nil
 	if err := snapshot.Validate(); err != nil {
 		return profiler.Snapshot{}, fmt.Errorf("validate projected lifecycle snapshot: %w", err)
 	}
 	return snapshot, nil
+}
+
+func evidenceIsTerminallyInvalid(conditions []metav1.Condition) bool {
+	for _, condition := range conditions {
+		if condition.Type == edgev1alpha1.ProfilingRunConditionEvidenceVerified &&
+			condition.Status == metav1.ConditionFalse && condition.Reason == evidenceReasonInvalid {
+			return true
+		}
+	}
+	return false
 }
 
 func projectIntent(frozenStatus bool, frozen *profilingrun.Intent, snapshot *profiler.Snapshot) error {
