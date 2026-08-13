@@ -91,7 +91,6 @@ func projectEvidenceActuationObservation(
 	return profilerevidence.ActuationObservation{
 		PowerMode:  observation.PowerMode,
 		Actuator:   projectProfilingActuatorTarget(observation.Actuator),
-		BootID:     observation.BootID,
 		ObservedAt: observation.ObservedAt.Time,
 	}
 }

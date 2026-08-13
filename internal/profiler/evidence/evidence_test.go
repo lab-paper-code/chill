@@ -137,9 +137,9 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 	return verified
 }
 
-func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T) {
+func TestActuatedExecutionEvidenceBindsIndependentStateReadBacks(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha5"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha6"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -164,13 +164,13 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 		match     string
 		permanent bool
 	}{
-		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
+		{name: "retired same-shape schema", mutate: func(candidate *ExecutionEvidence) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
+		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha5"
+		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
-		{name: "target boot identity drift", mutate: func(candidate *ExecutionEvidence) {
-			candidate.Actuation.Target.BootID = "other-boot-id"
-		}, match: "actuation boot identity differs across previous \"test-boot-id\", target \"other-boot-id\", and restored \"test-boot-id\" observations", permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
 		}, permanent: true},
@@ -734,10 +734,10 @@ func validActuatedExecutionEvidence(
 	execution.CandidateReport = report
 	completed := execution.Terminal.Job.CompletionTime
 	execution.FinalizedAt = completed.Add(4 * time.Second)
-	target := func() profilingrun.ActuatorTarget {
+	target := func(id int32) profilingrun.ActuatorTarget {
 		return profilingrun.ActuatorTarget{
 			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
-			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 0},
+			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: id},
 		}
 	}
 	execution.Actuation = &ActuationFacts{
@@ -748,16 +748,13 @@ func validActuatedExecutionEvidence(
 			Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
 		},
 		Previous: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
-			BootID: "test-boot-id", ObservedAt: completed.Add(-2 * time.Minute),
+			PowerMode: "MODE_50W", Actuator: target(1), ObservedAt: completed.Add(-2 * time.Minute),
 		},
 		Target: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
-			BootID: "test-boot-id", ObservedAt: completed.Add(-90 * time.Second),
+			PowerMode: intent.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-90 * time.Second),
 		},
 		Restored: ActuationObservation{
-			PowerMode: intent.Actuation.PowerMode, Actuator: target(),
-			BootID: "test-boot-id", ObservedAt: completed.Add(2 * time.Second),
+			PowerMode: "MODE_50W", Actuator: target(1), ObservedAt: completed.Add(2 * time.Second),
 		},
 		ReadyAt:            completed.Add(-70 * time.Second),
 		RestoreRequestedAt: completed.Add(time.Second),

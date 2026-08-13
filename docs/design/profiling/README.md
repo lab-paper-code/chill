@@ -4,10 +4,11 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha5`; actuated evidence
-retains the boot identity of each state observation and rejects a Run whose
-previous, target, and restored observations do not share one boot. Permanently
-invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha6`; actuated evidence
+retains independent previous, target, and restored state observations, checks
+the target against frozen intent, and checks restoration against the retained
+previous state. Permanently invalid retained evidence produces the terminal
+`EvidenceInvalid` outcome.
 Repeated active and idle trials, exact-state curve derivation, and the pure Plan
 5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
 used one artifact at batches one, two, and four, completed 12 accepted trials,
@@ -203,11 +204,12 @@ Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-
 governs the Run-owned actuation path, and
 [ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
 the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
-`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha5
-retains boot identity across the three actuation observations, rejects
-cross-boot execution evidence, and gives permanently invalid evidence the
-terminal `EvidenceInvalid` outcome. [ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md)
-governs the witness boundary.
+`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha6
+binds the independent previous, target, and restored observations to the Run,
+checks the target and restoration facts, and gives permanently invalid evidence
+the terminal `EvidenceInvalid` outcome. Boot identity belongs to the separate
+transition-evidence witness boundary governed by
+[ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md).
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
@@ -217,11 +219,11 @@ aggregates are recorded in ADR 0017. From those aggregates, `MAXN` provides
 and p99 latency fall to 0.754x and 0.763x. The two idle means differ by 0.0334
 W, so idle observations alone do not characterize the knob. Both power-mode
 slices have recorded L3 results. Their source Runs use superseded v1alpha4 and
-are archival rather than current-code-reloadable proof; they do not prove boot
-continuity under the v1alpha5 contract. The experiment does not establish
-another Node, model, execution path, batch size, RKNN path, GPU path, or L4
-campaign result. Catalog presence and standalone smoke are not production
-execution evidence.
+are archival rather than current-code-reloadable proof. They contain Run
+measurement evidence, not separate transition evidence. The experiment does
+not establish another Node, model, execution path, batch size, RKNN path, GPU
+path, or L4 campaign result. Catalog presence and standalone smoke are not
+production execution evidence.
 
 ### 7. Batch-saturation control path — `sequential-early-stop` implemented
 

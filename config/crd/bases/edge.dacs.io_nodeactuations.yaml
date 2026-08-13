@@ -359,12 +359,6 @@ spec:
                     - message: NvidiaLockedGPUClock actuator requires only nvidiaLockedGPUClock
                       rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
                         && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
-                  bootID:
-                    description: BootID is the host boot identity retained with this
-                      state observation.
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   observedAt:
                     format: date-time
                     type: string
@@ -376,7 +370,6 @@ spec:
                     type: string
                 required:
                 - actuator
-                - bootID
                 - observedAt
                 type: object
               readyAt:
@@ -469,12 +462,6 @@ spec:
                     - message: NvidiaLockedGPUClock actuator requires only nvidiaLockedGPUClock
                       rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
                         && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
-                  bootID:
-                    description: BootID is the host boot identity retained with this
-                      state observation.
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   observedAt:
                     format: date-time
                     type: string
@@ -486,7 +473,6 @@ spec:
                     type: string
                 required:
                 - actuator
-                - bootID
                 - observedAt
                 type: object
               safety:
@@ -613,12 +599,6 @@ spec:
                     - message: NvidiaLockedGPUClock actuator requires only nvidiaLockedGPUClock
                       rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
                         && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
-                  bootID:
-                    description: BootID is the host boot identity retained with this
-                      state observation.
-                    maxLength: 128
-                    minLength: 1
-                    type: string
                   observedAt:
                     format: date-time
                     type: string
@@ -630,7 +610,6 @@ spec:
                     type: string
                 required:
                 - actuator
-                - bootID
                 - observedAt
                 type: object
               terminalFailure:

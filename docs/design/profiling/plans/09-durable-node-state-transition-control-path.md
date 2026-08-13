@@ -41,10 +41,12 @@ precondition; it does not create, own, advance, retain, retire, or delete the
 operation. Transition execution, transition confirmation, and Run evidence
 admission remain separate responsibilities.
 
-Boot identity in actuation observations and execution evidence at `6619649`,
-and the terminal no-requeue outcome for permanently invalid Run evidence at
-`8b00f1c`, are input contracts. This plan consumes those contracts without
-defining another boot-identity format or another permanent-evidence retry rule.
+The terminal no-requeue outcome for permanently invalid Run evidence at
+`8b00f1c` is an input constraint. Boot identity is not: it belongs to transition
+evidence together with the control-plane witness, because it answers how a Node
+moved between states rather than whether a measurement taken in one state is
+valid. Current Run-owned actuation and execution evidence retain independent
+state read-backs and no boot identity.
 
 ## Checkpoint 1: Durable ownership
 
@@ -271,11 +273,10 @@ one operation without consulting a Run:
   witness identities;
 - fail-closed workload-safety observations;
 - actor observations and lifecycle timestamps for the predecessor, requested
-  target, settling, and any recovery, including the existing boot identity on
-  each actuation observation;
-- control-plane witness observations and, when required by the transition
-  class, an immutable external wall-power trace reference and its measurement
-  window;
+  target, settling, and any recovery;
+- control-plane witness observations, including boot identity before and after
+  the operation, and, when required by the transition class, an immutable
+  external wall-power trace reference and its measurement window;
 - the typed operation outcome and any admitted transition duration, transition
   energy, and survival result required by the frozen measurement policy; and
 - references to raw inputs and exclusions rather than copied raw samples.
@@ -314,12 +315,11 @@ that allocation and any scheduler use require their own approved design.
 
 ### The observed hazard is a release gate
 
-The compatibility design is required by three observed strict-schema failure
-classes: `NodeActuation` objects without a newly required policy field;
+The compatibility design is required by two observed strict-schema failure
+classes: `NodeActuation` objects without a newly required policy field, and
 `ProfilingRun` and `BatchSaturation` objects whose retained evidence used a
-superseded schema; and `NodeActuation` objects without the required boot-identity
-field. Each class entered an unbounded reconcile error loop, and one class also
-kept deletion blocked behind its finalizer.
+superseded schema. Each class entered an unbounded reconcile error loop, and one
+class also kept deletion blocked behind its finalizer.
 
 `NodeStateTransition` may not repeat that behavior. Its first storage contract
 must include a stable lifecycle envelope and recovery capsule. The envelope
@@ -387,7 +387,7 @@ A legacy `NodeActuation` that is proved restored remains a historical Run-owned
 record until its retention policy deletes it. Its existing Run evidence keeps
 the semantics of the schema under which it was admitted. It is never converted
 into a `NodeStateTransition`, never used as current-state authority, and never
-has missing boot or policy facts synthesized.
+has missing policy or transition-witness facts synthesized.
 
 A legacy object with an unsupported stored shape enters the same bounded
 compatibility classification. If its stable facts prove that mutation did not
@@ -418,8 +418,8 @@ implementation would require, at minimum:
 - envtest coverage for actor restart, Lease expiry and reacquisition, competing
   states, deletion during recovery, and migration coexistence;
 - stored-object fixtures for every supported old version and undecodable-body,
-  missing-policy, missing-boot-identity, superseded-evidence, and finalizer
-  deletion cases; and
+  missing-policy, missing required transition boot identity,
+  superseded-evidence, and finalizer deletion cases; and
 - focused live in-place apply, witness, multi-Run consumption, successor, and
   proved restoration evidence on an explicitly authorized test Node.
 

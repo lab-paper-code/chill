@@ -147,7 +147,6 @@ func projectObservation(observation *edgev1alpha1.NodeActuationObservation) (*no
 	projected := &nodeactuator.Observation{
 		PowerMode:  observation.PowerMode,
 		Target:     projectTarget(observation.Actuator),
-		BootID:     observation.BootID,
 		ObservedAt: observation.ObservedAt.Time,
 	}
 	if err := projected.Validate(); err != nil {

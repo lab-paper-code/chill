@@ -367,7 +367,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	}
 }
 
-func TestRunReconcilerPublishesBootIdentityMismatchWithoutRequeue(t *testing.T) {
+func TestRunReconcilerPublishesPermanentTargetMismatchWithoutRequeue(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
@@ -385,11 +385,8 @@ func TestRunReconcilerPublishesBootIdentityMismatchWithoutRequeue(t *testing.T) 
 	handoff.Spec.StageRequestedAt = metav1.NewTime(completedAt.Add(time.Second))
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 	finalizeErr := fmt.Errorf(
-		"%w: actuation boot identity differs across previous %q, target %q, and restored %q observations",
+		"%w: actuation target observation does not match frozen intent",
 		profilerevidence.ErrPermanentValidation,
-		"boot-before",
-		"boot-after",
-		"boot-after",
 	)
 	finalizer := &recordingRunEvidenceFinalizer{err: finalizeErr}
 	reconciler, err := NewRunReconciler(
@@ -406,7 +403,7 @@ func TestRunReconcilerPublishesBootIdentityMismatchWithoutRequeue(t *testing.T) 
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
 	result, err := reconciler.Reconcile(context.Background(), request)
 	if err != nil || result != (ctrl.Result{}) {
-		t.Fatalf("boot mismatch result = %#v, error = %v", result, err)
+		t.Fatalf("target mismatch result = %#v, error = %v", result, err)
 	}
 	if finalizer.calls != 1 {
 		t.Fatalf("finalizer calls = %d, want 1", finalizer.calls)
@@ -420,8 +417,8 @@ func TestRunReconcilerPublishesBootIdentityMismatchWithoutRequeue(t *testing.T) 
 	if actual.Status.Evidence != nil || execution == nil || execution.Status != metav1.ConditionTrue ||
 		execution.Reason != "JobSucceeded" || evidence == nil || evidence.Status != metav1.ConditionFalse ||
 		evidence.Reason != evidenceReasonInvalid ||
-		!strings.Contains(evidence.Message, `previous "boot-before", target "boot-after", and restored "boot-after"`) {
-		t.Fatalf("terminal boot mismatch status = %#v", actual.Status)
+		!strings.Contains(evidence.Message, "actuation target observation does not match frozen intent") {
+		t.Fatalf("terminal target mismatch status = %#v", actual.Status)
 	}
 }
 

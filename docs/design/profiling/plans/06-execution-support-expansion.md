@@ -22,11 +22,12 @@ the declared-batch-size artifact capability used by future campaigns.
 
 The Run-owned NodeActuator path is implemented under
 [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md). Execution
-evidence uses `chill.dacs.io/profiling-execution-evidence.v1alpha5`, retains a
-boot identity with each previous, target, and restored observation, and rejects
-evidence when those observations cross a boot. A permanent semantic
-contradiction produces terminal `EvidenceVerified=False` with reason
-`EvidenceInvalid` instead of an error requeue.
+evidence uses `chill.dacs.io/profiling-execution-evidence.v1alpha6`, retains
+independent previous, target, and restored observations, and validates the
+target against frozen intent and restoration against the retained previous
+state. A permanent semantic contradiction produces terminal
+`EvidenceVerified=False` with reason `EvidenceInvalid` instead of an error
+requeue.
 [ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
 bounds the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN`
 states; `MODE_30W` and `MODE_15W` are not authorized.
@@ -48,10 +49,10 @@ item relative to `MODE_50W`, while mean and p99 latency fall to 0.754x and
 0.763x. The idle means differ by 0.0334 W, so the knob is not characterizable
 without load. Both exact power-mode slices have recorded L3 results; their
 source Runs use superseded v1alpha4 and are archival rather than
-current-code-reloadable proof. They do not prove boot continuity under the
-v1alpha5 contract, and neither slice has the multiple-batch evidence required
-for L4. No result transfers to another Node, model, execution path, batch size,
-RKNN path, GPU path, or TensorRT row.
+current-code-reloadable proof. They contain Run measurement evidence rather
+than the separate transition evidence governed by ADR 0018, and neither slice
+has the multiple-batch evidence required for L4. No result transfers to another
+Node, model, execution path, batch size, RKNN path, GPU path, or TensorRT row.
 
 The testbed Evidence Store holds current-schema objects only. Measurements
 whose source objects use superseded schemas remain archival scientific records,

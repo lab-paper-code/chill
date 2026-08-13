@@ -87,12 +87,10 @@ var _ = Describe("NodeActuation API", func() {
 			Reason:             "TargetSettled",
 			Message:            "target was independently observed and settled",
 			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1),
-				BootID: "test-boot-id", ObservedAt: now,
+				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: now,
 			},
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator,
-				BootID: "test-boot-id", ObservedAt: now,
+				PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: now,
 			},
 			ReadyAt: &now,
 		}
@@ -118,8 +116,7 @@ var _ = Describe("NodeActuation API", func() {
 			ObservedGeneration: handoff.Generation,
 			Phase:              edgev1alpha1.NodeActuationPhaseVerifyingRestore,
 			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1),
-				BootID: "test-boot-id", ObservedAt: now,
+				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: now,
 			},
 			RestoreStartedAt: &now,
 		}
