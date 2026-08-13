@@ -14,6 +14,14 @@ operator:
     tag: "sha-0deb6ff"
     pullPolicy: Always
 
+# Pin Node discovery here because an unpinned operand silently resolves the
+# published image from the chart default.
+nodeDiscovery:
+  image:
+    repository: "155.230.35.213:5000/chill/chill-node-discovery"
+    tag: "sha-83a81ec"
+    pullPolicy: Always
+
 evidenceStore:
   enabled: true
   configRef:
