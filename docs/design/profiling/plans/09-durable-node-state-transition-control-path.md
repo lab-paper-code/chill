@@ -91,14 +91,24 @@ Zero bound or executing Runs does not restore the Node and does not delete the
 current transition. The object remains the durable owner of the established
 state until one of these explicit events occurs:
 
-- an authorized successor transition is accepted;
-- a configured tenure deadline causes the state coordinator to create an
-  explicit transition to the retained recovery state; or
-- fail-closed safety recovery requires an explicit transition to that recovery
-  state.
+- an authorized successor transition is accepted; or
+- fail-closed safety recovery requires an explicit transition to the retained
+  recovery state.
 
-The selected tenure policy and its source identity are frozen before mutation;
-they are configuration, not a Go constant. Retirement first closes admission
+Every transition, including a successor and a return to a previous state, is
+created by a person or by a separately approved orchestrator. The state
+coordinator confirms, fences, and retires; it does not create. A deadline that
+made the coordinator create a return transition would give it mutation
+authority, which is the concentration this plan exists to prevent.
+
+An automatic tenure deadline is therefore deferred until a second real use case
+justifies it. Adding one requires naming the coordinator an approved transition
+creator, bounding what it may create, and deciding how a deadline interacts with
+Runs still bound to the state — none of which a single use case settles.
+
+The selected retirement policy and its source identity are frozen before
+mutation; they are configuration, not a Go constant. Retirement first closes
+admission
 to new consumers, drains existing consumers, and proves the successor or
 restoration transition. Deletion of the current owner follows that proof.
 Deleting a Run never requests any of these actions.
@@ -257,10 +267,20 @@ confirmed-state binding from the immutable request, admitted transition
 evidence, current object UID, and lane fence. No other component can construct
 that binding from status text.
 
-The binding remains valid for a completed Run if its Job interval is wholly
-inside the recorded established-state tenure, even when a successor is
-confirmed before Run evidence is finalized. This permits delayed evidence
-processing without keeping the Node in the old state.
+The binding remains valid for a completed Run whose execution is contained by
+the established-state tenure, even when a successor is confirmed before Run
+evidence is finalized. This permits delayed evidence processing without keeping
+the Node in the old state.
+
+Containment is proved causally, not chronologically. A Run's state-interval
+validity follows from the ordering of its durable consumer claim against the
+mutation fence: the claim was accepted while the fence held the established
+state, and no accepted mutation intervened before the Job reached a terminal
+outcome. Timestamps serve audit and alignment with external instrumentation;
+timestamps from different clock domains are not silently compared. The Node
+actor, kubelet, the control plane, and the external wall-power meter each keep
+their own clock, and skew between them must never decide whether a scientific
+result is admitted or refused.
 
 ## Checkpoint 5: Transition and Run evidence admission
 
@@ -313,15 +333,19 @@ that allocation and any scheduler use require their own approved design.
 
 ## Checkpoint 6: Stored-schema compatibility
 
-### The observed hazard is a release gate
+### What this record owes the storage contract
 
-The compatibility design is required by two observed strict-schema failure
-classes: `NodeActuation` objects without a newly required policy field, and
-`ProfilingRun` and `BatchSaturation` objects whose retained evidence used a
-superseded schema. Each class entered an unbounded reconcile error loop, and one
-class also kept deletion blocked behind its finalizer.
+[ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md) governs
+every durable CHILL object and stored evidence contract: reader before writer,
+no required meaning added in place to a served version, a stored-version
+inventory before a reader is removed, one bounded operator-visible outcome for
+an object the current reader cannot decode, and a finalizer that neither
+releases before recovery is proven nor traps an object whose unrelated fields
+fail current validation. `NodeStateTransition` inherits those obligations; this
+checkpoint records only what satisfying them requires of this particular record.
 
-`NodeStateTransition` may not repeat that behavior. Its first storage contract
+`NodeStateTransition` holds a finalizer that protects a Node-wide mutation, so
+the ADR's finalizer obligation is the binding one. Its first storage contract
 must include a stable lifecycle envelope and recovery capsule. The envelope
 keeps the object and Node identities, contract version, compatibility outcome,
 mutation fence, and finalizer protocol readable. The recovery capsule keeps the
@@ -329,21 +353,10 @@ minimum previous-state and policy facts needed to decide whether mutation was
 possible and to perform and prove recovery. Versioned scientific evidence is
 referenced outside that stable recovery contract.
 
-The schema-evolution rules are:
-
-1. No rollout adds a required field or changes a stored field's type in place
-   for an already served storage version. Current writers enforce current
-   creation semantics without making retained objects undecodable.
-2. A change that needs new required meaning uses a new served API version or a
-   new evidence version. Compatible conversion preserves facts; it never
-   invents a policy, boot identity, observation, or witness.
-3. Reader support and an inventory of all stored versions deploy before a new
-   writer. An old reader is removed only after every old object is migrated,
-   safely retired, or placed in the defined compatibility outcome.
-4. Unsupported evidence is a permanent typed admission result, not an ordinary
-   reconcile error. Unsupported API objects are handled by an unstructured
-   compatibility path that can read the stable envelope even when the current
-   typed controller cannot decode the versioned body.
+An unsupported API object is reached through an unstructured compatibility path
+that reads the stable envelope even when the typed controller cannot decode the
+versioned body. That path is what makes the ADR's bounded outcome and finalizer
+obligations reachable for a record whose body may be unreadable.
 
 An object the normal controller cannot decode is marked once as
 `UnsupportedStoredSchema`, closed to consumers, and fenced from mutation. The
@@ -439,6 +452,29 @@ and plan would have to authorize those decisions, define the exact executable
 transition class, and supply safety and live evidence before any reboot-class
 request could pass validation. Until then, such a request is permanently
 unsupported before mutation.
+
+## Deferred: state continuity under arbitrary failure
+
+The tenure and fencing design here is also what would close a failure model the
+Run-owned in-place path does not cover. That path verifies the target state
+before the Job starts and reads the restored state back independently, and those
+two facts are the whole of what it claims. It does not claim that the state held
+for the whole of execution under arbitrary failure: an actor that lost its Lease
+while something else mutated the Node could in principle leave a Job measuring a
+state its evidence does not describe.
+
+That is a compound failure requiring several conditions to coincide, and it is
+out of scope for the in-place MAXN/MODE_50W transitions that
+[ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
+bounds the current path to, where the actor holds its Lease and the target for
+the duration. No gate, tenure, epoch, or fence for it is added to the current
+implementation, and none should be: the consumer claim and mutation fence
+described above are where it belongs, and they arrive with this plan or not at
+all.
+
+What the current path must therefore not claim is state continuity under
+arbitrary failure. It claims a verified target before execution and a proven
+restoration after it.
 
 ## Not authorized by this plan
 
