@@ -86,10 +86,7 @@ func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 		actuation := *canonical.Actuation
 		actuation.Previous.ObservedAt = actuation.Previous.ObservedAt.UTC()
 		actuation.Target.ObservedAt = actuation.Target.ObservedAt.UTC()
-		actuation.Restored.ObservedAt = actuation.Restored.ObservedAt.UTC()
 		actuation.ReadyAt = actuation.ReadyAt.UTC()
-		actuation.RestoreRequestedAt = actuation.RestoreRequestedAt.UTC()
-		actuation.RestoredAt = actuation.RestoredAt.UTC()
 		canonical.Actuation = &actuation
 	}
 	canonical.Terminal.Containers = append([]ContainerTerminal(nil), e.Terminal.Containers...)

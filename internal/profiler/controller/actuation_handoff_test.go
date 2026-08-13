@@ -41,7 +41,6 @@ func TestBuildActuationHandoffFreezesExactRunNodeTargetPolicyAndDeadline(t *test
 	if handoff.Spec.PolicyName != frozen.Prepared.Intent.Actuation.PolicyName ||
 		handoff.Spec.SettlingDurationSeconds != int32(policy.SettlingDurationSeconds) ||
 		handoff.Spec.MaxActuationDurationSeconds != int32(policy.MaxActuationDurationSeconds) ||
-		handoff.Spec.DesiredStage != edgev1alpha1.NodeActuationDesiredStageApply ||
 		!handoff.Spec.StageRequestedAt.Time.Equal(now) ||
 		!handoff.Spec.Deadline.Time.Equal(now.Add(time.Duration(policy.MaxActuationDurationSeconds)*time.Second)) {
 		t.Fatalf("handoff policy and timing = %#v", handoff.Spec)
@@ -100,65 +99,6 @@ func TestActuationHandoffsCreatesOnceAndReusesExactObject(t *testing.T) {
 	second, created, err := repository.Ensure(context.Background(), run, frozen)
 	if err != nil || created || second.UID != first.UID || second.ResourceVersion != first.ResourceVersion {
 		t.Fatalf("second Ensure = %#v, created=%t, error=%v", second, created, err)
-	}
-}
-
-func TestActuationHandoffsAdvancesOnceToRestoreBeforeDeadline(t *testing.T) {
-	t.Parallel()
-	run, frozen := testActuatedRunAndFrozen(t)
-	scheme := actuationHandoffTestScheme(t)
-	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-	kubeClient := &actuationUIDClient{Client: baseClient}
-	repository, err := NewActuationHandoffs(kubeClient, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createdAt := time.Unix(1_700_000_000, 0).UTC()
-	repository.now = func() time.Time { return createdAt }
-	handoff, _, err := repository.Ensure(context.Background(), run, frozen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restoreAt := createdAt.Add(time.Second)
-	repository.now = func() time.Time { return restoreAt }
-	changed, err := repository.AdvanceToRestore(context.Background(), run, frozen, handoff)
-	if err != nil || !changed {
-		t.Fatalf("AdvanceToRestore() changed=%t, error=%v", changed, err)
-	}
-	actual := &edgev1alpha1.NodeActuation{}
-	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(handoff), actual); err != nil {
-		t.Fatal(err)
-	}
-	if actual.Spec.DesiredStage != edgev1alpha1.NodeActuationDesiredStageRestore ||
-		!actual.Spec.StageRequestedAt.Time.Equal(restoreAt) || actual.Spec.Deadline != handoff.Spec.Deadline {
-		t.Fatalf("restored handoff spec = %#v", actual.Spec)
-	}
-	changed, err = repository.AdvanceToRestore(context.Background(), run, frozen, actual)
-	if err != nil || changed {
-		t.Fatalf("idempotent AdvanceToRestore() changed=%t, error=%v", changed, err)
-	}
-}
-
-func TestActuationHandoffsLeavesElapsedDeadlineToFailSafeRestore(t *testing.T) {
-	t.Parallel()
-	run, frozen := testActuatedRunAndFrozen(t)
-	scheme := actuationHandoffTestScheme(t)
-	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-	kubeClient := &actuationUIDClient{Client: baseClient}
-	repository, err := NewActuationHandoffs(kubeClient, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createdAt := time.Unix(1_700_000_000, 0).UTC()
-	repository.now = func() time.Time { return createdAt }
-	handoff, _, err := repository.Ensure(context.Background(), run, frozen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository.now = func() time.Time { return handoff.Spec.Deadline.Time }
-	changed, err := repository.AdvanceToRestore(context.Background(), run, frozen, handoff)
-	if err != nil || changed || handoff.Spec.DesiredStage != edgev1alpha1.NodeActuationDesiredStageApply {
-		t.Fatalf("elapsed AdvanceToRestore() changed=%t spec=%#v error=%v", changed, handoff.Spec, err)
 	}
 }
 

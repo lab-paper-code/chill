@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 )
@@ -20,13 +19,12 @@ func (e ExecutionEvidence) validateActuation() error {
 	if e.Actuation == nil {
 		return permanentValidationError(errors.New("actuated Run requires finalized actuation facts"))
 	}
-	return e.Actuation.validate(e.Intent, e.Terminal, e.FinalizedAt)
+	return e.Actuation.validate(e.Intent, e.Terminal)
 }
 
 func (a ActuationFacts) validate(
 	intent profilingrun.Intent,
 	terminal TerminalFacts,
-	finalizedAt time.Time,
 ) error {
 	if err := validateNamespacedObject(a.Run, "Run"); err != nil {
 		return permanentValidationError(err)
@@ -43,31 +41,15 @@ func (a ActuationFacts) validate(
 	if err := a.Target.validate("target"); err != nil {
 		return permanentValidationError(err)
 	}
-	if err := a.Restored.validate("restored"); err != nil {
-		return permanentValidationError(err)
-	}
 	if intent.Actuation == nil || a.Target.PowerMode != intent.Actuation.PowerMode ||
 		!reflect.DeepEqual(a.Target.Actuator, intent.Actuation.Actuator) {
 		return permanentValidationError(errors.New("actuation target observation does not match frozen intent"))
 	}
-	if a.Restored.PowerMode != a.Previous.PowerMode ||
-		!reflect.DeepEqual(a.Restored.Actuator, a.Previous.Actuator) {
-		return permanentValidationError(errors.New("restored observation does not match retained previous state"))
-	}
-	if a.ReadyAt.IsZero() || a.RestoreRequestedAt.IsZero() || a.RestoredAt.IsZero() {
+	if a.ReadyAt.IsZero() {
 		return permanentValidationError(errors.New("actuation lifecycle timestamps are required"))
 	}
 	if a.Target.ObservedAt.Before(a.Previous.ObservedAt) || a.ReadyAt.Before(a.Target.ObservedAt) {
 		return permanentValidationError(errors.New("actuation apply/read-back/ready timestamps are out of order"))
-	}
-	if terminal.Job.CompletionTime.After(a.RestoreRequestedAt) {
-		return permanentValidationError(errors.New("actuation restore request predates measurement Job completion"))
-	}
-	if a.Restored.ObservedAt.Before(a.RestoreRequestedAt) || a.RestoredAt.Before(a.Restored.ObservedAt) {
-		return permanentValidationError(errors.New("actuation restore/read-back timestamps are out of order"))
-	}
-	if finalizedAt.Before(a.RestoredAt) {
-		return errors.New("actuation finalization time predates restoration completion")
 	}
 	for _, container := range terminal.Containers {
 		if container.StartedAt.Before(a.ReadyAt) {

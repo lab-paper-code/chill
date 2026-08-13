@@ -83,43 +83,6 @@ func (h *ActuationHandoffs) Ensure(
 	return existing, false, nil
 }
 
-// AdvanceToRestore performs the only mutable Profiler-owned handoff
-// transition. An elapsed absolute deadline is left to the NodeActuator's
-// fail-safe restoration path because the API contract forbids a request
-// timestamp at or after that deadline.
-func (h *ActuationHandoffs) AdvanceToRestore(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
-	handoff *edgev1alpha1.NodeActuation,
-) (bool, error) {
-	if h == nil || h.client == nil || h.scheme == nil || h.now == nil {
-		return false, errors.New("actuation handoff repository is incomplete")
-	}
-	if err := verifyActuationHandoff(run, handoff, frozen); err != nil {
-		return false, err
-	}
-	if handoff.Spec.DesiredStage == edgev1alpha1.NodeActuationDesiredStageRestore {
-		return false, nil
-	}
-	requestedAt := h.now().UTC()
-	if !requestedAt.After(handoff.Spec.StageRequestedAt.Time) {
-		requestedAt = handoff.Spec.StageRequestedAt.Add(time.Nanosecond)
-	}
-	if !requestedAt.Before(handoff.Spec.Deadline.Time) {
-		return false, nil
-	}
-	base := handoff.DeepCopy()
-	desired := handoff.DeepCopy()
-	desired.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
-	desired.Spec.StageRequestedAt = metav1.NewTime(requestedAt)
-	if err := h.client.Patch(ctx, desired, client.MergeFrom(base)); err != nil {
-		return false, fmt.Errorf("advance NodeActuation to restore: %w", err)
-	}
-	handoff.Spec = desired.Spec
-	return true, nil
-}
-
 func buildActuationHandoff(
 	run *edgev1alpha1.ProfilingRun,
 	frozen FrozenRun,
@@ -156,7 +119,6 @@ func buildActuationHandoff(
 			SettlingDurationSeconds:     int32(material.settlingDurationSeconds),
 			MaxActuationDurationSeconds: int32(material.maxActuationDurationSeconds),
 			Deadline:                    metav1.NewTime(now.UTC().Add(time.Duration(material.maxActuationDurationSeconds) * time.Second)),
-			DesiredStage:                edgev1alpha1.NodeActuationDesiredStageApply,
 			StageRequestedAt:            requestedAt,
 		},
 	}
@@ -218,22 +180,16 @@ func verifyActuationHandoff(
 		MaxActuationDurationSeconds: int32(material.maxActuationDurationSeconds),
 	}
 	got := handoff.Spec
-	want.Deadline, want.StageRequestedAt, want.DesiredStage = got.Deadline, got.StageRequestedAt, got.DesiredStage
+	want.Deadline, want.StageRequestedAt = got.Deadline, got.StageRequestedAt
 	if !reflect.DeepEqual(got, want) {
 		return errors.New("existing NodeActuation does not match frozen Run input")
-	}
-	if got.DesiredStage != edgev1alpha1.NodeActuationDesiredStageApply &&
-		got.DesiredStage != edgev1alpha1.NodeActuationDesiredStageRestore {
-		return fmt.Errorf("existing NodeActuation has unsupported desired stage %q", got.DesiredStage)
 	}
 	if got.StageRequestedAt.IsZero() || got.Deadline.IsZero() || !got.StageRequestedAt.Before(&got.Deadline) {
 		return errors.New("existing NodeActuation has invalid timing identity")
 	}
-	if got.DesiredStage == edgev1alpha1.NodeActuationDesiredStageApply {
-		wantDeadline := got.StageRequestedAt.Add(time.Duration(got.MaxActuationDurationSeconds) * time.Second)
-		if !got.Deadline.Time.Equal(wantDeadline) {
-			return errors.New("existing NodeActuation deadline does not match frozen maximum duration")
-		}
+	wantDeadline := got.StageRequestedAt.Add(time.Duration(got.MaxActuationDurationSeconds) * time.Second)
+	if !got.Deadline.Time.Equal(wantDeadline) {
+		return errors.New("existing NodeActuation deadline does not match frozen maximum duration")
 	}
 	return nil
 }

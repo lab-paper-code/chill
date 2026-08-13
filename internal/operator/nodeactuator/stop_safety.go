@@ -10,8 +10,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// SafeToStop proves that no retained handoff still depends on the operand for
-// progress or physical restoration. Unknown and non-terminal states block
+// SafeToStop proves that no retained transition still depends on the operand
+// for progress or Lease release. Unknown and non-terminal states block
 // DaemonSet deletion.
 func SafeToStop(ctx context.Context, reader client.Reader, namespace string) (bool, error) {
 	if reader == nil {
@@ -37,14 +37,12 @@ func handoffNeedsOperand(handoff *edgev1alpha1.NodeActuation) bool {
 		return true
 	}
 	status := handoff.Status
-	if status.TerminalFailure != nil && status.TerminalFailure.Stage == edgev1alpha1.NodeActuationFailureStageRestore {
+	if status.Lease != nil {
 		return true
 	}
-	if status.RestoredAt != nil && status.RestoredObservation != nil {
+	if status.Phase == edgev1alpha1.NodeActuationPhaseReady ||
+		status.Phase == edgev1alpha1.NodeActuationPhaseFailed {
 		return false
 	}
-	if status.Phase == edgev1alpha1.NodeActuationPhaseFailed && status.ApplyStartedAt == nil {
-		return false
-	}
-	return status.Phase != edgev1alpha1.NodeActuationPhaseRestored
+	return true
 }

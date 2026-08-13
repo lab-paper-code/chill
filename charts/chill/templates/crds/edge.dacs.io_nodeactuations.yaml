@@ -22,8 +22,8 @@ spec:
     - jsonPath: .spec.node.name
       name: Node
       type: string
-    - jsonPath: .spec.desiredStage
-      name: Desired
+    - jsonPath: .spec.powerMode
+      name: Target
       type: string
     - jsonPath: .status.phase
       name: Phase
@@ -55,10 +55,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              NodeActuationSpec is the durable Profiler-to-NodeActuator handoff. Identity,
-              target, policy, timing, and deadline are immutable; only desiredStage and its
-              request timestamp may advance once from Apply to Restore.
+            description: NodeActuationSpec is the immutable durable Profiler-to-NodeActuator
+              handoff.
             properties:
               actuator:
                 description: Actuator is the exact non-fixed typed target selected
@@ -128,14 +126,9 @@ spec:
                   rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
                     && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
               deadline:
-                description: Deadline is the absolute fail-safe restoration deadline.
+                description: Deadline is the absolute bound for reaching the settled
+                  target state.
                 format: date-time
-                type: string
-              desiredStage:
-                description: DesiredStage is written only by the Profiler.
-                enum:
-                - Apply
-                - Restore
                 type: string
               deviceClass:
                 description: DeviceClass is the frozen class used to select the actuation
@@ -200,14 +193,12 @@ spec:
                 minimum: 1
                 type: integer
               stageRequestedAt:
-                description: StageRequestedAt records when the current desired stage
-                  was requested.
+                description: StageRequestedAt records when the transition was requested.
                 format: date-time
                 type: string
             required:
             - actuator
             - deadline
-            - desiredStage
             - deviceClass
             - maxActuationDurationSeconds
             - node
@@ -238,12 +229,8 @@ spec:
               rule: self.maxActuationDurationSeconds > self.settlingDurationSeconds
             - message: deadline must follow stageRequestedAt
               rule: self.deadline > self.stageRequestedAt
-            - message: desiredStage may only advance from Apply to Restore
-              rule: self.desiredStage == oldSelf.desiredStage || oldSelf.desiredStage
-                == 'Apply' && self.desiredStage == 'Restore'
-            - message: stageRequestedAt changes only when desiredStage advances
-              rule: 'self.desiredStage == oldSelf.desiredStage ? self.stageRequestedAt
-                == oldSelf.stageRequestedAt : self.stageRequestedAt > oldSelf.stageRequestedAt'
+            - message: stageRequestedAt is immutable
+              rule: self.stageRequestedAt == oldSelf.stageRequestedAt
           status:
             description: NodeActuationStatus is written only by the responsible per-Node
               actuator.
@@ -284,9 +271,6 @@ spec:
                 - Verifying
                 - Settling
                 - Ready
-                - Restoring
-                - VerifyingRestore
-                - Restored
                 - Failed
                 type: string
               previousObservation:
@@ -380,103 +364,6 @@ spec:
               reason:
                 maxLength: 128
                 type: string
-              restoreAppliedAt:
-                description: |-
-                  RestoreAppliedAt separates the idempotent restore command from its
-                  independent read-back after restart.
-                format: date-time
-                type: string
-              restoreStartedAt:
-                format: date-time
-                type: string
-              restoredAt:
-                format: date-time
-                type: string
-              restoredObservation:
-                description: NodeActuationObservation is one independently read typed
-                  host state.
-                properties:
-                  actuator:
-                    description: |-
-                      PowerModeActuator is a discriminated union. Exactly the target matching Kind
-                      is present; Fixed has no target parameters.
-                    properties:
-                      jetsonNVPModel:
-                        description: JetsonNVPModel is the target for the Jetson nvpmodel
-                          actuator.
-                        properties:
-                          id:
-                            description: ID is passed to the platform nvpmodel interface.
-                            format: int32
-                            minimum: 0
-                            type: integer
-                        required:
-                        - id
-                        type: object
-                      kind:
-                        description: Kind selects the typed actuator contract.
-                        enum:
-                        - Fixed
-                        - JetsonNVPModel
-                        - NvidiaLockedGPUClock
-                        type: string
-                      nvidiaLockedGPUClock:
-                        description: NvidiaLockedGPUClock is the target for the NVIDIA
-                          locked GPU clock actuator.
-                        properties:
-                          maxMHz:
-                            description: MaxMHz is the maximum requested locked GPU
-                              clock.
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          minMHz:
-                            description: MinMHz is the minimum requested locked GPU
-                              clock.
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          mode:
-                            description: Mode selects the NVIDIA clock-locking algorithm
-                              when declared.
-                            enum:
-                            - 0
-                            - 1
-                            format: int32
-                            type: integer
-                        required:
-                        - maxMHz
-                        - minMHz
-                        type: object
-                        x-kubernetes-validations:
-                        - message: minMHz must not exceed maxMHz
-                          rule: self.minMHz <= self.maxMHz
-                    required:
-                    - kind
-                    type: object
-                    x-kubernetes-validations:
-                    - message: Fixed actuator must not declare a target
-                      rule: 'self.kind == ''Fixed'' ? !has(self.jetsonNVPModel) &&
-                        !has(self.nvidiaLockedGPUClock) : true'
-                    - message: JetsonNVPModel actuator requires only jetsonNVPModel
-                      rule: 'self.kind == ''JetsonNVPModel'' ? has(self.jetsonNVPModel)
-                        && !has(self.nvidiaLockedGPUClock) : !has(self.jetsonNVPModel)'
-                    - message: NvidiaLockedGPUClock actuator requires only nvidiaLockedGPUClock
-                      rule: 'self.kind == ''NvidiaLockedGPUClock'' ? has(self.nvidiaLockedGPUClock)
-                        && !has(self.jetsonNVPModel) : !has(self.nvidiaLockedGPUClock)'
-                  observedAt:
-                    format: date-time
-                    type: string
-                  powerMode:
-                    description: |-
-                      PowerMode is populated when the observed target maps unambiguously to a
-                      stable DeviceClass mode name.
-                    maxLength: 128
-                    type: string
-                required:
-                - actuator
-                - observedAt
-                type: object
               safety:
                 description: Safety is the latest fail-closed workload coexistence
                   observation.
@@ -615,10 +502,7 @@ spec:
                 - observedAt
                 type: object
               terminalFailure:
-                description: |-
-                  TerminalFailure makes the measurement path terminal. It may be retained
-                  while fail-safe restoration continues; a restore failure replaces it and
-                  keeps the Node locked for operator attention.
+                description: TerminalFailure records the single terminal failure outcome.
                 properties:
                   message:
                     maxLength: 1024
@@ -642,8 +526,6 @@ spec:
                     - Apply
                     - Verify
                     - Settle
-                    - Hold
-                    - Restore
                     type: string
                 required:
                 - message
@@ -656,26 +538,15 @@ spec:
                 type: string
             type: object
             x-kubernetes-validations:
-            - message: terminalFailure is valid only while restoring or after failure
-              rule: '!has(self.terminalFailure) || has(self.phase) && self.phase in
-                [''Restoring'', ''VerifyingRestore'', ''Failed'']'
+            - message: terminalFailure is valid only after failure
+              rule: '!has(self.terminalFailure) || has(self.phase) && self.phase ==
+                ''Failed'''
             - message: Failed phase requires terminalFailure
               rule: '!has(self.phase) || self.phase != ''Failed'' || has(self.terminalFailure)'
             - message: Ready phase requires previous and target observations plus
                 readyAt
               rule: '!has(self.phase) || self.phase != ''Ready'' || has(self.previousObservation)
                 && has(self.targetObservation) && has(self.readyAt)'
-            - message: Restoring phase requires previous observation and restoreStartedAt
-              rule: '!has(self.phase) || self.phase != ''Restoring'' || has(self.previousObservation)
-                && has(self.restoreStartedAt)'
-            - message: VerifyingRestore phase requires previous observation and restore
-                timestamps
-              rule: '!has(self.phase) || self.phase != ''VerifyingRestore'' || has(self.previousObservation)
-                && has(self.restoreStartedAt) && has(self.restoreAppliedAt)'
-            - message: Restored phase requires previous and restored observations
-                plus restoredAt
-              rule: '!has(self.phase) || self.phase != ''Restored'' || has(self.previousObservation)
-                && has(self.restoredObservation) && has(self.restoredAt)'
         required:
         - spec
         type: object

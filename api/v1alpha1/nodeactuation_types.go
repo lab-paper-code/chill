@@ -2,17 +2,8 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// NodeActuationDesiredStage is the Profiler-owned requested lifecycle stage.
-// +kubebuilder:validation:Enum=Apply;Restore
-type NodeActuationDesiredStage string
-
-const (
-	NodeActuationDesiredStageApply   NodeActuationDesiredStage = "Apply"
-	NodeActuationDesiredStageRestore NodeActuationDesiredStage = "Restore"
-)
-
 // NodeActuationPhase is the NodeActuator-owned observed lifecycle phase.
-// +kubebuilder:validation:Enum=Pending;AcquiringLease;CheckingSafety;ObservingPrevious;Applying;Verifying;Settling;Ready;Restoring;VerifyingRestore;Restored;Failed
+// +kubebuilder:validation:Enum=Pending;AcquiringLease;CheckingSafety;ObservingPrevious;Applying;Verifying;Settling;Ready;Failed
 type NodeActuationPhase string
 
 const (
@@ -24,14 +15,11 @@ const (
 	NodeActuationPhaseVerifying         NodeActuationPhase = "Verifying"
 	NodeActuationPhaseSettling          NodeActuationPhase = "Settling"
 	NodeActuationPhaseReady             NodeActuationPhase = "Ready"
-	NodeActuationPhaseRestoring         NodeActuationPhase = "Restoring"
-	NodeActuationPhaseVerifyingRestore  NodeActuationPhase = "VerifyingRestore"
-	NodeActuationPhaseRestored          NodeActuationPhase = "Restored"
 	NodeActuationPhaseFailed            NodeActuationPhase = "Failed"
 )
 
 // NodeActuationFailureStage identifies the operation that failed terminally.
-// +kubebuilder:validation:Enum=Lease;Policy;Safety;ObservePrevious;Apply;Verify;Settle;Hold;Restore
+// +kubebuilder:validation:Enum=Lease;Policy;Safety;ObservePrevious;Apply;Verify;Settle
 type NodeActuationFailureStage string
 
 const (
@@ -42,13 +30,9 @@ const (
 	NodeActuationFailureStageApply           NodeActuationFailureStage = "Apply"
 	NodeActuationFailureStageVerify          NodeActuationFailureStage = "Verify"
 	NodeActuationFailureStageSettle          NodeActuationFailureStage = "Settle"
-	NodeActuationFailureStageHold            NodeActuationFailureStage = "Hold"
-	NodeActuationFailureStageRestore         NodeActuationFailureStage = "Restore"
 )
 
-// NodeActuationSpec is the durable Profiler-to-NodeActuator handoff. Identity,
-// target, policy, timing, and deadline are immutable; only desiredStage and its
-// request timestamp may advance once from Apply to Restore.
+// NodeActuationSpec is the immutable durable Profiler-to-NodeActuator handoff.
 // +kubebuilder:validation:XValidation:rule="self.run == oldSelf.run",message="run identity is immutable"
 // +kubebuilder:validation:XValidation:rule="self.node == oldSelf.node",message="node identity is immutable"
 // +kubebuilder:validation:XValidation:rule="self.deviceClass == oldSelf.deviceClass",message="deviceClass is immutable"
@@ -59,8 +43,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.deadline == oldSelf.deadline",message="deadline is immutable"
 // +kubebuilder:validation:XValidation:rule="self.maxActuationDurationSeconds > self.settlingDurationSeconds",message="maxActuationDurationSeconds must exceed settlingDurationSeconds"
 // +kubebuilder:validation:XValidation:rule="self.deadline > self.stageRequestedAt",message="deadline must follow stageRequestedAt"
-// +kubebuilder:validation:XValidation:rule="self.desiredStage == oldSelf.desiredStage || oldSelf.desiredStage == 'Apply' && self.desiredStage == 'Restore'",message="desiredStage may only advance from Apply to Restore"
-// +kubebuilder:validation:XValidation:rule="self.desiredStage == oldSelf.desiredStage ? self.stageRequestedAt == oldSelf.stageRequestedAt : self.stageRequestedAt > oldSelf.stageRequestedAt",message="stageRequestedAt changes only when desiredStage advances"
+// +kubebuilder:validation:XValidation:rule="self.stageRequestedAt == oldSelf.stageRequestedAt",message="stageRequestedAt is immutable"
 type NodeActuationSpec struct {
 	// Run is the exact owning ProfilingRun identity in this namespace.
 	Run ProfilingRunObjectReference `json:"run"`
@@ -97,13 +80,10 @@ type NodeActuationSpec struct {
 	// +kubebuilder:validation:Maximum=86400
 	MaxActuationDurationSeconds int32 `json:"maxActuationDurationSeconds"`
 
-	// Deadline is the absolute fail-safe restoration deadline.
+	// Deadline is the absolute bound for reaching the settled target state.
 	Deadline metav1.Time `json:"deadline"`
 
-	// DesiredStage is written only by the Profiler.
-	DesiredStage NodeActuationDesiredStage `json:"desiredStage"`
-
-	// StageRequestedAt records when the current desired stage was requested.
+	// StageRequestedAt records when the transition was requested.
 	StageRequestedAt metav1.Time `json:"stageRequestedAt"`
 }
 
@@ -174,12 +154,9 @@ type NodeActuationSafetyObservation struct {
 }
 
 // NodeActuationStatus is written only by the responsible per-Node actuator.
-// +kubebuilder:validation:XValidation:rule="!has(self.terminalFailure) || has(self.phase) && self.phase in ['Restoring', 'VerifyingRestore', 'Failed']",message="terminalFailure is valid only while restoring or after failure"
+// +kubebuilder:validation:XValidation:rule="!has(self.terminalFailure) || has(self.phase) && self.phase == 'Failed'",message="terminalFailure is valid only after failure"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Failed' || has(self.terminalFailure)",message="Failed phase requires terminalFailure"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Ready' || has(self.previousObservation) && has(self.targetObservation) && has(self.readyAt)",message="Ready phase requires previous and target observations plus readyAt"
-// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Restoring' || has(self.previousObservation) && has(self.restoreStartedAt)",message="Restoring phase requires previous observation and restoreStartedAt"
-// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'VerifyingRestore' || has(self.previousObservation) && has(self.restoreStartedAt) && has(self.restoreAppliedAt)",message="VerifyingRestore phase requires previous observation and restore timestamps"
-// +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Restored' || has(self.previousObservation) && has(self.restoredObservation) && has(self.restoredAt)",message="Restored phase requires previous and restored observations plus restoredAt"
 type NodeActuationStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -210,9 +187,6 @@ type NodeActuationStatus struct {
 	TargetObservation *NodeActuationObservation `json:"targetObservation,omitempty"`
 
 	// +optional
-	RestoredObservation *NodeActuationObservation `json:"restoredObservation,omitempty"`
-
-	// +optional
 	ApplyStartedAt *metav1.Time `json:"applyStartedAt,omitempty"`
 
 	// +optional
@@ -224,20 +198,7 @@ type NodeActuationStatus struct {
 	// +optional
 	ReadyAt *metav1.Time `json:"readyAt,omitempty"`
 
-	// +optional
-	RestoreStartedAt *metav1.Time `json:"restoreStartedAt,omitempty"`
-
-	// RestoreAppliedAt separates the idempotent restore command from its
-	// independent read-back after restart.
-	// +optional
-	RestoreAppliedAt *metav1.Time `json:"restoreAppliedAt,omitempty"`
-
-	// +optional
-	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`
-
-	// TerminalFailure makes the measurement path terminal. It may be retained
-	// while fail-safe restoration continues; a restore failure replaces it and
-	// keeps the Node locked for operator attention.
+	// TerminalFailure records the single terminal failure outcome.
 	// +optional
 	TerminalFailure *NodeActuationFailure `json:"terminalFailure,omitempty"`
 }
@@ -246,7 +207,7 @@ type NodeActuationStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=nact
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.spec.node.name`
-// +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=`.spec.desiredStage`
+// +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.powerMode`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

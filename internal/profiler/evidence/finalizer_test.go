@@ -129,7 +129,7 @@ func TestFinalizerAndLoaderPreserveActuatedEvidenceSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if execution.Actuation == nil || !execution.Actuation.RestoredAt.Equal(record.Actuation.RestoredAt) {
+	if execution.Actuation == nil || !execution.Actuation.ReadyAt.Equal(record.Actuation.ReadyAt) {
 		t.Fatalf("loaded actuation facts = %#v", execution.Actuation)
 	}
 }

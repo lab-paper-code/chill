@@ -16,7 +16,6 @@ data:
     metricsBindAddress: {{ .Values.nodeActuator.metricsBindAddress | quote }}
     healthProbePort: {{ .Values.nodeActuator.healthProbePort }}
     leaseDurationSeconds: {{ .Values.nodeActuator.leaseDurationSeconds }}
-    safetyValidFor: {{ .Values.nodeActuator.safetyValidFor | quote }}
     kubeAPIServer: {{ $kubeAPIServer | quote }}
     kubeAPITokenFile: {{ .Values.nodeActuator.kubernetesClient.tokenFile | quote }}
     kubeAPICAFile: {{ .Values.nodeActuator.kubernetesClient.caFile | quote }}

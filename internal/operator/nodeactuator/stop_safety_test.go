@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestSafeToStopBlocksEveryUnfinishedOrUnrestoredHandoff(t *testing.T) {
+func TestSafeToStopBlocksEveryUnfinishedOrLeaseHoldingHandoff(t *testing.T) {
 	t.Parallel()
 	now := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
 	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
@@ -19,11 +19,9 @@ func TestSafeToStopBlocksEveryUnfinishedOrUnrestoredHandoff(t *testing.T) {
 		"applying": {
 			Phase: edgev1alpha1.NodeActuationPhaseApplying, ApplyStartedAt: &now,
 		},
-		"restore failure": {
-			Phase: edgev1alpha1.NodeActuationPhaseFailed, ApplyStartedAt: &now,
-			TerminalFailure: &edgev1alpha1.NodeActuationFailure{
-				Stage: edgev1alpha1.NodeActuationFailureStageRestore,
-			},
+		"ready before Lease release": {
+			Phase: edgev1alpha1.NodeActuationPhaseReady,
+			Lease: &edgev1alpha1.ProfilingRunObjectReference{Name: "lease", UID: "lease-uid"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -34,15 +32,12 @@ func TestSafeToStopBlocksEveryUnfinishedOrUnrestoredHandoff(t *testing.T) {
 	}
 }
 
-func TestSafeToStopAllowsProvenRestoreOrPreMutationFailure(t *testing.T) {
+func TestSafeToStopAllowsTerminalTransitionsAfterLeaseRelease(t *testing.T) {
 	t.Parallel()
 	now := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
 	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
-		"pre-mutation failure": {Phase: edgev1alpha1.NodeActuationPhaseFailed},
-		"restored": {
-			Phase: edgev1alpha1.NodeActuationPhaseRestored, RestoredAt: &now,
-			RestoredObservation: &edgev1alpha1.NodeActuationObservation{ObservedAt: now},
-		},
+		"failed": {Phase: edgev1alpha1.NodeActuationPhaseFailed},
+		"ready":  {Phase: edgev1alpha1.NodeActuationPhaseReady, ReadyAt: &now},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if safe := safeToStopWithStatus(t, status); !safe {

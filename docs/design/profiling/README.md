@@ -4,11 +4,10 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha6`; actuated evidence
-retains independent previous, target, and restored state observations, checks
-the target against frozen intent, and checks restoration against the retained
-previous state. Permanently invalid retained evidence produces the terminal
-`EvidenceInvalid` outcome.
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha7`; actuated evidence
+retains independent previous and target state observations and checks the
+target against frozen intent. Permanently invalid retained evidence produces
+the terminal `EvidenceInvalid` outcome.
 Repeated active and idle trials, exact-state curve derivation, and the pure Plan
 5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
 used one artifact at batches one, two, and four, completed 12 accepted trials,
@@ -20,8 +19,11 @@ an archival scientific record, not current live or re-verifiable evidence, and
 does not establish a universal `b_sat=1` or statistical confirmation. The first
 recorded Plan 5 campaign closed with a typed budget-insufficient result; an
 accepted statistical confirmation and profile publication remain incomplete.
-Plan 9 is approved in scope and not yet implemented. This document itself does
-not authorize later API or internal changes.
+Plan 9 is partially implemented: `NodeActuation` is a one-way transition and
+the Profiler waits for `Ready`, runs the Job, and continues directly to the
+ordinary evidence path. Run state preconditions and campaign assembly remain
+design work. This document itself does not authorize later API or internal
+changes.
 
 ## How to use this directory
 
@@ -206,9 +208,9 @@ governs the actuation safety boundary,
 ownership from the Run, and
 [ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
 the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
-`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha6
-binds the independent previous, target, and restored observations to the Run,
-checks the target and restoration facts, and gives permanently invalid evidence
+`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha7
+binds the independent previous and target observations to the Run, checks the
+target facts, and gives permanently invalid evidence
 the terminal `EvidenceInvalid` outcome.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
@@ -263,7 +265,7 @@ boundary becomes a catalog fact resolved before any Run exists. One artifact
 defines one state key and one model-loaded-idle baseline. ADR 0016 records this
 decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
-### 9. Transition extraction — approved, not implemented
+### 9. Transition extraction — in progress
 
 [plans/09-transition-extraction.md](plans/09-transition-extraction.md)
 
@@ -274,12 +276,13 @@ Answers only:
 > survival flag can be observed. What is the smallest change that makes a
 > transition separately observable and separately assemblable?
 
-Transition ownership leaves the Run. `NodeActuation` becomes a one-way operation
-toward a declared target, returning to an earlier state is another operation
-rather than a restore phase, and a Run declares a required state it confirms by
-read-back but never establishes. A campaign emits a transition as one step of
-the same decision loop that emits its measurements, so one sweep of N Runs in
-one state performs one transition rather than 2N.
+`NodeActuation` is a one-way operation toward a declared target, with an
+immutable deadline bounding the transition through verified settling. `Ready`
+is terminal and releases the Node Lease while leaving the established state in
+place. The Profiler creates this handoff and waits for `Ready`,
+then executes and finalizes the Run without requesting another state change.
+Run state preconditions and campaign-emitted transition steps remain in this
+plan's implementation scope.
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
 protocols, recovery state machines, compatibility readers, reboot capability,

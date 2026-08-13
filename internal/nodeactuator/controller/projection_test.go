@@ -21,8 +21,7 @@ func TestProjectRequestBindsExactAssignedNodeAndFrozenInputs(t *testing.T) {
 	}
 	if request.Handoff.UID != "handoff-uid" || request.Run.UID != "run-uid" ||
 		request.Node.UID != "node-uid" || request.Target.JetsonNVPModel == nil ||
-		request.Target.JetsonNVPModel.ID != 2 || request.PolicyName != handoff.Spec.PolicyName ||
-		request.DesiredStage != nodeactuator.DesiredStageApply {
+		request.Target.JetsonNVPModel.ID != 2 || request.PolicyName != handoff.Spec.PolicyName {
 		t.Fatalf("projected request = %#v", request)
 	}
 }
@@ -66,7 +65,6 @@ func testNodeActuation() *edgev1alpha1.NodeActuation {
 			PolicyName:              "actuation-policy-v1",
 			SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
 			Deadline:         metav1.NewTime(requested.Add(15 * time.Minute)),
-			DesiredStage:     edgev1alpha1.NodeActuationDesiredStageApply,
 			StageRequestedAt: metav1.NewTime(requested),
 		},
 	}

@@ -1076,11 +1076,6 @@ func (in *NodeActuationStatus) DeepCopyInto(out *NodeActuationStatus) {
 		*out = new(NodeActuationObservation)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.RestoredObservation != nil {
-		in, out := &in.RestoredObservation, &out.RestoredObservation
-		*out = new(NodeActuationObservation)
-		(*in).DeepCopyInto(*out)
-	}
 	if in.ApplyStartedAt != nil {
 		in, out := &in.ApplyStartedAt, &out.ApplyStartedAt
 		*out = (*in).DeepCopy()
@@ -1095,18 +1090,6 @@ func (in *NodeActuationStatus) DeepCopyInto(out *NodeActuationStatus) {
 	}
 	if in.ReadyAt != nil {
 		in, out := &in.ReadyAt, &out.ReadyAt
-		*out = (*in).DeepCopy()
-	}
-	if in.RestoreStartedAt != nil {
-		in, out := &in.RestoreStartedAt, &out.RestoreStartedAt
-		*out = (*in).DeepCopy()
-	}
-	if in.RestoreAppliedAt != nil {
-		in, out := &in.RestoreAppliedAt, &out.RestoreAppliedAt
-		*out = (*in).DeepCopy()
-	}
-	if in.RestoredAt != nil {
-		in, out := &in.RestoredAt, &out.RestoredAt
 		*out = (*in).DeepCopy()
 	}
 	if in.TerminalFailure != nil {

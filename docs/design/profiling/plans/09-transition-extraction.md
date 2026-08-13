@@ -9,8 +9,10 @@
 
 ## Status
 
-Approved for the scope below and not yet implemented. ADR 0018 owns the
-boundary; this plan owns the change that realizes it.
+Partially implemented. `NodeActuation` is a one-way transition with a single
+terminal outcome, and the Profiler proceeds directly from `Ready` through the
+measurement and evidence path. The Run creates its handoff; state-precondition
+admission and campaign assembly remain in this plan. ADR 0018 owns the boundary.
 
 ## Question
 
@@ -26,10 +28,10 @@ Transition ownership leaves `ProfilingRun`. The mechanism does not move: the
 `NodeActuation` object and the per-Node actuator already perform apply and
 independent read-back, and neither is redesigned.
 
-`NodeActuation` becomes a one-way operation toward a declared target. Its
-restore phase is removed, because returning to an earlier state is another
-operation with that state as its target. One object therefore records one state
-change with one terminal outcome, which is the property that makes it
+`NodeActuation` is a one-way operation toward a declared target. Its
+terminal outcome is the declared target state; returning to an earlier state is
+another operation with that state as its target. One object therefore records
+one state change with one terminal outcome, which is the property that makes it
 measurable and reusable.
 
 A `ProfilingRun` declares the state it requires. Admission confirms that state

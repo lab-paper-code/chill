@@ -2,12 +2,11 @@ package nodeactuator
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
 
-func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
+func TestDecideHappyPathKeepsApplyAndTargetReadBackSeparate(t *testing.T) {
 	t.Parallel()
 	base := validSnapshot()
 	previous := observation(1, base.Now.Add(-time.Second))
@@ -56,50 +55,15 @@ func TestDecideHappyPathKeepsApplyAndRestoreReadBackSeparate(t *testing.T) {
 			s.VerifiedAt = &past
 			s.SettlingStartedAt = &past
 		}, want: ActionMarkReady},
-		{name: "hold ready state", mutate: func(s *Snapshot) {
+		{name: "release Lease at ready", mutate: func(s *Snapshot) {
 			s.Phase = PhaseReady
 			s.PreviousObservation = &previous
 			s.TargetObservation = &target
-		}, want: ActionHold},
-		{name: "begin requested restore", mutate: func(s *Snapshot) {
-			s.Phase = PhaseReady
-			s.PreviousObservation = &previous
-			s.TargetObservation = &target
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionBeginRestore},
-		{name: "apply retained previous state", mutate: func(s *Snapshot) {
-			s.Phase = PhaseRestoring
-			s.PreviousObservation = &previous
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionRestorePrevious},
-		{name: "observe restoration without apply when CHILL did not change state", mutate: func(s *Snapshot) {
-			s.Phase = PhaseRestoring
-			s.PreviousObservation = &target
-			s.TargetObservation = &target
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionObserveRestored},
-		{name: "read back restored state", mutate: func(s *Snapshot) {
-			s.Phase = PhaseVerifyingRestore
-			s.PreviousObservation = &previous
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionObserveRestored},
-		{name: "mark exact restoration", mutate: func(s *Snapshot) {
-			s.Phase = PhaseVerifyingRestore
-			s.PreviousObservation = &previous
-			s.RestoredObservation = &previous
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionMarkRestored},
-		{name: "release only after restored", mutate: func(s *Snapshot) {
-			s.Phase = PhaseRestored
-			s.PreviousObservation = &previous
-			s.RestoredObservation = &previous
-			s.Request.DesiredStage = DesiredStageRestore
 		}, want: ActionReleaseLease},
 		{name: "complete after Lease release", mutate: func(s *Snapshot) {
-			s.Phase = PhaseRestored
+			s.Phase = PhaseReady
 			s.PreviousObservation = &previous
-			s.RestoredObservation = &previous
-			s.Request.DesiredStage = DesiredStageRestore
+			s.TargetObservation = &target
 			s.Lease = LeaseObservation{State: LeaseNotHeld}
 		}, want: ActionComplete},
 	}
@@ -132,7 +96,7 @@ func TestDecideCountsSettlingFromTheRecordedStart(t *testing.T) {
 	}
 }
 
-func TestDecideFailsClosedOnSafetyReadBackDeadlineAndRestoreMismatch(t *testing.T) {
+func TestDecideFailsClosedOnSafetyReadBackAndDeadline(t *testing.T) {
 	t.Parallel()
 	base := validSnapshot()
 	previous := observation(1, base.Now.Add(-time.Second))
@@ -151,27 +115,24 @@ func TestDecideFailsClosedOnSafetyReadBackDeadlineAndRestoreMismatch(t *testing.
 			s.Phase = PhaseCheckingSafety
 			s.Safety = SafetyBlocked
 		}, want: ActionMarkFailed, wantStage: FailureStageSafety, wantReason: "WorkloadSafetyBlocked"},
-		{name: "target mismatch restores", mutate: func(s *Snapshot) {
+		{name: "target mismatch fails", mutate: func(s *Snapshot) {
 			s.Phase = PhaseVerifying
 			s.PreviousObservation = &previous
 			s.TargetObservation = &wrong
-		}, want: ActionBeginRestore, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
-		{name: "target name mismatch restores", mutate: func(s *Snapshot) {
+		}, want: ActionMarkFailed, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
+		{name: "target name mismatch fails", mutate: func(s *Snapshot) {
 			s.Phase = PhaseVerifying
 			s.PreviousObservation = &previous
 			s.TargetObservation = &wrongName
-		}, want: ActionBeginRestore, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
-		{name: "deadline restores", mutate: func(s *Snapshot) {
-			s.Phase = PhaseReady
+		}, want: ActionMarkFailed, wantStage: FailureStageVerify, wantReason: "TargetReadBackMismatch"},
+		{name: "deadline fails transition", mutate: func(s *Snapshot) {
+			s.Phase = PhaseSettling
 			s.PreviousObservation = &previous
+			s.TargetObservation = &wrong
+			s.VerifiedAt = &s.Now
+			s.SettlingStartedAt = &s.Now
 			s.Now = s.Request.Deadline
-		}, want: ActionBeginRestore, wantStage: FailureStageHold, wantReason: "DeadlineExceeded"},
-		{name: "restore mismatch terminal", mutate: func(s *Snapshot) {
-			s.Phase = PhaseVerifyingRestore
-			s.PreviousObservation = &previous
-			s.RestoredObservation = &wrong
-			s.Request.DesiredStage = DesiredStageRestore
-		}, want: ActionMarkFailed, wantStage: FailureStageRestore, wantReason: "RestoreReadBackMismatch"},
+		}, want: ActionMarkFailed, wantStage: FailureStageSettle, wantReason: "DeadlineExceeded"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,10 +147,10 @@ func TestDecideFailsClosedOnSafetyReadBackDeadlineAndRestoreMismatch(t *testing.
 	}
 }
 
-func TestDecideRenewsHeldLeaseAndRetainsItAfterRestoreFailure(t *testing.T) {
+func TestDecideRenewsHeldLeaseAndReleasesItAfterFailure(t *testing.T) {
 	t.Parallel()
 	snapshot := validSnapshot()
-	snapshot.Phase = PhaseReady
+	snapshot.Phase = PhaseApplying
 	snapshot.Lease.RetryAfter = 0
 	decision, err := Decide(snapshot)
 	if err != nil || decision.Action != ActionRenewLease {
@@ -198,16 +159,16 @@ func TestDecideRenewsHeldLeaseAndRetainsItAfterRestoreFailure(t *testing.T) {
 
 	snapshot.Phase = PhaseFailed
 	snapshot.Failure = &Failure{
-		Stage: FailureStageRestore, Reason: "RestoreReadBackMismatch", Message: "restore did not converge",
+		Stage: FailureStageApply, Reason: "TargetApplyFailed", Message: "apply did not complete",
 	}
 	snapshot.Lease.RetryAfter = time.Second
 	decision, err = Decide(snapshot)
-	if err != nil || decision.Action != ActionHold || decision.Failure != snapshot.Failure {
-		t.Fatalf("restore failure decision = %#v, error=%v", decision, err)
+	if err != nil || decision.Action != ActionReleaseLease || decision.Failure != snapshot.Failure {
+		t.Fatalf("failure decision = %#v, error=%v", decision, err)
 	}
 }
 
-func TestDecideReacquiresLeaseBeforeRecoveringFromPrimaryFailure(t *testing.T) {
+func TestDecideCompletesFailureWithoutReacquiringLease(t *testing.T) {
 	t.Parallel()
 	snapshot := validSnapshot()
 	previous := observation(1, snapshot.Now.Add(-time.Second))
@@ -218,8 +179,8 @@ func TestDecideReacquiresLeaseBeforeRecoveringFromPrimaryFailure(t *testing.T) {
 	}
 	snapshot.Lease = LeaseObservation{State: LeaseLost}
 	decision, err := Decide(snapshot)
-	if err != nil || decision.Action != ActionAcquireLease || decision.Failure != snapshot.Failure {
-		t.Fatalf("recovery decision = %#v, error=%v", decision, err)
+	if err != nil || decision.Action != ActionComplete || decision.Failure != snapshot.Failure {
+		t.Fatalf("terminal failure decision = %#v, error=%v", decision, err)
 	}
 }
 
@@ -247,38 +208,6 @@ func TestSettlingWaitNeverOutlivesLeaseRenewal(t *testing.T) {
 	}
 }
 
-func TestReadyStateRechecksWorkloadSafetyAndRestoresWhenBlocked(t *testing.T) {
-	t.Parallel()
-	snapshot := validSnapshot()
-	previous := observation(1, snapshot.Now.Add(-time.Second))
-	snapshot.Phase = PhaseReady
-	snapshot.PreviousObservation = &previous
-	stale := snapshot.Now.Add(-snapshot.SafetyValidFor)
-	snapshot.SafetyObservedAt = &stale
-	decision, err := Decide(snapshot)
-	if err != nil || decision.Action != ActionCheckSafety {
-		t.Fatalf("stale safety decision = %#v, error=%v", decision, err)
-	}
-
-	snapshot.Safety = SafetyBlocked
-	snapshot.SafetyObservedAt = &snapshot.Now
-	decision, err = Decide(snapshot)
-	if err != nil || decision.Action != ActionBeginRestore || decision.Failure == nil ||
-		decision.Failure.Stage != FailureStageSafety {
-		t.Fatalf("blocked safety decision = %#v, error=%v", decision, err)
-	}
-}
-
-func TestSnapshotRejectsRestoreVerificationWithoutPreviousState(t *testing.T) {
-	t.Parallel()
-	snapshot := validSnapshot()
-	snapshot.Phase = PhaseVerifyingRestore
-	snapshot.Request.DesiredStage = DesiredStageRestore
-	if _, err := Decide(snapshot); err == nil || !strings.Contains(err.Error(), "previous observation") {
-		t.Fatalf("invalid restore snapshot error = %v", err)
-	}
-}
-
 func validSnapshot() Snapshot {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	return Snapshot{
@@ -290,11 +219,11 @@ func validSnapshot() Snapshot {
 			Target:                  Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: 2}},
 			PolicyName:              "actuation-policy-v1",
 			SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
-			Deadline: now.Add(15 * time.Minute), DesiredStage: DesiredStageApply, StageRequestedAt: now,
+			Deadline: now.Add(15 * time.Minute), StageRequestedAt: now,
 		},
 		Now: now, Phase: PhasePending,
 		Lease:  LeaseObservation{State: LeaseHeld, RetryAfter: 10 * time.Second},
-		Safety: SafetyAllowed, SafetyObservedAt: &now, SafetyValidFor: 30 * time.Second,
+		Safety: SafetyAllowed, SafetyObservedAt: &now,
 	}
 }
 

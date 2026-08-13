@@ -21,7 +21,6 @@ type options struct {
 	watchNamespace    string
 	leaseNamespace    string
 	leaseDuration     int
-	safetyValidFor    time.Duration
 	allowedNamespaces stringListFlag
 	allowedPolicies   policyListFlag
 	jetsonCommand     stringListFlag
@@ -39,7 +38,6 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.watchNamespace, "watch-namespace", o.watchNamespace, "Namespace containing NodeActuation handoffs.")
 	flags.StringVar(&o.leaseNamespace, "lease-namespace", o.leaseNamespace, "Namespace containing Node-UID Leases.")
 	flags.IntVar(&o.leaseDuration, "lease-duration-seconds", 30, "Node-UID Lease duration in seconds.")
-	flags.DurationVar(&o.safetyValidFor, "safety-valid-for", time.Minute, "Maximum workload-safety observation age.")
 	flags.Var(
 		&o.allowedNamespaces, "allowed-namespace",
 		"Explicit workload namespace allowed during actuation; repeatable.",
@@ -90,9 +88,6 @@ func (o options) validate() error {
 	}
 	if o.leaseDuration < 5 || o.leaseDuration > 300 {
 		return errors.New("Lease duration must be between 5 and 300 seconds")
-	}
-	if o.safetyValidFor < time.Second || o.safetyValidFor > 5*time.Minute {
-		return errors.New("safety validity must be between 1 second and 5 minutes")
 	}
 	if len(o.allowedNamespaces) == 0 || len(o.allowedPolicies) == 0 {
 		return errors.New("at least one allowed namespace and actuation policy are required")

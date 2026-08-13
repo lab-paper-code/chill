@@ -168,7 +168,7 @@ func leaseTestRequest(handoffUID string) nodeactuator.Request {
 		},
 		PolicyName:              "actuation-policy-v1",
 		SettlingDurationSeconds: 60, MaxActuationDurationSeconds: 900,
-		Deadline: now.Add(15 * time.Minute), DesiredStage: nodeactuator.DesiredStageApply,
+		Deadline:         now.Add(15 * time.Minute),
 		StageRequestedAt: now,
 	}
 }

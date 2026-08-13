@@ -69,9 +69,6 @@
 {{- if or (lt (int .Values.nodeActuator.leaseDurationSeconds) 5) (gt (int .Values.nodeActuator.leaseDurationSeconds) 300) -}}
 {{- fail "nodeActuator.leaseDurationSeconds must be between 5 and 300 when nodeActuator.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.nodeActuator.safetyValidFor -}}
-{{- fail "nodeActuator.safetyValidFor must not be empty when nodeActuator.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.nodeActuator.kubernetesClient.tokenFile -}}
 {{- fail "nodeActuator.kubernetesClient.tokenFile must not be empty when nodeActuator.enabled=true" -}}
 {{- end -}}

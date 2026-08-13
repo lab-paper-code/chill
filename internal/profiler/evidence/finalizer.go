@@ -153,7 +153,6 @@ func cloneActuationFacts(input *ActuationFacts) *ActuationFacts {
 	copy := *input
 	copy.Previous.Actuator = cloneActuatorTarget(copy.Previous.Actuator)
 	copy.Target.Actuator = cloneActuatorTarget(copy.Target.Actuator)
-	copy.Restored.Actuator = cloneActuatorTarget(copy.Restored.Actuator)
 	return &copy
 }
 

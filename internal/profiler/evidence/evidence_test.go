@@ -137,9 +137,9 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 	return verified
 }
 
-func TestActuatedExecutionEvidenceBindsIndependentStateReadBacks(t *testing.T) {
+func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha6"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -168,24 +168,15 @@ func TestActuatedExecutionEvidenceBindsIndependentStateReadBacks(t *testing.T) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha5"
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha6"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
 		}, permanent: true},
-		{name: "restore drift", mutate: func(candidate *ExecutionEvidence) {
-			candidate.Actuation.Restored.Actuator.JetsonNVPModel.ID++
-		}, permanent: true},
-		{name: "early restore request", mutate: func(candidate *ExecutionEvidence) {
-			candidate.Actuation.RestoreRequestedAt = candidate.Terminal.Job.CompletionTime.Add(-time.Second)
-		}, permanent: true},
 		{name: "container before ready", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.ReadyAt = candidate.Terminal.Containers[0].StartedAt.Add(time.Second)
 		}, permanent: true},
-		{name: "finalization before restored status", mutate: func(candidate *ExecutionEvidence) {
-			candidate.FinalizedAt = candidate.Actuation.RestoredAt.Add(-time.Nanosecond)
-		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -753,12 +744,7 @@ func validActuatedExecutionEvidence(
 		Target: ActuationObservation{
 			PowerMode: intent.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-90 * time.Second),
 		},
-		Restored: ActuationObservation{
-			PowerMode: "MODE_50W", Actuator: target(1), ObservedAt: completed.Add(2 * time.Second),
-		},
-		ReadyAt:            completed.Add(-70 * time.Second),
-		RestoreRequestedAt: completed.Add(time.Second),
-		RestoredAt:         completed.Add(3 * time.Second),
+		ReadyAt: completed.Add(-70 * time.Second),
 	}
 	return intent, raw, execution
 }
@@ -786,6 +772,5 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 	}
 	copy.Previous.Actuator = cloneTarget(copy.Previous.Actuator)
 	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
-	copy.Restored.Actuator = cloneTarget(copy.Restored.Actuator)
 	return &copy
 }

@@ -40,7 +40,6 @@ func ProjectRequest(
 		SettlingDurationSeconds:     handoff.Spec.SettlingDurationSeconds,
 		MaxActuationDurationSeconds: handoff.Spec.MaxActuationDurationSeconds,
 		Deadline:                    handoff.Spec.Deadline.Time,
-		DesiredStage:                string(handoff.Spec.DesiredStage),
 		StageRequestedAt:            handoff.Spec.StageRequestedAt.Time,
 	}
 	if err := request.ValidateForNode(assignedNode); err != nil {
@@ -54,15 +53,10 @@ func ProjectSnapshot(
 	assignedNode nodeactuator.ObjectIdentity,
 	lease LeaseBinding,
 	now time.Time,
-	safetyValidFor time.Duration,
-	forceRestore bool,
 ) (nodeactuator.Snapshot, error) {
 	request, err := ProjectRequest(handoff, assignedNode)
 	if err != nil {
 		return nodeactuator.Snapshot{}, err
-	}
-	if forceRestore {
-		request.DesiredStage = nodeactuator.DesiredStageRestore
 	}
 	if handoff.Status.ObservedGeneration < 0 || handoff.Status.ObservedGeneration > handoff.Generation {
 		return nodeactuator.Snapshot{}, errors.New("NodeActuation status observedGeneration is invalid")
@@ -78,8 +72,7 @@ func ProjectSnapshot(
 		Lease: nodeactuator.LeaseObservation{
 			State: lease.State, RetryAfter: lease.RetryAfter,
 		},
-		Safety:         nodeactuator.SafetyUnknown,
-		SafetyValidFor: safetyValidFor,
+		Safety: nodeactuator.SafetyUnknown,
 	}
 	if handoff.Status.Safety != nil {
 		snapshot.SafetyObservedAt = &handoff.Status.Safety.ObservedAt.Time
@@ -101,10 +94,6 @@ func ProjectSnapshot(
 	snapshot.TargetObservation, err = projectObservation(handoff.Status.TargetObservation)
 	if err != nil {
 		return nodeactuator.Snapshot{}, fmt.Errorf("project target observation: %w", err)
-	}
-	snapshot.RestoredObservation, err = projectObservation(handoff.Status.RestoredObservation)
-	if err != nil {
-		return nodeactuator.Snapshot{}, fmt.Errorf("project restored observation: %w", err)
 	}
 	snapshot.VerifiedAt = projectTime(handoff.Status.VerifiedAt)
 	snapshot.SettlingStartedAt = projectTime(handoff.Status.SettlingStartedAt)

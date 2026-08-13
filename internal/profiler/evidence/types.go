@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha6"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
@@ -23,18 +23,15 @@ type ExecutionEvidence struct {
 	FinalizedAt     time.Time                    `json:"finalizedAt"`
 }
 
-// ActuationFacts are Profiler-observed Kubernetes facts finalized only after
-// the NodeActuator independently proves restoration. Worker-owned raw evidence
-// deliberately cannot assert these external host-state transitions.
+// ActuationFacts are Profiler-observed Kubernetes facts from the one-way
+// transition that established the measured state. Worker-owned raw evidence
+// deliberately cannot assert these external host-state observations.
 type ActuationFacts struct {
-	Run                NamespacedObjectFacts `json:"run"`
-	Handoff            NamespacedObjectFacts `json:"handoff"`
-	Previous           ActuationObservation  `json:"previous"`
-	Target             ActuationObservation  `json:"target"`
-	Restored           ActuationObservation  `json:"restored"`
-	ReadyAt            time.Time             `json:"readyAt"`
-	RestoreRequestedAt time.Time             `json:"restoreRequestedAt"`
-	RestoredAt         time.Time             `json:"restoredAt"`
+	Run      NamespacedObjectFacts `json:"run"`
+	Handoff  NamespacedObjectFacts `json:"handoff"`
+	Previous ActuationObservation  `json:"previous"`
+	Target   ActuationObservation  `json:"target"`
+	ReadyAt  time.Time             `json:"readyAt"`
 }
 
 type NamespacedObjectFacts struct {

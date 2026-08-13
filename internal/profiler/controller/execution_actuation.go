@@ -43,12 +43,9 @@ func (f *KubernetesExecutionFinalizer) observeActuation(
 		Handoff: profilerevidence.NamespacedObjectFacts{
 			Namespace: handoff.Namespace, Name: handoff.Name, UID: string(handoff.UID),
 		},
-		Previous:           projectEvidenceActuationObservation(handoff.Status.PreviousObservation),
-		Target:             projectEvidenceActuationObservation(handoff.Status.TargetObservation),
-		Restored:           projectEvidenceActuationObservation(handoff.Status.RestoredObservation),
-		ReadyAt:            handoff.Status.ReadyAt.Time,
-		RestoreRequestedAt: handoff.Spec.StageRequestedAt.Time,
-		RestoredAt:         handoff.Status.RestoredAt.Time,
+		Previous: projectEvidenceActuationObservation(handoff.Status.PreviousObservation),
+		Target:   projectEvidenceActuationObservation(handoff.Status.TargetObservation),
+		ReadyAt:  handoff.Status.ReadyAt.Time,
 	}, nil
 }
 
@@ -71,16 +68,14 @@ func validateFinalizedActuation(
 		!reflect.DeepEqual(handoff.Spec.Actuator, projectActuatorTarget(intent.Actuation.Actuator)) {
 		return errors.New("NodeActuation material identity does not match frozen intent")
 	}
-	if handoff.Spec.DesiredStage != edgev1alpha1.NodeActuationDesiredStageRestore ||
-		handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseRestored ||
+	if handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseReady ||
 		handoff.Status.ObservedGeneration != handoff.Generation ||
 		handoff.Status.TerminalFailure != nil {
-		return errors.New("NodeActuation has not completed successful restoration")
+		return errors.New("NodeActuation has not reached the ready target")
 	}
 	if handoff.Status.PreviousObservation == nil || handoff.Status.TargetObservation == nil ||
-		handoff.Status.RestoredObservation == nil || handoff.Status.ReadyAt == nil ||
-		handoff.Status.RestoredAt == nil || handoff.Spec.StageRequestedAt.IsZero() {
-		return errors.New("NodeActuation restoration provenance is incomplete")
+		handoff.Status.ReadyAt == nil || handoff.Spec.StageRequestedAt.IsZero() {
+		return errors.New("NodeActuation target provenance is incomplete")
 	}
 	return nil
 }

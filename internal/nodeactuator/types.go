@@ -12,8 +12,6 @@ import (
 const (
 	ActuatorKindJetsonNVPModel       = "JetsonNVPModel"
 	ActuatorKindNvidiaLockedGPUClock = "NvidiaLockedGPUClock"
-	DesiredStageApply                = "Apply"
-	DesiredStageRestore              = "Restore"
 )
 
 type ObjectIdentity struct {
@@ -51,7 +49,6 @@ type Request struct {
 	SettlingDurationSeconds     int32
 	MaxActuationDurationSeconds int32
 	Deadline                    time.Time
-	DesiredStage                string
 	StageRequestedAt            time.Time
 }
 
@@ -91,9 +88,6 @@ func (r Request) ValidateForNode(assigned ObjectIdentity) error {
 	}
 	if r.StageRequestedAt.IsZero() || r.Deadline.IsZero() || !r.StageRequestedAt.Before(r.Deadline) {
 		return errors.New("handoff stage request and deadline are invalid")
-	}
-	if r.DesiredStage != DesiredStageApply && r.DesiredStage != DesiredStageRestore {
-		return fmt.Errorf("unsupported desired stage %q", r.DesiredStage)
 	}
 	return nil
 }

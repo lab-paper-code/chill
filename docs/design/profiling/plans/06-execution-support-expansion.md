@@ -20,19 +20,21 @@ statistical confirmation.
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) governs
 the declared-batch-size artifact capability used by future campaigns.
 
-The Run-owned NodeActuator path is implemented under
-[ADR 0015](../../../adr/0015-node-power-actuation-boundary.md). Execution
-evidence uses `chill.dacs.io/profiling-execution-evidence.v1alpha6`, retains
-independent previous, target, and restored observations, and validates the
-target against frozen intent and restoration against the retained previous
-state. A permanent semantic contradiction produces terminal
+The NodeActuator transition path is implemented under
+[ADR 0018](../../../adr/0018-transition-ownership-boundary.md). A
+`NodeActuation` records one state change toward a declared target, independently
+reads that target back, settles it, releases the Node Lease at terminal `Ready`,
+and leaves the established state in place. Execution evidence uses
+`chill.dacs.io/profiling-execution-evidence.v1alpha7`, retains independent
+previous and target observations, and validates the target against frozen
+intent. A permanent semantic contradiction produces terminal
 `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an error
 requeue.
 [ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
 bounds the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN`
 states; `MODE_30W` and `MODE_15W` are not authorized.
-[ADR 0018](../../../adr/0018-transition-ownership-boundary.md) separates
-transition ownership from the Run.
+[ADR 0015](../../../adr/0015-node-power-actuation-boundary.md) remains
+authoritative for the sole-writer, safety, and host-adapter boundary.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
@@ -174,9 +176,9 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Select the dedicated per-Node `NodeActuator` operand as the only process
   allowed to mutate host mode; the Profiler orchestrates and the runtime worker
   remains unprivileged.
-- [x] Separate desired, observed, previous, and restored mode; actuator
-  kind/target; policy and Run identity; lifecycle stage; and apply,
-  verification, settling, and restoration timestamps in the durable handoff.
+- [x] Retain previous and target mode observations; actuator kind/target;
+  policy and Run identity; lifecycle stage; and apply, verification, settling,
+  and ready timestamps in the durable handoff.
 - [x] Freeze the selected target and configured actuation-policy name into
   immutable Run intent.
 - [x] Fix intent v1alpha10 and simultaneous Go/Python decoder compatibility
@@ -186,40 +188,39 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Define and test the Node-UID-keyed Lease acquire, renew, conflict,
   expiration takeover, and exact-holder release primitive; keep the production
   serialization gate open until the actuator controller consumes it.
-- [x] Fix the pure happy-path and fail-safe decision order with separate target
-  and restoration read-back phases; no command result directly proves state.
+- [x] Fix the pure transition order with independent target read-back; no
+  command result directly proves state.
 - [x] Implement the internal status reconciler with an exact local-Node filter,
-  a durable pre-mutation fence, independent read-back, and restoration-aware
-  finalization; keep its production gate open until an operand wires it.
+  a durable pre-mutation fence, independent read-back, and one terminal
+  outcome; keep its production gate open until an operand wires it.
 - [x] Implement a fail-closed Kubernetes workload-safety observation that
   retains every active blocking Pod identity outside explicit namespace and
   exact Pod-UID allowances; install no implicit default policy.
 - [x] Reject any handoff whose actuation-policy name is absent from
   the actuator's explicit authorization set before crossing a Lease, safety,
-  or host port; policy drift after retained state enters restoration.
+  or host port.
 - [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
   lifecycle with exact Node/self-Pod identity, shared Go policy naming,
   scoped API permissions, and a stop gate that retains the operand for every
-  unfinished or unrestored handoff.
+  unfinished transition or unreleased Lease.
 - [x] Wire the first Jetson NVPModel adapter with a bounded configured argv and
-  explicit narrow host mounts; keep the chart disabled until live restoration
-  proof closes the mutation gate.
+  explicit narrow host mounts; keep the chart disabled until live apply and
+  read-back proof closes the mutation gate.
 - [x] Serialize every runnable-operand handoff with the exact Node-UID Lease;
-  the first live MODE_50W lifecycle released that Lease after proven restore.
+  terminal `Ready` and `Failed` release that Lease.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
   exact self-Pod allowances before any host operation.
-- [x] Fix `apply -> read-back -> settling -> measurement -> restore` in the
-  Profiler lifecycle and prove that ordering in one retained live Run.
-- [x] Reconstruct the durable handoff after controller restart and request
-  restoration after a recorded Job failure or loss; an active-deadline worker
-  timeout follows the same `JobFailed` path.
-- [x] Surface restoration failure as a terminal `ProfilingRun` execution
+- [x] Fix `apply -> read-back -> settling -> Ready -> measurement` in the
+  Profiler lifecycle.
+- [x] Reconstruct the durable transition after controller restart without
+  introducing a recovery transition.
+- [x] Surface transition failure as a terminal `ProfilingRun` execution
   condition without finalizing evidence.
 - [ ] Connect that terminal condition to an operator alert sink.
 - [x] Admit one exact AGX Orin CPU ORT MODE_50W active Run after verified
-  target settling and before proven restoration.
+  target settling.
 - [x] Admit one exact model-loaded-idle Run through the same actuation and
-  restoration boundary.
+  target-read-back boundary.
 - [x] Complete two additional active and idle trials and verify stable
   derivation identities across all six retained objects.
 
@@ -235,19 +236,16 @@ selected target. The Profiler selects a configured policy by exact DeviceClass,
 mode, and actuator kind, binds its name into the intent, and retains its typed
 record and ConfigMap source in the immutable
 record. Its first policy fields bind settling and maximum handoff duration.
-The Profiler now creates one owned `NodeActuation`, records its exact UID in
+The Profiler creates one owned `NodeActuation`, records its exact UID in
 Run status, and reports `NodeActuatorPending` until the target is independently
 verified and settled. Only then may it create the measurement Job. A terminal
-Job advances the handoff once from `Apply` to `Restore`; evidence finalization
-is withheld until `Restored`, and a successful Job is accepted by that gate
-only when its completion timestamp does not follow the Profiler-owned restore
-request. The handoff keeps Run/Node UID, selected class/mode/target, policy
-name, policy timing, absolute deadline, and Profiler-owned desired stage in
-immutable or monotonic `spec`; the actuator alone owns
-previous/target/restored observations, phase, timestamps, and terminal failure
-in `status`. Its consumer projection rejects a foreign Node name or UID before
-any Lease or host adapter can receive the request. This closes the durable API
-boundary without enabling host mutation or selectable-mode profiling.
+Job continues through ordinary outcome and evidence finalization without
+requesting another state change. The handoff keeps Run/Node UID, selected
+class/mode/target, policy name, policy timing, request timestamp, and absolute
+transition deadline immutable in `spec`; the actuator alone owns previous and
+target observations, phase, timestamps, Lease identity, and terminal failure in
+`status`. Its consumer projection rejects a foreign Node name or UID before any
+Lease or host adapter can receive the request.
 
 The internal layer keeps Node locking and lifecycle decisions separate
 from host tooling. Its Lease name is derived from exact Node UID, holder
@@ -255,36 +253,31 @@ identity from exact handoff UID, and takeover is allowed only after a trusted
 renew/acquire timestamp plus configured duration expires. Release uses object
 preconditions and refuses a foreign holder. The pure lifecycle requires
 `observe previous -> compare target -> apply only when different -> settle ->
-hold -> apply previous only after a CHILL mutation -> observe restored`; deadline,
-safety rejection, target mismatch, and primary failure all enter the same
-restore path. `VerifyingRestore` and
-`restoreAppliedAt` make command application and independent read-back
-reconstructable after restart. A restore read-back mismatch keeps the failure
-terminal and retains or reacquires the Lease. The internal status reconciler
-now drives these primitives from durable `NodeActuation` state. It records the
+Ready`; deadline, safety rejection, target mismatch, and port failure all
+produce one terminal failure without a recovery chain. `Ready` and `Failed`
+release the Lease, and returning to an earlier state requires another
+`NodeActuation` with that state as its target. The internal status reconciler
+drives these primitives from durable `NodeActuation` state. It records the
 apply phase before invoking the host port, separates command completion from
-target and restoration read-back, retains the Lease and finalizer when
-restoration cannot be proven, and reconciles Lease status after restart. Its
+target read-back, and reconciles Lease status after restart. Its
 workload-safety adapter lists active Pods on the exact target Node and allows
 only explicitly configured namespaces or exact Pod UIDs; this permits the
 per-Node DaemonSet to exclude only its own Pod without trusting every workload in
 the release namespace. An unapproved Pod or an incomplete blocker set fails
 closed. The reconciler independently requires the handoff's policy name to be
-in its installed authorization set before crossing any port; if
-that authorization drifts after a previous state was retained, it durably
-starts restoration instead of abandoning the Node. The runnable operand
-now selects these allowances and consumes the Lease and lifecycle paths. The
-first opt-in AGX Orin Run closed the target apply/read-back and restoration
-gate. Three current-image active and three current-image model-loaded-idle Runs
-then closed admission and the sequential identity audit. Live host-failure
-injection and an operator alert sink remain open.
+in its installed authorization set before crossing any port. The runnable
+operand selects these allowances and consumes the Lease and lifecycle paths. The
+archived AGX Orin campaign contains apply/read-back and restoration evidence
+under a superseded stored contract; it does not prove the current v1alpha7
+one-way lifecycle. Live validation of the current contract and bounded host
+failure injection remain open.
 
 The runnable layer composes the controller with installation-owned host access.
 Helm renders a disabled-by-default ConfigMap, ServiceAccount,
 namespaced handoff/Lease Role, cluster-scoped Node/Pod read permissions, and the
 `ChillSystem` opt-in reference. The Operator owns the per-eligible-Node
 DaemonSet, reports its availability, and refuses disable or system finalization
-while any handoff is non-terminal or lacks proven restoration. The command
+while any transition is non-terminal or still records a held Lease. The command
 resolves exact Node UID from the API, excludes only its own downward-API Pod UID
 in addition to explicitly configured infrastructure namespaces, and derives
 authorized policy names through the same validated `internal/nodeactuator`
@@ -295,8 +288,8 @@ not depend on missing Kubernetes service environment variables. The Jetson adapt
 and never treats an apply exit as convergence. The chart mounts only the
 declared binary, runtime libraries, NVPModel configuration/state, and sysfs;
 it does not request privileged mode or added capabilities. The exact AGX Orin
-MODE_50W lifecycle is live-proven; no other Node, mode, or runtime inherits
-that result.
+MODE_50W measurement result is archival; no current-contract live proof or
+other Node, mode, or runtime inherits that result.
 
 ### Jetson NVPModel
 
@@ -308,18 +301,17 @@ that result.
   2026-08-06 audit.
 - [x] Implement explicit bounded `Apply(ID)` and `Observe()` operations.
 - [x] Judge success in the controller by a separate parsed name/ID read-back,
-  never command exit alone; the first MODE_50W live lifecycle proved both
-  target and restored read-backs.
-- [x] Retain exact Run/handoff identities and previous, target, and restored
+  never command exit alone.
+- [x] Retain exact Run/handoff identities and previous and target
   mode observations in finalized execution evidence.
 - [x] Configure the post-read-back settling duration in installation policy.
 - [ ] Define a thermal-stability criterion only if non-throttled admission and
   the configured settling duration are insufficient; elapsed settling time does
   not itself prove thermodynamic equilibrium.
-- [x] Test read-back mode drift, Lease conflict, partial apply failure, and
-  restore mismatch in the pure and controller paths.
+- [x] Test read-back mode drift, Lease conflict, and partial apply failure in
+  the pure and controller paths.
 - [ ] Run bounded live failure injection for an unsupported NVPModel ID and a
-  restoration failure; local error-path tests do not prove host behavior.
+  target read-back mismatch; local error-path tests do not prove host behavior.
 
 ### GPU clock
 
@@ -393,8 +385,8 @@ Completion: one exact Orange Pi RKNN row reaches L3.
 
 ### P4: Orin Nano ORT TensorRT / one NVPModel
 
-Entry condition: Orin Nano is restored to Ready/L0 and one power-mode protocol
-has proven apply/read-back/restore.
+Entry condition: Orin Nano is available at Ready/L0 and one power-mode protocol
+has proven apply/read-back.
 
 - Freeze ORT, TensorRT, CUDA, L4T, driver, artifact, GPU allocation, and exact
   NVPModel identities.
@@ -417,7 +409,7 @@ Entry condition: P4 reaches L3.
 
 ### P6: RTX server execution paths
 
-Entry condition: Node-wide GPU clock ownership and restoration are proven.
+Entry condition: Node-wide GPU clock transition ownership is proven.
 
 - Keep ORT CPU, ORT CUDA, and ORT TensorRT as separate paths with exact GPU,
   device-plugin, runtime, wall-source, and contamination-observer facts.
@@ -468,7 +460,7 @@ Every L3 vertical slice must prove all applicable items:
   mode-specific measurement-protocol identity, admit three sequential trials
   per mode; full intent-only audit fields may differ only when the delta is
   recorded and deliberately excluded from all three derivation identities;
-- changed Node state is restored and read back; and
+- the required Node state is independently read back before measurement; and
 - package/kind evidence and testbed live evidence are reported separately.
 
 Repository e2e is never run against the testbed kubeconfig. Live validation

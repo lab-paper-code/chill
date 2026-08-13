@@ -22,7 +22,6 @@ type Config struct {
 	MetricsBindAddress   string                             `json:"metricsBindAddress"`
 	HealthProbePort      int32                              `json:"healthProbePort"`
 	LeaseDurationSeconds int32                              `json:"leaseDurationSeconds"`
-	SafetyValidFor       string                             `json:"safetyValidFor"`
 	KubeAPIServer        string                             `json:"kubeAPIServer,omitempty"`
 	KubeAPITokenFile     string                             `json:"kubeAPITokenFile"`
 	KubeAPICAFile        string                             `json:"kubeAPICAFile"`
@@ -56,8 +55,8 @@ func (c Config) Validate() error {
 	for name, value := range map[string]string{
 		"image": c.Image, "imagePullPolicy": string(c.ImagePullPolicy),
 		"serviceAccountName": c.ServiceAccountName, "metricsBindAddress": c.MetricsBindAddress,
-		"safetyValidFor": c.SafetyValidFor, "kubeAPITokenFile": c.KubeAPITokenFile,
-		"kubeAPICAFile": c.KubeAPICAFile,
+		"kubeAPITokenFile": c.KubeAPITokenFile,
+		"kubeAPICAFile":    c.KubeAPICAFile,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			problems = append(problems, name+" is required without surrounding whitespace")
@@ -68,9 +67,6 @@ func (c Config) Validate() error {
 	}
 	if c.LeaseDurationSeconds < 5 || c.LeaseDurationSeconds > 300 {
 		problems = append(problems, "leaseDurationSeconds must be between 5 and 300")
-	}
-	if duration, err := time.ParseDuration(c.SafetyValidFor); err != nil || duration < time.Second || duration > 5*time.Minute {
-		problems = append(problems, "safetyValidFor must be a duration between 1 second and 5 minutes")
 	}
 	if strings.TrimSpace(c.KubeAPIServer) != c.KubeAPIServer {
 		problems = append(problems, "kubeAPIServer must not have surrounding whitespace")

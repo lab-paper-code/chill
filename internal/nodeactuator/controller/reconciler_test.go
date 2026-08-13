@@ -10,7 +10,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -82,7 +81,6 @@ type memoryHostActuator struct {
 	target       nodeactuator.Target
 	applyCalls   []nodeactuator.Target
 	observeCalls int
-	ignoreApply  bool
 	applyErr     error
 }
 
@@ -110,13 +108,11 @@ func (a *memoryHostActuator) Apply(
 	if a.applyErr != nil {
 		return a.applyErr
 	}
-	if !a.ignoreApply {
-		a.target = target
-	}
+	a.target = target
 	return nil
 }
 
-func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T) {
+func TestHandoffReconcilerFencesApplyAndReleasesLeaseAtReady(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	handoff := testNodeActuation()
@@ -132,7 +128,7 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
 
-	reconcileTimes(t, ctx, reconciler, request, 5)
+	reconcileTimes(t, ctx, reconciler, request, 4)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseApplying || len(host.applyCalls) != 0 ||
 		current.Status.ApplyStartedAt == nil {
@@ -152,26 +148,16 @@ func TestHandoffReconcilerFencesApplyAndRestoresBeforeLeaseRelease(t *testing.T)
 		t.Fatalf("settled phase = %s, status=%#v", current.Status.Phase, current.Status)
 	}
 
-	current.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
-	current.Spec.StageRequestedAt = metav1.NewTime(now)
-	if err := kubeClient.Update(ctx, current); err != nil {
-		t.Fatal(err)
-	}
-	reconcileTimes(t, ctx, reconciler, request, 4)
-	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestored || len(host.applyCalls) != 2 ||
-		current.Status.RestoredObservation == nil || lease.releaseCalls != 0 {
-		t.Fatalf("restoration = phase:%s applyCalls:%d releases:%d status:%#v",
-			current.Status.Phase, len(host.applyCalls), lease.releaseCalls, current.Status)
-	}
 	reconcileTimes(t, ctx, reconciler, request, 1)
 	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if lease.releaseCalls != 1 || current.Status.Lease != nil || host.target.JetsonNVPModel.ID != 1 {
-		t.Fatalf("post-restore release = releases:%d target:%#v status:%#v", lease.releaseCalls, host.target, current.Status)
+	if lease.releaseCalls != 1 || current.Status.Lease != nil || host.target.JetsonNVPModel.ID != 2 ||
+		len(host.applyCalls) != 1 {
+		t.Fatalf("ready release = releases:%d target:%#v applyCalls:%d status:%#v",
+			lease.releaseCalls, host.target, len(host.applyCalls), current.Status)
 	}
 }
 
-func TestHandoffReconcilerSkipsApplyAndRestoreWhenTargetIsAlreadyActive(t *testing.T) {
+func TestHandoffReconcilerSkipsApplyWhenTargetIsAlreadyActive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	handoff := testNodeActuation()
@@ -205,21 +191,9 @@ func TestHandoffReconcilerSkipsApplyAndRestoreWhenTargetIsAlreadyActive(t *testi
 		t.Fatalf("settled phase = %s, status=%#v", current.Status.Phase, current.Status)
 	}
 
-	current.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
-	current.Spec.StageRequestedAt = metav1.NewTime(now)
-	if err := kubeClient.Update(ctx, current); err != nil {
-		t.Fatal(err)
-	}
-	reconcileTimes(t, ctx, reconciler, request, 3)
-	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestored || len(host.applyCalls) != 0 ||
-		current.Status.RestoredObservation == nil || current.Status.RestoreAppliedAt != nil || lease.releaseCalls != 0 {
-		t.Fatalf("no-op restoration = phase:%s applyCalls:%d releases:%d status:%#v",
-			current.Status.Phase, len(host.applyCalls), lease.releaseCalls, current.Status)
-	}
 	reconcileTimes(t, ctx, reconciler, request, 1)
 	if lease.releaseCalls != 1 || len(host.applyCalls) != 0 {
-		t.Fatalf("post-restore release = releases:%d applyCalls:%d", lease.releaseCalls, len(host.applyCalls))
+		t.Fatalf("ready release = releases:%d applyCalls:%d", lease.releaseCalls, len(host.applyCalls))
 	}
 }
 
@@ -286,36 +260,6 @@ func TestExecuteLeaseActionReacquiresWithoutDiscardingDurableProgress(t *testing
 	}
 }
 
-func TestHandoffReconcilerRetainsLeaseAndFinalizerOnRestoreReadBackMismatch(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	now := time.Date(2026, 8, 6, 12, 2, 0, 0, time.UTC)
-	handoff := readyNodeActuation(now)
-	scheme := handoffReconcilerScheme(t)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
-		WithObjects(handoff).
-		Build()
-	lease := &recordingLeaseController{held: true}
-	safety := &staticSafetyChecker{allowed: true, now: now}
-	host := &memoryHostActuator{target: nvpTarget(2), ignoreApply: true}
-	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
-	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
-
-	reconcileTimes(t, ctx, reconciler, request, 4)
-	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
-		current.Status.TerminalFailure == nil ||
-		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStageRestore ||
-		lease.releaseCalls != 0 || !controllerutilContainsFinalizer(current, nodeActuationFinalizer) {
-		t.Fatalf("restore failure = releases:%d status:%#v finalizers:%v", lease.releaseCalls, current.Status, current.Finalizers)
-	}
-	reconcileTimes(t, ctx, reconciler, request, 1)
-	if lease.releaseCalls != 0 {
-		t.Fatalf("restore failure released Lease %d times", lease.releaseCalls)
-	}
-}
-
 func TestHandoffReconcilerIgnoresHandoffForAnotherNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -356,7 +300,7 @@ func TestHandoffReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing.T)
 	reconciler.options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{disallowed}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
 
-	reconcileTimes(t, ctx, reconciler, request, 2)
+	reconcileTimes(t, ctx, reconciler, request, 1)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
 	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
 		current.Status.TerminalFailure == nil ||
@@ -368,39 +312,7 @@ func TestHandoffReconcilerRejectsUnconfiguredPolicyBeforeEveryPort(t *testing.T)
 	}
 }
 
-func TestHandoffReconcilerRestoresRetainedStateAfterPolicyDrift(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	now := time.Date(2026, 8, 6, 12, 2, 0, 0, time.UTC)
-	handoff := readyNodeActuation(now)
-	handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageApply
-	handoff.Spec.StageRequestedAt = metav1.NewTime(now.Add(-2 * time.Minute))
-	scheme := handoffReconcilerScheme(t)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
-		WithObjects(handoff).
-		Build()
-	lease := &recordingLeaseController{held: true}
-	safety := &staticSafetyChecker{allowed: true, now: now}
-	host := &memoryHostActuator{target: nvpTarget(2)}
-	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
-	disallowed := testAllowedPolicy()
-	disallowed.PowerMode = "MAXN"
-	reconciler.options.AllowedPolicies = []nodeactuator.ActuationPolicySpec{disallowed}
-	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
-
-	reconcileTimes(t, ctx, reconciler, request, 1)
-	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestoring ||
-		current.Status.TerminalFailure == nil ||
-		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStagePolicy ||
-		lease.observeCalls != 0 || host.observeCalls != 0 || len(host.applyCalls) != 0 {
-		t.Fatalf("policy drift did not enter fenced restoration: lease=%#v host=%#v status=%#v",
-			lease, host, current.Status)
-	}
-}
-
-func TestHandoffReconcilerRestoresAfterPartialApplyError(t *testing.T) {
+func TestHandoffReconcilerTerminatesApplyFailureAndReleasesLease(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	handoff := testNodeActuation()
@@ -415,13 +327,19 @@ func TestHandoffReconcilerRestoresAfterPartialApplyError(t *testing.T) {
 	host := &memoryHostActuator{target: nvpTarget(1), applyErr: errors.New("command interrupted")}
 	reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
-	reconcileTimes(t, ctx, reconciler, request, 6)
+
+	reconcileTimes(t, ctx, reconciler, request, 5)
 	current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
-	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseRestoring ||
+	if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
 		current.Status.TerminalFailure == nil ||
 		current.Status.TerminalFailure.Stage != edgev1alpha1.NodeActuationFailureStageApply ||
-		current.Status.RestoreStartedAt == nil {
-		t.Fatalf("partial apply failure did not enter restoration: %#v", current.Status)
+		lease.releaseCalls != 0 {
+		t.Fatalf("apply failure = releases:%d status:%#v", lease.releaseCalls, current.Status)
+	}
+	reconcileTimes(t, ctx, reconciler, request, 1)
+	current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+	if lease.releaseCalls != 1 || current.Status.Lease != nil {
+		t.Fatalf("failed release = releases:%d status:%#v", lease.releaseCalls, current.Status)
 	}
 }
 
@@ -430,7 +348,6 @@ func TestHandoffReconcilerOptionsRequireExplicitPolicyAuthorization(t *testing.T
 	base := HandoffReconcilerOptions{
 		AssignedNode:    nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 		AllowedPolicies: []nodeactuator.ActuationPolicySpec{testAllowedPolicy()},
-		SafetyValidFor:  time.Minute,
 	}
 	for name, mutate := range map[string]func(*HandoffReconcilerOptions){
 		"missing policy": func(options *HandoffReconcilerOptions) {
@@ -469,7 +386,6 @@ func newTestHandoffReconciler(
 		HandoffReconcilerOptions{
 			AssignedNode:    nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 			AllowedPolicies: []nodeactuator.ActuationPolicySpec{testAllowedPolicy()},
-			SafetyValidFor:  5 * time.Minute,
 		},
 	)
 	if err != nil {
@@ -516,31 +432,6 @@ func getNodeActuation(
 	return handoff
 }
 
-func readyNodeActuation(now time.Time) *edgev1alpha1.NodeActuation {
-	handoff := testNodeActuation()
-	handoff.Finalizers = []string{nodeActuationFinalizer}
-	handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
-	handoff.Spec.StageRequestedAt = metav1.NewTime(now)
-	timestamp := metav1.NewTime(now.Add(-time.Minute))
-	handoff.Status = edgev1alpha1.NodeActuationStatus{
-		ObservedGeneration: handoff.Generation,
-		Phase:              edgev1alpha1.NodeActuationPhaseReady,
-		Lease:              &edgev1alpha1.ProfilingRunObjectReference{Name: "node-lease", UID: "lease-uid"},
-		Safety: &edgev1alpha1.NodeActuationSafetyObservation{
-			Verdict: edgev1alpha1.NodeActuationSafetyAllowed, ObservedAt: timestamp,
-		},
-		PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-			PowerMode: "mode-1", Actuator: projectAPITarget(nvpTarget(1)), ObservedAt: timestamp,
-		},
-		TargetObservation: &edgev1alpha1.NodeActuationObservation{
-			PowerMode: "mode-2", Actuator: projectAPITarget(nvpTarget(2)), ObservedAt: timestamp,
-		},
-		ApplyStartedAt: &timestamp, VerifiedAt: &timestamp,
-		SettlingStartedAt: &timestamp, ReadyAt: &timestamp,
-	}
-	return handoff
-}
-
 func nvpTarget(id int32) nodeactuator.Target {
 	return nodeactuator.Target{
 		Kind:           nodeactuator.ActuatorKindJetsonNVPModel,
@@ -555,13 +446,4 @@ func handoffReconcilerScheme(t *testing.T) *runtime.Scheme {
 		t.Fatal(err)
 	}
 	return scheme
-}
-
-func controllerutilContainsFinalizer(handoff *edgev1alpha1.NodeActuation, finalizer string) bool {
-	for _, candidate := range handoff.Finalizers {
-		if candidate == finalizer {
-			return true
-		}
-	}
-	return false
 }

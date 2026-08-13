@@ -35,7 +35,6 @@ type RunExecutionJobs interface {
 
 type RunActuationHandoffs interface {
 	Ensure(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun) (*edgev1alpha1.NodeActuation, bool, error)
-	AdvanceToRestore(context.Context, *edgev1alpha1.ProfilingRun, FrozenRun, *edgev1alpha1.NodeActuation) (bool, error)
 }
 
 // RunReconciler advances one ProfilingRun through short, durable transitions.

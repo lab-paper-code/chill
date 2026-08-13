@@ -49,7 +49,6 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 		actuatorcontroller.HandoffReconcilerOptions{
 			AssignedNode:    assigned,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
-			SafetyValidFor:  opts.safetyValidFor,
 		},
 	)
 	if err != nil {

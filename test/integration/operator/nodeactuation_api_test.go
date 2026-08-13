@@ -15,7 +15,7 @@ import (
 )
 
 var _ = Describe("NodeActuation API", func() {
-	It("accepts one exact handoff and only the Apply-to-Restore desired transition", func() {
+	It("accepts one exact handoff and rejects transition-request mutation", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("actuation-owner"))
 		Expect(k8sClient.Create(ctx, run)).To(Succeed())
@@ -23,11 +23,6 @@ var _ = Describe("NodeActuation API", func() {
 		handoff := validNodeActuation(uniqueNodeActuationName("transition"), run)
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
-		handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
-		handoff.Spec.StageRequestedAt = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(time.Minute))
-		Expect(k8sClient.Update(ctx, handoff)).To(Succeed())
-
-		handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageApply
 		handoff.Spec.StageRequestedAt = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(time.Minute))
 		err := k8sClient.Update(ctx, handoff)
 		Expect(err).To(HaveOccurred())
@@ -103,31 +98,6 @@ var _ = Describe("NodeActuation API", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
-	It("separates restore application from independent restore verification", func() {
-		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("actuation-restore-owner"))
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-		handoff := validNodeActuation(uniqueNodeActuationName("restore"), run)
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
-
-		now := metav1.Now()
-		handoff.Status = edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: handoff.Generation,
-			Phase:              edgev1alpha1.NodeActuationPhaseVerifyingRestore,
-			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: now,
-			},
-			RestoreStartedAt: &now,
-		}
-		err := k8sClient.Status().Update(ctx, handoff)
-		Expect(err).To(HaveOccurred())
-		Expect(apierrors.IsInvalid(err)).To(BeTrue())
-
-		handoff.Status.RestoreAppliedAt = &now
-		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
-	})
-
 	It("requires exact blocking Pod identities for a blocked safety verdict", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("actuation-safety-owner"))
@@ -170,7 +140,6 @@ func validNodeActuation(name string, run *edgev1alpha1.ProfilingRun) *edgev1alph
 			SettlingDurationSeconds:     60,
 			MaxActuationDurationSeconds: 900,
 			Deadline:                    metav1.NewTime(requested.Add(15 * time.Minute)),
-			DesiredStage:                edgev1alpha1.NodeActuationDesiredStageApply,
 			StageRequestedAt:            metav1.NewTime(requested),
 		},
 	}

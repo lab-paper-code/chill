@@ -15,13 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-const (
-	nodeActuationFinalizer = "edge.dacs.io/node-actuation-restore"
-	maximumStatusMessage   = 1024
-)
+const maximumStatusMessage = 1024
 
 type LeaseController interface {
 	Observe(context.Context, nodeactuator.Request, time.Time) (LeaseBinding, error)
@@ -41,15 +37,11 @@ type HostActuator interface {
 type HandoffReconcilerOptions struct {
 	AssignedNode    nodeactuator.ObjectIdentity
 	AllowedPolicies []nodeactuator.ActuationPolicySpec
-	SafetyValidFor  time.Duration
 }
 
 func (o HandoffReconcilerOptions) Validate() error {
 	if err := o.AssignedNode.Validate(); err != nil {
 		return fmt.Errorf("validate assigned Node: %w", err)
-	}
-	if o.SafetyValidFor < time.Second || o.SafetyValidFor > 5*time.Minute {
-		return errors.New("workload safety validity must be between 1 second and 5 minutes")
 	}
 	if len(o.AllowedPolicies) == 0 {
 		return errors.New("at least one allowed actuation policy is required")
@@ -69,7 +61,8 @@ func (o HandoffReconcilerOptions) Validate() error {
 }
 
 // HandoffReconciler is the only controller allowed to drive the host actuator
-// port. The Profiler owns desired stage; this reconciler owns observed status.
+// port. The Profiler owns immutable transition intent; this reconciler owns
+// observed status.
 type HandoffReconciler struct {
 	client.Client
 	lease    LeaseController
@@ -97,7 +90,6 @@ func NewHandoffReconciler(
 		options: HandoffReconcilerOptions{
 			AssignedNode:    options.AssignedNode,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), options.AllowedPolicies...),
-			SafetyValidFor:  options.SafetyValidFor,
 		},
 		now: time.Now,
 	}, nil
@@ -124,15 +116,7 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if handoff.Spec.Node.UID != r.options.AssignedNode.UID {
 		return ctrl.Result{}, errors.New("NodeActuation targets this Node name with a different UID")
 	}
-	if handoff.DeletionTimestamp.IsZero() && !controllerutil.ContainsFinalizer(handoff, nodeActuationFinalizer) {
-		base := handoff.DeepCopy()
-		controllerutil.AddFinalizer(handoff, nodeActuationFinalizer)
-		if err := r.Patch(ctx, handoff, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("add NodeActuation restoration finalizer: %w", err)
-		}
-		return ctrl.Result{}, nil
-	}
-	if !handoff.DeletionTimestamp.IsZero() && !controllerutil.ContainsFinalizer(handoff, nodeActuationFinalizer) {
+	if !handoff.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
@@ -142,13 +126,11 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	}
 	now := r.now().UTC()
 	if !allowsActuationPolicy(r.options.AllowedPolicies, actuationRequest) &&
+		handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseReady &&
 		handoff.Status.TerminalFailure == nil {
 		failure := nodeactuator.Failure{
 			Stage: nodeactuator.FailureStagePolicy, Reason: "PolicyRejected",
 			Message: "frozen actuation policy is not authorized by this NodeActuator",
-		}
-		if mayHaveMutated(handoff.Status) || handoff.Status.PreviousObservation != nil {
-			return ctrl.Result{}, r.beginRestore(ctx, handoff, now, &failure)
 		}
 		return r.markFailed(ctx, handoff, now, failure)
 	}
@@ -163,18 +145,7 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if leaseStatusUpdated {
 		return ctrl.Result{}, nil
 	}
-	if !handoff.DeletionTimestamp.IsZero() && canDeleteWithoutRestoration(handoff) {
-		if binding.State == nodeactuator.LeaseHeld {
-			if _, err := r.lease.Release(ctx, actuationRequest); err != nil {
-				return ctrl.Result{}, fmt.Errorf("release unused Node actuation Lease: %w", err)
-			}
-		}
-		return ctrl.Result{}, r.removeFinalizer(ctx, handoff)
-	}
-	snapshot, err := ProjectSnapshot(
-		handoff, r.options.AssignedNode, binding, now, r.options.SafetyValidFor,
-		!handoff.DeletionTimestamp.IsZero(),
-	)
+	snapshot, err := ProjectSnapshot(handoff, r.options.AssignedNode, binding, now)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -241,7 +212,7 @@ func (r *HandoffReconciler) execute(
 	switch decision.Action {
 	case nodeactuator.ActionAcquireLease, nodeactuator.ActionRenewLease:
 		return r.executeLeaseAction(ctx, handoff, snapshot, decision)
-	case nodeactuator.ActionWaitForLease, nodeactuator.ActionWaitForSettling, nodeactuator.ActionHold:
+	case nodeactuator.ActionWaitForLease, nodeactuator.ActionWaitForSettling:
 		return ctrl.Result{RequeueAfter: decision.RequeueAfter}, nil
 	case nodeactuator.ActionCheckSafety:
 		return r.executeSafetyAction(ctx, handoff, snapshot)
@@ -249,11 +220,6 @@ func (r *HandoffReconciler) execute(
 		nodeactuator.ActionObserveTarget, nodeactuator.ActionStartSettling,
 		nodeactuator.ActionMarkReady:
 		return r.executeTargetAction(ctx, handoff, snapshot, decision)
-	case nodeactuator.ActionBeginRestore:
-		return ctrl.Result{}, r.beginRestore(ctx, handoff, snapshot.Now, decision.Failure)
-	case nodeactuator.ActionRestorePrevious, nodeactuator.ActionObserveRestored,
-		nodeactuator.ActionMarkRestored:
-		return r.executeRestoreAction(ctx, handoff, snapshot, decision)
 	case nodeactuator.ActionReleaseLease:
 		return r.executeRelease(ctx, handoff, snapshot)
 	case nodeactuator.ActionMarkFailed:
@@ -262,9 +228,6 @@ func (r *HandoffReconciler) execute(
 		}
 		return r.markFailed(ctx, handoff, snapshot.Now, *decision.Failure)
 	case nodeactuator.ActionComplete:
-		if !handoff.DeletionTimestamp.IsZero() {
-			return ctrl.Result{}, r.removeFinalizer(ctx, handoff)
-		}
 		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unsupported NodeActuation action %q", decision.Action)
@@ -447,71 +410,6 @@ func (r *HandoffReconciler) executeObserveTarget(
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) executeRestoreAction(
-	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
-	snapshot nodeactuator.Snapshot,
-	decision nodeactuator.Decision,
-) (ctrl.Result, error) {
-	switch decision.Action {
-	case nodeactuator.ActionRestorePrevious:
-		if snapshot.PreviousObservation == nil {
-			return ctrl.Result{}, errors.New("restore action omitted previous observation")
-		}
-		if err := r.actuator.Apply(ctx, snapshot.Request, snapshot.PreviousObservation.Target); err != nil {
-			return r.markFailed(ctx, handoff, snapshot.Now, nodeactuator.Failure{
-				Stage: nodeactuator.FailureStageRestore, Reason: "RestoreApplyFailed", Message: err.Error(),
-			})
-		}
-		now := metav1.NewTime(snapshot.Now)
-		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
-			status.Phase, status.RestoreAppliedAt = edgev1alpha1.NodeActuationPhaseVerifyingRestore, &now
-			status.Reason, status.Message = "PreviousStateApplied", "restore command completed; independent read-back is still required"
-		})
-		return ctrl.Result{}, err
-	case nodeactuator.ActionObserveRestored:
-		return r.executeObserveRestored(ctx, handoff, snapshot)
-	case nodeactuator.ActionMarkRestored:
-		now := metav1.NewTime(snapshot.Now)
-		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
-			status.RestoredAt = &now
-			if decision.Failure == nil {
-				status.Phase = edgev1alpha1.NodeActuationPhaseRestored
-				status.Reason, status.Message = "PreviousStateRestored", "previous state was independently observed after restoration"
-			} else {
-				status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-				setTerminalFailure(status, *decision.Failure, snapshot.Now)
-			}
-		})
-		return ctrl.Result{}, err
-	default:
-		return ctrl.Result{}, fmt.Errorf("unsupported restore action %q", decision.Action)
-	}
-}
-
-func (r *HandoffReconciler) executeObserveRestored(
-	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
-	snapshot nodeactuator.Snapshot,
-) (ctrl.Result, error) {
-	observation, err := r.actuator.Observe(ctx, snapshot.Request)
-	if err != nil {
-		return r.markFailed(ctx, handoff, snapshot.Now, nodeactuator.Failure{
-			Stage: nodeactuator.FailureStageRestore, Reason: "RestoreObservationFailed", Message: err.Error(),
-		})
-	}
-	if err := observation.Validate(); err != nil {
-		return r.markFailed(ctx, handoff, snapshot.Now, nodeactuator.Failure{
-			Stage: nodeactuator.FailureStageRestore, Reason: "RestoreObservationInvalid", Message: err.Error(),
-		})
-	}
-	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
-		status.RestoredObservation = projectHostObservation(observation)
-		status.Reason, status.Message = "RestoredStateObserved", "independent restoration read-back was retained"
-	})
-	return ctrl.Result{}, err
-}
-
 func (r *HandoffReconciler) executeRelease(
 	ctx context.Context,
 	handoff *edgev1alpha1.NodeActuation,
@@ -532,29 +430,7 @@ func (r *HandoffReconciler) handlePortFailure(
 	snapshot nodeactuator.Snapshot,
 	failure nodeactuator.Failure,
 ) (ctrl.Result, error) {
-	if mayHaveMutated(handoff.Status) {
-		return ctrl.Result{}, r.beginRestore(ctx, handoff, snapshot.Now, &failure)
-	}
 	return r.markFailed(ctx, handoff, snapshot.Now, failure)
-}
-
-func (r *HandoffReconciler) beginRestore(
-	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
-	now time.Time,
-	failure *nodeactuator.Failure,
-) error {
-	timestamp := metav1.NewTime(now)
-	return r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
-		status.Phase = edgev1alpha1.NodeActuationPhaseRestoring
-		if status.RestoreStartedAt == nil {
-			status.RestoreStartedAt = &timestamp
-		}
-		status.Reason, status.Message = "RestorationStarted", "previous state restoration is required"
-		if failure != nil {
-			setTerminalFailure(status, *failure, now)
-		}
-	})
 }
 
 func (r *HandoffReconciler) markFailed(
@@ -586,21 +462,6 @@ func (r *HandoffReconciler) patchStatus(
 		return fmt.Errorf("patch NodeActuation status: %w", err)
 	}
 	handoff.Status = desired.Status
-	return nil
-}
-
-func (r *HandoffReconciler) removeFinalizer(
-	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
-) error {
-	if !controllerutil.ContainsFinalizer(handoff, nodeActuationFinalizer) {
-		return nil
-	}
-	base := handoff.DeepCopy()
-	controllerutil.RemoveFinalizer(handoff, nodeActuationFinalizer)
-	if err := r.Patch(ctx, handoff, client.MergeFrom(base)); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("remove NodeActuation restoration finalizer: %w", err)
-	}
 	return nil
 }
 
@@ -655,19 +516,6 @@ func setTerminalFailure(
 		Reason: failure.Reason, Message: message, OccurredAt: metav1.NewTime(now),
 	}
 	status.Reason, status.Message = failure.Reason, message
-}
-
-func mayHaveMutated(status edgev1alpha1.NodeActuationStatus) bool {
-	return status.ApplyStartedAt != nil || status.Phase == edgev1alpha1.NodeActuationPhaseApplying ||
-		status.Phase == edgev1alpha1.NodeActuationPhaseVerifying ||
-		status.Phase == edgev1alpha1.NodeActuationPhaseSettling ||
-		status.Phase == edgev1alpha1.NodeActuationPhaseReady ||
-		status.Phase == edgev1alpha1.NodeActuationPhaseRestoring ||
-		status.Phase == edgev1alpha1.NodeActuationPhaseVerifyingRestore
-}
-
-func canDeleteWithoutRestoration(handoff *edgev1alpha1.NodeActuation) bool {
-	return handoff.Status.PreviousObservation == nil && !mayHaveMutated(handoff.Status)
 }
 
 func truncateStatusMessage(message string) string {

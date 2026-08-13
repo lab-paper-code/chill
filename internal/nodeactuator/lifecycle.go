@@ -19,9 +19,6 @@ const (
 	PhaseVerifying         Phase = "Verifying"
 	PhaseSettling          Phase = "Settling"
 	PhaseReady             Phase = "Ready"
-	PhaseRestoring         Phase = "Restoring"
-	PhaseVerifyingRestore  Phase = "VerifyingRestore"
-	PhaseRestored          Phase = "Restored"
 	PhaseFailed            Phase = "Failed"
 )
 
@@ -52,8 +49,6 @@ const (
 	FailureStageApply           FailureStage = "Apply"
 	FailureStageVerify          FailureStage = "Verify"
 	FailureStageSettle          FailureStage = "Settle"
-	FailureStageHold            FailureStage = "Hold"
-	FailureStageRestore         FailureStage = "Restore"
 )
 
 type Action string
@@ -69,11 +64,6 @@ const (
 	ActionStartSettling   Action = "StartSettling"
 	ActionWaitForSettling Action = "WaitForSettling"
 	ActionMarkReady       Action = "MarkReady"
-	ActionHold            Action = "Hold"
-	ActionBeginRestore    Action = "BeginRestore"
-	ActionRestorePrevious Action = "RestorePrevious"
-	ActionObserveRestored Action = "ObserveRestored"
-	ActionMarkRestored    Action = "MarkRestored"
 	ActionReleaseLease    Action = "ReleaseLease"
 	ActionMarkFailed      Action = "MarkFailed"
 	ActionComplete        Action = "Complete"
@@ -116,10 +106,8 @@ type Snapshot struct {
 	Lease               LeaseObservation
 	Safety              SafetyState
 	SafetyObservedAt    *time.Time
-	SafetyValidFor      time.Duration
 	PreviousObservation *Observation
 	TargetObservation   *Observation
-	RestoredObservation *Observation
 	VerifiedAt          *time.Time
 	SettlingStartedAt   *time.Time
 	Failure             *Failure
@@ -132,20 +120,24 @@ type Decision struct {
 }
 
 // Decide chooses one idempotent next action from durable observations. Host
-// command success is never inferred here; Apply and Restore always lead to a
-// separate read-back action in a later phase.
+// command success is never inferred here; Apply always leads to a separate
+// read-back action in a later phase.
 func Decide(snapshot Snapshot) (Decision, error) {
 	if err := snapshot.Validate(); err != nil {
 		return Decision{}, err
 	}
-	if snapshot.Phase == PhaseRestored {
+	if snapshot.Phase == PhaseReady || snapshot.Phase == PhaseFailed {
 		if snapshot.Lease.State == LeaseHeld {
-			return Decision{Action: ActionReleaseLease}, nil
+			return Decision{Action: ActionReleaseLease, Failure: snapshot.Failure}, nil
 		}
-		return Decision{Action: ActionComplete}, nil
+		return Decision{Action: ActionComplete, Failure: snapshot.Failure}, nil
 	}
-	if snapshot.Phase == PhaseFailed {
-		return decideFailed(snapshot), nil
+	if !snapshot.Now.Before(snapshot.Request.Deadline) {
+		failure := &Failure{
+			Stage: deadlineFailureStage(snapshot.Phase), Reason: "DeadlineExceeded",
+			Message: "transition deadline expired before the target became ready",
+		}
+		return Decision{Action: ActionMarkFailed, Failure: failure}, nil
 	}
 	if snapshot.Lease.State != LeaseHeld {
 		if snapshot.Lease.State == LeaseConflict {
@@ -161,29 +153,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 			Stage: FailureStageSafety, Reason: "WorkloadSafetyBlocked",
 			Message: "an unapproved workload prevents Node-wide actuation",
 		}
-		if snapshot.PreviousObservation == nil {
-			return Decision{Action: ActionMarkFailed, Failure: failure}, nil
-		}
-		return Decision{Action: ActionBeginRestore, Failure: failure}, nil
-	}
-	if shouldBeginRestore(snapshot) {
-		failure := snapshot.Failure
-		if failure == nil && !snapshot.Now.Before(snapshot.Request.Deadline) {
-			failure = &Failure{
-				Stage: FailureStageHold, Reason: "DeadlineExceeded",
-				Message: "actuation deadline expired before restoration was requested",
-			}
-		}
-		if snapshot.PreviousObservation == nil {
-			if failure == nil {
-				failure = &Failure{
-					Stage: FailureStageObservePrevious, Reason: "PreviousStateUnavailable",
-					Message: "restoration was requested before a previous state was retained",
-				}
-			}
-			return Decision{Action: ActionMarkFailed, Failure: failure}, nil
-		}
-		return Decision{Action: ActionBeginRestore, Failure: failure}, nil
+		return Decision{Action: ActionMarkFailed, Failure: failure}, nil
 	}
 
 	return decideHeldPhase(snapshot)
@@ -216,7 +186,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		}
 		if !targetsEqual(snapshot.TargetObservation.Target, snapshot.Request.Target) ||
 			snapshot.TargetObservation.PowerMode != snapshot.Request.PowerMode {
-			return Decision{Action: ActionBeginRestore, Failure: &Failure{
+			return Decision{Action: ActionMarkFailed, Failure: &Failure{
 				Stage: FailureStageVerify, Reason: "TargetReadBackMismatch",
 				Message: "independent target observation does not match the requested state",
 			}}, nil
@@ -232,20 +202,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		}
 		return Decision{Action: ActionMarkReady}, nil
 	case PhaseReady:
-		if safetyExpired(snapshot) {
-			return Decision{Action: ActionCheckSafety}, nil
-		}
-		return Decision{Action: ActionHold, RequeueAfter: minimumPositive(
-			snapshot.Lease.RetryAfter, snapshot.Request.Deadline.Sub(snapshot.Now),
-			snapshot.SafetyObservedAt.Add(snapshot.SafetyValidFor).Sub(snapshot.Now),
-		)}, nil
-	case PhaseRestoring:
-		if observationsEqualState(snapshot.PreviousObservation, snapshot.TargetObservation) {
-			return decideRestoreReadBack(snapshot), nil
-		}
-		return Decision{Action: ActionRestorePrevious, Failure: snapshot.Failure}, nil
-	case PhaseVerifyingRestore:
-		return decideRestoreReadBack(snapshot), nil
+		return Decision{Action: ActionReleaseLease}, nil
 	}
 	return Decision{}, fmt.Errorf("unsupported actuation phase %q", snapshot.Phase)
 }
@@ -266,15 +223,12 @@ func (s Snapshot) Validate() error {
 	if s.Safety != "" && s.Safety != SafetyUnknown && s.Safety != SafetyAllowed && s.Safety != SafetyBlocked {
 		return fmt.Errorf("unsupported safety observation %q", s.Safety)
 	}
-	if s.SafetyValidFor <= 0 {
-		return errors.New("positive safety validity duration is required")
-	}
 	if (s.Safety == SafetyUnknown || s.Safety == "") && s.SafetyObservedAt != nil ||
 		s.Safety != SafetyUnknown && s.Safety != "" && s.SafetyObservedAt == nil {
 		return errors.New("safety verdict and observation time must be present together")
 	}
 	for name, observation := range map[string]*Observation{
-		"previous": s.PreviousObservation, "target": s.TargetObservation, "restored": s.RestoredObservation,
+		"previous": s.PreviousObservation, "target": s.TargetObservation,
 	} {
 		if observation != nil {
 			if err := observation.Validate(); err != nil {
@@ -284,9 +238,6 @@ func (s Snapshot) Validate() error {
 	}
 	if s.Phase == PhaseSettling && (s.VerifiedAt == nil || s.SettlingStartedAt == nil) {
 		return errors.New("settling phase requires verification and settling timestamps")
-	}
-	if s.Phase == PhaseVerifyingRestore && s.PreviousObservation == nil {
-		return errors.New("restore verification requires a retained previous observation")
 	}
 	if s.Phase == PhaseFailed && s.Failure == nil {
 		return errors.New("failed phase requires a typed failure")
@@ -299,80 +250,18 @@ func (s Snapshot) Validate() error {
 	return nil
 }
 
-func decideFailed(snapshot Snapshot) Decision {
-	if snapshot.Failure.Stage == FailureStageRestore {
-		if snapshot.Lease.State == LeaseHeld && snapshot.Lease.RetryAfter == 0 {
-			return Decision{Action: ActionRenewLease, Failure: snapshot.Failure}
-		}
-		if snapshot.Lease.State != LeaseHeld && snapshot.Lease.State != LeaseConflict {
-			return Decision{Action: ActionAcquireLease, Failure: snapshot.Failure}
-		}
-		return Decision{Action: ActionHold, RequeueAfter: snapshot.Lease.RetryAfter, Failure: snapshot.Failure}
-	}
-	if snapshot.RestoredObservation == nil && snapshot.PreviousObservation != nil {
-		if snapshot.Lease.State == LeaseConflict {
-			return Decision{
-				Action: ActionWaitForLease, RequeueAfter: snapshot.Lease.RetryAfter,
-				Failure: snapshot.Failure,
-			}
-		}
-		if snapshot.Lease.State != LeaseHeld {
-			return Decision{Action: ActionAcquireLease, Failure: snapshot.Failure}
-		}
-		if snapshot.Lease.RetryAfter == 0 {
-			return Decision{Action: ActionRenewLease, Failure: snapshot.Failure}
-		}
-		return Decision{Action: ActionBeginRestore, Failure: snapshot.Failure}
-	}
-	if snapshot.Lease.State == LeaseHeld {
-		return Decision{Action: ActionReleaseLease, Failure: snapshot.Failure}
-	}
-	return Decision{Action: ActionComplete, Failure: snapshot.Failure}
-}
-
-func shouldBeginRestore(snapshot Snapshot) bool {
-	if snapshot.Phase == PhaseRestoring || snapshot.Phase == PhaseVerifyingRestore {
-		return false
-	}
-	return snapshot.Request.DesiredStage == DesiredStageRestore || snapshot.Failure != nil ||
-		!snapshot.Now.Before(snapshot.Request.Deadline)
-}
-
 func targetsEqual(left, right Target) bool {
 	return reflect.DeepEqual(left, right)
-}
-
-func observationsEqualState(left, right *Observation) bool {
-	return left != nil && right != nil && left.PowerMode == right.PowerMode && targetsEqual(left.Target, right.Target)
-}
-
-func decideRestoreReadBack(snapshot Snapshot) Decision {
-	if snapshot.RestoredObservation == nil {
-		return Decision{Action: ActionObserveRestored, Failure: snapshot.Failure}
-	}
-	if !observationsEqualState(snapshot.RestoredObservation, snapshot.PreviousObservation) {
-		return Decision{Action: ActionMarkFailed, Failure: &Failure{
-			Stage: FailureStageRestore, Reason: "RestoreReadBackMismatch",
-			Message: "independent restoration observation does not match the retained previous state",
-		}}
-	}
-	return Decision{Action: ActionMarkRestored, Failure: snapshot.Failure}
 }
 
 func observationMatchesRequest(observation *Observation, request Request) bool {
 	return observation != nil && observation.PowerMode == request.PowerMode && targetsEqual(observation.Target, request.Target)
 }
 
-func safetyExpired(snapshot Snapshot) bool {
-	return snapshot.Safety != SafetyAllowed || snapshot.SafetyObservedAt == nil ||
-		!snapshot.Now.Before(snapshot.SafetyObservedAt.Add(snapshot.SafetyValidFor))
-}
-
 func validPhase(phase Phase) bool {
 	switch phase {
 	case "", PhasePending, PhaseAcquiringLease, PhaseCheckingSafety, PhaseObservingPrevious,
-		PhaseApplying, PhaseVerifying, PhaseSettling, PhaseReady, PhaseRestoring,
-		PhaseVerifyingRestore, PhaseRestored, PhaseFailed:
+		PhaseApplying, PhaseVerifying, PhaseSettling, PhaseReady, PhaseFailed:
 		return true
 	default:
 		return false
@@ -393,10 +282,27 @@ func validLeaseObservation(observation LeaseObservation) bool {
 func validFailureStage(stage FailureStage) bool {
 	switch stage {
 	case FailureStageLease, FailureStagePolicy, FailureStageSafety, FailureStageObservePrevious, FailureStageApply,
-		FailureStageVerify, FailureStageSettle, FailureStageHold, FailureStageRestore:
+		FailureStageVerify, FailureStageSettle:
 		return true
 	default:
 		return false
+	}
+}
+
+func deadlineFailureStage(phase Phase) FailureStage {
+	switch phase {
+	case "", PhasePending, PhaseAcquiringLease:
+		return FailureStageLease
+	case PhaseCheckingSafety:
+		return FailureStageSafety
+	case PhaseObservingPrevious:
+		return FailureStageObservePrevious
+	case PhaseApplying:
+		return FailureStageApply
+	case PhaseVerifying:
+		return FailureStageVerify
+	default:
+		return FailureStageSettle
 	}
 }
 

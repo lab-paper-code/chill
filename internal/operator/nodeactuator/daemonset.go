@@ -74,7 +74,6 @@ func nodeActuatorArgs(
 		"--watch-namespace=" + options.Namespace,
 		"--lease-namespace=" + options.Namespace,
 		fmt.Sprintf("--lease-duration-seconds=%d", config.LeaseDurationSeconds),
-		"--safety-valid-for=" + config.SafetyValidFor,
 		"--metrics-bind-address=" + config.MetricsBindAddress,
 		fmt.Sprintf("--health-probe-bind-address=:%d", config.HealthProbePort),
 	}

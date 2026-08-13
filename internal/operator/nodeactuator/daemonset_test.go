@@ -98,7 +98,7 @@ func validConfig() Config {
 	return Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
-		LeaseDurationSeconds: 30, SafetyValidFor: "1m", AllowedNamespaces: []string{"kube-system"},
+		LeaseDurationSeconds: 30, AllowedNamespaces: []string{"kube-system"},
 		KubeAPIServer:    "https://kubernetes.example:6443",
 		KubeAPITokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		KubeAPICAFile:    "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
