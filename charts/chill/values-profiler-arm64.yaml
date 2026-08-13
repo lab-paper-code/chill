@@ -19,6 +19,41 @@ evidenceStore:
   configRef:
     name: chill-evidence-store-config
 
+# The Node actuator is pinned and enabled here for the same reason as the
+# Operator above: this file is the only committed description of the testbed,
+# and applying it without this block leaves the chart default
+# nodeActuator.enabled=false. The AGX Orin actuated rows then become
+# unreachable, and the failure is silent because every other operand stays
+# healthy. The DaemonSet still lands only on Nodes carrying the
+# edge.dacs.io/node-actuation=enabled opt-in label.
+nodeActuator:
+  enabled: true
+  image:
+    repository: "155.230.35.213:5000/chill/chill-node-actuator"
+    tag: "sha-8923ca9"
+    pullPolicy: Always
+  # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
+  # node-role.kubernetes.io/edge:NoSchedule. The chart default
+  # nodeActuator.tolerations is empty, which silently yields a DaemonSet with
+  # DESIRED=0 rather than a scheduling error, so the toleration is explicit here.
+  tolerations:
+    - key: node-role.kubernetes.io/edge
+      operator: Exists
+      effect: NoSchedule
+  # The workload-safety adapter is fail-closed: any Pod on the target Node
+  # outside these namespaces blocks Node-wide actuation. The chart default is
+  # kube-system alone, which no KubeEdge edge Node can ever satisfy — each one
+  # permanently runs edgemesh-agent and edge-eclipse-mosquitto, the monitoring
+  # DaemonSets, and CHILL's own node-discovery. Note that
+  # edge-metrics-exporter-jetson lives in monitoring: without that namespace the
+  # Node cannot be actuated without also refusing the exporter that supplies the
+  # power metric being measured.
+  allowedNamespaces:
+    - kube-system
+    - kubeedge
+    - monitoring
+    - chill-system
+
 profiler:
   enabled: true
   image:
