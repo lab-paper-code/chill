@@ -64,10 +64,8 @@ var _ = Describe("NodeActuator operand reconciliation", func() {
 		Expect(k8sClient.Get(ctx, key, created)).To(Succeed())
 		Expect(metav1.IsControlledBy(created, system)).To(BeTrue())
 
-		run := validProfilingRun(uniqueProfilingRunName("actuator-stop"))
-		run.Namespace = namespaceName
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		handoff := validNodeActuation(uniqueNodeActuationName("actuator-stop"), run)
+		handoff := validNodeActuation(uniqueNodeActuationName("actuator-stop"))
+		handoff.Namespace = namespaceName
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: systemName}, system)).To(Succeed())

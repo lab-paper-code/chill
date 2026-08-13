@@ -69,7 +69,7 @@ type ProfilingRunCandidateSpec struct {
 
 	// PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
 	// directly; a non-fixed selection requires a frozen configured actuation
-	// policy and cannot create a measurement Job before its durable handoff.
+	// policy and a completed transition that confirms the required state.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	PowerMode string `json:"powerMode"`
@@ -137,8 +137,8 @@ type ProfilingRunStatus struct {
 	// +optional
 	Job *ProfilingRunObjectReference `json:"job,omitempty"`
 
-	// Actuation identifies the one owned durable Node actuation handoff for a
-	// non-fixed Run. Fixed Runs leave it absent.
+	// Actuation identifies the completed Node transition that confirmed a
+	// non-fixed Run's required state. Fixed Runs leave it absent.
 	// +optional
 	Actuation *ProfilingRunObjectReference `json:"actuation,omitempty"`
 

@@ -9,7 +9,6 @@ import (
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
@@ -17,10 +16,7 @@ import (
 var _ = Describe("NodeActuation API", func() {
 	It("accepts one exact handoff and rejects transition-request mutation", func() {
 		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("actuation-owner"))
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-		handoff := validNodeActuation(uniqueNodeActuationName("transition"), run)
+		handoff := validNodeActuation(uniqueNodeActuationName("transition"))
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		handoff.Spec.StageRequestedAt = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(time.Minute))
@@ -31,10 +27,7 @@ var _ = Describe("NodeActuation API", func() {
 
 	It("rejects changing frozen handoff identity", func() {
 		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("actuation-immutable-owner"))
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-		handoff := validNodeActuation(uniqueNodeActuationName("immutable"), run)
+		handoff := validNodeActuation(uniqueNodeActuationName("immutable"))
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		handoff.Spec.Node.UID = "other-node"
@@ -46,10 +39,7 @@ var _ = Describe("NodeActuation API", func() {
 	DescribeTable("rejects structurally unsafe handoffs",
 		func(mutate func(*edgev1alpha1.NodeActuation)) {
 			ctx := context.Background()
-			run := validProfilingRun(uniqueProfilingRunName("actuation-invalid-owner"))
-			Expect(k8sClient.Create(ctx, run)).To(Succeed())
-			DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-			handoff := validNodeActuation(uniqueNodeActuationName("invalid"), run)
+			handoff := validNodeActuation(uniqueNodeActuationName("invalid"))
 			mutate(handoff)
 
 			err := k8sClient.Create(ctx, handoff)
@@ -69,10 +59,7 @@ var _ = Describe("NodeActuation API", func() {
 
 	It("accepts complete Ready status and rejects Failed without terminal failure", func() {
 		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("actuation-status-owner"))
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-		handoff := validNodeActuation(uniqueNodeActuationName("status"), run)
+		handoff := validNodeActuation(uniqueNodeActuationName("status"))
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		now := metav1.Now()
@@ -100,10 +87,7 @@ var _ = Describe("NodeActuation API", func() {
 
 	It("requires exact blocking Pod identities for a blocked safety verdict", func() {
 		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("actuation-safety-owner"))
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-		handoff := validNodeActuation(uniqueNodeActuationName("safety"), run)
+		handoff := validNodeActuation(uniqueNodeActuationName("safety"))
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		now := metav1.Now()
@@ -121,18 +105,11 @@ var _ = Describe("NodeActuation API", func() {
 	})
 })
 
-func validNodeActuation(name string, run *edgev1alpha1.ProfilingRun) *edgev1alpha1.NodeActuation {
+func validNodeActuation(name string) *edgev1alpha1.NodeActuation {
 	requested := time.Now().UTC().Truncate(time.Second)
 	return &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name, Namespace: run.Namespace,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "ProfilingRun",
-				Name: run.Name, UID: run.UID, Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true),
-			}},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: edgev1alpha1.NodeActuationSpec{
-			Run:         edgev1alpha1.ProfilingRunObjectReference{Name: run.Name, UID: string(run.UID)},
 			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Actuator:                    jetsonNVPModelActuator(2),

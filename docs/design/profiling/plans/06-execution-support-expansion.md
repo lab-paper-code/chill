@@ -25,11 +25,11 @@ The NodeActuator transition path is implemented under
 `NodeActuation` records one state change toward a declared target, independently
 reads that target back, settles it, releases the Node Lease at terminal `Ready`,
 and leaves the established state in place. Execution evidence uses
-`chill.dacs.io/profiling-execution-evidence.v1alpha7`, retains independent
-previous and target observations, and validates the target against frozen
-intent. A permanent semantic contradiction produces terminal
-`EvidenceVerified=False` with reason `EvidenceInvalid` instead of an error
-requeue.
+`chill.dacs.io/profiling-execution-evidence.v1alpha8`, retains the confirming
+transition identity, target observation, and completion time, and validates
+the target against frozen intent. A permanent semantic contradiction produces
+terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
+error requeue.
 [ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
 bounds the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN`
 states; `MODE_30W` and `MODE_15W` are not authorized.
@@ -109,8 +109,9 @@ corresponding level.
   reaches L3.
 - CPU ORT, RKNNLite, ORT CUDA, and ORT TensorRT remain explicit adapters. Do
   not introduce a generic runtime plugin or device-specific copy of CPU ORT.
-- Stable supported power modes belong in `DeviceClass`; mutable desired,
-  observed, and previous mode belong to Run/actuator state.
+- Stable supported power modes belong in `DeviceClass`; the Run declares its
+  required mode, while observed target and previous mode belong to the
+  transition.
 - [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md) assigns
   Node-wide mutation exclusively to a dedicated per-Node actuator operand;
   Profiler orchestrates the durable Run lifecycle, while discovery and the
@@ -177,14 +178,14 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   allowed to mutate host mode; the Profiler orchestrates and the runtime worker
   remains unprivileged.
 - [x] Retain previous and target mode observations; actuator kind/target;
-  policy and Run identity; lifecycle stage; and apply, verification, settling,
-  and ready timestamps in the durable handoff.
+  policy identity; lifecycle stage; and apply, verification, settling, and ready
+  timestamps in the durable transition.
 - [x] Freeze the selected target and configured actuation-policy name into
   immutable Run intent.
 - [x] Fix intent v1alpha10 and simultaneous Go/Python decoder compatibility
   before wiring any selectable-mode producer.
-- [x] Materialize one owned durable handoff and verify its exact local-Node
-  consumer projection without enabling a measurement Job or host mutation.
+- [x] Define one independently submitted durable transition and verify its exact
+  local-Node consumer projection before host mutation.
 - [x] Define and test the Node-UID-keyed Lease acquire, renew, conflict,
   expiration takeover, and exact-holder release primitive; keep the production
   serialization gate open until the actuator controller consumes it.
@@ -210,12 +211,12 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   terminal `Ready` and `Failed` release that Lease.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
   exact self-Pod allowances before any host operation.
-- [x] Fix `apply -> read-back -> settling -> Ready -> measurement` in the
-  Profiler lifecycle.
+- [x] Fix `apply -> read-back -> settling -> Ready` as the transition lifecycle
+  and require a matching completed transition before measurement.
 - [x] Reconstruct the durable transition after controller restart without
   introducing a recovery transition.
-- [x] Surface transition failure as a terminal `ProfilingRun` execution
-  condition without finalizing evidence.
+- [x] End a Run with `RequiredStateNotConfirmed` without a Job when no successful
+  transition confirms its required state.
 - [ ] Connect that terminal condition to an operator alert sink.
 - [x] Admit one exact AGX Orin CPU ORT MODE_50W active Run after verified
   target settling.
@@ -236,16 +237,28 @@ selected target. The Profiler selects a configured policy by exact DeviceClass,
 mode, and actuator kind, binds its name into the intent, and retains its typed
 record and ConfigMap source in the immutable
 record. Its first policy fields bind settling and maximum handoff duration.
-The Profiler creates one owned `NodeActuation`, records its exact UID in
-Run status, and reports `NodeActuatorPending` until the target is independently
-verified and settled. Only then may it create the measurement Job. A terminal
-Job continues through ordinary outcome and evidence finalization without
-requesting another state change. The handoff keeps Run/Node UID, selected
-class/mode/target, policy name, policy timing, request timestamp, and absolute
-transition deadline immutable in `spec`; the actuator alone owns previous and
-target observations, phase, timestamps, Lease identity, and terminal failure in
-`status`. Its consumer projection rejects a foreign Node name or UID before any
-Lease or host adapter can receive the request.
+A non-fixed Run lists successful completed `NodeActuation` objects in its
+namespace for the exact target Node name and UID and selects the greatest
+`status.readyAt`. The transition's class, mode, typed actuator target, and
+target read-back must match frozen intent. The Run records the selected name
+and UID before creating its measurement Job. If no completed transition exists,
+or the newest successful transition established another mode, the Run ends
+with `RequiredStateNotConfirmed` without creating a Job. Fixed Runs execute
+directly. The Run never creates, owns, or repairs a transition.
+
+This confirmation can be stale and that limitation is accepted. Nothing else
+changes Node power state on this testbed, and operating procedure allows no
+transition during a measurement sweep. No re-observation, epoch, fence, claim,
+state-generation counter, or tenure protocol enforces the assumption. Until a
+campaign emits transition atoms, each required `NodeActuation` is submitted
+manually.
+
+The transition keeps Node UID, selected class/mode/target, policy name, policy
+timing, request timestamp, and absolute deadline immutable in `spec`; the
+actuator alone owns previous and target observations, phase, timestamps, Lease
+identity, and terminal failure in `status`. Its consumer projection rejects a
+foreign Node name or UID before any Lease or host adapter can receive the
+request.
 
 The internal layer keeps Node locking and lifecycle decisions separate
 from host tooling. Its Lease name is derived from exact Node UID, holder
@@ -268,7 +281,7 @@ closed. The reconciler independently requires the handoff's policy name to be
 in its installed authorization set before crossing any port. The runnable
 operand selects these allowances and consumes the Lease and lifecycle paths. The
 archived AGX Orin campaign contains apply/read-back and restoration evidence
-under a superseded stored contract; it does not prove the current v1alpha7
+under a superseded stored contract; it does not prove the current v1alpha8
 one-way lifecycle. Live validation of the current contract and bounded host
 failure injection remain open.
 
@@ -302,8 +315,8 @@ other Node, mode, or runtime inherits that result.
 - [x] Implement explicit bounded `Apply(ID)` and `Observe()` operations.
 - [x] Judge success in the controller by a separate parsed name/ID read-back,
   never command exit alone.
-- [x] Retain exact Run/handoff identities and previous and target
-  mode observations in finalized execution evidence.
+- [x] Retain the exact Run and confirming-transition identities, target mode
+  observation, and transition completion time in finalized execution evidence.
 - [x] Configure the post-read-back settling duration in installation policy.
 - [ ] Define a thermal-stability criterion only if non-throttled admission and
   the configured settling duration are insufficient; elapsed settling time does
@@ -349,7 +362,7 @@ optional typed actuation binding. Host-bound derivation identities use
 execution-state-identity v1alpha4. The installed RKNN declaration pins the
 arm64-only runtime image, declared-batch-size artifact supply image and path, exact
 host ABI/device contract, and runtime access contract.
-The production Job now consumes the verified report once and projects the
+The production Job consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
 Pod-level supplemental groups, runtime-only privilege, and an optional extended
 resource. Observer containers receive neither host mounts nor privilege. The

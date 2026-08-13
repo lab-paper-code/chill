@@ -594,12 +594,8 @@ func newRunReconciler(
 	admitter *recordingAdmitter,
 ) *profilercontroller.RunReconciler {
 	t.Helper()
-	handoffs, err := profilercontroller.NewActuationHandoffs(kube, clientgoscheme.Scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
 	reconciler, err := profilercontroller.NewRunReconciler(
-		kube, freezer, handoffs, jobs, finalizer, admitter,
+		kube, freezer, jobs, finalizer, admitter,
 	)
 	if err != nil {
 		t.Fatal(err)

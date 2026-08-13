@@ -139,7 +139,7 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha8"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -157,6 +157,9 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		decoded.Actuation.Target.PowerMode != intent.Actuation.PowerMode {
 		t.Fatalf("actuated evidence round trip = %#v", decoded.Actuation)
 	}
+	if strings.Contains(string(payload), `"previous"`) {
+		t.Fatalf("Run evidence retained transition-owned previous state: %s", payload)
+	}
 
 	tests := []struct {
 		name      string
@@ -168,7 +171,7 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha6"
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
@@ -176,6 +179,9 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		}, permanent: true},
 		{name: "container before ready", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.ReadyAt = candidate.Terminal.Containers[0].StartedAt.Add(time.Second)
+		}, permanent: true},
+		{name: "ready before target read-back", mutate: func(candidate *ExecutionEvidence) {
+			candidate.Actuation.ReadyAt = candidate.Actuation.Target.ObservedAt.Add(-time.Second)
 		}, permanent: true},
 	}
 	for _, test := range tests {
@@ -738,9 +744,6 @@ func validActuatedExecutionEvidence(
 		Handoff: NamespacedObjectFacts{
 			Namespace: execution.Terminal.Job.Namespace, Name: "run-actuation", UID: "actuation-uid",
 		},
-		Previous: ActuationObservation{
-			PowerMode: "MODE_50W", Actuator: target(1), ObservedAt: completed.Add(-2 * time.Minute),
-		},
 		Target: ActuationObservation{
 			PowerMode: intent.Actuation.PowerMode, Actuator: target(0), ObservedAt: completed.Add(-90 * time.Second),
 		},
@@ -770,7 +773,6 @@ func cloneActuationFactsForTest(input *ActuationFacts) *ActuationFacts {
 		}
 		return cloned
 	}
-	copy.Previous.Actuator = cloneTarget(copy.Previous.Actuator)
 	copy.Target.Actuator = cloneTarget(copy.Target.Actuator)
 	return &copy
 }

@@ -12,8 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ProjectRequest verifies API identity, ownership, and the local Node binding
-// before the pure actuator core or a host adapter may observe the request.
+// ProjectRequest verifies API identity and the local Node binding before the
+// pure actuator core or a host adapter may observe the request.
 func ProjectRequest(
 	handoff *edgev1alpha1.NodeActuation,
 	assignedNode nodeactuator.ObjectIdentity,
@@ -21,17 +21,12 @@ func ProjectRequest(
 	if handoff == nil {
 		return nodeactuator.Request{}, errors.New("NodeActuation is required")
 	}
-	controller := metav1.GetControllerOf(handoff)
-	if handoff.Namespace == "" || handoff.Name == "" || handoff.UID == "" || handoff.Generation < 1 ||
-		controller == nil || controller.APIVersion != edgev1alpha1.GroupVersion.String() ||
-		controller.Kind != "ProfilingRun" || controller.Name != handoff.Spec.Run.Name ||
-		string(controller.UID) != handoff.Spec.Run.UID {
-		return nodeactuator.Request{}, errors.New("NodeActuation API identity or ProfilingRun ownership is invalid")
+	if handoff.Namespace == "" || handoff.Name == "" || handoff.UID == "" || handoff.Generation < 1 {
+		return nodeactuator.Request{}, errors.New("NodeActuation API identity is invalid")
 	}
 	request := nodeactuator.Request{
 		Handoff:                     nodeactuator.ObjectIdentity{Name: handoff.Name, UID: string(handoff.UID)},
 		Generation:                  handoff.Generation,
-		Run:                         projectObjectIdentity(handoff.Spec.Run),
 		Node:                        projectObjectIdentity(handoff.Spec.Node),
 		DeviceClass:                 handoff.Spec.DeviceClass,
 		PowerMode:                   handoff.Spec.PowerMode,

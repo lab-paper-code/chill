@@ -87,7 +87,7 @@ spec:
                     description: |-
                       PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
                       directly; a non-fixed selection requires a frozen configured actuation
-                      policy and cannot create a measurement Job before its durable handoff.
+                      policy and a completed transition that confirms the required state.
                     maxLength: 128
                     minLength: 1
                     type: string
@@ -247,8 +247,8 @@ spec:
                 type: object
               actuation:
                 description: |-
-                  Actuation identifies the one owned durable Node actuation handoff for a
-                  non-fixed Run. Fixed Runs leave it absent.
+                  Actuation identifies the completed Node transition that confirmed a
+                  non-fixed Run's required state. Fixed Runs leave it absent.
                 properties:
                   name:
                     maxLength: 253

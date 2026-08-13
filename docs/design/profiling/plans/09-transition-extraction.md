@@ -10,23 +10,22 @@
 ## Status
 
 Partially implemented. `NodeActuation` is a one-way transition with a single
-terminal outcome, and the Profiler proceeds directly from `Ready` through the
-measurement and evidence path. The Run creates its handoff; state-precondition
-admission and campaign assembly remain in this plan. ADR 0018 owns the boundary.
+terminal outcome and no Run owner. A non-fixed Run confirms its frozen state
+from the newest successful transition on its target Node, records that
+transition, and only then creates its Job. Campaign assembly remains in this
+plan. ADR 0018 owns the boundary.
 
 ## Question
 
 > The specification measures transition duration τ, transition energy overhead
-> η, and the transition-survival flag between states. A `ProfilingRun` owns the
-> transition that establishes its own state, so no window exists in which those
-> quantities can be observed. What is the smallest change that makes a
-> transition separately observable and separately assemblable?
+> η, and the transition-survival flag between states. How does one independent
+> transition establish a state that many Runs can consume without placing that
+> transition inside a Run's measurement window?
 
-## What moves
+## Ownership boundary
 
-Transition ownership leaves `ProfilingRun`. The mechanism does not move: the
-`NodeActuation` object and the per-Node actuator already perform apply and
-independent read-back, and neither is redesigned.
+Transition ownership is independent of `ProfilingRun`. The `NodeActuation`
+object and the per-Node actuator perform apply and independent read-back.
 
 `NodeActuation` is a one-way operation toward a declared target. Its
 terminal outcome is the declared target state; returning to an earlier state is
@@ -34,10 +33,26 @@ another operation with that state as its target. One object therefore records
 one state change with one terminal outcome, which is the property that makes it
 measurable and reusable.
 
-A `ProfilingRun` declares the state it requires. Admission confirms that state
-by read-back and executes; a Run whose required state is not established does
-not run and does not repair it. Run evidence retains the observed state and no
-longer retains transition facts.
+A `ProfilingRun` declares the state it requires. The Run controller confirms
+that state by read-back before execution; a Run whose required state is not
+established does not run and does not repair it. Run evidence retains the
+confirming transition identity, the observed target state, and the transition
+completion time; the previous state remains transition-owned evidence.
+
+For a Run with a configured actuation policy, confirmation lists
+`NodeActuation` objects in the Run namespace, filters successful terminal
+`Ready` objects by exact target Node name and UID, and selects the greatest
+`status.readyAt`. The selected transition's declared class, mode, and actuator
+target and its target read-back must match frozen intent. The Run records its
+name and UID before creating the Job. No completed transition, or a newest
+successful transition for another mode, produces terminal
+`RequiredStateNotConfirmed` without a Job. A Run without an actuation policy
+executes directly.
+
+This confirmation can be stale and that limitation is accepted. Nothing else
+changes Node power state on this testbed, and operating procedure emits no
+transition during a measurement sweep. The Run does not re-observe the host or
+add an epoch, fence, claim, state-generation counter, or tenure check.
 
 ## The atom
 
@@ -82,9 +97,15 @@ The stored contract changes once, when the extraction is complete. Objects
 written under the prior contract are deleted rather than migrated, per
 [ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md).
 
+Until the campaign action vocabulary emits transition atoms, an operator
+submits each required `NodeActuation` manually. There is no automatic Run
+fallback when confirmation is absent.
+
 ## Verification
 
+The Run boundary is verified when an unconfirmed Run reaches terminal
+`RequiredStateNotConfirmed` without creating a transition or Job, a confirmed
+Run records the newest successful matching transition before Job creation, and
+evidence rejects a Job container that started before that transition completed.
 The extraction is complete when a `BatchSaturation` sweep of N Runs in one state
-performs one transition rather than 2N, when a Run whose required state is not
-established reaches a terminal outcome without actuating, and when a transition
-atom can be created and observed independently of any Run.
+performs one transition rather than 2N.

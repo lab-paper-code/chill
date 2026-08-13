@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha8"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
@@ -27,11 +27,10 @@ type ExecutionEvidence struct {
 // transition that established the measured state. Worker-owned raw evidence
 // deliberately cannot assert these external host-state observations.
 type ActuationFacts struct {
-	Run      NamespacedObjectFacts `json:"run"`
-	Handoff  NamespacedObjectFacts `json:"handoff"`
-	Previous ActuationObservation  `json:"previous"`
-	Target   ActuationObservation  `json:"target"`
-	ReadyAt  time.Time             `json:"readyAt"`
+	Run     NamespacedObjectFacts `json:"run"`
+	Handoff NamespacedObjectFacts `json:"handoff"`
+	Target  ActuationObservation  `json:"target"`
+	ReadyAt time.Time             `json:"readyAt"`
 }
 
 type NamespacedObjectFacts struct {

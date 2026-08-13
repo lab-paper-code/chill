@@ -20,7 +20,7 @@ type ActuationPolicyResolverOptions struct {
 
 // KubernetesActuationPolicyResolver reads installation-time Node actuation
 // authorization and timing policy. The selected canonical policy is copied
-// into the immutable Run record before any durable handoff is created.
+// into the immutable Run record before its required state is confirmed.
 type KubernetesActuationPolicyResolver struct {
 	reader  client.Reader
 	options ActuationPolicyResolverOptions

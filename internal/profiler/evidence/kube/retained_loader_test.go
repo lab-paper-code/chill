@@ -148,8 +148,8 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 
 	execution.Actuation.Handoff.UID = "replacement-uid"
 	if err := validateRunEvidenceBinding(run, execution); err == nil ||
-		!strings.Contains(err.Error(), "recorded Run handoff") {
-		t.Fatalf("validateRunEvidenceBinding() error = %v, want handoff mismatch", err)
+		!strings.Contains(err.Error(), "recorded confirming transition") {
+		t.Fatalf("validateRunEvidenceBinding() error = %v, want transition mismatch", err)
 	}
 }
 

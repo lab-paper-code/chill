@@ -213,7 +213,6 @@ func validSnapshot() Snapshot {
 	return Snapshot{
 		Request: Request{
 			Handoff: ObjectIdentity{Name: "handoff", UID: "handoff-uid"}, Generation: 1,
-			Run:         ObjectIdentity{Name: "run", UID: "run-uid"},
 			Node:        ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Target:                  Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: 2}},

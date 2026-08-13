@@ -11,7 +11,7 @@ change when the underlying implementation intentionally changes.
 `internal/profiler/controller/intent_setup.go` uses:
 
 ```text
-For(ProfilingRun) + Owns(ConfigMap, NodeActuation, Job)
+For(ProfilingRun) + Owns(ConfigMap, Job)
   -> controller-runtime event delivery
   -> RunReconciler.Reconcile
 ```

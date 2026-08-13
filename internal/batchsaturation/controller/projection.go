@@ -107,7 +107,7 @@ func isTerminalReason(reason string) bool {
 		"ActuationPolicyInvalid",
 		"ExecutionLost",
 		"JobFailed",
-		"NodeActuationFailed",
+		"RequiredStateNotConfirmed",
 		"EvidenceInvalid":
 		return true
 	default:

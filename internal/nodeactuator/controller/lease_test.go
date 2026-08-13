@@ -159,7 +159,6 @@ func leaseTestRequest(handoffUID string) nodeactuator.Request {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	return nodeactuator.Request{
 		Handoff: nodeactuator.ObjectIdentity{Name: handoffUID, UID: handoffUID}, Generation: 1,
-		Run:         nodeactuator.ObjectIdentity{Name: "run", UID: "run-uid"},
 		Node:        nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 		DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 		Target: nodeactuator.Target{

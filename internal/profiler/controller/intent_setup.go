@@ -7,14 +7,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// SetupWithManager registers direct ProfilingRun and owned durable-transition
-// events. Fact resolution remains an exact API read during preparation.
+// SetupWithManager registers direct ProfilingRun and owned-record events. Fact
+// resolution remains an exact API read during preparation.
 func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("profilingrun").
 		For(&edgev1alpha1.ProfilingRun{}).
 		Owns(&corev1.ConfigMap{}).
-		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
 }

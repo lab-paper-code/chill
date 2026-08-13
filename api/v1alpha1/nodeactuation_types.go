@@ -32,8 +32,7 @@ const (
 	NodeActuationFailureStageSettle          NodeActuationFailureStage = "Settle"
 )
 
-// NodeActuationSpec is the immutable durable Profiler-to-NodeActuator handoff.
-// +kubebuilder:validation:XValidation:rule="self.run == oldSelf.run",message="run identity is immutable"
+// NodeActuationSpec is one immutable durable transition request.
 // +kubebuilder:validation:XValidation:rule="self.node == oldSelf.node",message="node identity is immutable"
 // +kubebuilder:validation:XValidation:rule="self.deviceClass == oldSelf.deviceClass",message="deviceClass is immutable"
 // +kubebuilder:validation:XValidation:rule="self.powerMode == oldSelf.powerMode",message="powerMode is immutable"
@@ -45,9 +44,6 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.deadline > self.stageRequestedAt",message="deadline must follow stageRequestedAt"
 // +kubebuilder:validation:XValidation:rule="self.stageRequestedAt == oldSelf.stageRequestedAt",message="stageRequestedAt is immutable"
 type NodeActuationSpec struct {
-	// Run is the exact owning ProfilingRun identity in this namespace.
-	Run ProfilingRunObjectReference `json:"run"`
-
 	// Node is the exact cluster-scoped Kubernetes Node identity.
 	Node ProfilingRunObjectReference `json:"node"`
 
@@ -211,7 +207,7 @@ type NodeActuationStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// NodeActuation is one durable Profiler-to-NodeActuator handoff for one Run.
+// NodeActuation is one durable transition toward a declared Node state.
 type NodeActuation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -222,7 +218,7 @@ type NodeActuation struct {
 
 // +kubebuilder:object:root=true
 
-// NodeActuationList contains NodeActuation handoffs.
+// NodeActuationList contains Node transitions.
 type NodeActuationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

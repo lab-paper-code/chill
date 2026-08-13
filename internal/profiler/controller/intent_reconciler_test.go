@@ -48,38 +48,6 @@ type recordingExecutionJobs struct {
 	err    error
 }
 
-type recordingActuationHandoffs struct {
-	calls   int
-	frozen  FrozenRun
-	handoff *edgev1alpha1.NodeActuation
-	err     error
-}
-
-func (h *recordingActuationHandoffs) Ensure(
-	_ context.Context,
-	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
-) (*edgev1alpha1.NodeActuation, bool, error) {
-	h.calls++
-	h.frozen = frozen
-	if h.err != nil {
-		return nil, false, h.err
-	}
-	if h.handoff != nil {
-		return h.handoff.DeepCopy(), false, nil
-	}
-	return &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: run.Namespace, Name: "node-actuation", UID: "actuation-uid",
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "ProfilingRun",
-				Name: run.Name, UID: run.UID, Controller: ptr.To(true),
-			}},
-		},
-		Spec: edgev1alpha1.NodeActuationSpec{StageRequestedAt: metav1.NewTime(time.Now().UTC())},
-	}, true, nil
-}
-
 type recordingRunEvidenceFinalizer struct {
 	calls  int
 	result FinalizedRunEvidence
@@ -147,7 +115,7 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	freezer := &recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		kubeClient, freezer, jobs,
 		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
@@ -170,17 +138,16 @@ func TestRunReconcilerFreezesThenRecordsOneMeasurementJob(t *testing.T) {
 	}
 }
 
-func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
+func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T) {
+	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
 	run.Status.IntentFrozen = true
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
-	handoffs := &recordingActuationHandoffs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
-		handoffs,
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -192,34 +159,41 @@ func TestRunReconcilerWithholdsActuatedJobUntilDurableHandoff(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if handoffs.calls != 1 || jobs.calls != 0 {
-		t.Fatalf("actuated Run transitions: handoffs=%d jobs=%d", handoffs.calls, jobs.calls)
+	if jobs.calls != 0 {
+		t.Fatalf("unconfirmed Run created %d Jobs", jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if actual.Status.Actuation == nil || actual.Status.Actuation.UID != "actuation-uid" ||
-		condition == nil || condition.Status != metav1.ConditionUnknown ||
-		condition.Reason != "NodeActuatorPending" {
-		t.Fatalf("actuation handoff condition = %#v", condition)
+	if actual.Status.Actuation != nil || condition == nil || condition.Status != metav1.ConditionFalse ||
+		condition.Reason != requiredStateNotConfirmedReason {
+		t.Fatalf("unconfirmed state outcome = %#v", actual.Status)
+	}
+	transitions := &edgev1alpha1.NodeActuationList{}
+	if err := kubeClient.List(context.Background(), transitions); err != nil {
+		t.Fatal(err)
+	}
+	if len(transitions.Items) != 0 {
+		t.Fatalf("Run created transitions: %#v", transitions.Items)
 	}
 }
 
-func TestRunReconcilerCreatesActuatedJobOnlyAfterTargetIsReady(t *testing.T) {
+func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
 	run, frozen := testActuatedRunAndFrozen(t)
 	run.Status.IntentFrozen = true
-	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseReady)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	matching := completedTransitionForRun(run, frozen, "matching", frozen.Prepared.Intent.Actuation.PowerMode, base)
+	different := completedTransitionForRun(run, frozen, "different", "MAXN", base.Add(time.Minute))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
+		WithObjects(run, matching, different).Build()
 	jobs := &recordingExecutionJobs{}
-	handoffs := &recordingActuationHandoffs{handoff: handoff}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
-		handoffs,
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -231,16 +205,65 @@ func TestRunReconcilerCreatesActuatedJobOnlyAfterTargetIsReady(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if handoffs.calls != 1 || jobs.calls != 1 {
-		t.Fatalf("actuated ready calls: handoff=%d jobs=%d", handoffs.calls, jobs.calls)
+	if jobs.calls != 0 {
+		t.Fatalf("Run ignored the newest state and created %d Jobs", jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
 	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Actuation == nil || actual.Status.Actuation.UID != string(handoff.UID) ||
-		actual.Status.Job == nil || actual.Status.Job.Name != "measurement-job" {
-		t.Fatalf("actuated Run references = %#v", actual.Status)
+	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	if actual.Status.Actuation != nil || actual.Status.Job != nil || condition == nil ||
+		condition.Status != metav1.ConditionFalse || condition.Reason != requiredStateNotConfirmedReason {
+		t.Fatalf("newest different state outcome = %#v", actual.Status)
+	}
+}
+
+func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run, frozen := testActuatedRunAndFrozen(t)
+	run.Status.IntentFrozen = true
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	older := completedTransitionForRun(run, frozen, "older", "MAXN", base)
+	confirming := completedTransitionForRun(
+		run, frozen, "confirming", frozen.Prepared.Intent.Actuation.PowerMode, base.Add(time.Minute),
+	)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
+		WithObjects(run, older, confirming).Build()
+	jobs := &recordingExecutionJobs{}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
+		jobs,
+		&recordingRunEvidenceFinalizer{},
+		&recordingRunEvidenceAdmitter{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if jobs.calls != 1 {
+		t.Fatalf("confirmed Run created %d Jobs, want 1", jobs.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.Actuation == nil || actual.Status.Actuation.Name != confirming.Name ||
+		actual.Status.Actuation.UID != string(confirming.UID) || actual.Status.Job == nil ||
+		actual.Status.Job.Name != "measurement-job" {
+		t.Fatalf("confirmed Run references = %#v", actual.Status)
+	}
+	transitions := &edgev1alpha1.NodeActuationList{}
+	if err := kubeClient.List(context.Background(), transitions); err != nil {
+		t.Fatal(err)
+	}
+	if len(transitions.Items) != 2 {
+		t.Fatalf("Run changed transition count to %d", len(transitions.Items))
 	}
 }
 
@@ -257,8 +280,12 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseReady)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	handoff := completedTransitionForRun(
+		run, frozen, "node-actuation", frozen.Prepared.Intent.Actuation.PowerMode,
+		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
+	)
+	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, handoff).Build()
 	finalized := FinalizedRunEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Reference: evidencestore.ObjectIdentity{
@@ -272,7 +299,6 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
-		&recordingActuationHandoffs{handoff: handoff},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -310,8 +336,12 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
 		}},
 	})
-	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseReady)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	handoff := completedTransitionForRun(
+		run, frozen, "node-actuation", frozen.Prepared.Intent.Actuation.PowerMode,
+		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
+	)
+	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job, handoff).Build()
 	finalizeErr := fmt.Errorf(
 		"%w: actuation target observation does not match frozen intent",
 		profilerevidence.ErrPermanentValidation,
@@ -320,7 +350,6 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
-		&recordingActuationHandoffs{handoff: handoff},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -373,7 +402,6 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
-		&recordingActuationHandoffs{},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -401,43 +429,6 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 	}
 }
 
-func TestRunReconcilerPublishesActuationFailureAsTerminalExecution(t *testing.T) {
-	t.Parallel()
-	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
-	run.Status.IntentFrozen = true
-	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseFailed)
-	handoff.Status.TerminalFailure = &edgev1alpha1.NodeActuationFailure{
-		Stage: edgev1alpha1.NodeActuationFailureStageApply, Reason: "TargetApplyFailed",
-		Message: "target command did not complete", OccurredAt: metav1.Now(),
-	}
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
-	reconciler, err := NewRunReconciler(
-		kubeClient,
-		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
-		&recordingActuationHandoffs{handoff: handoff},
-		&recordingExecutionJobs{},
-		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	actual := &edgev1alpha1.ProfilingRun{}
-	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
-		t.Fatal(err)
-	}
-	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "NodeActuationFailed" ||
-		!strings.Contains(condition.Message, "TargetApplyFailed") {
-		t.Fatalf("actuation failure condition = %#v", condition)
-	}
-}
-
 func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
@@ -448,7 +439,7 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		kubeClient, freezer, jobs,
 		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
@@ -487,7 +478,6 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
-		&recordingActuationHandoffs{},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -556,7 +546,6 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			reconciler, err := NewRunReconciler(
 				kubeClient,
 				&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
-				&recordingActuationHandoffs{},
 				jobs,
 				finalizer,
 				admitter,
@@ -594,7 +583,7 @@ func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	freezer := &recordingIntentFreezer{}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
-		kubeClient, freezer, &recordingActuationHandoffs{}, jobs,
+		kubeClient, freezer, jobs,
 		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
@@ -618,7 +607,6 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		&recordingIntentFreezer{err: want},
-		&recordingActuationHandoffs{},
 		&recordingExecutionJobs{},
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -652,7 +640,6 @@ func TestRunReconcilerPublishesTerminalFreezeFailureWithoutRequeue(t *testing.T)
 	reconciler, err := NewRunReconciler(
 		kubeClient,
 		freezer,
-		&recordingActuationHandoffs{},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -722,24 +709,48 @@ func frozenRunForPrepared(t *testing.T, prepared profiler.PreparedRun) FrozenRun
 	}
 }
 
-func ownedActuationForRun(
+func completedTransitionForRun(
 	run *edgev1alpha1.ProfilingRun,
-	phase edgev1alpha1.NodeActuationPhase,
+	frozen FrozenRun,
+	name string,
+	powerMode string,
+	readyAt time.Time,
 ) *edgev1alpha1.NodeActuation {
-	requestedAt := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	intent := frozen.Prepared.Intent
+	actuator := projectActuatorTarget(intent.Actuation.Actuator)
+	if powerMode != intent.Actuation.PowerMode && actuator.JetsonNVPModel != nil {
+		actuator.JetsonNVPModel.ID++
+	}
+	requestedAt := readyAt.Add(-2 * time.Minute)
+	targetObservedAt := readyAt.Add(-time.Minute)
+	previousObservedAt := requestedAt.Add(10 * time.Second)
+	ready := metav1.NewTime(readyAt)
 	return &edgev1alpha1.NodeActuation{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: run.Namespace, Name: "node-actuation", UID: "actuation-uid",
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "ProfilingRun",
-				Name: run.Name, UID: run.UID, Controller: ptr.To(true),
-			}},
+			Namespace: run.Namespace, Name: name, UID: types.UID(name + "-uid"), Generation: 1,
 		},
 		Spec: edgev1alpha1.NodeActuationSpec{
-			StageRequestedAt: metav1.NewTime(requestedAt),
-			Deadline:         metav1.NewTime(requestedAt.Add(5 * time.Minute)),
+			Node:                        edgev1alpha1.ProfilingRunObjectReference{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
+			DeviceClass:                 intent.State.DeviceClass,
+			PowerMode:                   powerMode,
+			Actuator:                    actuator,
+			PolicyName:                  intent.Actuation.PolicyName,
+			SettlingDurationSeconds:     30,
+			MaxActuationDurationSeconds: 300,
+			StageRequestedAt:            metav1.NewTime(requestedAt),
+			Deadline:                    metav1.NewTime(requestedAt.Add(5 * time.Minute)),
 		},
-		Status: edgev1alpha1.NodeActuationStatus{Phase: phase},
+		Status: edgev1alpha1.NodeActuationStatus{
+			ObservedGeneration: 1,
+			Phase:              edgev1alpha1.NodeActuationPhaseReady,
+			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
+				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewTime(previousObservedAt),
+			},
+			TargetObservation: &edgev1alpha1.NodeActuationObservation{
+				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewTime(targetObservedAt),
+			},
+			ReadyAt: &ready,
+		},
 	}
 }
 

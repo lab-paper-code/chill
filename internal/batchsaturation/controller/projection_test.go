@@ -81,6 +81,12 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	}
 }
 
+func TestRequiredStateNotConfirmedIsTerminal(t *testing.T) {
+	if !isTerminalReason("RequiredStateNotConfirmed") {
+		t.Fatal("RequiredStateNotConfirmed was not classified as terminal")
+	}
+}
+
 type terminalTrialMethod struct{}
 
 func (terminalTrialMethod) Plan(batchsaturation.Observed) (batchsaturation.Plan, error) {

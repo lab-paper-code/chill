@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -43,9 +41,8 @@ func (f *KubernetesExecutionFinalizer) observeActuation(
 		Handoff: profilerevidence.NamespacedObjectFacts{
 			Namespace: handoff.Namespace, Name: handoff.Name, UID: string(handoff.UID),
 		},
-		Previous: projectEvidenceActuationObservation(handoff.Status.PreviousObservation),
-		Target:   projectEvidenceActuationObservation(handoff.Status.TargetObservation),
-		ReadyAt:  handoff.Status.ReadyAt.Time,
+		Target:  projectEvidenceActuationObservation(handoff.Status.TargetObservation),
+		ReadyAt: handoff.Status.ReadyAt.Time,
 	}, nil
 }
 
@@ -58,24 +55,11 @@ func validateFinalizedActuation(
 		return errors.New("Run, actuated intent, and NodeActuation are required")
 	}
 	if handoff.Namespace != run.Namespace || handoff.Name != run.Status.Actuation.Name ||
-		string(handoff.UID) != run.Status.Actuation.UID || !metav1.IsControlledBy(handoff, run) {
-		return errors.New("NodeActuation does not match the recorded Run handoff")
+		string(handoff.UID) != run.Status.Actuation.UID {
+		return errors.New("NodeActuation does not match the recorded confirming transition")
 	}
-	if handoff.Spec.Run.Name != run.Name || handoff.Spec.Run.UID != string(run.UID) ||
-		handoff.Spec.Node.Name != intent.TargetNode.Name || handoff.Spec.Node.UID != intent.TargetNode.UID ||
-		handoff.Spec.DeviceClass != intent.State.DeviceClass ||
-		handoff.Spec.PowerMode != intent.Actuation.PowerMode ||
-		!reflect.DeepEqual(handoff.Spec.Actuator, projectActuatorTarget(intent.Actuation.Actuator)) {
-		return errors.New("NodeActuation material identity does not match frozen intent")
-	}
-	if handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseReady ||
-		handoff.Status.ObservedGeneration != handoff.Generation ||
-		handoff.Status.TerminalFailure != nil {
-		return errors.New("NodeActuation has not reached the ready target")
-	}
-	if handoff.Status.PreviousObservation == nil || handoff.Status.TargetObservation == nil ||
-		handoff.Status.ReadyAt == nil || handoff.Spec.StageRequestedAt.IsZero() {
-		return errors.New("NodeActuation target provenance is incomplete")
+	if err := validateConfirmingTransition(intent, handoff); err != nil {
+		return err
 	}
 	return nil
 }

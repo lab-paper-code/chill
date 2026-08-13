@@ -84,7 +84,6 @@ func (e ExecutionEvidence) canonicalJSON() ([]byte, error) {
 	canonical.Terminal.NodeWorkload.ObservedAt = canonical.Terminal.NodeWorkload.ObservedAt.UTC()
 	if canonical.Actuation != nil {
 		actuation := *canonical.Actuation
-		actuation.Previous.ObservedAt = actuation.Previous.ObservedAt.UTC()
 		actuation.Target.ObservedAt = actuation.Target.ObservedAt.UTC()
 		actuation.ReadyAt = actuation.ReadyAt.UTC()
 		canonical.Actuation = &actuation

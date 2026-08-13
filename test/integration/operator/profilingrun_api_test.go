@@ -132,7 +132,7 @@ var _ = Describe("ProfilingRun API", func() {
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha7", Size: 1024,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha8", Size: 1024,
 			},
 			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
 				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",

@@ -95,7 +95,7 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 	}
 }
 
-func TestKubernetesExecutionFinalizerProjectsOnlyReadyOwnedActuation(t *testing.T) {
+func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t *testing.T) {
 	t.Parallel()
 	run, frozen := testActuatedRunAndFrozen(t)
 	scheme := runtime.NewScheme()
@@ -103,25 +103,10 @@ func TestKubernetesExecutionFinalizerProjectsOnlyReadyOwnedActuation(t *testing.
 		t.Fatal(err)
 	}
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	handoff, err := buildActuationHandoff(run, frozen, scheme, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handoff.UID = "actuation-uid"
-	handoff.Generation = 2
-	observation := func(at time.Time) *edgev1alpha1.NodeActuationObservation {
-		return &edgev1alpha1.NodeActuationObservation{
-			PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: metav1.NewTime(at),
-		}
-	}
 	readyAt := metav1.NewTime(base.Add(30 * time.Second))
-	handoff.Status = edgev1alpha1.NodeActuationStatus{
-		ObservedGeneration:  handoff.Generation,
-		Phase:               edgev1alpha1.NodeActuationPhaseReady,
-		PreviousObservation: observation(base),
-		TargetObservation:   observation(base.Add(20 * time.Second)),
-		ReadyAt:             &readyAt,
-	}
+	handoff := completedTransitionForRun(
+		run, frozen, "actuation", frozen.Prepared.Intent.Actuation.PowerMode, readyAt.Time,
+	)
 	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{
 		Name: handoff.Name, UID: string(handoff.UID),
 	}

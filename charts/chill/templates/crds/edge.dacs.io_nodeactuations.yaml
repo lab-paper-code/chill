@@ -34,8 +34,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: NodeActuation is one durable Profiler-to-NodeActuator handoff
-          for one Run.
+        description: NodeActuation is one durable transition toward a declared Node
+          state.
         properties:
           apiVersion:
             description: |-
@@ -55,8 +55,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: NodeActuationSpec is the immutable durable Profiler-to-NodeActuator
-              handoff.
+            description: NodeActuationSpec is one immutable durable transition request.
             properties:
               actuator:
                 description: Actuator is the exact non-fixed typed target selected
@@ -169,22 +168,6 @@ spec:
                 maxLength: 128
                 minLength: 1
                 type: string
-              run:
-                description: Run is the exact owning ProfilingRun identity in this
-                  namespace.
-                properties:
-                  name:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                  uid:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                - uid
-                type: object
               settlingDurationSeconds:
                 description: SettlingDurationSeconds is the frozen post-verification
                   settling period.
@@ -204,13 +187,10 @@ spec:
             - node
             - policyName
             - powerMode
-            - run
             - settlingDurationSeconds
             - stageRequestedAt
             type: object
             x-kubernetes-validations:
-            - message: run identity is immutable
-              rule: self.run == oldSelf.run
             - message: node identity is immutable
               rule: self.node == oldSelf.node
             - message: deviceClass is immutable

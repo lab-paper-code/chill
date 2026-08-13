@@ -40,7 +40,6 @@ type NvidiaLockedGPUClockTarget struct {
 type Request struct {
 	Handoff                     ObjectIdentity
 	Generation                  int64
-	Run                         ObjectIdentity
 	Node                        ObjectIdentity
 	DeviceClass                 string
 	PowerMode                   string
@@ -54,7 +53,7 @@ type Request struct {
 
 func (r Request) ValidateForNode(assigned ObjectIdentity) error {
 	for field, identity := range map[string]ObjectIdentity{
-		"handoff": r.Handoff, "Run": r.Run, "Node": r.Node, "assigned Node": assigned,
+		"handoff": r.Handoff, "Node": r.Node, "assigned Node": assigned,
 	} {
 		if err := identity.Validate(); err != nil {
 			return fmt.Errorf("validate %s identity: %w", field, err)

@@ -181,7 +181,7 @@ func validateRunEvidenceBinding(
 		execution.Actuation.Handoff.Namespace != run.Namespace ||
 		execution.Actuation.Handoff.Name != run.Status.Actuation.Name ||
 		execution.Actuation.Handoff.UID != run.Status.Actuation.UID {
-		return errors.New("retained actuation evidence does not match the recorded Run handoff")
+		return errors.New("retained actuation evidence does not match the recorded confirming transition")
 	}
 	return nil
 }

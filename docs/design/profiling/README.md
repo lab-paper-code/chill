@@ -4,10 +4,10 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha7`; actuated evidence
-retains independent previous and target state observations and checks the
-target against frozen intent. Permanently invalid retained evidence produces
-the terminal `EvidenceInvalid` outcome.
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha8`; actuated evidence
+retains the confirming transition identity, its target read-back, and its
+completion time, and checks the target against frozen intent. Permanently
+invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
 Repeated active and idle trials, exact-state curve derivation, and the pure Plan
 5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
 used one artifact at batches one, two, and four, completed 12 accepted trials,
@@ -19,11 +19,11 @@ an archival scientific record, not current live or re-verifiable evidence, and
 does not establish a universal `b_sat=1` or statistical confirmation. The first
 recorded Plan 5 campaign closed with a typed budget-insufficient result; an
 accepted statistical confirmation and profile publication remain incomplete.
-Plan 9 is partially implemented: `NodeActuation` is a one-way transition and
-the Profiler waits for `Ready`, runs the Job, and continues directly to the
-ordinary evidence path. Run state preconditions and campaign assembly remain
-design work. This document itself does not authorize later API or internal
-changes.
+Plan 9 is partially implemented: `NodeActuation` is a one-way transition
+independent of every Run, and a non-fixed Run executes only when the newest
+successful transition on its target Node confirms its frozen state. Campaign
+assembly remains design work. This document itself does not authorize later
+API or internal changes.
 
 ## How to use this directory
 
@@ -208,10 +208,10 @@ governs the actuation safety boundary,
 ownership from the Run, and
 [ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
 the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
-`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha7
-binds the independent previous and target observations to the Run, checks the
-target facts, and gives permanently invalid evidence
-the terminal `EvidenceInvalid` outcome.
+`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha8
+binds the confirming transition identity, target observation, and completion
+time to the Run, checks the target facts, and gives permanently invalid
+evidence the terminal `EvidenceInvalid` outcome.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
@@ -265,24 +265,31 @@ boundary becomes a catalog fact resolved before any Run exists. One artifact
 defines one state key and one model-loaded-idle baseline. ADR 0016 records this
 decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
-### 9. Transition extraction — in progress
+### 9. Transition extraction — Run boundary implemented
 
 [plans/09-transition-extraction.md](plans/09-transition-extraction.md)
 
 Answers only:
 
-> A `ProfilingRun` owns the transition that establishes its own state, so no
-> window exists in which transition duration, transition energy, and the
-> survival flag can be observed. What is the smallest change that makes a
-> transition separately observable and separately assemblable?
+> How can a separately owned transition establish a state that many Runs
+> consume without placing the transition inside any measurement window?
 
 `NodeActuation` is a one-way operation toward a declared target, with an
 immutable deadline bounding the transition through verified settling. `Ready`
 is terminal and releases the Node Lease while leaving the established state in
-place. The Profiler creates this handoff and waits for `Ready`,
-then executes and finalizes the Run without requesting another state change.
-Run state preconditions and campaign-emitted transition steps remain in this
-plan's implementation scope.
+place. A non-fixed Run selects the most recent successfully completed
+`NodeActuation` on its exact target Node and records that transition before it
+creates a Job. If no completed transition exists, or the newest one established
+a different mode, the Run ends with `RequiredStateNotConfirmed` and creates no
+Job. Fixed Runs execute directly. The Run never creates, owns, or repairs a
+transition. Until campaign assembly is implemented, transitions are submitted
+manually.
+
+Confirmation is intentionally allowed to be stale. Nothing else changes Node
+power state on this testbed, and the operating procedure permits no transition
+during a measurement sweep. No epoch, fence, claim, re-observation, or tenure
+protocol enforces that assumption. Campaign-emitted transition steps remain in
+this plan's implementation scope.
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
 protocols, recovery state machines, compatibility readers, reboot capability,

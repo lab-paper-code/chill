@@ -35,9 +35,6 @@ func (a ActuationFacts) validate(
 	if a.Run.Namespace != terminal.Job.Namespace || a.Handoff.Namespace != a.Run.Namespace {
 		return permanentValidationError(errors.New("actuation Run, handoff, and terminal Job namespaces do not match"))
 	}
-	if err := a.Previous.validate("previous"); err != nil {
-		return permanentValidationError(err)
-	}
 	if err := a.Target.validate("target"); err != nil {
 		return permanentValidationError(err)
 	}
@@ -46,10 +43,10 @@ func (a ActuationFacts) validate(
 		return permanentValidationError(errors.New("actuation target observation does not match frozen intent"))
 	}
 	if a.ReadyAt.IsZero() {
-		return permanentValidationError(errors.New("actuation lifecycle timestamps are required"))
+		return permanentValidationError(errors.New("actuation transition completion time is required"))
 	}
-	if a.Target.ObservedAt.Before(a.Previous.ObservedAt) || a.ReadyAt.Before(a.Target.ObservedAt) {
-		return permanentValidationError(errors.New("actuation apply/read-back/ready timestamps are out of order"))
+	if a.ReadyAt.Before(a.Target.ObservedAt) {
+		return permanentValidationError(errors.New("actuation read-back and completion timestamps are out of order"))
 	}
 	for _, container := range terminal.Containers {
 		if container.StartedAt.Before(a.ReadyAt) {
