@@ -39,23 +39,48 @@ prompt, recorded the host output as a typed terminal Apply failure, and left
 the Node untouched. A subsequent CPU-frequency sample above the MODE_50W cap
 verified that the Node remained on MAXN.
 
-Open question: does the reboot demand follow from the device hardware or from
-the installed NVPModel configuration? The observations above do not distinguish
-them. Resolving it requires authoritative evidence for this exact device and
-software configuration, or a controlled, reboot-capable investigation outside
-CHILL that audits the NVPModel configuration and repeats the transition probe.
+The installed configuration was then inspected directly on the `jetsono` Node
+through a short-lived read-only Pod that mounted `/etc/nvpmodel.conf` from the
+Node read-only. That file declares:
+
+```text
+TPC_PG_MASK /sys/devices/gpu.0/tpc_pg_mask
+POWER_MODEL ID=0 NAME=MAXN, TPC_POWER_GATING TPC_PG_MASK 0
+POWER_MODEL ID=1 NAME=MODE_15W, TPC_POWER_GATING TPC_PG_MASK 248
+POWER_MODEL ID=2 NAME=MODE_30W, TPC_POWER_GATING TPC_PG_MASK 240
+POWER_MODEL ID=3 NAME=MODE_50W, TPC_POWER_GATING TPC_PG_MASK 0
+```
+
+The configuration also declares `PM_CONFIG DEFAULT=2`, the persisted
+`/var/lib/nvpmodel/status` state read `pmode:0000`, and the configuration
+contained no reboot-related keyword. The reboot demand therefore is not a
+per-mode reboot flag in that file.
+
+The former hardware-or-configuration question was too coarse. The
+configuration assigns each mode a GPU TPC power-gating mask, while GPU TPC
+power gating on this part is established at boot. Together with the transition
+results, that evidence supports the inference that NVPModel demands a reboot
+exactly when the target mode's `TPC_PG_MASK` differs from the mask currently in
+effect. This is a transition property, not a property of the target mode alone.
+The evidence is not a complete pairwise test: transitions between MAXN and
+MODE_50W kept mask 0 and completed in place, while attempts from MAXN at mask 0
+to MODE_30W at 240 or MODE_15W at 248 demanded a reboot.
 
 ## Decision
 
-Treat a DeviceClass's declared power-mode set and its in-place-actuatable set as
-separate facts. An actuation policy authorizes only a mode shown to be reachable
-in place through the configured actuator on the tested device. Establish that
-per-device fact by probing the transition and observing its result; do not infer
-it from catalog presence.
+Treat a DeviceClass's declared power-mode set and an actuation policy's
+in-place-reachable transition set as separate facts. An actuation policy
+authorizes only modes whose transitions from the current and restoration modes
+it can encounter stay within an in-place-reachable `TPC_PG_MASK` equivalence
+class for the tested device and configuration. Establish that transition fact
+from the configured masks and observed probes; do not infer it from catalog
+presence or characterize reachability from the target name alone.
 
-For the tested `jetson-agx-orin-64g`, authorize MODE_50W and MAXN. Do not
-authorize MODE_30W or MODE_15W through this actuation path on the basis of the
-current observations.
+For the tested `jetson-agx-orin-64g` configuration, MAXN and MODE_50W form the
+observed in-place class at mask 0; MODE_30W at 240 and MODE_15W at 248 are in
+different classes. Keep the current policy within the mask-0 class by
+authorizing MODE_50W and MAXN. Do not authorize a transition from that class to
+MODE_30W or MODE_15W through this actuation path on the current evidence.
 
 Keep the existing fail-closed behavior. An interactive reboot is outside the
 actuator contract, and the actuator must not answer a reboot prompt. Apply
@@ -64,11 +89,22 @@ failure remains a typed terminal failure and does not start measurement.
 ## Consequences
 
 The device catalog may continue to describe all four named modes without
-claiming that all four are actuation-authorized. Campaigns using this actuator
-on the tested device have a two-point power-mode axis, MODE_50W and MAXN; a
-four-point energy-versus-capacity curve is not obtainable through this path.
+claiming that every transition among them is actuation-authorized. Campaigns
+using this actuator while operating and restoring within the tested mask-0
+class have a two-point power-mode axis, MODE_50W and MAXN; a four-point
+energy-versus-capacity curve is not obtainable through this in-place path.
 
-This decision does not establish a hardware restriction, describe another
-Jetson or the Xavier policy, or make MODE_30W and MODE_15W generally unusable.
-It records only that those two modes were not reachable in place through this
-actuator on this device under the tested configuration on 2026-08-13.
+**Prediction, not observation:** a MODE_15W-to-MODE_30W transition changes the
+mask from 248 to 240 and is therefore predicted to demand a reboot. That
+transition was not attempted.
+
+**Prediction, not observation:** a transition between any two modes that share
+the same mask is predicted not to require a reboot. MAXN and MODE_50W are the
+only distinct same-mask pair in this catalog and their transitions were
+observed in place; the general mask-equivalence rule was not tested on another
+same-mask pair here.
+
+This decision is limited to this device and installed configuration on
+2026-08-13. It makes no claim about another Jetson device, another JetPack
+version, or the Xavier row. It neither authorizes nor proposes that CHILL reboot
+a Node; reboot-capable actuation remains a separate, untaken decision.
