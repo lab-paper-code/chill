@@ -261,6 +261,24 @@ boundary becomes a catalog fact resolved before any Run exists. One artifact
 defines one state key and one model-loaded-idle baseline. ADR 0016 records this
 decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
 
+### 9. Durable Node state-transition control path — design only
+
+[plans/09-durable-node-state-transition-control-path.md](plans/09-durable-node-state-transition-control-path.md)
+
+Answers only:
+
+> Can a Node state transition be established, witnessed, and then consumed by
+> many `ProfilingRun` objects, without any single Run owning, holding, or
+> restoring it?
+
+Design only. No scope is approved and nothing is implemented. The plan proposes
+a durable transition owner, per-Node serialization and consumer fencing,
+failure recovery, one-time state-precondition binding, separate transition
+evidence admission, bounded stored-schema incompatibility, and a
+drain-and-cutover migration from Run-owned actuation. It does not authorize
+reboot capability or any API, controller, RBAC, deployment, evidence-schema, or
+migration change.
+
 ## Component contracts
 
 These documents define reusable internal subsystem boundaries. They support the
