@@ -29,6 +29,10 @@ type ModelArtifact struct {
 	// +kubebuilder:validation:MinLength=1
 	Format string `json:"format"`
 
+	// Input declares this artifact's input tensor contract without its batch axis.
+	// +optional
+	Input *ModelArtifactInputContract `json:"input,omitempty"`
+
 	// Derivation binds a derived executable to its source artifact and conversion settings.
 	// It is absent for canonical source artifacts.
 	// +optional
@@ -53,19 +57,13 @@ type ModelArtifactDerivation struct {
 	// +kubebuilder:validation:items:Minimum=1
 	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
 
-	// Input freezes the tensor contract consumed by a runtime that cannot
-	// discover it safely from the derived executable.
-	// +optional
-	Input *ModelArtifactInputContract `json:"input,omitempty"`
-
 	// Conversion binds the converter and recipe used to produce this artifact.
 	Conversion ModelArtifactConversion `json:"conversion"`
 }
 
 type ModelArtifactInputContract struct {
 	// InputSampleShape is the input tensor shape without its batch axis. The
-	// batch axis is supplied by the selected declared batch size, so a mismatch is not
-	// representable here.
+	// selected measurement batch supplies that axis.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
 	InputSampleShape []int32 `json:"inputSampleShape"`

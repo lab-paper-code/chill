@@ -72,7 +72,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
 			Path: input.Declaration.Artifact.Path,
 		},
-		ArtifactCapability:  reportArtifactCapability(input.Artifact.Derivation),
+		ArtifactCapability:  reportArtifactCapability(input.Artifact),
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
 		HostContract:        hostContract,
 		RuntimeAccess:       reportRuntimeAccess(input.Declaration.Access),
@@ -107,8 +107,9 @@ func cloneActuatorTarget(source *profilingrun.ActuatorTarget) *profilingrun.Actu
 }
 
 func reportArtifactCapability(
-	derivation *edgev1alpha1.ModelArtifactDerivation,
+	artifact edgev1alpha1.ModelArtifact,
 ) *profilingrun.CandidateArtifactCapability {
+	derivation := artifact.Derivation
 	if derivation == nil {
 		return nil
 	}
@@ -116,10 +117,10 @@ func reportArtifactCapability(
 		TargetPlatform:     derivation.TargetPlatform,
 		DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...),
 	}
-	if derivation.Input != nil {
-		capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)
-		capability.InputLayout = derivation.Input.Layout
-		capability.InputDataType = derivation.Input.DataType
+	if artifact.Input != nil {
+		capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)
+		capability.InputLayout = artifact.Input.Layout
+		capability.InputDataType = artifact.Input.DataType
 	}
 	return capability
 }

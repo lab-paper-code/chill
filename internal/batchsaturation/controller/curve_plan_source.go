@@ -41,6 +41,16 @@ type CurvePlanSourceOptions struct {
 	MaxObjectBytes int64
 }
 
+// ArtifactInputContractMissingError identifies a selected artifact that cannot
+// supply the tensor contract required by an immutable curve plan.
+type ArtifactInputContractMissingError struct {
+	Artifact string
+}
+
+func (e *ArtifactInputContractMissingError) Error() string {
+	return fmt.Sprintf("artifact %q declares no input tensor contract", e.Artifact)
+}
+
 // CurvePlanSource resolves one BatchSaturation's immutable curve plan without
 // creating either of the Run objects used to project its active and idle
 // intents.
@@ -102,17 +112,10 @@ func (s *CurvePlanSource) Resolve(
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
-	if report.ArtifactCapability == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New(
-			"a batch-saturation campaign requires an artifact that declares its batch sizes; " +
-				"a runtime that consumes batch as a call argument is not supported here",
-		)
+	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
 	}
-	plannedBatchSizes := make([]int, len(report.ArtifactCapability.DeclaredBatchSizes))
-	for index, batchSize := range report.ArtifactCapability.DeclaredBatchSizes {
-		plannedBatchSizes[index] = int(batchSize)
-	}
-	sort.Ints(plannedBatchSizes)
 
 	active, err := s.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive,
@@ -135,15 +138,34 @@ func (s *CurvePlanSource) Resolve(
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
 	}
-	conversion, err := s.resolveConversion(ctx, parent.Spec.State.Candidate.ModelSpec, report)
+	artifact, err := s.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+	}
+	conversion, err := resolveConversion(artifact, report)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+	}
+	if artifact.Input == nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil,
+			&ArtifactInputContractMissingError{Artifact: artifact.Name}
+	}
+	capability := profilingrun.CandidateArtifactCapability{
+		InputSampleShape: append([]int32(nil), artifact.Input.InputSampleShape...),
+		InputLayout:      artifact.Input.Layout,
+		InputDataType:    artifact.Input.DataType,
+	}
+	if report.ArtifactCapability != nil {
+		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform
+		capability.DeclaredBatchSizes = append(
+			[]int32(nil), report.ArtifactCapability.DeclaredBatchSizes...,
+		)
 	}
 	spec, err := admission.ProjectCurvePlanSpec(
 		parent.Name,
 		active.Intent,
 		idle.Intent,
-		*report.ArtifactCapability,
+		capability,
 		conversion,
 		plannedBatchSizes,
 	)
@@ -156,6 +178,37 @@ func (s *CurvePlanSource) Resolve(
 	}
 	recorded, reference, err := s.record(ctx, parent.UID, plan)
 	return recorded, reference, transition, err
+}
+
+func resolvePlannedBatchSizes(
+	campaign []int32,
+	capability *profilingrun.CandidateArtifactCapability,
+) ([]int, error) {
+	if capability != nil {
+		if len(campaign) != 0 {
+			return nil, errors.New("BatchSaturation batchSizes must be absent when the selected artifact declares batch sizes")
+		}
+		planned := make([]int, len(capability.DeclaredBatchSizes))
+		for index, batchSize := range capability.DeclaredBatchSizes {
+			planned[index] = int(batchSize)
+		}
+		sort.Ints(planned)
+		return planned, nil
+	}
+	if len(campaign) == 0 {
+		return nil, errors.New("BatchSaturation batchSizes are required when the selected artifact declares no batch sizes")
+	}
+	planned := make([]int, len(campaign))
+	for index, batchSize := range campaign {
+		if batchSize < 1 {
+			return nil, errors.New("BatchSaturation batchSizes must be positive")
+		}
+		if index > 0 && batchSize <= campaign[index-1] {
+			return nil, errors.New("BatchSaturation batchSizes must be strictly increasing")
+		}
+		planned[index] = int(batchSize)
+	}
+	return planned, nil
 }
 
 func (s *CurvePlanSource) prepare(
@@ -174,18 +227,18 @@ func (s *CurvePlanSource) prepare(
 	return s.preparer.Prepare(ctx, requested.Preparation)
 }
 
-func (s *CurvePlanSource) resolveConversion(
+func (s *CurvePlanSource) resolveArtifact(
 	ctx context.Context,
 	modelSpecName string,
 	report profilingrun.CandidateReport,
-) (profilederivation.CurveConversionContract, error) {
+) (edgev1alpha1.ModelArtifact, error) {
 	model := &edgev1alpha1.ModelSpec{}
 	if err := s.reader.Get(ctx, types.NamespacedName{Name: modelSpecName}, model); err != nil {
-		return profilederivation.CurveConversionContract{}, fmt.Errorf("get ModelSpec %q for conversion provenance: %w", modelSpecName, err)
+		return edgev1alpha1.ModelArtifact{}, fmt.Errorf("get ModelSpec %q for curve-plan artifact: %w", modelSpecName, err)
 	}
 	input := report.Inputs.ModelSpec
 	if model.Name != input.Name || string(model.UID) != input.UID || model.ResourceVersion != input.ResourceVersion {
-		return profilederivation.CurveConversionContract{}, errors.New("conversion ModelSpec does not match the resolved candidate report identity")
+		return edgev1alpha1.ModelArtifact{}, errors.New("curve-plan ModelSpec does not match the resolved candidate report identity")
 	}
 	var selected *edgev1alpha1.ModelArtifact
 	for index := range model.Spec.Artifacts {
@@ -194,24 +247,35 @@ func (s *CurvePlanSource) resolveConversion(
 			continue
 		}
 		if selected != nil {
-			return profilederivation.CurveConversionContract{}, fmt.Errorf(
+			return edgev1alpha1.ModelArtifact{}, fmt.Errorf(
 				"ModelSpec %q contains duplicate artifact %q", model.Name, artifact.Name,
 			)
 		}
 		selected = artifact
 	}
 	if selected == nil {
-		return profilederivation.CurveConversionContract{}, fmt.Errorf(
+		return edgev1alpha1.ModelArtifact{}, fmt.Errorf(
 			"ModelSpec %q does not contain selected artifact %q", model.Name, report.Selection.Artifact,
 		)
 	}
+	return *selected, nil
+}
+
+func resolveConversion(
+	selected edgev1alpha1.ModelArtifact,
+	report profilingrun.CandidateReport,
+) (profilederivation.CurveConversionContract, error) {
 	if selected.Derivation == nil {
-		return profilederivation.CurveConversionContract{}, errors.New("resolve conversion requires a derived artifact")
+		if report.ArtifactCapability != nil {
+			return profilederivation.CurveConversionContract{}, errors.New(
+				"canonical artifact disagrees with the candidate report artifact capability",
+			)
+		}
+		return profilederivation.CurveConversionContract{}, nil
 	}
-	if selected.Derivation.Input == nil {
+	if report.ArtifactCapability == nil {
 		return profilederivation.CurveConversionContract{}, errors.New(
-			"a batch-saturation campaign requires a derived artifact that declares its input tensor contract; " +
-				"a derived artifact without that contract is not supported here",
+			"derived artifact has no candidate report artifact capability",
 		)
 	}
 	return profilederivation.CurveConversionContract{

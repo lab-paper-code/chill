@@ -80,33 +80,6 @@ spec:
                             type: integer
                           minItems: 1
                           type: array
-                        input:
-                          description: |-
-                            Input freezes the tensor contract consumed by a runtime that cannot
-                            discover it safely from the derived executable.
-                          properties:
-                            dataType:
-                              minLength: 1
-                              type: string
-                            inputSampleShape:
-                              description: |-
-                                InputSampleShape is the input tensor shape without its batch axis. The
-                                batch axis is supplied by the selected declared batch size, so a mismatch is not
-                                representable here.
-                              items:
-                                format: int32
-                                minimum: 1
-                                type: integer
-                              minItems: 1
-                              type: array
-                            layout:
-                              minLength: 1
-                              type: string
-                          required:
-                          - dataType
-                          - inputSampleShape
-                          - layout
-                          type: object
                         sourceArtifact:
                           description: |-
                             SourceArtifact references the source ModelArtifact name in this ModelSpec.
@@ -129,6 +102,31 @@ spec:
                         as onnx.
                       minLength: 1
                       type: string
+                    input:
+                      description: Input declares this artifact's input tensor contract
+                        without its batch axis.
+                      properties:
+                        dataType:
+                          minLength: 1
+                          type: string
+                        inputSampleShape:
+                          description: |-
+                            InputSampleShape is the input tensor shape without its batch axis. The
+                            selected measurement batch supplies that axis.
+                          items:
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          minItems: 1
+                          type: array
+                        layout:
+                          minLength: 1
+                          type: string
+                      required:
+                      - dataType
+                      - inputSampleShape
+                      - layout
+                      type: object
                     name:
                       description: Name is unique within one ModelSpec and is referenced
                         by execution paths.

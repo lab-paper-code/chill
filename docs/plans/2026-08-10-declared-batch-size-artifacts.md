@@ -129,7 +129,7 @@ Update the call site at `runtime/rknnlite/runner.py:371`:
 `internal/profiler/controller/catalog_facts.go` — delete only this line from the RKNNLite condition:
 
 ```go
-			artifact.Derivation.Input.Shape[0] != artifact.Derivation.FixedBatch ||
+			artifact.Input.Shape[0] != artifact.Derivation.FixedBatch ||
 ```
 
 `internal/profilingrun/candidate.go` — delete only these two lines from the RKNNLite condition:
@@ -373,8 +373,8 @@ go build ./... 2>&1 | head -40
 
 Fix each break with the corresponding rename, changing nothing else:
 
-- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), derivation.Input.InputSampleShape...)`.
-- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Derivation.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
+- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)`.
+- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
 - `internal/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
 
 - [ ] **Step 8: Change the runtime contract**
@@ -421,16 +421,20 @@ spec:
   artifacts:
   - name: canonical-onnx
     format: onnx
+    input:
+      inputSampleShape: [3, 224, 224]
+      layout: NCHW
+      dataType: float32
   - name: mobilenet-v2-050-rk3588
     format: rknn
+    input:
+      inputSampleShape: [224, 224, 3]
+      layout: NHWC
+      dataType: float32
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
       declaredBatchSizes: [1, 2, 4, 8, 16]
-      input:
-        inputSampleShape: [224, 224, 3]
-        layout: NHWC
-        dataType: float32
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2

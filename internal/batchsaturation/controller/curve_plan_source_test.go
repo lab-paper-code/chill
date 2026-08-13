@@ -93,6 +93,117 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 }
 
+func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(t *testing.T) {
+	parent := testParent()
+	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+	parent.Spec.BatchSizes = []int32{1, 2, 4, 8, 16, 32}
+	_, report := curvePlanCandidateReport(t, parent)
+	report.Selection.Artifact = "canonical-onnx"
+	report.ArtifactSupply.Path = "/artifact/canonical.onnx"
+	report.ArtifactCapability = nil
+	reportBytes := encodeCurvePlanCandidateReport(t, report)
+	model := curvePlanModel(report)
+	model.Spec.Artifacts[0].Derivation = nil
+	model.Spec.Artifacts[0].Input = &edgev1alpha1.ModelArtifactInputContract{
+		InputSampleShape: []int32{3, 192, 256}, Layout: "NCHW", DataType: "float16",
+	}
+	preparer := &fakeCurvePlanPreparer{
+		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
+	}
+	source, err := NewCurvePlanSource(
+		&fakeCurvePlanModelReader{model: model},
+		&fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer,
+		newFakeCurvePlanStore(),
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatalf("construct curve-plan source: %v", err)
+	}
+
+	plan, _, _, err := source.Resolve(context.Background(), parent)
+	if err != nil {
+		t.Fatalf("resolve canonical-artifact curve plan: %v", err)
+	}
+	shared := plan.Shared()
+	if !slices.Equal(shared.PlannedBatchSizes, []int{1, 2, 4, 8, 16, 32}) {
+		t.Fatalf("planned batch sizes = %v", shared.PlannedBatchSizes)
+	}
+	if shared.Conversion.TargetPlatform != "" || shared.Conversion.Tool != "" ||
+		shared.Conversion.ToolVersion != "" {
+		t.Fatalf("canonical artifact conversion contract = %+v", shared.Conversion)
+	}
+	if shared.Tensor.Layout != "NCHW" || shared.Tensor.DataType != "float16" ||
+		!slices.Equal(shared.Tensor.InputSampleShape, []int{3, 192, 256}) {
+		t.Fatalf("canonical artifact tensor contract = %+v", shared.Tensor)
+	}
+	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
+		preparer.requests[1].Measurement.Batch != 1 {
+		t.Fatalf("canonical artifact preparation requests = %+v", preparer.requests)
+	}
+}
+
+func TestCurvePlanSourceRejectsArtifactWithoutDeclaredInputContract(t *testing.T) {
+	parent := testParent()
+	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+	parent.Spec.BatchSizes = []int32{1, 2}
+	_, report := curvePlanCandidateReport(t, parent)
+	report.Selection.Artifact = "undeclared-input"
+	report.ArtifactCapability = nil
+	reportBytes := encodeCurvePlanCandidateReport(t, report)
+	model := curvePlanModel(report)
+	model.Spec.Artifacts[0].Derivation = nil
+	model.Spec.Artifacts[0].Input = nil
+	source, err := NewCurvePlanSource(
+		&fakeCurvePlanModelReader{model: model},
+		&fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		&fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"},
+		newFakeCurvePlanStore(),
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatalf("construct curve-plan source: %v", err)
+	}
+
+	_, _, _, err = source.Resolve(context.Background(), parent)
+	var missing *ArtifactInputContractMissingError
+	if !errors.As(err, &missing) {
+		t.Fatalf("Resolve() error = %v, want ArtifactInputContractMissingError", err)
+	}
+	if missing.Artifact != "undeclared-input" ||
+		err.Error() != `artifact "undeclared-input" declares no input tensor contract` {
+		t.Fatalf("missing input contract error = %v, artifact = %q", err, missing.Artifact)
+	}
+}
+
+func TestCurvePlanSourceRejectsCampaignBatchSizesForDerivedArtifact(t *testing.T) {
+	parent := testParent()
+	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+	parent.Spec.BatchSizes = []int32{1, 2, 4}
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	preparer := &fakeCurvePlanPreparer{
+		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
+	}
+	source, err := NewCurvePlanSource(
+		&fakeCurvePlanModelReader{model: curvePlanModel(report)},
+		&fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer,
+		newFakeCurvePlanStore(),
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatalf("construct curve-plan source: %v", err)
+	}
+
+	if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
+		!strings.Contains(err.Error(), "must be absent when the selected artifact declares batch sizes") {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(preparer.requests) != 0 {
+		t.Fatalf("conflicting sources prepared Runs: %+v", preparer.requests)
+	}
+}
+
 func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -101,27 +212,6 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 		preparedArtifact string
 		want             string
 	}{
-		{
-			name: "runtime consumes batch as call argument",
-			mutateReport: func(report *profilingrun.CandidateReport) {
-				report.ArtifactCapability = nil
-			},
-			want: "requires an artifact that declares its batch sizes",
-		},
-		{
-			name: "derived artifact has no input tensor contract",
-			mutateModel: func(model *edgev1alpha1.ModelSpec) {
-				model.Spec.Artifacts[0].Derivation.Input = nil
-			},
-			want: "requires a derived artifact that declares its input tensor contract",
-		},
-		{
-			name: "conversion receives a canonical artifact",
-			mutateModel: func(model *edgev1alpha1.ModelSpec) {
-				model.Spec.Artifacts[0].Derivation = nil
-			},
-			want: "resolve conversion requires a derived artifact",
-		},
 		{
 			name:             "prepared artifact disagrees with report",
 			preparedArtifact: "different-artifact",
@@ -226,13 +316,13 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 		},
 		Spec: edgev1alpha1.ModelSpecSpec{Artifacts: []edgev1alpha1.ModelArtifact{{
 			Name: report.Selection.Artifact, Format: "onnx",
+			Input: &edgev1alpha1.ModelArtifactInputContract{
+				InputSampleShape: []int32{3, 224, 224}, Layout: "NCHW", DataType: "float32",
+			},
 			Derivation: &edgev1alpha1.ModelArtifactDerivation{
 				SourceArtifact: "canonical-onnx", TargetPlatform: "cpu",
 				DeclaredBatchSizes: []int32{1, 2, 4},
-				Input: &edgev1alpha1.ModelArtifactInputContract{
-					InputSampleShape: []int32{3, 224, 224}, Layout: "NCHW", DataType: "float32",
-				},
-				Conversion: edgev1alpha1.ModelArtifactConversion{Tool: "onnx-tool", Version: "1.2.3"},
+				Conversion:         edgev1alpha1.ModelArtifactConversion{Tool: "onnx-tool", Version: "1.2.3"},
 			},
 		}}},
 	}

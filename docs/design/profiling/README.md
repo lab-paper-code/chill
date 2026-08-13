@@ -261,11 +261,15 @@ Answers only:
 
 It is CHILL's own. RKNN-Toolkit2 enumerates several batch shapes into one
 artifact, and an RK3588 probe confirmed one artifact executing batches 1, 2, and
-4 while refusing an undeclared batch. One artifact therefore declares a set of
-declared batch sizes, one execution path serves a whole sweep, and the capability
-boundary becomes a catalog fact resolved before any Run exists. One artifact
-defines one state key and one model-loaded-idle baseline. ADR 0016 records this
-decision. Plans 5 and 5a keep the estimand, acceptance rule, and sizing method.
+4 while refusing an undeclared batch. Every artifact declares its input tensor
+contract. A derived artifact additionally supplies the finite set fixed by its
+conversion as an artifact constraint. A canonical ONNX artifact with a symbolic
+batch axis leaves the sweep set to `BatchSaturation.spec.batchSizes` because
+ONNX Runtime takes batch as a call argument. Exactly one source supplies the
+recorded plan, whose exhaustion is `CapabilityBoundary` for either source. One
+artifact defines one state key and one model-loaded-idle baseline. ADR 0016
+records this decision. Plans 5 and 5a keep the estimand, acceptance rule, and
+sizing method.
 
 ### 9. Transition extraction — implemented
 

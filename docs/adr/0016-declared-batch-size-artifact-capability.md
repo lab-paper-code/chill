@@ -2,51 +2,76 @@
 
 ## Status
 
-Accepted. Supersedes and replaces 0014, which is deleted.
+Accepted.
 
 ## Context
 
-CHILL's RKNN conversion pipeline overwrote the source ONNX model's symbolic
-batch axis with one constant immediately before conversion. The resulting
-one-batch artifact supply was a property of that conversion step.
+CHILL measures one finite batch sweep against one immutable artifact and one
+execution path. The source of that finite set depends on how the artifact and
+runtime represent batch.
 
 RKNN-Toolkit2 2.3.2 accepts `dynamic_input` during conversion and enumerates
 several batch shapes into one immutable artifact. An RK3588 probe loaded one
 such artifact and executed several declared batches through the same RKNNLite
 path. The runtime refused an undeclared batch and reported the shapes carried by
-the artifact. The converter and device probe together provide the evidence for
-a finite declared batch size set.
+the artifact. The converter and device probe provide the evidence for a finite
+artifact-declared batch-size set.
+
+The canonical ONNX artifact retains its symbolic batch axis. ONNX Runtime takes
+the batch size as a call argument, so that artifact does not impose a finite
+batch-size set. A batch-saturation campaign must still freeze the finite set it
+will measure before it creates a Run.
+
+The input tensor contract is a property of each artifact. It is required to
+freeze comparable curve plans regardless of whether a conversion produced the
+artifact.
 
 ## Decision
 
-Every derived artifact declares its executable batch set as `DeclaredBatchSizes`.
-One execution path, artifact identity, and runtime path serve every declared
-batch size. The declared batch size set may be sparse. Its contents are catalog
-configuration; `NewCurvePlan` sorts and validates `PlannedBatchSizes`.
+Every artifact declares its batch-invariant input tensor contract as
+`ModelArtifact.input`. A selected artifact without that declaration cannot
+produce a curve plan and returns a typed error naming the artifact.
+
+Every derived artifact additionally declares the finite batch set fixed by its
+conversion as `ModelArtifact.derivation.declaredBatchSizes`. One execution
+path, artifact identity, and runtime path serve every declared batch size. A
+canonical artifact declares no derivation and no finite batch-size set;
+`BatchSaturation.spec.batchSizes` supplies its measurement-selected sweep.
+
+Exactly one source applies to a campaign. `spec.batchSizes` must be absent when
+the selected artifact has `DeclaredBatchSizes`, and it is required, positive,
+unique, and strictly increasing when the selected artifact has none. Supplying
+both sources is a validation error.
+
+The recorded curve plan carries the selected artifact's input tensor contract
+unchanged and the selected batch set as `PlannedBatchSizes`. Its conversion
+contract is populated for the artifact-declared source and all-empty for the
+campaign-declared canonical source, so the immutable plan records whether its
+boundary is an artifact constraint or a measurement choice.
 
 The capability boundary is resolved when measurement intent is frozen. The
-selected artifact's declared batch size set becomes the batch sizes recorded in
-the curve plan.
-The sweep advances through that set in ascending order, steps over sizes the
-operator omitted, and reaches the capability boundary when the set is
-exhausted. `KMax` is compared with the largest planned batch size.
+sweep advances through the recorded set in ascending order, steps over omitted
+sizes, and reaches the capability boundary when the set is exhausted. `KMax` is
+compared with the largest planned batch size.
 
 One artifact defines one execution-state key. The curve therefore owns one
 admitted model-loaded-idle baseline for that state. The baseline Run uses the
-first declared batch.
+first planned batch.
 
 ## Consequences
 
 A runtime that enumerates one batch per artifact requires a per-batch execution
-path introduced by a new architectural decision and supported by its own
-conversion, device, state-identity, and baseline evidence.
+path supported by its own conversion, device, state-identity, and baseline
+evidence.
 
-A catalog entry may declare a batch size that the selected artifact was built
-without. A Run created for that declared batch size follows the ordinary trial
-failure and retry path. The frozen capability boundary remains derived from the
-declared set.
+A derived-artifact catalog entry may declare a batch size that the selected
+artifact was built without. A canonical-artifact campaign may likewise select
+a batch that its runtime cannot execute. A Run created for either selected size
+follows the ordinary trial failure and retry path. The frozen capability
+boundary remains exhaustion of the recorded set.
 
 Plan 5's confirmatory estimand ranges over every batch above its candidate
 through `KMax`. Its confirmatory sizing boundary therefore accepts only a
-consecutive planned batch size span from the candidate through `KMax` and returns an
-explicit error for a gap. Plan 5a follows sparse planned batch size sets directly.
+consecutive planned batch-size span from the candidate through `KMax` and
+returns an explicit error for a gap. Plan 5a follows sparse planned batch-size
+sets directly.

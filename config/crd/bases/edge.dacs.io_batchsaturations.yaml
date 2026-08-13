@@ -115,6 +115,22 @@ spec:
                 x-kubernetes-validations:
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
+              batchSizes:
+                description: |-
+                  BatchSizes is the measurement-selected sweep for an artifact that does
+                  not declare a finite batch-size set. It must be absent when the selected
+                  artifact declares its own set. Kubernetes forbids uniqueItems on an array
+                  schema, so ascending order is checked here and strict increase is enforced
+                  where the sweep is resolved.
+                items:
+                  format: int32
+                  minimum: 1
+                  type: integer
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: batchSizes must be in ascending order
+                  rule: self.isSorted()
               idleProtocol:
                 properties:
                   admissionPolicy:

@@ -85,7 +85,7 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *testing.T) {
 	objects := validRKNNCandidateObjects()
 	model := objects[0].(*edgev1alpha1.ModelSpec)
-	model.Spec.Artifacts[1].Derivation.Input = nil
+	model.Spec.Artifacts[1].Input = nil
 	resolver := newCandidateResolver(t, objects...)
 	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
 		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
@@ -416,10 +416,6 @@ func validArtifactDerivation(source string) *edgev1alpha1.ModelArtifactDerivatio
 		SourceArtifact:     source,
 		TargetPlatform:     "rk3588",
 		DeclaredBatchSizes: []int32{1},
-		Input: &edgev1alpha1.ModelArtifactInputContract{
-			InputSampleShape: []int32{224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
-			DataType: profilingrun.RKNNLiteInputDataType,
-		},
 		Conversion: edgev1alpha1.ModelArtifactConversion{
 			Tool:    "rknn-toolkit2",
 			Version: "2.3.2",
@@ -526,6 +522,10 @@ func validRKNNCandidateObjects() []client.Object {
 	model := objects[0].(*edgev1alpha1.ModelSpec)
 	model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
 		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn",
+		Input: &edgev1alpha1.ModelArtifactInputContract{
+			InputSampleShape: []int32{224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
+			DataType: profilingrun.RKNNLiteInputDataType,
+		},
 		Derivation: validArtifactDerivation("canonical-onnx"),
 	})
 	model.Spec.ExecutionPaths = append(model.Spec.ExecutionPaths, edgev1alpha1.ModelExecutionPath{

@@ -6,16 +6,20 @@ spec:
   artifacts:
   - name: canonical-onnx
     format: onnx
+    input:
+      inputSampleShape: [3, 224, 224]
+      layout: NCHW
+      dataType: float32
   - name: mobilenet-v2-050-rk3588
     format: rknn
+    input:
+      inputSampleShape: [224, 224, 3]
+      layout: NHWC
+      dataType: float32
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
       declaredBatchSizes: [1, 2, 4, 8, 16]
-      input:
-        inputSampleShape: [224, 224, 3]
-        layout: NHWC
-        dataType: float32
       conversion:
         tool: rknn-toolkit2
         version: 2.3.2
