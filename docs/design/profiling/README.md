@@ -191,6 +191,10 @@ assigns mutable power-mode ownership to a dedicated per-Node actuator operand.
 [ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) records
 the tested AGX Orin boundary between catalogued modes and the in-place-reachable
 subset authorized by actuation policies.
+[ADR 0018](../../adr/0018-state-transition-operation-and-witness-boundary.md)
+separates durable transition evidence from the Runs that consume an established
+state, and requires an external witness for a transition its actor cannot
+survive.
 The Profiler now creates the durable `NodeActuation` handoff from frozen Run
 inputs, and the actuator boundary strictly projects only an exact local
 Node name/UID match. The pure apply/read-back/settle/restore decision core and

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. Its per-Run actuation state machine is narrowed by
+[0018 State Transition Operation and Witness Boundary](0018-state-transition-operation-and-witness-boundary.md);
+the NodeActuator boundary defined here is unchanged.
 
 ## Context
 
