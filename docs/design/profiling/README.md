@@ -223,7 +223,7 @@ another Node, model, execution path, batch size, RKNN path, GPU path, or L4
 campaign result. Catalog presence and standalone smoke are not production
 execution evidence.
 
-### 7. Batch-saturation control path — approved, not implemented
+### 7. Batch-saturation control path — `sequential-early-stop` implemented
 
 [plans/07-batch-saturation-control-path.md](plans/07-batch-saturation-control-path.md)
 
@@ -232,12 +232,17 @@ Answers only:
 > Can one declared `BatchSaturation` object drive a whole `b_sat` measurement
 > without a human step between Runs?
 
-Approved design. A `BatchSaturation` resource owns the `ProfilingRun` objects it
-creates, decides the next measurement from the admitted ones, and publishes one
-typed outcome. Plan 5a and Plan 5 keep the estimand, acceptance rule, and sizing
+The `sequential-early-stop` control path is implemented. A `BatchSaturation`
+resource owns the `ProfilingRun` objects it creates, reconstructs progress from
+those Runs, decides the next measurement from admitted evidence, and publishes
+one typed outcome. The recorded Orange Pi RKNN campaign exercised this path
+with one artifact at batches one, two, and four and produced
+`Stopped/NoFurtherImprovement`. The `two-pass-confirmatory` method remains
+design work. Plan 5a and Plan 5 keep the estimand, acceptance rule, and sizing
 method; this plan owns only the control path that executes them, and supersedes
-their procedural sections. `ProfilingRun` remains independently submittable. The
-plan does not add an estimator, a `DeviceProfile` API, or scheduler consumption.
+their procedural sections. `ProfilingRun` remains independently submittable.
+The plan does not add an estimator, a `DeviceProfile` API, or scheduler
+consumption.
 
 ### 8. Declared-batch-size artifacts — approved, under implementation
 
