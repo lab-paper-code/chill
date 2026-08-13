@@ -52,7 +52,7 @@ ADR 0017 remains authoritative for the in-place reachability mechanism; this
 decision does not restate it.
 
 A reboot also changes the measurement boundary. A Node-local observer cannot
-report until kubelet startup, CNI readiness, image availability, and Pod
+report until kubelet startup, CNI readiness, any required image pull, and Pod
 scheduling allow it to run. A transition duration ending at that first reading
 would therefore measure Kubernetes recovery, not only the device transition.
 For a reboot-class transition, the transition-time instrument must be the
@@ -61,14 +61,15 @@ transition, where an external 2 Hz poller and CHILL's in-Job observer agreed to
 0.03% over the same window.
 
 Second, the transition is welded to the Run. The research specification defines
-transition duration tau, transition energy overhead eta, and the
+transition duration τ, transition energy overhead η, and the
 transition-survival flag as raw quantities measured between states, alongside
 the quantities measured within a state. The current Run-owned lifecycle has no
-separate evidence boundary for them. Each actuated Run also pays for a
-transition to its target and a transition back to its previous state. If a
-reboot-class edge were ever separately authorized, three Runs in one arm would
-therefore imply six reboots of a shared Node. The Run lifetime would span both
-reboots because its evidence remains withheld until restoration is verified.
+separate evidence boundary for them. Each Run that measures a target different
+from the previous Node state pays for a transition to its target and a
+transition back to its previous state. If a reboot-class edge were ever
+separately authorized, three Runs in one arm would therefore imply six reboots
+of a shared Node. The Run lifetime would span both reboots because its evidence
+remains withheld until restoration is verified.
 
 ## Decision
 
@@ -96,7 +97,7 @@ Any transition whose actor cannot survive it requires an external witness.
 Control-plane observation of the Node boot identity establishes whether the
 boot changed and distinguishes the expected identity transition from an
 unexplained disappearance. External wall-power observation supplies the device
-transition window for tau and the power trace needed for transition-energy
+transition window for τ and the power trace needed for transition-energy
 evidence; a restarted Node-local Pod's first reading is not that boundary.
 
 This decision does not authorize CHILL to reboot a Node. It does not choose a

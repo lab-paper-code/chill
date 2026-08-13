@@ -32,16 +32,13 @@ NVPM ERROR: bad input!
 NVPM ERROR: optMask is 1, no request for power mode
 ```
 
-The mount experiment in `9dee9b0` exposed `/proc/device-tree/compatible` in the
-running actuator DaemonSet's `volumeMounts` but produced byte-identical host
-output. It was reverted in `6dd77f0`. CHILL did not answer the interactive
-prompt, recorded the host output as a typed terminal Apply failure, and left
-the Node untouched. A subsequent CPU-frequency sample above the MODE_50W cap
-verified that the Node remained on MAXN.
+CHILL did not answer the interactive prompt, recorded the host output as a
+typed terminal Apply failure, and left the Node untouched. A subsequent
+CPU-frequency sample above the MODE_50W cap verified that the Node remained on
+MAXN.
 
-The installed configuration was then inspected directly on the `jetsono` Node
-through a short-lived read-only Pod that mounted `/etc/nvpmodel.conf` from the
-Node read-only. That file declares:
+The installed configuration at `/etc/nvpmodel.conf` on the `jetsono` Node, read
+through a short-lived Pod mounting that file read-only, declares:
 
 ```text
 TPC_PG_MASK /sys/devices/gpu.0/tpc_pg_mask
@@ -52,19 +49,18 @@ POWER_MODEL ID=3 NAME=MODE_50W, TPC_POWER_GATING TPC_PG_MASK 0
 ```
 
 The configuration also declares `PM_CONFIG DEFAULT=2`, the persisted
-`/var/lib/nvpmodel/status` state read `pmode:0000`, and the configuration
-contained no reboot-related keyword. The reboot demand therefore is not a
+`/var/lib/nvpmodel/status` state reads `pmode:0000`, and the configuration
+contains no reboot-related keyword. The reboot demand is therefore not a
 per-mode reboot flag in that file.
 
-The former hardware-or-configuration question was too coarse. The
-configuration assigns each mode a GPU TPC power-gating mask, while GPU TPC
-power gating on this part is established at boot. Together with the transition
-results, that evidence supports the inference that NVPModel demands a reboot
-exactly when the target mode's `TPC_PG_MASK` differs from the mask currently in
-effect. This is a transition property, not a property of the target mode alone.
-The evidence is not a complete pairwise test: transitions between MAXN and
-MODE_50W kept mask 0 and completed in place, while attempts from MAXN at mask 0
-to MODE_30W at 240 or MODE_15W at 248 demanded a reboot.
+The installed configuration assigns each mode a GPU TPC power-gating mask
+written to `/sys/devices/gpu.0/tpc_pg_mask`. GPU TPC power gating on this part
+is established at boot. NVPModel therefore demands a reboot exactly when the
+target mode's `TPC_PG_MASK` differs from the mask currently in effect.
+Reachability is a property of the transition, not of the target mode. The
+evidence is not a complete pairwise test: transitions between MAXN and MODE_50W
+kept mask 0 and completed in place, while attempts from MAXN at mask 0 to
+MODE_30W at 240 or MODE_15W at 248 demanded a reboot.
 
 ## Decision
 
