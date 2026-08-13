@@ -19,6 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	evidenceReasonInvalid            = "EvidenceInvalid"
+	evidenceReasonVerificationFailed = "EvidenceVerificationFailed"
+)
+
 // RunIntentFreezer durably freezes one Run before execution is materialized.
 type RunIntentFreezer interface {
 	Freeze(context.Context, *edgev1alpha1.ProfilingRun) (FreezeIntentResult, error)
@@ -113,7 +118,24 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionFinalizeEvidence:
 		finalized, finalizeErr := r.finalize.Finalize(ctx, run, frozen.Run.Prepared, job)
 		if finalizeErr != nil {
-			statusErr := r.publishEvidenceFailure(ctx, run)
+			if errors.Is(finalizeErr, profilerevidence.ErrPermanentValidation) {
+				statusErr := r.publishEvidenceFailure(
+					ctx,
+					run,
+					evidenceReasonInvalid,
+					"retained execution evidence is permanently invalid: "+finalizeErr.Error(),
+				)
+				if statusErr != nil {
+					return ctrl.Result{}, fmt.Errorf("publish permanent evidence failure: %w", statusErr)
+				}
+				return ctrl.Result{}, nil
+			}
+			statusErr := r.publishEvidenceFailure(
+				ctx,
+				run,
+				evidenceReasonVerificationFailed,
+				"retained execution evidence could not be verified",
+			)
 			if statusErr != nil {
 				return ctrl.Result{}, errors.Join(finalizeErr, statusErr)
 			}
@@ -314,7 +336,12 @@ func (r *RunReconciler) publishIntentFreezeFailure(
 	})
 }
 
-func (r *RunReconciler) publishEvidenceFailure(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
+func (r *RunReconciler) publishEvidenceFailure(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+	reason string,
+	message string,
+) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
 		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
 			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
@@ -324,7 +351,7 @@ func (r *RunReconciler) publishEvidenceFailure(ctx context.Context, run *edgev1a
 		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
 			Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
 			Status: metav1.ConditionFalse, ObservedGeneration: run.Generation,
-			Reason: "EvidenceVerificationFailed", Message: "retained execution evidence could not be verified",
+			Reason: reason, Message: message,
 		})
 	})
 }

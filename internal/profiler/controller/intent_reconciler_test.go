@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -363,6 +364,108 @@ func TestRunReconcilerFinalizesActuatedEvidenceOnlyAfterOrderedRestore(t *testin
 	if actual.Status.Evidence == nil || actual.Status.Evidence.Key != finalized.Reference.Key ||
 		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion {
 		t.Fatalf("finalized actuated status = %#v", actual.Status)
+	}
+}
+
+func TestRunReconcilerPublishesBootIdentityMismatchWithoutRequeue(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run, frozen := testActuatedRunAndFrozen(t)
+	recordIntentAndJob(run)
+	completedAt := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC))
+	job := ownedJob(run, &batchv1.JobStatus{
+		Succeeded:      1,
+		CompletionTime: &completedAt,
+		Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completedAt,
+		}},
+	})
+	handoff := ownedActuationForRun(run, edgev1alpha1.NodeActuationPhaseRestored)
+	handoff.Spec.DesiredStage = edgev1alpha1.NodeActuationDesiredStageRestore
+	handoff.Spec.StageRequestedAt = metav1.NewTime(completedAt.Add(time.Second))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	finalizeErr := fmt.Errorf(
+		"%w: actuation boot identity differs across previous %q, target %q, and restored %q observations",
+		profilerevidence.ErrPermanentValidation,
+		"boot-before",
+		"boot-after",
+		"boot-after",
+	)
+	finalizer := &recordingRunEvidenceFinalizer{err: finalizeErr}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozen}},
+		&recordingActuationHandoffs{handoff: handoff},
+		&recordingExecutionJobs{},
+		finalizer,
+		&recordingRunEvidenceAdmitter{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil || result != (ctrl.Result{}) {
+		t.Fatalf("boot mismatch result = %#v, error = %v", result, err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", finalizer.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+	evidence := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
+	if actual.Status.Evidence != nil || execution == nil || execution.Status != metav1.ConditionTrue ||
+		execution.Reason != "JobSucceeded" || evidence == nil || evidence.Status != metav1.ConditionFalse ||
+		evidence.Reason != evidenceReasonInvalid ||
+		!strings.Contains(evidence.Message, `previous "boot-before", target "boot-after", and restored "boot-after"`) {
+		t.Fatalf("terminal boot mismatch status = %#v", actual.Status)
+	}
+}
+
+func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run := testRun()
+	prepared := currentPreparedRun(t)
+	recordIntentAndJob(run)
+	job := ownedJob(run, &batchv1.JobStatus{
+		Succeeded:  1,
+		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+	})
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	want := errors.New("evidence store temporarily unavailable")
+	finalizer := &recordingRunEvidenceFinalizer{err: want}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
+		&recordingActuationHandoffs{},
+		&recordingExecutionJobs{},
+		finalizer,
+		&recordingRunEvidenceAdmitter{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if !errors.Is(err, want) || result != (ctrl.Result{}) {
+		t.Fatalf("transient finalization result = %#v, error = %v, want wrapped %v", result, err, want)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("finalizer calls = %d, want 1", finalizer.calls)
+	}
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	evidence := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)
+	if actual.Status.Evidence != nil || evidence == nil || evidence.Status != metav1.ConditionFalse ||
+		evidence.Reason != evidenceReasonVerificationFailed ||
+		evidence.Message != "retained execution evidence could not be verified" {
+		t.Fatalf("retryable finalization status = %#v", actual.Status)
 	}
 }
 

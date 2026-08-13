@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -158,28 +159,32 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 	}
 
 	tests := []struct {
-		name   string
-		mutate func(*ExecutionEvidence)
-		match  string
+		name      string
+		mutate    func(*ExecutionEvidence)
+		match     string
+		permanent bool
 	}{
 		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
-		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }},
+		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
 		{name: "target boot identity drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.BootID = "other-boot-id"
-		}, match: "actuation boot identity differs across previous \"test-boot-id\", target \"other-boot-id\", and restored \"test-boot-id\" observations"},
+		}, match: "actuation boot identity differs across previous \"test-boot-id\", target \"other-boot-id\", and restored \"test-boot-id\" observations", permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Target.Actuator.JetsonNVPModel.ID++
-		}},
+		}, permanent: true},
 		{name: "restore drift", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.Restored.Actuator.JetsonNVPModel.ID++
-		}},
+		}, permanent: true},
 		{name: "early restore request", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.RestoreRequestedAt = candidate.Terminal.Job.CompletionTime.Add(-time.Second)
-		}},
+		}, permanent: true},
 		{name: "container before ready", mutate: func(candidate *ExecutionEvidence) {
 			candidate.Actuation.ReadyAt = candidate.Terminal.Containers[0].StartedAt.Add(time.Second)
+		}, permanent: true},
+		{name: "finalization before restored status", mutate: func(candidate *ExecutionEvidence) {
+			candidate.FinalizedAt = candidate.Actuation.RestoredAt.Add(-time.Nanosecond)
 		}},
 	}
 	for _, test := range tests {
@@ -188,10 +193,15 @@ func TestActuatedExecutionEvidenceBindsIndependentRestorationFacts(t *testing.T)
 			candidate := execution
 			candidate.Actuation = cloneActuationFactsForTest(execution.Actuation)
 			test.mutate(&candidate)
-			if err := candidate.Validate(raw); err == nil {
+			err := candidate.Validate(raw)
+			if err == nil {
 				t.Fatalf("%s drift was accepted", test.name)
-			} else if test.match != "" && !strings.Contains(err.Error(), test.match) {
+			}
+			if test.match != "" && !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("Validate() error = %q, want %q", err, test.match)
+			}
+			if permanent := errors.Is(err, ErrPermanentValidation); permanent != test.permanent {
+				t.Fatalf("Validate() permanent = %t, want %t: %v", permanent, test.permanent, err)
 			}
 		})
 	}
@@ -206,6 +216,8 @@ func TestFixedExecutionEvidenceRejectsActuationFacts(t *testing.T) {
 	execution.Actuation = facts.Actuation
 	if err := execution.Validate(raw); err == nil {
 		t.Fatal("fixed evidence accepted actuation facts")
+	} else if !errors.Is(err, ErrPermanentValidation) {
+		t.Fatalf("fixed evidence error = %v, want permanent validation", err)
 	}
 }
 
