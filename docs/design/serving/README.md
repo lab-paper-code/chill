@@ -7,10 +7,12 @@ The entry point runs. `internal/serving` holds its routing decision,
 `cmd/serving-entrypoint` assembles them and supplies the weights from a table it
 reads at start-up. An image, a chart component that renders only when
 `servingEntrypoint.enabled` is set, and a `fast-deploy` component deliver it.
+The chart renders the per-node Services that table names, so every address the
+entry point can choose exists.
 
 Two things this document decides are not implemented: nothing carries the SLO
-class the consumer contract declares, and nothing creates the per-node Services
-the entry point addresses.
+class the consumer contract declares, and nothing serves inference behind those
+Services, which stand without an endpoint until something does.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
@@ -107,6 +109,14 @@ entry point ── weighted choice of Service ──▶ chill-serving-<node>
 
 The decision is CHILL's and the transport is EdgeMesh's, which is the division
 that already governs power mode.
+
+The chart renders those Services from the routing table itself, so a weight and
+the address it names cannot disagree, and a node appears under one Service name
+or the render fails. Each selects `app.kubernetes.io/component: serving` and
+`edge.dacs.io/serving-node`, and carries the EdgeMesh proxy label the
+demonstrated path ran through. Whatever carries those labels on that node is
+what the Service reaches, which is how the address is settled without settling
+what serves behind it.
 
 [`internal/serving`](../../../internal/serving) carries that decision alone:
 what the entry point reads from an inference request — the declared model, with
