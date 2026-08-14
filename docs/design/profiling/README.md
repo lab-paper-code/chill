@@ -206,9 +206,9 @@ Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-
 governs the actuation safety boundary,
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) separates transition
 ownership from the Run, and
-[ADR 0017](../../adr/0017-power-mode-reachability-boundary.md) makes every
-catalogued mode reachable, taking a reboot where the device requires one to
-establish the target. Execution evidence v1alpha8
+[ADR 0017](../../adr/0017-power-mode-reachability-boundary.md) authorizes only
+the AGX Orin modes the actuator establishes in fact, `MODE_50W` and `MAXN`;
+`MODE_30W` and `MODE_15W` need a reboot and are unreachable. Execution evidence v1alpha8
 binds the confirming transition identity, target observation, and completion
 time to the Run, checks the target facts, and gives permanently invalid
 evidence the terminal `EvidenceInvalid` outcome.
@@ -299,8 +299,8 @@ No epoch, fence, claim, re-observation, concurrent-campaign guard, or tenure
 protocol enforces those assumptions.
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
-protocols, recovery state machines, compatibility readers, and the
-transition-cost measurement that later consumes the extracted operation.
+protocols, recovery state machines, compatibility readers, reboot capability,
+and the transition-cost measurement that later consumes the extracted operation.
 
 ## Component contracts
 

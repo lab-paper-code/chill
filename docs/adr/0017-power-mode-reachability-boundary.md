@@ -8,50 +8,47 @@ Accepted
 
 `DeviceClass.spec.powerModes` declares the named power modes and typed actuator
 targets a device catalog offers. Catalog declaration does not establish that the
-configured actuator can move a device into a mode, and reaching one mode does
-not cost what reaching another does.
+configured actuator can move a device into a mode.
 
 On the Jetson platform each mode carries a GPU TPC power-gating mask the device
-establishes at boot. The actuator is asked for a reboot exactly when the target
-mode's mask differs from the mask in effect. Reachability is therefore a
-property of the transition and not of the target mode: two modes sharing a mask
-are reached in place, and two modes in different masks are not.
+establishes at boot. A transition between two modes sharing a mask completes in
+place; a transition into a mask the device did not boot with does not. That
+makes reachability a property of the transition rather than of the target mode,
+so it cannot be characterized from the target's name.
 
-An actuator that treats a reboot demand as a refusal leaves a catalogued mode
-permanently unreachable and makes the reachable set an accident of whichever
-mask the device happened to boot into.
+The actuator tool offers a flag that claims to reboot when a switch requires
+one. It does not reboot from the actuator's environment, and it does not refuse
+either. It applies the parameters it can and returns success, leaving a device
+whose reported mode names the target while the target's gating parameter is
+unset. The tool's own verbose query shows the disagreement; its plain query,
+which is what a read-back reads, does not.
+
+The reported mode name is therefore a nominal value. It says which mode was
+requested, not that the mode was established.
 
 ## Decision
 
-A declared target is a target. The actuator establishes the declared mode, and
-where the device requires a reboot to establish it, that reboot is part of the
-transition rather than grounds to refuse it. Take it through the actuator's
-documented non-interactive path; do not answer an interactive prompt.
+Authorize a transition only where the actuator establishes the mode in fact.
+For this platform that is the set of transitions staying within the mask
+equivalence class the device booted into, and it excludes the force flag, whose
+success is indistinguishable at the read-back from a mode that was established.
 
-The rest of the actuator's contract is unchanged. Host command success is never
-inferred, every apply is followed by an independent read-back before the state
-is accepted, and an apply failure remains a typed terminal failure.
+Reaching a mode in another class requires the Node to reboot into it. The
+actuator cannot reboot a Node, and granting it that is a decision this one does
+not take. Until it is taken, a mode outside the booted class is unreachable and
+is declared as such rather than approximated.
 
-A transition that reboots is survivable because the actuation phase is made
-durable before the host command runs and the next action is derived from that
-durable record, never from what the actuator held in memory. An actuator process
-that does not outlive its own command is an ordinary case here, not a fault.
+Keep the existing fail-closed behavior. An apply failure remains a typed
+terminal failure and does not start measurement.
 
 ## Consequences
 
-Every catalogued mode is reachable, so a campaign's power-mode axis is the
-catalog rather than one mask equivalence class.
+A campaign operating within the booted mask class has a two-point power-mode
+axis on the tested class, and a four-point energy-versus-capacity curve is not
+obtainable through this path.
 
-A reboot ends every Pod on the Node, not only CHILL's. Node-wide workload safety
-already gates the transition; what widens is the reach of what it permits, and
-that is the same judgment the operator makes in declaring the target.
-
-Transition cost is not one quantity. A transition that reboots pays for the boot
-and a transition in place does not, so they are separate measured rows and are
-not compared as though they were the same operation.
-
-An apply whose process dies with the Node normally records nothing and the
-transition resumes from its durable phase. A narrow race remains in which the
-actuator records a terminal apply failure just before the Node goes down while
-the transition in fact took effect. That costs a campaign step and a retry, and
-it is recorded here rather than engineered against.
+Read-back compares a mode name, and a mode name does not distinguish an
+established mode from a partly applied one. Any actuator path that can apply a
+mode partially can therefore produce a transition that verifies and settles
+without the device holding the state. Closing that gap means observing the
+parameters a mode is made of, not the name the tool prints for it.
