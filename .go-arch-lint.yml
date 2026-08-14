@@ -54,6 +54,7 @@ components:
   profiler-evidence: { in: internal/profiler/evidence }
   profiler-evidence-kube: { in: internal/profiler/evidence/kube }
   profiler-worker: { in: internal/profiler/worker }
+  serving-core: { in: internal/serving }
 
 deps:
   # Executables are composition roots. Their job is to assemble any internal

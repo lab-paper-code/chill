@@ -2,7 +2,8 @@
 
 ## Status
 
-Design only. Nothing here is implemented and no scope is approved.
+`internal/serving` holds the entry point's routing decision. Nothing else here
+is implemented.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
@@ -97,6 +98,11 @@ entry point ── weighted choice of Service ──▶ chill-serving-<node>
 
 The decision is CHILL's and the transport is EdgeMesh's, which is the division
 that already governs power mode.
+
+[`internal/serving`](../../../internal/serving) carries that decision alone:
+what the entry point reads from an inference request — the declared model, with
+the payload left opaque — and which node's Service receives it, given the
+weights. It touches no transport and holds no state.
 
 ## What serving would unlock for measurement
 
