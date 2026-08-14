@@ -112,6 +112,11 @@ transport is the only thing it adds and neither end observes that a choice
 happened. It reads the weights in force through an interface and takes no
 position on what supplies them.
 
+A table read at start-up supplies those weights today. It revises nothing, which
+is what makes it a development stand-in: it lets the entry point be deployed and
+reached before anything computes a weight, and replacing it is supplying another
+implementation of the same interface.
+
 ## What serving would unlock for measurement
 
 `μ_s`, the SLO capacity of a state, is defined against an arrival process: the

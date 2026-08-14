@@ -9,9 +9,9 @@ import (
 // it. Each serving node is reached through its own Service, so the entry point
 // keeps the choice and leaves the transport to the cluster network.
 type Backend struct {
-	Node    string
-	Service string
-	Weight  int32
+	Node    string `json:"node"`
+	Service string `json:"service"`
+	Weight  int32  `json:"weight"`
 }
 
 // Weights is the routing weight vector for one model: w in
