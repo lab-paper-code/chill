@@ -12,6 +12,7 @@ CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
+SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
 RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
@@ -338,6 +339,10 @@ docker-build-metric-observer: ## Build the MetricObserver image.
 docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
 
+.PHONY: docker-build-serving-entrypoint
+docker-build-serving-entrypoint: ## Build the inference entry point image.
+	$(CONTAINER_TOOL) build -f build/docker/serving-entrypoint.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
+
 .PHONY: docker-build-all
 docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
 
@@ -440,6 +445,12 @@ docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver 
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/workload-observer.Dockerfile --tag $(WORKLOAD_OBSERVER_IMG) .
+
+.PHONY: docker-buildx-serving-entrypoint
+docker-buildx-serving-entrypoint: ## Build and push the inference entry point image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/serving-entrypoint.Dockerfile --tag $(SERVING_ENTRYPOINT_IMG) .
 
 .PHONY: docker-buildx-all
 docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
