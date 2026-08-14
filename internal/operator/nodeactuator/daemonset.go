@@ -46,6 +46,10 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: selectorLabels},
 				Spec: corev1.PodSpec{
+					// A restart is part of establishing a boot-established power
+					// mode, and reboot(2) restarts the Node only from the host PID
+					// namespace. Outside it, it would end this Pod instead.
+					HostPID:            true,
 					ServiceAccountName: config.ServiceAccountName,
 					NodeSelector:       config.NodeSelector, Affinity: config.Affinity,
 					Tolerations: config.Tolerations, SecurityContext: config.PodSecurityContext,

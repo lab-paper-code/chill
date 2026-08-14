@@ -28,6 +28,11 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 		len(daemonSet.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("NodeActuator host surface = %#v", daemonSet.Spec.Template.Spec)
 	}
+	// reboot(2) restarts the Node only from the host PID namespace, so a mode
+	// established at boot is unreachable without this.
+	if !daemonSet.Spec.Template.Spec.HostPID {
+		t.Fatal("NodeActuator Pod is not in the host PID namespace")
+	}
 	container := daemonSet.Spec.Template.Spec.Containers[0]
 	if container.Command[0] != "/node-actuator" || container.SecurityContext == nil ||
 		container.SecurityContext.Privileged == nil || *container.SecurityContext.Privileged ||
@@ -75,6 +80,15 @@ func TestConfigRejectsImplicitEligibilityOrAuthorization(t *testing.T) {
 		},
 		"broad host path": func(config *Config) {
 			config.JetsonNVPModel.HostPaths[0].HostPath = "/"
+		},
+		"no restart capability": func(config *Config) {
+			config.SecurityContext.Capabilities.Add = nil
+		},
+		"capability beyond restart": func(config *Config) {
+			config.SecurityContext.Capabilities.Add = []corev1.Capability{"SYS_BOOT", "NET_ADMIN"}
+		},
+		"wrong capability": func(config *Config) {
+			config.SecurityContext.Capabilities.Add = []corev1.Capability{"SYS_ADMIN"}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -126,7 +140,9 @@ func validConfig() Config {
 		SecurityContext: &corev1.SecurityContext{
 			Privileged: &privileged, AllowPrivilegeEscalation: &noEscalation,
 			ReadOnlyRootFilesystem: &readOnlyRoot,
-			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"SYS_BOOT"},
+			},
 		},
 	}
 }

@@ -128,7 +128,9 @@ func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
 		SecurityContext: &corev1.SecurityContext{
 			Privileged: &privileged, AllowPrivilegeEscalation: &noEscalation,
 			ReadOnlyRootFilesystem: &readOnlyRoot,
-			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"SYS_BOOT"},
+			},
 		},
 	}
 }

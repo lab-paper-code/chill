@@ -16,6 +16,12 @@ import (
 
 const maximumDiagnosticOutput = 4096
 
+// rebootRequiredMarker is how NVPModel reports that the target mode is
+// established at boot rather than in place. It refuses the change and leaves
+// the Node untouched, so the marker is the only signal that separates a mode
+// this actuator can set from one it must restart the Node to reach.
+const rebootRequiredMarker = "Reboot required for changing to this power mode"
+
 type NVPModelOptions struct {
 	Command []string
 	Timeout time.Duration
@@ -52,6 +58,7 @@ type NVPModel struct {
 	options NVPModelOptions
 	runner  commandRunner
 	now     func() time.Time
+	restart func() error
 }
 
 func NewNVPModel(options NVPModelOptions) (*NVPModel, error) {
@@ -63,8 +70,9 @@ func NewNVPModel(options NVPModelOptions) (*NVPModel, error) {
 			Command: append([]string(nil), options.Command...),
 			Timeout: options.Timeout,
 		},
-		runner: execCommandRunner{},
-		now:    time.Now,
+		runner:  execCommandRunner{},
+		now:     time.Now,
+		restart: restartNode,
 	}, nil
 }
 
@@ -110,18 +118,64 @@ func (a *NVPModel) Apply(
 		target.NvidiaLockedGPUClock != nil || target.JetsonNVPModel.ID < 0 {
 		return errors.New("NVPModel apply requires only a non-negative NVPModel ID")
 	}
-	commandCtx, cancel, err := a.commandContext(ctx, request)
-	if err != nil {
-		return err
+	// A Node that already holds the requested mode is left alone. This is what
+	// bounds the restart below: after the Node comes back holding the target,
+	// a repeated Apply reaches this return and never restarts it again.
+	if current, err := a.Observe(ctx, request); err == nil && holdsTarget(current, request, target) {
+		return nil
 	}
-	defer cancel()
-	output, commandErr := a.runner.CombinedOutput(commandCtx, appendCommand(
-		a.options.Command, "-m", strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10),
-	))
-	if commandErr != nil {
+
+	identifier := strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10)
+	output, commandErr := a.run(ctx, request, "-m", identifier)
+	if commandErr == nil {
+		return nil
+	}
+	if !strings.Contains(string(output), rebootRequiredMarker) {
 		return commandError("apply NVPModel", commandErr, output)
 	}
-	return nil
+
+	// The mode is established at boot. Record it as the mode to come up in,
+	// then restart the Node so the boot establishes it.
+	forceOutput, forceErr := a.run(ctx, request, "--force", "-m", identifier)
+	if forceErr != nil {
+		return commandError("record NVPModel target", forceErr, forceOutput)
+	}
+	if err := a.restartNode(); err != nil {
+		return fmt.Errorf("restart the Node to establish NVPModel mode %s: %w", identifier, err)
+	}
+	// Reached only if the restart returned without restarting anything, which
+	// would leave the mode recorded and unestablished. Never report success.
+	return fmt.Errorf("restart to establish NVPModel mode %s returned without restarting the Node", identifier)
+}
+
+func (a *NVPModel) run(
+	ctx context.Context,
+	request nodeactuator.Request,
+	arguments ...string,
+) ([]byte, error) {
+	commandCtx, cancel, err := a.commandContext(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	return a.runner.CombinedOutput(commandCtx, appendCommand(a.options.Command, arguments...))
+}
+
+func (a *NVPModel) restartNode() error {
+	if a.restart != nil {
+		return a.restart()
+	}
+	return restartNode()
+}
+
+func holdsTarget(
+	observation nodeactuator.Observation,
+	request nodeactuator.Request,
+	target nodeactuator.Target,
+) bool {
+	return observation.PowerMode == request.PowerMode &&
+		observation.Target.JetsonNVPModel != nil && target.JetsonNVPModel != nil &&
+		observation.Target.JetsonNVPModel.ID == target.JetsonNVPModel.ID
 }
 
 func (a *NVPModel) commandContext(

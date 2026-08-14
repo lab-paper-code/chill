@@ -15,6 +15,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator/jetson"
 )
 
+// rebootCapability is the one capability this operand may hold. A power mode
+// the device establishes at boot is reached by restarting the Node, and this is
+// the narrowest privilege that permits it. Nothing else is allowed alongside it.
+const rebootCapability = corev1.Capability("SYS_BOOT")
+
 type Config struct {
 	Image                string                             `json:"image"`
 	ImagePullPolicy      corev1.PullPolicy                  `json:"imagePullPolicy"`
@@ -116,8 +121,9 @@ func (c Config) validateHostAdapters() error {
 	if security == nil || security.Privileged == nil || *security.Privileged ||
 		security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
 		security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem || security.Capabilities == nil ||
-		len(security.Capabilities.Add) != 0 || !slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
-		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, read-only-rootfs security with all capabilities dropped")
+		len(security.Capabilities.Add) != 1 || security.Capabilities.Add[0] != rebootCapability ||
+		!slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
+		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, read-only-rootfs security dropping all capabilities and adding only SYS_BOOT")
 	}
 	return nil
 }

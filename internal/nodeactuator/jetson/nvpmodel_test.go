@@ -41,21 +41,138 @@ func TestNVPModelObserveParsesIndependentNameAndID(t *testing.T) {
 	}
 }
 
+// scriptedRunner answers each call with the next queued response, so a test can
+// describe an Apply that queries, is refused, and records the target in turn.
+type scriptedRunner struct {
+	commands  [][]string
+	responses []scriptedResponse
+}
+
+type scriptedResponse struct {
+	output string
+	err    error
+}
+
+func (r *scriptedRunner) CombinedOutput(_ context.Context, command []string) ([]byte, error) {
+	r.commands = append(r.commands, append([]string(nil), command...))
+	if len(r.responses) == 0 {
+		return nil, errors.New("no scripted response")
+	}
+	response := r.responses[0]
+	r.responses = r.responses[1:]
+	return []byte(response.output), response.err
+}
+
+func scriptedAdapter(t *testing.T, responses ...scriptedResponse) (*NVPModel, *scriptedRunner, time.Time) {
+	t.Helper()
+	adapter, _, now := testAdapter(t)
+	scripted := &scriptedRunner{responses: responses}
+	adapter.runner = scripted
+	adapter.restart = func() error { return errors.New("restart was not expected") }
+	return adapter, scripted, now
+}
+
+func applyTarget(id int32) nodeactuator.Target {
+	return nodeactuator.Target{
+		Kind:           nodeactuator.ActuatorKindJetsonNVPModel,
+		JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{ID: id},
+	}
+}
+
+func modeRequest(now time.Time, mode string, id int32) nodeactuator.Request {
+	request := testRequest(now)
+	request.PowerMode = mode
+	request.Target = applyTarget(id)
+	return request
+}
+
+func commandArguments(command []string) []string {
+	return command[4:]
+}
+
 func TestNVPModelApplyPassesOnlyTypedIDAndDoesNotSelfVerify(t *testing.T) {
 	t.Parallel()
-	adapter, runner, now := testAdapter(t)
-	target := nodeactuator.Target{
-		Kind: nodeactuator.ActuatorKindJetsonNVPModel,
-		JetsonNVPModel: &nodeactuator.JetsonNVPModelTarget{
-			ID: 8,
-		},
-	}
-	if err := adapter.Apply(context.Background(), testRequest(now), target); err != nil {
+	adapter, runner, now := scriptedAdapter(t,
+		scriptedResponse{output: "NV Power Mode: MAXN\n0\n"},
+		scriptedResponse{output: ""},
+	)
+	if err := adapter.Apply(context.Background(), modeRequest(now, "MODE_50W", 3), applyTarget(3)); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"/host/ld.so", "--library-path", "/host/lib", "/host/nvpmodel", "-m", "8"}}
-	if !reflect.DeepEqual(runner.commands, want) {
+	want := [][]string{{"-q"}, {"-m", "3"}}
+	got := [][]string{commandArguments(runner.commands[0]), commandArguments(runner.commands[1])}
+	if len(runner.commands) != 2 || !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestNVPModelApplyLeavesANodeAlreadyHoldingTheTargetAlone(t *testing.T) {
+	t.Parallel()
+	adapter, runner, now := scriptedAdapter(t,
+		scriptedResponse{output: "NV Power Mode: MODE_30W\n2\n"},
+	)
+	if err := adapter.Apply(context.Background(), modeRequest(now, "MODE_30W", 2), applyTarget(2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(commandArguments(runner.commands[0]), []string{"-q"}) {
+		t.Fatalf("commands = %#v, want a query only", runner.commands)
+	}
+}
+
+func TestNVPModelApplyRecordsTheTargetAndRestartsWhenTheModeNeedsABoot(t *testing.T) {
+	t.Parallel()
+	adapter, runner, now := scriptedAdapter(t,
+		scriptedResponse{output: "NV Power Mode: MAXN\n0\n"},
+		scriptedResponse{output: "NVPM WARN: " + rebootRequiredMarker + ": 2\n", err: errors.New("exit status 234")},
+		scriptedResponse{output: "NVPM WARN: rebooting..\n"},
+	)
+	restarted := false
+	adapter.restart = func() error { restarted = true; return nil }
+
+	err := adapter.Apply(context.Background(), modeRequest(now, "MODE_30W", 2), applyTarget(2))
+	if err == nil || !strings.Contains(err.Error(), "without restarting the Node") {
+		t.Fatalf("err = %v, want a refusal to report success after a restart that returned", err)
+	}
+	if !restarted {
+		t.Fatal("the Node was not restarted")
+	}
+	want := [][]string{{"-q"}, {"-m", "2"}, {"--force", "-m", "2"}}
+	got := make([][]string, 0, len(runner.commands))
+	for _, command := range runner.commands {
+		got = append(got, commandArguments(command))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestNVPModelApplyFailsWhenTheNodeCannotBeRestarted(t *testing.T) {
+	t.Parallel()
+	adapter, _, now := scriptedAdapter(t,
+		scriptedResponse{output: "NV Power Mode: MAXN\n0\n"},
+		scriptedResponse{output: rebootRequiredMarker + ": 2\n", err: errors.New("exit status 234")},
+		scriptedResponse{output: ""},
+	)
+	adapter.restart = func() error { return errors.New("operation not permitted") }
+
+	err := adapter.Apply(context.Background(), modeRequest(now, "MODE_30W", 2), applyTarget(2))
+	if err == nil || !strings.Contains(err.Error(), "operation not permitted") {
+		t.Fatalf("err = %v, want the restart failure surfaced", err)
+	}
+}
+
+func TestNVPModelApplyDoesNotRecordATargetTheToolRefusedForAnotherReason(t *testing.T) {
+	t.Parallel()
+	adapter, runner, now := scriptedAdapter(t,
+		scriptedResponse{output: "NV Power Mode: MAXN\n0\n"},
+		scriptedResponse{output: "NVPM ERROR: bad input!\n", err: errors.New("exit status 1")},
+	)
+	err := adapter.Apply(context.Background(), modeRequest(now, "MODE_30W", 2), applyTarget(2))
+	if err == nil || !strings.Contains(err.Error(), "apply NVPModel") {
+		t.Fatalf("err = %v, want the typed apply failure", err)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("commands = %#v, want the query and the refused apply only", runner.commands)
 	}
 }
 
