@@ -2,11 +2,15 @@
 
 ## Status
 
-The entry point is implemented and runnable: `internal/serving` holds its
-routing decision, `internal/serving/entrypoint` serves that decision over HTTP,
-and `cmd/serving-entrypoint` assembles them and supplies the weights from a
-table it reads at start-up. No image or chart ships it, and nothing else here is
-implemented.
+The entry point runs. `internal/serving` holds its routing decision,
+`internal/serving/entrypoint` serves that decision over HTTP, and
+`cmd/serving-entrypoint` assembles them and supplies the weights from a table it
+reads at start-up. An image, a chart component that renders only when
+`servingEntrypoint.enabled` is set, and a `fast-deploy` component deliver it.
+
+Two things this document decides are not implemented: nothing carries the SLO
+class the consumer contract declares, and nothing creates the per-node Services
+the entry point addresses.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
