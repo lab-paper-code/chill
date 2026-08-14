@@ -307,6 +307,50 @@ console:
     create: true
     name: ""
 
+# The inference entry point: the one point every external request crosses. It
+# distributes each request over the nodes serving the declared model. The table
+# below is read once at start-up, so it is a development stand-in for whatever
+# computes routing weights.
+servingEntrypoint:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: daclab/chill-serving-entrypoint
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Port the entry point accepts consumer requests on.
+  port: 8080
+  # Port the per-node serving Services expose. CHILL takes no position on what
+  # a serving worker listens on, so this must be set when enabled=true.
+  servingPort: 0
+  # Routing weights per model. Each entry names a serving node, the Service in
+  # this release's namespace that reaches only that node, and its weight.
+  #   mobilenet:
+  #     - node: jetsono
+  #       service: chill-serving-jetsono
+  #       weight: 1
+  routes: {}
+  service:
+    type: ClusterIP
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
 uninstallCleanup:
   enabled: true
   timeout: 120s

@@ -6,6 +6,7 @@
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
 {{- $nodeActuatorImageTag := include "chill.nodeActuatorImageTag" . -}}
 {{- $consoleImageTag := include "chill.consoleImageTag" . -}}
+{{- $servingEntrypointImageTag := include "chill.servingEntrypointImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
 {{- end -}}
@@ -27,6 +28,26 @@
 {{- end -}}
 {{- if and (not .Values.console.serviceAccount.create) (empty .Values.console.serviceAccount.name) -}}
 {{- fail "console.serviceAccount.name must be set when console.serviceAccount.create=false" -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.servingEntrypoint.enabled -}}
+{{- if lt (int .Values.servingEntrypoint.replicaCount) 1 -}}
+{{- fail "servingEntrypoint.replicaCount must be positive when servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.servingEntrypoint.image.repository -}}
+{{- fail "servingEntrypoint.image.repository must not be empty when servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if empty $servingEntrypointImageTag -}}
+{{- fail "servingEntrypoint.image.tag or Chart.appVersion must not be empty when servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.servingEntrypoint.port) 1) (gt (int .Values.servingEntrypoint.port) 65535) -}}
+{{- fail "servingEntrypoint.port must be between 1 and 65535 when servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if or (lt (int .Values.servingEntrypoint.servingPort) 1) (gt (int .Values.servingEntrypoint.servingPort) 65535) -}}
+{{- fail "servingEntrypoint.servingPort must be between 1 and 65535 when servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if empty .Values.servingEntrypoint.routes -}}
+{{- fail "servingEntrypoint.routes must name at least one model when servingEntrypoint.enabled=true" -}}
 {{- end -}}
 {{- end -}}
 {{- if empty .Values.operator.image.repository -}}

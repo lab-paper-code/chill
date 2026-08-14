@@ -170,6 +170,18 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.console.image.tag -}}
 {{- end -}}
 
+{{- define "chill.servingEntrypointName" -}}
+{{- printf "%s-serving-entrypoint" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.servingEntrypointImage" -}}
+{{- printf "%s:%s" .Values.servingEntrypoint.image.repository (include "chill.servingEntrypointImageTag" .) -}}
+{{- end -}}
+
+{{- define "chill.servingEntrypointImageTag" -}}
+{{- default .Chart.AppVersion .Values.servingEntrypoint.image.tag -}}
+{{- end -}}
+
 {{- define "chill.uninstallCleanupName" -}}
 {{- printf "%s-uninstall-cleanup" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
