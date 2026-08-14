@@ -99,7 +99,7 @@ func successfullyCompletedOnNode(
 		transition.Status.ObservedGeneration == transition.Generation && transition.Status.TerminalFailure == nil &&
 		transition.Status.TargetObservation != nil && !transition.Status.TargetObservation.ObservedAt.IsZero() &&
 		transition.Status.ReadyAt != nil && !transition.Status.ReadyAt.IsZero() &&
-		!transition.Status.ReadyAt.Before(&transition.Status.TargetObservation.ObservedAt)
+		!transition.Status.ReadyAt.BeforeTime(&transition.Status.TargetObservation.ObservedAt)
 }
 
 func validateConfirmingTransition(

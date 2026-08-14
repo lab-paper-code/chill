@@ -513,6 +513,37 @@ spec:
                 - reason
                 - stage
                 type: object
+              transitionCost:
+                description: |-
+                  TransitionCost records Node-clock duration only after a state change
+                  reaches Ready.
+                properties:
+                  applyAndReadBackMilliseconds:
+                    description: |-
+                      ApplyAndReadBackMilliseconds measures from the durable pre-mutation fence
+                      through independent target read-back and entry into settling. It is
+                      controller-path cost, not a device-only measurement: it includes two
+                      edge-to-control-plane round trips and two nvpmodel invocations in addition
+                      to the device change.
+                    format: int64
+                    type: integer
+                  endToEndMilliseconds:
+                    description: |-
+                      EndToEndMilliseconds measures from the durable pre-mutation apply fence
+                      through terminal Ready.
+                    format: int64
+                    type: integer
+                  settlingMilliseconds:
+                    description: |-
+                      SettlingMilliseconds measures from the recorded settling start through
+                      terminal Ready.
+                    format: int64
+                    type: integer
+                required:
+                - applyAndReadBackMilliseconds
+                - endToEndMilliseconds
+                - settlingMilliseconds
+                type: object
               verifiedAt:
                 format: date-time
                 type: string

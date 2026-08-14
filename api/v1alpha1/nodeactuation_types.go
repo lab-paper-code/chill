@@ -149,6 +149,25 @@ type NodeActuationSafetyObservation struct {
 	BlockingPods []NodeActuationPodReference `json:"blockingPods,omitempty"`
 }
 
+// NodeActuationTransitionCost records the duration of one completed state
+// change in integer milliseconds.
+type NodeActuationTransitionCost struct {
+	// EndToEndMilliseconds measures from the durable pre-mutation apply fence
+	// through terminal Ready.
+	EndToEndMilliseconds int64 `json:"endToEndMilliseconds"`
+
+	// ApplyAndReadBackMilliseconds measures from the durable pre-mutation fence
+	// through independent target read-back and entry into settling. It is
+	// controller-path cost, not a device-only measurement: it includes two
+	// edge-to-control-plane round trips and two nvpmodel invocations in addition
+	// to the device change.
+	ApplyAndReadBackMilliseconds int64 `json:"applyAndReadBackMilliseconds"`
+
+	// SettlingMilliseconds measures from the recorded settling start through
+	// terminal Ready.
+	SettlingMilliseconds int64 `json:"settlingMilliseconds"`
+}
+
 // NodeActuationStatus is written only by the responsible per-Node actuator.
 // +kubebuilder:validation:XValidation:rule="!has(self.terminalFailure) || has(self.phase) && self.phase == 'Failed'",message="terminalFailure is valid only after failure"
 // +kubebuilder:validation:XValidation:rule="!has(self.phase) || self.phase != 'Failed' || has(self.terminalFailure)",message="Failed phase requires terminalFailure"
@@ -183,16 +202,21 @@ type NodeActuationStatus struct {
 	TargetObservation *NodeActuationObservation `json:"targetObservation,omitempty"`
 
 	// +optional
-	ApplyStartedAt *metav1.Time `json:"applyStartedAt,omitempty"`
+	ApplyStartedAt *metav1.MicroTime `json:"applyStartedAt,omitempty"`
 
 	// +optional
-	VerifiedAt *metav1.Time `json:"verifiedAt,omitempty"`
+	VerifiedAt *metav1.MicroTime `json:"verifiedAt,omitempty"`
 
 	// +optional
-	SettlingStartedAt *metav1.Time `json:"settlingStartedAt,omitempty"`
+	SettlingStartedAt *metav1.MicroTime `json:"settlingStartedAt,omitempty"`
 
 	// +optional
-	ReadyAt *metav1.Time `json:"readyAt,omitempty"`
+	ReadyAt *metav1.MicroTime `json:"readyAt,omitempty"`
+
+	// TransitionCost records Node-clock duration only after a state change
+	// reaches Ready.
+	// +optional
+	TransitionCost *NodeActuationTransitionCost `json:"transitionCost,omitempty"`
 
 	// TerminalFailure records the single terminal failure outcome.
 	// +optional

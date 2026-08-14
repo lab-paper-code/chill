@@ -178,8 +178,10 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   allowed to mutate host mode; the Profiler orchestrates and the runtime worker
   remains unprivileged.
 - [x] Retain previous and target mode observations; actuator kind/target;
-  policy identity; lifecycle stage; and apply, verification, settling, and ready
-  timestamps in the durable transition.
+  policy identity; lifecycle stage; microsecond-resolution apply, verification,
+  settling, and ready timestamps; and the successful state change's end-to-end,
+  apply-and-read-back, and settling durations in integer milliseconds in the
+  durable transition.
 - [x] Freeze the selected target and configured actuation-policy name into
   immutable Run intent.
 - [x] Fix intent v1alpha10 and simultaneous Go/Python decoder compatibility
@@ -255,10 +257,10 @@ manually.
 
 The transition keeps Node UID, selected class/mode/target, policy name, policy
 timing, request timestamp, and absolute deadline immutable in `spec`; the
-actuator alone owns previous and target observations, phase, timestamps, Lease
-identity, and terminal failure in `status`. Its consumer projection rejects a
-foreign Node name or UID before any Lease or host adapter can receive the
-request.
+actuator alone owns previous and target observations, phase, timestamps,
+successful transition cost, Lease identity, and terminal failure in `status`.
+Its consumer projection rejects a foreign Node name or UID before any Lease or
+host adapter can receive the request.
 
 The internal layer keeps Node locking and lifecycle decisions separate
 from host tooling. Its Lease name is derived from exact Node UID, holder

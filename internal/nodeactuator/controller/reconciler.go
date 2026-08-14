@@ -307,11 +307,11 @@ func (r *HandoffReconciler) executeTargetAction(
 		if snapshot.TargetObservation == nil && snapshot.PreviousObservation == nil {
 			return ctrl.Result{}, errors.New("settling action omitted target evidence")
 		}
-		now := metav1.NewTime(snapshot.Now)
+		now := metav1.NewMicroTime(snapshot.Now)
 		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 			if snapshot.TargetObservation == nil {
 				status.TargetObservation = projectHostObservation(*snapshot.PreviousObservation)
-				verifiedAt := metav1.NewTime(snapshot.PreviousObservation.ObservedAt)
+				verifiedAt := metav1.NewMicroTime(snapshot.PreviousObservation.ObservedAt)
 				status.VerifiedAt = &verifiedAt
 				status.Reason = "TargetAlreadyActive"
 				status.Message = "current host state already matched the requested target; settling interval started"
@@ -323,9 +323,17 @@ func (r *HandoffReconciler) executeTargetAction(
 		})
 		return ctrl.Result{}, err
 	case nodeactuator.ActionMarkReady:
-		now := metav1.NewTime(snapshot.Now)
+		now := metav1.NewMicroTime(snapshot.Now)
 		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 			status.Phase, status.ReadyAt = edgev1alpha1.NodeActuationPhaseReady, &now
+			if status.ApplyStartedAt != nil && status.SettlingStartedAt != nil {
+				status.TransitionCost = &edgev1alpha1.NodeActuationTransitionCost{
+					EndToEndMilliseconds: now.UnixMilli() - status.ApplyStartedAt.UnixMilli(),
+					ApplyAndReadBackMilliseconds: status.SettlingStartedAt.UnixMilli() -
+						status.ApplyStartedAt.UnixMilli(),
+					SettlingMilliseconds: now.UnixMilli() - status.SettlingStartedAt.UnixMilli(),
+				}
+			}
 			status.Reason, status.Message = "TargetSettled", "target was independently observed and settled"
 		})
 		return ctrl.Result{}, err
@@ -364,7 +372,7 @@ func (r *HandoffReconciler) executeApplyTarget(
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
 	if handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseApplying {
-		now := metav1.NewTime(snapshot.Now)
+		now := metav1.NewMicroTime(snapshot.Now)
 		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 			status.Phase = edgev1alpha1.NodeActuationPhaseApplying
 			if status.ApplyStartedAt == nil {
@@ -402,7 +410,7 @@ func (r *HandoffReconciler) executeObserveTarget(
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationInvalid", Message: err.Error(),
 		})
 	}
-	now := metav1.NewTime(observation.ObservedAt)
+	now := metav1.NewMicroTime(observation.ObservedAt)
 	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.TargetObservation, status.VerifiedAt = projectHostObservation(observation), &now
 		status.Reason, status.Message = "TargetObserved", "independent target read-back was retained"

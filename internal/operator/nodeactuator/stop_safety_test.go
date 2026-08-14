@@ -13,7 +13,7 @@ import (
 
 func TestSafeToStopBlocksEveryUnfinishedOrLeaseHoldingHandoff(t *testing.T) {
 	t.Parallel()
-	now := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
+	now := metav1.NewMicroTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
 	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
 		"pending": {Phase: edgev1alpha1.NodeActuationPhasePending},
 		"applying": {
@@ -34,7 +34,7 @@ func TestSafeToStopBlocksEveryUnfinishedOrLeaseHoldingHandoff(t *testing.T) {
 
 func TestSafeToStopAllowsTerminalTransitionsAfterLeaseRelease(t *testing.T) {
 	t.Parallel()
-	now := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
+	now := metav1.NewMicroTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
 	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
 		"failed": {Phase: edgev1alpha1.NodeActuationPhaseFailed},
 		"ready":  {Phase: edgev1alpha1.NodeActuationPhaseReady, ReadyAt: &now},

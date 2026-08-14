@@ -99,7 +99,7 @@ func TestProjectSnapshotProjectsEstablishedStateFromTheOwnedTransition(t *testin
 		t.Fatal(err)
 	}
 	transition.Generation = 1
-	readyAt := metav1.NewTime(time.Unix(1100, 0))
+	readyAt := metav1.NewMicroTime(time.Unix(1100, 0))
 	transition.Status = edgev1alpha1.NodeActuationStatus{
 		ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady,
 		TargetObservation: &edgev1alpha1.NodeActuationObservation{

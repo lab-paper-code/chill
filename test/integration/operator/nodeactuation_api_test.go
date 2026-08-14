@@ -63,6 +63,7 @@ var _ = Describe("NodeActuation API", func() {
 		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
 
 		now := metav1.Now()
+		readyAt := metav1.NewMicroTime(now.Time)
 		handoff.Status = edgev1alpha1.NodeActuationStatus{
 			ObservedGeneration: handoff.Generation,
 			Phase:              edgev1alpha1.NodeActuationPhaseReady,
@@ -74,7 +75,7 @@ var _ = Describe("NodeActuation API", func() {
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
 				PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: now,
 			},
-			ReadyAt: &now,
+			ReadyAt: &readyAt,
 		}
 		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
 

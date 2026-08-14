@@ -82,6 +82,7 @@ type memoryHostActuator struct {
 	applyCalls   []nodeactuator.Target
 	observeCalls int
 	applyErr     error
+	now          func() time.Time
 }
 
 func (a *memoryHostActuator) Observe(
@@ -93,9 +94,13 @@ func (a *memoryHostActuator) Observe(
 	if reflect.DeepEqual(a.target, request.Target) {
 		powerMode = request.PowerMode
 	}
+	observedAt := time.Date(2026, 8, 6, 12, 0, a.observeCalls, 0, time.UTC)
+	if a.now != nil {
+		observedAt = a.now()
+	}
 	return nodeactuator.Observation{
 		PowerMode: powerMode,
-		Target:    a.target, ObservedAt: time.Date(2026, 8, 6, 12, 0, a.observeCalls, 0, time.UTC),
+		Target:    a.target, ObservedAt: observedAt,
 	}, nil
 }
 
@@ -195,6 +200,73 @@ func TestHandoffReconcilerSkipsApplyWhenTargetIsAlreadyActive(t *testing.T) {
 	if lease.releaseCalls != 1 || len(host.applyCalls) != 0 {
 		t.Fatalf("ready release = releases:%d applyCalls:%d", lease.releaseCalls, len(host.applyCalls))
 	}
+}
+
+func TestHandoffReconcilerRecordsTransitionCostOnlyAtReady(t *testing.T) {
+	t.Parallel()
+
+	t.Run("segments sum to end-to-end duration", func(t *testing.T) {
+		ctx := context.Background()
+		handoff := testNodeActuation()
+		scheme := handoffReconcilerScheme(t)
+		kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+			WithObjects(handoff).
+			Build()
+		lease := &recordingLeaseController{}
+		now := time.Date(2026, 8, 6, 12, 0, 0, 125_000_000, time.UTC)
+		safety := &staticSafetyChecker{allowed: true, now: now}
+		host := &memoryHostActuator{target: nvpTarget(1), now: func() time.Time { return now }}
+		reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
+
+		reconcileTimes(t, ctx, reconciler, request, 4)
+		now = now.Add(1375 * time.Millisecond)
+		reconcileTimes(t, ctx, reconciler, request, 3)
+		current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+		if current.Status.Phase != edgev1alpha1.NodeActuationPhaseSettling ||
+			current.Status.TransitionCost != nil {
+			t.Fatalf("pre-Ready cost = phase:%s cost:%#v", current.Status.Phase, current.Status.TransitionCost)
+		}
+
+		now = now.Add(60625 * time.Millisecond)
+		reconcileTimes(t, ctx, reconciler, request, 1)
+		current = getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+		cost := current.Status.TransitionCost
+		if current.Status.Phase != edgev1alpha1.NodeActuationPhaseReady || cost == nil {
+			t.Fatalf("Ready cost = phase:%s cost:%#v", current.Status.Phase, cost)
+		}
+		if cost.ApplyAndReadBackMilliseconds != 1375 || cost.SettlingMilliseconds != 60625 ||
+			cost.EndToEndMilliseconds != 62000 ||
+			cost.EndToEndMilliseconds != cost.ApplyAndReadBackMilliseconds+cost.SettlingMilliseconds {
+			t.Fatalf("transition cost = %#v", cost)
+		}
+	})
+
+	t.Run("failure records no cost", func(t *testing.T) {
+		ctx := context.Background()
+		handoff := testNodeActuation()
+		scheme := handoffReconcilerScheme(t)
+		kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(&edgev1alpha1.NodeActuation{}).
+			WithObjects(handoff).
+			Build()
+		lease := &recordingLeaseController{}
+		now := time.Date(2026, 8, 6, 12, 0, 0, 125_000_000, time.UTC)
+		safety := &staticSafetyChecker{allowed: true, now: now}
+		host := &memoryHostActuator{target: nvpTarget(1), applyErr: errors.New("command interrupted")}
+		reconciler := newTestHandoffReconciler(t, kubeClient, lease, safety, host, &now)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(handoff)}
+
+		reconcileTimes(t, ctx, reconciler, request, 4)
+		now = now.Add(375 * time.Millisecond)
+		reconcileTimes(t, ctx, reconciler, request, 1)
+		current := getNodeActuation(t, ctx, kubeClient, request.NamespacedName)
+		if current.Status.Phase != edgev1alpha1.NodeActuationPhaseFailed ||
+			current.Status.TransitionCost != nil {
+			t.Fatalf("failed transition cost = phase:%s cost:%#v", current.Status.Phase, current.Status.TransitionCost)
+		}
+	})
 }
 
 func TestExecuteLeaseActionSchedulesLifecycleProgressAfterRenewal(t *testing.T) {

@@ -724,7 +724,7 @@ func completedTransitionForRun(
 	requestedAt := readyAt.Add(-2 * time.Minute)
 	targetObservedAt := readyAt.Add(-time.Minute)
 	previousObservedAt := requestedAt.Add(10 * time.Second)
-	ready := metav1.NewTime(readyAt)
+	ready := metav1.NewMicroTime(readyAt)
 	return &edgev1alpha1.NodeActuation{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: run.Namespace, Name: name, UID: types.UID(name + "-uid"), Generation: 1,

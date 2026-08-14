@@ -139,7 +139,7 @@ func projectObservation(observation *edgev1alpha1.NodeActuationObservation) (*no
 	return projected, nil
 }
 
-func projectTime(value *metav1.Time) *time.Time {
+func projectTime(value *metav1.MicroTime) *time.Time {
 	if value == nil {
 		return nil
 	}
