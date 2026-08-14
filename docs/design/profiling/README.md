@@ -206,17 +206,17 @@ Runtime-specific adapters remain explicit. [ADR 0015](../../adr/0015-node-power-
 governs the actuation safety boundary,
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) separates transition
 ownership from the Run, and
-[ADR 0017](../../adr/0017-in-place-power-mode-reachability-boundary.md) limits
-the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN` states;
-`MODE_30W` and `MODE_15W` are not authorized. Execution evidence v1alpha8
+[ADR 0017](../../adr/0017-power-mode-reachability-boundary.md) makes every
+catalogued mode reachable, taking a reboot where the device requires one to
+establish the target. Execution evidence v1alpha8
 binds the confirming transition identity, target observation, and completion
 time to the Run, checks the target facts, and gives permanently invalid
 evidence the terminal `EvidenceInvalid` outcome.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
-three admitted model-loaded-idle Runs in each authorized state. The exact
-aggregates are recorded in ADR 0017. From those aggregates, `MAXN` provides
+three admitted model-loaded-idle Runs in each state. The exact aggregates are
+recorded in [plans/06](plans/06-execution-support-expansion.md). From those, `MAXN` provides
 1.326x the throughput at 1.714x the incremental energy per item, while mean
 and p99 latency fall to 0.754x and 0.763x. The two idle means differ by 0.0334
 W, so idle observations alone do not characterize the knob. Both power-mode
@@ -299,8 +299,8 @@ No epoch, fence, claim, re-observation, concurrent-campaign guard, or tenure
 protocol enforces those assumptions.
 [ADR 0018](../../adr/0018-transition-ownership-boundary.md) owns the boundary.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
-protocols, recovery state machines, compatibility readers, reboot capability,
-and the transition-cost measurement that later consumes the extracted operation.
+protocols, recovery state machines, compatibility readers, and the
+transition-cost measurement that later consumes the extracted operation.
 
 ## Component contracts
 

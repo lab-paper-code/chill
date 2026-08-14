@@ -30,16 +30,16 @@ transition identity, target observation, and completion time, and validates
 the target against frozen intent. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
 error requeue.
-[ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
-bounds the tested AGX Orin in-place axis to the mask-0 `MODE_50W` and `MAXN`
-states; `MODE_30W` and `MODE_15W` are not authorized.
+[ADR 0017](../../../adr/0017-power-mode-reachability-boundary.md) makes every
+catalogued mode reachable, taking a reboot where the device requires one to
+establish the target.
 [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md) remains
 authoritative for the sole-writer, safety, and host-adapter boundary.
 
 One `jetson-agx-orin-64g` CPU ORT comparison measured
 `mobilenet-v2-050`, batch one, for 75 seconds, with three admitted active and
-three admitted model-loaded-idle Runs in each authorized state. ADR 0017
-records these aggregates:
+three admitted model-loaded-idle Runs in each state, and recorded these
+aggregates:
 
 | Power mode | `P_idle` (W) | `P_act` (W) | Throughput (items/s) | Incremental energy (J/item) |
 |---|---:|---:|---:|---:|

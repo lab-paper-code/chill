@@ -5,7 +5,7 @@
 > Boundary: [ADR 0018](../../../adr/0018-transition-ownership-boundary.md),
 > [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md)
 >
-> Reachability: [ADR 0017](../../../adr/0017-in-place-power-mode-reachability-boundary.md)
+> Reachability: [ADR 0017](../../../adr/0017-power-mode-reachability-boundary.md)
 
 ## Status
 
@@ -97,9 +97,9 @@ enter the Run rules directly.
 
 The following are excluded and no part of this plan depends on them: a new
 resource kind; state epochs, fences, tenure, claims, or successor protocols;
-recovery state machines; stored-schema compatibility readers; reboot-class
-actuation; and the transition-cost measurement itself, which is a separate unit
-that consumes the atom this plan produces.
+recovery state machines; stored-schema compatibility readers; and the
+transition-cost measurement itself, which is a separate unit that consumes the
+atom this plan produces.
 
 Stored objects from another contract are deleted rather than migrated, per
 [ADR 0019](../../../adr/0019-durable-stored-contract-compatibility.md).
