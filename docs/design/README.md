@@ -8,6 +8,7 @@ flat list of equally authoritative files.
 | Design area | Start here | Scope |
 |---|---|---|
 | Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Ordered profiling plans, reusable component contracts, and supporting fact audits |
+| Serving | [serving/README.md](serving/README.md) | The consumer contract for inference, node roles, the object model the scheduler needs, and its control loops. Design only |
 | Operator console | [operator-console/README.md](operator-console/README.md) | Operator-facing concepts, workflows, interfaces, use cases, and requirements |
 | Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Current semantic-navigation, package-boundary, optional indexing, and Helm-topology evidence contract |
 
