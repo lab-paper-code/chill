@@ -65,6 +65,8 @@ node's traffic away first.
 | `edgemesh-agent` runs on all ten nodes | cluster |
 | EdgeMesh's load balancer implements round-robin, random, and consistent-hash selection, reads `DestinationRule` and not `VirtualService`, and applies no per-backend weight | [`pkg/loadbalancer`](https://github.com/kubeedge/edgemesh/tree/main/pkg/loadbalancer) |
 | CHILL already depends on EdgeMesh: the operator labels the evidence-store Service with `service.edgemesh.kubeedge.io/service-proxy-name`, and edge measurement workers reach it on every Run | cluster |
+| a cloud-side pod reaches a pod on `jetsono` through a single-endpoint Service carrying that same label, and the entry point forwards a request across that path | cluster |
+| that forwarding costs about 1.4 ms on a connection the entry point keeps open: 6.0–6.7 ms end to end against 4.5–5.8 ms for the same request answered without leaving the cloud | cluster |
 
 KServe and Knative do not ship a proxy. KServe declares Istio or an
 `ingressClassName` as a prerequisite and recommends Gateway API; Knative defines
@@ -131,10 +133,7 @@ it yields throughput at saturation, which is an upper bound on `μ_s` and not
 
 ## Not yet verified
 
-These bear on the decisions above and have not been demonstrated on this cluster.
+This bears on the decisions above and has not been demonstrated on this cluster.
 
-- **Cloud-to-edge reachability.** Edge-to-cloud is exercised on every Run. The
-  reverse direction, which the entry point needs, has never been demonstrated.
 - **Weight propagation delay**, which bounds how fast a routing loop can run.
-- **The tunnel hop's cost**, which enters the latency budget of any request whose
-  serving node differs from the entry point's node.
+  The table in force today is read once at start-up, so nothing propagates yet.
