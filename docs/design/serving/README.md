@@ -4,8 +4,9 @@
 
 The entry point is implemented and runnable: `internal/serving` holds its
 routing decision, `internal/serving/entrypoint` serves that decision over HTTP,
-and `cmd/serving-entrypoint` assembles them from a routing table it reads at
-start-up. No image or chart ships it, and nothing else here is implemented.
+and `cmd/serving-entrypoint` assembles them and supplies the weights from a
+table it reads at start-up. No image or chart ships it, and nothing else here is
+implemented.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
@@ -113,10 +114,11 @@ transport is the only thing it adds and neither end observes that a choice
 happened. It reads the weights in force through an interface and takes no
 position on what supplies them.
 
-A table read at start-up supplies those weights today. It revises nothing, which
-is what makes it a development stand-in: it lets the entry point be deployed and
-reached before anything computes a weight, and replacing it is supplying another
-implementation of the same interface.
+A table read once at start-up supplies those weights today. It revises nothing,
+which is what makes it a development stand-in, and it lets the entry point be
+deployed and reached before anything computes a weight. It lives in the binary
+that assembles the entry point rather than beside it, so what replaces it is a
+different value passed at the same seam.
 
 ## What serving would unlock for measurement
 

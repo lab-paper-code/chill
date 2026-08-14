@@ -5,29 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"sort"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
 )
-
-func loadRoutes(path string) (entrypoint.StaticRoutes, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return entrypoint.StaticRoutes{}, fmt.Errorf("read the routing table: %w", err)
-	}
-	return entrypoint.ParseStaticRoutes(raw)
-}
-
-func servedModels(routes entrypoint.StaticRoutes) []string {
-	models := make([]string, 0, len(routes.Models))
-	for model := range routes.Models {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	return models
-}
 
 func buildHandler(routes entrypoint.Routes, opts options) http.Handler {
 	return &entrypoint.Handler{
