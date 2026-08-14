@@ -49,6 +49,28 @@
 {{- if empty .Values.servingEntrypoint.routes -}}
 {{- fail "servingEntrypoint.routes must name at least one model when servingEntrypoint.enabled=true" -}}
 {{- end -}}
+{{- $serviceToNode := dict -}}
+{{- $nodeToService := dict -}}
+{{- range $backends := .Values.servingEntrypoint.routes -}}
+{{- range $backend := $backends -}}
+{{- $service := $backend.service -}}
+{{- $node := $backend.node -}}
+{{- if hasKey $serviceToNode $service -}}
+{{- if ne (get $serviceToNode $service) $node -}}
+{{- fail (printf "servingEntrypoint.routes service %q maps to multiple nodes: %q, %q" $service (get $serviceToNode $service) $node) -}}
+{{- end -}}
+{{- else -}}
+{{- $_ := set $serviceToNode $service $node -}}
+{{- end -}}
+{{- if hasKey $nodeToService $node -}}
+{{- if ne (get $nodeToService $node) $service -}}
+{{- fail (printf "servingEntrypoint.routes node %q maps to multiple services: %q, %q" $node (get $nodeToService $node) $service) -}}
+{{- end -}}
+{{- else -}}
+{{- $_ := set $nodeToService $node $service -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- if empty .Values.operator.image.repository -}}
 {{- fail "operator.image.repository must not be empty" -}}

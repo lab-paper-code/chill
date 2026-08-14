@@ -329,6 +329,11 @@ servingEntrypoint:
   #     - node: jetsono
   #       service: chill-serving-jetsono
   #       weight: 1
+  # The chart renders one ClusterIP Service per node this table names, so every
+  # address the entry point can reach exists. Each one selects
+  # app.kubernetes.io/component: serving and edge.dacs.io/serving-node: <node>,
+  # and carries no endpoint until a Pod on that node carries both labels. A node
+  # therefore appears under one Service name throughout the table.
   routes: {}
   service:
     type: ClusterIP

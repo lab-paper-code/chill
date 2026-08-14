@@ -1,0 +1,35 @@
+{{- /*
+One ClusterIP Service per node the routing table names, so every address the
+entry point can reach exists. A Service with a single endpoint leaves EdgeMesh
+nothing to select, so its transport applies and its policy does not.
+*/ -}}
+{{- if .Values.servingEntrypoint.enabled -}}
+{{- $serviceNodes := dict -}}
+{{- range $backends := .Values.servingEntrypoint.routes -}}
+{{- range $backend := $backends -}}
+{{- $_ := set $serviceNodes $backend.service $backend.node -}}
+{{- end -}}
+{{- end -}}
+{{- range $service := keys $serviceNodes | sortAlpha }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: serving
+    service.edgemesh.kubeedge.io/service-proxy-name: ""
+    {{- include "chill.labels" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: serving
+    edge.dacs.io/serving-node: {{ get $serviceNodes $service }}
+  ports:
+    - name: http
+      port: {{ $.Values.servingEntrypoint.servingPort }}
+      targetPort: {{ $.Values.servingEntrypoint.servingPort }}
+      protocol: TCP
+{{- end }}
+{{- end }}
