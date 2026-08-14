@@ -41,7 +41,7 @@ func TestNVPModelObserveParsesIndependentNameAndID(t *testing.T) {
 	}
 }
 
-func TestNVPModelApplyTakesTheRebootAndDoesNotSelfVerify(t *testing.T) {
+func TestNVPModelApplyPassesOnlyTypedIDAndDoesNotSelfVerify(t *testing.T) {
 	t.Parallel()
 	adapter, runner, now := testAdapter(t)
 	target := nodeactuator.Target{
@@ -53,7 +53,7 @@ func TestNVPModelApplyTakesTheRebootAndDoesNotSelfVerify(t *testing.T) {
 	if err := adapter.Apply(context.Background(), testRequest(now), target); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"/host/ld.so", "--library-path", "/host/lib", "/host/nvpmodel", "--force", "-m", "8"}}
+	want := [][]string{{"/host/ld.so", "--library-path", "/host/lib", "/host/nvpmodel", "-m", "8"}}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
 	}

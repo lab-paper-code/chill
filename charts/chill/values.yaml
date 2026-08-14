@@ -191,21 +191,6 @@ powerActuation:
       actuatorKind: JetsonNVPModel
       settlingDurationSeconds: 60
       maxActuationDurationSeconds: 900
-    # MODE_30W and MODE_15W sit in different GPU power-gating masks from MAXN
-    # and MODE_50W, so the device reboots to establish them. The duration below
-    # is the in-place figure and has not been sized against a boot.
-    - name: orin-mode-30w-v1
-      deviceClass: jetson-agx-orin-64g
-      powerMode: MODE_30W
-      actuatorKind: JetsonNVPModel
-      settlingDurationSeconds: 60
-      maxActuationDurationSeconds: 900
-    - name: orin-mode-15w-v1
-      deviceClass: jetson-agx-orin-64g
-      powerMode: MODE_15W
-      actuatorKind: JetsonNVPModel
-      settlingDurationSeconds: 60
-      maxActuationDurationSeconds: 900
 
 nodeActuator:
   enabled: false
