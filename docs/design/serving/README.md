@@ -2,9 +2,10 @@
 
 ## Status
 
-`internal/serving` holds the entry point's routing decision and
-`internal/serving/entrypoint` serves it over HTTP. Nothing else here is
-implemented.
+The entry point is implemented and runnable: `internal/serving` holds its
+routing decision, `internal/serving/entrypoint` serves that decision over HTTP,
+and `cmd/serving-entrypoint` assembles them from a routing table it reads at
+start-up. No image or chart ships it, and nothing else here is implemented.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
