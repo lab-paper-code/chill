@@ -48,6 +48,10 @@ func (execCommandRunner) CombinedOutput(ctx context.Context, command []string) (
 
 // NVPModel is the Jetson host port. Apply reports command completion only;
 // the controller always calls Observe independently before accepting state.
+//
+// Apply carries --force, which is how the tool reboots a device that cannot
+// reach the target mode in place. Observe does not: a query switches nothing,
+// so the flag would say nothing there.
 type NVPModel struct {
 	options NVPModelOptions
 	runner  commandRunner
@@ -116,7 +120,7 @@ func (a *NVPModel) Apply(
 	}
 	defer cancel()
 	output, commandErr := a.runner.CombinedOutput(commandCtx, appendCommand(
-		a.options.Command, "-m", strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10),
+		a.options.Command, "--force", "-m", strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10),
 	))
 	if commandErr != nil {
 		return commandError("apply NVPModel", commandErr, output)
