@@ -104,6 +104,7 @@ measurement. What prevents one is that a campaign emits a transition before its
 sweep and none during it, and that one campaign operates on a Node at a time.
 That is an operating assumption of the testbed, recorded rather than enforced.
 
-This decision does not authorize CHILL to reboot a Node. Reboot-class actuation
-remains outside the actuator contract, and ADR 0017 keeps a mode that requires
-one unreachable rather than approximated.
+A transition into a mode the device establishes at boot restarts the Node, which
+this ownership does not change: the transition still belongs to no Run, and the
+restart is bounded by the same immutable deadline. ADR 0017 owns when one is
+taken.

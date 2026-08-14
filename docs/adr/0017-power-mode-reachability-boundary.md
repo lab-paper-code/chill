@@ -10,45 +10,52 @@ Accepted
 targets a device catalog offers. Catalog declaration does not establish that the
 configured actuator can move a device into a mode.
 
-On the Jetson platform each mode carries a GPU TPC power-gating mask the device
+On the Jetson platform each mode carries a GPU power-gating mask the device
 establishes at boot. A transition between two modes sharing a mask completes in
 place; a transition into a mask the device did not boot with does not. That
 makes reachability a property of the transition rather than of the target mode,
 so it cannot be characterized from the target's name.
 
-The actuator tool offers a flag that claims to reboot when a switch requires
-one. It does not reboot from the actuator's environment, and it does not refuse
-either. It applies the parameters it can and returns success, leaving a device
-whose reported mode names the target while the target's gating parameter is
-unset. The tool's own verbose query shows the disagreement; its plain query,
-which is what a read-back reads, does not.
-
-The reported mode name is therefore a nominal value. It says which mode was
-requested, not that the mode was established.
+The tool separates the two cases itself. It refuses the second kind and names
+the reason, and it offers a flag that records the target and claims to restart
+the device. From a container without the capability the restart does not happen
+and the flag still returns success, leaving a device whose reported mode names
+the target while the target's gating is unset. The reported mode name is
+therefore nominal: it says which mode was requested, not that it was
+established.
 
 ## Decision
 
-Authorize a transition only where the actuator establishes the mode in fact.
-For this platform that is the set of transitions staying within the mask
-equivalence class the device booted into, and it excludes the force flag, whose
-success is indistinguishable at the read-back from a mode that was established.
+A declared target is a target. Where the tool applies the mode, that is the
+whole transition. Where it refuses with the reboot demand, the mode is one the
+device establishes at boot, so the actuator records the target and restarts the
+Node into it and the boot establishes it in full.
 
-Reaching a mode in another class requires the Node to reboot into it. The
-actuator cannot reboot a Node, and granting it that is a decision this one does
-not take. Until it is taken, a mode outside the booted class is unreachable and
-is declared as such rather than approximated.
+The restart is the actuator's own, which is what makes its absence observable. A
+restart that returns is a restart that did not happen, and the transition fails
+rather than reporting a mode that was only recorded. The actuator holds the host
+PID namespace and `SYS_BOOT` for this and nothing else, and the operator refuses
+a configuration carrying any other capability.
 
-Keep the existing fail-closed behavior. An apply failure remains a typed
-terminal failure and does not start measurement.
+Applying to a Node already holding the target does nothing. That is what bounds
+the restart: the Node returns holding the mode, the repeated apply stops there,
+and a second restart cannot follow.
+
+Keep the existing fail-closed behavior. A refusal the tool gives for any other
+reason stays a typed terminal failure, and every apply is still followed by an
+independent read-back before the state is accepted.
 
 ## Consequences
 
-A campaign operating within the booted mask class has a two-point power-mode
-axis on the tested class, and a four-point energy-versus-capacity curve is not
-obtainable through this path.
+Every catalogued mode is reachable, so a campaign's power-mode axis is the
+catalog rather than one mask equivalence class.
 
-Read-back compares a mode name, and a mode name does not distinguish an
-established mode from a partly applied one. Any actuator path that can apply a
-mode partially can therefore produce a transition that verifies and settles
-without the device holding the state. Closing that gap means observing the
-parameters a mode is made of, not the name the tool prints for it.
+Transition cost is not one quantity. A transition that restarts the Node pays
+for the boot and a transition in place does not, by more than an order of
+magnitude, so the two are separate measured rows and are not compared as though
+they were the same operation.
+
+A restart ends every Pod on the Node, not only CHILL's. Node-wide workload
+safety gates the transition before the mode is recorded, and what widens is the
+reach of what it permits, which is the same judgment the operator makes in
+declaring the target.

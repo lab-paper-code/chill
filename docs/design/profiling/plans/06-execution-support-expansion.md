@@ -30,9 +30,9 @@ transition identity, target observation, and completion time, and validates
 the target against frozen intent. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
 error requeue.
-[ADR 0017](../../../adr/0017-power-mode-reachability-boundary.md) authorizes
-only the AGX Orin modes the actuator establishes in fact, `MODE_50W` and `MAXN`;
-`MODE_30W` and `MODE_15W` need a reboot and are unreachable.
+[ADR 0017](../../../adr/0017-power-mode-reachability-boundary.md) makes every
+catalogued mode reachable, restarting the Node into one the device establishes
+at boot, so the AGX Orin power-mode axis is four points rather than two.
 [ADR 0015](../../../adr/0015-node-power-actuation-boundary.md) remains
 authoritative for the sole-writer, safety, and host-adapter boundary.
 
