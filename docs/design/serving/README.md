@@ -2,8 +2,9 @@
 
 ## Status
 
-`internal/serving` holds the entry point's routing decision. Nothing else here
-is implemented.
+`internal/serving` holds the entry point's routing decision and
+`internal/serving/entrypoint` serves it over HTTP. Nothing else here is
+implemented.
 
 This document carries decisions and the observations they rest on. Anything not
 stated here is not decided — including the object model, the control loops, node
@@ -103,6 +104,13 @@ that already governs power mode.
 what the entry point reads from an inference request — the declared model, with
 the payload left opaque — and which node's Service receives it, given the
 weights. It touches no transport and holds no state.
+
+[`internal/serving/entrypoint`](../../../internal/serving/entrypoint) serves
+that decision over HTTP. It forwards the request to the chosen node's Service
+with its method, path, and payload intact and returns the response unread, so
+transport is the only thing it adds and neither end observes that a choice
+happened. It reads the weights in force through an interface and takes no
+position on what supplies them.
 
 ## What serving would unlock for measurement
 

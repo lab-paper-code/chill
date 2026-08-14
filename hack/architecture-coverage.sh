@@ -37,6 +37,7 @@ components=(
   profiler-evidence-kube
   profiler-worker
   serving-core
+  serving-entrypoint
 )
 
 component_for() {
@@ -73,6 +74,7 @@ component_for() {
     internal/profiler/evidence/kube) echo profiler-evidence-kube ;;
     internal/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
+    internal/serving/entrypoint) echo serving-entrypoint ;;
     *) return 1 ;;
   esac
 }
