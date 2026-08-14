@@ -16,6 +16,7 @@ console_image="${CONSOLE_IMG:-}"
 metric_observer_image="${METRIC_OBSERVER_IMG:-}"
 workload_observer_image="${WORKLOAD_OBSERVER_IMG:-}"
 measurement_worker_image="${MEASUREMENT_WORKER_IMG:-}"
+serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
 measurement_worker_platforms="${MEASUREMENT_WORKER_PLATFORMS:-${platforms}}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
@@ -57,8 +58,8 @@ Options:
   --platforms LIST             Buildx platforms. Default: ${platforms}
   --components NAME            all, operator, node-discovery, node-actuator,
                                profiler, console, metric-observer,
-                               workload-observer, or measurement-worker.
-                               Default: ${components}
+                               workload-observer, measurement-worker, or
+                               serving-entrypoint. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -80,6 +81,7 @@ Environment:
   METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
   WORKLOAD_OBSERVER_IMG        Full WorkloadObserver image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_IMG       Full measurement worker image ref. Overrides registry/tag defaults.
+  SERVING_ENTRYPOINT_IMG       Full inference entry point image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_PLATFORMS Measurement worker platforms. Default: ${measurement_worker_platforms}
   IMAGE_TAG                    Image tag when --tag is not provided.
   CONTAINER_TOOL               docker-compatible build tool. Default: docker
@@ -230,7 +232,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker) ;;
+all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker|serving-entrypoint) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -355,6 +357,9 @@ fi
 if [[ -z "${measurement_worker_image}" ]] && component_selected measurement-worker; then
 	measurement_worker_image="${registry}/${image_namespace}/chill-measurement-worker:${image_tag}"
 fi
+if [[ -z "${serving_entrypoint_image}" ]] && component_selected serving-entrypoint; then
+	serving_entrypoint_image="${registry}/${image_namespace}/chill-serving-entrypoint:${image_tag}"
+fi
 push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
@@ -376,6 +381,9 @@ if [[ -n "${workload_observer_image}" ]]; then
 fi
 if [[ -n "${measurement_worker_image}" ]]; then
 	split_image_ref "${measurement_worker_image}" "measurement-worker"
+fi
+if [[ -n "${serving_entrypoint_image}" ]]; then
+	split_image_ref "${serving_entrypoint_image}" "serving-entrypoint"
 fi
 
 if [[ -n "${extra_helm_set}" ]]; then
@@ -418,6 +426,7 @@ echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
+echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
 echo "platforms: ${platforms}"
 echo "measurement-worker platforms: ${measurement_worker_platforms}"
 echo "components: ${components}"
@@ -593,6 +602,11 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("measurement-worker")
 	fi
+	if component_selected serving-entrypoint; then
+		"${function_name}" "build/docker/serving-entrypoint.Dockerfile" "${serving_entrypoint_image}" &
+		pids+=("$!")
+		names+=("serving-entrypoint")
+	fi
 
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}"; then
@@ -656,6 +670,12 @@ run_ctr_plain_http_components() {
 			"${measurement_worker_platforms}" &
 		pids+=("$!")
 		names+=("measurement-worker")
+	fi
+	if component_selected serving-entrypoint; then
+		ctr_plain_http_build_push_one serving-entrypoint \
+			"build/docker/serving-entrypoint.Dockerfile" "${serving_entrypoint_image}" &
+		pids+=("$!")
+		names+=("serving-entrypoint")
 	fi
 
 	for i in "${!pids[@]}"; do
@@ -779,6 +799,7 @@ echo "console image: ${console_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
+echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"
 try "${kubectl_bin}" get chillsystems.edge.dacs.io -A -o wide
 try "${kubectl_bin}" -n "${release_namespace}" get deployments,daemonsets,pods -o wide
