@@ -81,7 +81,7 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 	}
 	best := math.Inf(1)
 	bestBatch := 0
-	wait := 0
+	nonImprovingBatches := 0
 	plannedBatchSizes := curve.plan.recorded.record.Shared.PlannedBatchSizes
 	for index, point := range discovery.points {
 		expectedBatch := plannedBatchSizes[index]
@@ -105,11 +105,11 @@ func DeriveSequentialBatchDecision(curve Curve, policy SequentialPolicy) (Sequen
 		if bestBatch == 0 || value < best*(1-policy.MinDelta) {
 			best = value
 			bestBatch = point.Batch
-			wait = 0
+			nonImprovingBatches = 0
 			continue
 		}
-		wait++
-		if wait >= policy.Patience {
+		nonImprovingBatches++
+		if nonImprovingBatches >= policy.Patience {
 			result.Status = SequentialStopped
 			result.StopReason = StopNoFurtherImprovement
 		} else if value > best*policy.DivergenceFactor {
