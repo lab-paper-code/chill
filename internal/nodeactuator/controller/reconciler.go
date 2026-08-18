@@ -267,12 +267,12 @@ func (r *HandoffReconciler) executeSafetyAction(
 ) (ctrl.Result, error) {
 	result, err := r.safety.Check(ctx, snapshot.Request)
 	if err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyCheckFailed", Message: err.Error(),
 		})
 	}
 	if err := result.Validate(); err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyResultInvalid", Message: err.Error(),
 		})
 	}
@@ -349,12 +349,12 @@ func (r *HandoffReconciler) executeObservePrevious(
 ) (ctrl.Result, error) {
 	observation, err := r.actuator.Observe(ctx, snapshot.Request)
 	if err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageObservePrevious, Reason: "PreviousObservationFailed", Message: err.Error(),
 		})
 	}
 	if err := observation.Validate(); err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageObservePrevious, Reason: "PreviousObservationInvalid", Message: err.Error(),
 		})
 	}
@@ -383,7 +383,7 @@ func (r *HandoffReconciler) executeApplyTarget(
 		return ctrl.Result{}, err
 	}
 	if err := r.actuator.Apply(ctx, snapshot.Request, snapshot.Request.Target); err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageApply, Reason: "TargetApplyFailed", Message: err.Error(),
 		})
 	}
@@ -401,12 +401,12 @@ func (r *HandoffReconciler) executeObserveTarget(
 ) (ctrl.Result, error) {
 	observation, err := r.actuator.Observe(ctx, snapshot.Request)
 	if err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationFailed", Message: err.Error(),
 		})
 	}
 	if err := observation.Validate(); err != nil {
-		return r.handlePortFailure(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationInvalid", Message: err.Error(),
 		})
 	}
@@ -432,7 +432,7 @@ func (r *HandoffReconciler) executeRelease(
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) handlePortFailure(
+func (r *HandoffReconciler) failTerminally(
 	ctx context.Context,
 	handoff *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
