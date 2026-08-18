@@ -22,7 +22,7 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 		return errors.New("assigned Node has incomplete API identity")
 	}
 	assigned := nodeactuator.ObjectIdentity{Name: node.Name, UID: string(node.UID)}
-	leases, err := actuatorcontroller.NewNodeLeaseManager(manager.GetClient(), actuatorcontroller.LeaseOptions{
+	leases, err := actuatorcontroller.NewNodeLock(manager.GetClient(), actuatorcontroller.LeaseOptions{
 		Namespace: opts.leaseNamespace, DurationSeconds: int32(opts.leaseDuration),
 	})
 	if err != nil {

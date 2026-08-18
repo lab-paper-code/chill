@@ -21,7 +21,7 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 	scheme := leaseTestScheme(t)
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	kubeClient := &leaseUIDClient{Client: baseClient}
-	manager, err := NewNodeLeaseManager(kubeClient, LeaseOptions{
+	manager, err := NewNodeLock(kubeClient, LeaseOptions{
 		Namespace: "chill-system", DurationSeconds: 30,
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestNodeLeaseManagerReleasesOnlyExactHolder(t *testing.T) {
 	scheme := leaseTestScheme(t)
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	kubeClient := &leaseUIDClient{Client: baseClient}
-	manager, err := NewNodeLeaseManager(kubeClient, LeaseOptions{
+	manager, err := NewNodeLock(kubeClient, LeaseOptions{
 		Namespace: "chill-system", DurationSeconds: 30,
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestNodeLeaseManagerRenewsOnlyExactHolderAndRejectsNodeIdentityDrift(t *tes
 	scheme := leaseTestScheme(t)
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	kubeClient := &leaseUIDClient{Client: baseClient}
-	manager, err := NewNodeLeaseManager(kubeClient, LeaseOptions{
+	manager, err := NewNodeLock(kubeClient, LeaseOptions{
 		Namespace: "chill-system", DurationSeconds: 30,
 	})
 	if err != nil {

@@ -47,33 +47,33 @@ type LeaseRecord struct {
 	RetryAfter     time.Duration
 }
 
-// NodeLeaseManager serializes CHILL Node-wide mutation by exact Node UID. It
-// never infers ownership from a Lease name alone and never deletes another
-// holder's Lease.
-type NodeLeaseManager struct {
+// NodeLock serializes CHILL Node-wide mutation by exact Node UID, holding a
+// Kubernetes Lease for it. It never infers ownership from a Lease name alone
+// and never deletes another holder's Lease.
+type NodeLock struct {
 	client  client.Client
 	options LeaseOptions
 }
 
-func NewNodeLeaseManager(kubeClient client.Client, options LeaseOptions) (*NodeLeaseManager, error) {
+func NewNodeLock(kubeClient client.Client, options LeaseOptions) (*NodeLock, error) {
 	if kubeClient == nil {
 		return nil, errors.New("Kubernetes client is required")
 	}
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
-	return &NodeLeaseManager{client: kubeClient, options: options}, nil
+	return &NodeLock{client: kubeClient, options: options}, nil
 }
 
 // Observe classifies the current lock without acquiring, renewing, or
 // releasing it. The returned retry bound is relative to the supplied time.
-func (m *NodeLeaseManager) Observe(
+func (m *NodeLock) Observe(
 	ctx context.Context,
 	request nodeactuator.Request,
 	now time.Time,
 ) (LeaseRecord, error) {
 	if m == nil || m.client == nil {
-		return LeaseRecord{}, errors.New("Node Lease manager is incomplete")
+		return LeaseRecord{}, errors.New("Node lock is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
 		return LeaseRecord{}, fmt.Errorf("validate Lease observation request: %w", err)
@@ -125,13 +125,13 @@ func (m *NodeLeaseManager) Observe(
 	return record, nil
 }
 
-func (m *NodeLeaseManager) AcquireOrRenew(
+func (m *NodeLock) AcquireOrRenew(
 	ctx context.Context,
 	request nodeactuator.Request,
 	now time.Time,
 ) (LeaseRecord, error) {
 	if m == nil || m.client == nil {
-		return LeaseRecord{}, errors.New("Node Lease manager is incomplete")
+		return LeaseRecord{}, errors.New("Node lock is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
 		return LeaseRecord{}, fmt.Errorf("validate Lease request: %w", err)
@@ -187,12 +187,12 @@ func (m *NodeLeaseManager) AcquireOrRenew(
 	return heldLeaseBinding(lease, holder, m.options.DurationSeconds), nil
 }
 
-func (m *NodeLeaseManager) Release(
+func (m *NodeLock) Release(
 	ctx context.Context,
 	request nodeactuator.Request,
 ) (bool, error) {
 	if m == nil || m.client == nil {
-		return false, errors.New("Node Lease manager is incomplete")
+		return false, errors.New("Node lock is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
 		return false, fmt.Errorf("validate Lease release request: %w", err)
@@ -225,7 +225,7 @@ func (m *NodeLeaseManager) Release(
 	return true, nil
 }
 
-func (m *NodeLeaseManager) create(
+func (m *NodeLock) create(
 	ctx context.Context,
 	request nodeactuator.Request,
 	name, holder string,
