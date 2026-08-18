@@ -46,7 +46,7 @@ func ProjectRequest(
 func ProjectSnapshot(
 	handoff *edgev1alpha1.NodeActuation,
 	assignedNode nodeactuator.ObjectIdentity,
-	lease LeaseBinding,
+	lease LeaseRecord,
 	now time.Time,
 ) (nodeactuator.Snapshot, error) {
 	request, err := ProjectRequest(handoff, assignedNode)

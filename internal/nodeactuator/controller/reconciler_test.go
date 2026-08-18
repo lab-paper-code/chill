@@ -27,7 +27,7 @@ func (l *recordingLeaseController) Observe(
 	context.Context,
 	nodeactuator.Request,
 	time.Time,
-) (LeaseBinding, error) {
+) (LeaseRecord, error) {
 	l.observeCalls++
 	state := nodeactuator.LeaseNotHeld
 	retry := time.Duration(0)
@@ -35,7 +35,7 @@ func (l *recordingLeaseController) Observe(
 	if l.held {
 		state, retry, uid = nodeactuator.LeaseHeld, 10*time.Second, "lease-uid"
 	}
-	return LeaseBinding{
+	return LeaseRecord{
 		Name: "node-lease", UID: uid, HolderIdentity: "holder", State: state, RetryAfter: retry,
 	}, nil
 }
@@ -44,10 +44,10 @@ func (l *recordingLeaseController) AcquireOrRenew(
 	context.Context,
 	nodeactuator.Request,
 	time.Time,
-) (LeaseBinding, error) {
+) (LeaseRecord, error) {
 	l.acquireCalls++
 	l.held = true
-	return LeaseBinding{
+	return LeaseRecord{
 		Name: "node-lease", UID: "lease-uid", HolderIdentity: "holder",
 		State: nodeactuator.LeaseHeld, RetryAfter: 10 * time.Second,
 	}, nil

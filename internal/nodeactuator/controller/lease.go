@@ -39,7 +39,7 @@ func (o LeaseOptions) Validate() error {
 	return nil
 }
 
-type LeaseBinding struct {
+type LeaseRecord struct {
 	Name           string
 	UID            string
 	HolderIdentity string
@@ -71,73 +71,73 @@ func (m *NodeLeaseManager) Observe(
 	ctx context.Context,
 	request nodeactuator.Request,
 	now time.Time,
-) (LeaseBinding, error) {
+) (LeaseRecord, error) {
 	if m == nil || m.client == nil {
-		return LeaseBinding{}, errors.New("Node Lease manager is incomplete")
+		return LeaseRecord{}, errors.New("Node Lease manager is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
-		return LeaseBinding{}, fmt.Errorf("validate Lease observation request: %w", err)
+		return LeaseRecord{}, fmt.Errorf("validate Lease observation request: %w", err)
 	}
 	if now.IsZero() {
-		return LeaseBinding{}, errors.New("Lease observation time is required")
+		return LeaseRecord{}, errors.New("Lease observation time is required")
 	}
 	name := nodeLeaseName(request.Node.UID)
 	holder := nodeLeaseHolder(request.Handoff.UID)
 	key := types.NamespacedName{Namespace: m.options.Namespace, Name: name}
 	lease := &coordinationv1.Lease{}
 	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
-		return LeaseBinding{Name: name, HolderIdentity: holder, State: nodeactuator.LeaseNotHeld}, nil
+		return LeaseRecord{Name: name, HolderIdentity: holder, State: nodeactuator.LeaseNotHeld}, nil
 	} else if err != nil {
-		return LeaseBinding{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
+		return LeaseRecord{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
 	}
 	if err := validateLeaseNodeIdentity(lease, request.Node.UID); err != nil {
-		return LeaseBinding{}, err
+		return LeaseRecord{}, err
 	}
 	expiresAt, err := leaseExpiry(lease)
 	if err != nil {
-		return LeaseBinding{}, err
+		return LeaseRecord{}, err
 	}
 	currentHolder := ptr.Deref(lease.Spec.HolderIdentity, "")
-	binding := LeaseBinding{
+	record := LeaseRecord{
 		Name: lease.Name, UID: string(lease.UID), HolderIdentity: currentHolder,
 	}
 	if currentHolder != holder {
 		if now.Before(expiresAt) {
-			binding.State = nodeactuator.LeaseConflict
-			binding.RetryAfter = expiresAt.Sub(now)
-			return binding, nil
+			record.State = nodeactuator.LeaseConflict
+			record.RetryAfter = expiresAt.Sub(now)
+			return record, nil
 		}
-		binding.State = nodeactuator.LeaseNotHeld
-		return binding, nil
+		record.State = nodeactuator.LeaseNotHeld
+		return record, nil
 	}
 	if lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
-		return LeaseBinding{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
+		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
 	}
 	if !now.Before(expiresAt) {
-		binding.State = nodeactuator.LeaseLost
-		return binding, nil
+		record.State = nodeactuator.LeaseLost
+		return record, nil
 	}
-	binding.State = nodeactuator.LeaseHeld
+	record.State = nodeactuator.LeaseHeld
 	renewAt := expiresAt.Add(-time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second * 2 / 3)
 	if now.Before(renewAt) {
-		binding.RetryAfter = renewAt.Sub(now)
+		record.RetryAfter = renewAt.Sub(now)
 	}
-	return binding, nil
+	return record, nil
 }
 
 func (m *NodeLeaseManager) AcquireOrRenew(
 	ctx context.Context,
 	request nodeactuator.Request,
 	now time.Time,
-) (LeaseBinding, error) {
+) (LeaseRecord, error) {
 	if m == nil || m.client == nil {
-		return LeaseBinding{}, errors.New("Node Lease manager is incomplete")
+		return LeaseRecord{}, errors.New("Node Lease manager is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
-		return LeaseBinding{}, fmt.Errorf("validate Lease request: %w", err)
+		return LeaseRecord{}, fmt.Errorf("validate Lease request: %w", err)
 	}
 	if now.IsZero() {
-		return LeaseBinding{}, errors.New("Lease observation time is required")
+		return LeaseRecord{}, errors.New("Lease observation time is required")
 	}
 	name := nodeLeaseName(request.Node.UID)
 	holder := nodeLeaseHolder(request.Handoff.UID)
@@ -146,28 +146,28 @@ func (m *NodeLeaseManager) AcquireOrRenew(
 	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
 		return m.create(ctx, request, name, holder, now)
 	} else if err != nil {
-		return LeaseBinding{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
+		return LeaseRecord{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
 	}
 	if err := validateLeaseNodeIdentity(lease, request.Node.UID); err != nil {
-		return LeaseBinding{}, err
+		return LeaseRecord{}, err
 	}
 	expiresAt, err := leaseExpiry(lease)
 	if err != nil {
-		return LeaseBinding{}, err
+		return LeaseRecord{}, err
 	}
 	currentHolder := ptr.Deref(lease.Spec.HolderIdentity, "")
 	if currentHolder != holder && now.Before(expiresAt) {
-		return LeaseBinding{
+		return LeaseRecord{
 			Name: lease.Name, UID: string(lease.UID), HolderIdentity: currentHolder,
 			State: nodeactuator.LeaseConflict, RetryAfter: expiresAt.Sub(now),
 		}, nil
 	}
 	if currentHolder == holder && lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
-		return LeaseBinding{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
+		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
 	}
 	if currentHolder == holder && lease.Spec.LeaseDurationSeconds != nil &&
 		*lease.Spec.LeaseDurationSeconds != m.options.DurationSeconds {
-		return LeaseBinding{}, errors.New("held Node actuation Lease duration differs from configured duration")
+		return LeaseRecord{}, errors.New("held Node actuation Lease duration differs from configured duration")
 	}
 
 	base := lease.DeepCopy()
@@ -182,7 +182,7 @@ func (m *NodeLeaseManager) AcquireOrRenew(
 		lease.Spec.LeaseTransitions = ptr.To(transitions + 1)
 	}
 	if err := m.client.Patch(ctx, lease, client.MergeFrom(base)); err != nil {
-		return LeaseBinding{}, fmt.Errorf("acquire or renew Node actuation Lease %s: %w", key, err)
+		return LeaseRecord{}, fmt.Errorf("acquire or renew Node actuation Lease %s: %w", key, err)
 	}
 	return heldLeaseBinding(lease, holder, m.options.DurationSeconds), nil
 }
@@ -230,7 +230,7 @@ func (m *NodeLeaseManager) create(
 	request nodeactuator.Request,
 	name, holder string,
 	now time.Time,
-) (LeaseBinding, error) {
+) (LeaseRecord, error) {
 	microNow := metav1.NewMicroTime(now.UTC())
 	lease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{
@@ -253,10 +253,10 @@ func (m *NodeLeaseManager) create(
 		if apierrors.IsAlreadyExists(err) {
 			return m.AcquireOrRenew(ctx, request, now)
 		}
-		return LeaseBinding{}, fmt.Errorf("create Node actuation Lease: %w", err)
+		return LeaseRecord{}, fmt.Errorf("create Node actuation Lease: %w", err)
 	}
 	if lease.UID == "" {
-		return LeaseBinding{}, errors.New("created Node actuation Lease has incomplete API identity")
+		return LeaseRecord{}, errors.New("created Node actuation Lease has incomplete API identity")
 	}
 	return heldLeaseBinding(lease, holder, m.options.DurationSeconds), nil
 }
@@ -290,8 +290,8 @@ func heldLeaseBinding(
 	lease *coordinationv1.Lease,
 	holder string,
 	durationSeconds int32,
-) LeaseBinding {
-	return LeaseBinding{
+) LeaseRecord {
+	return LeaseRecord{
 		Name: lease.Name, UID: string(lease.UID), HolderIdentity: holder,
 		State:      nodeactuator.LeaseHeld,
 		RetryAfter: time.Duration(durationSeconds) * time.Second / 3,

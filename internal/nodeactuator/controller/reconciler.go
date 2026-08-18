@@ -20,8 +20,8 @@ import (
 const maximumStatusMessage = 1024
 
 type LeaseController interface {
-	Observe(context.Context, nodeactuator.Request, time.Time) (LeaseBinding, error)
-	AcquireOrRenew(context.Context, nodeactuator.Request, time.Time) (LeaseBinding, error)
+	Observe(context.Context, nodeactuator.Request, time.Time) (LeaseRecord, error)
+	AcquireOrRenew(context.Context, nodeactuator.Request, time.Time) (LeaseRecord, error)
 	Release(context.Context, nodeactuator.Request) (bool, error)
 }
 
@@ -134,18 +134,18 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 		return r.markFailed(ctx, handoff, now, failure)
 	}
-	binding, err := r.lease.Observe(ctx, actuationRequest, now)
+	record, err := r.lease.Observe(ctx, actuationRequest, now)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("observe Node actuation Lease: %w", err)
 	}
-	leaseStatusUpdated, err := r.synchronizeLeaseStatus(ctx, handoff, binding)
+	leaseStatusUpdated, err := r.synchronizeLeaseStatus(ctx, handoff, record)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if leaseStatusUpdated {
 		return ctrl.Result{}, nil
 	}
-	snapshot, err := ProjectSnapshot(handoff, r.options.AssignedNode, binding, now)
+	snapshot, err := ProjectSnapshot(handoff, r.options.AssignedNode, record, now)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -171,14 +171,14 @@ func allowsActuationPolicy(policies []nodeactuator.ActuationPolicySpec, request 
 func (r *HandoffReconciler) synchronizeLeaseStatus(
 	ctx context.Context,
 	handoff *edgev1alpha1.NodeActuation,
-	binding LeaseBinding,
+	record LeaseRecord,
 ) (bool, error) {
-	switch binding.State {
+	switch record.State {
 	case nodeactuator.LeaseHeld:
-		if binding.Name == "" || binding.UID == "" {
+		if record.Name == "" || record.UID == "" {
 			return false, errors.New("held Node actuation Lease has incomplete identity")
 		}
-		want := edgev1alpha1.ProfilingRunObjectReference{Name: binding.Name, UID: binding.UID}
+		want := edgev1alpha1.ProfilingRunObjectReference{Name: record.Name, UID: record.UID}
 		if handoff.Status.Lease == nil {
 			if err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 				status.Lease = &want
@@ -240,15 +240,15 @@ func (r *HandoffReconciler) executeLeaseAction(
 	snapshot nodeactuator.Snapshot,
 	decision nodeactuator.Decision,
 ) (ctrl.Result, error) {
-	binding, err := r.lease.AcquireOrRenew(ctx, snapshot.Request, snapshot.Now)
+	record, err := r.lease.AcquireOrRenew(ctx, snapshot.Request, snapshot.Now)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("acquire or renew Node actuation Lease: %w", err)
 	}
-	if binding.State != nodeactuator.LeaseHeld || binding.Name == "" || binding.UID == "" {
-		return ctrl.Result{RequeueAfter: binding.RetryAfter}, nil
+	if record.State != nodeactuator.LeaseHeld || record.Name == "" || record.UID == "" {
+		return ctrl.Result{RequeueAfter: record.RetryAfter}, nil
 	}
 	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
-		status.Lease = &edgev1alpha1.ProfilingRunObjectReference{Name: binding.Name, UID: binding.UID}
+		status.Lease = &edgev1alpha1.ProfilingRunObjectReference{Name: record.Name, UID: record.UID}
 		if decision.Action == nodeactuator.ActionAcquireLease && status.PreviousObservation == nil {
 			status.Phase = edgev1alpha1.NodeActuationPhaseAcquiringLease
 			status.Reason, status.Message = "LeaseHeld", "exact Node UID Lease is held by this handoff"
