@@ -175,7 +175,7 @@ func passportFixture() (
 		Status: edgev1alpha1.ProfilingRunStatus{
 			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
 			},

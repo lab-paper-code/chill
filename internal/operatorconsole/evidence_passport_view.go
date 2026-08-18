@@ -28,15 +28,15 @@ type EvidencePassport struct {
 }
 
 type EvidencePassportRun struct {
-	Namespace       string                                          `json:"namespace"`
-	Name            string                                          `json:"name"`
-	UID             string                                          `json:"uid"`
-	ResourceVersion string                                          `json:"resourceVersion"`
-	Generation      int64                                           `json:"generation"`
-	Spec            edgev1alpha1.ProfilingRunSpec                   `json:"spec"`
-	Conditions      []metav1.Condition                              `json:"conditions,omitempty"`
-	Job             *edgev1alpha1.ProfilingRunObjectReference       `json:"job,omitempty"`
-	ActualExecution *edgev1alpha1.ProfilingRunActualExecutionStatus `json:"actualExecution,omitempty"`
+	Namespace       string                                            `json:"namespace"`
+	Name            string                                            `json:"name"`
+	UID             string                                            `json:"uid"`
+	ResourceVersion string                                            `json:"resourceVersion"`
+	Generation      int64                                             `json:"generation"`
+	Spec            edgev1alpha1.ProfilingRunSpec                     `json:"spec"`
+	Conditions      []metav1.Condition                                `json:"conditions,omitempty"`
+	Job             *edgev1alpha1.ProfilingRunObjectReference         `json:"job,omitempty"`
+	ActualExecution *edgev1alpha1.ProfilingRunObservedExecutionStatus `json:"actualExecution,omitempty"`
 }
 
 type EvidencePassportLineage struct {
@@ -185,7 +185,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 			Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
 			ResourceVersion: run.ResourceVersion, Generation: run.Generation, Spec: run.Spec,
 			Conditions: append([]metav1.Condition(nil), run.Status.Conditions...),
-			Job:        run.Status.Job, ActualExecution: run.Status.ActualExecution,
+			Job:        run.Status.Job, ActualExecution: run.Status.ObservedExecution,
 		},
 		Evidence: EvidencePassportLineage{
 			FinalizedAt: snapshot.Execution.FinalizedAt.UTC(), Final: final,

@@ -206,8 +206,8 @@ spec:
               outcomes.
             properties:
               actualExecution:
-                description: ActualExecution records the Pod and Node identities observed
-                  after scheduling.
+                description: Records the Pod and Node identities observed after the
+                  Run was scheduled.
                 properties:
                   node:
                     description: ProfilingRunObjectReference is deliberately smaller

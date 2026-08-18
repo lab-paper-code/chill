@@ -126,7 +126,7 @@ var _ = Describe("ProfilingRun API", func() {
 				Reason: "JobSucceeded", LastTransitionTime: metav1.Now(),
 			}},
 			Job: &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"},
-			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
 			},

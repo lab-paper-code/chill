@@ -364,7 +364,7 @@ func (r *RunReconciler) publishFinalizedEvidence(
 		return errors.New("finalized execution identities are incomplete")
 	}
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
-		desired.ActualExecution = &edgev1alpha1.ProfilingRunActualExecutionStatus{
+		desired.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 			Pod: finalized.Pod, Node: finalized.Node,
 		}
 		desired.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{

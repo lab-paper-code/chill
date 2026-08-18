@@ -160,12 +160,12 @@ func validateRunEvidenceBinding(
 		execution.Terminal.Job.UID != run.Status.Job.UID {
 		return errors.New("retained evidence does not belong to the recorded Run")
 	}
-	if run.Status.ActualExecution == nil ||
+	if run.Status.ObservedExecution == nil ||
 		execution.Terminal.Pod.Namespace != run.Namespace ||
-		execution.Terminal.Pod.Name != run.Status.ActualExecution.Pod.Name ||
-		execution.Terminal.Pod.UID != run.Status.ActualExecution.Pod.UID ||
-		execution.Terminal.Node.Name != run.Status.ActualExecution.Node.Name ||
-		execution.Terminal.Node.UID != run.Status.ActualExecution.Node.UID {
+		execution.Terminal.Pod.Name != run.Status.ObservedExecution.Pod.Name ||
+		execution.Terminal.Pod.UID != run.Status.ObservedExecution.Pod.UID ||
+		execution.Terminal.Node.Name != run.Status.ObservedExecution.Node.Name ||
+		execution.Terminal.Node.UID != run.Status.ObservedExecution.Node.UID {
 		return errors.New("retained evidence contradicts recorded execution identities")
 	}
 	if execution.Intent.Actuation == nil {

@@ -142,9 +142,9 @@ type ProfilingRunStatus struct {
 	// +optional
 	Actuation *ProfilingRunObjectReference `json:"actuation,omitempty"`
 
-	// ActualExecution records the Pod and Node identities observed after scheduling.
+	// Records the Pod and Node identities observed after the Run was scheduled.
 	// +optional
-	ActualExecution *ProfilingRunActualExecutionStatus `json:"actualExecution,omitempty"`
+	ObservedExecution *ProfilingRunObservedExecutionStatus `json:"actualExecution,omitempty"`
 
 	// Evidence identifies independently verified immutable execution evidence.
 	// +optional
@@ -166,7 +166,7 @@ type ProfilingRunObjectReference struct {
 	UID string `json:"uid"`
 }
 
-type ProfilingRunActualExecutionStatus struct {
+type ProfilingRunObservedExecutionStatus struct {
 	Pod  ProfilingRunObjectReference `json:"pod"`
 	Node ProfilingRunObjectReference `json:"node"`
 }

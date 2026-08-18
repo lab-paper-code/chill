@@ -113,7 +113,7 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
-			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
 			},
@@ -161,7 +161,7 @@ func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
 			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
-			ActualExecution: &edgev1alpha1.ProfilingRunActualExecutionStatus{
+			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
 			},

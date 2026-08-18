@@ -631,8 +631,8 @@ func assertFinalizedEvidence(
 ) {
 	t.Helper()
 	if run.Status.Evidence == nil || run.Status.Evidence.Key != finalized.Reference.Key ||
-		run.Status.ActualExecution == nil || run.Status.ActualExecution.Pod != finalized.Pod ||
-		run.Status.ActualExecution.Node != finalized.Node {
+		run.Status.ObservedExecution == nil || run.Status.ObservedExecution.Pod != finalized.Pod ||
+		run.Status.ObservedExecution.Node != finalized.Node {
 		t.Fatalf("finalized evidence status is incomplete: %#v", run.Status)
 	}
 	evidence := findCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceVerified)

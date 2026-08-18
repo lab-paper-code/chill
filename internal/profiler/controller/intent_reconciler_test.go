@@ -498,8 +498,8 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 	if actual.Status.Evidence == nil || actual.Status.Evidence.Key != finalized.Reference.Key ||
 		actual.Status.Evidence.SchemaVersion != profilerevidence.ExecutionEvidenceSchemaVersion ||
-		actual.Status.ActualExecution == nil || actual.Status.ActualExecution.Pod != finalized.Pod ||
-		actual.Status.ActualExecution.Node != finalized.Node {
+		actual.Status.ObservedExecution == nil || actual.Status.ObservedExecution.Pod != finalized.Pod ||
+		actual.Status.ObservedExecution.Node != finalized.Node {
 		t.Fatalf("finalized status = %#v", actual.Status)
 	}
 	execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
@@ -529,7 +529,7 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			prepared := currentPreparedRun(t)
 			recordIntentAndJob(run)
 			run.Status.Evidence = testEvidenceReference()
-			run.Status.ActualExecution = &edgev1alpha1.ProfilingRunActualExecutionStatus{
+			run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
 			}
