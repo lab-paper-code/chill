@@ -195,7 +195,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 	case PhaseSettling:
 		settledAt := snapshot.SettlingStartedAt.Add(time.Duration(snapshot.Request.SettlingDurationSeconds) * time.Second)
 		if snapshot.Now.Before(settledAt) {
-			return Decision{Action: ActionWaitForSettling, RequeueAfter: minimumPositive(
+			return Decision{Action: ActionWaitForSettling, RequeueAfter: earliestRequeue(
 				settledAt.Sub(snapshot.Now), snapshot.Lease.RetryAfter,
 				snapshot.Request.Deadline.Sub(snapshot.Now),
 			)}, nil
@@ -306,15 +306,18 @@ func deadlineFailureStage(phase Phase) FailureStage {
 	}
 }
 
-func minimumPositive(values ...time.Duration) time.Duration {
-	var result time.Duration
-	for _, value := range values {
-		if value <= 0 {
+// earliestRequeue is the soonest of the supplied bounds. Zero means none of
+// them is still ahead, which is the value controller-runtime reads as no
+// requeue at all.
+func earliestRequeue(bounds ...time.Duration) time.Duration {
+	var earliest time.Duration
+	for _, bound := range bounds {
+		if bound <= 0 {
 			continue
 		}
-		if result == 0 || value < result {
-			result = value
+		if earliest == 0 || bound < earliest {
+			earliest = bound
 		}
 	}
-	return result
+	return earliest
 }
