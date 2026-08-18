@@ -13,19 +13,19 @@ const (
 	PassConfirmatory PassRole = "confirmatory"
 )
 
-// CurveRun keeps an exact projected trial beside the admission result that
+// TrialAdmission keeps an exact projected trial beside the admission result that
 // authorized its use.
-type CurveRun struct {
+type TrialAdmission struct {
 	Trial     Trial           `json:"trial"`
 	Admission AdmissionResult `json:"admission"`
 }
 
-// PassBatch either carries the admitted Runs needed for one point or an
-// explicit capability boundary. An empty Runs slice alone is not a boundary.
+// PassBatch either carries the trial admissions needed for one point or an
+// explicit capability boundary. An empty slice alone is not a boundary.
 type PassBatch struct {
-	Batch              int        `json:"batch"`
-	Runs               []CurveRun `json:"runs,omitempty"`
-	CapabilityBoundary bool       `json:"capabilityBoundary,omitempty"`
+	Batch              int              `json:"batch"`
+	Admissions         []TrialAdmission `json:"runs,omitempty"`
+	CapabilityBoundary bool             `json:"capabilityBoundary,omitempty"`
 }
 
 type Pass struct {
@@ -111,7 +111,7 @@ func deriveCurvePass(
 	exhaustedBoundary := plannedBatchSizes[len(plannedBatchSizes)-1] + 1
 	for index, batchInput := range batches {
 		if batchInput.CapabilityBoundary {
-			if len(batchInput.Runs) != 0 || index != len(batches)-1 ||
+			if len(batchInput.Admissions) != 0 || index != len(batches)-1 ||
 				plannedBatchIndex != len(plannedBatchSizes) || batchInput.Batch != exhaustedBoundary {
 				return curvePass{}, errors.New("capability boundary must follow exhaustion of the planned batch size set")
 			}
@@ -139,15 +139,15 @@ func deriveCurvePoint(
 	policy PointPolicy,
 	seenTrials map[string]struct{},
 ) (Point, error) {
-	if len(input.Runs) == 0 {
-		return Point{}, fmt.Errorf("batch %d has neither admitted Runs nor an explicit capability boundary", input.Batch)
+	if len(input.Admissions) == 0 {
+		return Point{}, fmt.Errorf("batch %d has neither admitted trials nor an explicit capability boundary", input.Batch)
 	}
 	baseline, exists := baselines[state.StateIdentity]
 	if !exists {
 		return Point{}, fmt.Errorf("batch %d has no exact-state idle baseline", input.Batch)
 	}
-	admitted := make([]AdmittedTrial, 0, len(input.Runs))
-	for _, run := range input.Runs {
+	admitted := make([]AdmittedTrial, 0, len(input.Admissions))
+	for _, run := range input.Admissions {
 		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != state.StateIdentity ||
 			run.Trial.EnvironmentIdentity != state.EnvironmentIdentity ||
 			run.Trial.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {

@@ -203,7 +203,7 @@ func testConfirmatoryPass(
 				MeasurementProtocolIdentity: trial.MeasurementProtocolIdentity,
 				TrialID:                     trialID, TotalWallJoules: &total, WindowSeconds: 1, CompletedItems: 1,
 			}
-			batchInput.Runs = append(batchInput.Runs, CurveRun{Trial: trial, Admission: admission})
+			batchInput.Admissions = append(batchInput.Admissions, TrialAdmission{Trial: trial, Admission: admission})
 		}
 		pass.Batches = append(pass.Batches, batchInput)
 	}

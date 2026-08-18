@@ -207,9 +207,9 @@ func testVariableDiscoveryCurve(t *testing.T, means []float64, deviation float64
 	pass := testPass(t, plan, means, "variable")
 	offsets := []float64{-deviation, 0, deviation}
 	for batchIndex := range pass.Batches {
-		for trialIndex := range pass.Batches[batchIndex].Runs {
+		for trialIndex := range pass.Batches[batchIndex].Admissions {
 			total := means[batchIndex] + 1 + offsets[trialIndex]
-			pass.Batches[batchIndex].Runs[trialIndex].Admission.TotalWallJoules = &total
+			pass.Batches[batchIndex].Admissions[trialIndex].Admission.TotalWallJoules = &total
 		}
 	}
 	curve, err := DeriveCurve(

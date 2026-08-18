@@ -71,32 +71,32 @@ func TestEvaluateTrialPreservesNonAcceptedAndErrorReturns(t *testing.T) {
 	})
 }
 
-func TestEvaluateCurveRunRetainsTheAdmissionThatAuthorizedTheTrial(t *testing.T) {
+func TestEvaluateTrialAdmissionRetainsTheAdmissionThatAuthorizedTheTrial(t *testing.T) {
 	evidence, policy := acceptedActiveFixture(t)
-	compact, curveRun, err := EvaluateCurveRun(evidence, policy)
+	compact, admission, err := EvaluateTrialAdmission(evidence, policy)
 	if err != nil {
-		t.Fatalf("EvaluateCurveRun() error = %v", err)
+		t.Fatalf("EvaluateTrialAdmission() error = %v", err)
 	}
 	trialCompact, trial, err := EvaluateTrial(evidence, policy)
 	if err != nil {
 		t.Fatalf("EvaluateTrial() error = %v", err)
 	}
-	if curveRun == nil || trial == nil {
-		t.Fatalf("accepted evaluation omitted projections: curveRun=%+v trial=%+v", curveRun, trial)
+	if admission == nil || trial == nil {
+		t.Fatalf("accepted evaluation omitted projections: admission=%+v trial=%+v", admission, trial)
 	}
-	if !reflect.DeepEqual(compact, trialCompact) || !reflect.DeepEqual(curveRun.Trial, *trial) {
+	if !reflect.DeepEqual(compact, trialCompact) || !reflect.DeepEqual(admission.Trial, *trial) {
 		t.Fatalf("evaluation projections drifted: curve=(%+v, %+v) trial=(%+v, %+v)",
-			compact, curveRun.Trial, trialCompact, *trial)
+			compact, admission.Trial, trialCompact, *trial)
 	}
 	admissionPolicy, err := policy.AdmissionPolicy()
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAdmission := profilederivation.Admit(curveRun.Trial, admissionPolicy)
+	wantAdmission := profilederivation.Admit(admission.Trial, admissionPolicy)
 	if wantAdmission.Verdict != profilederivation.VerdictAccepted ||
-		!reflect.DeepEqual(curveRun.Admission, wantAdmission) {
+		!reflect.DeepEqual(admission.Admission, wantAdmission) {
 		t.Fatalf("retained admission did not authorize the trial: got=%+v want=%+v",
-			curveRun.Admission, wantAdmission)
+			admission.Admission, wantAdmission)
 	}
 }
 

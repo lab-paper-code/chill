@@ -102,16 +102,16 @@ func (d *CurveDeriver) Derive(
 		if err != nil {
 			return batchsaturation.CurveResult{}, err
 		}
-		result, curveRun, err := profileradmission.EvaluateCurveRun(verified, frozen.AdmissionPolicy)
+		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, frozen.AdmissionPolicy)
 		if err != nil {
 			return batchsaturation.CurveResult{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
-		if curveRun == nil {
+		if admission == nil {
 			return batchsaturation.CurveResult{}, fmt.Errorf(
 				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
 			)
 		}
-		passBatches[batchIndex].Runs = append(passBatches[batchIndex].Runs, *curveRun)
+		passBatches[batchIndex].Admissions = append(passBatches[batchIndex].Admissions, *admission)
 		if index == 0 {
 			activeWitness = verified
 		}
