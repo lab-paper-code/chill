@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	leaseNodeUIDAnnotation    = "edge.dacs.io/node-actuation-node-uid"
-	leaseHandoffUIDAnnotation = "edge.dacs.io/node-actuation-handoff-uid"
-	leaseIdentityHashLength   = 32
+	leaseNodeUIDAnnotation       = "edge.dacs.io/node-actuation-node-uid"
+	leaseTransitionUIDAnnotation = "edge.dacs.io/node-actuation-handoff-uid"
+	leaseIdentityHashLength      = 32
 )
 
 type LeaseOptions struct {
@@ -76,13 +76,13 @@ func (m *NodeLock) Observe(
 		return LeaseRecord{}, errors.New("Node lock is incomplete")
 	}
 	if err := request.ValidateForNode(request.Node); err != nil {
-		return LeaseRecord{}, fmt.Errorf("validate Lease observation request: %w", err)
+		return LeaseRecord{}, fmt.Errorf("validate lock observation request: %w", err)
 	}
 	if now.IsZero() {
 		return LeaseRecord{}, errors.New("Lease observation time is required")
 	}
 	name := nodeLeaseName(request.Node.UID)
-	holder := nodeLeaseHolder(request.Handoff.UID)
+	holder := nodeLeaseHolder(request.Transition.UID)
 	key := types.NamespacedName{Namespace: m.options.Namespace, Name: name}
 	lease := &coordinationv1.Lease{}
 	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
@@ -110,8 +110,8 @@ func (m *NodeLock) Observe(
 		record.State = nodeactuator.LockNotHeld
 		return record, nil
 	}
-	if lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
-		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
+	if lease.Annotations[leaseTransitionUIDAnnotation] != request.Transition.UID {
+		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its transition annotation")
 	}
 	if !now.Before(expiresAt) {
 		record.State = nodeactuator.LockLost
@@ -140,7 +140,7 @@ func (m *NodeLock) AcquireOrRenew(
 		return LeaseRecord{}, errors.New("Lease observation time is required")
 	}
 	name := nodeLeaseName(request.Node.UID)
-	holder := nodeLeaseHolder(request.Handoff.UID)
+	holder := nodeLeaseHolder(request.Transition.UID)
 	key := types.NamespacedName{Namespace: m.options.Namespace, Name: name}
 	lease := &coordinationv1.Lease{}
 	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
@@ -162,8 +162,8 @@ func (m *NodeLock) AcquireOrRenew(
 			State: nodeactuator.LockConflict, RetryAfter: expiresAt.Sub(now),
 		}, nil
 	}
-	if currentHolder == holder && lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
-		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
+	if currentHolder == holder && lease.Annotations[leaseTransitionUIDAnnotation] != request.Transition.UID {
+		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its transition annotation")
 	}
 	if currentHolder == holder && lease.Spec.LeaseDurationSeconds != nil &&
 		*lease.Spec.LeaseDurationSeconds != m.options.DurationSeconds {
@@ -175,7 +175,7 @@ func (m *NodeLock) AcquireOrRenew(
 	lease.Spec.HolderIdentity = ptr.To(holder)
 	lease.Spec.LeaseDurationSeconds = ptr.To(m.options.DurationSeconds)
 	lease.Spec.RenewTime = &microNow
-	lease.Annotations[leaseHandoffUIDAnnotation] = request.Handoff.UID
+	lease.Annotations[leaseTransitionUIDAnnotation] = request.Transition.UID
 	if currentHolder != holder || !now.Before(expiresAt) {
 		lease.Spec.AcquireTime = &microNow
 		transitions := ptr.Deref(lease.Spec.LeaseTransitions, 0)
@@ -210,10 +210,10 @@ func (m *NodeLock) Release(
 	if err := validateLeaseNodeIdentity(lease, request.Node.UID); err != nil {
 		return false, err
 	}
-	holder := nodeLeaseHolder(request.Handoff.UID)
+	holder := nodeLeaseHolder(request.Transition.UID)
 	if ptr.Deref(lease.Spec.HolderIdentity, "") != holder ||
-		lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
-		return false, errors.New("refusing to release a Node actuation Lease held by another handoff")
+		lease.Annotations[leaseTransitionUIDAnnotation] != request.Transition.UID {
+		return false, errors.New("refusing to release a Node actuation Lease held by another transition")
 	}
 	uid := lease.UID
 	resourceVersion := lease.ResourceVersion
@@ -237,8 +237,8 @@ func (m *NodeLock) create(
 			Namespace: m.options.Namespace,
 			Name:      name,
 			Annotations: map[string]string{
-				leaseNodeUIDAnnotation:    request.Node.UID,
-				leaseHandoffUIDAnnotation: request.Handoff.UID,
+				leaseNodeUIDAnnotation:       request.Node.UID,
+				leaseTransitionUIDAnnotation: request.Transition.UID,
 			},
 		},
 		Spec: coordinationv1.LeaseSpec{
@@ -302,8 +302,8 @@ func nodeLeaseName(nodeUID string) string {
 	return "chill-node-actuation-" + hashedLeaseIdentity(nodeUID)
 }
 
-func nodeLeaseHolder(handoffUID string) string {
-	return "nodeactuation-" + hashedLeaseIdentity(handoffUID)
+func nodeLeaseHolder(transitionUID string) string {
+	return "nodeactuation-" + hashedLeaseIdentity(transitionUID)
 }
 
 func hashedLeaseIdentity(value string) string {

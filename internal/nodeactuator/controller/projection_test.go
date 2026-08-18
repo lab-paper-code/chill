@@ -12,23 +12,23 @@ import (
 
 func TestProjectRequestBindsExactAssignedNodeAndFrozenInputs(t *testing.T) {
 	t.Parallel()
-	handoff := testNodeActuation()
-	request, err := ProjectRequest(handoff, nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"})
+	transition := testNodeActuation()
+	request, err := ProjectRequest(transition, nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Handoff.UID != "handoff-uid" || request.Node.UID != "node-uid" ||
+	if request.Transition.UID != "transition-uid" || request.Node.UID != "node-uid" ||
 		request.Target.JetsonNVPModel == nil ||
-		request.Target.JetsonNVPModel.ID != 2 || request.PolicyName != handoff.Spec.PolicyName {
+		request.Target.JetsonNVPModel.ID != 2 || request.PolicyName != transition.Spec.PolicyName {
 		t.Fatalf("projected request = %#v", request)
 	}
 }
 
 func TestProjectRequestRejectsForeignNode(t *testing.T) {
 	t.Parallel()
-	handoff := testNodeActuation()
+	transition := testNodeActuation()
 	if _, err := ProjectRequest(
-		handoff,
+		transition,
 		nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "other-node"},
 	); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("foreign Node error = %v", err)
@@ -39,7 +39,7 @@ func testNodeActuation() *edgev1alpha1.NodeActuation {
 	requested := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	return &edgev1alpha1.NodeActuation{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "chill-system", Name: "handoff", UID: "handoff-uid", Generation: 1,
+			Namespace: "chill-system", Name: "transition", UID: "transition-uid", Generation: 1,
 		},
 		Spec: edgev1alpha1.NodeActuationSpec{
 			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: "jetsonx", UID: "node-uid"},

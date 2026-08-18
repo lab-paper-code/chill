@@ -212,7 +212,7 @@ func validSnapshot() Snapshot {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	return Snapshot{
 		Request: Request{
-			Handoff: ObjectIdentity{Name: "handoff", UID: "handoff-uid"}, Generation: 1,
+			Transition: ObjectIdentity{Name: "transition", UID: "transition-uid"}, Generation: 1,
 			Node:        ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 			DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 			Target:                  Target{Kind: ActuatorKindJetsonNVPModel, JetsonNVPModel: &JetsonNVPModelTarget{ID: 2}},

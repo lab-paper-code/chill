@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts options) error {
+func setupTransitionController(ctx context.Context, manager ctrl.Manager, opts options) error {
 	node := &corev1.Node{}
 	if err := manager.GetAPIReader().Get(ctx, client.ObjectKey{Name: opts.nodeName}, node); err != nil {
 		return fmt.Errorf("resolve assigned Node %q: %w", opts.nodeName, err)
@@ -44,9 +44,9 @@ func setupHandoffController(ctx context.Context, manager ctrl.Manager, opts opti
 	if err != nil {
 		return fmt.Errorf("construct Jetson NVPModel adapter: %w", err)
 	}
-	reconciler, err := actuatorcontroller.NewHandoffReconciler(
+	reconciler, err := actuatorcontroller.NewTransitionReconciler(
 		manager.GetClient(), leases, safety, hostActuator,
-		actuatorcontroller.HandoffReconcilerOptions{
+		actuatorcontroller.TransitionReconcilerOptions{
 			AssignedNode:    assigned,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), opts.allowedPolicies...),
 		},

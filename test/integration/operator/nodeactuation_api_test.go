@@ -14,58 +14,58 @@ import (
 )
 
 var _ = Describe("NodeActuation API", func() {
-	It("accepts one exact handoff and rejects transition-request mutation", func() {
+	It("accepts one exact transition and rejects transition-request mutation", func() {
 		ctx := context.Background()
-		handoff := validNodeActuation(uniqueNodeActuationName("transition"))
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+		transition := validNodeActuation(uniqueNodeActuationName("transition"))
+		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
 
-		handoff.Spec.StageRequestedAt = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(time.Minute))
-		err := k8sClient.Update(ctx, handoff)
+		transition.Spec.StageRequestedAt = metav1.NewTime(transition.Spec.StageRequestedAt.Add(time.Minute))
+		err := k8sClient.Update(ctx, transition)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
-	It("rejects changing frozen handoff identity", func() {
+	It("rejects changing frozen transition identity", func() {
 		ctx := context.Background()
-		handoff := validNodeActuation(uniqueNodeActuationName("immutable"))
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+		transition := validNodeActuation(uniqueNodeActuationName("immutable"))
+		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
 
-		handoff.Spec.Node.UID = "other-node"
-		err := k8sClient.Update(ctx, handoff)
+		transition.Spec.Node.UID = "other-node"
+		err := k8sClient.Update(ctx, transition)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
-	DescribeTable("rejects structurally unsafe handoffs",
+	DescribeTable("rejects structurally unsafe transitions",
 		func(mutate func(*edgev1alpha1.NodeActuation)) {
 			ctx := context.Background()
-			handoff := validNodeActuation(uniqueNodeActuationName("invalid"))
-			mutate(handoff)
+			transition := validNodeActuation(uniqueNodeActuationName("invalid"))
+			mutate(transition)
 
-			err := k8sClient.Create(ctx, handoff)
+			err := k8sClient.Create(ctx, transition)
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 		},
-		Entry("fixed target", func(handoff *edgev1alpha1.NodeActuation) {
-			handoff.Spec.Actuator = edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}
+		Entry("fixed target", func(transition *edgev1alpha1.NodeActuation) {
+			transition.Spec.Actuator = edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}
 		}),
-		Entry("maximum does not exceed settling", func(handoff *edgev1alpha1.NodeActuation) {
-			handoff.Spec.MaxActuationDurationSeconds = handoff.Spec.SettlingDurationSeconds
+		Entry("maximum does not exceed settling", func(transition *edgev1alpha1.NodeActuation) {
+			transition.Spec.MaxActuationDurationSeconds = transition.Spec.SettlingDurationSeconds
 		}),
-		Entry("deadline precedes request", func(handoff *edgev1alpha1.NodeActuation) {
-			handoff.Spec.Deadline = metav1.NewTime(handoff.Spec.StageRequestedAt.Add(-time.Second))
+		Entry("deadline precedes request", func(transition *edgev1alpha1.NodeActuation) {
+			transition.Spec.Deadline = metav1.NewTime(transition.Spec.StageRequestedAt.Add(-time.Second))
 		}),
 	)
 
 	It("accepts complete Ready status and rejects Failed without terminal failure", func() {
 		ctx := context.Background()
-		handoff := validNodeActuation(uniqueNodeActuationName("status"))
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+		transition := validNodeActuation(uniqueNodeActuationName("status"))
+		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
 
 		now := metav1.Now()
 		readyAt := metav1.NewMicroTime(now.Time)
-		handoff.Status = edgev1alpha1.NodeActuationStatus{
-			ObservedGeneration: handoff.Generation,
+		transition.Status = edgev1alpha1.NodeActuationStatus{
+			ObservedGeneration: transition.Generation,
 			Phase:              edgev1alpha1.NodeActuationPhaseReady,
 			Reason:             "TargetSettled",
 			Message:            "target was independently observed and settled",
@@ -73,36 +73,36 @@ var _ = Describe("NodeActuation API", func() {
 				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: now,
 			},
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: handoff.Spec.PowerMode, Actuator: handoff.Spec.Actuator, ObservedAt: now,
+				PowerMode: transition.Spec.PowerMode, Actuator: transition.Spec.Actuator, ObservedAt: now,
 			},
 			ReadyAt: &readyAt,
 		}
-		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, transition)).To(Succeed())
 
-		handoff.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
-		handoff.Status.TerminalFailure = nil
-		err := k8sClient.Status().Update(ctx, handoff)
+		transition.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
+		transition.Status.TerminalFailure = nil
+		err := k8sClient.Status().Update(ctx, transition)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 	})
 
 	It("requires exact blocking Pod identities for a blocked safety verdict", func() {
 		ctx := context.Background()
-		handoff := validNodeActuation(uniqueNodeActuationName("safety"))
-		Expect(k8sClient.Create(ctx, handoff)).To(Succeed())
+		transition := validNodeActuation(uniqueNodeActuationName("safety"))
+		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
 
 		now := metav1.Now()
-		handoff.Status.Safety = &edgev1alpha1.NodeActuationSafetyObservation{
+		transition.Status.Safety = &edgev1alpha1.NodeActuationSafetyObservation{
 			Verdict: edgev1alpha1.NodeActuationSafetyBlocked, ObservedAt: now,
 		}
-		err := k8sClient.Status().Update(ctx, handoff)
+		err := k8sClient.Status().Update(ctx, transition)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
 
-		handoff.Status.Safety.BlockingPods = []edgev1alpha1.NodeActuationPodReference{{
+		transition.Status.Safety.BlockingPods = []edgev1alpha1.NodeActuationPodReference{{
 			Namespace: "tenant-a", Name: "serving", UID: "pod-uid",
 		}}
-		Expect(k8sClient.Status().Update(ctx, handoff)).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, transition)).To(Succeed())
 	})
 })
 

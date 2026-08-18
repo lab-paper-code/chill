@@ -17,7 +17,7 @@ import (
 
 func TestKubernetesWorkloadSafetyCheckerAllowsOnlyConfiguredNamespaces(t *testing.T) {
 	t.Parallel()
-	request := leaseTestRequest("handoff-a")
+	request := leaseTestRequest("transition-a")
 	checker := workloadSafetyChecker(t,
 		workloadPod("kube-system", "kube-proxy", "system-uid", request.Node.Name, corev1.PodRunning),
 		workloadPod("chill-system", "node-actuator", "actuator-uid", request.Node.Name, corev1.PodRunning),
@@ -38,7 +38,7 @@ func TestKubernetesWorkloadSafetyCheckerAllowsOnlyConfiguredNamespaces(t *testin
 
 func TestKubernetesWorkloadSafetyCheckerReturnsAllowedForExactApprovedSet(t *testing.T) {
 	t.Parallel()
-	request := leaseTestRequest("handoff-a")
+	request := leaseTestRequest("transition-a")
 	checker := workloadSafetyChecker(t,
 		workloadPod("kube-system", "kube-proxy", "system-uid", request.Node.Name, corev1.PodRunning),
 		workloadPod("chill-system", "node-actuator", "actuator-uid", request.Node.Name, corev1.PodRunning),
@@ -51,7 +51,7 @@ func TestKubernetesWorkloadSafetyCheckerReturnsAllowedForExactApprovedSet(t *tes
 
 func TestKubernetesWorkloadSafetyCheckerFailsClosedOnUnrepresentableSet(t *testing.T) {
 	t.Parallel()
-	request := leaseTestRequest("handoff-a")
+	request := leaseTestRequest("transition-a")
 	pods := make([]client.Object, 0, maximumRecordedBlockingPods+1)
 	for i := 0; i <= maximumRecordedBlockingPods; i++ {
 		pods = append(pods, workloadPod(

@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestSafeToStopBlocksEveryUnfinishedOrLeaseHoldingHandoff(t *testing.T) {
+func TestSafeToStopBlocksEveryUnfinishedOrLockHoldingTransition(t *testing.T) {
 	t.Parallel()
 	now := metav1.NewMicroTime(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
 	for name, status := range map[string]edgev1alpha1.NodeActuationStatus{
@@ -53,10 +53,10 @@ func safeToStopWithStatus(t *testing.T, status edgev1alpha1.NodeActuationStatus)
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	handoff := &edgev1alpha1.NodeActuation{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "handoff"}, Status: status,
+	transition := &edgev1alpha1.NodeActuation{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "transition"}, Status: status,
 	}
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(handoff).Build()
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(transition).Build()
 	safe, err := SafeToStop(context.Background(), reader, "chill-system")
 	if err != nil {
 		t.Fatal(err)

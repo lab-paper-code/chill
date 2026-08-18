@@ -206,7 +206,7 @@ func TestNVPModelPropagatesBoundedCommandFailure(t *testing.T) {
 	}
 }
 
-func TestNVPModelRejectsElapsedHandoffDeadline(t *testing.T) {
+func TestNVPModelRejectsElapsedTransitionDeadline(t *testing.T) {
 	t.Parallel()
 	adapter, runner, now := testAdapter(t)
 	request := testRequest(now)

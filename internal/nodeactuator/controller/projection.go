@@ -1,4 +1,4 @@
-// Package controller adapts durable Kubernetes handoffs to the pure
+// Package controller adapts durable Kubernetes transitions to the pure
 // NodeActuator contract. It performs no host operation.
 package controller
 
@@ -15,27 +15,27 @@ import (
 // ProjectRequest verifies API identity and the local Node binding before the
 // pure actuator core or a host adapter may observe the request.
 func ProjectRequest(
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	assignedNode nodeactuator.ObjectIdentity,
 ) (nodeactuator.Request, error) {
-	if handoff == nil {
+	if transition == nil {
 		return nodeactuator.Request{}, errors.New("NodeActuation is required")
 	}
-	if handoff.Namespace == "" || handoff.Name == "" || handoff.UID == "" || handoff.Generation < 1 {
+	if transition.Namespace == "" || transition.Name == "" || transition.UID == "" || transition.Generation < 1 {
 		return nodeactuator.Request{}, errors.New("NodeActuation API identity is invalid")
 	}
 	request := nodeactuator.Request{
-		Handoff:                     nodeactuator.ObjectIdentity{Name: handoff.Name, UID: string(handoff.UID)},
-		Generation:                  handoff.Generation,
-		Node:                        projectObjectIdentity(handoff.Spec.Node),
-		DeviceClass:                 handoff.Spec.DeviceClass,
-		PowerMode:                   handoff.Spec.PowerMode,
-		Target:                      projectTarget(handoff.Spec.Actuator),
-		PolicyName:                  handoff.Spec.PolicyName,
-		SettlingDurationSeconds:     handoff.Spec.SettlingDurationSeconds,
-		MaxActuationDurationSeconds: handoff.Spec.MaxActuationDurationSeconds,
-		Deadline:                    handoff.Spec.Deadline.Time,
-		StageRequestedAt:            handoff.Spec.StageRequestedAt.Time,
+		Transition:                  nodeactuator.ObjectIdentity{Name: transition.Name, UID: string(transition.UID)},
+		Generation:                  transition.Generation,
+		Node:                        projectObjectIdentity(transition.Spec.Node),
+		DeviceClass:                 transition.Spec.DeviceClass,
+		PowerMode:                   transition.Spec.PowerMode,
+		Target:                      projectTarget(transition.Spec.Actuator),
+		PolicyName:                  transition.Spec.PolicyName,
+		SettlingDurationSeconds:     transition.Spec.SettlingDurationSeconds,
+		MaxActuationDurationSeconds: transition.Spec.MaxActuationDurationSeconds,
+		Deadline:                    transition.Spec.Deadline.Time,
+		StageRequestedAt:            transition.Spec.StageRequestedAt.Time,
 	}
 	if err := request.ValidateForNode(assignedNode); err != nil {
 		return nodeactuator.Request{}, fmt.Errorf("validate projected NodeActuation: %w", err)
@@ -44,59 +44,59 @@ func ProjectRequest(
 }
 
 func ProjectSnapshot(
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	assignedNode nodeactuator.ObjectIdentity,
 	lease LeaseRecord,
 	now time.Time,
 ) (nodeactuator.Snapshot, error) {
-	request, err := ProjectRequest(handoff, assignedNode)
+	request, err := ProjectRequest(transition, assignedNode)
 	if err != nil {
 		return nodeactuator.Snapshot{}, err
 	}
-	if handoff.Status.ObservedGeneration < 0 || handoff.Status.ObservedGeneration > handoff.Generation {
+	if transition.Status.ObservedGeneration < 0 || transition.Status.ObservedGeneration > transition.Generation {
 		return nodeactuator.Snapshot{}, errors.New("NodeActuation status observedGeneration is invalid")
 	}
-	if handoff.Status.Lease != nil &&
-		(lease.UID == "" || handoff.Status.Lease.Name != lease.Name || handoff.Status.Lease.UID != lease.UID) {
+	if transition.Status.Lease != nil &&
+		(lease.UID == "" || transition.Status.Lease.Name != lease.Name || transition.Status.Lease.UID != lease.UID) {
 		return nodeactuator.Snapshot{}, errors.New("NodeActuation status Lease identity does not match observed Lease")
 	}
 	snapshot := nodeactuator.Snapshot{
 		Request: request,
 		Now:     now,
-		Phase:   nodeactuator.Phase(handoff.Status.Phase),
+		Phase:   nodeactuator.Phase(transition.Status.Phase),
 		Lock: nodeactuator.LockObservation{
 			State: lease.State, RetryAfter: lease.RetryAfter,
 		},
 		Safety: nodeactuator.SafetyUnknown,
 	}
-	if handoff.Status.Safety != nil {
-		snapshot.SafetyObservedAt = &handoff.Status.Safety.ObservedAt.Time
-		switch handoff.Status.Safety.Verdict {
+	if transition.Status.Safety != nil {
+		snapshot.SafetyObservedAt = &transition.Status.Safety.ObservedAt.Time
+		switch transition.Status.Safety.Verdict {
 		case edgev1alpha1.NodeActuationSafetyAllowed:
 			snapshot.Safety = nodeactuator.SafetyAllowed
 		case edgev1alpha1.NodeActuationSafetyBlocked:
 			snapshot.Safety = nodeactuator.SafetyBlocked
 		default:
 			return nodeactuator.Snapshot{}, fmt.Errorf(
-				"unsupported workload safety verdict %q", handoff.Status.Safety.Verdict,
+				"unsupported workload safety verdict %q", transition.Status.Safety.Verdict,
 			)
 		}
 	}
-	snapshot.PreviousObservation, err = projectObservation(handoff.Status.PreviousObservation)
+	snapshot.PreviousObservation, err = projectObservation(transition.Status.PreviousObservation)
 	if err != nil {
 		return nodeactuator.Snapshot{}, fmt.Errorf("project previous observation: %w", err)
 	}
-	snapshot.TargetObservation, err = projectObservation(handoff.Status.TargetObservation)
+	snapshot.TargetObservation, err = projectObservation(transition.Status.TargetObservation)
 	if err != nil {
 		return nodeactuator.Snapshot{}, fmt.Errorf("project target observation: %w", err)
 	}
-	snapshot.VerifiedAt = projectTime(handoff.Status.VerifiedAt)
-	snapshot.SettlingStartedAt = projectTime(handoff.Status.SettlingStartedAt)
-	if handoff.Status.TerminalFailure != nil {
+	snapshot.VerifiedAt = projectTime(transition.Status.VerifiedAt)
+	snapshot.SettlingStartedAt = projectTime(transition.Status.SettlingStartedAt)
+	if transition.Status.TerminalFailure != nil {
 		snapshot.Failure = &nodeactuator.Failure{
-			Stage:   nodeactuator.FailureStage(handoff.Status.TerminalFailure.Stage),
-			Reason:  handoff.Status.TerminalFailure.Reason,
-			Message: handoff.Status.TerminalFailure.Message,
+			Stage:   nodeactuator.FailureStage(transition.Status.TerminalFailure.Stage),
+			Reason:  transition.Status.TerminalFailure.Reason,
+			Message: transition.Status.TerminalFailure.Message,
 		}
 	}
 	if err := snapshot.Validate(); err != nil {

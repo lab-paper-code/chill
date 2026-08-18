@@ -28,7 +28,7 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	firstRequest := leaseTestRequest("handoff-a")
+	firstRequest := leaseTestRequest("transition-a")
 	first, err := manager.AcquireOrRenew(ctx, firstRequest, now)
 	if err != nil || first.State != nodeactuator.LockHeld || first.RetryAfter != 10*time.Second || first.UID == "" {
 		t.Fatalf("first acquire = %#v, error=%v", first, err)
@@ -39,7 +39,7 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 		t.Fatalf("held observation = %#v, error=%v", observed, err)
 	}
 
-	secondRequest := leaseTestRequest("handoff-b")
+	secondRequest := leaseTestRequest("transition-b")
 	conflict, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(5*time.Second))
 	if err != nil || conflict.State != nodeactuator.LockConflict || conflict.RetryAfter != 25*time.Second ||
 		conflict.HolderIdentity != first.HolderIdentity {
@@ -61,7 +61,7 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 		t.Fatal(err)
 	}
 	if lease.Spec.LeaseTransitions == nil || *lease.Spec.LeaseTransitions != 1 ||
-		lease.Annotations[leaseHandoffUIDAnnotation] != secondRequest.Handoff.UID {
+		lease.Annotations[leaseTransitionUIDAnnotation] != secondRequest.Transition.UID {
 		t.Fatalf("taken Lease = %#v", lease.Spec)
 	}
 	observed, err = manager.Observe(ctx, secondRequest, now.Add(31*time.Second))
@@ -83,16 +83,16 @@ func TestNodeLeaseManagerReleasesOnlyExactHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	firstRequest := leaseTestRequest("handoff-a")
+	firstRequest := leaseTestRequest("transition-a")
 	if _, err := manager.AcquireOrRenew(ctx, firstRequest, now); err != nil {
 		t.Fatal(err)
 	}
-	secondRequest := leaseTestRequest("handoff-b")
+	secondRequest := leaseTestRequest("transition-b")
 	if _, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(31*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if released, err := manager.Release(ctx, firstRequest); err == nil || released ||
-		!strings.Contains(err.Error(), "another handoff") {
+		!strings.Contains(err.Error(), "another transition") {
 		t.Fatalf("foreign release = %t, error=%v", released, err)
 	}
 	if released, err := manager.Release(ctx, secondRequest); err != nil || !released {
@@ -118,7 +118,7 @@ func TestNodeLeaseManagerRenewsOnlyExactHolderAndRejectsNodeIdentityDrift(t *tes
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	request := leaseTestRequest("handoff-a")
+	request := leaseTestRequest("transition-a")
 	if _, err := manager.AcquireOrRenew(ctx, request, now); err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +155,10 @@ func TestLeaseOptionsRejectsUnboundedOrImplicitConfiguration(t *testing.T) {
 	}
 }
 
-func leaseTestRequest(handoffUID string) nodeactuator.Request {
+func leaseTestRequest(transitionUID string) nodeactuator.Request {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	return nodeactuator.Request{
-		Handoff: nodeactuator.ObjectIdentity{Name: handoffUID, UID: handoffUID}, Generation: 1,
+		Transition: nodeactuator.ObjectIdentity{Name: transitionUID, UID: transitionUID}, Generation: 1,
 		Node:        nodeactuator.ObjectIdentity{Name: "jetsonx", UID: "node-uid"},
 		DeviceClass: "jetson-xavier-nx-8g", PowerMode: "MODE_15W_6CORE",
 		Target: nodeactuator.Target{
@@ -185,8 +185,8 @@ func requireCreatedNodeLease(
 		t.Fatal(err)
 	}
 	if len(lease.OwnerReferences) != 0 || lease.Annotations[leaseNodeUIDAnnotation] != request.Node.UID ||
-		lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID ||
-		lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != nodeLeaseHolder(request.Handoff.UID) {
+		lease.Annotations[leaseTransitionUIDAnnotation] != request.Transition.UID ||
+		lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != nodeLeaseHolder(request.Transition.UID) {
 		t.Fatalf("created Lease = %#v", lease)
 	}
 	return lease, key

@@ -34,12 +34,12 @@ type HostActuator interface {
 	Apply(context.Context, nodeactuator.Request, nodeactuator.Target) error
 }
 
-type HandoffReconcilerOptions struct {
+type TransitionReconcilerOptions struct {
 	AssignedNode    nodeactuator.ObjectIdentity
 	AllowedPolicies []nodeactuator.ActuationPolicySpec
 }
 
-func (o HandoffReconcilerOptions) Validate() error {
+func (o TransitionReconcilerOptions) Validate() error {
 	if err := o.AssignedNode.Validate(); err != nil {
 		return fmt.Errorf("validate assigned Node: %w", err)
 	}
@@ -60,34 +60,34 @@ func (o HandoffReconcilerOptions) Validate() error {
 	return nil
 }
 
-// HandoffReconciler is the only controller allowed to drive the host actuator
+// TransitionReconciler is the only controller allowed to drive the host actuator
 // port. The Profiler owns immutable transition intent; this reconciler owns
 // observed status.
-type HandoffReconciler struct {
+type TransitionReconciler struct {
 	client.Client
 	lease    LeaseController
 	safety   WorkloadSafetyChecker
 	actuator HostActuator
-	options  HandoffReconcilerOptions
+	options  TransitionReconcilerOptions
 	now      func() time.Time
 }
 
-func NewHandoffReconciler(
+func NewTransitionReconciler(
 	kubeClient client.Client,
 	lease LeaseController,
 	safety WorkloadSafetyChecker,
 	actuator HostActuator,
-	options HandoffReconcilerOptions,
-) (*HandoffReconciler, error) {
+	options TransitionReconcilerOptions,
+) (*TransitionReconciler, error) {
 	if kubeClient == nil || lease == nil || safety == nil || actuator == nil {
 		return nil, errors.New("Kubernetes client, Lease, workload safety, and host actuator are required")
 	}
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
-	return &HandoffReconciler{
+	return &TransitionReconciler{
 		Client: kubeClient, lease: lease, safety: safety, actuator: actuator,
-		options: HandoffReconcilerOptions{
+		options: TransitionReconcilerOptions{
 			AssignedNode:    options.AssignedNode,
 			AllowedPolicies: append([]nodeactuator.ActuationPolicySpec(nil), options.AllowedPolicies...),
 		},
@@ -95,57 +95,57 @@ func NewHandoffReconciler(
 	}, nil
 }
 
-func (r *HandoffReconciler) SetupWithManager(manager ctrl.Manager) error {
+func (r *TransitionReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		Named("node-actuation").
 		For(&edgev1alpha1.NodeActuation{}).
 		Complete(r)
 }
 
-func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
-	handoff := &edgev1alpha1.NodeActuation{}
-	if err := r.Get(ctx, request.NamespacedName, handoff); err != nil {
+func (r *TransitionReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+	transition := &edgev1alpha1.NodeActuation{}
+	if err := r.Get(ctx, request.NamespacedName, transition); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("get NodeActuation %s: %w", request.NamespacedName, err)
 	}
-	if handoff.Spec.Node.Name != r.options.AssignedNode.Name {
+	if transition.Spec.Node.Name != r.options.AssignedNode.Name {
 		return ctrl.Result{}, nil
 	}
-	if handoff.Spec.Node.UID != r.options.AssignedNode.UID {
+	if transition.Spec.Node.UID != r.options.AssignedNode.UID {
 		return ctrl.Result{}, errors.New("NodeActuation targets this Node name with a different UID")
 	}
-	if !handoff.DeletionTimestamp.IsZero() {
+	if !transition.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
-	actuationRequest, err := ProjectRequest(handoff, r.options.AssignedNode)
+	actuationRequest, err := ProjectRequest(transition, r.options.AssignedNode)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	now := r.now().UTC()
 	if !allowsActuationPolicy(r.options.AllowedPolicies, actuationRequest) &&
-		handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseReady &&
-		handoff.Status.TerminalFailure == nil {
+		transition.Status.Phase != edgev1alpha1.NodeActuationPhaseReady &&
+		transition.Status.TerminalFailure == nil {
 		failure := nodeactuator.Failure{
 			Stage: nodeactuator.FailureStagePolicy, Reason: "PolicyRejected",
 			Message: "frozen actuation policy is not authorized by this NodeActuator",
 		}
-		return r.markFailed(ctx, handoff, now, failure)
+		return r.markFailed(ctx, transition, now, failure)
 	}
 	record, err := r.lease.Observe(ctx, actuationRequest, now)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("observe Node actuation Lease: %w", err)
 	}
-	leaseStatusUpdated, err := r.synchronizeLeaseStatus(ctx, handoff, record)
+	leaseStatusUpdated, err := r.synchronizeLeaseStatus(ctx, transition, record)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if leaseStatusUpdated {
 		return ctrl.Result{}, nil
 	}
-	snapshot, err := ProjectSnapshot(handoff, r.options.AssignedNode, record, now)
+	snapshot, err := ProjectSnapshot(transition, r.options.AssignedNode, record, now)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -153,7 +153,7 @@ func (r *HandoffReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("decide NodeActuation %s lifecycle: %w", request.NamespacedName, err)
 	}
-	return r.execute(ctx, handoff, snapshot, decision)
+	return r.execute(ctx, transition, snapshot, decision)
 }
 
 func allowsActuationPolicy(policies []nodeactuator.ActuationPolicySpec, request nodeactuator.Request) bool {
@@ -168,9 +168,9 @@ func allowsActuationPolicy(policies []nodeactuator.ActuationPolicySpec, request 
 	return false
 }
 
-func (r *HandoffReconciler) synchronizeLeaseStatus(
+func (r *TransitionReconciler) synchronizeLeaseStatus(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	record LeaseRecord,
 ) (bool, error) {
 	switch record.State {
@@ -179,20 +179,20 @@ func (r *HandoffReconciler) synchronizeLeaseStatus(
 			return false, errors.New("held Node actuation Lease has incomplete identity")
 		}
 		want := edgev1alpha1.ProfilingRunObjectReference{Name: record.Name, UID: record.UID}
-		if handoff.Status.Lease == nil {
-			if err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+		if transition.Status.Lease == nil {
+			if err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 				status.Lease = &want
 			}); err != nil {
 				return false, err
 			}
 			return true, nil
 		}
-		if *handoff.Status.Lease != want {
+		if *transition.Status.Lease != want {
 			return false, errors.New("recorded Node actuation Lease identity differs from the held Lease")
 		}
 	case nodeactuator.LockNotHeld, nodeactuator.LockConflict:
-		if handoff.Status.Lease != nil {
-			if err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+		if transition.Status.Lease != nil {
+			if err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 				status.Lease = nil
 			}); err != nil {
 				return false, err
@@ -203,30 +203,30 @@ func (r *HandoffReconciler) synchronizeLeaseStatus(
 	return false, nil
 }
 
-func (r *HandoffReconciler) execute(
+func (r *TransitionReconciler) execute(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 	decision nodeactuator.Decision,
 ) (ctrl.Result, error) {
 	switch decision.Action {
 	case nodeactuator.ActionAcquireLease, nodeactuator.ActionRenewLease:
-		return r.executeLeaseAction(ctx, handoff, snapshot, decision)
+		return r.executeLeaseAction(ctx, transition, snapshot, decision)
 	case nodeactuator.ActionWaitForLease, nodeactuator.ActionWaitForSettling:
 		return ctrl.Result{RequeueAfter: decision.RequeueAfter}, nil
 	case nodeactuator.ActionCheckSafety:
-		return r.executeSafetyAction(ctx, handoff, snapshot)
+		return r.executeSafetyAction(ctx, transition, snapshot)
 	case nodeactuator.ActionObservePrevious, nodeactuator.ActionApplyTarget,
 		nodeactuator.ActionObserveTarget, nodeactuator.ActionStartSettling,
 		nodeactuator.ActionMarkReady:
-		return r.executeTargetAction(ctx, handoff, snapshot, decision)
+		return r.executeTargetAction(ctx, transition, snapshot, decision)
 	case nodeactuator.ActionReleaseLease:
-		return r.executeRelease(ctx, handoff, snapshot)
+		return r.executeRelease(ctx, transition, snapshot)
 	case nodeactuator.ActionMarkFailed:
 		if decision.Failure == nil {
 			return ctrl.Result{}, errors.New("failure action omitted typed failure")
 		}
-		return r.markFailed(ctx, handoff, snapshot.Now, *decision.Failure)
+		return r.markFailed(ctx, transition, snapshot.Now, *decision.Failure)
 	case nodeactuator.ActionComplete:
 		return ctrl.Result{}, nil
 	default:
@@ -234,9 +234,9 @@ func (r *HandoffReconciler) execute(
 	}
 }
 
-func (r *HandoffReconciler) executeLeaseAction(
+func (r *TransitionReconciler) executeLeaseAction(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 	decision nodeactuator.Decision,
 ) (ctrl.Result, error) {
@@ -247,11 +247,11 @@ func (r *HandoffReconciler) executeLeaseAction(
 	if record.State != nodeactuator.LockHeld || record.Name == "" || record.UID == "" {
 		return ctrl.Result{RequeueAfter: record.RetryAfter}, nil
 	}
-	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err = r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Lease = &edgev1alpha1.ProfilingRunObjectReference{Name: record.Name, UID: record.UID}
 		if decision.Action == nodeactuator.ActionAcquireLease && status.PreviousObservation == nil {
 			status.Phase = edgev1alpha1.NodeActuationPhaseAcquiringLease
-			status.Reason, status.Message = "LeaseHeld", "exact Node UID Lease is held by this handoff"
+			status.Reason, status.Message = "LeaseHeld", "exact Node UID Lease is held by this transition"
 		}
 	})
 	if err != nil {
@@ -260,23 +260,23 @@ func (r *HandoffReconciler) executeLeaseAction(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func (r *HandoffReconciler) executeSafetyAction(
+func (r *TransitionReconciler) executeSafetyAction(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
 	result, err := r.safety.Check(ctx, snapshot.Request)
 	if err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyCheckFailed", Message: err.Error(),
 		})
 	}
 	if err := result.Validate(); err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageSafety, Reason: "WorkloadSafetyResultInvalid", Message: err.Error(),
 		})
 	}
-	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err = r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Safety = projectSafetyResult(result)
 		if status.Phase != edgev1alpha1.NodeActuationPhaseReady {
 			status.Phase = edgev1alpha1.NodeActuationPhaseCheckingSafety
@@ -290,25 +290,25 @@ func (r *HandoffReconciler) executeSafetyAction(
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) executeTargetAction(
+func (r *TransitionReconciler) executeTargetAction(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 	decision nodeactuator.Decision,
 ) (ctrl.Result, error) {
 	switch decision.Action {
 	case nodeactuator.ActionObservePrevious:
-		return r.executeObservePrevious(ctx, handoff, snapshot)
+		return r.executeObservePrevious(ctx, transition, snapshot)
 	case nodeactuator.ActionApplyTarget:
-		return r.executeApplyTarget(ctx, handoff, snapshot)
+		return r.executeApplyTarget(ctx, transition, snapshot)
 	case nodeactuator.ActionObserveTarget:
-		return r.executeObserveTarget(ctx, handoff, snapshot)
+		return r.executeObserveTarget(ctx, transition, snapshot)
 	case nodeactuator.ActionStartSettling:
 		if snapshot.TargetObservation == nil && snapshot.PreviousObservation == nil {
 			return ctrl.Result{}, errors.New("settling action omitted target evidence")
 		}
 		now := metav1.NewMicroTime(snapshot.Now)
-		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+		err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 			if snapshot.TargetObservation == nil {
 				status.TargetObservation = projectHostObservation(*snapshot.PreviousObservation)
 				verifiedAt := metav1.NewMicroTime(snapshot.PreviousObservation.ObservedAt)
@@ -324,7 +324,7 @@ func (r *HandoffReconciler) executeTargetAction(
 		return ctrl.Result{}, err
 	case nodeactuator.ActionMarkReady:
 		now := metav1.NewMicroTime(snapshot.Now)
-		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+		err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 			status.Phase, status.ReadyAt = edgev1alpha1.NodeActuationPhaseReady, &now
 			if status.ApplyStartedAt != nil && status.SettlingStartedAt != nil {
 				status.TransitionCost = &edgev1alpha1.NodeActuationTransitionCost{
@@ -342,23 +342,23 @@ func (r *HandoffReconciler) executeTargetAction(
 	}
 }
 
-func (r *HandoffReconciler) executeObservePrevious(
+func (r *TransitionReconciler) executeObservePrevious(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
 	observation, err := r.actuator.Observe(ctx, snapshot.Request)
 	if err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageObservePrevious, Reason: "PreviousObservationFailed", Message: err.Error(),
 		})
 	}
 	if err := observation.Validate(); err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageObservePrevious, Reason: "PreviousObservationInvalid", Message: err.Error(),
 		})
 	}
-	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err = r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Phase = edgev1alpha1.NodeActuationPhaseObservingPrevious
 		status.PreviousObservation = projectHostObservation(observation)
 		status.Reason, status.Message = "PreviousStateObserved", "current host state is retained before the target-state decision"
@@ -366,14 +366,14 @@ func (r *HandoffReconciler) executeObservePrevious(
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) executeApplyTarget(
+func (r *TransitionReconciler) executeApplyTarget(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
-	if handoff.Status.Phase != edgev1alpha1.NodeActuationPhaseApplying {
+	if transition.Status.Phase != edgev1alpha1.NodeActuationPhaseApplying {
 		now := metav1.NewMicroTime(snapshot.Now)
-		err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+		err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 			status.Phase = edgev1alpha1.NodeActuationPhaseApplying
 			if status.ApplyStartedAt == nil {
 				status.ApplyStartedAt = &now
@@ -383,84 +383,84 @@ func (r *HandoffReconciler) executeApplyTarget(
 		return ctrl.Result{}, err
 	}
 	if err := r.actuator.Apply(ctx, snapshot.Request, snapshot.Request.Target); err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageApply, Reason: "TargetApplyFailed", Message: err.Error(),
 		})
 	}
-	err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Phase = edgev1alpha1.NodeActuationPhaseVerifying
 		status.Reason, status.Message = "TargetApplied", "host command completed; independent read-back is still required"
 	})
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) executeObserveTarget(
+func (r *TransitionReconciler) executeObserveTarget(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
 	observation, err := r.actuator.Observe(ctx, snapshot.Request)
 	if err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationFailed", Message: err.Error(),
 		})
 	}
 	if err := observation.Validate(); err != nil {
-		return r.failTerminally(ctx, handoff, snapshot, nodeactuator.Failure{
+		return r.failTerminally(ctx, transition, snapshot, nodeactuator.Failure{
 			Stage: nodeactuator.FailureStageVerify, Reason: "TargetObservationInvalid", Message: err.Error(),
 		})
 	}
 	now := metav1.NewMicroTime(observation.ObservedAt)
-	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err = r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.TargetObservation, status.VerifiedAt = projectHostObservation(observation), &now
 		status.Reason, status.Message = "TargetObserved", "independent target read-back was retained"
 	})
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) executeRelease(
+func (r *TransitionReconciler) executeRelease(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 ) (ctrl.Result, error) {
 	if _, err := r.lease.Release(ctx, snapshot.Request); err != nil {
 		return ctrl.Result{}, fmt.Errorf("release Node actuation Lease: %w", err)
 	}
-	err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Lease = nil
 	})
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) failTerminally(
+func (r *TransitionReconciler) failTerminally(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	snapshot nodeactuator.Snapshot,
 	failure nodeactuator.Failure,
 ) (ctrl.Result, error) {
-	return r.markFailed(ctx, handoff, snapshot.Now, failure)
+	return r.markFailed(ctx, transition, snapshot.Now, failure)
 }
 
-func (r *HandoffReconciler) markFailed(
+func (r *TransitionReconciler) markFailed(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	now time.Time,
 	failure nodeactuator.Failure,
 ) (ctrl.Result, error) {
-	err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
+	err := r.patchStatus(ctx, transition, func(status *edgev1alpha1.NodeActuationStatus) {
 		status.Phase = edgev1alpha1.NodeActuationPhaseFailed
 		setTerminalFailure(status, failure, now)
 	})
 	return ctrl.Result{}, err
 }
 
-func (r *HandoffReconciler) patchStatus(
+func (r *TransitionReconciler) patchStatus(
 	ctx context.Context,
-	handoff *edgev1alpha1.NodeActuation,
+	transition *edgev1alpha1.NodeActuation,
 	mutate func(*edgev1alpha1.NodeActuationStatus),
 ) error {
-	base := handoff.DeepCopy()
-	desired := handoff.DeepCopy()
+	base := transition.DeepCopy()
+	desired := transition.DeepCopy()
 	mutate(&desired.Status)
 	desired.Status.ObservedGeneration = desired.Generation
 	if reflect.DeepEqual(base.Status, desired.Status) {
@@ -469,7 +469,7 @@ func (r *HandoffReconciler) patchStatus(
 	if err := r.Status().Patch(ctx, desired, client.MergeFrom(base)); err != nil {
 		return fmt.Errorf("patch NodeActuation status: %w", err)
 	}
-	handoff.Status = desired.Status
+	transition.Status = desired.Status
 	return nil
 }
 

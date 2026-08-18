@@ -20,23 +20,23 @@ func SafeToStop(ctx context.Context, reader client.Reader, namespace string) (bo
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(namespace) != namespace {
 		return false, errors.New("NodeActuation namespace is required without surrounding whitespace")
 	}
-	handoffs := &edgev1alpha1.NodeActuationList{}
-	if err := reader.List(ctx, handoffs, client.InNamespace(namespace)); err != nil {
+	transitions := &edgev1alpha1.NodeActuationList{}
+	if err := reader.List(ctx, transitions, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list NodeActuations before stopping operand: %w", err)
 	}
-	for i := range handoffs.Items {
-		if handoffNeedsOperand(&handoffs.Items[i]) {
+	for i := range transitions.Items {
+		if transitionNeedsOperand(&transitions.Items[i]) {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
-func handoffNeedsOperand(handoff *edgev1alpha1.NodeActuation) bool {
-	if handoff == nil {
+func transitionNeedsOperand(transition *edgev1alpha1.NodeActuation) bool {
+	if transition == nil {
 		return true
 	}
-	status := handoff.Status
+	status := transition.Status
 	if status.Lease != nil {
 		return true
 	}

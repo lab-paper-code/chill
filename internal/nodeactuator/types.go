@@ -35,10 +35,10 @@ type NvidiaLockedGPUClockTarget struct {
 	Mode   *int32
 }
 
-// Request is the verified durable handoff presented to the Lease and
+// Request is the verified durable transition presented to the lock and
 // host-adapter state machine. It is not evidence that mutation has occurred.
 type Request struct {
-	Handoff                     ObjectIdentity
+	Transition                  ObjectIdentity
 	Generation                  int64
 	Node                        ObjectIdentity
 	DeviceClass                 string
@@ -53,40 +53,40 @@ type Request struct {
 
 func (r Request) ValidateForNode(assigned ObjectIdentity) error {
 	for field, identity := range map[string]ObjectIdentity{
-		"handoff": r.Handoff, "Node": r.Node, "assigned Node": assigned,
+		"transition": r.Transition, "Node": r.Node, "assigned Node": assigned,
 	} {
 		if err := identity.Validate(); err != nil {
 			return fmt.Errorf("validate %s identity: %w", field, err)
 		}
 	}
 	if r.Node != assigned {
-		return errors.New("handoff Node identity does not match this NodeActuator instance")
+		return errors.New("transition Node identity does not match this NodeActuator instance")
 	}
 	if r.Generation < 1 {
-		return errors.New("handoff generation must be positive")
+		return errors.New("transition generation must be positive")
 	}
 	for field, value := range map[string]string{
 		"deviceClass": r.DeviceClass, "powerMode": r.PowerMode,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("handoff %s is required without surrounding whitespace", field)
+			return fmt.Errorf("transition %s is required without surrounding whitespace", field)
 		}
 	}
 	if err := r.Target.Validate(); err != nil {
-		return fmt.Errorf("validate handoff target: %w", err)
+		return fmt.Errorf("validate transition target: %w", err)
 	}
 	if strings.TrimSpace(r.PolicyName) == "" || strings.TrimSpace(r.PolicyName) != r.PolicyName {
-		return errors.New("handoff policy identity is required without surrounding whitespace")
+		return errors.New("transition policy identity is required without surrounding whitespace")
 	}
 	if r.SettlingDurationSeconds < 1 || r.SettlingDurationSeconds > 86_400 {
-		return errors.New("handoff settling duration must be between 1 second and 24 hours")
+		return errors.New("transition settling duration must be between 1 second and 24 hours")
 	}
 	if r.MaxActuationDurationSeconds <= r.SettlingDurationSeconds ||
 		r.MaxActuationDurationSeconds > 86_400 {
-		return errors.New("handoff maximum duration must exceed settling and be at most 24 hours")
+		return errors.New("transition maximum duration must exceed settling and be at most 24 hours")
 	}
 	if r.StageRequestedAt.IsZero() || r.Deadline.IsZero() || !r.StageRequestedAt.Before(r.Deadline) {
-		return errors.New("handoff stage request and deadline are invalid")
+		return errors.New("transition stage request and deadline are invalid")
 	}
 	return nil
 }

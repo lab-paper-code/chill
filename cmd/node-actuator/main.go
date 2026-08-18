@@ -58,7 +58,7 @@ func main() {
 		setupLog.Error(err, "unable to start NodeActuator manager")
 		os.Exit(1)
 	}
-	if err := setupHandoffController(context.Background(), manager, opts); err != nil {
+	if err := setupTransitionController(context.Background(), manager, opts); err != nil {
 		setupLog.Error(err, "unable to register NodeActuation reconciler")
 		os.Exit(1)
 	}
