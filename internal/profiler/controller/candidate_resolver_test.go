@@ -604,7 +604,7 @@ declarations:
 }
 
 func validRuntimeDeclaration() string {
-	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha1","image":"` + testRuntimeImage + `","architecture":"amd64","runtime":{"family":"onnxruntime","backends":["CPUExecutionProvider"]},"verification":"exact-image-runtime-inspection-v1"}`
+	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"amd64","runtime":{"family":"onnxruntime","backends":["CPUExecutionProvider"]},"verification":"exact-image-runtime-inspection-v1"}`
 }
 
 func validRKNNRuntimeDeclaration() string {

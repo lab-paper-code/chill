@@ -19,11 +19,10 @@ import (
 )
 
 const (
-	executionFactsSchema             = "chill.dacs.io/profiler-execution-facts.v1alpha5"
-	runtimeDeclarationSchemaV1Alpha1 = "chill.dacs.io/runtime-declaration.v1alpha1"
-	runtimeDeclarationSchema         = "chill.dacs.io/runtime-declaration.v1alpha2"
-	artifactSupplySchema             = "chill.dacs.io/artifact-supply.v1alpha1"
-	trustedRuntimeInspection         = "exact-image-runtime-inspection-v1"
+	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha5"
+	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha2"
+	artifactSupplySchema     = "chill.dacs.io/artifact-supply.v1alpha1"
+	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
 )
 
 var artifactPath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
@@ -260,8 +259,7 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return runtimeDeclaration{}, errors.New("runtime producer declaration must contain exactly one JSON object")
 	}
-	if declaration.SchemaVersion != runtimeDeclarationSchema &&
-		declaration.SchemaVersion != runtimeDeclarationSchemaV1Alpha1 {
+	if declaration.SchemaVersion != runtimeDeclarationSchema {
 		return runtimeDeclaration{}, fmt.Errorf("unsupported runtime declaration schema %q", declaration.SchemaVersion)
 	}
 	for name, value := range map[string]string{
@@ -287,9 +285,6 @@ func decodeRuntimeDeclaration(source runtimeDeclarationSource) (runtimeDeclarati
 			return runtimeDeclaration{}, fmt.Errorf("duplicate runtime backend %q", backend)
 		}
 		seen[backend] = struct{}{}
-	}
-	if declaration.SchemaVersion == runtimeDeclarationSchemaV1Alpha1 && len(declaration.Packages) != 0 {
-		return runtimeDeclaration{}, errors.New("v1alpha1 runtime declaration cannot contain packages")
 	}
 	seenPackages := make(map[string]struct{}, len(declaration.Packages))
 	for _, pkg := range declaration.Packages {
