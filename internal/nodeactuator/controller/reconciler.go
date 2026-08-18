@@ -174,7 +174,7 @@ func (r *HandoffReconciler) synchronizeLeaseStatus(
 	record LeaseRecord,
 ) (bool, error) {
 	switch record.State {
-	case nodeactuator.LeaseHeld:
+	case nodeactuator.LockHeld:
 		if record.Name == "" || record.UID == "" {
 			return false, errors.New("held Node actuation Lease has incomplete identity")
 		}
@@ -190,7 +190,7 @@ func (r *HandoffReconciler) synchronizeLeaseStatus(
 		if *handoff.Status.Lease != want {
 			return false, errors.New("recorded Node actuation Lease identity differs from the held Lease")
 		}
-	case nodeactuator.LeaseNotHeld, nodeactuator.LeaseConflict:
+	case nodeactuator.LockNotHeld, nodeactuator.LockConflict:
 		if handoff.Status.Lease != nil {
 			if err := r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {
 				status.Lease = nil
@@ -244,7 +244,7 @@ func (r *HandoffReconciler) executeLeaseAction(
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("acquire or renew Node actuation Lease: %w", err)
 	}
-	if record.State != nodeactuator.LeaseHeld || record.Name == "" || record.UID == "" {
+	if record.State != nodeactuator.LockHeld || record.Name == "" || record.UID == "" {
 		return ctrl.Result{RequeueAfter: record.RetryAfter}, nil
 	}
 	err = r.patchStatus(ctx, handoff, func(status *edgev1alpha1.NodeActuationStatus) {

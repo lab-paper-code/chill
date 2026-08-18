@@ -30,31 +30,31 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	firstRequest := leaseTestRequest("handoff-a")
 	first, err := manager.AcquireOrRenew(ctx, firstRequest, now)
-	if err != nil || first.State != nodeactuator.LeaseHeld || first.RetryAfter != 10*time.Second || first.UID == "" {
+	if err != nil || first.State != nodeactuator.LockHeld || first.RetryAfter != 10*time.Second || first.UID == "" {
 		t.Fatalf("first acquire = %#v, error=%v", first, err)
 	}
 	lease, key := requireCreatedNodeLease(t, ctx, kubeClient, firstRequest)
 	observed, err := manager.Observe(ctx, firstRequest, now)
-	if err != nil || observed.State != nodeactuator.LeaseHeld || observed.RetryAfter != 10*time.Second {
+	if err != nil || observed.State != nodeactuator.LockHeld || observed.RetryAfter != 10*time.Second {
 		t.Fatalf("held observation = %#v, error=%v", observed, err)
 	}
 
 	secondRequest := leaseTestRequest("handoff-b")
 	conflict, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(5*time.Second))
-	if err != nil || conflict.State != nodeactuator.LeaseConflict || conflict.RetryAfter != 25*time.Second ||
+	if err != nil || conflict.State != nodeactuator.LockConflict || conflict.RetryAfter != 25*time.Second ||
 		conflict.HolderIdentity != first.HolderIdentity {
 		t.Fatalf("conflict = %#v, error=%v", conflict, err)
 	}
 	observed, err = manager.Observe(ctx, secondRequest, now.Add(5*time.Second))
-	if err != nil || observed.State != nodeactuator.LeaseConflict || observed.RetryAfter != 25*time.Second {
+	if err != nil || observed.State != nodeactuator.LockConflict || observed.RetryAfter != 25*time.Second {
 		t.Fatalf("conflict observation = %#v, error=%v", observed, err)
 	}
 	observed, err = manager.Observe(ctx, firstRequest, now.Add(31*time.Second))
-	if err != nil || observed.State != nodeactuator.LeaseLost {
+	if err != nil || observed.State != nodeactuator.LockLost {
 		t.Fatalf("expired holder observation = %#v, error=%v", observed, err)
 	}
 	taken, err := manager.AcquireOrRenew(ctx, secondRequest, now.Add(31*time.Second))
-	if err != nil || taken.State != nodeactuator.LeaseHeld || taken.HolderIdentity == first.HolderIdentity {
+	if err != nil || taken.State != nodeactuator.LockHeld || taken.HolderIdentity == first.HolderIdentity {
 		t.Fatalf("expired takeover = %#v, error=%v", taken, err)
 	}
 	if err := kubeClient.Get(ctx, key, lease); err != nil {
@@ -65,7 +65,7 @@ func TestNodeLeaseManagerSerializesOneNodeByUIDAndAllowsExpiredTakeover(t *testi
 		t.Fatalf("taken Lease = %#v", lease.Spec)
 	}
 	observed, err = manager.Observe(ctx, secondRequest, now.Add(31*time.Second))
-	if err != nil || observed.State != nodeactuator.LeaseHeld || observed.HolderIdentity != taken.HolderIdentity {
+	if err != nil || observed.State != nodeactuator.LockHeld || observed.HolderIdentity != taken.HolderIdentity {
 		t.Fatalf("takeover observation = %#v, error=%v", observed, err)
 	}
 }
@@ -123,7 +123,7 @@ func TestNodeLeaseManagerRenewsOnlyExactHolderAndRejectsNodeIdentityDrift(t *tes
 		t.Fatal(err)
 	}
 	renewed, err := manager.AcquireOrRenew(ctx, request, now.Add(5*time.Second))
-	if err != nil || renewed.State != nodeactuator.LeaseHeld {
+	if err != nil || renewed.State != nodeactuator.LockHeld {
 		t.Fatalf("renew = %#v, error=%v", renewed, err)
 	}
 	lease := &coordinationv1.Lease{}

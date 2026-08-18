@@ -29,11 +29,11 @@ func (l *recordingLeaseController) Observe(
 	time.Time,
 ) (LeaseRecord, error) {
 	l.observeCalls++
-	state := nodeactuator.LeaseNotHeld
+	state := nodeactuator.LockNotHeld
 	retry := time.Duration(0)
 	uid := ""
 	if l.held {
-		state, retry, uid = nodeactuator.LeaseHeld, 10*time.Second, "lease-uid"
+		state, retry, uid = nodeactuator.LockHeld, 10*time.Second, "lease-uid"
 	}
 	return LeaseRecord{
 		Name: "node-lease", UID: uid, HolderIdentity: "holder", State: state, RetryAfter: retry,
@@ -49,7 +49,7 @@ func (l *recordingLeaseController) AcquireOrRenew(
 	l.held = true
 	return LeaseRecord{
 		Name: "node-lease", UID: "lease-uid", HolderIdentity: "holder",
-		State: nodeactuator.LeaseHeld, RetryAfter: 10 * time.Second,
+		State: nodeactuator.LockHeld, RetryAfter: 10 * time.Second,
 	}, nil
 }
 

@@ -64,7 +64,7 @@ func ProjectSnapshot(
 		Request: request,
 		Now:     now,
 		Phase:   nodeactuator.Phase(handoff.Status.Phase),
-		Lease: nodeactuator.LeaseObservation{
+		Lock: nodeactuator.LockObservation{
 			State: lease.State, RetryAfter: lease.RetryAfter,
 		},
 		Safety: nodeactuator.SafetyUnknown,

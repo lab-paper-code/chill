@@ -43,7 +43,7 @@ type LeaseRecord struct {
 	Name           string
 	UID            string
 	HolderIdentity string
-	State          nodeactuator.LeaseState
+	State          nodeactuator.LockState
 	RetryAfter     time.Duration
 }
 
@@ -86,7 +86,7 @@ func (m *NodeLeaseManager) Observe(
 	key := types.NamespacedName{Namespace: m.options.Namespace, Name: name}
 	lease := &coordinationv1.Lease{}
 	if err := m.client.Get(ctx, key, lease); apierrors.IsNotFound(err) {
-		return LeaseRecord{Name: name, HolderIdentity: holder, State: nodeactuator.LeaseNotHeld}, nil
+		return LeaseRecord{Name: name, HolderIdentity: holder, State: nodeactuator.LockNotHeld}, nil
 	} else if err != nil {
 		return LeaseRecord{}, fmt.Errorf("get Node actuation Lease %s: %w", key, err)
 	}
@@ -103,21 +103,21 @@ func (m *NodeLeaseManager) Observe(
 	}
 	if currentHolder != holder {
 		if now.Before(expiresAt) {
-			record.State = nodeactuator.LeaseConflict
+			record.State = nodeactuator.LockConflict
 			record.RetryAfter = expiresAt.Sub(now)
 			return record, nil
 		}
-		record.State = nodeactuator.LeaseNotHeld
+		record.State = nodeactuator.LockNotHeld
 		return record, nil
 	}
 	if lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
 		return LeaseRecord{}, errors.New("Node actuation Lease holder identity does not match its handoff annotation")
 	}
 	if !now.Before(expiresAt) {
-		record.State = nodeactuator.LeaseLost
+		record.State = nodeactuator.LockLost
 		return record, nil
 	}
-	record.State = nodeactuator.LeaseHeld
+	record.State = nodeactuator.LockHeld
 	renewAt := expiresAt.Add(-time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second * 2 / 3)
 	if now.Before(renewAt) {
 		record.RetryAfter = renewAt.Sub(now)
@@ -159,7 +159,7 @@ func (m *NodeLeaseManager) AcquireOrRenew(
 	if currentHolder != holder && now.Before(expiresAt) {
 		return LeaseRecord{
 			Name: lease.Name, UID: string(lease.UID), HolderIdentity: currentHolder,
-			State: nodeactuator.LeaseConflict, RetryAfter: expiresAt.Sub(now),
+			State: nodeactuator.LockConflict, RetryAfter: expiresAt.Sub(now),
 		}, nil
 	}
 	if currentHolder == holder && lease.Annotations[leaseHandoffUIDAnnotation] != request.Handoff.UID {
@@ -293,7 +293,7 @@ func heldLeaseBinding(
 ) LeaseRecord {
 	return LeaseRecord{
 		Name: lease.Name, UID: string(lease.UID), HolderIdentity: holder,
-		State:      nodeactuator.LeaseHeld,
+		State:      nodeactuator.LockHeld,
 		RetryAfter: time.Duration(durationSeconds) * time.Second / 3,
 	}
 }

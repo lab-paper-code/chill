@@ -22,13 +22,13 @@ const (
 	PhaseFailed            Phase = "Failed"
 )
 
-type LeaseState string
+type LockState string
 
 const (
-	LeaseNotHeld  LeaseState = "NotHeld"
-	LeaseHeld     LeaseState = "Held"
-	LeaseConflict LeaseState = "Conflict"
-	LeaseLost     LeaseState = "Lost"
+	LockNotHeld  LockState = "NotHeld"
+	LockHeld     LockState = "Held"
+	LockConflict LockState = "Conflict"
+	LockLost     LockState = "Lost"
 )
 
 type SafetyState string
@@ -88,8 +88,8 @@ func (o Observation) Validate() error {
 	return nil
 }
 
-type LeaseObservation struct {
-	State      LeaseState
+type LockObservation struct {
+	State      LockState
 	RetryAfter time.Duration
 }
 
@@ -103,7 +103,7 @@ type Snapshot struct {
 	Request             Request
 	Now                 time.Time
 	Phase               Phase
-	Lease               LeaseObservation
+	Lock                LockObservation
 	Safety              SafetyState
 	SafetyObservedAt    *time.Time
 	PreviousObservation *Observation
@@ -127,7 +127,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 		return Decision{}, err
 	}
 	if snapshot.Phase == PhaseReady || snapshot.Phase == PhaseFailed {
-		if snapshot.Lease.State == LeaseHeld {
+		if snapshot.Lock.State == LockHeld {
 			return Decision{Action: ActionReleaseLease, Failure: snapshot.Failure}, nil
 		}
 		return Decision{Action: ActionComplete, Failure: snapshot.Failure}, nil
@@ -139,13 +139,13 @@ func Decide(snapshot Snapshot) (Decision, error) {
 		}
 		return Decision{Action: ActionMarkFailed, Failure: failure}, nil
 	}
-	if snapshot.Lease.State != LeaseHeld {
-		if snapshot.Lease.State == LeaseConflict {
-			return Decision{Action: ActionWaitForLease, RequeueAfter: snapshot.Lease.RetryAfter}, nil
+	if snapshot.Lock.State != LockHeld {
+		if snapshot.Lock.State == LockConflict {
+			return Decision{Action: ActionWaitForLease, RequeueAfter: snapshot.Lock.RetryAfter}, nil
 		}
 		return Decision{Action: ActionAcquireLease}, nil
 	}
-	if snapshot.Lease.RetryAfter == 0 {
+	if snapshot.Lock.RetryAfter == 0 {
 		return Decision{Action: ActionRenewLease}, nil
 	}
 	if snapshot.Safety == SafetyBlocked {
@@ -196,7 +196,7 @@ func decideHeldPhase(snapshot Snapshot) (Decision, error) {
 		settledAt := snapshot.SettlingStartedAt.Add(time.Duration(snapshot.Request.SettlingDurationSeconds) * time.Second)
 		if snapshot.Now.Before(settledAt) {
 			return Decision{Action: ActionWaitForSettling, RequeueAfter: earliestRequeue(
-				settledAt.Sub(snapshot.Now), snapshot.Lease.RetryAfter,
+				settledAt.Sub(snapshot.Now), snapshot.Lock.RetryAfter,
 				snapshot.Request.Deadline.Sub(snapshot.Now),
 			)}, nil
 		}
@@ -217,8 +217,8 @@ func (s Snapshot) Validate() error {
 	if !validPhase(s.Phase) {
 		return fmt.Errorf("unsupported actuation phase %q", s.Phase)
 	}
-	if !validLeaseObservation(s.Lease) {
-		return errors.New("invalid Lease observation")
+	if !validLockObservation(s.Lock) {
+		return errors.New("invalid lock observation")
 	}
 	if s.Safety != "" && s.Safety != SafetyUnknown && s.Safety != SafetyAllowed && s.Safety != SafetyBlocked {
 		return fmt.Errorf("unsupported safety observation %q", s.Safety)
@@ -268,11 +268,11 @@ func validPhase(phase Phase) bool {
 	}
 }
 
-func validLeaseObservation(observation LeaseObservation) bool {
+func validLockObservation(observation LockObservation) bool {
 	switch observation.State {
-	case LeaseNotHeld, LeaseLost:
+	case LockNotHeld, LockLost:
 		return observation.RetryAfter == 0
-	case LeaseHeld, LeaseConflict:
+	case LockHeld, LockConflict:
 		return observation.RetryAfter >= 0
 	default:
 		return false

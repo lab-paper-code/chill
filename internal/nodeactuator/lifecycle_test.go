@@ -19,7 +19,7 @@ func TestDecideHappyPathKeepsApplyAndTargetReadBackSeparate(t *testing.T) {
 		mutate func(*Snapshot)
 		want   Action
 	}{
-		{name: "acquire Node Lease", mutate: func(s *Snapshot) { s.Lease = LeaseObservation{State: LeaseNotHeld} }, want: ActionAcquireLease},
+		{name: "acquire Node Lease", mutate: func(s *Snapshot) { s.Lock = LockObservation{State: LockNotHeld} }, want: ActionAcquireLease},
 		{name: "check safety after Lease", mutate: func(s *Snapshot) { s.Phase = PhasePending }, want: ActionCheckSafety},
 		{name: "repeat unknown safety", mutate: func(s *Snapshot) {
 			s.Phase = PhaseCheckingSafety
@@ -64,7 +64,7 @@ func TestDecideHappyPathKeepsApplyAndTargetReadBackSeparate(t *testing.T) {
 			s.Phase = PhaseReady
 			s.PreviousObservation = &previous
 			s.TargetObservation = &target
-			s.Lease = LeaseObservation{State: LeaseNotHeld}
+			s.Lock = LockObservation{State: LockNotHeld}
 		}, want: ActionComplete},
 	}
 	for _, test := range tests {
@@ -151,7 +151,7 @@ func TestDecideRenewsHeldLeaseAndReleasesItAfterFailure(t *testing.T) {
 	t.Parallel()
 	snapshot := validSnapshot()
 	snapshot.Phase = PhaseApplying
-	snapshot.Lease.RetryAfter = 0
+	snapshot.Lock.RetryAfter = 0
 	decision, err := Decide(snapshot)
 	if err != nil || decision.Action != ActionRenewLease {
 		t.Fatalf("renew decision = %#v, error=%v", decision, err)
@@ -161,7 +161,7 @@ func TestDecideRenewsHeldLeaseAndReleasesItAfterFailure(t *testing.T) {
 	snapshot.Failure = &Failure{
 		Stage: FailureStageApply, Reason: "TargetApplyFailed", Message: "apply did not complete",
 	}
-	snapshot.Lease.RetryAfter = time.Second
+	snapshot.Lock.RetryAfter = time.Second
 	decision, err = Decide(snapshot)
 	if err != nil || decision.Action != ActionReleaseLease || decision.Failure != snapshot.Failure {
 		t.Fatalf("failure decision = %#v, error=%v", decision, err)
@@ -177,7 +177,7 @@ func TestDecideCompletesFailureWithoutReacquiringLease(t *testing.T) {
 	snapshot.Failure = &Failure{
 		Stage: FailureStageApply, Reason: "ApplyFailed", Message: "target command failed",
 	}
-	snapshot.Lease = LeaseObservation{State: LeaseLost}
+	snapshot.Lock = LockObservation{State: LockLost}
 	decision, err := Decide(snapshot)
 	if err != nil || decision.Action != ActionComplete || decision.Failure != snapshot.Failure {
 		t.Fatalf("terminal failure decision = %#v, error=%v", decision, err)
@@ -187,7 +187,7 @@ func TestDecideCompletesFailureWithoutReacquiringLease(t *testing.T) {
 func TestDecideWaitsOnConflictingLeaseWithoutCrossingHostBoundary(t *testing.T) {
 	t.Parallel()
 	snapshot := validSnapshot()
-	snapshot.Lease = LeaseObservation{State: LeaseConflict, RetryAfter: 7 * time.Second}
+	snapshot.Lock = LockObservation{State: LockConflict, RetryAfter: 7 * time.Second}
 	decision, err := Decide(snapshot)
 	if err != nil || decision.Action != ActionWaitForLease || decision.RequeueAfter != 7*time.Second {
 		t.Fatalf("conflict decision = %#v, error=%v", decision, err)
@@ -201,7 +201,7 @@ func TestSettlingWaitNeverOutlivesLeaseRenewal(t *testing.T) {
 	verified := snapshot.Now
 	snapshot.VerifiedAt = &verified
 	snapshot.SettlingStartedAt = &verified
-	snapshot.Lease.RetryAfter = 10 * time.Second
+	snapshot.Lock.RetryAfter = 10 * time.Second
 	decision, err := Decide(snapshot)
 	if err != nil || decision.Action != ActionWaitForSettling || decision.RequeueAfter != 10*time.Second {
 		t.Fatalf("settling decision = %#v, error=%v", decision, err)
@@ -221,7 +221,7 @@ func validSnapshot() Snapshot {
 			Deadline: now.Add(15 * time.Minute), StageRequestedAt: now,
 		},
 		Now: now, Phase: PhasePending,
-		Lease:  LeaseObservation{State: LeaseHeld, RetryAfter: 10 * time.Second},
+		Lock:   LockObservation{State: LockHeld, RetryAfter: 10 * time.Second},
 		Safety: SafetyAllowed, SafetyObservedAt: &now,
 	}
 }
