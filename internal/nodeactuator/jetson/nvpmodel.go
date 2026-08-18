@@ -125,8 +125,8 @@ func (a *NVPModel) Apply(
 		return nil
 	}
 
-	identifier := strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10)
-	output, commandErr := a.run(ctx, request, "-m", identifier)
+	modeID := strconv.FormatInt(int64(target.JetsonNVPModel.ID), 10)
+	output, commandErr := a.run(ctx, request, "-m", modeID)
 	if commandErr == nil {
 		return nil
 	}
@@ -136,16 +136,16 @@ func (a *NVPModel) Apply(
 
 	// The mode is established at boot. Record it as the mode to come up in,
 	// then restart the Node so the boot establishes it.
-	forceOutput, forceErr := a.run(ctx, request, "--force", "-m", identifier)
+	forceOutput, forceErr := a.run(ctx, request, "--force", "-m", modeID)
 	if forceErr != nil {
 		return commandError("record NVPModel target", forceErr, forceOutput)
 	}
 	if err := a.restartNode(); err != nil {
-		return fmt.Errorf("restart the Node to establish NVPModel mode %s: %w", identifier, err)
+		return fmt.Errorf("restart the Node to establish NVPModel mode %s: %w", modeID, err)
 	}
 	// Reached only if the restart returned without restarting anything, which
 	// would leave the mode recorded and unestablished. Never report success.
-	return fmt.Errorf("restart to establish NVPModel mode %s returned without restarting the Node", identifier)
+	return fmt.Errorf("restart to establish NVPModel mode %s returned without restarting the Node", modeID)
 }
 
 func (a *NVPModel) run(
