@@ -7,6 +7,8 @@ The current repo is an early scaffold. Public implementation decisions live in:
 - `docs/adr/`
 
 The design-document entry point is [`docs/design/README.md`](docs/design/README.md).
+The production package map and layer vocabulary are in
+[`internal/README.md`](internal/README.md).
 
 Detailed research notes and unpublished design context are kept outside the public repository.
 
