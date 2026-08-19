@@ -394,6 +394,8 @@ bounded MetricObserver helper
 
 profile derivation
         -> bounded power-window integration leaf
+
+transition-cost derivation -> bounded power-window integration leaf
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or

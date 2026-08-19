@@ -50,6 +50,7 @@ components:
   node-actuator-jetson: { in: internal/nodeactuator/jetson }
   profile-derivation: { in: internal/profiling/derivation }
   power-window: { in: internal/profiling/powerwindow }
+  transition-cost-core: { in: internal/profiling/transitioncost }
   profiling-run: { in: internal/profiling/run }
   profiler-app: { in: internal/profiling/profiler }
   profiler-controller: { in: internal/profiling/profiler/controller }
@@ -169,6 +170,9 @@ deps:
       - power-window
   power-window:
     anyVendorDeps: true
+  transition-cost-core:
+    mayDependOn:
+      - power-window
   profiling-run:
     anyVendorDeps: true
 

@@ -32,6 +32,7 @@ components=(
   node-actuator-jetson
   profile-derivation
   power-window
+  transition-cost-core
   profiling-run
   profiler-app
   profiler-controller
@@ -73,6 +74,7 @@ component_for() {
     internal/nodeactuator/jetson) echo node-actuator-jetson ;;
     internal/profiling/derivation) echo profile-derivation ;;
     internal/profiling/powerwindow) echo power-window ;;
+    internal/profiling/transitioncost) echo transition-cost-core ;;
     internal/profiling/run) echo profiling-run ;;
     internal/profiling/profiler) echo profiler-app ;;
     internal/profiling/profiler/controller) echo profiler-controller ;;
