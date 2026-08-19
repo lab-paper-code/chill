@@ -83,19 +83,15 @@ func NewCurvePlanSource(
 	}, nil
 }
 
-// Resolve recomputes the selected plan and records it immutably. When the
-// object already exists, the stored plan remains authoritative and is returned
-// with its observed reference only after it agrees semantically with the
-// recomputed plan.
-func (s *CurvePlanSource) Resolve(
+// Project resolves the plan a campaign selects without recording it, so a
+// caller that only needs to know whether the intent resolves does not write to
+// the Evidence Store.
+func (s *CurvePlanSource) Project(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchSaturation,
-) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *TransitionMaterial, error) {
+) (profilederivation.CurvePlan, *TransitionMaterial, error) {
 	if parent == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("a parent BatchSaturation is required")
-	}
-	if parent.UID == "" {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("BatchSaturation UID is required")
+		return profilederivation.CurvePlan{}, nil, errors.New("a parent BatchSaturation is required")
 	}
 
 	selection := profiler.CandidateSelection{
@@ -106,15 +102,15 @@ func (s *CurvePlanSource) Resolve(
 	}
 	resolved, err := s.resolver.ResolveCandidate(ctx, selection)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
 	}
 	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
 	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+		return profilederivation.CurvePlan{}, nil, err
 	}
 
 	active, err := s.prepare(ctx, parent, batchsaturation.Measurement{
@@ -122,32 +118,32 @@ func (s *CurvePlanSource) Resolve(
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
 	}
 	if active.Intent.State.Artifact != report.Selection.Artifact {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
+		return profilederivation.CurvePlan{}, nil, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
 	}
 	transition, err := projectTransitionMaterial(active)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("project campaign transition: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project campaign transition: %w", err)
 	}
 	idle, err := s.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
 	}
 	artifact, err := s.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+		return profilederivation.CurvePlan{}, nil, err
 	}
 	conversion, err := resolveConversion(artifact, report)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+		return profilederivation.CurvePlan{}, nil, err
 	}
 	if artifact.Input == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil,
+		return profilederivation.CurvePlan{}, nil,
 			&ArtifactInputContractMissingError{Artifact: artifact.Name}
 	}
 	capability := profilingrun.CandidateArtifactCapability{
@@ -170,11 +166,32 @@ func (s *CurvePlanSource) Resolve(
 		plannedBatchSizes,
 	)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("project curve-plan specification: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project curve-plan specification: %w", err)
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, fmt.Errorf("construct curve plan: %w", err)
+		return profilederivation.CurvePlan{}, nil, fmt.Errorf("construct curve plan: %w", err)
+	}
+	return plan, transition, nil
+}
+
+// Resolve recomputes the selected plan and records it immutably. When the
+// object already exists, the stored plan remains authoritative and is returned
+// with its observed reference only after it agrees semantically with the
+// recomputed plan.
+func (s *CurvePlanSource) Resolve(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchSaturation,
+) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *TransitionMaterial, error) {
+	if parent == nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("a parent BatchSaturation is required")
+	}
+	if parent.UID == "" {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("BatchSaturation UID is required")
+	}
+	plan, transition, err := s.Project(ctx, parent)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
 	}
 	recorded, reference, err := s.record(ctx, parent.UID, plan)
 	return recorded, reference, transition, err
