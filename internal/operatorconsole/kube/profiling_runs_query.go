@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -8,17 +8,9 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// ProfilingRunsSnapshot is one namespaced or all-namespaces LIST response. An
-// empty Namespace means all namespaces; it does not imply ChillSystem ownership.
-type ProfilingRunsSnapshot struct {
-	ReadAt          time.Time
-	ResourceVersion string
-	Namespace       string
-	Runs            []edgev1alpha1.ProfilingRun
-}
 
 // KubernetesProfilingRunsQuery reads ProfilingRuns without caching or
 // inferring an owning ChillSystem from their namespace.
@@ -35,14 +27,14 @@ func NewKubernetesProfilingRunsQuery(reader client.Reader, namespace string) (*K
 	return &KubernetesProfilingRunsQuery{reader: reader, namespace: namespace, now: time.Now}, nil
 }
 
-func (q *KubernetesProfilingRunsQuery) Read(ctx context.Context) (ProfilingRunsSnapshot, error) {
+func (q *KubernetesProfilingRunsQuery) Read(ctx context.Context) (operatorconsole.ProfilingRunsSnapshot, error) {
 	runs := &edgev1alpha1.ProfilingRunList{}
 	options := make([]client.ListOption, 0, 1)
 	if q.namespace != "" {
 		options = append(options, client.InNamespace(q.namespace))
 	}
 	if err := q.reader.List(ctx, runs, options...); err != nil {
-		return ProfilingRunsSnapshot{}, fmt.Errorf("list ProfilingRuns: %w", err)
+		return operatorconsole.ProfilingRunsSnapshot{}, fmt.Errorf("list ProfilingRuns: %w", err)
 	}
 
 	sort.Slice(runs.Items, func(i, j int) bool {
@@ -50,7 +42,7 @@ func (q *KubernetesProfilingRunsQuery) Read(ctx context.Context) (ProfilingRunsS
 		right := runs.Items[j].Namespace + "\x00" + runs.Items[j].Name
 		return left < right
 	})
-	return ProfilingRunsSnapshot{
+	return operatorconsole.ProfilingRunsSnapshot{
 		ReadAt: q.now().UTC(), ResourceVersion: runs.ResourceVersion,
 		Namespace: q.namespace, Runs: runs.Items,
 	}, nil

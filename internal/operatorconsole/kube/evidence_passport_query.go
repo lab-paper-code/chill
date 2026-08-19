@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,16 +29,6 @@ type VerifiedEvidenceLoader interface {
 		*edgev1alpha1.ProfilingRun,
 		evidencestore.ObjectIdentity,
 	) (VerifiedEvidenceView, error)
-}
-
-// EvidencePassportSnapshot joins one ProfilingRun control-plane record with
-// the verified immutable evidence it references. It is a read-time projection,
-// not a second persisted copy of either source.
-type EvidencePassportSnapshot struct {
-	ReadAt      time.Time
-	Run         edgev1alpha1.ProfilingRun
-	Execution   profilerevidence.ExecutionEvidence
-	Measurement profilerevidence.RawMeasurement
 }
 
 // KubernetesEvidencePassportQuery exact-reads a ProfilingRun and follows only
@@ -62,31 +53,31 @@ func NewKubernetesEvidencePassportQuery(
 func (q *KubernetesEvidencePassportQuery) Read(
 	ctx context.Context,
 	namespace, name string,
-) (EvidencePassportSnapshot, error) {
+) (operatorconsole.EvidencePassportSnapshot, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(namespace) != namespace ||
 		strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return EvidencePassportSnapshot{}, errors.New("ProfilingRun namespace and name are required without surrounding whitespace")
+		return operatorconsole.EvidencePassportSnapshot{}, errors.New("ProfilingRun namespace and name are required without surrounding whitespace")
 	}
 
 	run := &edgev1alpha1.ProfilingRun{}
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	if err := q.reader.Get(ctx, key, run); err != nil {
-		return EvidencePassportSnapshot{}, fmt.Errorf("get ProfilingRun %s: %w", key, err)
+		return operatorconsole.EvidencePassportSnapshot{}, fmt.Errorf("get ProfilingRun %s: %w", key, err)
 	}
 	reference, err := evidenceIdentity(run.Status.Evidence)
 	if err != nil {
-		return EvidencePassportSnapshot{}, fmt.Errorf("read ProfilingRun %s evidence reference: %w", key, err)
+		return operatorconsole.EvidencePassportSnapshot{}, fmt.Errorf("read ProfilingRun %s evidence reference: %w", key, err)
 	}
 	verified, err := q.loader.Load(ctx, run, reference)
 	if err != nil {
-		return EvidencePassportSnapshot{}, fmt.Errorf("load ProfilingRun %s evidence: %w", key, err)
+		return operatorconsole.EvidencePassportSnapshot{}, fmt.Errorf("load ProfilingRun %s evidence: %w", key, err)
 	}
 	execution, measurement, err := verified.Records()
 	if err != nil {
-		return EvidencePassportSnapshot{}, fmt.Errorf("project ProfilingRun %s verified evidence: %w", key, err)
+		return operatorconsole.EvidencePassportSnapshot{}, fmt.Errorf("project ProfilingRun %s verified evidence: %w", key, err)
 	}
 
-	return EvidencePassportSnapshot{
+	return operatorconsole.EvidencePassportSnapshot{
 		ReadAt: q.now().UTC(), Run: *run.DeepCopy(), Execution: execution, Measurement: measurement,
 	}, nil
 }

@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -171,7 +171,7 @@ func passportFixture() (
 		Size: 1024,
 	}
 	run := &edgev1alpha1.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
 			IntentFrozen: true,
 			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
@@ -188,8 +188,8 @@ func passportFixture() (
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
 		Terminal: profilerevidence.TerminalFacts{
-			Job:  profilerevidence.JobTerminalFacts{Namespace: "chill-system", Name: "job", UID: "job-uid"},
-			Pod:  profilerevidence.PodTerminalFacts{Namespace: "chill-system", Name: "pod", UID: "pod-uid"},
+			Job:  profilerevidence.JobTerminalFacts{Namespace: consoleTestNamespace, Name: "job", UID: "job-uid"},
+			Pod:  profilerevidence.PodTerminalFacts{Namespace: consoleTestNamespace, Name: "pod", UID: "pod-uid"},
 			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
 		},
 	}

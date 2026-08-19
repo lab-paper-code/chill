@@ -10,6 +10,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// BatchSaturationResultSnapshot joins one BatchSaturation control-plane record
+// with the immutable terminal result it references. It is a read-time
+// projection, not a second persisted copy of either source.
+type BatchSaturationResultSnapshot struct {
+	ReadAt   time.Time
+	Campaign edgev1alpha1.BatchSaturation
+	Result   batchsaturation.ResultRecord
+}
+
+// ErrBatchSaturationResultUnavailable indicates that a campaign has not
+// published its terminal result reference.
+var ErrBatchSaturationResultUnavailable = errors.New("terminal result is not available")
+
 const BatchSaturationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
 
 // BatchSaturationResult is the bounded read model for one finished campaign.

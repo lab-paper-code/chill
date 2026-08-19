@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -14,16 +14,16 @@ import (
 )
 
 func TestNewKubernetesProfilingRunsQueryRequiresReader(t *testing.T) {
-	if _, err := NewKubernetesProfilingRunsQuery(nil, "chill-system"); err == nil {
+	if _, err := NewKubernetesProfilingRunsQuery(nil, consoleTestNamespace); err == nil {
 		t.Fatal("NewKubernetesProfilingRunsQuery() error = nil")
 	}
 }
 
 func TestKubernetesProfilingRunsQueryReadsSelectedNamespace(t *testing.T) {
 	scheme := inventoryScheme(t)
-	runB := &edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run-b"}}
+	runB := &edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run-b"}}
 	runA := &edgev1alpha1.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run-a", UID: "run-uid", Generation: 2},
+		ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run-a", UID: "run-uid", Generation: 2},
 		Status:     edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 2, IntentFrozen: true},
 	}
 	foreign := &edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "foreign"}}
@@ -31,7 +31,7 @@ func TestKubernetesProfilingRunsQueryReadsSelectedNamespace(t *testing.T) {
 		Reader:          fake.NewClientBuilder().WithScheme(scheme).WithObjects(runB, runA, foreign).Build(),
 		resourceVersion: "runs-rv",
 	}
-	query, err := NewKubernetesProfilingRunsQuery(reader, "chill-system")
+	query, err := NewKubernetesProfilingRunsQuery(reader, consoleTestNamespace)
 	if err != nil {
 		t.Fatalf("NewKubernetesProfilingRunsQuery() error = %v", err)
 	}
@@ -42,7 +42,7 @@ func TestKubernetesProfilingRunsQueryReadsSelectedNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if !got.ReadAt.Equal(readAt.UTC()) || got.ResourceVersion != "runs-rv" || got.Namespace != "chill-system" {
+	if !got.ReadAt.Equal(readAt.UTC()) || got.ResourceVersion != "runs-rv" || got.Namespace != consoleTestNamespace {
 		t.Fatalf("snapshot metadata = %v, %q, %q", got.ReadAt, got.ResourceVersion, got.Namespace)
 	}
 	if len(got.Runs) != 2 || got.Runs[0].Name != "run-a" || got.Runs[1].Name != "run-b" ||
@@ -73,7 +73,7 @@ func TestKubernetesProfilingRunsQueryReadsAllNamespaces(t *testing.T) {
 
 func TestKubernetesProfilingRunsQueryReportsReadFailure(t *testing.T) {
 	want := errors.New("API unavailable")
-	query, err := NewKubernetesProfilingRunsQuery(&failingSystemReader{err: want}, "chill-system")
+	query, err := NewKubernetesProfilingRunsQuery(&failingSystemReader{err: want}, consoleTestNamespace)
 	if err != nil {
 		t.Fatalf("NewKubernetesProfilingRunsQuery() error = %v", err)
 	}

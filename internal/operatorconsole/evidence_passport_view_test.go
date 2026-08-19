@@ -6,16 +6,19 @@ import (
 	"testing"
 	"time"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	t.Parallel()
 	const rawObjectKey = "raw.json"
-	run, _, execution := passportFixture()
+	run, execution := passportFixture()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	execution.FinalizedAt = started.Add(time.Minute)
 	execution.RawMeasurement.Store = "chill-evidence"
@@ -141,7 +144,7 @@ func testThermalReading(available, active, latched bool, events uint64, temperat
 
 func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 	t.Parallel()
-	run, _, execution := passportFixture()
+	run, execution := passportFixture()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	passport, err := BuildEvidencePassport(EvidencePassportSnapshot{
 		ReadAt:    started,
@@ -164,4 +167,37 @@ func TestBuildEvidencePassportRepresentsNoSuccessfulPowerSamples(t *testing.T) {
 	if passport.Measurement.Power.Watts != nil || passport.Measurement.Power.Failures != 1 {
 		t.Fatalf("power facts = %#v", passport.Measurement.Power)
 	}
+}
+
+// passportFixture builds the minimum verified evidence this projection
+// accepts. The adapter package keeps its own copy for its own reasons.
+func passportFixture() (*edgev1alpha1.ProfilingRun, profilerevidence.ExecutionEvidence) {
+	identity := evidencestore.ObjectIdentity{
+		Store: "chill-evidence", Key: "profiling-runs/run/execution.json",
+		Size: 1024,
+	}
+	run := &edgev1alpha1.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run", UID: "run-uid"},
+		Status: edgev1alpha1.ProfilingRunStatus{
+			IntentFrozen: true,
+			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
+				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
+				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
+			},
+			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
+				Store: identity.Store, Key: identity.Key,
+				Size: identity.Size, SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+			},
+		},
+	}
+	execution := profilerevidence.ExecutionEvidence{
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
+		Terminal: profilerevidence.TerminalFacts{
+			Job:  profilerevidence.JobTerminalFacts{Namespace: consoleTestNamespace, Name: "job", UID: "job-uid"},
+			Pod:  profilerevidence.PodTerminalFacts{Namespace: consoleTestNamespace, Name: "pod", UID: "pod-uid"},
+			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
+		},
+	}
+	return run, execution
 }

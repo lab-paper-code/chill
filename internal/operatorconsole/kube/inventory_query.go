@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -9,21 +9,10 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// InventorySnapshot is one read-through projection from three authoritative
-// Kubernetes LIST responses. Their resource versions are kept separately;
-// this type does not claim an atomic cross-resource snapshot.
-type InventorySnapshot struct {
-	ReadAt                       time.Time
-	DeviceClassesResourceVersion string
-	NodesResourceVersion         string
-	ModelSpecsResourceVersion    string
-	Classes                      []deviceclass.InventoryClass
-	Models                       []edgev1alpha1.ModelSpec
-}
 
 // KubernetesInventoryQuery reads inventory authorities without caching or
 // persisting a duplicate status surface.
@@ -42,29 +31,29 @@ func NewKubernetesInventoryQuery(reader client.Reader) (*KubernetesInventoryQuer
 // Read lists DeviceClasses, live Nodes, and declared ModelSpecs. It applies
 // Kubernetes label selector semantics only to the class-to-Node projection;
 // it does not infer model compatibility.
-func (q *KubernetesInventoryQuery) Read(ctx context.Context) (InventorySnapshot, error) {
+func (q *KubernetesInventoryQuery) Read(ctx context.Context) (operatorconsole.InventorySnapshot, error) {
 	classes := &edgev1alpha1.DeviceClassList{}
 	if err := q.reader.List(ctx, classes); err != nil {
-		return InventorySnapshot{}, fmt.Errorf("list DeviceClasses for inventory: %w", err)
+		return operatorconsole.InventorySnapshot{}, fmt.Errorf("list DeviceClasses for inventory: %w", err)
 	}
 
 	nodes := &corev1.NodeList{}
 	if err := q.reader.List(ctx, nodes); err != nil {
-		return InventorySnapshot{}, fmt.Errorf("list Nodes for inventory: %w", err)
+		return operatorconsole.InventorySnapshot{}, fmt.Errorf("list Nodes for inventory: %w", err)
 	}
 
 	models := &edgev1alpha1.ModelSpecList{}
 	if err := q.reader.List(ctx, models); err != nil {
-		return InventorySnapshot{}, fmt.Errorf("list ModelSpecs for inventory: %w", err)
+		return operatorconsole.InventorySnapshot{}, fmt.Errorf("list ModelSpecs for inventory: %w", err)
 	}
 
 	projected, err := deviceclass.ProjectInventory(classes.Items, nodes.Items)
 	if err != nil {
-		return InventorySnapshot{}, fmt.Errorf("project inventory: %w", err)
+		return operatorconsole.InventorySnapshot{}, fmt.Errorf("project inventory: %w", err)
 	}
 	sort.Slice(models.Items, func(i, j int) bool { return models.Items[i].Name < models.Items[j].Name })
 
-	return InventorySnapshot{
+	return operatorconsole.InventorySnapshot{
 		ReadAt:                       q.now().UTC(),
 		DeviceClassesResourceVersion: classes.ResourceVersion,
 		NodesResourceVersion:         nodes.ResourceVersion,

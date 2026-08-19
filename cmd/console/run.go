@@ -12,7 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 	"github.com/lab-paper-code/chill/internal/operatorconsole/readapi"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
@@ -27,7 +27,7 @@ func (l consoleEvidenceLoader) Load(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	reference evidencestore.ObjectIdentity,
-) (operatorconsole.VerifiedEvidenceView, error) {
+) (consolekube.VerifiedEvidenceView, error) {
 	return l.retained.Load(ctx, run, reference)
 }
 
@@ -49,7 +49,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
 	}
-	query, err := operatorconsole.NewKubernetesEvidencePassportQuery(
+	query, err := consolekube.NewKubernetesEvidencePassportQuery(
 		reader,
 		consoleEvidenceLoader{retained: loader},
 	)
@@ -65,7 +65,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Store resolver: %w", err)
 	}
-	results, err := operatorconsole.NewKubernetesBatchSaturationResultQuery(
+	results, err := consolekube.NewKubernetesBatchSaturationResultQuery(
 		reader,
 		campaignResultObjectReader{
 			reader: reader, resolver: resolver,

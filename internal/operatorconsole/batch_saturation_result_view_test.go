@@ -7,13 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
 )
 
 func TestBuildBatchSaturationResultJoinsDeclaredStateWithTheSealedRecord(t *testing.T) {
 	t.Parallel()
-	campaign, identity, record, _ := campaignResultFixture(t)
+	campaign, identity, record := campaignResultFixture(t)
 	campaign.Spec = edgev1alpha1.BatchSaturationSpec{
 		State: edgev1alpha1.MeasurementStateSpec{
 			TargetNode: "jetsono",
@@ -58,7 +61,7 @@ func TestBuildBatchSaturationResultJoinsDeclaredStateWithTheSealedRecord(t *test
 
 func TestBuildBatchSaturationResultPassesDetailThroughUninterpreted(t *testing.T) {
 	t.Parallel()
-	campaign, _, _, _ := campaignResultFixture(t)
+	campaign, _, _ := campaignResultFixture(t)
 	// A detail shape the Console has never seen must survive untouched, because
 	// a later measurement method may publish one.
 	detail := json.RawMessage(`{"method":"not-yet-invented","points":[{"batch":7,"value":1.5}]}`)
@@ -101,7 +104,7 @@ func TestBuildBatchSaturationResultPassesDetailThroughUninterpreted(t *testing.T
 
 func TestBuildBatchSaturationResultRejectsAnIncompleteSnapshot(t *testing.T) {
 	t.Parallel()
-	campaign, _, record, _ := campaignResultFixture(t)
+	campaign, _, record := campaignResultFixture(t)
 	tests := map[string]struct {
 		snapshot BatchSaturationResultSnapshot
 		match    string
@@ -133,7 +136,7 @@ func TestBuildBatchSaturationResultRejectsAnIncompleteSnapshot(t *testing.T) {
 
 func TestBuildBatchSaturationResultDoesNotAliasTheCampaign(t *testing.T) {
 	t.Parallel()
-	campaign, _, record, _ := campaignResultFixture(t)
+	campaign, _, record := campaignResultFixture(t)
 	view, err := BuildBatchSaturationResult(BatchSaturationResultSnapshot{
 		ReadAt: time.Now(), Campaign: *campaign, Result: record,
 	})
@@ -144,4 +147,68 @@ func TestBuildBatchSaturationResultDoesNotAliasTheCampaign(t *testing.T) {
 	if campaign.Spec.State.TargetNode == "aliased-node" {
 		t.Fatal("view aliases the campaign spec")
 	}
+}
+
+// campaignResultFixture builds the record through its own constructor so the
+// fixture cannot drift from the schema the decoder accepts.
+func campaignResultFixture(t *testing.T) (
+	*edgev1alpha1.BatchSaturation,
+	evidencestore.ObjectIdentity,
+	batchsaturation.ResultRecord,
+) {
+	t.Helper()
+	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
+		Outcome: "Stopped/NoFurtherImprovement",
+		CurvePlan: batchsaturation.StoredObjectReference{
+			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,
+		},
+		AdmittedTrials: []batchsaturation.AdmittedTrialReference{{
+			Run: batchsaturation.RunReference{
+				Namespace: "chill-system", Name: "campaign-active-b1-a1", UID: "run-uid",
+			},
+			Measurement: batchsaturation.ResultMeasurement{
+				WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
+			},
+			Evidence: batchsaturation.StoredObjectReference{
+				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha8", Size: 23188,
+			},
+		}},
+		ExcludedTrials: []batchsaturation.ExcludedTrialReference{{
+			Run: batchsaturation.RunReference{
+				Namespace: "chill-system", Name: "campaign-active-b1-a2", UID: "excluded-uid",
+			},
+			Measurement: batchsaturation.ResultMeasurement{
+				WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
+			},
+			Attempt: 2,
+			Reasons: []string{"PowerWindowCoverage"},
+		}},
+		Detail: json.RawMessage(`{"selectedBatch":1}`),
+	})
+	if err != nil {
+		t.Fatalf("build result record: %v", err)
+	}
+	payload, err := record.CanonicalJSON()
+	if err != nil {
+		t.Fatalf("encode result record: %v", err)
+	}
+	identity := evidencestore.ObjectIdentity{
+		Store: "chill-evidence-store", Key: "batch-saturations/campaign/result.json",
+		Size: int64(len(payload)),
+	}
+	campaign := &edgev1alpha1.BatchSaturation{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "chill-system", Name: "campaign", UID: "campaign-uid",
+		},
+		Status: edgev1alpha1.BatchSaturationStatus{
+			Phase: "Complete", Outcome: "Stopped/NoFurtherImprovement", AcceptedTrials: 27,
+			Result: &edgev1alpha1.ProfilingRunEvidenceReference{
+				Store: identity.Store, Key: identity.Key, Size: identity.Size,
+				SchemaVersion: record.SchemaVersion(),
+			},
+		},
+	}
+	return campaign, identity, record
 }

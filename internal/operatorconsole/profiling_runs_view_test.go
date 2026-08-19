@@ -10,6 +10,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// consoleTestNamespace is the namespace these view tests address.
+const consoleTestNamespace = "chill-system"
+
 func TestBuildProfilingRunsProjectsIdentitySpecAndStatus(t *testing.T) {
 	t.Parallel()
 	readAt := time.Date(2026, 8, 19, 6, 0, 0, 0, time.FixedZone("KST", 9*60*60))

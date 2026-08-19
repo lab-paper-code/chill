@@ -9,9 +9,20 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"gonum.org/v1/gonum/stat"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// EvidencePassportSnapshot joins one ProfilingRun control-plane record with
+// the verified immutable evidence it references. It is a read-time projection,
+// not a second persisted copy of either source.
+type EvidencePassportSnapshot struct {
+	ReadAt      time.Time
+	Run         edgev1alpha1.ProfilingRun
+	Execution   profilerevidence.ExecutionEvidence
+	Measurement profilerevidence.RawMeasurement
+}
 
 const EvidencePassportAPIVersion = "console.chill.dacs.io/v1alpha1"
 

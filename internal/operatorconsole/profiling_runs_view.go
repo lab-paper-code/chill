@@ -6,6 +6,15 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+// ProfilingRunsSnapshot is one namespaced or all-namespaces LIST response. An
+// empty Namespace means all namespaces; it does not imply ChillSystem ownership.
+type ProfilingRunsSnapshot struct {
+	ReadAt          time.Time
+	ResourceVersion string
+	Namespace       string
+	Runs            []edgev1alpha1.ProfilingRun
+}
+
 // ProfilingRunsView is the bounded read model for a ProfilingRun listing. It
 // keeps each Run's immutable spec and its status separate, retains the source
 // resourceVersion, and states its own scope rather than letting a reader infer

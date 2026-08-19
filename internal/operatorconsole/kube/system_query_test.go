@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"

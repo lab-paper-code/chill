@@ -7,6 +7,18 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 )
 
+// InventorySnapshot is one read-through projection from three authoritative
+// Kubernetes LIST responses. Their resource versions are kept separately;
+// this type does not claim an atomic cross-resource snapshot.
+type InventorySnapshot struct {
+	ReadAt                       time.Time
+	DeviceClassesResourceVersion string
+	NodesResourceVersion         string
+	ModelSpecsResourceVersion    string
+	Classes                      []deviceclass.InventoryClass
+	Models                       []edgev1alpha1.ModelSpec
+}
+
 // InventoryView is the bounded read model for declared device classes joined
 // with the Nodes their selectors currently match, and for the model catalog.
 // The three source resourceVersions stay separate because the reads are not

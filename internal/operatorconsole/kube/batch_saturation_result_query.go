@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"context"
@@ -11,22 +11,10 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// BatchSaturationResultSnapshot joins one BatchSaturation control-plane record
-// with the immutable terminal result it references. It is a read-time
-// projection, not a second persisted copy of either source.
-type BatchSaturationResultSnapshot struct {
-	ReadAt   time.Time
-	Campaign edgev1alpha1.BatchSaturation
-	Result   batchsaturation.ResultRecord
-}
-
-// ErrBatchSaturationResultUnavailable indicates that a campaign has not
-// published its terminal result reference.
-var ErrBatchSaturationResultUnavailable = errors.New("terminal result is not available")
 
 // ResultObjectReader mirrors the Evidence Store's exact-identity reader. Its
 // implementation is supplied at the composition root, as
@@ -58,30 +46,30 @@ func NewKubernetesBatchSaturationResultQuery(
 func (q *KubernetesBatchSaturationResultQuery) Read(
 	ctx context.Context,
 	namespace, name string,
-) (BatchSaturationResultSnapshot, error) {
+) (operatorconsole.BatchSaturationResultSnapshot, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(namespace) != namespace ||
 		strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return BatchSaturationResultSnapshot{}, errors.New("BatchSaturation namespace and name are required without surrounding whitespace")
+		return operatorconsole.BatchSaturationResultSnapshot{}, errors.New("BatchSaturation namespace and name are required without surrounding whitespace")
 	}
 
 	campaign := &edgev1alpha1.BatchSaturation{}
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	if err := q.reader.Get(ctx, key, campaign); err != nil {
-		return BatchSaturationResultSnapshot{}, fmt.Errorf("get BatchSaturation %s: %w", key, err)
+		return operatorconsole.BatchSaturationResultSnapshot{}, fmt.Errorf("get BatchSaturation %s: %w", key, err)
 	}
 	identity, err := terminalResultIdentity(campaign.Status.Result)
 	if err != nil {
-		return BatchSaturationResultSnapshot{}, fmt.Errorf("read BatchSaturation %s result reference: %w", key, err)
+		return operatorconsole.BatchSaturationResultSnapshot{}, fmt.Errorf("read BatchSaturation %s result reference: %w", key, err)
 	}
 	payload, err := q.readResult(ctx, identity)
 	if err != nil {
-		return BatchSaturationResultSnapshot{}, fmt.Errorf("read BatchSaturation %s result: %w", key, err)
+		return operatorconsole.BatchSaturationResultSnapshot{}, fmt.Errorf("read BatchSaturation %s result: %w", key, err)
 	}
 	record, err := batchsaturation.DecodeResultRecord(payload)
 	if err != nil {
-		return BatchSaturationResultSnapshot{}, fmt.Errorf("decode BatchSaturation %s result: %w", key, err)
+		return operatorconsole.BatchSaturationResultSnapshot{}, fmt.Errorf("decode BatchSaturation %s result: %w", key, err)
 	}
-	return BatchSaturationResultSnapshot{
+	return operatorconsole.BatchSaturationResultSnapshot{
 		ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(), Result: record,
 	}, nil
 }
@@ -115,7 +103,7 @@ func terminalResultIdentity(
 	reference *edgev1alpha1.ProfilingRunEvidenceReference,
 ) (evidencestore.ObjectIdentity, error) {
 	if reference == nil {
-		return evidencestore.ObjectIdentity{}, ErrBatchSaturationResultUnavailable
+		return evidencestore.ObjectIdentity{}, operatorconsole.ErrBatchSaturationResultUnavailable
 	}
 	identity := evidencestore.ObjectIdentity{
 		Store: reference.Store, Key: reference.Key, Size: reference.Size,

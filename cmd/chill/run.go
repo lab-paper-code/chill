@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 )
 
 type inventoryQuery interface {
@@ -174,7 +175,7 @@ func newInventoryQuery(opts inventoryOptions) (inventoryQuery, error) {
 	if err != nil {
 		return nil, err
 	}
-	query, err := operatorconsole.NewKubernetesInventoryQuery(kubeClient)
+	query, err := consolekube.NewKubernetesInventoryQuery(kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}
@@ -186,7 +187,7 @@ func newSystemQuery(opts systemOptions) (systemQuery, error) {
 	if err != nil {
 		return nil, err
 	}
-	query, err := operatorconsole.NewKubernetesSystemQuery(kubeClient)
+	query, err := consolekube.NewKubernetesSystemQuery(kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}
@@ -204,7 +205,7 @@ func newProfilingRunsQuery(opts profilingRunsOptions) (profilingRunsQuery, error
 	} else if namespace == "" {
 		namespace = defaultNamespace
 	}
-	query, err := operatorconsole.NewKubernetesProfilingRunsQuery(kubeClient, namespace)
+	query, err := consolekube.NewKubernetesProfilingRunsQuery(kubeClient, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}

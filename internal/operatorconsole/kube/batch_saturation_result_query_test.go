@@ -1,4 +1,4 @@
-package operatorconsole
+package kube
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/batchsaturation"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -71,7 +72,7 @@ func TestBatchSaturationResultQueryRejectsUnusableResultReference(t *testing.T) 
 				campaign.Status.Result = nil
 			},
 			match: "terminal result is not available",
-			is:    ErrBatchSaturationResultUnavailable,
+			is:    operatorconsole.ErrBatchSaturationResultUnavailable,
 		},
 		{
 			name: "empty key",
@@ -128,7 +129,7 @@ func TestBatchSaturationResultQueryReportsAMissingCampaignAsNotFound(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = query.Read(context.Background(), "chill-system", "absent")
+	_, err = query.Read(context.Background(), consoleTestNamespace, "absent")
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("Read() error = %v, want a NotFound the HTTP layer can classify", err)
 	}
@@ -209,10 +210,10 @@ func TestNewBatchSaturationResultQueryValidatesDependenciesAndIdentity(t *testin
 	if _, err := query.Read(context.Background(), " ", "campaign"); err == nil {
 		t.Fatal("invalid namespace was accepted")
 	}
-	if _, err := query.Read(context.Background(), "chill-system", ""); err == nil {
+	if _, err := query.Read(context.Background(), consoleTestNamespace, ""); err == nil {
 		t.Fatal("blank name was accepted")
 	}
-	if _, err := query.Read(context.Background(), "chill-system", "campaign "); err == nil {
+	if _, err := query.Read(context.Background(), consoleTestNamespace, "campaign "); err == nil {
 		t.Fatal("invalid name was accepted")
 	}
 }
@@ -253,7 +254,7 @@ func campaignResultFixture(t *testing.T) (
 		},
 		AdmittedTrials: []batchsaturation.AdmittedTrialReference{{
 			Run: batchsaturation.RunReference{
-				Namespace: "chill-system", Name: "campaign-active-b1-a1", UID: "run-uid",
+				Namespace: consoleTestNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
 			},
 			Measurement: batchsaturation.ResultMeasurement{
 				WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
@@ -265,7 +266,7 @@ func campaignResultFixture(t *testing.T) (
 		}},
 		ExcludedTrials: []batchsaturation.ExcludedTrialReference{{
 			Run: batchsaturation.RunReference{
-				Namespace: "chill-system", Name: "campaign-active-b1-a2", UID: "excluded-uid",
+				Namespace: consoleTestNamespace, Name: "campaign-active-b1-a2", UID: "excluded-uid",
 			},
 			Measurement: batchsaturation.ResultMeasurement{
 				WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
@@ -288,7 +289,7 @@ func campaignResultFixture(t *testing.T) (
 	}
 	campaign := &edgev1alpha1.BatchSaturation{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "chill-system", Name: "campaign", UID: "campaign-uid",
+			Namespace: consoleTestNamespace, Name: "campaign", UID: "campaign-uid",
 		},
 		Status: edgev1alpha1.BatchSaturationStatus{
 			Phase: "Complete", Outcome: "Stopped/NoFurtherImprovement", AcceptedTrials: 27,

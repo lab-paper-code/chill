@@ -35,6 +35,7 @@ components:
   device-class: { in: internal/deviceclass }
   operator-console: { in: internal/operatorconsole }
   operator-console-readapi: { in: internal/operatorconsole/readapi }
+  operator-console-kube: { in: internal/operatorconsole/kube }
   operator: { in: internal/operator/** }
   evidence-core: { in: internal/evidencestore }
   evidence-kube: { in: internal/evidencestore/kube }
@@ -92,6 +93,15 @@ deps:
     mayDependOn:
       - api
       - platform-core
+
+  operator-console-kube:
+    mayDependOn:
+      - api
+      - batch-saturation-core
+      - device-class
+      - evidence-core
+      - operator-console
+      - profiler-evidence
 
   operator-console-readapi:
     mayDependOn:

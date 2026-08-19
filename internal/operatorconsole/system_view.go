@@ -6,6 +6,15 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+// SystemSnapshot is one read-through view of the authoritative ChillSystem
+// resources. It preserves the LIST resource version and does not derive a
+// separate health state from the stored spec and conditions.
+type SystemSnapshot struct {
+	ReadAt          time.Time
+	ResourceVersion string
+	Systems         []edgev1alpha1.ChillSystem
+}
+
 // SystemsView is the bounded read model for the ChillSystems the Console can
 // see. It keeps the request and the observed status separate and computes no
 // aggregate health, and it carries the identity of each source so a reader can
