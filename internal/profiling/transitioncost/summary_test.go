@@ -212,22 +212,6 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 	}
 }
 
-func TestSummarizeRejectsNonFiniteDerivedValues(t *testing.T) {
-	direction := testDirections()[0]
-	result := deriveAttempt(t, direction, "overflow", 2, 0, true, acceptedAttempt,
-		func(_ *transitioncost.FrozenContract, raw *transitioncost.RawObservation) {
-			for index := range raw.PowerSamples {
-				raw.PowerSamples[index].Watts = math.MaxFloat64
-			}
-		})
-	if observation, ok := result.AcceptedObservation(); !ok || finiteForTest(observation.EtaJoules()) {
-		t.Fatalf("test did not construct an accepted non-finite derived input: accepted=%v eta=%v",
-			ok, observation.EtaJoules())
-	}
-	_, err := transitioncost.Summarize(testDirections(), 5, []transitioncost.Result{result})
-	assertErrorContains(t, err, "non-finite derived value")
-}
-
 func TestDirectedTableOwnsCallerAndRecordSlices(t *testing.T) {
 	directions := testDirections()
 	results := completeResults(t, directions)
@@ -419,8 +403,4 @@ func assertErrorContains(t *testing.T, err error, want string) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %v, want containing %q", err, want)
 	}
-}
-
-func finiteForTest(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

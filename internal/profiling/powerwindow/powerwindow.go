@@ -70,7 +70,14 @@ func Integrate(window Window, policy Policy) (float64, error) {
 		if duration > policy.MaximumGap {
 			return 0, errors.New("maximum sample gap exceeds policy")
 		}
-		joules += (points[index-1].Watts + points[index].Watts) / 2 * duration.Seconds()
+		segmentJoules := (points[index-1].Watts + points[index].Watts) / 2 * duration.Seconds()
+		if math.IsNaN(segmentJoules) || math.IsInf(segmentJoules, 0) {
+			return 0, errors.New("power integral segment is non-finite")
+		}
+		joules += segmentJoules
+		if math.IsNaN(joules) || math.IsInf(joules, 0) {
+			return 0, errors.New("accumulated power integral is non-finite")
+		}
 	}
 	return joules, nil
 }

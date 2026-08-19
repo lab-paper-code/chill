@@ -259,6 +259,15 @@ func TestDeriveClassifiesPowerQualityInsufficient(t *testing.T) {
 			},
 			reason: transitioncost.ReasonPowerWindowInsufficient,
 		},
+		{
+			name: "non-finite integral from finite samples",
+			alter: func(raw *transitioncost.RawObservation, _ *transitioncost.Policy) {
+				for index := range raw.PowerSamples {
+					raw.PowerSamples[index].Watts = math.MaxFloat64
+				}
+			},
+			reason: transitioncost.ReasonPowerWindowInsufficient,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

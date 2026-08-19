@@ -84,6 +84,23 @@ func TestIntegrateRejectsInvalidWatts(t *testing.T) {
 	}
 }
 
+func TestIntegrateRejectsNonFiniteIntegralFromFiniteSamples(t *testing.T) {
+	start := time.Unix(0, 0).UTC()
+	_, err := Integrate(
+		Window{
+			Start: start,
+			End:   start.Add(2 * time.Second),
+			Samples: []Sample{
+				{ObservedAt: start.Add(100 * time.Millisecond), Watts: math.MaxFloat64},
+				{ObservedAt: start.Add(time.Second), Watts: math.MaxFloat64},
+				{ObservedAt: start.Add(1900 * time.Millisecond), Watts: math.MaxFloat64},
+			},
+		},
+		Policy{MaximumBoundaryDistance: 100 * time.Millisecond, MinimumCoverage: 0.9, MaximumGap: time.Second},
+	)
+	assertErrorContains(t, err, "power integral segment is non-finite")
+}
+
 func TestIntegrateRejectsInsufficientWindowQuality(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	for _, test := range []struct {
