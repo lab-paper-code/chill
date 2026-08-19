@@ -23,6 +23,12 @@ Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchSaturation` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its frozen state.
+Plan 10 is approved for implementation to measure both directed transitions
+between one selected pair of device power modes. One
+`PowerModeTransitionCost` directly owns an off-target observer and sequential
+`NodeActuation` objects; each transition window produces both `tau` and `eta`
+and records whether serving survived. The approval does not select a live
+target or authorize an unbounded restart or cluster mutation.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory
@@ -301,6 +307,28 @@ protocol enforces those assumptions.
 The plan excludes a new resource kind, epochs, fences, tenure, successor
 protocols, recovery state machines, compatibility readers, and the
 transition-cost measurement that later consumes the extracted operation.
+
+### 10. Power-mode transition-cost measurement — approved for implementation
+
+[plans/10-transition-cost-measurement.md](plans/10-transition-cost-measurement.md)
+
+Answers only:
+
+> How can one real state transition produce `tau_(s->s')` and
+> `eta_(s->s')` from the exact same observation window, including across a
+> Node restart?
+
+The first scope fixes one device type and model and measures one selected
+pair of power modes. One `PowerModeTransitionCost` directly owns a bounded
+off-target observer and creates one `NodeActuation` at a time; no additional
+per-transition resource exists. Each `transitionWindow` closes when independent
+target read-back and the frozen workload-readiness witness have both succeeded.
+The same boundaries produce duration, wall joules, and signed eta, while exact
+workload identity records whether serving survived. Raw transition observations
+and finalized results remain in the Evidence Store. Physical continuity and
+clock alignment are the first gate; repeated observations produce the directed
+state-pair table, while profile publication and scheduler use remain later
+work.
 
 ## Component contracts
 
