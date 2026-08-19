@@ -95,7 +95,7 @@ func executeSystem(ctx context.Context, args []string, stdout, stderr io.Writer,
 	if err != nil {
 		return fmt.Errorf("read systems: %w", err)
 	}
-	if err := writeSystems(stdout, opts.output, snapshot); err != nil {
+	if err := writeSystems(stdout, opts.output, operatorconsole.BuildSystems(snapshot)); err != nil {
 		return fmt.Errorf("write systems: %w", err)
 	}
 	return nil

@@ -113,7 +113,8 @@ func TestExecuteSystemWritesStructuredJSON(t *testing.T) {
 	if err := execute(context.Background(), []string{"system", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
-	var document systemsDocument
+	// The CLI must emit the shared Console view, not a shape of its own.
+	var document operatorconsole.SystemsView
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
