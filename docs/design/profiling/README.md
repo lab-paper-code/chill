@@ -391,6 +391,9 @@ one-shot runtime worker
 bounded MetricObserver helper
         -> internal/metricobserver
         -> edge-metrics adapter
+
+profile derivation
+        -> bounded power-window integration leaf
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or

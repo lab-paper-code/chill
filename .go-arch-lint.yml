@@ -49,6 +49,7 @@ components:
   node-actuator-controller: { in: internal/nodeactuator/controller }
   node-actuator-jetson: { in: internal/nodeactuator/jetson }
   profile-derivation: { in: internal/profiling/derivation }
+  power-window: { in: internal/profiling/powerwindow }
   profiling-run: { in: internal/profiling/run }
   profiler-app: { in: internal/profiling/profiler }
   profiler-controller: { in: internal/profiling/profiler/controller }
@@ -163,6 +164,10 @@ deps:
     mayDependOn:
       - node-actuator-core
   profile-derivation:
+    anyVendorDeps: true
+    mayDependOn:
+      - power-window
+  power-window:
     anyVendorDeps: true
   profiling-run:
     anyVendorDeps: true
