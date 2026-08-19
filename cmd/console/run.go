@@ -9,16 +9,16 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	bscontroller "github.com/lab-paper-code/chill/internal/batchsaturation/controller"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 	"github.com/lab-paper-code/chill/internal/operatorconsole/readapi"
-	"github.com/lab-paper-code/chill/internal/profilederivation"
-	profilerapp "github.com/lab-paper-code/chill/internal/profiler"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
-	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
+	bscontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

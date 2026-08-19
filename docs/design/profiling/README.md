@@ -151,7 +151,7 @@ Answers only:
 > to keep going?
 
 The pure curve-plan, Loader-verified execution-state, exact-state curve, and
-sequential-stop boundaries are implemented in `internal/profilederivation`. The
+sequential-stop boundaries are implemented in `internal/profiling/derivation`. The
 rule produces a decision without a confidence statement; its selected batch is
 the candidate Plan 5's confirmation pass takes as input. Plan 7 owns the control
 path that produces and composes the Runs this rule consumes.

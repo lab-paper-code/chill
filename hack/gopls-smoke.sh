@@ -57,12 +57,12 @@ if [[ -n "$diagnostics" ]]; then
 fi
 
 freezer_interface="$(position_of \
-  internal/profiler/controller/intent_reconciler.go \
+  internal/profiling/profiler/controller/intent_reconciler.go \
   'type RunIntentFreezer interface' \
   'RunIntentFreezer')"
 freezer_implementations="$(gopls_command implementation "$freezer_interface")"
 require_contains freezer-implementation "$freezer_implementations" \
-  'internal/profiler/controller/intent_freezer.go'
+  'internal/profiling/profiler/controller/intent_freezer.go'
 
 setup_call="$(position_of \
   cmd/profiler/controller_setup.go \
@@ -70,7 +70,7 @@ setup_call="$(position_of \
   'SetupWithManager')"
 setup_definition="$(gopls_command definition "$setup_call")"
 require_contains setup-definition "$setup_definition" \
-  'internal/profiler/controller/intent_setup.go'
+  'internal/profiling/profiler/controller/intent_setup.go'
 
 intent_frozen="$(position_of \
   api/v1alpha1/profilingrun_types.go \
@@ -78,19 +78,19 @@ intent_frozen="$(position_of \
   'IntentFrozen')"
 intent_frozen_references="$(gopls_command references "$intent_frozen")"
 require_contains intent-frozen-freezer-reference "$intent_frozen_references" \
-  'internal/profiler/controller/intent_freezer.go'
+  'internal/profiling/profiler/controller/intent_freezer.go'
 require_contains intent-frozen-projection-reference "$intent_frozen_references" \
-  'internal/profiler/controller/projection.go'
+  'internal/profiling/profiler/controller/projection.go'
 require_contains intent-frozen-integration-reference "$intent_frozen_references" \
   'test/integration/operator/profilingrun_api_test.go'
 
 reconcile="$(position_of \
-  internal/profiler/controller/intent_reconciler.go \
+  internal/profiling/profiler/controller/intent_reconciler.go \
   'func \(r \*RunReconciler\) Reconcile' \
   'Reconcile')"
 reconcile_hierarchy="$(gopls_command call_hierarchy "$reconcile")"
 require_contains reconcile-freeze-callee "$reconcile_hierarchy" \
-  'internal/profiler/controller/intent_reconciler.go:'
+  'internal/profiling/profiler/controller/intent_reconciler.go:'
 
 printf 'phase1.go_toolchain=%s\n' "$expected_go"
 printf 'phase1.gopls=%s\n' "$expected_gopls"

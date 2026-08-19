@@ -176,8 +176,8 @@ The output status is `Accepted`, `CandidateOnly`, `Censored`, `Ambiguous`, or
 ## Code boundary
 
 ```text
-internal/profilederivation/       pure admission, integration, aggregation, b_sat
-internal/profiler/admission/      verified evidence-to-trial projection
+internal/profiling/derivation/       pure admission, integration, aggregation, b_sat
+internal/profiling/profiler/admission/      verified evidence-to-trial projection
 ```
 
 The pure package imports no Kubernetes, CHILL API, controller-runtime,

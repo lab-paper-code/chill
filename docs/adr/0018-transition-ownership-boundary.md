@@ -30,7 +30,7 @@ transition duration τ, transition energy overhead η, and the transition-surviv
 flag as raw quantities measured between states, alongside the quantities
 measured within a state. A Run-owned transition has no evidence boundary for
 them, and two Run-level rules actively prevent observing one:
-[execution evidence](../../internal/profiler/evidence/actuation.go) is invalid if
+[execution evidence](../../internal/profiling/profiler/evidence/actuation.go) is invalid if
 any measurement container started before the actuation became ready, so power
 sampling never covers the transition interval; and
 [workload safety](../../internal/nodeactuator/controller/workload_safety.go)

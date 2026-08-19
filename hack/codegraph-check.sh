@@ -37,8 +37,8 @@ q1_symbols="$(query_json IntentReconciler)"
 q1_callers="$($codegraph callers --path "$repo_root" --limit 50 --json NewIntentReconciler)"
 q1=pass
 for file in \
-  internal/profiler/controller/intent_setup.go \
-  internal/profiler/controller/intent_reconciler.go; do
+  internal/profiling/profiler/controller/intent_setup.go \
+  internal/profiling/profiler/controller/intent_reconciler.go; do
   if ! contains_path "$file" <<<"$q1_symbols"; then q1=fail; fi
 done
 if ! jq -e 'any(.callers[]; .filePath == "cmd/profiler/controller_setup.go")' \
@@ -50,9 +50,9 @@ q2_interface="$(query_json RunIntentFreezer)"
 q2_production="$(query_json IntentFreezer)"
 q2_fake="$(query_json recordingIntentFreezer)"
 q2=pass
-if ! contains_path internal/profiler/controller/intent_reconciler.go <<<"$q2_interface"; then q2=fail; fi
-if ! contains_path internal/profiler/controller/intent_freezer.go <<<"$q2_production"; then q2=fail; fi
-if ! contains_path internal/profiler/controller/intent_reconciler_test.go <<<"$q2_fake"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/intent_reconciler.go <<<"$q2_interface"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/intent_freezer.go <<<"$q2_production"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/intent_reconciler_test.go <<<"$q2_fake"; then q2=fail; fi
 
 codegraph_imports="$temp_root/codegraph-imports"
 go_imports="$temp_root/go-imports"
@@ -91,8 +91,8 @@ else
 fi
 for file in \
   api/v1alpha1/profilingrun_types.go \
-  internal/profiler/controller/intent_freezer.go \
-  internal/profiler/controller/projection.go \
+  internal/profiling/profiler/controller/intent_freezer.go \
+  internal/profiling/profiler/controller/projection.go \
   test/integration/operator/profilingrun_api_test.go; do
   if ! rg -q 'IntentFrozen' "$repo_root/$file"; then
     echo "codegraph check: authoritative IntentFrozen source missing in $file" >&2

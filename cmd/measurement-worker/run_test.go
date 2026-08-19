@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/profiler/worker"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
@@ -201,7 +201,7 @@ func validOptions() options {
 
 func validCPUIntent(t *testing.T) profilingrun.Intent {
 	t.Helper()
-	payload, err := os.ReadFile("../../internal/profiler/worker/testdata/lattepanda-ort-cpu-bs1.json")
+	payload, err := os.ReadFile("../../internal/profiling/profiler/worker/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

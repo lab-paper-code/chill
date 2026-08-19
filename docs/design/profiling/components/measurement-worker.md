@@ -412,7 +412,7 @@ Profiler controller
 
 runtime worker
   -> explicit CPU ORT adapter
-  -> internal/profiler/evidence raw codec
+  -> internal/profiling/profiler/evidence raw codec
   -> internal/evidencestore + S3 adapter
 
 metric-observer helper

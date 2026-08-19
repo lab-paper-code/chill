@@ -9,15 +9,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchcontroller "github.com/lab-paper-code/chill/internal/batchsaturation/controller"
 	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	profilerapp "github.com/lab-paper-code/chill/internal/profiler"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
-	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
+	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
+	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 )
 
 const batchSaturationMaximumObjectBytes int64 = 64 << 20

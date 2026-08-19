@@ -9,7 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"gonum.org/v1/gonum/stat"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

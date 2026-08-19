@@ -23,8 +23,8 @@ excludeFiles:
 # component. Keep this mapping synchronized with architecture-coverage.sh.
 components:
   api: { in: api/v1alpha1 }
-  batch-saturation-core: { in: internal/batchsaturation }
-  batch-saturation-controller: { in: internal/batchsaturation/controller }
+  batch-saturation-core: { in: internal/profiling/campaign }
+  batch-saturation-controller: { in: internal/profiling/campaign/controller }
   entrypoints: { in: [cmd, cmd/**] }
   platform-core:
     in:
@@ -48,14 +48,14 @@ components:
   node-actuator-core: { in: internal/nodeactuator }
   node-actuator-controller: { in: internal/nodeactuator/controller }
   node-actuator-jetson: { in: internal/nodeactuator/jetson }
-  profile-derivation: { in: internal/profilederivation }
-  profiling-run: { in: internal/profilingrun }
-  profiler-app: { in: internal/profiler }
-  profiler-controller: { in: internal/profiler/controller }
-  profiler-admission: { in: internal/profiler/admission }
-  profiler-evidence: { in: internal/profiler/evidence }
-  profiler-evidence-kube: { in: internal/profiler/evidence/kube }
-  profiler-worker: { in: internal/profiler/worker }
+  profile-derivation: { in: internal/profiling/derivation }
+  profiling-run: { in: internal/profiling/run }
+  profiler-app: { in: internal/profiling/profiler }
+  profiler-controller: { in: internal/profiling/profiler/controller }
+  profiler-admission: { in: internal/profiling/profiler/admission }
+  profiler-evidence: { in: internal/profiling/profiler/evidence }
+  profiler-evidence-kube: { in: internal/profiling/profiler/evidence/kube }
+  profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-entrypoint: { in: internal/serving/entrypoint }
 

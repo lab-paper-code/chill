@@ -180,7 +180,7 @@ neither `Decide` nor the controller changes.
 | `sequential-early-stop` | `DeriveSequentialBatchDecision` | Plan 5a walk through the batch sizes recorded in the curve plan, including sparse sets, and stop rule |
 | `two-pass-confirmatory` | `DeriveBSatDiscovery`, sizing, `DeriveBSatConfirmatory` | Plan 5 discovery, consecutive candidate-to-`KMax` sizing, confirmation |
 
-Both call existing pure functions in `internal/profilederivation`. This plan
+Both call existing pure functions in `internal/profiling/derivation`. This plan
 adds no estimator and changes no acceptance rule.
 
 `two-pass-confirmatory` counts its active-Run budget in admitted active trials.
@@ -316,8 +316,8 @@ duplication; assembled Runs are validated by the API server.
 ## Code boundary
 
 ```text
-internal/batchsaturation/            pure; no CHILL-internal imports
-internal/batchsaturation/controller/ Kubernetes adapter; imports batch-saturation-core
+internal/profiling/campaign/            pure; no CHILL-internal imports
+internal/profiling/campaign/controller/ Kubernetes adapter; imports batch-saturation-core
                                       plus api, evidence-core, profile-derivation,
                                       profiler-app/admission/controller/evidence,
                                       and profiling-run
@@ -332,7 +332,7 @@ aggregate measurement unit as an architectural boundary.
 ## What this plan removes
 
 - `docs/design/profiling/campaigns/` and every file under it
-- `internal/profilederivation/campaign_artifacts_test.go`, which validates a
+- `internal/profiling/derivation/campaign_artifacts_test.go`, which validates a
   committed contract file that no longer exists
 - `docs/design/profiling/foundations/runtime-execution/05-support-matrix.csv`.
   A measured row is read from `BatchSaturation` status. An unmeasured row then

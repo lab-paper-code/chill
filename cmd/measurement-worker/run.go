@@ -10,8 +10,8 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
-	"github.com/lab-paper-code/chill/internal/profiler/worker"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 type measurementCoordinator interface {

@@ -8,7 +8,7 @@ change when the underlying implementation intentionally changes.
 
 `cmd/profiler/controller_setup.go` constructs the shared dependencies and calls
 `RunReconciler.SetupWithManager`. Registration in
-`internal/profiler/controller/intent_setup.go` uses:
+`internal/profiling/profiler/controller/intent_setup.go` uses:
 
 ```text
 For(ProfilingRun) + Owns(ConfigMap, Job)
@@ -22,7 +22,7 @@ Required evidence: setup source and focused reconciler tests. The event edge is
 ## Q2. Which implementation freezes a Run intent?
 
 `RunIntentFreezer` is declared in
-`internal/profiler/controller/intent_reconciler.go`. Production uses
+`internal/profiling/profiler/controller/intent_reconciler.go`. Production uses
 `IntentFreezer` from `intent_freezer.go`; `intent_reconciler_test.go` contains a
 recording fake. `cmd/profiler/controller_setup.go` constructs and injects the
 production implementation.
@@ -88,7 +88,7 @@ replacing that evidence.
 `cmd/profiler/controller_setup.go` reuses the Profiler's candidate, preparation,
 intent-record, Evidence Store, and retained-evidence dependencies and calls the
 batch-saturation reconciler's `SetupWithManager`. Registration in
-`internal/batchsaturation/controller/setup.go` uses:
+`internal/profiling/campaign/controller/setup.go` uses:
 
 ```text
 For(BatchSaturation) + Owns(ProfilingRun)

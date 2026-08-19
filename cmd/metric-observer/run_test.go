@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profiler/worker"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
+	"github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestExecutePublishesFrozenMetricObservation(t *testing.T) {

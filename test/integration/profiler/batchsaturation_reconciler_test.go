@@ -8,9 +8,9 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/batchsaturation"
-	batchcontroller "github.com/lab-paper-code/chill/internal/batchsaturation/controller"
-	"github.com/lab-paper-code/chill/internal/profilederivation"
+	"github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
+	"github.com/lab-paper-code/chill/internal/profiling/derivation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

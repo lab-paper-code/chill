@@ -128,13 +128,13 @@ move its boundaries from observed power or workload values.
 
 ```text
 api/v1alpha1/                   public active/idle Run request schema
-internal/profilingrun/          plain intent and runtime-result validation
-internal/profiler/worker/       Job-local orchestration and raw projection
+internal/profiling/run/          plain intent and runtime-result validation
+internal/profiling/profiler/worker/       Job-local orchestration and raw projection
 runtime/ortcpu/                 explicit active/idle CPU ORT execution adapter
-internal/profiler/evidence/     raw/final record verification and loading
+internal/profiling/profiler/evidence/     raw/final record verification and loading
 ```
 
-`internal/profilingrun` imports no Kubernetes API, controller-runtime, client,
+`internal/profiling/run` imports no Kubernetes API, controller-runtime, client,
 or CHILL API package. Kubernetes projection remains in the Plan 4 controller;
 the runtime adapter and worker remain Kubernetes-free.
 

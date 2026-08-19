@@ -6,7 +6,7 @@
 
 Completed derivation plan. The pure curve-plan construction, verified-state
 projection, exact-state curve, and sequential-stop constructors are implemented in
-`internal/profilederivation`, with golden tests for every stop reason and the
+`internal/profiling/derivation`, with golden tests for every stop reason and the
 recovery/accumulation cases. This plan answers the same question as
 [Plan 5](05-batch-saturation-campaign.md) at a lower evidence strength and a
 much lower measurement cost. It produces a decision, not a statistical claim.
@@ -329,7 +329,7 @@ Plan 5's confirmation pass takes as its input.
 ## Code boundary
 
 ```text
-internal/profilederivation/   the stopping rule over a sequence of batch means
+internal/profiling/derivation/   the stopping rule over a sequence of batch means
 ```
 
 The rule consumes per-batch means after ADR 0016's curve-plan constructor has

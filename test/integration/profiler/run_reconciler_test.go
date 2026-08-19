@@ -14,11 +14,11 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiler/admission"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
-	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	"github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -656,7 +656,7 @@ func assertAcceptedAdmission(t *testing.T, run *edgev1alpha1.ProfilingRun, polic
 func loadRetainedIntent(t *testing.T) profilingrun.Intent {
 	t.Helper()
 	payload, err := os.ReadFile(filepath.Join(
-		"..", "..", "..", "internal", "profiler", "controller", "testdata", "lattepanda-ort-cpu-bs1.json",
+		"..", "..", "..", "internal", "profiling", "profiler", "controller", "testdata", "lattepanda-ort-cpu-bs1.json",
 	))
 	if err != nil {
 		t.Fatal(err)

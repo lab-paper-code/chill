@@ -47,8 +47,8 @@ component_for() {
 
   case "$package_path" in
     api/v1alpha1) echo api ;;
-    internal/batchsaturation) echo batch-saturation-core ;;
-    internal/batchsaturation/controller) echo batch-saturation-controller ;;
+    internal/profiling/campaign) echo batch-saturation-core ;;
+    internal/profiling/campaign/controller) echo batch-saturation-controller ;;
     cmd|cmd/*) echo entrypoints ;;
     internal/component|internal/kubeconfig|internal/metadata|internal/nodeprobe)
       echo platform-core
@@ -69,14 +69,14 @@ component_for() {
     internal/nodeactuator) echo node-actuator-core ;;
     internal/nodeactuator/controller) echo node-actuator-controller ;;
     internal/nodeactuator/jetson) echo node-actuator-jetson ;;
-    internal/profilederivation) echo profile-derivation ;;
-    internal/profilingrun) echo profiling-run ;;
-    internal/profiler) echo profiler-app ;;
-    internal/profiler/controller) echo profiler-controller ;;
-    internal/profiler/admission) echo profiler-admission ;;
-    internal/profiler/evidence) echo profiler-evidence ;;
-    internal/profiler/evidence/kube) echo profiler-evidence-kube ;;
-    internal/profiler/worker) echo profiler-worker ;;
+    internal/profiling/derivation) echo profile-derivation ;;
+    internal/profiling/run) echo profiling-run ;;
+    internal/profiling/profiler) echo profiler-app ;;
+    internal/profiling/profiler/controller) echo profiler-controller ;;
+    internal/profiling/profiler/admission) echo profiler-admission ;;
+    internal/profiling/profiler/evidence) echo profiler-evidence ;;
+    internal/profiling/profiler/evidence/kube) echo profiler-evidence-kube ;;
+    internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
     internal/serving/entrypoint) echo serving-entrypoint ;;
     *) return 1 ;;

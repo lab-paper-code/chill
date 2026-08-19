@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
-	"github.com/lab-paper-code/chill/internal/profiler/worker"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 )

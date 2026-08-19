@@ -16,7 +16,7 @@
 - Do not add digest, byte-equality, or canonical re-encoding comparison as a validation gate.
 - Values deciding what a Run measures belong in configuration, never Go constants.
 - Do not give a struct a field that accepts only one value.
-- Pure packages (`internal/profilederivation`, `internal/batchsaturation`) must not import `api/v1alpha1`, Kubernetes APIs, or controller-runtime.
+- Pure packages (`internal/profiling/derivation`, `internal/profiling/campaign`) must not import `api/v1alpha1`, Kubernetes APIs, or controller-runtime.
 - Every new production package must map to exactly one `.go-arch-lint.yml` component. This plan adds none.
 - `make manifests generate` when API types change; `make arch-check` when a package or internal import changes; `make lint` and `make test` before handoff.
 - Never run e2e against the testbed kubeconfig.
@@ -35,12 +35,12 @@ Two follow-on plans depend on this one and must not be started inside it:
 
 Four sites assert `inputShape[0] == fixedBatch`, comparing two fields of the same catalog record against each other. None can observe whether the artifact executes the batch. Task 2 merges those two fields, so these checks lose their subject; deleting them first keeps Task 2 to a type change.
 
-The batch-eligibility check at `internal/profilingrun/candidate.go:445` is **not** deleted here. It transforms into a set-membership test in Task 2.
+The batch-eligibility check at `internal/profiling/run/candidate.go:445` is **not** deleted here. It transforms into a set-membership test in Task 2.
 
 **Files:**
-- Modify: `internal/profiler/controller/catalog_facts.go:140-146`
-- Modify: `internal/profilingrun/candidate.go:443-451`
-- Modify: `internal/profiler/worker/rknn_lite.go:209-215`
+- Modify: `internal/profiling/profiler/controller/catalog_facts.go:140-146`
+- Modify: `internal/profiling/run/candidate.go:443-451`
+- Modify: `internal/profiling/profiler/worker/rknn_lite.go:209-215`
 - Modify: `runtime/rknnlite/runner.py:374-405`, `:664-666`, `:371`
 - Modify: `runtime/rknnlite/test_runner.py`
 
@@ -126,20 +126,20 @@ Update the call site at `runtime/rknnlite/runner.py:371`:
 
 - [ ] **Step 6: Delete the three Go equality checks**
 
-`internal/profiler/controller/catalog_facts.go` — delete only this line from the RKNNLite condition:
+`internal/profiling/profiler/controller/catalog_facts.go` — delete only this line from the RKNNLite condition:
 
 ```go
 			artifact.Input.Shape[0] != artifact.Derivation.FixedBatch ||
 ```
 
-`internal/profilingrun/candidate.go` — delete only these two lines from the RKNNLite condition:
+`internal/profiling/run/candidate.go` — delete only these two lines from the RKNNLite condition:
 
 ```go
 			len(report.ArtifactCapability.InputShape) == 0 ||
 			report.ArtifactCapability.InputShape[0] != report.ArtifactCapability.FixedBatch ||
 ```
 
-`internal/profiler/worker/rknn_lite.go` — replace:
+`internal/profiling/profiler/worker/rknn_lite.go` — replace:
 
 ```go
 	if capability.FixedBatch < 1 || len(capability.InputShape) == 0 ||
@@ -182,10 +182,10 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 
 **Files:**
 - Modify: `api/v1alpha1/modelspec_types.go:49-51,62-70`
-- Modify: `internal/profilingrun/candidate.go:15,79-87,323-334,443-451`
-- Modify: `internal/profiler/controller/candidate_report.go:109-125`
-- Modify: `internal/profiler/controller/catalog_facts.go:140-155`
-- Modify: `internal/profiler/worker/rknn_lite.go:18,209-215,230-240`
+- Modify: `internal/profiling/run/candidate.go:15,79-87,323-334,443-451`
+- Modify: `internal/profiling/profiler/controller/candidate_report.go:109-125`
+- Modify: `internal/profiling/profiler/controller/catalog_facts.go:140-155`
+- Modify: `internal/profiling/profiler/worker/rknn_lite.go:18,209-215,230-240`
 - Modify: `runtime/rknnlite/runner.py:374-405,953-958`
 - Modify: `config/samples/edge_v1alpha1_modelspec.yaml`
 - Generated: `config/crd/bases/`, `charts/chill/templates/crds/`, `api/v1alpha1/zz_generated.deepcopy.go`
@@ -196,7 +196,7 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 
 - [ ] **Step 1: Write the failing eligibility test**
 
-Add to `internal/profilingrun/candidate_test.go`. The helper mirrors the fixture already used by `TestCandidateReportValidatesHostContractDelivery` at `:196-223`, varying only the declared batch sizes and the measured batch:
+Add to `internal/profiling/run/candidate_test.go`. The helper mirrors the fixture already used by `TestCandidateReportValidatesHostContractDelivery` at `:196-223`, varying only the declared batch sizes and the measured batch:
 
 ```go
 func TestVerifyCandidateReportRejectsABatchOutsideTheDeclaredBatchSizes(t *testing.T) {
@@ -257,7 +257,7 @@ Add `"strings"` to the test file's imports if it is not already there.
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-go test ./internal/profilingrun/ -run TestVerifyCandidateReport -v
+go test ./internal/profiling/run/ -run TestVerifyCandidateReport -v
 ```
 Expected: FAIL to compile — `DeclaredBatchSizes` is undefined.
 
@@ -287,7 +287,7 @@ and replace `Shape` in `ModelArtifactInputContract`:
 
 - [ ] **Step 4: Change the candidate capability contract**
 
-In `internal/profilingrun/candidate.go`, raise the schema constant and replace the capability type:
+In `internal/profiling/run/candidate.go`, raise the schema constant and replace the capability type:
 
 ```go
 	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha8"
@@ -327,7 +327,7 @@ In `validateInternalCandidateReport`, replace the artifact block:
 	}
 ```
 
-Update the fixture at `internal/profilingrun/candidate_test.go:275` to the new field names, so every existing caller keeps compiling:
+Update the fixture at `internal/profiling/run/candidate_test.go:275` to the new field names, so every existing caller keeps compiling:
 
 ```go
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
@@ -340,7 +340,7 @@ func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 
 - [ ] **Step 5: Turn the surviving batch check into set membership**
 
-This is the capability boundary. `internal/profiler/preparation.go:203` calls `ValidateCandidateReport` during intent freeze, so it rejects an undeclared batch before the Run executes. In the RKNNLite block of `VerifyCandidateReport`, replace:
+This is the capability boundary. `internal/profiling/profiler/preparation.go:203` calls `ValidateCandidateReport` during intent freeze, so it rejects an undeclared batch before the Run executes. In the RKNNLite block of `VerifyCandidateReport`, replace:
 
 ```go
 			report.ArtifactCapability.FixedBatch != int32(intent.Measurement.Batch) ||
@@ -361,7 +361,7 @@ Add `"slices"` to the file's imports.
 - [ ] **Step 6: Run the tests to verify they pass**
 
 ```bash
-go test ./internal/profilingrun/ -run TestVerifyCandidateReport -v
+go test ./internal/profiling/run/ -run TestVerifyCandidateReport -v
 ```
 Expected: PASS.
 
@@ -373,9 +373,9 @@ go build ./... 2>&1 | head -40
 
 Fix each break with the corresponding rename, changing nothing else:
 
-- `internal/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)`.
-- `internal/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
-- `internal/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
+- `internal/profiling/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)`.
+- `internal/profiling/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
+- `internal/profiling/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
 
 - [ ] **Step 8: Change the runtime contract**
 
@@ -482,11 +482,11 @@ git commit -m "feat: declare a declared-batch-size set per artifact"
 One artifact covers every planned batch size, so the former per-batch record has nothing batch-varying to hold: four of its seven fields become shared, two become derived, one is the batch itself.
 
 **Files:**
-- Modify: `internal/profilederivation/curve_plan.go`
-- Modify: `internal/profilederivation/curve_plan_test.go`
-- Modify: `internal/profiler/admission/curve_plan.go`
-- Modify: `internal/profiler/admission/curve_plan_test.go`
-- Modify: `internal/profilederivation/curve.go` call sites the compiler reports
+- Modify: `internal/profiling/derivation/curve_plan.go`
+- Modify: `internal/profiling/derivation/curve_plan_test.go`
+- Modify: `internal/profiling/profiler/admission/curve_plan.go`
+- Modify: `internal/profiling/profiler/admission/curve_plan_test.go`
+- Modify: `internal/profiling/derivation/curve.go` call sites the compiler reports
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-2
@@ -494,7 +494,7 @@ One artifact covers every planned batch size, so the former per-batch record has
 
 - [ ] **Step 1: Write the failing curve-plan test**
 
-Replace the former per-batch test in `internal/profilederivation/curve_plan_test.go` with:
+Replace the former per-batch test in `internal/profiling/derivation/curve_plan_test.go` with:
 
 ```go
 func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
@@ -527,13 +527,13 @@ Add `validCurvePlanSpec()` to that file, returning a fully populated `CurvePlanS
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-go test ./internal/profilederivation/ -run TestNewCurvePlan -v
+go test ./internal/profiling/derivation/ -run TestNewCurvePlan -v
 ```
 Expected: FAIL to compile — `PlannedBatchSizes` is undefined and `NewCurvePlan` takes two arguments.
 
 - [ ] **Step 3: Move the artifact facts into the shared contract**
 
-In `internal/profilederivation/curve_plan.go`, add:
+In `internal/profiling/derivation/curve_plan.go`, add:
 
 ```go
 // CurveArtifactContract binds the one immutable artifact every planned batch
@@ -563,7 +563,7 @@ Raise the schema constant:
 
 - [ ] **Step 4: Delete the per-batch machinery**
 
-Delete from `internal/profilederivation/curve_plan.go`:
+Delete from `internal/profiling/derivation/curve_plan.go`:
 
 the per-batch contract and verified-record types, their arrays, validation
 function, and clone helpers.
@@ -625,12 +625,12 @@ Extend `validateCurvePlanSpec` to reject an empty `PlannedBatchSizes`, a non-pos
 go build ./... 2>&1 | head -40
 ```
 
-`internal/profiler/admission/curve_plan.go` projects one verified state. `internal/profilederivation/curve.go` keys its admitted idle baselines by the single `StateIdentity`. Make no behavior change beyond removing the former per-batch dimension.
+`internal/profiling/profiler/admission/curve_plan.go` projects one verified state. `internal/profiling/derivation/curve.go` keys its admitted idle baselines by the single `StateIdentity`. Make no behavior change beyond removing the former per-batch dimension.
 
 - [ ] **Step 6: Run to verify the contract tests pass**
 
 ```bash
-go test ./internal/profilederivation/ ./internal/profiler/admission/ -v
+go test ./internal/profiling/derivation/ ./internal/profiling/profiler/admission/ -v
 ```
 Expected: PASS.
 
@@ -660,13 +660,13 @@ capability boundary is exhausting the set. A gap inside the set is a size the
 operator chose to skip, and the sweep steps over it.
 
 **Files:**
-- Modify: `internal/batchsaturation/types.go:43,64`
-- Modify: `internal/batchsaturation/lifecycle.go:18-41`
-- Modify: `internal/batchsaturation/lifecycle_test.go:98-109`
-- Modify: `internal/batchsaturation/sequential.go:46-91`
-- Modify: `internal/batchsaturation/sequential_test.go`
-- Modify: `internal/batchsaturation/controller/projection.go:13-15,19-22,73-107`
-- Modify: `internal/batchsaturation/controller/projection_test.go`
+- Modify: `internal/profiling/campaign/types.go:43,64`
+- Modify: `internal/profiling/campaign/lifecycle.go:18-41`
+- Modify: `internal/profiling/campaign/lifecycle_test.go:98-109`
+- Modify: `internal/profiling/campaign/sequential.go:46-91`
+- Modify: `internal/profiling/campaign/sequential_test.go`
+- Modify: `internal/profiling/campaign/controller/projection.go:13-15,19-22,73-107`
+- Modify: `internal/profiling/campaign/controller/projection_test.go`
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-3
@@ -674,7 +674,7 @@ operator chose to skip, and the sweep steps over it.
 
 - [ ] **Step 1: Write the failing sweep test**
 
-Replace `TestDecideReportsCapabilityBoundaryToTheMethod` in `internal/batchsaturation/lifecycle_test.go` with:
+Replace `TestDecideReportsCapabilityBoundaryToTheMethod` in `internal/profiling/campaign/lifecycle_test.go` with:
 
 ```go
 func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
@@ -698,7 +698,7 @@ func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 }
 ```
 
-Add to `internal/batchsaturation/sequential_test.go`, replacing `TestSequentialStopsAtACapabilityBoundary`:
+Add to `internal/profiling/campaign/sequential_test.go`, replacing `TestSequentialStopsAtACapabilityBoundary`:
 
 ```go
 func TestSequentialStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
@@ -753,13 +753,13 @@ func TestSequentialStopsWhenThePlannedBatchSizeSetIsExhausted(t *testing.T) {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-go test ./internal/batchsaturation/ -run 'TestDecideGives|TestSequentialSteps|TestSequentialStops' -v
+go test ./internal/profiling/campaign/ -run 'TestDecideGives|TestSequentialSteps|TestSequentialStops' -v
 ```
 Expected: FAIL to compile — `Snapshot.PlannedBatchSizes` and `Observed.PlannedBatchSizes` are undefined.
 
 - [ ] **Step 3: Change the pure types**
 
-In `internal/batchsaturation/types.go`, delete `Trial.CapabilityRejected`, delete `Observed.CapabilityBoundary *int`, and add to both `Snapshot` and `Observed`:
+In `internal/profiling/campaign/types.go`, delete `Trial.CapabilityRejected`, delete `Observed.CapabilityBoundary *int`, and add to both `Snapshot` and `Observed`:
 
 ```go
 	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
@@ -772,7 +772,7 @@ Extend `Snapshot.Validate()` to require a non-empty `PlannedBatchSizes` with pos
 
 - [ ] **Step 4: Pass the set through `Decide`**
 
-In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected` branch from the first loop, delete `|| trial.CapabilityRejected` from the retry loop's guard, and seed `observed` from the snapshot:
+In `internal/profiling/campaign/lifecycle.go`, delete the `trial.CapabilityRejected` branch from the first loop, delete `|| trial.CapabilityRejected` from the retry loop's guard, and seed `observed` from the snapshot:
 
 ```go
 	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
@@ -780,7 +780,7 @@ In `internal/batchsaturation/lifecycle.go`, delete the `trial.CapabilityRejected
 
 - [ ] **Step 5: Advance the sweep through the declared set**
 
-In `internal/batchsaturation/sequential.go`, `Plan` currently walks consecutive integers. Replace the four places that assume that. Guard the set first:
+In `internal/profiling/campaign/sequential.go`, `Plan` currently walks consecutive integers. Replace the four places that assume that. Guard the set first:
 
 ```go
 	if len(observed.PlannedBatchSizes) == 0 {
@@ -847,13 +847,13 @@ func nextPlannedBatchSize(plannedBatchSizes []int, highest int) (int, bool) {
 - [ ] **Step 6: Run to verify it passes**
 
 ```bash
-go test ./internal/batchsaturation/ -v
+go test ./internal/profiling/campaign/ -v
 ```
 Expected: PASS.
 
 - [ ] **Step 7: Delete the unreachable reason code from the projection**
 
-In `internal/batchsaturation/controller/projection.go`, delete the `capabilityReasonCode` constant and its doc comment, delete the `trial.CapabilityRejected` assignment, and delete `capabilityReasonCode` from the `isTerminalReason` switch. Add the planned batch size set as a projection input:
+In `internal/profiling/campaign/controller/projection.go`, delete the `capabilityReasonCode` constant and its doc comment, delete the `trial.CapabilityRejected` assignment, and delete `capabilityReasonCode` from the `isTerminalReason` switch. Add the planned batch size set as a projection input:
 
 ```go
 func ProjectSnapshot(
@@ -870,19 +870,19 @@ func ProjectSnapshot(
 	}
 ```
 
-Update `internal/batchsaturation/controller/projection_test.go` to pass a planned batch size set to every call.
+Update `internal/profiling/campaign/controller/projection_test.go` to pass a planned batch size set to every call.
 
 - [ ] **Step 8: Run and gate**
 
 ```bash
-go test ./internal/batchsaturation/... -v && make lint && make test
+go test ./internal/profiling/campaign/... -v && make lint && make test
 ```
 Expected: all pass.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add internal/batchsaturation
+git add internal/profiling/campaign
 git commit -m "refactor: resolve the capability boundary from the planned batch sizes"
 ```
 

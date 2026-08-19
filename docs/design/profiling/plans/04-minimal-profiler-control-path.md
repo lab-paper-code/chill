@@ -224,8 +224,8 @@ measurement path.
 
 - `internal/modelcompat`: static artifact/runtime/DeviceClass compatibility;
 - `internal/metricobserver`: bounded typed metric observation;
-- `internal/profilingrun`: immutable intent and execution-evidence validation;
-- `internal/profilederivation`: scientific admission and later derivation.
+- `internal/profiling/run`: immutable intent and execution-evidence validation;
+- `internal/profiling/derivation`: scientific admission and later derivation.
 
 None of these packages imports the Profiler, Kubernetes APIs, controller-runtime,
 or CHILL API types.
@@ -427,15 +427,15 @@ cmd/main.go
   -> Profiler Deployment
 
 cmd/profiler/main.go
-  -> internal/profiler/controller/    ProfilingRun reconciliation and status
-  -> internal/profiler/               one-Run application orchestration
+  -> internal/profiling/profiler/controller/    ProfilingRun reconciliation and status
+  -> internal/profiling/profiler/               one-Run application orchestration
        +--> internal/modelcompat
-       +--> internal/profilingrun
-       +--> internal/profilederivation
+       +--> internal/profiling/run
+       +--> internal/profiling/derivation
        +--> narrow Kubernetes/source/evidence ports
 
 runtime worker entrypoint
-  -> internal/profiler/runner/        one-Job execution plane
+  -> internal/profiling/profiler/runner/        one-Job execution plane
        +--> explicit CPU ORT execution adapter
        +--> durable evidence sink
 
@@ -454,12 +454,12 @@ charts/chill/
 ```
 
 `internal/operator/profiler` manages only the Profiler operand. It does not
-import profiling-domain leaf packages. `internal/profiler` owns the application
+import profiling-domain leaf packages. `internal/profiling/profiler` owns the application
 sequence and narrow interfaces without Kubernetes objects. Native object
 translation and controller-runtime behavior stay under
-`internal/profiler/controller` and its adapters.
+`internal/profiling/profiler/controller` and its adapters.
 
-`internal/profiler/runner` does not import controller-runtime, the Operator, or
+`internal/profiling/profiler/runner` does not import controller-runtime, the Operator, or
 CHILL controller packages. It performs the bounded execution requested by the
 Job and terminates. The controller observes durable Kubernetes and evidence-
 sink state instead of depending on runner process memory.
@@ -646,7 +646,7 @@ sentinel values accepted by the active result validator.
    on the live cluster.
 4. Close the five Run-path checkpoints and record the reviewed API/state
    contracts.
-5. Add `internal/profiler` ports and a deterministic one-Run orchestrator with
+5. Add `internal/profiling/profiler` ports and a deterministic one-Run orchestrator with
    fake adapters; do not add Kubernetes dependencies. Implemented for intent
    preparation, lifecycle decisions, and terminal evidence finalization.
 6. Add the namespaced `ProfilingRun` API and schema tests. Implemented with an

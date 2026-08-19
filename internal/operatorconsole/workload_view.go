@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/profilingrun"
+	"github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 

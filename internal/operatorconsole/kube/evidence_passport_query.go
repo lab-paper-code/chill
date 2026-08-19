@@ -9,7 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

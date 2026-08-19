@@ -10,7 +10,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
-	"github.com/lab-paper-code/chill/internal/profiler/worker"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 )
 
 const (

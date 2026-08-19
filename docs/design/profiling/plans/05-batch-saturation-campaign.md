@@ -801,7 +801,7 @@ version check, and the retained wire shapes, with no consumer for it yet.
 ## Code boundary
 
 ```text
-internal/profilederivation/   the acceptance quantity and rule, curve derivation
+internal/profiling/derivation/   the acceptance quantity and rule, curve derivation
                               owning exact-state baselines, the joint estimator, the
                               confirmatory boundary, policy file decoding
 ```
