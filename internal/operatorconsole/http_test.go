@@ -17,10 +17,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// consoleTestNamespace is the namespace every Console route test addresses.
+const consoleTestNamespace = "chill-system"
+
 func TestHTTPHandlerServesEvidencePassportWithoutStoreEndpoint(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPassportReader{snapshot: httpPassportSnapshot()}
-	handler, err := NewHTTPHandler(reader)
+	handler, err := NewHTTPHandler(reader, &recordingCampaignResultReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +37,7 @@ func TestHTTPHandlerServesEvidencePassportWithoutStoreEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("response = %d, headers=%v, body=%s", response.Code, response.Header(), response.Body.String())
 	}
-	if reader.namespace != "chill-system" || reader.name != "run" || reader.calls != 1 {
+	if reader.namespace != consoleTestNamespace || reader.name != "run" || reader.calls != 1 {
 		t.Fatalf("query = %q/%q calls=%d", reader.namespace, reader.name, reader.calls)
 	}
 	if strings.Contains(response.Body.String(), "store.internal") || strings.Contains(response.Body.String(), "source.internal") {
@@ -65,7 +68,7 @@ func TestHTTPHandlerMapsQueryErrorsWithoutLeakingDetails(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			handler, err := NewHTTPHandler(&recordingPassportReader{err: test.err})
+			handler, err := NewHTTPHandler(&recordingPassportReader{err: test.err}, &recordingCampaignResultReader{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +88,7 @@ func TestHTTPHandlerMapsQueryErrorsWithoutLeakingDetails(t *testing.T) {
 
 func TestHTTPHandlerHealthAndMethodBoundary(t *testing.T) {
 	t.Parallel()
-	handler, err := NewHTTPHandler(&recordingPassportReader{})
+	handler, err := NewHTTPHandler(&recordingPassportReader{}, &recordingCampaignResultReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,4 +156,117 @@ func httpPassportSnapshot() EvidencePassportSnapshot {
 			},
 		},
 	}
+}
+
+func TestHTTPHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
+	t.Parallel()
+	campaign, _, record, _ := campaignResultFixture(t)
+	reader := &recordingCampaignResultReader{snapshot: BatchSaturationResultSnapshot{
+		ReadAt: time.Now(), Campaign: *campaign, Result: record,
+	}}
+	handler, err := NewHTTPHandler(&recordingPassportReader{}, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/namespaces/chill-system/batch-saturations/campaign/result",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	if reader.namespace != consoleTestNamespace || reader.name != "campaign" || reader.calls != 1 {
+		t.Fatalf("query = %q/%q calls=%d", reader.namespace, reader.name, reader.calls)
+	}
+	var result BatchSaturationResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != "BatchSaturationResult" || result.Campaign.Name != "campaign" ||
+		len(result.Result.AdmittedTrials) != 1 || len(result.Result.ExcludedTrials) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	// The Evidence Store is reached with credentials the caller never sees.
+	if strings.Contains(response.Body.String(), "accessKey") ||
+		strings.Contains(response.Body.String(), "endpoint") {
+		t.Fatalf("response leaked store access details: %s", response.Body.String())
+	}
+}
+
+func TestHTTPHandlerAnswersNotFoundForACampaignWithoutAResultYet(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		err  error
+		want int
+	}{
+		"no result published": {
+			err:  ErrBatchSaturationResultUnavailable,
+			want: http.StatusNotFound,
+		},
+		"campaign missing": {
+			err: apierrors.NewNotFound(
+				schema.GroupResource{Group: "edge.dacs.io", Resource: "batchsaturations"}, "missing",
+			),
+			want: http.StatusNotFound,
+		},
+		"store unreachable": {
+			err:  errors.New("dial evidence store: connection refused"),
+			want: http.StatusBadGateway,
+		},
+	}
+	for name, test := range tests {
+		test := test
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			handler, err := NewHTTPHandler(
+				&recordingPassportReader{}, &recordingCampaignResultReader{err: test.err},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet,
+				"/api/v1/namespaces/chill-system/batch-saturations/campaign/result",
+				nil,
+			))
+			if response.Code != test.want {
+				t.Fatalf("response = %d body=%s", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "connection refused") {
+				t.Fatalf("response leaked the underlying failure: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestNewHTTPHandlerRequiresBothReaders(t *testing.T) {
+	t.Parallel()
+	if _, err := NewHTTPHandler(nil, &recordingCampaignResultReader{}); err == nil {
+		t.Fatal("nil Evidence Passport reader was accepted")
+	}
+	if _, err := NewHTTPHandler(&recordingPassportReader{}, nil); err == nil {
+		t.Fatal("nil batch-saturation result reader was accepted")
+	}
+}
+
+type recordingCampaignResultReader struct {
+	snapshot  BatchSaturationResultSnapshot
+	err       error
+	namespace string
+	name      string
+	calls     int
+}
+
+func (r *recordingCampaignResultReader) Read(
+	_ context.Context,
+	namespace, name string,
+) (BatchSaturationResultSnapshot, error) {
+	r.calls++
+	r.namespace, r.name = namespace, name
+	return r.snapshot, r.err
 }
