@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -47,9 +46,8 @@ func (q *KubernetesBatchSaturationResultQuery) Read(
 	ctx context.Context,
 	namespace, name string,
 ) (operatorconsole.BatchSaturationResultSnapshot, error) {
-	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(namespace) != namespace ||
-		strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return operatorconsole.BatchSaturationResultSnapshot{}, errors.New("BatchSaturation namespace and name are required without surrounding whitespace")
+	if err := validateObjectReference("BatchSaturation", namespace, name); err != nil {
+		return operatorconsole.BatchSaturationResultSnapshot{}, err
 	}
 
 	campaign := &edgev1alpha1.BatchSaturation{}

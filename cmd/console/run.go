@@ -50,7 +50,11 @@ func (p consoleCurvePlanProjector) Project(
 	return plan, err
 }
 
-func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
+// newEvidencePassportQuery keeps passport reads behind retained-evidence verification authority.
+func newEvidencePassportQuery(
+	reader client.Reader,
+	opts options,
+) (*consolekube.KubernetesEvidencePassportQuery, error) {
 	loader, err := evidencekube.NewRetainedLoader(
 		reader,
 		func(binding storekube.Binding, credentials storekube.Credentials) (evidencestore.LocationReader, error) {
@@ -75,6 +79,14 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Passport query: %w", err)
 	}
+	return query, nil
+}
+
+// newCampaignResultQuery keeps result reads behind the declared Evidence Store binding authority.
+func newCampaignResultQuery(
+	reader client.Reader,
+	opts options,
+) (*consolekube.KubernetesBatchSaturationResultQuery, error) {
 	resolver, err := profilercontroller.NewKubernetesEvidenceStoreResolver(
 		reader,
 		profilercontroller.EvidenceStoreResolverOptions{
@@ -94,6 +106,14 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-saturation result query: %w", err)
 	}
+	return results, nil
+}
+
+// newCampaignPreflightQuery keeps preflight reads behind the production profiling authorities.
+func newCampaignPreflightQuery(
+	reader client.Reader,
+	opts options,
+) (*consolekube.KubernetesBatchSaturationPreflightQuery, error) {
 	candidates, err := profilercontroller.NewKubernetesCandidateResolver(
 		reader,
 		profilercontroller.CandidateResolverOptions{
@@ -156,7 +176,23 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-saturation preflight query: %w", err)
 	}
-	handler, err := readapi.NewHandler(query, results, preflights)
+	return preflights, nil
+}
+
+func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
+	passports, err := newEvidencePassportQuery(reader, opts)
+	if err != nil {
+		return nil, err
+	}
+	results, err := newCampaignResultQuery(reader, opts)
+	if err != nil {
+		return nil, err
+	}
+	preflights, err := newCampaignPreflightQuery(reader, opts)
+	if err != nil {
+		return nil, err
+	}
+	handler, err := readapi.NewHandler(passports, results, preflights)
 	if err != nil {
 		return nil, fmt.Errorf("construct Console HTTP handler: %w", err)
 	}

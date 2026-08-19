@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -54,9 +53,8 @@ func (q *KubernetesEvidencePassportQuery) Read(
 	ctx context.Context,
 	namespace, name string,
 ) (operatorconsole.EvidencePassportSnapshot, error) {
-	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(namespace) != namespace ||
-		strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return operatorconsole.EvidencePassportSnapshot{}, errors.New("ProfilingRun namespace and name are required without surrounding whitespace")
+	if err := validateObjectReference("ProfilingRun", namespace, name); err != nil {
+		return operatorconsole.EvidencePassportSnapshot{}, err
 	}
 
 	run := &edgev1alpha1.ProfilingRun{}

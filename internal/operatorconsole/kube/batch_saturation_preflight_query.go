@@ -3,7 +3,6 @@ package kube
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -46,9 +45,8 @@ func (q *KubernetesBatchSaturationPreflightQuery) Read(
 	if campaign == nil {
 		return operatorconsole.BatchSaturationPreflightSnapshot{}, errors.New("a BatchSaturation campaign is required")
 	}
-	if strings.TrimSpace(campaign.Namespace) == "" || strings.TrimSpace(campaign.Namespace) != campaign.Namespace ||
-		strings.TrimSpace(campaign.Name) == "" || strings.TrimSpace(campaign.Name) != campaign.Name {
-		return operatorconsole.BatchSaturationPreflightSnapshot{}, errors.New("BatchSaturation namespace and name are required without surrounding whitespace")
+	if err := validateObjectReference("BatchSaturation", campaign.Namespace, campaign.Name); err != nil {
+		return operatorconsole.BatchSaturationPreflightSnapshot{}, err
 	}
 
 	plan, err := q.projector.Project(ctx, campaign)
