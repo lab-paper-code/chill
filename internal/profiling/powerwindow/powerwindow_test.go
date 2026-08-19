@@ -84,7 +84,28 @@ func TestIntegrateRejectsInvalidWatts(t *testing.T) {
 	}
 }
 
-func TestIntegrateRejectsNonFiniteIntegralFromFiniteSamples(t *testing.T) {
+func TestIntegrateAcceptsFiniteIntegralWithoutIntermediateAverageOverflow(t *testing.T) {
+	start := time.Unix(0, 0).UTC()
+	joules, err := Integrate(
+		Window{
+			Start: start,
+			End:   start.Add(100 * time.Millisecond),
+			Samples: []Sample{
+				{ObservedAt: start.Add(5 * time.Millisecond), Watts: math.MaxFloat64},
+				{ObservedAt: start.Add(95 * time.Millisecond), Watts: math.MaxFloat64},
+			},
+		},
+		Policy{MaximumBoundaryDistance: 5 * time.Millisecond, MinimumCoverage: 0.8, MaximumGap: 90 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.IsNaN(joules) || math.IsInf(joules, 0) {
+		t.Fatalf("joules = %v, want finite", joules)
+	}
+}
+
+func TestIntegrateRejectsNonFiniteAccumulatedIntegralFromFiniteSamples(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	_, err := Integrate(
 		Window{
@@ -98,7 +119,7 @@ func TestIntegrateRejectsNonFiniteIntegralFromFiniteSamples(t *testing.T) {
 		},
 		Policy{MaximumBoundaryDistance: 100 * time.Millisecond, MinimumCoverage: 0.9, MaximumGap: time.Second},
 	)
-	assertErrorContains(t, err, "power integral segment is non-finite")
+	assertErrorContains(t, err, "accumulated power integral is non-finite")
 }
 
 func TestIntegrateRejectsInsufficientWindowQuality(t *testing.T) {
