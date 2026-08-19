@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

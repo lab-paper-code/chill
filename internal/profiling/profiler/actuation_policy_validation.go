@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func (s ActuationSelection) Validate() error {

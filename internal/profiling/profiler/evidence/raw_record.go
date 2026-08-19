@@ -3,7 +3,7 @@ package evidence
 import (
 	"fmt"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // rawRecord is the finalization/loading boundary shared by active and idle

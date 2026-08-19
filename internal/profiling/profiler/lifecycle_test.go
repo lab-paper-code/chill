@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestDecideSelectsOneBoundedNextAction(t *testing.T) {

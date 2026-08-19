@@ -7,7 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // CurvePlanProjector resolves the immutable plan one campaign selects. The

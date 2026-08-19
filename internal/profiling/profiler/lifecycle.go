@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // JobObservation is the controller-independent fact observed for a previously

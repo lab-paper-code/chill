@@ -20,7 +20,7 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 

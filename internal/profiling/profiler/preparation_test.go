@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {

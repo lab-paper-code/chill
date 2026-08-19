@@ -8,7 +8,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

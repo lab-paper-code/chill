@@ -4,9 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {

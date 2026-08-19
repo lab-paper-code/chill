@@ -3,7 +3,7 @@ package worker
 import (
 	"errors"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // RuntimeMeasurement is a sealed process-boundary result. Only a runtime

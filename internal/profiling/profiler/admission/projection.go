@@ -3,7 +3,7 @@ package admission
 import (
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 

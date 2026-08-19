@@ -10,7 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"k8s.io/apimachinery/pkg/types"
 )
 

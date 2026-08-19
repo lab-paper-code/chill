@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha10"

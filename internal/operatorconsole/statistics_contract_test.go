@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // The Console cannot depend on the pure derivation package in production, but

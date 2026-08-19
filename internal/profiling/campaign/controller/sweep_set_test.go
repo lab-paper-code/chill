@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/profiling/run"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 // Kubernetes forbids uniqueItems on an array schema, so the CRD checks ascending

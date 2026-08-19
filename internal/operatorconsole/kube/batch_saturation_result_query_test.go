@@ -14,7 +14,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
