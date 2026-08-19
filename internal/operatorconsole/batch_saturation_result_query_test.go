@@ -19,6 +19,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// consoleTestNamespace is the namespace these Console tests address.
+const consoleTestNamespace = "chill-system"
+
 func TestBatchSaturationResultQueryFollowsCampaignReferenceAndPreservesSources(t *testing.T) {
 	t.Parallel()
 	campaign, identity, record, payload := campaignResultFixture(t)

@@ -16,6 +16,7 @@ components=(
   platform-core
   device-class
   operator-console
+  operator-console-readapi
   operator
   evidence-core
   evidence-kube
@@ -53,6 +54,7 @@ component_for() {
       ;;
     internal/deviceclass) echo device-class ;;
     internal/operatorconsole) echo operator-console ;;
+    internal/operatorconsole/readapi) echo operator-console-readapi ;;
     internal/operator/*) echo operator ;;
     internal/evidencestore) echo evidence-core ;;
     internal/evidencestore/kube) echo evidence-kube ;;

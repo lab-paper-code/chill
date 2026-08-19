@@ -13,6 +13,7 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/operatorconsole/readapi"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -74,7 +75,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-saturation result query: %w", err)
 	}
-	handler, err := operatorconsole.NewHTTPHandler(query, results)
+	handler, err := readapi.NewHandler(query, results)
 	if err != nil {
 		return nil, fmt.Errorf("construct Console HTTP handler: %w", err)
 	}

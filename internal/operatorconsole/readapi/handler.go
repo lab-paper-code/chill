@@ -1,4 +1,8 @@
-package operatorconsole
+// Package readapi is the HTTP transport for the CHILL Console read surface.
+// It owns routes, status classification and encoding; it owns no projection.
+// Keeping it beside the service package rather than inside it is what stops a
+// read model from being shaped by the protocol that happens to carry it.
+package readapi
 
 import (
 	"context"
@@ -6,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -15,16 +20,16 @@ const (
 )
 
 type EvidencePassportReader interface {
-	Read(context.Context, string, string) (EvidencePassportSnapshot, error)
+	Read(context.Context, string, string) (operatorconsole.EvidencePassportSnapshot, error)
 }
 
 type BatchSaturationResultReader interface {
-	Read(context.Context, string, string) (BatchSaturationResultSnapshot, error)
+	Read(context.Context, string, string) (operatorconsole.BatchSaturationResultSnapshot, error)
 }
 
-// NewHTTPHandler exposes a read-only Console API. Authentication and routing
+// NewHandler exposes a read-only Console API. Authentication and routing
 // belong to the deployment boundary in front of this handler.
-func NewHTTPHandler(
+func NewHandler(
 	passports EvidencePassportReader,
 	results BatchSaturationResultReader,
 ) (http.Handler, error) {
@@ -42,30 +47,30 @@ func NewHTTPHandler(
 			request.Context(), request.PathValue("namespace"), request.PathValue("name"),
 		)
 		if err != nil {
-			writeConsoleError(writer, queryStatus(err), "EvidencePassportUnavailable")
+			writeError(writer, queryStatus(err), "EvidencePassportUnavailable")
 			return
 		}
-		passport, err := BuildEvidencePassport(snapshot)
+		passport, err := operatorconsole.BuildEvidencePassport(snapshot)
 		if err != nil {
-			writeConsoleError(writer, http.StatusInternalServerError, "EvidencePassportProjectionFailed")
+			writeError(writer, http.StatusInternalServerError, "EvidencePassportProjectionFailed")
 			return
 		}
-		writeConsoleJSON(writer, passport)
+		writeJSON(writer, passport)
 	})
 	mux.HandleFunc(batchSaturationResultPath, func(writer http.ResponseWriter, request *http.Request) {
 		snapshot, err := results.Read(
 			request.Context(), request.PathValue("namespace"), request.PathValue("name"),
 		)
 		if err != nil {
-			writeConsoleError(writer, queryStatus(err), "BatchSaturationResultUnavailable")
+			writeError(writer, queryStatus(err), "BatchSaturationResultUnavailable")
 			return
 		}
-		result, err := BuildBatchSaturationResult(snapshot)
+		result, err := operatorconsole.BuildBatchSaturationResult(snapshot)
 		if err != nil {
-			writeConsoleError(writer, http.StatusInternalServerError, "BatchSaturationResultProjectionFailed")
+			writeError(writer, http.StatusInternalServerError, "BatchSaturationResultProjectionFailed")
 			return
 		}
-		writeConsoleJSON(writer, result)
+		writeJSON(writer, result)
 	})
 	return mux, nil
 }
@@ -75,7 +80,7 @@ func NewHTTPHandler(
 // answers Not Found rather than the Bad Gateway a store failure earns.
 func queryStatus(err error) int {
 	switch {
-	case apierrors.IsNotFound(err), errors.Is(err, ErrBatchSaturationResultUnavailable):
+	case apierrors.IsNotFound(err), errors.Is(err, operatorconsole.ErrBatchSaturationResultUnavailable):
 		return http.StatusNotFound
 	case apierrors.IsForbidden(err):
 		return http.StatusForbidden
@@ -84,7 +89,7 @@ func queryStatus(err error) int {
 	}
 }
 
-func writeConsoleJSON(writer http.ResponseWriter, value any) {
+func writeJSON(writer http.ResponseWriter, value any) {
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(writer)
@@ -92,7 +97,7 @@ func writeConsoleJSON(writer http.ResponseWriter, value any) {
 	_ = encoder.Encode(value)
 }
 
-func writeConsoleError(writer http.ResponseWriter, status int, code string) {
+func writeError(writer http.ResponseWriter, status int, code string) {
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
