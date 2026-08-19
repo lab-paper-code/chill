@@ -1,6 +1,7 @@
 package readapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/profilederivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profilingrun"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,12 +24,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-const testNamespace = "chill-system"
+const (
+	testNamespace     = "chill-system"
+	testPreflightPath = "/api/v1/namespaces/" + testNamespace + "/batch-saturations/preflight"
+	testNoStore       = "no-store"
+)
 
 func TestHandlerServesEvidencePassportWithoutStoreEndpoint(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPassportReader{snapshot: passportSnapshot()}
-	handler, err := NewHandler(reader, &recordingCampaignResultReader{})
+	handler, err := NewHandler(reader, &recordingCampaignResultReader{}, &recordingPreflightReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +42,7 @@ func TestHandlerServesEvidencePassportWithoutStoreEndpoint(t *testing.T) {
 		http.MethodGet, "/api/v1/namespaces/"+testNamespace+"/profiling-runs/run/evidence-passport", nil,
 	))
 
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != testNoStore {
 		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 	if reader.namespace != testNamespace || reader.name != "run" || reader.calls != 1 {
@@ -58,7 +64,7 @@ func TestHandlerServesEvidencePassportWithoutStoreEndpoint(t *testing.T) {
 func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	t.Parallel()
 	reader := &recordingCampaignResultReader{snapshot: campaignResultSnapshot(t)}
-	handler, err := NewHandler(&recordingPassportReader{}, reader)
+	handler, err := NewHandler(&recordingPassportReader{}, reader, &recordingPreflightReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +73,7 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 		http.MethodGet, "/api/v1/namespaces/"+testNamespace+"/batch-saturations/campaign/result", nil,
 	))
 
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != testNoStore {
 		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 	if reader.namespace != testNamespace || reader.name != "campaign" || reader.calls != 1 {
@@ -83,6 +89,181 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "accessKey") {
 		t.Fatalf("response leaked store access details: %s", response.Body.String())
+	}
+}
+
+func TestHandlerServesResolvingBatchSaturationPreflight(t *testing.T) {
+	t.Parallel()
+	reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
+	handler, err := NewHandler(
+		&recordingPassportReader{}, &recordingCampaignResultReader{}, reader,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost, testPreflightPath, preflightCampaignBody(t, testNamespace),
+	))
+
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != testNoStore {
+		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	var preflight operatorconsole.BatchSaturationPreflight
+	if err := json.Unmarshal(response.Body.Bytes(), &preflight); err != nil {
+		t.Fatal(err)
+	}
+	if !preflight.Resolves || len(preflight.Plan) == 0 {
+		t.Fatalf("preflight = %#v", preflight)
+	}
+}
+
+func TestHandlerServesUnresolvedPreflightAsASuccessfulRead(t *testing.T) {
+	t.Parallel()
+	const reason = "referenced DeviceClass does not exist"
+	reader := &recordingPreflightReader{
+		snapshot: operatorconsole.BatchSaturationPreflightSnapshot{
+			ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Reason: reason,
+		},
+	}
+	handler, err := NewHandler(
+		&recordingPassportReader{}, &recordingCampaignResultReader{}, reader,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost, testPreflightPath, preflightCampaignBody(t, testNamespace),
+	))
+
+	if response.Code >= http.StatusBadRequest {
+		t.Fatalf("unresolved preflight returned an error status: %d body=%s", response.Code, response.Body.String())
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var preflight operatorconsole.BatchSaturationPreflight
+	if err := json.Unmarshal(response.Body.Bytes(), &preflight); err != nil {
+		t.Fatal(err)
+	}
+	if preflight.Resolves || preflight.Reason != reason {
+		t.Fatalf("preflight = %#v", preflight)
+	}
+}
+
+func TestHandlerRejectsInvalidBatchSaturationPreflightRequests(t *testing.T) {
+	t.Parallel()
+	reader := &recordingPreflightReader{}
+	handler, err := NewHandler(
+		&recordingPassportReader{}, &recordingCampaignResultReader{}, reader,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]string{
+		"undecodable body":   `{`,
+		"unknown field":      `{"metadata":{"name":"campaign"},"unexpected":true}`,
+		"wrong kind":         `{"kind":"ProfilingRun","metadata":{"name":"campaign"}}`,
+		"wrong API version":  `{"apiVersion":"edge.dacs.io/v2","metadata":{"name":"campaign"}}`,
+		"namespace mismatch": `{"metadata":{"namespace":"another-namespace","name":"campaign"}}`,
+	}
+	for name, body := range tests {
+		name, body := name, body
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodPost, testPreflightPath, strings.NewReader(body),
+			))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			var failure struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+				t.Fatal(err)
+			}
+			if failure.Code != "BatchSaturationPreflightRequestInvalid" {
+				t.Fatalf("error code = %q", failure.Code)
+			}
+		})
+	}
+	if reader.calls != 0 {
+		t.Fatalf("invalid requests reached the reader: calls = %d", reader.calls)
+	}
+}
+
+func TestHandlerUsesPathNamespaceForBatchSaturationPreflight(t *testing.T) {
+	t.Parallel()
+	reader := &recordingPreflightReader{
+		snapshot: operatorconsole.BatchSaturationPreflightSnapshot{
+			ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Reason: "unresolved",
+		},
+	}
+	handler, err := NewHandler(
+		&recordingPassportReader{}, &recordingCampaignResultReader{}, reader,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodPost, testPreflightPath, preflightCampaignBody(t, ""),
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", response.Code, http.StatusOK, response.Body.String())
+	}
+	if reader.calls != 1 || reader.campaign == nil || reader.campaign.Namespace != testNamespace {
+		t.Fatalf("reader campaign = %#v, calls = %d", reader.campaign, reader.calls)
+	}
+}
+
+func TestHandlerMapsPreflightReadFailuresWithoutLeakingDetails(t *testing.T) {
+	t.Parallel()
+	notFound := apierrors.NewNotFound(
+		schema.GroupResource{Group: "edge.dacs.io", Resource: "deviceclasses"}, "missing",
+	)
+	tests := map[string]struct {
+		err  error
+		want int
+	}{
+		"object missing":     {err: notFound, want: http.StatusNotFound},
+		"forbidden":          {err: apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied")), want: http.StatusForbidden},
+		"reader unavailable": {err: errors.New("dial Kubernetes API: connection refused"), want: http.StatusBadGateway},
+	}
+	for name, test := range tests {
+		test := test
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			handler, err := NewHandler(
+				&recordingPassportReader{}, &recordingCampaignResultReader{},
+				&recordingPreflightReader{err: test.err},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodPost, testPreflightPath, preflightCampaignBody(t, testNamespace),
+			))
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d (body %s)", response.Code, test.want, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), test.err.Error()) {
+				t.Fatalf("response leaked the underlying failure: %s", response.Body.String())
+			}
+			var failure struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+				t.Fatal(err)
+			}
+			if failure.Code != "BatchSaturationPreflightUnavailable" {
+				t.Fatalf("error code = %q", failure.Code)
+			}
+		})
 	}
 }
 
@@ -108,6 +289,7 @@ func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 			t.Parallel()
 			handler, err := NewHandler(
 				&recordingPassportReader{err: test.err}, &recordingCampaignResultReader{err: test.err},
+				&recordingPreflightReader{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -132,7 +314,9 @@ func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 
 func TestHandlerHealthAndMethodBoundary(t *testing.T) {
 	t.Parallel()
-	handler, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{})
+	handler, err := NewHandler(
+		&recordingPassportReader{}, &recordingCampaignResultReader{}, &recordingPreflightReader{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +328,7 @@ func TestHandlerHealthAndMethodBoundary(t *testing.T) {
 		{method: http.MethodGet, path: "/healthz", want: http.StatusOK},
 		{method: http.MethodPost, path: "/api/v1/namespaces/" + testNamespace + "/profiling-runs/run/evidence-passport", want: http.StatusMethodNotAllowed},
 		{method: http.MethodPost, path: "/api/v1/namespaces/" + testNamespace + "/batch-saturations/campaign/result", want: http.StatusMethodNotAllowed},
+		{method: http.MethodGet, path: testPreflightPath, want: http.StatusMethodNotAllowed},
 		{method: http.MethodGet, path: "/unknown", want: http.StatusNotFound},
 	} {
 		response := httptest.NewRecorder()
@@ -154,13 +339,16 @@ func TestHandlerHealthAndMethodBoundary(t *testing.T) {
 	}
 }
 
-func TestNewHandlerRequiresBothReaders(t *testing.T) {
+func TestNewHandlerRequiresAllReaders(t *testing.T) {
 	t.Parallel()
-	if _, err := NewHandler(nil, &recordingCampaignResultReader{}); err == nil {
+	if _, err := NewHandler(nil, &recordingCampaignResultReader{}, &recordingPreflightReader{}); err == nil {
 		t.Fatal("nil Evidence Passport reader was accepted")
 	}
-	if _, err := NewHandler(&recordingPassportReader{}, nil); err == nil {
+	if _, err := NewHandler(&recordingPassportReader{}, nil, &recordingPreflightReader{}); err == nil {
 		t.Fatal("nil batch-saturation result reader was accepted")
+	}
+	if _, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, nil); err == nil {
+		t.Fatal("nil batch-saturation preflight reader was accepted")
 	}
 }
 
@@ -196,6 +384,90 @@ func (r *recordingCampaignResultReader) Read(
 	r.calls++
 	r.namespace, r.name = namespace, name
 	return r.snapshot, r.err
+}
+
+type recordingPreflightReader struct {
+	snapshot operatorconsole.BatchSaturationPreflightSnapshot
+	err      error
+	campaign *edgev1alpha1.BatchSaturation
+	calls    int
+}
+
+func (r *recordingPreflightReader) Read(
+	_ context.Context,
+	campaign *edgev1alpha1.BatchSaturation,
+) (operatorconsole.BatchSaturationPreflightSnapshot, error) {
+	r.calls++
+	r.campaign = campaign
+	return r.snapshot, r.err
+}
+
+func preflightCampaign(namespace string) edgev1alpha1.BatchSaturation {
+	return edgev1alpha1.BatchSaturation{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "BatchSaturation",
+		},
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "campaign"},
+		Spec: edgev1alpha1.BatchSaturationSpec{
+			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"}, BatchSizes: []int32{1, 2, 4},
+		},
+	}
+}
+
+func preflightCampaignBody(t *testing.T, namespace string) *bytes.Reader {
+	t.Helper()
+	encoded, err := json.Marshal(preflightCampaign(namespace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(encoded)
+}
+
+func resolvingPreflightSnapshot(t *testing.T) operatorconsole.BatchSaturationPreflightSnapshot {
+	t.Helper()
+	return operatorconsole.BatchSaturationPreflightSnapshot{
+		ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Plan: preflightPlan(t),
+	}
+}
+
+func preflightPlan(t *testing.T) profilederivation.CurvePlan {
+	t.Helper()
+	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
+		Name: "mobilenet-curve", LogicalModel: "mobilenet-v2", DeviceClass: "orangepi-5-plus",
+		NodeUID: "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
+		RuntimeImage: "registry.example/chill/runtime:v1", PowerMode: "fixed",
+		CPU: profilederivation.CurveCPUContract{
+			Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8",
+		},
+		MetricSource: profilederivation.CurveMetricSourceContract{
+			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
+			PowerMetric: "power_watts",
+		},
+		ActiveProtocol: preflightProtocol("saturated"),
+		IdleProtocol:   preflightProtocol("idle-model-loaded"),
+		Artifact: profilederivation.CurveArtifactContract{
+			ExecutionPath: "rknnlite", Name: "artifact", Path: "/artifact/model.rknn",
+			Image: "registry.example/chill/artifact:v1",
+		},
+		PlannedBatchSizes: []int{1, 2, 4},
+		Tensor: profilederivation.CurveTensorContract{
+			Layout: "NHWC", DataType: "float32", InputSampleShape: []int{224, 224, 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build preflight plan: %v", err)
+	}
+	return plan
+}
+
+func preflightProtocol(mode string) profilederivation.CurveProtocolContract {
+	return profilederivation.CurveProtocolContract{
+		WorkloadMode: mode, InputGenerator: "seeded", OutputValidation: "shape",
+		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900,
+		MetricDurationSeconds: 31, MetricObserverImage: "registry.example/chill/metric-observer:v1",
+		WorkloadObserverImage: "registry.example/chill/workload-observer:v1",
+		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
+	}
 }
 
 func passportSnapshot() operatorconsole.EvidencePassportSnapshot {

@@ -10,13 +10,17 @@ import (
 	"errors"
 	"net/http"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
-	evidencePassportPath      = "GET /api/v1/namespaces/{namespace}/profiling-runs/{name}/evidence-passport"
-	batchSaturationResultPath = "GET /api/v1/namespaces/{namespace}/batch-saturations/{name}/result"
+	evidencePassportPath                             = "GET /api/v1/namespaces/{namespace}/profiling-runs/{name}/evidence-passport"
+	batchSaturationResultPath                        = "GET /api/v1/namespaces/{namespace}/batch-saturations/{name}/result"
+	batchSaturationPreflightPath                     = "POST /api/v1/namespaces/{namespace}/batch-saturations/preflight"
+	maximumPreflightRequestBytes               int64 = 1 << 20
+	batchSaturationPreflightRequestInvalidCode       = "BatchSaturationPreflightRequestInvalid"
 )
 
 type EvidencePassportReader interface {
@@ -27,14 +31,19 @@ type BatchSaturationResultReader interface {
 	Read(context.Context, string, string) (operatorconsole.BatchSaturationResultSnapshot, error)
 }
 
+type BatchSaturationPreflightReader interface {
+	Read(context.Context, *edgev1alpha1.BatchSaturation) (operatorconsole.BatchSaturationPreflightSnapshot, error)
+}
+
 // NewHandler exposes a read-only Console API. Authentication and routing
 // belong to the deployment boundary in front of this handler.
 func NewHandler(
 	passports EvidencePassportReader,
 	results BatchSaturationResultReader,
+	preflights BatchSaturationPreflightReader,
 ) (http.Handler, error) {
-	if passports == nil || results == nil {
-		return nil, errors.New("Evidence Passport and batch-saturation result readers are required")
+	if passports == nil || results == nil || preflights == nil {
+		return nil, errors.New("Evidence Passport, batch-saturation result, and batch-saturation preflight readers are required")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -71,6 +80,39 @@ func NewHandler(
 			return
 		}
 		writeJSON(writer, result)
+	})
+	mux.HandleFunc(batchSaturationPreflightPath, func(writer http.ResponseWriter, request *http.Request) {
+		request.Body = http.MaxBytesReader(writer, request.Body, maximumPreflightRequestBytes)
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		var campaign edgev1alpha1.BatchSaturation
+		if err := decoder.Decode(&campaign); err != nil {
+			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			return
+		}
+		if campaign.Kind != "" && campaign.Kind != "BatchSaturation" ||
+			campaign.APIVersion != "" && campaign.APIVersion != edgev1alpha1.GroupVersion.String() {
+			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			return
+		}
+		namespace := request.PathValue("namespace")
+		if campaign.Namespace == "" {
+			campaign.Namespace = namespace
+		} else if campaign.Namespace != namespace {
+			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			return
+		}
+		snapshot, err := preflights.Read(request.Context(), &campaign)
+		if err != nil {
+			writeError(writer, queryStatus(err), "BatchSaturationPreflightUnavailable")
+			return
+		}
+		preflight, err := operatorconsole.BuildBatchSaturationPreflight(snapshot)
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, "BatchSaturationPreflightProjectionFailed")
+			return
+		}
+		writeJSON(writer, preflight)
 	})
 	return mux, nil
 }

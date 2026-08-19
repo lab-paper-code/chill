@@ -32,6 +32,13 @@ rules:
     resourceNames:
       - {{ printf "%s-evidence-store-credentials" (include "chill.systemName" .) | quote }}
     verbs: ["get"]
+  # Preflight reports a missing Profiler fact source as a reason, so the
+  # Console must be allowed to attempt that read in every deployment profile.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ include "chill.profilerFactSourceName" . | quote }}
+    verbs: ["get"]
   {{- if .Values.evidenceStore.enabled }}
   # A campaign result is written by the controller rather than by a measurement
   # Job, so its delivery contract is read from the Evidence Store operand
@@ -76,6 +83,39 @@ subjects:
     name: {{ include "chill.consoleServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+---
+# Resolving a campaign intent reads its model catalog, device class, and target
+# Node; all three authorities are cluster-scoped.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-preflight-reader
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["modelspecs", "deviceclasses"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-preflight-reader
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-preflight-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.consoleServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -126,6 +166,13 @@ spec:
           args:
             - {{ printf "--bind-address=:%v" .Values.console.port | quote }}
             - {{ printf "--system-name=%s" (include "chill.systemName" .) | quote }}
+            # The Console starts without the Profiler so preflight can explain
+            # an absent fact source instead of making startup depend on it.
+            - {{ printf "--fact-source-config-map=%s" (include "chill.profilerFactSourceName" .) | quote }}
+            - {{ printf "--execution-facts-key=%s" .Values.profiler.factSource.executionFactsKey | quote }}
+            - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
+            - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
+            - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
           env:
             - name: POD_NAMESPACE
               valueFrom:

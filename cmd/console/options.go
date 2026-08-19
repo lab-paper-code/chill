@@ -9,10 +9,15 @@ import (
 )
 
 type options struct {
-	bindAddress string
-	tempDir     string
-	systemName  string
-	namespace   string
+	bindAddress            string
+	tempDir                string
+	systemName             string
+	namespace              string
+	factSourceConfigMap    string
+	executionFactsKey      string
+	metricSourcesKey       string
+	workloadObservationKey string
+	actuationPoliciesKey   string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -26,6 +31,21 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		&o.namespace, "namespace", os.Getenv("POD_NAMESPACE"),
 		"Management namespace holding the Evidence Store operand.",
 	)
+	flags.StringVar(&o.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
+	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
+	flags.StringVar(&o.metricSourcesKey, "metric-sources-key", "", "ConfigMap key containing Node metric sources.")
+	flags.StringVar(
+		&o.workloadObservationKey,
+		"workload-observation-key",
+		"",
+		"ConfigMap key containing the WorkloadObserver image.",
+	)
+	flags.StringVar(
+		&o.actuationPoliciesKey,
+		"actuation-policies-key",
+		"",
+		"ConfigMap key containing versioned Node actuation policies.",
+	)
 }
 
 func (o options) validate() error {
@@ -36,8 +56,13 @@ func (o options) validate() error {
 		return errors.New("evidence temporary directory must be an absolute path without surrounding whitespace")
 	}
 	for name, value := range map[string]string{
-		"system name": o.systemName,
-		"namespace":   o.namespace,
+		"system name":              o.systemName,
+		"namespace":                o.namespace,
+		"fact-source ConfigMap":    o.factSourceConfigMap,
+		"execution-facts key":      o.executionFactsKey,
+		"metric-sources key":       o.metricSourcesKey,
+		"workload-observation key": o.workloadObservationKey,
+		"actuation-policies key":   o.actuationPoliciesKey,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)

@@ -9,6 +9,9 @@ func validOptions() options {
 	return options{
 		bindAddress: ":8080", tempDir: "/tmp/evidence",
 		systemName: "chill", namespace: "chill-system",
+		factSourceConfigMap: "chill-profiler-facts",
+		executionFactsKey:   "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
+		workloadObservationKey: "workload-observation.yaml", actuationPoliciesKey: "actuation-policies.yaml",
 	}
 }
 
@@ -18,13 +21,23 @@ func TestOptionsValidate(t *testing.T) {
 		t.Fatalf("valid options rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*options){
-		"blank bind address":  func(o *options) { o.bindAddress = " " },
-		"relative temp dir":   func(o *options) { o.tempDir = "relative" },
-		"padded temp dir":     func(o *options) { o.tempDir = " /tmp/evidence" },
-		"missing system name": func(o *options) { o.systemName = "" },
-		"padded system name":  func(o *options) { o.systemName = "chill " },
-		"missing namespace":   func(o *options) { o.namespace = "" },
-		"padded namespace":    func(o *options) { o.namespace = " chill-system" },
+		"blank bind address":               func(o *options) { o.bindAddress = " " },
+		"relative temp dir":                func(o *options) { o.tempDir = "relative" },
+		"padded temp dir":                  func(o *options) { o.tempDir = " /tmp/evidence" },
+		"missing system name":              func(o *options) { o.systemName = "" },
+		"padded system name":               func(o *options) { o.systemName = "chill " },
+		"missing namespace":                func(o *options) { o.namespace = "" },
+		"padded namespace":                 func(o *options) { o.namespace = " chill-system" },
+		"missing fact-source ConfigMap":    func(o *options) { o.factSourceConfigMap = "" },
+		"padded fact-source ConfigMap":     func(o *options) { o.factSourceConfigMap = "chill-profiler-facts " },
+		"missing execution-facts key":      func(o *options) { o.executionFactsKey = "" },
+		"padded execution-facts key":       func(o *options) { o.executionFactsKey = " execution-facts.yaml" },
+		"missing metric-sources key":       func(o *options) { o.metricSourcesKey = "" },
+		"padded metric-sources key":        func(o *options) { o.metricSourcesKey = "metric-sources.yaml " },
+		"missing workload-observation key": func(o *options) { o.workloadObservationKey = "" },
+		"padded workload-observation key":  func(o *options) { o.workloadObservationKey = " workload-observation.yaml" },
+		"missing actuation-policies key":   func(o *options) { o.actuationPoliciesKey = "" },
+		"padded actuation-policies key":    func(o *options) { o.actuationPoliciesKey = "actuation-policies.yaml " },
 	} {
 		t.Run(name, func(t *testing.T) {
 			invalid := validOptions()

@@ -9,11 +9,14 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	bscontroller "github.com/lab-paper-code/chill/internal/batchsaturation/controller"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 	"github.com/lab-paper-code/chill/internal/operatorconsole/readapi"
+	"github.com/lab-paper-code/chill/internal/profilederivation"
+	profilerapp "github.com/lab-paper-code/chill/internal/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiler/controller"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiler/evidence/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,6 +32,22 @@ func (l consoleEvidenceLoader) Load(
 	reference evidencestore.ObjectIdentity,
 ) (consolekube.VerifiedEvidenceView, error) {
 	return l.retained.Load(ctx, run, reference)
+}
+
+// consoleCurvePlanProjector drops the campaign transition the projector also
+// derives. The Console reads a plan; it never actuates a power mode, so
+// carrying the transition material past the composition root would hand a read
+// surface something it has no business acting on.
+type consoleCurvePlanProjector struct {
+	projector *bscontroller.CurvePlanProjector
+}
+
+func (p consoleCurvePlanProjector) Project(
+	ctx context.Context,
+	campaign *edgev1alpha1.BatchSaturation,
+) (profilederivation.CurvePlan, error) {
+	plan, _, err := p.projector.Project(ctx, campaign)
+	return plan, err
 }
 
 func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
@@ -75,7 +94,69 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-saturation result query: %w", err)
 	}
-	handler, err := readapi.NewHandler(query, results)
+	candidates, err := profilercontroller.NewKubernetesCandidateResolver(
+		reader,
+		profilercontroller.CandidateResolverOptions{
+			Namespace:     opts.namespace,
+			ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey:  opts.executionFactsKey,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct candidate resolver: %w", err)
+	}
+	nodes, err := profilercontroller.NewKubernetesNodeResolver(reader)
+	if err != nil {
+		return nil, fmt.Errorf("construct Node resolver: %w", err)
+	}
+	metrics, err := profilercontroller.NewKubernetesMetricSourceResolver(
+		reader,
+		profilercontroller.MetricSourceResolverOptions{
+			Namespace:     opts.namespace,
+			ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey:  opts.metricSourcesKey,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct metric-source resolver: %w", err)
+	}
+	workloads, err := profilercontroller.NewKubernetesWorkloadObservationResolver(
+		reader,
+		profilercontroller.WorkloadObservationResolverOptions{
+			Namespace:     opts.namespace,
+			ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey:  opts.workloadObservationKey,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct workload-observation resolver: %w", err)
+	}
+	actuation, err := profilercontroller.NewKubernetesActuationPolicyResolver(
+		reader,
+		profilercontroller.ActuationPolicyResolverOptions{
+			Namespace:     opts.namespace,
+			ConfigMapName: opts.factSourceConfigMap,
+			ConfigMapKey:  opts.actuationPoliciesKey,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct actuation-policy resolver: %w", err)
+	}
+	preparer, err := profilerapp.NewPreparer(candidates, nodes, metrics, workloads, actuation)
+	if err != nil {
+		return nil, fmt.Errorf("construct Run preparer: %w", err)
+	}
+	projector, err := bscontroller.NewCurvePlanProjector(reader, candidates, preparer)
+	if err != nil {
+		return nil, fmt.Errorf("construct curve-plan projector: %w", err)
+	}
+	preflights, err := consolekube.NewKubernetesBatchSaturationPreflightQuery(
+		consoleCurvePlanProjector{projector: projector},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct batch-saturation preflight query: %w", err)
+	}
+	handler, err := readapi.NewHandler(query, results, preflights)
 	if err != nil {
 		return nil, fmt.Errorf("construct Console HTTP handler: %w", err)
 	}
