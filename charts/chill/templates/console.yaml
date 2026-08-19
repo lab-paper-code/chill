@@ -42,6 +42,40 @@ rules:
       - {{ .Values.evidenceStore.configRef.name | quote }}
     verbs: ["get"]
   {{- end }}
+{{- if .Values.evidenceStore.enabled }}
+---
+# The ChillSystem is cluster-scoped, so reading which Evidence Store a campaign
+# result was delivered to needs a cluster-scoped grant. chill-console-viewer is
+# the grant an operator binds to a person; it binds to nobody by default and
+# carries more than the Console itself needs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-system-reader
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["chillsystems"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-system-reader
+  labels:
+    app.kubernetes.io/component: operator-console
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-system-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.consoleServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
