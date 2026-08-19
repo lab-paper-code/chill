@@ -115,6 +115,7 @@ deps:
       - device-class
       - evidence-core
       - metric-core
+      - profile-derivation
       - profiler-evidence
       - profiling-run
       - workload-core
