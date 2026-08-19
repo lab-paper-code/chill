@@ -95,6 +95,7 @@ deps:
   operator-console:
     mayDependOn:
       - api
+      - batch-saturation-core
       - device-class
       - evidence-core
       - metric-core
