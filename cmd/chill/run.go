@@ -73,7 +73,7 @@ func executeInventory(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return fmt.Errorf("read inventory: %w", err)
 	}
-	if err := writeInventory(stdout, opts.output, snapshot); err != nil {
+	if err := writeInventory(stdout, opts.output, operatorconsole.BuildInventory(snapshot)); err != nil {
 		return fmt.Errorf("write inventory: %w", err)
 	}
 	return nil
