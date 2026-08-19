@@ -23,11 +23,16 @@ type profilingRunsQuery interface {
 	Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error)
 }
 
+type batchSaturationPreflightQuery interface {
+	Read(context.Context) (operatorconsole.BatchSaturationPreflight, error)
+}
+
 type dependencies struct {
 	newInventoryQuery func(inventoryOptions) (inventoryQuery, error)
 	newSystemQuery    func(systemOptions) (systemQuery, error)
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
 	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
+	newPreflightQuery func(preflightOptions) (batchSaturationPreflightQuery, error)
 }
 
 func productionDependencies() dependencies {
@@ -36,12 +41,13 @@ func productionDependencies() dependencies {
 		newSystemQuery:    newSystemQuery,
 		newRunsQuery:      newProfilingRunsQuery,
 		newRunShowQuery:   newEvidencePassportQuery,
+		newPreflightQuery: newBatchSaturationPreflightQuery,
 	}
 }
 
 func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
 	if len(args) == 0 {
-		return fmt.Errorf("%w: expected command: inventory, system, or runs", errUsage)
+		return fmt.Errorf("%w: expected command: inventory, system, runs, or preflight", errUsage)
 	}
 	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		return writeUsage(stdout)
@@ -53,6 +59,8 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps 
 		return executeSystem(ctx, args[1:], stdout, stderr, deps)
 	case "runs":
 		return executeProfilingRuns(ctx, args[1:], stdout, stderr, deps)
+	case "preflight":
+		return executePreflight(ctx, args[1:], stdout, stderr, deps)
 	default:
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
@@ -149,6 +157,28 @@ func executeProfilingRunShow(ctx context.Context, args []string, stdout, stderr 
 	return nil
 }
 
+func executePreflight(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
+	opts, err := parsePreflightOptions(args, stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	query, err := deps.newPreflightQuery(opts)
+	if err != nil {
+		return fmt.Errorf("construct BatchSaturation preflight query: %w", err)
+	}
+	preflight, err := query.Read(ctx)
+	if err != nil {
+		return fmt.Errorf("read BatchSaturation preflight: %w", err)
+	}
+	if err := writeBatchSaturationPreflight(stdout, opts.output, preflight); err != nil {
+		return fmt.Errorf("write BatchSaturation preflight: %w", err)
+	}
+	return nil
+}
+
 func writeUsage(writer io.Writer) error {
 	if _, err := fmt.Fprintln(writer, "Usage:"); err != nil {
 		return err
@@ -165,8 +195,12 @@ func writeUsage(writer io.Writer) error {
 		"  kubectl chill runs      [-n NAMESPACE|-A] [--kubeconfig PATH] [--context NAME] [-o table|json]"); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(writer,
+		"  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]"); err != nil {
+		return err
+	}
 	_, err := fmt.Fprintln(writer,
-		"  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]")
+		"  kubectl chill preflight -f FILE [-n NAMESPACE] [--console-service NAME] [-o table|json]")
 	return err
 }
 
