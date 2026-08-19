@@ -120,7 +120,7 @@ func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.
 	if err != nil {
 		return fmt.Errorf("read ProfilingRuns: %w", err)
 	}
-	if err := writeProfilingRuns(stdout, opts.output, snapshot); err != nil {
+	if err := writeProfilingRuns(stdout, opts.output, operatorconsole.BuildProfilingRuns(snapshot)); err != nil {
 		return fmt.Errorf("write ProfilingRuns: %w", err)
 	}
 	return nil

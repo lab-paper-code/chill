@@ -165,7 +165,8 @@ func TestExecuteProfilingRunsWritesStructuredJSON(t *testing.T) {
 	if err := execute(context.Background(), []string{"runs", "-A", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
-	var document profilingRunsDocument
+	// The CLI must emit the shared Console view, not a shape of its own.
+	var document operatorconsole.ProfilingRunsView
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
