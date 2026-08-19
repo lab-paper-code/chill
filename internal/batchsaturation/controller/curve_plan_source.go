@@ -51,15 +51,33 @@ func (e *ArtifactInputContractMissingError) Error() string {
 	return fmt.Sprintf("artifact %q declares no input tensor contract", e.Artifact)
 }
 
+// CurvePlanProjector resolves the immutable plan one BatchSaturation selects.
+// It reads the facts that plan freezes and writes nothing, so a caller that
+// only asks whether an intent resolves needs no Evidence Store authority.
+type CurvePlanProjector struct {
+	reader   client.Reader
+	resolver profiler.CandidateResolver
+	preparer CurvePlanPreparer
+}
+
+func NewCurvePlanProjector(
+	reader client.Reader,
+	resolver profiler.CandidateResolver,
+	preparer CurvePlanPreparer,
+) (*CurvePlanProjector, error) {
+	if reader == nil || resolver == nil || preparer == nil {
+		return nil, errors.New("ModelSpec reader, candidate resolver, and Run preparer are required")
+	}
+	return &CurvePlanProjector{reader: reader, resolver: resolver, preparer: preparer}, nil
+}
+
 // CurvePlanSource resolves one BatchSaturation's immutable curve plan without
 // creating either of the Run objects used to project its active and idle
 // intents.
 type CurvePlanSource struct {
-	reader   client.Reader
-	resolver profiler.CandidateResolver
-	preparer CurvePlanPreparer
-	store    CurvePlanStore
-	options  CurvePlanSourceOptions
+	projector *CurvePlanProjector
+	store     CurvePlanStore
+	options   CurvePlanSourceOptions
 }
 
 func NewCurvePlanSource(
@@ -78,15 +96,19 @@ func NewCurvePlanSource(
 	if options.MaxObjectBytes < 1 {
 		return nil, errors.New("maximum curve-plan object size must be positive")
 	}
+	projector, err := NewCurvePlanProjector(reader, resolver, preparer)
+	if err != nil {
+		return nil, err
+	}
 	return &CurvePlanSource{
-		reader: reader, resolver: resolver, preparer: preparer, store: store, options: options,
+		projector: projector, store: store, options: options,
 	}, nil
 }
 
 // Project resolves the plan a campaign selects without recording it, so a
 // caller that only needs to know whether the intent resolves does not write to
 // the Evidence Store.
-func (s *CurvePlanSource) Project(
+func (p *CurvePlanProjector) Project(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchSaturation,
 ) (profilederivation.CurvePlan, *TransitionMaterial, error) {
@@ -100,7 +122,7 @@ func (s *CurvePlanSource) Project(
 		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
 		PowerMode:     parent.Spec.State.Candidate.PowerMode,
 	}
-	resolved, err := s.resolver.ResolveCandidate(ctx, selection)
+	resolved, err := p.resolver.ResolveCandidate(ctx, selection)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
 	}
@@ -113,7 +135,7 @@ func (s *CurvePlanSource) Project(
 		return profilederivation.CurvePlan{}, nil, err
 	}
 
-	active, err := s.prepare(ctx, parent, batchsaturation.Measurement{
+	active, err := p.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeActive,
 		Batch:        plannedBatchSizes[0],
 	})
@@ -127,14 +149,14 @@ func (s *CurvePlanSource) Project(
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project campaign transition: %w", err)
 	}
-	idle, err := s.prepare(ctx, parent, batchsaturation.Measurement{
+	idle, err := p.prepare(ctx, parent, batchsaturation.Measurement{
 		WorkloadMode: batchsaturation.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
 	}
-	artifact, err := s.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
+	artifact, err := p.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
@@ -189,7 +211,7 @@ func (s *CurvePlanSource) Resolve(
 	if parent.UID == "" {
 		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("BatchSaturation UID is required")
 	}
-	plan, transition, err := s.Project(ctx, parent)
+	plan, transition, err := s.projector.Project(ctx, parent)
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
 	}
@@ -228,7 +250,7 @@ func resolvePlannedBatchSizes(
 	return planned, nil
 }
 
-func (s *CurvePlanSource) prepare(
+func (p *CurvePlanProjector) prepare(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchSaturation,
 	measurement batchsaturation.Measurement,
@@ -241,16 +263,16 @@ func (s *CurvePlanSource) prepare(
 	if err != nil {
 		return profiler.PreparedRun{}, err
 	}
-	return s.preparer.Prepare(ctx, requested.Preparation)
+	return p.preparer.Prepare(ctx, requested.Preparation)
 }
 
-func (s *CurvePlanSource) resolveArtifact(
+func (p *CurvePlanProjector) resolveArtifact(
 	ctx context.Context,
 	modelSpecName string,
 	report profilingrun.CandidateReport,
 ) (edgev1alpha1.ModelArtifact, error) {
 	model := &edgev1alpha1.ModelSpec{}
-	if err := s.reader.Get(ctx, types.NamespacedName{Name: modelSpecName}, model); err != nil {
+	if err := p.reader.Get(ctx, types.NamespacedName{Name: modelSpecName}, model); err != nil {
 		return edgev1alpha1.ModelArtifact{}, fmt.Errorf("get ModelSpec %q for curve-plan artifact: %w", modelSpecName, err)
 	}
 	input := report.Inputs.ModelSpec
