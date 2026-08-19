@@ -18,6 +18,7 @@ import (
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 )
 
 const batchSaturationMaximumObjectBytes int64 = 64 << 20
@@ -94,9 +95,9 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 
 func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerControllerShared, error) {
 	reader := mgr.GetAPIReader()
-	candidates, err := profilercontroller.NewKubernetesCandidateResolver(
+	candidates, err := profilerkube.NewKubernetesCandidateResolver(
 		reader,
-		profilercontroller.CandidateResolverOptions{
+		profilerkube.CandidateResolverOptions{
 			Namespace:     opts.watchNamespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.executionFactsKey,
@@ -105,13 +106,13 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct candidate resolver: %w", err)
 	}
-	nodes, err := profilercontroller.NewKubernetesNodeResolver(reader)
+	nodes, err := profilerkube.NewKubernetesNodeResolver(reader)
 	if err != nil {
 		return nil, fmt.Errorf("construct Node resolver: %w", err)
 	}
-	power, err := profilercontroller.NewKubernetesMetricSourceResolver(
+	power, err := profilerkube.NewKubernetesMetricSourceResolver(
 		reader,
-		profilercontroller.MetricSourceResolverOptions{
+		profilerkube.MetricSourceResolverOptions{
 			Namespace:     opts.watchNamespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.metricSourcesKey,
@@ -120,9 +121,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct metric-source resolver: %w", err)
 	}
-	workloads, err := profilercontroller.NewKubernetesWorkloadObservationResolver(
+	workloads, err := profilerkube.NewKubernetesWorkloadObservationResolver(
 		reader,
-		profilercontroller.WorkloadObservationResolverOptions{
+		profilerkube.WorkloadObservationResolverOptions{
 			Namespace:     opts.watchNamespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.workloadObservationKey,
@@ -131,9 +132,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct workload-observation resolver: %w", err)
 	}
-	actuationPolicies, err := profilercontroller.NewKubernetesActuationPolicyResolver(
+	actuationPolicies, err := profilerkube.NewKubernetesActuationPolicyResolver(
 		reader,
-		profilercontroller.ActuationPolicyResolverOptions{
+		profilerkube.ActuationPolicyResolverOptions{
 			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey: opts.actuationPoliciesKey,
 		},
@@ -149,9 +150,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct intent records: %w", err)
 	}
-	policies, err := profilercontroller.NewKubernetesAdmissionPolicyResolver(
+	policies, err := profilerkube.NewKubernetesAdmissionPolicyResolver(
 		reader,
-		profilercontroller.AdmissionPolicyResolverOptions{
+		profilerkube.AdmissionPolicyResolverOptions{
 			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey: opts.admissionPoliciesKey,
 		},
@@ -159,9 +160,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct admission-policy resolver: %w", err)
 	}
-	executionPolicies, err := profilercontroller.NewKubernetesExecutionPolicyResolver(
+	executionPolicies, err := profilerkube.NewKubernetesExecutionPolicyResolver(
 		reader,
-		profilercontroller.ExecutionPolicyResolverOptions{
+		profilerkube.ExecutionPolicyResolverOptions{
 			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey: opts.executionPoliciesKey,
 		},
@@ -169,9 +170,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct execution-policy resolver: %w", err)
 	}
-	stores, err := profilercontroller.NewKubernetesEvidenceStoreResolver(
+	stores, err := profilerkube.NewKubernetesEvidenceStoreResolver(
 		reader,
-		profilercontroller.EvidenceStoreResolverOptions{
+		profilerkube.EvidenceStoreResolverOptions{
 			SystemName: opts.systemName, Namespace: opts.watchNamespace,
 		},
 	)

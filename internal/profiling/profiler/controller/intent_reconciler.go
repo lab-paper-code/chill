@@ -69,7 +69,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	frozen, err := r.freezer.Freeze(ctx, run)
 	if err != nil {
-		if reason, terminal := terminalFreezeReason(err); terminal {
+		if reason, terminal := profiler.TerminalFreezeReason(err); terminal {
 			return ctrl.Result{}, r.publishIntentFreezeFailure(ctx, run, reason, err.Error())
 		}
 		return ctrl.Result{}, fmt.Errorf("freeze ProfilingRun %s intent: %w", req.NamespacedName, err)

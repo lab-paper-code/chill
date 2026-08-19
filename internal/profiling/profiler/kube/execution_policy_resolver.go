@@ -1,4 +1,4 @@
-package controller
+package kube
 
 import (
 	"context"
@@ -26,8 +26,6 @@ type KubernetesExecutionPolicyResolver struct {
 	reader  client.Reader
 	options ExecutionPolicyResolverOptions
 }
-
-var _ ExecutionPolicyResolver = (*KubernetesExecutionPolicyResolver)(nil)
 
 func NewKubernetesExecutionPolicyResolver(
 	reader client.Reader,
@@ -58,18 +56,18 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 		return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get execution-policy ConfigMap %s: %w", key, err)
 	}
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.FrozenExecutionPolicy{}, invalidExecutionPolicy(
+		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
 			"execution-policy ConfigMap has incomplete Kubernetes identity",
 		)
 	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
-		return profiler.FrozenExecutionPolicy{}, invalidExecutionPolicy(
+		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
 			"execution-policy ConfigMap key must be stored in text data",
 		)
 	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || raw == "" {
-		return profiler.FrozenExecutionPolicy{}, invalidExecutionPolicy(
+		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
 			"execution-policy ConfigMap %s is missing key %q",
 			key,
 			r.options.ConfigMapKey,
@@ -80,7 +78,7 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
-		return profiler.FrozenExecutionPolicy{}, newTerminalFreezeError(freezeReasonExecutionPolicyInvalid, err)
+		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonExecutionPolicyInvalid, err)
 	}
 	return frozen, nil
 }

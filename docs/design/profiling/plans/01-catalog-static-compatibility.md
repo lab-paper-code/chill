@@ -140,7 +140,7 @@ The first consumer is split across a pure evaluator and trusted fact adapter:
 
 ```text
 internal/modelcompat/                         pure compatibility evaluator
-internal/profiling/profiler/controller/candidate_resolver.go
+internal/profiling/profiler/kube/candidate_resolver.go
                                               trusted fact adapter
 ```
 

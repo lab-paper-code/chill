@@ -427,7 +427,8 @@ cmd/main.go
   -> Profiler Deployment
 
 cmd/profiler/main.go
-  -> internal/profiling/profiler/controller/    ProfilingRun reconciliation and status
+  -> internal/profiling/profiler/controller/    ProfilingRun reconciliation and Kubernetes writes
+  -> internal/profiling/profiler/kube/          trusted Kubernetes fact and policy readers
   -> internal/profiling/profiler/               one-Run application orchestration
        +--> internal/modelcompat
        +--> internal/profiling/run
@@ -435,7 +436,7 @@ cmd/profiler/main.go
        +--> narrow Kubernetes/source/evidence ports
 
 runtime worker entrypoint
-  -> internal/profiling/profiler/runner/        one-Job execution plane
+  -> internal/profiling/profiler/worker/        one-Job execution plane
        +--> explicit CPU ORT execution adapter
        +--> durable evidence sink
 
@@ -455,11 +456,13 @@ charts/chill/
 
 `internal/operator/profiler` manages only the Profiler operand. It does not
 import profiling-domain leaf packages. `internal/profiling/profiler` owns the application
-sequence and narrow interfaces without Kubernetes objects. Native object
-translation and controller-runtime behavior stay under
-`internal/profiling/profiler/controller` and its adapters.
+sequence and narrow interfaces without Kubernetes objects. The
+`internal/profiling/profiler/controller` package owns reconciliation, status,
+and owned-object writes. `internal/profiling/profiler/kube` implements the
+read-side adapters that resolve trusted cluster facts and configured policies.
+Both are assembled only by an entrypoint.
 
-`internal/profiling/profiler/runner` does not import controller-runtime, the Operator, or
+`internal/profiling/profiler/worker` does not import controller-runtime, the Operator, or
 CHILL controller packages. It performs the bounded execution requested by the
 Job and terminates. The controller observes durable Kubernetes and evidence-
 sink state instead of depending on runner process memory.

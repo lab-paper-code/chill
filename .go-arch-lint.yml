@@ -55,6 +55,7 @@ components:
   profiler-admission: { in: internal/profiling/profiler/admission }
   profiler-evidence: { in: internal/profiling/profiler/evidence }
   profiler-evidence-kube: { in: internal/profiling/profiler/evidence/kube }
+  profiler-kube: { in: internal/profiling/profiler/kube }
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-entrypoint: { in: internal/serving/entrypoint }
@@ -212,13 +213,22 @@ deps:
     mayDependOn:
       - api
       - platform-core
-      - device-class
       - evidence-core
       - evidence-kube
-      - model-compat
-      - metric-edgemetrics
       - profiler-app
       - profiler-admission
       - profiler-evidence
       - profiler-evidence-kube
+      - profiling-run
+
+  profiler-kube:
+    mayDependOn:
+      - api
+      - platform-core
+      - device-class
+      - evidence-kube
+      - metric-edgemetrics
+      - model-compat
+      - profiler-app
+      - profiler-admission
       - profiling-run

@@ -179,8 +179,8 @@ func TestIntentFreezerClassifiesAdmissionWorkloadMismatchBeforeExecutionPolicyRe
 	)
 
 	_, err = freezer.Freeze(ctx, run)
-	reason, terminal := terminalFreezeReason(err)
-	if err == nil || !terminal || reason != freezeReasonAdmissionPolicyInvalid || execution.calls != 0 {
+	reason, terminal := profiler.TerminalFreezeReason(err)
+	if err == nil || !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid || execution.calls != 0 {
 		t.Fatalf(
 			"workload mismatch error = %v, reason=%q terminal=%t executionCalls=%d",
 			err,

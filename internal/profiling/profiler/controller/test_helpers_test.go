@@ -1,111 +1,41 @@
 package controller
 
 import (
-	"context"
-	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	"github.com/lab-paper-code/chill/internal/profiling/run"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/yaml"
 )
 
 const (
-	testConfiguredActiveExecutionPolicy = "configured-active"
-	testConfiguredIdleExecutionPolicy   = "configured-idle"
+	testARM64Architecture     = "arm64"
+	testSelectablePowerMode   = "15W"
+	testWorkloadObserverImage = "registry.example/workload-observer@sha256:" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
-func TestKubernetesExecutionPolicyResolverFreezesSelectedConfigMapPolicy(t *testing.T) {
-	intent := currentPreparedRun(t).Intent
-	raw := controllerExecutionPolicyCatalog(t)
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       testSystemNamespace,
-			Name:            "chill-profiler-facts",
-			UID:             testFactsUID,
-			ResourceVersion: "42",
-		},
-		Data: map[string]string{"execution-policies.yaml": string(raw)},
-	}
-	resolver, err := NewKubernetesExecutionPolicyResolver(
-		fake.NewClientBuilder().WithObjects(configMap).Build(),
-		ExecutionPolicyResolverOptions{
-			Namespace:     testSystemNamespace,
-			ConfigMapName: "chill-profiler-facts",
-			ConfigMapKey:  "execution-policies.yaml",
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	frozen, err := resolver.Resolve(context.Background(), intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if frozen.Policy.Name != testConfiguredActiveExecutionPolicy ||
-		frozen.Source.UID != testFactsUID || frozen.Source.ResourceVersion != "42" {
-		t.Fatalf("resolved execution policy = %#v", frozen)
-	}
-}
-
-func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T) {
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       testSystemNamespace,
-			Name:            "facts",
-			UID:             testFactsUID,
-			ResourceVersion: "1",
-		},
-		BinaryData: map[string][]byte{"execution-policies.yaml": controllerExecutionPolicyCatalog(t)},
-	}
-	resolver, err := NewKubernetesExecutionPolicyResolver(
-		fake.NewClientBuilder().WithObjects(configMap).Build(),
-		ExecutionPolicyResolverOptions{
-			Namespace:     testSystemNamespace,
-			ConfigMapName: "facts",
-			ConfigMapKey:  "execution-policies.yaml",
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = resolver.Resolve(context.Background(), currentPreparedRun(t).Intent)
-	if err == nil || !strings.Contains(err.Error(), "text data") {
-		t.Fatalf("binary execution policy error = %v", err)
-	}
-	if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonExecutionPolicyInvalid {
-		t.Fatalf("binary execution policy classification = %q, terminal=%t", reason, terminal)
-	}
-
-	malformedConfigMap := configMap.DeepCopy()
-	malformedConfigMap.BinaryData = nil
-	malformedConfigMap.Data = map[string]string{"execution-policies.yaml": "policies: ["}
-	malformed, err := NewKubernetesExecutionPolicyResolver(
-		fake.NewClientBuilder().WithObjects(malformedConfigMap).Build(),
-		ExecutionPolicyResolverOptions{
-			Namespace: testSystemNamespace, ConfigMapName: "facts", ConfigMapKey: "execution-policies.yaml",
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := malformed.Resolve(context.Background(), currentPreparedRun(t).Intent); err == nil {
-		t.Fatal("malformed execution-policy catalog was accepted")
-	} else if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonExecutionPolicyInvalid {
-		t.Fatalf("malformed execution-policy classification = %q, terminal=%t", reason, terminal)
-	}
-}
+const controllerPolicyCatalog = `
+schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
+policies:
+  - name: operator-meter-policy
+    workloadMode: saturated-serial-fixed-batch
+    minimumSamples: 7
+    maximumGapSeconds: 2.5
+    maximumBoundaryDistanceSeconds: 1.25
+    minimumCoverage: 0.97
+    allowReceiptTimestamps: true
+    rejectConcurrentCHILLWorkloads: true
+    rejectExternalWorkloadChanges: true
+`
 
 func controllerExecutionPolicyCatalog(t *testing.T) []byte {
 	t.Helper()
 	active := controllerExecutionPolicySpec(profilingrun.SaturatedSerialFixedBatchWorkloadMode)
-	active.Name = testConfiguredActiveExecutionPolicy
+	active.Name = "configured-active"
 	idle := active
-	idle.Name = testConfiguredIdleExecutionPolicy
+	idle.Name = "configured-idle"
 	idle.WorkloadMode = "idle-model-loaded"
 	rknnActive := active
 	rknnActive.Name = "test-rknn-active"

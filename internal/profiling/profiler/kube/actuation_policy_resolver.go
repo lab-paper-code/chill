@@ -1,4 +1,4 @@
-package controller
+package kube
 
 import (
 	"context"
@@ -57,18 +57,18 @@ func (r *KubernetesActuationPolicyResolver) ResolveActuationPolicy(
 		return profiler.FrozenActuationPolicy{}, fmt.Errorf("get actuation-policy ConfigMap %s: %w", key, err)
 	}
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.FrozenActuationPolicy{}, invalidActuationPolicy(
+		return profiler.FrozenActuationPolicy{}, profiler.InvalidActuationPolicy(
 			"actuation-policy ConfigMap has incomplete Kubernetes identity",
 		)
 	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
-		return profiler.FrozenActuationPolicy{}, invalidActuationPolicy(
+		return profiler.FrozenActuationPolicy{}, profiler.InvalidActuationPolicy(
 			"actuation-policy ConfigMap key must be stored in text data",
 		)
 	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || raw == "" {
-		return profiler.FrozenActuationPolicy{}, invalidActuationPolicy(
+		return profiler.FrozenActuationPolicy{}, profiler.InvalidActuationPolicy(
 			"actuation-policy ConfigMap %s is missing key %q",
 			key,
 			r.options.ConfigMapKey,
@@ -84,7 +84,7 @@ func (r *KubernetesActuationPolicyResolver) ResolveActuationPolicy(
 		},
 	)
 	if err != nil {
-		return profiler.FrozenActuationPolicy{}, newTerminalFreezeError(freezeReasonActuationPolicyInvalid, err)
+		return profiler.FrozenActuationPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonActuationPolicyInvalid, err)
 	}
 	return frozen, nil
 }

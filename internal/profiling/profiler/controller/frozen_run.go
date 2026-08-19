@@ -71,10 +71,10 @@ func validateSelectedAdmissionPolicy(
 		return err
 	}
 	if selected.Name != run.Spec.AdmissionPolicy {
-		return invalidAdmissionPolicy("frozen admission policy does not match immutable ProfilingRun spec")
+		return profiler.InvalidAdmissionPolicy("frozen admission policy does not match immutable ProfilingRun spec")
 	}
 	if selected.WorkloadMode != prepared.Intent.Measurement.WorkloadMode {
-		return invalidAdmissionPolicy("frozen admission policy workload mode does not match immutable Run intent")
+		return profiler.InvalidAdmissionPolicy("frozen admission policy workload mode does not match immutable Run intent")
 	}
 	return nil
 }
@@ -86,7 +86,7 @@ func validateSelectedExecutionPolicy(
 	if (policy.Policy.DeviceClass != "*" && policy.Policy.DeviceClass != prepared.Intent.State.DeviceClass) ||
 		policy.Policy.ExecutionPath != prepared.Intent.Candidate.ExecutionPath ||
 		policy.Policy.WorkloadMode != prepared.Intent.Measurement.WorkloadMode {
-		return invalidExecutionPolicy("frozen execution policy does not match immutable Run intent")
+		return profiler.InvalidExecutionPolicy("frozen execution policy does not match immutable Run intent")
 	}
 	return nil
 }

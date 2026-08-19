@@ -112,7 +112,7 @@ func (f *IntentFreezer) Freeze(
 
 	requested, err := ProjectRequest(run.Spec)
 	if err != nil {
-		return FreezeIntentResult{}, newTerminalFreezeError(freezeReasonInvalidRunSpec, err)
+		return FreezeIntentResult{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonInvalidRunSpec, err)
 	}
 	prepared, err := f.preparer.Prepare(ctx, requested.Preparation)
 	if err != nil {

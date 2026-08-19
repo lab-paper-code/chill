@@ -37,6 +37,7 @@ components=(
   profiler-admission
   profiler-evidence
   profiler-evidence-kube
+  profiler-kube
   profiler-worker
   serving-core
   serving-entrypoint
@@ -76,6 +77,7 @@ component_for() {
     internal/profiling/profiler/admission) echo profiler-admission ;;
     internal/profiling/profiler/evidence) echo profiler-evidence ;;
     internal/profiling/profiler/evidence/kube) echo profiler-evidence-kube ;;
+    internal/profiling/profiler/kube) echo profiler-kube ;;
     internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
     internal/serving/entrypoint) echo serving-entrypoint ;;

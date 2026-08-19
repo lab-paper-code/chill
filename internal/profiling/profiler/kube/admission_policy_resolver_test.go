@@ -1,10 +1,11 @@
-package controller
+package kube
 
 import (
 	"context"
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,7 +82,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	if _, err := resolver.Resolve(context.Background(), "operator-meter-policy"); err == nil ||
 		!strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary policy source error = %v", err)
-	} else if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonAdmissionPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid {
 		t.Fatalf("binary policy source classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -96,7 +97,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	)
 	if _, err := malformed.Resolve(context.Background(), "operator-meter-policy"); err == nil {
 		t.Fatal("malformed admission-policy catalog was accepted")
-	} else if reason, terminal := terminalFreezeReason(err); !terminal || reason != freezeReasonAdmissionPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid {
 		t.Fatalf("malformed policy classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -106,7 +107,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	})
 	if _, err := missing.Resolve(context.Background(), "operator-meter-policy"); err == nil {
 		t.Fatal("missing admission-policy ConfigMap was accepted")
-	} else if reason, terminal := terminalFreezeReason(err); terminal {
+	} else if reason, terminal := profiler.TerminalFreezeReason(err); terminal {
 		t.Fatalf("missing ConfigMap must remain retryable, got terminal reason %q", reason)
 	}
 }
@@ -132,8 +133,8 @@ func TestKubernetesAdmissionPolicyResolverClassifiesUnknownPolicyAsTerminal(t *t
 		t.Fatal(err)
 	}
 	_, err = resolver.Resolve(context.Background(), "typo-v9")
-	reason, terminal := terminalFreezeReason(err)
-	if err == nil || !terminal || reason != freezeReasonAdmissionPolicyInvalid ||
+	reason, terminal := profiler.TerminalFreezeReason(err)
+	if err == nil || !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid ||
 		!strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("unknown policy error = %v, reason=%q terminal=%t", err, reason, terminal)
 	}

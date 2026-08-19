@@ -1,4 +1,4 @@
-package controller
+package kube
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,7 +49,7 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 	name string,
 ) (profileradmission.FrozenPolicy, error) {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+		return profileradmission.FrozenPolicy{}, profiler.InvalidAdmissionPolicy(
 			"admission-policy name is required without surrounding whitespace",
 		)
 	}
@@ -58,18 +59,18 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 		return profileradmission.FrozenPolicy{}, fmt.Errorf("get admission-policy ConfigMap %s: %w", key, err)
 	}
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+		return profileradmission.FrozenPolicy{}, profiler.InvalidAdmissionPolicy(
 			"admission-policy ConfigMap has incomplete Kubernetes identity",
 		)
 	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
-		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+		return profileradmission.FrozenPolicy{}, profiler.InvalidAdmissionPolicy(
 			"admission-policy ConfigMap key must be stored in text data",
 		)
 	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || raw == "" {
-		return profileradmission.FrozenPolicy{}, invalidAdmissionPolicy(
+		return profileradmission.FrozenPolicy{}, profiler.InvalidAdmissionPolicy(
 			"admission-policy ConfigMap %s is missing key %q",
 			key,
 			r.options.ConfigMapKey,
@@ -80,7 +81,7 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
-		return profileradmission.FrozenPolicy{}, newTerminalFreezeError(freezeReasonAdmissionPolicyInvalid, err)
+		return profileradmission.FrozenPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonAdmissionPolicyInvalid, err)
 	}
 	return frozen, nil
 }

@@ -634,7 +634,7 @@ func TestRunReconcilerPublishesTerminalFreezeFailureWithoutRequeue(t *testing.T)
 	run.Generation = 7
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	freezer := &recordingIntentFreezer{
-		err: invalidAdmissionPolicy("admission policy %q is not configured", "typo-v9"),
+		err: profiler.InvalidAdmissionPolicy("admission policy %q is not configured", "typo-v9"),
 	}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
@@ -662,7 +662,7 @@ func TestRunReconcilerPublishesTerminalFreezeFailureWithoutRequeue(t *testing.T)
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 	if actual.Status.ObservedGeneration != run.Generation || condition == nil ||
 		condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != run.Generation ||
-		condition.Reason != freezeReasonAdmissionPolicyInvalid ||
+		condition.Reason != profiler.FreezeReasonAdmissionPolicyInvalid ||
 		!strings.Contains(condition.Message, `admission policy "typo-v9" is not configured`) {
 		t.Fatalf("terminal freeze status = %#v", actual.Status)
 	}

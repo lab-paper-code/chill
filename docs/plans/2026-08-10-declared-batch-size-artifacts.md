@@ -38,7 +38,7 @@ Four sites assert `inputShape[0] == fixedBatch`, comparing two fields of the sam
 The batch-eligibility check at `internal/profiling/run/candidate.go:445` is **not** deleted here. It transforms into a set-membership test in Task 2.
 
 **Files:**
-- Modify: `internal/profiling/profiler/controller/catalog_facts.go:140-146`
+- Modify: `internal/profiling/profiler/kube/catalog_facts.go:140-146`
 - Modify: `internal/profiling/run/candidate.go:443-451`
 - Modify: `internal/profiling/profiler/worker/rknn_lite.go:209-215`
 - Modify: `runtime/rknnlite/runner.py:374-405`, `:664-666`, `:371`
@@ -126,7 +126,7 @@ Update the call site at `runtime/rknnlite/runner.py:371`:
 
 - [ ] **Step 6: Delete the three Go equality checks**
 
-`internal/profiling/profiler/controller/catalog_facts.go` — delete only this line from the RKNNLite condition:
+`internal/profiling/profiler/kube/catalog_facts.go` — delete only this line from the RKNNLite condition:
 
 ```go
 			artifact.Input.Shape[0] != artifact.Derivation.FixedBatch ||
@@ -183,8 +183,8 @@ git commit -m "refactor: drop artifact batch checks that compare two declaration
 **Files:**
 - Modify: `api/v1alpha1/modelspec_types.go:49-51,62-70`
 - Modify: `internal/profiling/run/candidate.go:15,79-87,323-334,443-451`
-- Modify: `internal/profiling/profiler/controller/candidate_report.go:109-125`
-- Modify: `internal/profiling/profiler/controller/catalog_facts.go:140-155`
+- Modify: `internal/profiling/profiler/kube/candidate_report.go:109-125`
+- Modify: `internal/profiling/profiler/kube/catalog_facts.go:140-155`
 - Modify: `internal/profiling/profiler/worker/rknn_lite.go:18,209-215,230-240`
 - Modify: `runtime/rknnlite/runner.py:374-405,953-958`
 - Modify: `config/samples/edge_v1alpha1_modelspec.yaml`
@@ -373,8 +373,8 @@ go build ./... 2>&1 | head -40
 
 Fix each break with the corresponding rename, changing nothing else:
 
-- `internal/profiling/profiler/controller/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)`.
-- `internal/profiling/profiler/controller/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
+- `internal/profiling/profiler/kube/candidate_report.go` — `reportArtifactCapability` sets `DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...)` and `capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)`.
+- `internal/profiling/profiler/kube/catalog_facts.go` — the RKNNLite condition reads `len(artifact.Input.InputSampleShape) == 0` and its dimension loop iterates `InputSampleShape`. Add `len(artifact.Derivation.DeclaredBatchSizes) == 0` to that condition so a derived RKNNLite artifact must declare at least one declared batch size.
 - `internal/profiling/profiler/worker/rknn_lite.go` — raise `rknnLiteRequestSchemaVersion` to `"chill.dacs.io/rknnlite-runtime-request.v1alpha4"`; the delivery check reads `len(capability.InputSampleShape) == 0`; wherever the adapter previously passed `InputShape`, pass `append([]int32{int32(batch)}, capability.InputSampleShape...)`.
 
 - [ ] **Step 8: Change the runtime contract**

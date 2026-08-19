@@ -17,8 +17,8 @@ import (
 	bscontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -87,9 +87,9 @@ func newCampaignResultQuery(
 	reader client.Reader,
 	opts options,
 ) (*consolekube.KubernetesBatchSaturationResultQuery, error) {
-	resolver, err := profilercontroller.NewKubernetesEvidenceStoreResolver(
+	resolver, err := profilerkube.NewKubernetesEvidenceStoreResolver(
 		reader,
-		profilercontroller.EvidenceStoreResolverOptions{
+		profilerkube.EvidenceStoreResolverOptions{
 			SystemName: opts.systemName, Namespace: opts.namespace,
 		},
 	)
@@ -114,9 +114,9 @@ func newCampaignPreflightQuery(
 	reader client.Reader,
 	opts options,
 ) (*consolekube.KubernetesBatchSaturationPreflightQuery, error) {
-	candidates, err := profilercontroller.NewKubernetesCandidateResolver(
+	candidates, err := profilerkube.NewKubernetesCandidateResolver(
 		reader,
-		profilercontroller.CandidateResolverOptions{
+		profilerkube.CandidateResolverOptions{
 			Namespace:     opts.namespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.executionFactsKey,
@@ -125,13 +125,13 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct candidate resolver: %w", err)
 	}
-	nodes, err := profilercontroller.NewKubernetesNodeResolver(reader)
+	nodes, err := profilerkube.NewKubernetesNodeResolver(reader)
 	if err != nil {
 		return nil, fmt.Errorf("construct Node resolver: %w", err)
 	}
-	metrics, err := profilercontroller.NewKubernetesMetricSourceResolver(
+	metrics, err := profilerkube.NewKubernetesMetricSourceResolver(
 		reader,
-		profilercontroller.MetricSourceResolverOptions{
+		profilerkube.MetricSourceResolverOptions{
 			Namespace:     opts.namespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.metricSourcesKey,
@@ -140,9 +140,9 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct metric-source resolver: %w", err)
 	}
-	workloads, err := profilercontroller.NewKubernetesWorkloadObservationResolver(
+	workloads, err := profilerkube.NewKubernetesWorkloadObservationResolver(
 		reader,
-		profilercontroller.WorkloadObservationResolverOptions{
+		profilerkube.WorkloadObservationResolverOptions{
 			Namespace:     opts.namespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.workloadObservationKey,
@@ -151,9 +151,9 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct workload-observation resolver: %w", err)
 	}
-	actuation, err := profilercontroller.NewKubernetesActuationPolicyResolver(
+	actuation, err := profilerkube.NewKubernetesActuationPolicyResolver(
 		reader,
-		profilercontroller.ActuationPolicyResolverOptions{
+		profilerkube.ActuationPolicyResolverOptions{
 			Namespace:     opts.namespace,
 			ConfigMapName: opts.factSourceConfigMap,
 			ConfigMapKey:  opts.actuationPoliciesKey,
@@ -205,7 +205,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 // resolved per read rather than recovered from a Job.
 type campaignResultObjectReader struct {
 	reader    client.Reader
-	resolver  *profilercontroller.KubernetesEvidenceStoreResolver
+	resolver  *profilerkube.KubernetesEvidenceStoreResolver
 	namespace string
 	tempDir   string
 }
