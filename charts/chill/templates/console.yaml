@@ -22,7 +22,7 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["profilingruns"]
+    resources: ["profilingruns", "batchsaturations"]
     verbs: ["get"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -32,6 +32,16 @@ rules:
     resourceNames:
       - {{ printf "%s-evidence-store-credentials" (include "chill.systemName" .) | quote }}
     verbs: ["get"]
+  {{- if .Values.evidenceStore.enabled }}
+  # A campaign result is written by the controller rather than by a measurement
+  # Job, so its delivery contract is read from the Evidence Store operand
+  # configuration instead of being recovered from a Job.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ .Values.evidenceStore.configRef.name | quote }}
+    verbs: ["get"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -81,6 +91,12 @@ spec:
           imagePullPolicy: {{ .Values.console.image.pullPolicy }}
           args:
             - {{ printf "--bind-address=:%v" .Values.console.port | quote }}
+            - {{ printf "--system-name=%s" (include "chill.systemName" .) | quote }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: http
               containerPort: {{ .Values.console.port }}
