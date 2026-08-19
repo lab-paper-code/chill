@@ -101,6 +101,7 @@ deps:
       - device-class
       - evidence-core
       - operator-console
+      - profile-derivation
       - profiler-evidence
 
   operator-console-readapi:
