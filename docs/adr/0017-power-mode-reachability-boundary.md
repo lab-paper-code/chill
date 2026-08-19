@@ -50,11 +50,6 @@ independent read-back before the state is accepted.
 Every catalogued mode is reachable, so a campaign's power-mode axis is the
 catalog rather than one mask equivalence class.
 
-Transition cost is not one quantity. A transition that restarts the Node pays
-for the boot and a transition in place does not, by more than an order of
-magnitude, so the two are separate measured rows and are not compared as though
-they were the same operation.
-
 A restart ends every Pod on the Node, not only CHILL's. Node-wide workload
 safety gates the transition before the mode is recorded, and what widens is the
 reach of what it permits, which is the same judgment the operator makes in
