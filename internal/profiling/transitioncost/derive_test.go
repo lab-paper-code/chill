@@ -53,9 +53,14 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	if result.FrozenContract() != frozen {
 		t.Fatalf("frozen contract changed: %#v", result.FrozenContract())
 	}
-	if result.RawObservation().BaselineReference != frozen.TargetIdleBaseline.EvidenceReference {
+	retainedRaw := result.RawObservation()
+	if retainedRaw.DeviceClass != raw.DeviceClass || retainedRaw.Actuator != raw.Actuator {
+		t.Fatalf("raw scope identity changed: DeviceClass=%q Actuator=%#v, want %q %#v",
+			retainedRaw.DeviceClass, retainedRaw.Actuator, raw.DeviceClass, raw.Actuator)
+	}
+	if retainedRaw.BaselineReference != frozen.TargetIdleBaseline.EvidenceReference {
 		t.Fatalf("raw baseline reference = %q, want %q",
-			result.RawObservation().BaselineReference, frozen.TargetIdleBaseline.EvidenceReference)
+			retainedRaw.BaselineReference, frozen.TargetIdleBaseline.EvidenceReference)
 	}
 }
 
@@ -307,6 +312,18 @@ func TestDeriveRejectsEveryFrozenIdentityContradiction(t *testing.T) {
 			alter: func(raw *transitioncost.RawObservation) { raw.NodeActuation.UID = "other-actuation" },
 		},
 		{
+			name:  "DeviceClass",
+			alter: func(raw *transitioncost.RawObservation) { raw.DeviceClass = "other-class" },
+		},
+		{
+			name:  "actuator kind",
+			alter: func(raw *transitioncost.RawObservation) { raw.Actuator.Kind = "other-kind" },
+		},
+		{
+			name:  "actuator target",
+			alter: func(raw *transitioncost.RawObservation) { raw.Actuator.Target = "other-target" },
+		},
+		{
 			name:  "source state",
 			alter: func(raw *transitioncost.RawObservation) { raw.SourceState.PowerMode = mode30W },
 		},
@@ -363,6 +380,27 @@ func TestDeriveRejectsMalformedFrozenInputsAsErrors(t *testing.T) {
 			match: "baseline state",
 		},
 		{
+			name: "DeviceClass contains surrounding whitespace",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.DeviceClass = " jetson-orin"
+			},
+			match: "frozen identity",
+		},
+		{
+			name: "actuator kind is empty",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.Actuator.Kind = ""
+			},
+			match: "frozen identity",
+		},
+		{
+			name: "actuator target contains surrounding whitespace",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.Actuator.Target = " /sys/devices/gpu"
+			},
+			match: "frozen identity",
+		},
+		{
 			name: "same source and target",
 			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
 				frozen.TargetState = frozen.SourceState
@@ -394,14 +432,40 @@ func TestDeriveRejectsMalformedFrozenInputsAsErrors(t *testing.T) {
 }
 
 func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
-	frozen, raw, policy := validInputs()
-	raw.ObservationEndedAt = raw.ObservationStartedAt
-
-	result, err := transitioncost.Derive(frozen, raw, policy)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name  string
+		alter func(*transitioncost.RawObservation)
+	}{
+		{
+			name:  "invalid coverage window",
+			alter: func(raw *transitioncost.RawObservation) { raw.ObservationEndedAt = raw.ObservationStartedAt },
+		},
+		{
+			name:  "empty DeviceClass",
+			alter: func(raw *transitioncost.RawObservation) { raw.DeviceClass = "" },
+		},
+		{
+			name:  "actuator kind contains surrounding whitespace",
+			alter: func(raw *transitioncost.RawObservation) { raw.Actuator.Kind = " host" },
+		},
+		{
+			name:  "empty actuator target",
+			alter: func(raw *transitioncost.RawObservation) { raw.Actuator.Target = "" },
+		},
 	}
-	assertOutcome(t, result, transitioncost.VerdictInvalid, transitioncost.ReasonObservationMalformed)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			frozen, raw, policy := validInputs()
+			test.alter(&raw)
+
+			result, err := transitioncost.Derive(frozen, raw, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOutcome(t, result, transitioncost.VerdictInvalid,
+				transitioncost.ReasonObservationMalformed)
+		})
+	}
 }
 
 func TestResultOwnsRawEvidenceCopy(t *testing.T) {
@@ -445,9 +509,15 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 	target := transitioncost.StateIdentity{DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MAXN"}
 	workload := transitioncost.WorkloadIdentity{Namespace: "serving", Name: "mobilenet", UID: "workload-uid"}
 	frozen := transitioncost.FrozenContract{
-		Node:          transitioncost.NodeIdentity{Name: "orin", UID: "node-uid"},
-		NodeActuation: transitioncost.NodeActuationIdentity{Namespace: "chill-system", Name: "to-maxn", UID: "actuation-uid"},
-		SourceState:   source, TargetState: target, Workload: workload,
+		Node:        transitioncost.NodeIdentity{Name: "orin", UID: "node-uid"},
+		DeviceClass: "jetson-orin-agx-64gb",
+		Actuator: transitioncost.ActuatorIdentity{
+			Kind: "host-command", Target: "/sys/devices/gpu",
+		},
+		NodeActuation: transitioncost.NodeActuationIdentity{
+			Namespace: "chill-system", Name: "to-maxn", UID: "actuation-uid",
+		},
+		SourceState: source, TargetState: target, Workload: workload,
 		ProtocolIdentity: "transition-cost-v1", MeterIdentity: "wall-meter-1",
 		TargetIdleBaseline: transitioncost.IdleBaseline{
 			EvidenceReference: "evidence://idle-maxn", State: target, MeanWallWatts: 12,
@@ -458,8 +528,9 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 	}
 	raw := transitioncost.RawObservation{
 		ObservationStartedAt: testTime(0), ObservationEndedAt: testTime(8),
-		Node: frozen.Node, NodeActuation: frozen.NodeActuation,
-		SourceState: source, TargetState: target, Workload: workload,
+		Node: frozen.Node, DeviceClass: frozen.DeviceClass, Actuator: frozen.Actuator,
+		NodeActuation: frozen.NodeActuation,
+		SourceState:   source, TargetState: target, Workload: workload,
 		ProtocolIdentity: frozen.ProtocolIdentity, MeterIdentity: frozen.MeterIdentity,
 		BaselineReference: frozen.TargetIdleBaseline.EvidenceReference,
 		BaselineState:     frozen.TargetIdleBaseline.State,

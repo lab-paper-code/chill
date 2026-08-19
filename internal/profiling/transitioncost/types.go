@@ -46,6 +46,13 @@ type NodeActuationIdentity struct {
 	UID       string
 }
 
+// ActuatorIdentity identifies the exact actuation path and factual target
+// used for one transition observation.
+type ActuatorIdentity struct {
+	Kind   string
+	Target string
+}
+
 // StateIdentity is one exact Layer-0 device, model, and power-mode state.
 type StateIdentity struct {
 	DeviceType string
@@ -73,6 +80,8 @@ type IdleBaseline struct {
 // directed transition observation.
 type FrozenContract struct {
 	Node               NodeIdentity
+	DeviceClass        string
+	Actuator           ActuatorIdentity
 	NodeActuation      NodeActuationIdentity
 	SourceState        StateIdentity
 	TargetState        StateIdentity
@@ -148,6 +157,8 @@ type RawObservation struct {
 	ObservationEndedAt   time.Time
 
 	Node              NodeIdentity
+	DeviceClass       string
+	Actuator          ActuatorIdentity
 	NodeActuation     NodeActuationIdentity
 	SourceState       StateIdentity
 	TargetState       StateIdentity

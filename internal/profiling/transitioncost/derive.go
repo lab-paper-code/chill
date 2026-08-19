@@ -121,7 +121,8 @@ func classified(input verifiedInput, verdict Verdict, reason Reason, detail stri
 }
 
 func validateFrozen(frozen FrozenContract) error {
-	if !validObject(frozen.Node) || !validNodeActuation(frozen.NodeActuation) ||
+	if !validObject(frozen.Node) || !plainIdentity(frozen.DeviceClass) ||
+		!validActuator(frozen.Actuator) || !validNodeActuation(frozen.NodeActuation) ||
 		!validState(frozen.SourceState) || !validState(frozen.TargetState) ||
 		!validWorkload(frozen.Workload) || !plainIdentity(frozen.ProtocolIdentity) ||
 		!plainIdentity(frozen.MeterIdentity) || !plainIdentity(frozen.TargetIdleBaseline.EvidenceReference) {
@@ -166,7 +167,8 @@ func validateRawHeader(raw RawObservation) string {
 		!raw.ObservationEndedAt.After(raw.ObservationStartedAt) {
 		return "raw observation coverage window is invalid"
 	}
-	if !validObject(raw.Node) || !validNodeActuation(raw.NodeActuation) ||
+	if !validObject(raw.Node) || !plainIdentity(raw.DeviceClass) ||
+		!validActuator(raw.Actuator) || !validNodeActuation(raw.NodeActuation) ||
 		!validState(raw.SourceState) || !validState(raw.TargetState) ||
 		!validWorkload(raw.Workload) || !plainIdentity(raw.ProtocolIdentity) ||
 		!plainIdentity(raw.MeterIdentity) || !plainIdentity(raw.BaselineReference) ||
@@ -252,6 +254,12 @@ func identityContradiction(frozen FrozenContract, raw RawObservation) string {
 	if raw.Node != frozen.Node {
 		return "raw Node identity differs from the frozen Node"
 	}
+	if raw.DeviceClass != frozen.DeviceClass {
+		return "raw DeviceClass differs from the frozen DeviceClass"
+	}
+	if raw.Actuator != frozen.Actuator {
+		return "raw actuator identity differs from the frozen actuator"
+	}
 	if raw.NodeActuation != frozen.NodeActuation {
 		return "raw NodeActuation identity differs from the frozen execution"
 	}
@@ -335,6 +343,10 @@ func validateFailure(failure *Failure, start, end time.Time) string {
 
 func validObject(identity NodeIdentity) bool {
 	return plainIdentity(identity.Name) && plainIdentity(identity.UID)
+}
+
+func validActuator(identity ActuatorIdentity) bool {
+	return plainIdentity(identity.Kind) && plainIdentity(identity.Target)
 }
 
 func validNodeActuation(identity NodeActuationIdentity) bool {
