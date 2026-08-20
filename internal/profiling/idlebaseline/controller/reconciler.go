@@ -9,15 +9,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const idleBaselineKind = "ModelLoadedIdleBaseline"
 
 type BaselineDeriver interface {
 	Derive(
@@ -40,16 +44,27 @@ type BaselineResultWriter interface {
 }
 
 type Reconciler struct {
-	client  client.Client
-	derive  BaselineDeriver
-	results BaselineResultWriter
+	client   client.Client
+	preparer profilercontroller.RunPreparer
+	derive   BaselineDeriver
+	results  BaselineResultWriter
+	now      func() time.Time
 }
 
-func NewReconciler(kube client.Client, derive BaselineDeriver, results BaselineResultWriter) (*Reconciler, error) {
-	if kube == nil || derive == nil || results == nil {
-		return nil, errors.New("idle baseline Kubernetes client, deriver, and result writer are required")
+func NewReconciler(
+	kube client.Client,
+	preparer profilercontroller.RunPreparer,
+	derive BaselineDeriver,
+	results BaselineResultWriter,
+) (*Reconciler, error) {
+	if kube == nil || preparer == nil || derive == nil || results == nil {
+		return nil, errors.New(
+			"idle baseline Kubernetes client, Run preparer, deriver, and result writer are required",
+		)
 	}
-	return &Reconciler{client: kube, derive: derive, results: results}, nil
+	return &Reconciler{
+		client: kube, preparer: preparer, derive: derive, results: results, now: time.Now,
+	}, nil
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -77,6 +92,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		Phase:              edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring,
 		AttemptedRuns:      int32(len(runs)),
 		AcceptedRuns:       int32(len(accepted)),
+	}
+	if len(runs) == 0 {
+		established, failed, stateErr := r.ensureRequiredState(ctx, parent)
+		if stateErr != nil {
+			return ctrl.Result{}, stateErr
+		}
+		if failed {
+			status.Phase = edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient
+			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
+		}
+		if !established {
+			return ctrl.Result{}, r.patchStatus(ctx, parent, status)
+		}
+		if err := r.patchStatus(ctx, parent, status); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.ensureRun(ctx, parent, 1)
 	}
 
 	if len(accepted) >= policy.MinimumTrials {
@@ -213,7 +245,7 @@ func validateOwnedRun(
 	actual, expected *edgev1alpha1.ProfilingRun,
 ) error {
 	owner := metav1.GetControllerOf(actual)
-	if owner == nil || owner.Kind != "ModelLoadedIdleBaseline" ||
+	if owner == nil || owner.Kind != idleBaselineKind ||
 		owner.APIVersion != edgev1alpha1.GroupVersion.String() || owner.UID != parent.UID {
 		return fmt.Errorf("ProfilingRun %q is not controller-owned by this ModelLoadedIdleBaseline", actual.Name)
 	}

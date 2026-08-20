@@ -7,6 +7,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,6 +21,20 @@ type fakeBaselineDeriver struct {
 	references idlebaseline.AcceptedFinalEvidence
 	calls      int
 	runs       []edgev1alpha1.ProfilingRun
+}
+
+type fakeRunPreparer struct {
+	prepared profiler.PreparedRun
+	err      error
+	calls    int
+}
+
+func (p *fakeRunPreparer) Prepare(
+	context.Context,
+	profiler.PreparationRequest,
+) (profiler.PreparedRun, error) {
+	p.calls++
+	return p.prepared, p.err
 }
 
 func (d *fakeBaselineDeriver) Derive(
@@ -218,7 +233,7 @@ func newTestReconciler(
 	writer BaselineResultWriter,
 ) *Reconciler {
 	t.Helper()
-	reconciler, err := NewReconciler(kube, deriver, writer)
+	reconciler, err := NewReconciler(kube, &fakeRunPreparer{}, deriver, writer)
 	if err != nil {
 		t.Fatal(err)
 	}

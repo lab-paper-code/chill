@@ -102,6 +102,7 @@ deps:
       - idle-baseline-core
       - profile-derivation
       - profiler-admission
+      - profiler-app
       - profiler-controller
       - profiler-evidence
 

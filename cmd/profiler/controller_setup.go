@@ -274,7 +274,9 @@ func setupModelLoadedIdleBaselineController(
 	if err != nil {
 		return fmt.Errorf("construct model-loaded idle baseline result writer: %w", err)
 	}
-	reconciler, err := idlebaselinecontroller.NewReconciler(mgr.GetClient(), deriver, results)
+	reconciler, err := idlebaselinecontroller.NewReconciler(
+		mgr.GetClient(), shared.preparer, deriver, results,
+	)
 	if err != nil {
 		return fmt.Errorf("construct ModelLoadedIdleBaseline reconciler: %w", err)
 	}

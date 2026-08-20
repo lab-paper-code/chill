@@ -346,14 +346,16 @@ state-pair table, while profile publication and scheduler use remain later
 work.
 
 The independent `ModelLoadedIdleBaseline` producer is implemented for Plan
-10's `P_idle(s')` input. It owns only model-loaded-idle `ProfilingRun` objects,
-runs one at a time until the configured admitted-count target or attempt limit,
-and writes a Complete immutable aggregate containing the exact measurement
-state, derived `IdleBaseline`, and accepted final-evidence references. An
-Insufficient request closes only in compact status and does not fabricate an
-aggregate result. The transition-cost controller consumes only this current
-Complete result, requires its exact measurement state, and freezes its mean and
-full stored-result reference into the enclosing preparation.
+10's `P_idle(s')` input. Before its first model-loaded-idle `ProfilingRun`, it
+owns one `NodeActuation` that establishes a mutable declared state; a fixed
+selection creates no actuation. It then runs one `ProfilingRun` at a time until
+the configured admitted-count target or attempt limit and writes a Complete
+immutable aggregate containing the exact measurement state, derived
+`IdleBaseline`, and accepted final-evidence references. An Insufficient request
+closes only in compact status and does not fabricate an aggregate result. The
+transition-cost controller consumes only this current Complete result, requires
+its exact measurement state, and freezes its mean and full stored-result
+reference into the enclosing preparation.
 Each baseline request also selects a required whole-core CPU quota. Its child
 Run transports that selection to preparation, which freezes it in the existing
 CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol
