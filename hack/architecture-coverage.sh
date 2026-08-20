@@ -24,6 +24,7 @@ components=(
   evidence-s3
   metric-core
   metric-edgemetrics
+  metric-shelly-gateway
   workload-core
   workload-kube
   model-compat
@@ -66,6 +67,7 @@ component_for() {
     internal/evidencestore/s3) echo evidence-s3 ;;
     internal/metricobserver) echo metric-core ;;
     internal/metricobserver/edgemetrics) echo metric-edgemetrics ;;
+    internal/metricobserver/shellygateway) echo metric-shelly-gateway ;;
     internal/workloadobserver) echo workload-core ;;
     internal/workloadobserver/kube) echo workload-kube ;;
     internal/modelcompat) echo model-compat ;;

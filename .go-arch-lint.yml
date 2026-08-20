@@ -42,6 +42,7 @@ components:
   evidence-s3: { in: internal/evidencestore/s3 }
   metric-core: { in: internal/metricobserver }
   metric-edgemetrics: { in: internal/metricobserver/edgemetrics }
+  metric-shelly-gateway: { in: internal/metricobserver/shellygateway }
   workload-core: { in: internal/workloadobserver }
   workload-kube: { in: internal/workloadobserver/kube }
   model-compat: { in: internal/modelcompat }
@@ -145,6 +146,9 @@ deps:
   metric-core:
     anyVendorDeps: true
   metric-edgemetrics:
+    mayDependOn:
+      - metric-core
+  metric-shelly-gateway:
     mayDependOn:
       - metric-core
   workload-core:
