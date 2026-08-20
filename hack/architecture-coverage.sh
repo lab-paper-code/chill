@@ -33,6 +33,7 @@ components=(
   profile-derivation
   power-window
   transition-cost-core
+  transition-cost-kube
   transition-cost-worker
   profiling-run
   profiler-app
@@ -76,6 +77,7 @@ component_for() {
     internal/profiling/derivation) echo profile-derivation ;;
     internal/profiling/powerwindow) echo power-window ;;
     internal/profiling/transitioncost) echo transition-cost-core ;;
+    internal/profiling/transitioncost/kube) echo transition-cost-kube ;;
     internal/profiling/transitioncost/worker) echo transition-cost-worker ;;
     internal/profiling/run) echo profiling-run ;;
     internal/profiling/profiler) echo profiler-app ;;

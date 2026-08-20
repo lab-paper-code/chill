@@ -397,6 +397,8 @@ profile derivation
 
 transition-cost derivation -> bounded power-window integration leaf
 
+transition-cost Kubernetes observer -> API status facts + transition-cost derivation
+
 transition-cost worker -> bounded MetricObserver + transition-cost derivation + immutable Evidence Store writer
 ```
 
