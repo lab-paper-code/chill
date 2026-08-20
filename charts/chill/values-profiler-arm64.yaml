@@ -66,7 +66,7 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-8692305"
+    tag: "sha-5c0a29c"
     pullPolicy: Always
   transitionObserver:
     observerNodeName: genesis1
