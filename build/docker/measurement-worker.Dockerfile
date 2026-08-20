@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /o
 FROM python:3.11-slim
 
 ARG NUMPY_VERSION=2.2.6
-ARG ONNXRUNTIME_VERSION=1.23.2
+ARG ONNXRUNTIME_VERSION=1.27.0
 
 RUN pip install --no-cache-dir \
     numpy==${NUMPY_VERSION} \
