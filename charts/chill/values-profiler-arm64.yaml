@@ -66,20 +66,20 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-094c48f"
+    tag: "sha-3c82553"
     pullPolicy: Always
   transitionObserver:
     observerNodeName: genesis1
 
 profiling:
-  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:2afcec16bdd6a3b6680d4062cd548afbc2d2faa01fa2d35bf48b1121a4d04324"
-  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:98a2ace849d0529d693f15a4249a1e89bfdfd0cc53725c7412482121b31f5560"
+  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:ea0295b9089c3699338a8fae0c62e0abda27cb485488f87efefe06fe4ba0f7b6"
+  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:e458f6c0239ee9b0413300e974cf73025b610b65e9f8828d3d605f9eadca2d81"
   executionDeclarations:
     - modelSpec: mobilenet-v2-050
       deviceClass: raspberry-pi-5-8g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:6bc66b1f560d60e0df0f3bf3823290739d39d49d25c5f57d488d489d028de026","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:011b2e8093263dbf3b5b3b2a4f3a12210703328d8779708a1501099ecaa7182a","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -89,7 +89,7 @@ profiling:
       deviceClass: orangepi-5-plus-16g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:6bc66b1f560d60e0df0f3bf3823290739d39d49d25c5f57d488d489d028de026","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:011b2e8093263dbf3b5b3b2a4f3a12210703328d8779708a1501099ecaa7182a","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -99,7 +99,7 @@ profiling:
       deviceClass: jetson-agx-orin-64g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:6bc66b1f560d60e0df0f3bf3823290739d39d49d25c5f57d488d489d028de026","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:011b2e8093263dbf3b5b3b2a4f3a12210703328d8779708a1501099ecaa7182a","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
