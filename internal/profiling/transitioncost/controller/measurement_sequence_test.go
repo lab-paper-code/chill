@@ -239,7 +239,7 @@ func sequenceFinalizedAttempt(
 		record.Reason = transitioncost.ReasonAccepted
 		record.AcceptedObservation = &transitioncost.FinalizedAcceptedObservationRecord{
 			StartedAt: time.Unix(100, 0).UTC(), CompletedAt: time.Unix(101, 0).UTC(),
-			BoundaryMappingUncertaintyMilliseconds: prepared.BoundaryMappingUncertainty.Milliseconds(),
+			BoundaryMappingUncertaintyMilliseconds: 25,
 			TauMilliseconds:                        1000, TransitionWallJoules: 15, EtaJoules: 3, ServingSurvived: true,
 		}
 	case transitioncost.VerdictInvalid:

@@ -67,14 +67,6 @@ var _ = Describe("PowerModeTransitionCost API", func() {
 		Entry("zero fact poll interval", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
 			measurement.Spec.ObservationPolicy.FactPollIntervalMilliseconds = 0
 		}),
-		Entry("boundary mapping uncertainty below fact poll interval", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
-			measurement.Spec.ObservationPolicy.BoundaryMappingUncertaintyMilliseconds =
-				measurement.Spec.ObservationPolicy.FactPollIntervalMilliseconds - 1
-		}),
-		Entry("boundary mapping uncertainty above acceptance ceiling", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
-			measurement.Spec.ObservationPolicy.BoundaryMappingUncertaintyMilliseconds =
-				measurement.Spec.ObservationPolicy.MaximumBoundaryUncertaintyMilliseconds + 1
-		}),
 		Entry("empty execution path", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
 			measurement.Spec.ExecutionPath = ""
 		}),
@@ -115,7 +107,6 @@ func validPowerModeTransitionCost(name string) *edgev1alpha1.PowerModeTransition
 				MinimumCoverage:                          "0.95",
 				MaximumSampleGapMilliseconds:             2000,
 				MaximumBoundaryUncertaintyMilliseconds:   100,
-				BoundaryMappingUncertaintyMilliseconds:   75,
 				MaximumReadyObservationDelayMilliseconds: 5000,
 			},
 			EvidenceStore: "test-store",

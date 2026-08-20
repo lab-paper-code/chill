@@ -24,7 +24,11 @@ func TestRawRecordRoundTripRetainsOnlyObservedFacts(t *testing.T) {
 		PowerSamples: []transitioncost.PowerSample{{
 			ObservedAt: base.Add(time.Second), RequestLatencySeconds: 0.123456789, Watts: 20,
 		}},
-		BoundaryMappingUncertainty: 50 * time.Millisecond,
+		MarkerBrackets: transitioncost.TransitionMarkerBrackets{
+			ApplyStartedAt: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt: base.Add(1900 * time.Millisecond),
+			},
+		},
 	}
 
 	payload, err := transitioncost.EncodeRawRecord(raw)
@@ -37,6 +41,7 @@ func TestRawRecordRoundTripRetainsOnlyObservedFacts(t *testing.T) {
 	}
 	if !decoded.ObservationStartedAt.Equal(raw.ObservationStartedAt) ||
 		decoded.SourceReadBack.State != raw.SourceReadBack.State ||
+		decoded.MarkerBrackets != raw.MarkerBrackets ||
 		len(decoded.PowerSamples) != 1 ||
 		math.Abs(decoded.PowerSamples[0].RequestLatencySeconds-raw.PowerSamples[0].RequestLatencySeconds) > 1e-12 {
 		t.Fatalf("decoded raw observation changed: %#v", decoded)
@@ -53,8 +58,11 @@ func TestRawRecordRoundTripRetainsOnlyObservedFacts(t *testing.T) {
 	if !ok {
 		t.Fatalf("rawObservation = %#v", record["rawObservation"])
 	}
-	if got := wireRaw["boundaryMappingUncertaintyNanoseconds"]; got != float64(raw.BoundaryMappingUncertainty) {
-		t.Fatalf("raw boundary uncertainty = %v, want %d", got, raw.BoundaryMappingUncertainty)
+	if _, found := wireRaw["boundaryMappingUncertaintyNanoseconds"]; found {
+		t.Fatal("raw observation retains configured boundary uncertainty")
+	}
+	if wireRaw["markerBrackets"] == nil {
+		t.Fatal("raw observation does not retain marker receipt-time brackets")
 	}
 }
 
@@ -70,7 +78,7 @@ func TestDecodeRawRecordRejectsUnknownTrailingAndRetiredContracts(t *testing.T) 
 		"trailing value": append(append([]byte(nil), payload...), []byte(` {}`)...),
 		"retired schema": []byte(strings.Replace(
 			string(payload), transitioncost.RawRecordSchemaVersion,
-			"chill.dacs.io/transition-cost-raw-observation.v1alpha1", 1,
+			"chill.dacs.io/transition-cost-raw-observation.v1alpha2", 1,
 		)),
 	}
 	for name, candidate := range tests {

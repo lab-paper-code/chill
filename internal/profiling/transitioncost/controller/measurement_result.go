@@ -14,7 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 )
 
-const measurementResultSchemaVersion = "chill.dacs.io/transition-cost-measurement-result.v1alpha1"
+const measurementResultSchemaVersion = "chill.dacs.io/transition-cost-measurement-result.v1alpha2"
 
 type measurementResultStore interface {
 	evidencestore.LocationReader

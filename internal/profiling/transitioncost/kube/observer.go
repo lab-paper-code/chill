@@ -21,16 +21,15 @@ import (
 // Request contains the operational selection and bounds for one off-target
 // transition-fact observation. Expected state comparison remains Derive's job.
 type Request struct {
-	Namespace                  string
-	NodeActuationName          string
-	TargetNode                 string
-	ServingService             string
-	ServingContainer           string
-	DeviceType                 string
-	Model                      string
-	PollInterval               time.Duration
-	ObservationTimeout         time.Duration
-	BoundaryMappingUncertainty time.Duration
+	Namespace          string
+	NodeActuationName  string
+	TargetNode         string
+	ServingService     string
+	ServingContainer   string
+	DeviceType         string
+	Model              string
+	PollInterval       time.Duration
+	ObservationTimeout time.Duration
 }
 
 // Observer polls the Kubernetes API without creating or mutating objects.
@@ -60,8 +59,7 @@ func (o *Observer) Observe(
 ) (transitioncost.RawObservation, error) {
 	startedAt := o.now().UTC()
 	raw := transitioncost.RawObservation{
-		ObservationStartedAt:       startedAt,
-		BoundaryMappingUncertainty: o.request.BoundaryMappingUncertainty,
+		ObservationStartedAt: startedAt,
 	}
 	finish := func(err error) (transitioncost.RawObservation, error) {
 		raw.ObservationEndedAt = o.now().UTC()
@@ -90,11 +88,19 @@ func (o *Observer) Observe(
 				ObservedAt: snapshot.readiness.ObservedAt,
 				Process:    *snapshot.process,
 			}
+			raw.MarkerBrackets.ReadyProcessWitness.LastAbsentReceivedAt = snapshot.receivedAt
 			break
 		}
 		if err := wait(observeCtx, o.request.PollInterval); err != nil {
 			return finish(fmt.Errorf("observe Kubernetes transition facts: %w", err))
 		}
+	}
+	terminal, err := o.observeActuation(observeCtx, &raw)
+	if err != nil {
+		return finish(err)
+	}
+	if terminal || raw.TransitionStart != nil || raw.TargetReadBack != nil {
+		return finish(errors.New("NodeActuation markers appeared before the observer was ready"))
 	}
 
 	onReady()
@@ -115,13 +121,18 @@ func (o *Observer) Observe(
 		}
 		if raw.TargetReadBack != nil && snapshot.process != nil &&
 			snapshot.readiness != nil && snapshot.readiness.Ready {
-			appendSnapshotReadiness(&raw, snapshot, &lastReady, true)
-			raw.PostTransitionProcess = &transitioncost.ProcessObservation{
-				ObservedAt: snapshot.readiness.ObservedAt,
-				Process:    *snapshot.process,
+			if err := markPresent(
+				&raw.MarkerBrackets.ReadyProcessWitness,
+				snapshot.receivedAt,
+			); err != nil {
+				return finish(err)
 			}
+			appendSnapshotReadiness(&raw, snapshot, &lastReady, true)
+			process := *snapshot.process
+			raw.PostTransitionProcess = &process
 			return finish(nil)
 		}
+		markAbsent(&raw.MarkerBrackets.ReadyProcessWitness, snapshot.receivedAt)
 		appendSnapshotReadiness(&raw, snapshot, &lastReady, false)
 
 		if err := wait(observeCtx, o.request.PollInterval); err != nil {
@@ -161,16 +172,17 @@ func (o *Observer) servingSnapshot(
 	}
 	receivedAt := o.now().UTC()
 	var selected *corev1.Pod
+	snapshot := servingSnapshot{receivedAt: receivedAt}
 	for index := range pods.Items {
 		if pods.Items[index].Spec.NodeName == o.request.TargetNode {
 			if selected != nil {
-				return servingSnapshot{}, nil
+				return snapshot, nil
 			}
 			selected = &pods.Items[index]
 		}
 	}
 	if selected == nil {
-		return servingSnapshot{}, nil
+		return snapshot, nil
 	}
 	return projectServingPod(*selected, o.request.ServingContainer, receivedAt), nil
 }
@@ -181,13 +193,16 @@ func (o *Observer) observeActuation(
 ) (bool, error) {
 	actuation := &edgev1alpha1.NodeActuation{}
 	key := client.ObjectKey{Namespace: o.request.Namespace, Name: o.request.NodeActuationName}
-	if err := o.reader.Get(ctx, key, actuation); err != nil {
+	err := o.reader.Get(ctx, key, actuation)
+	receivedAt := o.now().UTC()
+	if err != nil {
 		if apierrors.IsNotFound(err) {
+			markAbsent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt)
+			markAbsent(&raw.MarkerBrackets.TargetObservation, receivedAt)
 			return false, nil
 		}
 		return false, fmt.Errorf("get NodeActuation %s: %w", key, err)
 	}
-	receivedAt := o.now().UTC()
 	if err := projectActuation(raw, actuation.Status, o.request.DeviceType, o.request.Model, receivedAt); err != nil {
 		return false, err
 	}
@@ -211,12 +226,6 @@ func validateRequest(request Request) error {
 	}
 	if request.ObservationTimeout <= 0 {
 		return errors.New("observation timeout must be positive")
-	}
-	if request.BoundaryMappingUncertainty < 0 {
-		return errors.New("boundary mapping uncertainty cannot be negative")
-	}
-	if request.BoundaryMappingUncertainty < request.PollInterval {
-		return errors.New("boundary mapping uncertainty must cover the poll interval")
 	}
 	return nil
 }

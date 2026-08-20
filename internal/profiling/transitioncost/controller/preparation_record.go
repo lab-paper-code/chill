@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha1"
+	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha2"
 	preparationRecordDataKey       = "preparation.json"
 	maximumDurationMilliseconds    = int64((1<<63 - 1) / time.Millisecond)
 )
@@ -151,20 +151,19 @@ type preparationRecordWire struct {
 }
 
 type preparedMeasurementWire struct {
-	Namespace                              string                                   `json:"namespace"`
-	TargetNode                             edgev1alpha1.ProfilingRunObjectReference `json:"targetNode"`
-	ObserverNodeName                       string                                   `json:"observerNodeName"`
-	DeviceClass                            string                                   `json:"deviceClass"`
-	ExecutionPath                          string                                   `json:"executionPath"`
-	ServingService                         string                                   `json:"servingService"`
-	ServingContainer                       string                                   `json:"servingContainer"`
-	PowerSource                            preparationPowerSourceWire               `json:"powerSource"`
-	PowerRequest                           preparationPowerRequestWire              `json:"powerRequest"`
-	FactPollIntervalMilliseconds           int64                                    `json:"factPollIntervalMilliseconds"`
-	FactObservationTimeoutMilliseconds     int64                                    `json:"factObservationTimeoutMilliseconds"`
-	BoundaryMappingUncertaintyMilliseconds int64                                    `json:"boundaryMappingUncertaintyMilliseconds"`
-	Policy                                 preparationPolicyWire                    `json:"policy"`
-	Directions                             []preparationDirectionWire               `json:"directions"`
+	Namespace                          string                                   `json:"namespace"`
+	TargetNode                         edgev1alpha1.ProfilingRunObjectReference `json:"targetNode"`
+	ObserverNodeName                   string                                   `json:"observerNodeName"`
+	DeviceClass                        string                                   `json:"deviceClass"`
+	ExecutionPath                      string                                   `json:"executionPath"`
+	ServingService                     string                                   `json:"servingService"`
+	ServingContainer                   string                                   `json:"servingContainer"`
+	PowerSource                        preparationPowerSourceWire               `json:"powerSource"`
+	PowerRequest                       preparationPowerRequestWire              `json:"powerRequest"`
+	FactPollIntervalMilliseconds       int64                                    `json:"factPollIntervalMilliseconds"`
+	FactObservationTimeoutMilliseconds int64                                    `json:"factObservationTimeoutMilliseconds"`
+	Policy                             preparationPolicyWire                    `json:"policy"`
+	Directions                         []preparationDirectionWire               `json:"directions"`
 }
 
 type preparationPowerSourceWire struct {
@@ -244,7 +243,6 @@ func projectPreparationWire(prepared PreparedMeasurement) (preparedMeasurementWi
 	projectDuration("power request timeout", prepared.PowerRequest.RequestTimeout, &wire.PowerRequest.RequestTimeoutMilliseconds)
 	projectDuration("fact poll interval", prepared.FactPollInterval, &wire.FactPollIntervalMilliseconds)
 	projectDuration("fact observation timeout", prepared.FactObservationTimeout, &wire.FactObservationTimeoutMilliseconds)
-	projectDuration("boundary mapping uncertainty", prepared.BoundaryMappingUncertainty, &wire.BoundaryMappingUncertaintyMilliseconds)
 	projectDuration("maximum boundary distance", prepared.Policy.MaximumBoundaryDistance, &wire.Policy.MaximumBoundaryDistanceMilliseconds)
 	projectDuration("maximum sample gap", prepared.Policy.MaximumSampleGap, &wire.Policy.MaximumSampleGapMilliseconds)
 	projectDuration("maximum boundary uncertainty", prepared.Policy.MaximumBoundaryUncertainty, &wire.Policy.MaximumBoundaryUncertaintyMilliseconds)
@@ -331,7 +329,6 @@ func restorePreparedMeasurement(wire preparedMeasurementWire) (PreparedMeasureme
 	restoreDuration("power request timeout", wire.PowerRequest.RequestTimeoutMilliseconds, false, &prepared.PowerRequest.RequestTimeout)
 	restoreDuration("fact poll interval", wire.FactPollIntervalMilliseconds, false, &prepared.FactPollInterval)
 	restoreDuration("fact observation timeout", wire.FactObservationTimeoutMilliseconds, false, &prepared.FactObservationTimeout)
-	restoreDuration("boundary mapping uncertainty", wire.BoundaryMappingUncertaintyMilliseconds, true, &prepared.BoundaryMappingUncertainty)
 	restoreDuration("maximum boundary distance", wire.Policy.MaximumBoundaryDistanceMilliseconds, true, &prepared.Policy.MaximumBoundaryDistance)
 	restoreDuration("maximum sample gap", wire.Policy.MaximumSampleGapMilliseconds, false, &prepared.Policy.MaximumSampleGap)
 	restoreDuration("maximum boundary uncertainty", wire.Policy.MaximumBoundaryUncertaintyMilliseconds, true, &prepared.Policy.MaximumBoundaryUncertainty)

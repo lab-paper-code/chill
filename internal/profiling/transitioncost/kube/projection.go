@@ -13,19 +13,23 @@ import (
 )
 
 type servingSnapshot struct {
-	readiness *transitioncost.ReadyObservation
-	process   *transitioncost.ProcessIdentity
+	receivedAt time.Time
+	readiness  *transitioncost.ReadyObservation
+	process    *transitioncost.ProcessIdentity
 }
 
 func projectServingPod(pod corev1.Pod, containerName string, receivedAt time.Time) servingSnapshot {
 	ready, known := podReady(pod.Status.Conditions)
 	if !known {
-		return servingSnapshot{}
+		return servingSnapshot{receivedAt: receivedAt}
 	}
-	snapshot := servingSnapshot{readiness: &transitioncost.ReadyObservation{
-		ObservedAt: receivedAt,
-		Ready:      ready,
-	}}
+	snapshot := servingSnapshot{
+		receivedAt: receivedAt,
+		readiness: &transitioncost.ReadyObservation{
+			ObservedAt: receivedAt,
+			Ready:      ready,
+		},
+	}
 	if !ready {
 		return snapshot
 	}
@@ -102,21 +106,39 @@ func projectActuation(
 		}
 		raw.SourceReadBack = readBack
 	}
-	if raw.TransitionStart == nil && status.ApplyStartedAt != nil {
-		if status.ApplyStartedAt.IsZero() {
-			return errors.New("NodeActuation apply-start timestamp is zero")
-		}
-		raw.TransitionStart = &transitioncost.MappedFact{
-			OccurredAt: status.ApplyStartedAt.Time,
-			MappedAt:   receivedAt,
+	if raw.TransitionStart == nil {
+		if status.ApplyStartedAt == nil {
+			markAbsent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt)
+		} else {
+			if status.ApplyStartedAt.IsZero() {
+				return errors.New("NodeActuation apply-start timestamp is zero")
+			}
+			if err := markPresent(&raw.MarkerBrackets.ApplyStartedAt, receivedAt); err != nil {
+				return fmt.Errorf("bracket NodeActuation apply-start: %w", err)
+			}
+			raw.TransitionStart = &transitioncost.OccurredFact{
+				OccurredAt: status.ApplyStartedAt.Time,
+			}
 		}
 	}
-	if raw.TargetReadBack == nil && status.TargetObservation != nil {
-		readBack, err := projectReadBack(*status.TargetObservation, deviceType, model, receivedAt)
-		if err != nil {
-			return fmt.Errorf("project target NodeActuation observation: %w", err)
+	if raw.TargetReadBack == nil {
+		if status.TargetObservation == nil {
+			markAbsent(&raw.MarkerBrackets.TargetObservation, receivedAt)
+		} else {
+			readBack, err := projectReadBack(*status.TargetObservation, deviceType, model, receivedAt)
+			if err != nil {
+				return fmt.Errorf("project target NodeActuation observation: %w", err)
+			}
+			if err := markPresent(&raw.MarkerBrackets.TargetObservation, receivedAt); err != nil {
+				return fmt.Errorf("bracket NodeActuation target observation: %w", err)
+			}
+			raw.TargetReadBack = &transitioncost.TargetStateReadBack{
+				Fact: transitioncost.OccurredFact{
+					OccurredAt: readBack.Fact.OccurredAt,
+				},
+				State: readBack.State,
+			}
 		}
-		raw.TargetReadBack = &readBack
 	}
 	if status.TerminalFailure == nil {
 		if status.Phase == edgev1alpha1.NodeActuationPhaseFailed {
@@ -154,6 +176,26 @@ func projectActuation(
 	default:
 		return fmt.Errorf("unsupported NodeActuation terminal failure stage %q", status.TerminalFailure.Stage)
 	}
+	return nil
+}
+
+func markAbsent(bracket *transitioncost.ReceiptTimeBracket, receivedAt time.Time) {
+	if bracket.FirstPresentReceivedAt.IsZero() {
+		bracket.LastAbsentReceivedAt = receivedAt
+	}
+}
+
+func markPresent(bracket *transitioncost.ReceiptTimeBracket, receivedAt time.Time) error {
+	if !bracket.FirstPresentReceivedAt.IsZero() {
+		return nil
+	}
+	if bracket.LastAbsentReceivedAt.IsZero() {
+		return errors.New("last-absent receipt time is missing")
+	}
+	if !receivedAt.After(bracket.LastAbsentReceivedAt) {
+		return errors.New("first-present receipt time does not follow last-absent receipt time")
+	}
+	bracket.FirstPresentReceivedAt = receivedAt
 	return nil
 }
 

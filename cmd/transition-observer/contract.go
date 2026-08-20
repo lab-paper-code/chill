@@ -13,7 +13,7 @@ import (
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 )
 
-const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha2"
+const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha3"
 
 type attemptContract struct {
 	powerSource  metricobserver.SourceIdentity
@@ -45,16 +45,15 @@ type powerObservationWire struct {
 }
 
 type transitionFactsWire struct {
-	Namespace                              string       `json:"namespace"`
-	NodeActuationName                      string       `json:"nodeActuationName"`
-	TargetNode                             string       `json:"targetNode"`
-	DeviceType                             string       `json:"deviceType"`
-	Model                                  string       `json:"model"`
-	ServingService                         string       `json:"servingService"`
-	ServingContainer                       string       `json:"servingContainer"`
-	PollIntervalMilliseconds               milliseconds `json:"pollIntervalMilliseconds"`
-	ObservationTimeoutMilliseconds         milliseconds `json:"observationTimeoutMilliseconds"`
-	BoundaryMappingUncertaintyMilliseconds milliseconds `json:"boundaryMappingUncertaintyMilliseconds"`
+	Namespace                      string       `json:"namespace"`
+	NodeActuationName              string       `json:"nodeActuationName"`
+	TargetNode                     string       `json:"targetNode"`
+	DeviceType                     string       `json:"deviceType"`
+	Model                          string       `json:"model"`
+	ServingService                 string       `json:"servingService"`
+	ServingContainer               string       `json:"servingContainer"`
+	PollIntervalMilliseconds       milliseconds `json:"pollIntervalMilliseconds"`
+	ObservationTimeoutMilliseconds milliseconds `json:"observationTimeoutMilliseconds"`
 }
 
 type milliseconds time.Duration
@@ -123,9 +122,8 @@ func (w attemptWire) contract() (attemptContract, error) {
 			TargetNode: w.TransitionFacts.TargetNode, ServingService: w.TransitionFacts.ServingService,
 			ServingContainer: w.TransitionFacts.ServingContainer,
 			DeviceType:       w.TransitionFacts.DeviceType, Model: w.TransitionFacts.Model,
-			PollInterval:               time.Duration(w.TransitionFacts.PollIntervalMilliseconds),
-			ObservationTimeout:         time.Duration(w.TransitionFacts.ObservationTimeoutMilliseconds),
-			BoundaryMappingUncertainty: time.Duration(w.TransitionFacts.BoundaryMappingUncertaintyMilliseconds),
+			PollInterval:       time.Duration(w.TransitionFacts.PollIntervalMilliseconds),
+			ObservationTimeout: time.Duration(w.TransitionFacts.ObservationTimeoutMilliseconds),
 		},
 		rawLocation: w.RawLocation,
 	}, nil

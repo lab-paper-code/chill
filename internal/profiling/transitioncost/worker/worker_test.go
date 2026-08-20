@@ -258,14 +258,28 @@ func completedRestartFacts(
 			},
 			State: source,
 		},
-		TransitionStart: &transitioncost.MappedFact{
-			OccurredAt: base.Add(2 * time.Second), MappedAt: base.Add(2 * time.Second),
+		TransitionStart: &transitioncost.OccurredFact{
+			OccurredAt: base.Add(2 * time.Second),
 		},
-		TargetReadBack: &transitioncost.StateReadBack{
-			Fact: transitioncost.MappedFact{
-				OccurredAt: base.Add(4 * time.Second), MappedAt: base.Add(4 * time.Second),
+		TargetReadBack: &transitioncost.TargetStateReadBack{
+			Fact: transitioncost.OccurredFact{
+				OccurredAt: base.Add(4 * time.Second),
 			},
 			State: target,
+		},
+		MarkerBrackets: transitioncost.TransitionMarkerBrackets{
+			ApplyStartedAt: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(1990 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(2 * time.Second),
+			},
+			TargetObservation: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(3980 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(4 * time.Second),
+			},
+			ReadyProcessWitness: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(5970 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(6 * time.Second),
+			},
 		},
 		Readiness: []transitioncost.ReadyObservation{
 			{ObservedAt: base.Add(5 * time.Second), Ready: false},
@@ -274,10 +288,7 @@ func completedRestartFacts(
 		PreTransitionProcess: &transitioncost.ProcessObservation{
 			ObservedAt: base.Add(1500 * time.Millisecond), Process: pre,
 		},
-		PostTransitionProcess: &transitioncost.ProcessObservation{
-			ObservedAt: base.Add(7 * time.Second), Process: post,
-		},
-		BoundaryMappingUncertainty: 20 * time.Millisecond,
+		PostTransitionProcess: &post,
 	}
 }
 

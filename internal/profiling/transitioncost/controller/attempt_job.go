@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha2"
+	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha3"
 	transitionAttemptJSONEnvName       = "CHILL_TRANSITION_ATTEMPT_JSON"
 	transitionObserverBinaryPath       = "/transition-observer"
 	transitionContractMaximumBytesFlag = "--max-contract-bytes="
@@ -84,16 +84,15 @@ type attemptPowerObservation struct {
 }
 
 type attemptTransitionFacts struct {
-	Namespace                              string `json:"namespace"`
-	NodeActuationName                      string `json:"nodeActuationName"`
-	TargetNode                             string `json:"targetNode"`
-	DeviceType                             string `json:"deviceType"`
-	Model                                  string `json:"model"`
-	ServingService                         string `json:"servingService"`
-	ServingContainer                       string `json:"servingContainer"`
-	PollIntervalMilliseconds               int64  `json:"pollIntervalMilliseconds"`
-	ObservationTimeoutMilliseconds         int64  `json:"observationTimeoutMilliseconds"`
-	BoundaryMappingUncertaintyMilliseconds int64  `json:"boundaryMappingUncertaintyMilliseconds"`
+	Namespace                      string `json:"namespace"`
+	NodeActuationName              string `json:"nodeActuationName"`
+	TargetNode                     string `json:"targetNode"`
+	DeviceType                     string `json:"deviceType"`
+	Model                          string `json:"model"`
+	ServingService                 string `json:"servingService"`
+	ServingContainer               string `json:"servingContainer"`
+	PollIntervalMilliseconds       int64  `json:"pollIntervalMilliseconds"`
+	ObservationTimeoutMilliseconds int64  `json:"observationTimeoutMilliseconds"`
 }
 
 // BuildAttemptJob projects one prepared direction into one immutable native
@@ -186,12 +185,11 @@ func validateAttemptJobRequest(
 		return PreparedDirection{}, errors.New("raw evidence store differs from the measurement or delivery binding")
 	}
 	for name, duration := range map[string]time.Duration{
-		"power interval":               request.Prepared.PowerRequest.Interval,
-		"power duration":               request.Prepared.PowerRequest.Duration,
-		"power request timeout":        request.Prepared.PowerRequest.RequestTimeout,
-		"fact poll interval":           request.Prepared.FactPollInterval,
-		"fact observation timeout":     request.Prepared.FactObservationTimeout,
-		"boundary mapping uncertainty": request.Prepared.BoundaryMappingUncertainty,
+		"power interval":           request.Prepared.PowerRequest.Interval,
+		"power duration":           request.Prepared.PowerRequest.Duration,
+		"power request timeout":    request.Prepared.PowerRequest.RequestTimeout,
+		"fact poll interval":       request.Prepared.FactPollInterval,
+		"fact observation timeout": request.Prepared.FactObservationTimeout,
 	} {
 		if duration%time.Millisecond != 0 {
 			return PreparedDirection{}, fmt.Errorf("%s must be an exact millisecond duration", name)
@@ -236,9 +234,8 @@ func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection
 			DeviceType:     direction.FrozenContract.TargetState.DeviceType,
 			Model:          direction.FrozenContract.TargetState.Model,
 			ServingService: request.Prepared.ServingService, ServingContainer: request.Prepared.ServingContainer,
-			PollIntervalMilliseconds:               request.Prepared.FactPollInterval.Milliseconds(),
-			ObservationTimeoutMilliseconds:         request.Prepared.FactObservationTimeout.Milliseconds(),
-			BoundaryMappingUncertaintyMilliseconds: request.Prepared.BoundaryMappingUncertainty.Milliseconds(),
+			PollIntervalMilliseconds:       request.Prepared.FactPollInterval.Milliseconds(),
+			ObservationTimeoutMilliseconds: request.Prepared.FactObservationTimeout.Milliseconds(),
 		},
 		RawLocation: request.RawLocation,
 	})

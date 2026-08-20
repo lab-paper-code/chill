@@ -71,9 +71,37 @@ type MappedFact struct {
 	MappedAt   time.Time `json:"mappedAt"`
 }
 
+// OccurredFact is one device-clock fact whose observer-clock mapping is
+// retained separately as a receipt-time bracket.
+type OccurredFact struct {
+	OccurredAt time.Time `json:"occurredAt"`
+}
+
+// ReceiptTimeBracket bounds when one marker first became visible to the
+// observer using two consecutive receipt times on that observer's clock.
+type ReceiptTimeBracket struct {
+	LastAbsentReceivedAt   time.Time `json:"lastAbsentReceivedAt"`
+	FirstPresentReceivedAt time.Time `json:"firstPresentReceivedAt"`
+}
+
+// TransitionMarkerBrackets retains the three observer-clock mappings needed
+// to derive one transition window and its measured mapping uncertainty.
+type TransitionMarkerBrackets struct {
+	ApplyStartedAt      ReceiptTimeBracket `json:"applyStartedAt"`
+	TargetObservation   ReceiptTimeBracket `json:"targetObservation"`
+	ReadyProcessWitness ReceiptTimeBracket `json:"readyProcessWitness"`
+}
+
 // StateReadBack is one independently observed state fact.
 type StateReadBack struct {
 	Fact  MappedFact    `json:"fact"`
+	State StateIdentity `json:"state"`
+}
+
+// TargetStateReadBack retains the device fact and state without duplicating
+// the observer receipt mapping owned by TransitionMarkerBrackets.
+type TargetStateReadBack struct {
+	Fact  OccurredFact  `json:"fact"`
 	State StateIdentity `json:"state"`
 }
 
@@ -127,20 +155,19 @@ type RawObservation struct {
 	ObservationStartedAt time.Time `json:"observationStartedAt"`
 	ObservationEndedAt   time.Time `json:"observationEndedAt"`
 
-	SourceReadBack        StateReadBack  `json:"sourceReadBack"`
-	TransitionStart       *MappedFact    `json:"transitionStart"`
-	ActuationFailure      *Failure       `json:"actuationFailure"`
-	TargetReadBack        *StateReadBack `json:"targetReadBack"`
-	TargetReadBackFailure *Failure       `json:"targetReadBackFailure"`
+	SourceReadBack        StateReadBack            `json:"sourceReadBack"`
+	TransitionStart       *OccurredFact            `json:"transitionStart"`
+	ActuationFailure      *Failure                 `json:"actuationFailure"`
+	TargetReadBack        *TargetStateReadBack     `json:"targetReadBack"`
+	TargetReadBackFailure *Failure                 `json:"targetReadBackFailure"`
+	MarkerBrackets        TransitionMarkerBrackets `json:"markerBrackets"`
 
 	PowerSamples  []PowerSample      `json:"powerSamples"`
 	PowerFailures []PowerReadFailure `json:"powerFailures"`
 	Readiness     []ReadyObservation `json:"readiness"`
 
 	PreTransitionProcess  *ProcessObservation `json:"preTransitionProcess"`
-	PostTransitionProcess *ProcessObservation `json:"postTransitionProcess"`
-
-	BoundaryMappingUncertainty time.Duration `json:"boundaryMappingUncertaintyNanoseconds"`
+	PostTransitionProcess *ProcessIdentity    `json:"postTransitionProcess"`
 }
 
 type acceptedRecord struct {

@@ -273,13 +273,17 @@ Raw evidence retains:
 - the device-side transition-start and target-read-back facts;
 - the observer-side meter samples, workload-readiness facts, and serving
   process/restart facts;
-- the mapping used to place both window boundaries in the meter trace; and
-- the measured upper bound on boundary-alignment error.
+- the last receipt where each apply-start, target-read-back, and fresh
+  Ready/process marker was absent; and
+- the first receipt where each of those three markers was present.
 
-`boundaryMappingUncertaintyMilliseconds` freezes that Gate 0 measured and
-selected marker-transfer upper bound. It must cover the frozen fact-poll
-interval. `maximumBoundaryUncertaintyMilliseconds` is a separate observation
-acceptance ceiling; it does not supply or replace the measured bound.
+Derivation places the window at the apply-start and fresh Ready/process
+first-present receipts. It measures each marker's mapping width from its own
+last-absent and first-present receipts, rounds only the maximum of those three
+widths up to a whole millisecond, and compares that measured value with the
+frozen `maximumBoundaryUncertaintyMilliseconds` acceptance ceiling. The frozen
+fact-poll interval decides how often these brackets can be narrowed; neither it
+nor the ceiling supplies a measured bound.
 
 If the selected path cannot bound that error tightly enough for the frozen
 sampling and integration policy, implementation stops at the feasibility gate.
@@ -302,10 +306,11 @@ repeat one directed transition at a time
     |
     +-> create one NodeActuation
     |       |
-    |       +-> actual transition begins -------- transitionWindow.startedAt
+    |       +-> apply first becomes visible ----- transitionWindow.startedAt
     |       |                                     power integration begins
     |       +-> apply -> optional restart -> independent target read-back
-    |       +-> fresh workload Ready ------------ transitionWindow.completedAt
+    |       +-> target read-back first becomes visible
+    |       +-> fresh Ready+process first visible transitionWindow.completedAt
     |                                             power integration ends
     |
     +-> observer writes one immutable raw object
@@ -342,7 +347,8 @@ observations made under that selection:
   request latency;
 - every process/restart fact and readiness event;
 - transition-start, target-read-back, and request-readiness boundary facts; and
-- boundary-mapping uncertainty.
+- the last-absent and first-present observer receipt times for each apply,
+  target, and fresh Ready/process marker.
 
 Each finalized transition object records the state pair, transition window,
 `tau`, raw wall energy, baseline, `eta`, serving-survival flag, verdict, and
@@ -391,7 +397,8 @@ state is another explicitly requested and independently measured
 3. With separate live-test authorization, capture one bounded trace across a
    restart-required transition.
 4. Report sample cadence, failed reads, maximum gap, timestamp authority,
-   marker-transfer path, and boundary-alignment uncertainty.
+   marker-transfer path, all three last-absent/first-present brackets, and the
+   maximum derived boundary-alignment uncertainty.
 5. Stop if the observer or meter path disappears with the target Node, if the
    workload facts cannot distinguish Ready, restart, and unknown, or if the
    timing error exceeds the frozen integration policy.

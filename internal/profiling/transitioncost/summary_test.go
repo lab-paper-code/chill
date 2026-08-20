@@ -269,7 +269,9 @@ func completeResults(
 				t, direction, fmt.Sprintf("direction-%d-accepted-%d", directionIndex, index),
 				2+index, eta, index < 3, acceptedAttempt,
 				func(_ *transitioncost.FrozenContract, raw *transitioncost.RawObservation) {
-					raw.BoundaryMappingUncertainty = time.Duration(index+1) * time.Millisecond
+					raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
+						raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.
+							Add(-time.Duration(index+1) * time.Millisecond)
 				},
 			))
 		}
@@ -310,21 +312,25 @@ func deriveAttempt(
 		},
 		State: direction.Source,
 	}
-	raw.TransitionStart = &transitioncost.MappedFact{OccurredAt: startedAt, MappedAt: startedAt}
-	raw.TargetReadBack = &transitioncost.StateReadBack{
-		Fact: transitioncost.MappedFact{
-			OccurredAt: startedAt.Add(time.Second),
-			MappedAt:   startedAt.Add(time.Second),
-		},
+	raw.TransitionStart = &transitioncost.OccurredFact{OccurredAt: startedAt}
+	raw.TargetReadBack = &transitioncost.TargetStateReadBack{
+		Fact:  transitioncost.OccurredFact{OccurredAt: startedAt.Add(time.Second)},
 		State: direction.Target,
+	}
+	raw.MarkerBrackets = transitioncost.TransitionMarkerBrackets{
+		ApplyStartedAt: markerBracket(startedAt, time.Millisecond),
+		TargetObservation: markerBracket(
+			startedAt.Add(time.Second),
+			time.Millisecond,
+		),
+		ReadyProcessWitness: markerBracket(completedAt, time.Millisecond),
 	}
 	raw.Readiness = []transitioncost.ReadyObservation{{
 		ObservedAt: completedAt, Ready: true,
 	}}
 	raw.PreTransitionProcess.ObservedAt = startedAt.Add(-time.Second)
-	raw.PostTransitionProcess.ObservedAt = completedAt.Add(time.Second)
 	if !servingSurvived {
-		raw.PostTransitionProcess.Process.ContainerID = "replacement-container"
+		raw.PostTransitionProcess.ContainerID = "replacement-container"
 	}
 	watts := frozen.TargetIdleBaseline.MeanWallWatts + etaJoules/float64(tauSeconds)
 	raw.PowerSamples = constantPowerSamples(startedAt, completedAt, watts)
@@ -336,9 +342,11 @@ func deriveAttempt(
 	case invalidAttempt:
 		raw.SourceReadBack.State.PowerMode = "unexpected-mode"
 	case failedAttempt:
-		raw.Readiness = nil
+		raw.PostTransitionProcess = nil
+		raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 	case insufficientAttempt:
-		raw.BoundaryMappingUncertainty = policy.MaximumBoundaryUncertainty + time.Millisecond
+		raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
+			startedAt.Add(-policy.MaximumBoundaryUncertainty - time.Millisecond)
 	default:
 		t.Fatalf("unknown test attempt outcome %d", outcome)
 	}
@@ -364,6 +372,13 @@ func deriveAttempt(
 		t.Fatalf("finalize attempt %q: %v", id, err)
 	}
 	return finalized
+}
+
+func markerBracket(firstPresent time.Time, width time.Duration) transitioncost.ReceiptTimeBracket {
+	return transitioncost.ReceiptTimeBracket{
+		LastAbsentReceivedAt:   firstPresent.Add(-width),
+		FirstPresentReceivedAt: firstPresent,
+	}
 }
 
 func baselineFor(target transitioncost.StateIdentity) transitioncost.IdleBaseline {

@@ -68,20 +68,19 @@ func NewPreparer(
 // PreparedMeasurement contains only the selections consumed by the next Job
 // and NodeActuation materialization boundary.
 type PreparedMeasurement struct {
-	Namespace                  string
-	TargetNode                 edgev1alpha1.ProfilingRunObjectReference
-	ObserverNodeName           string
-	DeviceClass                string
-	ExecutionPath              string
-	ServingService             string
-	ServingContainer           string
-	PowerSource                metricobserver.SourceIdentity
-	PowerRequest               metricobserver.Request
-	FactPollInterval           time.Duration
-	FactObservationTimeout     time.Duration
-	BoundaryMappingUncertainty time.Duration
-	Policy                     transitioncost.Policy
-	Directions                 [2]PreparedDirection
+	Namespace              string
+	TargetNode             edgev1alpha1.ProfilingRunObjectReference
+	ObserverNodeName       string
+	DeviceClass            string
+	ExecutionPath          string
+	ServingService         string
+	ServingContainer       string
+	PowerSource            metricobserver.SourceIdentity
+	PowerRequest           metricobserver.Request
+	FactPollInterval       time.Duration
+	FactObservationTimeout time.Duration
+	Policy                 transitioncost.Policy
+	Directions             [2]PreparedDirection
 }
 
 // PreparedDirection is one ordered transition with its target-mode baseline,
@@ -94,11 +93,10 @@ type PreparedDirection struct {
 }
 
 type preparedObservation struct {
-	powerRequest               metricobserver.Request
-	factPollInterval           time.Duration
-	factObservationTimeout     time.Duration
-	boundaryMappingUncertainty time.Duration
-	policy                     transitioncost.Policy
+	powerRequest           metricobserver.Request
+	factPollInterval       time.Duration
+	factObservationTimeout time.Duration
+	policy                 transitioncost.Policy
 }
 
 func (p *Preparer) Prepare(
@@ -232,7 +230,7 @@ func (p *Preparer) Prepare(
 		ServingService: measurement.Spec.ServingService, ServingContainer: measurement.Spec.ServingContainer,
 		PowerSource: powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,
-		BoundaryMappingUncertainty: observation.boundaryMappingUncertainty, Policy: observation.policy,
+		Policy:     observation.policy,
 		Directions: [2]PreparedDirection{direction(0, 1), direction(1, 0)},
 	}, nil
 }
@@ -295,7 +293,6 @@ func prepareObservation(
 	timeout := time.Duration(spec.PowerTimeoutMilliseconds) * time.Millisecond
 	factTimeout := time.Duration(spec.MaximumTransitionDurationSeconds) * time.Second
 	factPoll := time.Duration(spec.FactPollIntervalMilliseconds) * time.Millisecond
-	boundaryMapping := time.Duration(spec.BoundaryMappingUncertaintyMilliseconds) * time.Millisecond
 	maximumBoundaryUncertainty := time.Duration(spec.MaximumBoundaryUncertaintyMilliseconds) * time.Millisecond
 	minimumCoverage, err := strconv.ParseFloat(spec.MinimumCoverage, 64)
 	if err != nil {
@@ -307,7 +304,7 @@ func prepareObservation(
 	}
 	return preparedObservation{
 		powerRequest: powerRequest, factPollInterval: factPoll,
-		factObservationTimeout: factTimeout, boundaryMappingUncertainty: boundaryMapping,
+		factObservationTimeout: factTimeout,
 		policy: transitioncost.Policy{
 			MaximumBoundaryDistance:      time.Duration(spec.MaximumBoundaryDistanceMilliseconds) * time.Millisecond,
 			MinimumCoverage:              minimumCoverage,

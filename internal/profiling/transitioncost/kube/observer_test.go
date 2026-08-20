@@ -48,24 +48,94 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 		t.Fatalf("transition facts = start:%+v target:%+v", raw.TransitionStart, raw.TargetReadBack)
 	}
 	if raw.PreTransitionProcess == nil || raw.PostTransitionProcess == nil ||
-		raw.PreTransitionProcess.Process != raw.PostTransitionProcess.Process {
+		raw.PreTransitionProcess.Process != *raw.PostTransitionProcess {
 		t.Fatalf("process observations = pre:%+v post:%+v", raw.PreTransitionProcess, raw.PostTransitionProcess)
 	}
 	if len(raw.Readiness) != 2 || !raw.Readiness[0].Ready || !raw.Readiness[1].Ready ||
-		!raw.Readiness[1].ObservedAt.After(raw.TargetReadBack.Fact.MappedAt) {
+		!raw.Readiness[1].ObservedAt.Equal(
+			raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt,
+		) ||
+		!raw.Readiness[1].ObservedAt.After(
+			raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt,
+		) {
 		t.Fatalf("readiness = %+v, target read-back = %+v", raw.Readiness, raw.TargetReadBack)
 	}
-	if raw.BoundaryMappingUncertainty != testRequest().BoundaryMappingUncertainty {
-		t.Fatalf("boundary uncertainty = %v", raw.BoundaryMappingUncertainty)
+	for name, bracket := range map[string]transitioncost.ReceiptTimeBracket{
+		"apply":         raw.MarkerBrackets.ApplyStartedAt,
+		"target":        raw.MarkerBrackets.TargetObservation,
+		"ready-process": raw.MarkerBrackets.ReadyProcessWitness,
+	} {
+		if bracket.LastAbsentReceivedAt.IsZero() ||
+			!bracket.FirstPresentReceivedAt.After(bracket.LastAbsentReceivedAt) {
+			t.Fatalf("%s marker bracket = %+v", name, bracket)
+		}
 	}
 }
 
-func TestNewRequiresBoundaryBoundToCoverPolling(t *testing.T) {
-	request := testRequest()
-	request.BoundaryMappingUncertainty = request.PollInterval - time.Nanosecond
-	_, err := transitionkube.New(newClient(t), request)
-	if err == nil || !strings.Contains(err.Error(), "cover the poll interval") {
-		t.Fatalf("New() error = %v", err)
+func TestObserverRequiresPreReadyMarkerAbsence(t *testing.T) {
+	kubeClient := newClient(
+		t,
+		service(),
+		readyPod("serving", "containerd://same", 0),
+		successfulActuation(actuationTimes()),
+	)
+	observer := newObserver(t, kubeClient, testRequest())
+	called := false
+
+	_, err := observer.Observe(context.Background(), func() { called = true })
+	if err == nil || !strings.Contains(err.Error(), "last-absent receipt time is missing") {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	if called {
+		t.Fatal("ready callback ran without a pre-ready absent marker observation")
+	}
+}
+
+func TestObserverAdvancesAbsenceAndFreezesFirstPresence(t *testing.T) {
+	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
+	observer := newObserver(t, kubeClient, testRequest())
+	times := actuationTimes()
+	operation := successfulActuation(times)
+	operation.Status.TargetObservation = nil
+	completed := make(chan error, 1)
+	var readyAt time.Time
+
+	raw, err := observer.Observe(context.Background(), func() {
+		readyAt = time.Now().UTC()
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			if err := kubeClient.Create(context.Background(), operation); err != nil {
+				completed <- err
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+			current := &edgev1alpha1.NodeActuation{}
+			if err := kubeClient.Get(
+				context.Background(),
+				client.ObjectKeyFromObject(operation),
+				current,
+			); err != nil {
+				completed <- err
+				return
+			}
+			current.Status.TargetObservation = successfulActuation(times).Status.TargetObservation
+			completed <- kubeClient.Update(context.Background(), current)
+		}()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operationErr := <-completed; operationErr != nil {
+		t.Fatalf("advance NodeActuation markers: %v", operationErr)
+	}
+	apply := raw.MarkerBrackets.ApplyStartedAt
+	target := raw.MarkerBrackets.TargetObservation
+	ready := raw.MarkerBrackets.ReadyProcessWitness
+	if !apply.LastAbsentReceivedAt.After(readyAt) ||
+		!target.LastAbsentReceivedAt.After(apply.FirstPresentReceivedAt) ||
+		!target.FirstPresentReceivedAt.After(apply.FirstPresentReceivedAt) ||
+		!ready.FirstPresentReceivedAt.After(target.FirstPresentReceivedAt) {
+		t.Fatalf("marker brackets did not advance/freeze in order: %+v", raw.MarkerBrackets)
 	}
 }
 
@@ -97,12 +167,12 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 	}
 	if raw.PreTransitionProcess == nil || raw.PostTransitionProcess == nil ||
 		raw.PreTransitionProcess.Process.ContainerID != "containerd://old" ||
-		raw.PostTransitionProcess.Process.ContainerID != "containerd://new" {
+		raw.PostTransitionProcess.ContainerID != "containerd://new" {
 		t.Fatalf("process observations = pre:%+v post:%+v", raw.PreTransitionProcess, raw.PostTransitionProcess)
 	}
 
-	startedAt := raw.TransitionStart.MappedAt
-	completedAt := raw.Readiness[len(raw.Readiness)-1].ObservedAt
+	startedAt := raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt
+	completedAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
 	window := completedAt.Sub(startedAt)
 	raw.PowerSamples = []transitioncost.PowerSample{
 		{ObservedAt: startedAt.Add(window / 4), Watts: 10},
@@ -123,7 +193,7 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 			MaximumBoundaryDistance:      10 * time.Millisecond,
 			MinimumCoverage:              0.49,
 			MaximumSampleGap:             time.Second,
-			MaximumBoundaryUncertainty:   10 * time.Millisecond,
+			MaximumBoundaryUncertainty:   time.Second,
 			MaximumReadyObservationDelay: time.Second,
 		},
 	)
@@ -374,7 +444,6 @@ func testRequest() transitionkube.Request {
 		ServingService: "serving", ServingContainer: "model",
 		DeviceType: "jetson_orin", Model: "mobilenet-v2-050",
 		PollInterval: time.Millisecond, ObservationTimeout: 250 * time.Millisecond,
-		BoundaryMappingUncertainty: 2 * time.Millisecond,
 	}
 }
 

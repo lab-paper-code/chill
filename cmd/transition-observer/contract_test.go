@@ -35,7 +35,7 @@ func TestLoadContractIsStrictBoundedAndConvertsUnits(t *testing.T) {
 	invalidSchedule.PowerObservation.RequestTimeoutMilliseconds = 100
 	equalDuration.PowerObservation.DurationMilliseconds = 4000
 	shortDuration.PowerObservation.DurationMilliseconds = 3999
-	retired.SchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha1"
+	retired.SchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha2"
 	for _, test := range []struct {
 		name    string
 		payload []byte
@@ -89,7 +89,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 			RequestTimeout: 50 * time.Millisecond, MaxEvents: 52,
 		},
 		FactPollInterval: 50 * time.Millisecond, FactObservationTimeout: 4 * time.Second,
-		BoundaryMappingUncertainty: 50 * time.Millisecond, Directions: directions,
+		Directions: directions,
 	}
 	job, err := transitioncontroller.BuildAttemptJob(
 		transitioncontroller.AttemptJobRequest{
@@ -145,7 +145,6 @@ func validAttemptWire() attemptWire {
 			DeviceType: "jetson-orin", Model: "model",
 			ServingService: "serving", ServingContainer: "runtime",
 			PollIntervalMilliseconds: 50, ObservationTimeoutMilliseconds: 4000,
-			BoundaryMappingUncertaintyMilliseconds: 50,
 		},
 		RawLocation: evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},
 	}

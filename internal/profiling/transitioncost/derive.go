@@ -52,17 +52,25 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, e
 			"independent read-back did not confirm the frozen target state"), nil
 	}
 
-	completedAt, ok := earliestReady(verified)
-	if !ok {
+	if verified.raw.PostTransitionProcess == nil {
 		return classified(verified, VerdictFailed, ReasonReadinessNotReached,
-			"no fresh Ready=True observation followed target read-back"), nil
+			"no fresh Ready=True process witness followed target read-back"), nil
 	}
-	startedAt := verified.raw.TransitionStart.MappedAt
-	if !completedAt.After(startedAt) {
+	startedAt := verified.raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt
+	targetReadBackAt := verified.raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt
+	completedAt := verified.raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
+	if completedAt.Sub(targetReadBackAt) > verified.policy.MaximumReadyObservationDelay {
+		return classified(verified, VerdictFailed, ReasonReadinessNotReached,
+			"fresh Ready=True process witness exceeds the timing bound"), nil
+	}
+	boundaryUncertainty, representable := measuredBoundaryMappingUncertainty(
+		verified.raw.MarkerBrackets,
+	)
+	if !representable {
 		return classified(verified, VerdictInvalid, ReasonObservationMalformed,
-			"completed transition boundary does not follow transition start"), nil
+			"boundary mapping uncertainty cannot be represented in milliseconds"), nil
 	}
-	if verified.raw.BoundaryMappingUncertainty > verified.policy.MaximumBoundaryUncertainty {
+	if boundaryUncertainty > verified.policy.MaximumBoundaryUncertainty {
 		return classified(verified, VerdictInsufficient, ReasonBoundaryUncertaintyExceeded,
 			"boundary mapping uncertainty exceeds policy"), nil
 	}
@@ -81,7 +89,7 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, e
 			err.Error()), nil
 	}
 
-	servingSurvived, known := servingSurvival(verified.raw, startedAt, completedAt)
+	servingSurvived, known := servingSurvival(verified.raw, startedAt)
 	if !known {
 		return classified(verified, VerdictInsufficient, ReasonServingSurvivalUnknown,
 			"pre-transition and post-completion process identity is incomplete"), nil
@@ -91,7 +99,7 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, e
 	accepted := &acceptedRecord{
 		startedAt:                  startedAt,
 		completedAt:                completedAt,
-		boundaryMappingUncertainty: verified.raw.BoundaryMappingUncertainty,
+		boundaryMappingUncertainty: boundaryUncertainty,
 		tauMilliseconds:            tauSeconds * 1000,
 		transitionWallJoules:       joules,
 		targetIdleBaseline:         verified.frozen.TargetIdleBaseline,
@@ -166,24 +174,70 @@ func validateRawHeader(raw RawObservation) string {
 	if !validStateReadBack(raw.SourceReadBack) {
 		return "source read-back is malformed"
 	}
-	if raw.BoundaryMappingUncertainty < 0 {
-		return "boundary mapping uncertainty is negative"
-	}
 	if !within(raw.SourceReadBack.Fact.MappedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
 		return "source read-back is outside raw observation coverage"
+	}
+	if detail := validateMarkerBrackets(raw); detail != "" {
+		return detail
 	}
 	return ""
 }
 
+func validateMarkerBrackets(raw RawObservation) string {
+	checks := []struct {
+		name    string
+		bracket ReceiptTimeBracket
+		present bool
+	}{
+		{name: "applyStartedAt", bracket: raw.MarkerBrackets.ApplyStartedAt,
+			present: raw.TransitionStart != nil},
+		{name: "targetObservation", bracket: raw.MarkerBrackets.TargetObservation,
+			present: raw.TargetReadBack != nil},
+		{name: "readyProcessWitness", bracket: raw.MarkerBrackets.ReadyProcessWitness,
+			present: raw.PostTransitionProcess != nil},
+	}
+	for _, check := range checks {
+		if !validMarkerBracket(
+			check.bracket,
+			check.present,
+			raw.ObservationStartedAt,
+			raw.ObservationEndedAt,
+		) {
+			return check.name + " receipt-time bracket is malformed or outside coverage"
+		}
+	}
+	apply := raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt
+	target := raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt
+	ready := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
+	if !apply.IsZero() && apply.Before(raw.SourceReadBack.Fact.MappedAt) {
+		return "applyStartedAt receipt precedes source read-back"
+	}
+	if !target.IsZero() && (apply.IsZero() || target.Before(apply)) {
+		return "targetObservation receipt precedes applyStartedAt"
+	}
+	if !ready.IsZero() && (target.IsZero() || !ready.After(target)) {
+		return "ready-process receipt does not follow targetObservation"
+	}
+	return ""
+}
+
+func validMarkerBracket(bracket ReceiptTimeBracket, present bool, start, end time.Time) bool {
+	if bracket.LastAbsentReceivedAt.IsZero() ||
+		!within(bracket.LastAbsentReceivedAt, start, end) {
+		return false
+	}
+	if !present {
+		return bracket.FirstPresentReceivedAt.IsZero()
+	}
+	return !bracket.FirstPresentReceivedAt.IsZero() &&
+		bracket.FirstPresentReceivedAt.After(bracket.LastAbsentReceivedAt) &&
+		within(bracket.FirstPresentReceivedAt, start, end)
+}
+
 func validateTransitionFacts(raw RawObservation) string {
 	if raw.TransitionStart != nil {
-		if !validMappedFact(*raw.TransitionStart) ||
-			!within(raw.TransitionStart.MappedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
-			return "transition-start fact is malformed or outside coverage"
-		}
-		if raw.TransitionStart.MappedAt.Before(raw.SourceReadBack.Fact.MappedAt) ||
-			raw.TransitionStart.OccurredAt.Before(raw.SourceReadBack.Fact.OccurredAt) {
-			return "transition start precedes source read-back"
+		if raw.TransitionStart.OccurredAt.IsZero() {
+			return "transition-start fact is malformed"
 		}
 	}
 	if detail := validateFailure(raw.ActuationFailure, raw.ObservationStartedAt, raw.ObservationEndedAt); detail != "" {
@@ -199,13 +253,9 @@ func validateTransitionFacts(raw RawObservation) string {
 		return "target read-back has both success and failure facts"
 	}
 	if raw.TargetReadBack != nil {
-		if raw.TransitionStart == nil || !validStateReadBack(*raw.TargetReadBack) ||
-			!within(raw.TargetReadBack.Fact.MappedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
-			return "target read-back is malformed, unstarted, or outside coverage"
-		}
-		if raw.TargetReadBack.Fact.MappedAt.Before(raw.TransitionStart.MappedAt) ||
-			raw.TargetReadBack.Fact.OccurredAt.Before(raw.TransitionStart.OccurredAt) {
-			return "target read-back precedes transition start"
+		if raw.TransitionStart == nil || raw.TargetReadBack.Fact.OccurredAt.IsZero() ||
+			!validState(raw.TargetReadBack.State) {
+			return "target read-back is malformed or unstarted"
 		}
 	}
 	return ""
@@ -230,41 +280,61 @@ func validateObservedFacts(raw RawObservation) string {
 			return "readiness observation is malformed or outside coverage"
 		}
 	}
-	for _, process := range []*ProcessObservation{raw.PreTransitionProcess, raw.PostTransitionProcess} {
-		if process == nil {
-			continue
-		}
-		if process.ObservedAt.IsZero() || !within(process.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) ||
-			!validProcess(process.Process) {
-			return "serving process observation is malformed or outside coverage"
-		}
+	if raw.PreTransitionProcess != nil &&
+		(raw.PreTransitionProcess.ObservedAt.IsZero() ||
+			!within(raw.PreTransitionProcess.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) ||
+			!validProcess(raw.PreTransitionProcess.Process)) {
+		return "pre-transition process observation is malformed or outside coverage"
+	}
+	if raw.PostTransitionProcess != nil && !validProcess(*raw.PostTransitionProcess) {
+		return "post-transition process observation is malformed"
+	}
+	if raw.PostTransitionProcess != nil && !hasReadyWitness(raw) {
+		return "ready-process bracket has no matching Ready=True observation"
 	}
 	return ""
 }
 
-func earliestReady(input verifiedInput) (time.Time, bool) {
-	targetReadBackAt := input.raw.TargetReadBack.Fact.MappedAt
-	latest := targetReadBackAt.Add(input.policy.MaximumReadyObservationDelay)
-	var earliest time.Time
-	for _, readiness := range input.raw.Readiness {
-		if !readiness.Ready || !readiness.ObservedAt.After(targetReadBackAt) ||
-			readiness.ObservedAt.After(latest) {
-			continue
-		}
-		if earliest.IsZero() || readiness.ObservedAt.Before(earliest) {
-			earliest = readiness.ObservedAt
+func hasReadyWitness(raw RawObservation) bool {
+	witnessAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
+	for _, readiness := range raw.Readiness {
+		if readiness.Ready && readiness.ObservedAt.Equal(witnessAt) {
+			return true
 		}
 	}
-	return earliest, !earliest.IsZero()
+	return false
 }
 
-func servingSurvival(raw RawObservation, startedAt, completedAt time.Time) (bool, bool) {
+func servingSurvival(raw RawObservation, startedAt time.Time) (bool, bool) {
 	if raw.PreTransitionProcess == nil || raw.PostTransitionProcess == nil ||
-		raw.PreTransitionProcess.ObservedAt.After(startedAt) ||
-		raw.PostTransitionProcess.ObservedAt.Before(completedAt) {
+		raw.PreTransitionProcess.ObservedAt.After(startedAt) {
 		return false, false
 	}
-	return raw.PreTransitionProcess.Process == raw.PostTransitionProcess.Process, true
+	return raw.PreTransitionProcess.Process == *raw.PostTransitionProcess, true
+}
+
+func measuredBoundaryMappingUncertainty(
+	brackets TransitionMarkerBrackets,
+) (time.Duration, bool) {
+	maximum := time.Duration(0)
+	for _, bracket := range []ReceiptTimeBracket{
+		brackets.ApplyStartedAt,
+		brackets.TargetObservation,
+		brackets.ReadyProcessWitness,
+	} {
+		width := bracket.FirstPresentReceivedAt.Sub(bracket.LastAbsentReceivedAt)
+		if width > maximum {
+			maximum = width
+		}
+	}
+	if remainder := maximum % time.Millisecond; remainder != 0 {
+		increment := time.Millisecond - remainder
+		if maximum > time.Duration(1<<63-1)-increment {
+			return 0, false
+		}
+		maximum += increment
+	}
+	return maximum, true
 }
 
 func powerSamples(samples []PowerSample) []powerwindow.Sample {

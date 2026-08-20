@@ -143,7 +143,7 @@ func TestDecodeMeasurementResultRejectsUntrustedStoredRecord(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			record.SchemaVersion = "chill.dacs.io/transition-cost-measurement-result.v1alpha0"
+			record.SchemaVersion = "chill.dacs.io/transition-cost-measurement-result.v1alpha1"
 			return marshalMeasurementResultRecord(t, record)
 		}},
 		{name: "unknown field", payload: func() []byte {

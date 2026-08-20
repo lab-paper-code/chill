@@ -130,7 +130,7 @@ func TestFinalizedTransitionCodecRejectsMalformedCurrentRecord(t *testing.T) {
 	tests := map[string][]byte{
 		"unknown field": bytes.Replace(payload, []byte(`"observation":`), []byte(`"unknown":true,"observation":`), 1),
 		"old schema": bytes.Replace(payload, []byte(FinalizedTransitionRecordSchemaVersion),
-			[]byte("chill.dacs.io/transition-cost-finalized-observation.v1alpha0"), 1),
+			[]byte("chill.dacs.io/transition-cost-finalized-observation.v1alpha1"), 1),
 		"trailing value": append(append([]byte(nil), payload...), []byte(" {}")...),
 	}
 	for name, malformed := range tests {
@@ -321,10 +321,24 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 			},
 			State: direction.SourceState,
 		},
-		TransitionStart: &transitioncost.MappedFact{OccurredAt: base.Add(time.Second), MappedAt: base.Add(time.Second)},
-		TargetReadBack: &transitioncost.StateReadBack{
-			Fact:  transitioncost.MappedFact{OccurredAt: base.Add(2 * time.Second), MappedAt: base.Add(2 * time.Second)},
+		TransitionStart: &transitioncost.OccurredFact{OccurredAt: base.Add(time.Second)},
+		TargetReadBack: &transitioncost.TargetStateReadBack{
+			Fact:  transitioncost.OccurredFact{OccurredAt: base.Add(2 * time.Second)},
 			State: direction.TargetState,
+		},
+		MarkerBrackets: transitioncost.TransitionMarkerBrackets{
+			ApplyStartedAt: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(990 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(time.Second),
+			},
+			TargetObservation: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(1990 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(2 * time.Second),
+			},
+			ReadyProcessWitness: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   base.Add(2990 * time.Millisecond),
+				FirstPresentReceivedAt: base.Add(3 * time.Second),
+			},
 		},
 		Readiness: []transitioncost.ReadyObservation{{ObservedAt: base.Add(3 * time.Second), Ready: true}},
 		PowerSamples: []transitioncost.PowerSample{
@@ -337,18 +351,18 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 		PreTransitionProcess: &transitioncost.ProcessObservation{
 			ObservedAt: base.Add(900 * time.Millisecond), Process: process,
 		},
-		PostTransitionProcess: &transitioncost.ProcessObservation{
-			ObservedAt: base.Add(3100 * time.Millisecond), Process: process,
-		},
-		BoundaryMappingUncertainty: prepared.BoundaryMappingUncertainty,
+		PostTransitionProcess: &process,
 	}
 	switch outcome {
 	case invalidAttempt:
 		raw.SourceReadBack.State.PowerMode = otherMeasurementStateValue
 	case failedAttempt:
-		raw.Readiness = nil
+		raw.PostTransitionProcess = nil
+		raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 	case insufficientAttempt:
-		raw.BoundaryMappingUncertainty = prepared.Policy.MaximumBoundaryUncertainty + time.Millisecond
+		raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
+			raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.
+				Add(-prepared.Policy.MaximumBoundaryUncertainty - time.Millisecond)
 	}
 	return raw
 }

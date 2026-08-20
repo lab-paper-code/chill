@@ -108,14 +108,13 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 
 	if prepared.FactPollInterval != 200*time.Millisecond ||
 		prepared.FactObservationTimeout != 900*time.Second ||
-		prepared.BoundaryMappingUncertainty != 250*time.Millisecond ||
 		prepared.PowerRequest != (metricobserver.Request{
 			Interval: 500 * time.Millisecond, RequestTimeout: 100 * time.Millisecond,
 			Duration: 900*time.Second + 500*time.Millisecond, MaxEvents: 1803,
 		}) {
-		t.Fatalf("prepared observation schedule = power:%+v poll:%v timeout:%v mapping:%v",
+		t.Fatalf("prepared observation schedule = power:%+v poll:%v timeout:%v",
 			prepared.PowerRequest, prepared.FactPollInterval,
-			prepared.FactObservationTimeout, prepared.BoundaryMappingUncertainty)
+			prepared.FactObservationTimeout)
 	}
 	wantPolicy := transitioncost.Policy{
 		MaximumBoundaryDistance: 100 * time.Millisecond, MinimumCoverage: .95,
@@ -574,7 +573,7 @@ func validTransitionMeasurement() *edgev1alpha1.PowerModeTransitionCost {
 				MaximumTransitionDurationSeconds: 900, FactPollIntervalMilliseconds: 200,
 				MaximumBoundaryDistanceMilliseconds: 100, MinimumCoverage: "0.95",
 				MaximumSampleGapMilliseconds: 1000, MaximumBoundaryUncertaintyMilliseconds: 300,
-				BoundaryMappingUncertaintyMilliseconds: 250, MaximumReadyObservationDelayMilliseconds: 3000,
+				MaximumReadyObservationDelayMilliseconds: 3000,
 			},
 		},
 	}

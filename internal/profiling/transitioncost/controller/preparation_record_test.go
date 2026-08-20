@@ -96,7 +96,7 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 		{name: "old schema", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
 				string(record.BinaryData[preparationRecordDataKey]), preparationRecordSchemaVersion,
-				"chill.dacs.io/power-mode-transition-preparation.v1alpha0", 1,
+				"chill.dacs.io/power-mode-transition-preparation.v1alpha1", 1,
 			))
 		}},
 		{name: "trailing value", mutate: func(record *corev1.ConfigMap) {
@@ -136,7 +136,7 @@ func assertRecoveredPreparation(t *testing.T, recovered, expected PreparedMeasur
 		recovered.PowerSource.MetricLabels["device_type"] != expected.PowerSource.MetricLabels["device_type"] ||
 		recovered.PowerRequest != expected.PowerRequest || recovered.FactPollInterval != expected.FactPollInterval ||
 		recovered.FactObservationTimeout != expected.FactObservationTimeout ||
-		recovered.BoundaryMappingUncertainty != expected.BoundaryMappingUncertainty || recovered.Policy != expected.Policy {
+		recovered.Policy != expected.Policy {
 		t.Fatalf("recovered enclosing preparation = %#v", recovered)
 	}
 	for index := range recovered.Directions {

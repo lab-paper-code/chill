@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	FinalizedTransitionRecordSchemaVersion = "chill.dacs.io/transition-cost-finalized-observation.v1alpha1"
+	FinalizedTransitionRecordSchemaVersion = "chill.dacs.io/transition-cost-finalized-observation.v1alpha2"
 	maximumTransitionReceiptBytes          = 4 * 1024
 )
 

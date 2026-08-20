@@ -44,22 +44,21 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	if !observation.ServingSurvived() {
 		t.Fatal("servingSurvived = false, want true")
 	}
-	if observation.BoundaryMappingUncertainty() != 20*time.Millisecond {
-		t.Fatalf("boundary uncertainty = %v, want 20ms", observation.BoundaryMappingUncertainty())
+	if observation.BoundaryMappingUncertainty() != 30*time.Millisecond {
+		t.Fatalf("boundary uncertainty = %v, want 30ms", observation.BoundaryMappingUncertainty())
 	}
 	if result.FrozenContract() != frozen {
 		t.Fatalf("frozen contract changed: %#v", result.FrozenContract())
 	}
 }
 
-func TestDeriveSelectsEarliestFreshReadyObservation(t *testing.T) {
+func TestDeriveUsesReadyProcessBracketInsteadOfDiagnosticReadiness(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	raw.Readiness = []transitioncost.ReadyObservation{
 		{ObservedAt: testTime(6), Ready: true},
 		{ObservedAt: testTime(3), Ready: true},
 		{ObservedAt: testTime(5), Ready: true},
 	}
-	raw.PostTransitionProcess.ObservedAt = testTime(6)
 
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
@@ -69,11 +68,11 @@ func TestDeriveSelectsEarliestFreshReadyObservation(t *testing.T) {
 	if !ok {
 		t.Fatalf("outcome = %s/%s, want accepted", result.Verdict(), result.Reason())
 	}
-	if !observation.CompletedAt().Equal(testTime(5)) {
-		t.Fatalf("completedAt = %v, want earliest valid Ready at %v", observation.CompletedAt(), testTime(5))
+	if !observation.CompletedAt().Equal(testTime(6)) {
+		t.Fatalf("completedAt = %v, want bracketed witness at %v", observation.CompletedAt(), testTime(6))
 	}
-	if observation.TauMilliseconds() != 3000 {
-		t.Fatalf("tauMilliseconds = %v, want 3000", observation.TauMilliseconds())
+	if observation.TauMilliseconds() != 4000 {
+		t.Fatalf("tauMilliseconds = %v, want 4000", observation.TauMilliseconds())
 	}
 }
 
@@ -99,6 +98,9 @@ func TestDeriveClassifiesOperationFailures(t *testing.T) {
 			name: "actuation failed",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.TargetReadBack = nil
+				raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt = time.Time{}
+				raw.PostTransitionProcess = nil
+				raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 				raw.ActuationFailure = &transitioncost.Failure{ObservedAt: testTime(3), Message: "apply failed"}
 			},
 			reason: transitioncost.ReasonActuationFailed,
@@ -107,6 +109,9 @@ func TestDeriveClassifiesOperationFailures(t *testing.T) {
 			name: "target read-back failed",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.TargetReadBack = nil
+				raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt = time.Time{}
+				raw.PostTransitionProcess = nil
+				raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 				raw.TargetReadBackFailure = &transitioncost.Failure{
 					ObservedAt: testTime(4), Message: "read-back failed",
 				}
@@ -135,34 +140,35 @@ func TestDeriveClassifiesOperationFailures(t *testing.T) {
 	}
 }
 
-func TestDeriveNeverClosesOnStaleFailedOrLateReadiness(t *testing.T) {
+func TestDeriveRequiresFreshTimelyReadyProcessWitness(t *testing.T) {
 	tests := []struct {
-		name      string
-		readiness []transitioncost.ReadyObservation
+		name  string
+		alter func(*transitioncost.RawObservation)
 	}{
 		{
-			name: "pre-transition Ready is stale",
-			readiness: []transitioncost.ReadyObservation{{
-				ObservedAt: testTime(3), Ready: true,
-			}},
+			name: "no fresh witness",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PostTransitionProcess = nil
+				raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
+			},
 		},
 		{
-			name: "post-read-back Ready false",
-			readiness: []transitioncost.ReadyObservation{{
-				ObservedAt: testTime(5), Ready: false,
-			}},
-		},
-		{
-			name: "Ready observation exceeds timing bound",
-			readiness: []transitioncost.ReadyObservation{{
-				ObservedAt: testTime(8), Ready: true,
-			}},
+			name: "witness exceeds timing bound",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.MarkerBrackets.ReadyProcessWitness = transitioncost.ReceiptTimeBracket{
+					LastAbsentReceivedAt:   testTimeMillis(7990),
+					FirstPresentReceivedAt: testTime(8),
+				}
+				raw.Readiness = []transitioncost.ReadyObservation{{
+					ObservedAt: testTime(8), Ready: true,
+				}}
+			},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			frozen, raw, policy := validInputs()
-			raw.Readiness = test.readiness
+			test.alter(&raw)
 			result, err := transitioncost.Derive(frozen, raw, policy)
 			if err != nil {
 				t.Fatal(err)
@@ -185,7 +191,7 @@ func TestDeriveUsesExactProcessIdentityForMeasuredServingInterruption(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			frozen, raw, policy := validInputs()
-			test.alter(&raw.PostTransitionProcess.Process)
+			test.alter(raw.PostTransitionProcess)
 			result, err := transitioncost.Derive(frozen, raw, policy)
 			if err != nil {
 				t.Fatal(err)
@@ -203,7 +209,7 @@ func TestDeriveUsesExactProcessIdentityForMeasuredServingInterruption(t *testing
 
 func TestDeriveRequiresTrustworthyServingSurvivalEvidence(t *testing.T) {
 	frozen, raw, policy := validInputs()
-	raw.PostTransitionProcess = nil
+	raw.PreTransitionProcess = nil
 
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
@@ -289,7 +295,7 @@ func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T
 
 func TestDeriveRejectsExcessiveBoundaryUncertainty(t *testing.T) {
 	frozen, raw, policy := validInputs()
-	raw.BoundaryMappingUncertainty = 51 * time.Millisecond
+	raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt = testTimeMillis(1949)
 
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
@@ -413,6 +419,45 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			},
 		},
 		{
+			name: "missing marker last-absent receipt",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt = time.Time{}
+			},
+		},
+		{
+			name: "reversed marker bracket",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.MarkerBrackets.TargetObservation.LastAbsentReceivedAt = testTimeMillis(4010)
+			},
+		},
+		{
+			name: "ready marker precedes target marker",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.MarkerBrackets.ReadyProcessWitness = transitioncost.ReceiptTimeBracket{
+					LastAbsentReceivedAt:   testTimeMillis(3900),
+					FirstPresentReceivedAt: testTimeMillis(3990),
+				}
+			},
+		},
+		{
+			name: "missing Ready witness",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.Readiness = nil
+			},
+		},
+		{
+			name: "false-only Ready witness",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.Readiness[0].Ready = false
+			},
+		},
+		{
+			name: "mismatched Ready witness receipt",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.Readiness[0].ObservedAt = testTimeMillis(5999)
+			},
+		},
+		{
 			name: "non-finite power failure latency",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.PowerFailures = []transitioncost.PowerReadFailure{{
@@ -445,11 +490,11 @@ func TestResultOwnsRawEvidenceCopy(t *testing.T) {
 	}
 	raw.PowerSamples[0].Watts = 999
 	raw.Readiness[0].Ready = false
-	raw.TransitionStart.MappedAt = testTime(7)
+	raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt = testTime(7)
 
 	retained := result.RawObservation()
 	if retained.PowerSamples[0].Watts != 10 || !retained.Readiness[0].Ready ||
-		!retained.TransitionStart.MappedAt.Equal(testTime(2)) {
+		!retained.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.Equal(testTime(2)) {
 		t.Fatalf("retained raw observation aliases caller input: %#v", retained)
 	}
 	retained.PowerSamples[0].Watts = 777
@@ -491,9 +536,23 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		SourceReadBack: transitioncost.StateReadBack{
 			Fact: transitioncost.MappedFact{OccurredAt: testTime(1), MappedAt: testTime(1)}, State: source,
 		},
-		TransitionStart: &transitioncost.MappedFact{OccurredAt: testTime(2), MappedAt: testTime(2)},
-		TargetReadBack: &transitioncost.StateReadBack{
-			Fact: transitioncost.MappedFact{OccurredAt: testTime(4), MappedAt: testTime(4)}, State: target,
+		TransitionStart: &transitioncost.OccurredFact{OccurredAt: testTimeMillis(1500)},
+		TargetReadBack: &transitioncost.TargetStateReadBack{
+			Fact: transitioncost.OccurredFact{OccurredAt: testTimeMillis(3500)}, State: target,
+		},
+		MarkerBrackets: transitioncost.TransitionMarkerBrackets{
+			ApplyStartedAt: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   testTimeMillis(1990),
+				FirstPresentReceivedAt: testTime(2),
+			},
+			TargetObservation: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   testTimeMillis(3980),
+				FirstPresentReceivedAt: testTime(4),
+			},
+			ReadyProcessWitness: transitioncost.ReceiptTimeBracket{
+				LastAbsentReceivedAt:   testTime(6).Add(-29500 * time.Microsecond),
+				FirstPresentReceivedAt: testTime(6),
+			},
 		},
 		PowerSamples: []transitioncost.PowerSample{
 			{ObservedAt: testTimeMillis(2100), RequestLatencySeconds: 0.01, Watts: 10},
@@ -508,10 +567,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		PreTransitionProcess: &transitioncost.ProcessObservation{
 			ObservedAt: testTime(1), Process: process,
 		},
-		PostTransitionProcess: &transitioncost.ProcessObservation{
-			ObservedAt: testTime(7), Process: process,
-		},
-		BoundaryMappingUncertainty: 20 * time.Millisecond,
+		PostTransitionProcess: &process,
 	}
 	policy := transitioncost.Policy{
 		MaximumBoundaryDistance:      200 * time.Millisecond,

@@ -180,7 +180,7 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 			RequestTimeout: 50 * time.Millisecond, MaxEvents: 52,
 		},
 		FactPollInterval: 50 * time.Millisecond, FactObservationTimeout: 4 * time.Second,
-		BoundaryMappingUncertainty: 50 * time.Millisecond, Directions: directions,
+		Directions: directions,
 	}
 	tolerationSeconds := int64(30)
 	return AttemptJobRequest{
