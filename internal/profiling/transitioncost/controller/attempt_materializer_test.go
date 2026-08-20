@@ -36,13 +36,15 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, test.direction, time.Unix(100, 0)))
 			name := fmt.Sprintf("transition-transition-cost-uid-d%d-a%d", test.direction, test.attempt)
 
-			progress, err := fixture.materializer.Advance(context.Background(), fixture.measurement, test.direction, test.attempt)
+			progress, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if progress.Stage != AttemptStageObserverStarting || progress.Job == nil || progress.Job.Name != name ||
-				fixture.stores.calls != 1 || fixture.preparer.calls != 0 {
-				t.Fatalf("first progress = %#v, store calls = %d, preparer calls = %d", progress, fixture.stores.calls, fixture.preparer.calls)
+				fixture.stores.calls != 1 {
+				t.Fatalf("first progress = %#v, store calls = %d", progress, fixture.stores.calls)
 			}
 			var payload attemptPayload
 			if err := json.Unmarshal([]byte(envValue(
@@ -53,14 +55,16 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			wantRawKey := fmt.Sprintf(
 				"power-mode-transition-costs/transition-cost-uid/d%d-a%d/raw.json", test.direction, test.attempt,
 			)
-			if payload.RawLocation.Store != "evidence" || payload.RawLocation.Key != wantRawKey {
+			if payload.RawLocation.Store != attemptEvidenceStore || payload.RawLocation.Key != wantRawKey {
 				t.Fatalf("raw location = %#v", payload.RawLocation)
 			}
 			requireFinalLocation(t, fixture.measurement, test.direction, test.attempt,
 				strings.TrimSuffix(wantRawKey, "raw.json")+"final.json")
 
 			setJobReady(t, fixture.client, progress.Job)
-			progress, err = fixture.materializer.Advance(context.Background(), fixture.measurement, test.direction, test.attempt)
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +86,9 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 				)) || !metav1.IsControlledBy(progress.NodeActuation, fixture.measurement) {
 				t.Fatalf("actuation policy projection = %#v", progress.NodeActuation)
 			}
-			if _, err := fixture.materializer.Advance(context.Background(), fixture.measurement, test.direction, test.attempt); err != nil {
+			if _, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
+			); err != nil {
 				t.Fatal(err)
 			}
 			if fixture.stores.calls != 1 || objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
@@ -103,7 +109,7 @@ func requireFinalLocation(t *testing.T, measurement *edgev1alpha1.PowerModeTrans
 	}
 }
 
-func TestAttemptMaterializerRejectsInvalidSelectionBeforeReadingPreparation(t *testing.T) {
+func TestAttemptMaterializerRejectsInvalidSelectionBeforeMaterialization(t *testing.T) {
 	tests := []struct {
 		name      string
 		direction int
@@ -118,12 +124,12 @@ func TestAttemptMaterializerRejectsInvalidSelectionBeforeReadingPreparation(t *t
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newAttemptMaterializerFixture(t)
 			if _, err := fixture.materializer.Advance(
-				context.Background(), fixture.measurement, test.direction, test.attempt,
+				context.Background(), fixture.measurement, fixture.prepared, test.direction, test.attempt,
 			); err == nil {
 				t.Fatal("Advance() unexpectedly succeeded")
 			}
-			if fixture.stores.calls != 0 || fixture.preparer.calls != 0 {
-				t.Fatalf("invalid selection crossed a material boundary: store=%d prepare=%d", fixture.stores.calls, fixture.preparer.calls)
+			if fixture.stores.calls != 0 {
+				t.Fatalf("invalid selection crossed a material boundary: store=%d", fixture.stores.calls)
 			}
 		})
 	}
@@ -154,7 +160,9 @@ func TestAttemptMaterializerFailsClosedOnUnconfirmedSource(t *testing.T) {
 				objects = append(objects, test.source(t))
 			}
 			fixture := newAttemptMaterializerFixture(t, objects...)
-			progress, err := fixture.materializer.Advance(context.Background(), fixture.measurement, 0, 1)
+			progress, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,12 +178,16 @@ func TestAttemptMaterializerReturnsTerminalPairForFinalization(t *testing.T) {
 	for _, conditionType := range []batchv1.JobConditionType{batchv1.JobComplete, batchv1.JobFailed} {
 		t.Run(string(conditionType), func(t *testing.T) {
 			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
-			progress, err := fixture.materializer.Advance(context.Background(), fixture.measurement, 0, 1)
+			progress, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			setJobReady(t, fixture.client, progress.Job)
-			progress, err = fixture.materializer.Advance(context.Background(), fixture.measurement, 0, 1)
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +218,9 @@ func TestAttemptMaterializerReturnsTerminalPairForFinalization(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			progress, err = fixture.materializer.Advance(context.Background(), fixture.measurement, 0, 1)
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,42 +238,33 @@ type attemptMaterializerFixture struct {
 	client       client.Client
 	materializer *AttemptMaterializer
 	stores       *recordingAttemptStoreResolver
-	preparer     *countingMeasurementPreparer
 }
 
 func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attemptMaterializerFixture {
 	t.Helper()
 	measurement, prepared, scheme := preparationRecordFixture(t)
 	measurement.Spec.AttemptLimit = 3
-	measurement.Spec.EvidenceStore = "evidence"
+	measurement.Spec.EvidenceStore = attemptEvidenceStore
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	record, err := buildPreparationRecord(measurement, prepared, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects = append(objects, record)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&batchv1.Job{}, &edgev1alpha1.NodeActuation{}).
 		WithObjects(objects...).Build()
-	preparer := &countingMeasurementPreparer{err: errors.New("mutable preparation must not be read")}
 	stores := &recordingAttemptStoreResolver{binding: storekube.Binding{
-		Store: "evidence", Endpoint: "http://store", Bucket: "bucket", Region: "region",
+		Store: attemptEvidenceStore, Endpoint: "http://store", Bucket: "bucket", Region: "region",
 		CredentialsSecretName: "credentials",
 	}}
 	_, options, _ := validAttemptJobInputs(t)
 	options.ActiveDeadline = 20 * time.Minute
-	materializer, err := NewAttemptMaterializer(
-		kubeClient, scheme, mustPreparationRecords(t, kubeClient, scheme, preparer), stores, options,
-	)
+	materializer, err := NewAttemptMaterializer(kubeClient, scheme, stores, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	materializer.now = func() time.Time { return time.Unix(150, 0) }
 	return attemptMaterializerFixture{
 		measurement: measurement, prepared: prepared, client: kubeClient,
-		materializer: materializer, stores: stores, preparer: preparer,
+		materializer: materializer, stores: stores,
 	}
 }
 

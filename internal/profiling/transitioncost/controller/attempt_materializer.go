@@ -54,29 +54,26 @@ type AttemptProgress struct {
 // It is deliberately not registered as a controller until evidence
 // finalization can consume FinalizationReady in the same lifecycle.
 type AttemptMaterializer struct {
-	client       client.Client
-	scheme       *runtime.Scheme
-	preparations *PreparationRecords
-	stores       AttemptStoreBindingResolver
-	options      AttemptJobOptions
-	now          func() time.Time
+	client  client.Client
+	scheme  *runtime.Scheme
+	stores  AttemptStoreBindingResolver
+	options AttemptJobOptions
+	now     func() time.Time
 }
 
 func NewAttemptMaterializer(
 	kubeClient client.Client,
 	scheme *runtime.Scheme,
-	preparations *PreparationRecords,
 	stores AttemptStoreBindingResolver,
 	options AttemptJobOptions,
 ) (*AttemptMaterializer, error) {
-	if kubeClient == nil || scheme == nil || preparations == nil || stores == nil {
-		return nil, errors.New("Kubernetes client, scheme, preparation records, and Evidence Store resolver are required")
+	if kubeClient == nil || scheme == nil || stores == nil {
+		return nil, errors.New("Kubernetes client, scheme, and Evidence Store resolver are required")
 	}
 	options.Resources = *options.Resources.DeepCopy()
 	options.Tolerations = cloneTolerations(options.Tolerations)
 	return &AttemptMaterializer{
-		client: kubeClient, scheme: scheme, preparations: preparations,
-		stores: stores, options: options, now: time.Now,
+		client: kubeClient, scheme: scheme, stores: stores, options: options, now: time.Now,
 	}, nil
 }
 
@@ -86,16 +83,13 @@ func NewAttemptMaterializer(
 func (m *AttemptMaterializer) Advance(
 	ctx context.Context,
 	measurement *edgev1alpha1.PowerModeTransitionCost,
+	prepared PreparedMeasurement,
 	directionIndex int,
 	attemptNumber int32,
 ) (AttemptProgress, error) {
 	selection, err := selectAttempt(measurement, directionIndex, attemptNumber)
 	if err != nil {
 		return AttemptProgress{}, err
-	}
-	prepared, _, err := m.preparations.Resolve(ctx, measurement)
-	if err != nil {
-		return AttemptProgress{}, fmt.Errorf("resolve immutable transition preparation: %w", err)
 	}
 
 	job, err := m.loadJob(ctx, measurement, selection)

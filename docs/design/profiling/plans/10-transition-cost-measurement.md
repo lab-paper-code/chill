@@ -25,9 +25,11 @@ future attempt-scoped observation Jobs. One current-only immutable ConfigMap
 retains that enclosing preparation and the selected off-target observer Node
 before execution. Job projection and the repeatable one-attempt materialization
 operation now extend through strict raw-evidence finalization into one immutable,
-raw-free observation. They remain deliberately unregistered until controller
-sequencing closes the lifecycle. Repeated attempt decisions and live verification
-remain incomplete.
+raw-free observation. A package-local control core now reconstructs the retained
+alternating direction prefix, advances only its first missing attempt, and derives
+the complete two-row table in memory. It remains deliberately unregistered until
+terminal result writing and compact status publication close the lifecycle. Live
+verification remains incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
