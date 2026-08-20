@@ -8,13 +8,16 @@ COPY go.sum go.sum
 RUN go mod download
 
 COPY cmd/profiler/ cmd/profiler/
+COPY cmd/transition-observer/ cmd/transition-observer/
 COPY api/ api/
 COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/profiler ./cmd/profiler
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o /out/transition-observer ./cmd/transition-observer
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /out/profiler .
+COPY --from=builder /out/transition-observer .
 USER 65532:65532
 
 ENTRYPOINT ["/profiler"]

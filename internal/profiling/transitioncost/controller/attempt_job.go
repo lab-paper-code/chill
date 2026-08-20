@@ -254,7 +254,7 @@ func attemptContainer(
 ) corev1.Container {
 	return corev1.Container{
 		Name: transitionObserverContainerName, Image: options.ObserverImage,
-		ImagePullPolicy: options.ImagePullPolicy,
+		ImagePullPolicy: options.ImagePullPolicy, Command: []string{transitionObserverBinaryPath},
 		Args: []string{
 			transitionContractMaximumBytesFlag + strconv.Itoa(len(payload)),
 			"--store-endpoint=" + binding.Endpoint,

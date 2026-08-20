@@ -90,6 +90,7 @@ func assertAttemptPod(t *testing.T, pod corev1.PodSpec, options AttemptJobOption
 func assertAttemptContainer(t *testing.T, container corev1.Container, options AttemptJobOptions) {
 	t.Helper()
 	if container.Name != transitionObserverContainerName || container.Image != options.ObserverImage ||
+		strings.Join(container.Command, " ") != "/transition-observer" ||
 		container.ReadinessProbe == nil || container.ReadinessProbe.Exec == nil ||
 		strings.Join(container.ReadinessProbe.Exec.Command, " ") != "/transition-observer --probe-ready-file" ||
 		container.TerminationMessagePolicy != corev1.TerminationMessageReadFile ||
