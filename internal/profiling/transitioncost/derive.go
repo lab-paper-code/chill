@@ -8,20 +8,23 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
+	"github.com/prometheus/common/model"
 )
 
 // Derive validates one frozen contract and one factual raw observation, then
 // produces one terminal scientific result. Malformed frozen inputs are caller
 // errors; terminal properties of retained raw evidence are typed results.
 func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, error) {
-	if err := validateFrozen(frozen); err != nil {
+	verifiedFrozen := cloneFrozen(frozen)
+	verifiedRaw := cloneRaw(raw)
+	if err := validateFrozen(verifiedFrozen); err != nil {
 		return Result{}, fmt.Errorf("validate frozen transition contract: %w", err)
 	}
 	if err := validatePolicy(policy); err != nil {
 		return Result{}, fmt.Errorf("validate transition-cost policy: %w", err)
 	}
 
-	verified := verifiedInput{frozen: frozen, raw: cloneRaw(raw), policy: policy}
+	verified := verifiedInput{frozen: verifiedFrozen, raw: verifiedRaw, policy: policy}
 	if detail := validateRawStructure(verified.raw); detail != "" {
 		return classified(verified, VerdictInvalid, ReasonObservationMalformed, detail), nil
 	}
@@ -125,7 +128,8 @@ func validateFrozen(frozen FrozenContract) error {
 		!validActuator(frozen.Actuator) || !validNodeActuation(frozen.NodeActuation) ||
 		!validState(frozen.SourceState) || !validState(frozen.TargetState) ||
 		!validWorkload(frozen.Workload) || !plainIdentity(frozen.ProtocolIdentity) ||
-		!plainIdentity(frozen.MeterIdentity) || !plainIdentity(frozen.TargetIdleBaseline.EvidenceReference) {
+		!plainIdentity(frozen.MeterIdentity) || !validMeterSource(frozen.MeterSource) ||
+		!plainIdentity(frozen.TargetIdleBaseline.EvidenceReference) {
 		return errors.New("frozen identity is incomplete or contains surrounding whitespace")
 	}
 	if frozen.SourceState.DeviceType != frozen.TargetState.DeviceType ||
@@ -171,7 +175,8 @@ func validateRawHeader(raw RawObservation) string {
 		!validActuator(raw.Actuator) || !validNodeActuation(raw.NodeActuation) ||
 		!validState(raw.SourceState) || !validState(raw.TargetState) ||
 		!validWorkload(raw.Workload) || !plainIdentity(raw.ProtocolIdentity) ||
-		!plainIdentity(raw.MeterIdentity) || !plainIdentity(raw.BaselineReference) ||
+		!plainIdentity(raw.MeterIdentity) || !validMeterSource(raw.MeterSource) ||
+		!plainIdentity(raw.BaselineReference) ||
 		!validState(raw.BaselineState) || !validStateReadBack(raw.SourceReadBack) {
 		return "raw observation identity or source read-back is malformed"
 	}
@@ -272,6 +277,9 @@ func identityContradiction(frozen FrozenContract, raw RawObservation) string {
 	if raw.ProtocolIdentity != frozen.ProtocolIdentity || raw.MeterIdentity != frozen.MeterIdentity {
 		return "raw protocol or meter identity differs from the frozen identity"
 	}
+	if !meterSourceMatches(raw.MeterSource, frozen.MeterSource) {
+		return "raw meter source identity differs from the frozen meter source"
+	}
 	if raw.BaselineReference != frozen.TargetIdleBaseline.EvidenceReference ||
 		raw.BaselineState != frozen.TargetIdleBaseline.State {
 		return "raw target idle baseline identity differs from the frozen baseline"
@@ -361,6 +369,45 @@ func validWorkload(identity WorkloadIdentity) bool {
 	return plainIdentity(identity.Namespace) && plainIdentity(identity.Name) && plainIdentity(identity.UID)
 }
 
+func validConfigurationSource(identity ConfigurationSourceIdentity) bool {
+	return plainIdentity(identity.Namespace) && plainIdentity(identity.Name) &&
+		plainIdentity(identity.UID) && plainIdentity(identity.ResourceVersion) &&
+		plainIdentity(identity.Key)
+}
+
+func validMeterSource(identity MeterSourceIdentity) bool {
+	if !plainIdentity(identity.Kind) || !plainIdentity(identity.Endpoint) ||
+		!plainIdentity(identity.PowerMetric) ||
+		!model.IsValidMetricName(model.LabelValue(identity.PowerMetric)) ||
+		!validWorkload(identity.GatewayWorkload) ||
+		!validConfigurationSource(identity.ConfigurationSource) || len(identity.Labels) == 0 {
+		return false
+	}
+	for name, value := range identity.Labels {
+		if !plainIdentity(name) || !model.LabelName(name).IsValid() ||
+			!model.LabelValue(value).IsValid() {
+			return false
+		}
+	}
+	return true
+}
+
+func meterSourceMatches(left, right MeterSourceIdentity) bool {
+	if left.Kind != right.Kind || left.Endpoint != right.Endpoint ||
+		left.PowerMetric != right.PowerMetric ||
+		left.GatewayWorkload != right.GatewayWorkload ||
+		left.ConfigurationSource != right.ConfigurationSource ||
+		len(left.Labels) != len(right.Labels) {
+		return false
+	}
+	for name, value := range left.Labels {
+		if rightValue, ok := right.Labels[name]; !ok || rightValue != value {
+			return false
+		}
+	}
+	return true
+}
+
 func validProcess(identity ProcessIdentity) bool {
 	return plainIdentity(identity.ContainerName) && plainIdentity(identity.ContainerID) &&
 		!identity.StartedAt.IsZero() && identity.RestartCount >= 0
@@ -380,6 +427,7 @@ func within(value, start, end time.Time) bool {
 
 func cloneRaw(raw RawObservation) RawObservation {
 	clone := raw
+	clone.MeterSource = cloneMeterSource(raw.MeterSource)
 	clone.PowerSamples = append([]PowerSample(nil), raw.PowerSamples...)
 	clone.PowerFailures = append([]Failure(nil), raw.PowerFailures...)
 	clone.Readiness = append([]ReadyObservation(nil), raw.Readiness...)
@@ -406,6 +454,21 @@ func cloneRaw(raw RawObservation) RawObservation {
 	if raw.PostTransitionProcess != nil {
 		value := *raw.PostTransitionProcess
 		clone.PostTransitionProcess = &value
+	}
+	return clone
+}
+
+func cloneFrozen(frozen FrozenContract) FrozenContract {
+	clone := frozen
+	clone.MeterSource = cloneMeterSource(frozen.MeterSource)
+	return clone
+}
+
+func cloneMeterSource(identity MeterSourceIdentity) MeterSourceIdentity {
+	clone := identity
+	clone.Labels = make(map[string]string, len(identity.Labels))
+	for name, value := range identity.Labels {
+		clone.Labels[name] = value
 	}
 	return clone
 }

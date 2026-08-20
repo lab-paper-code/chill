@@ -60,12 +60,32 @@ type StateIdentity struct {
 	PowerMode  string
 }
 
-// WorkloadIdentity identifies the exact serving workload used as the
-// readiness and process-survival witness.
+// WorkloadIdentity identifies one exact Kubernetes workload.
 type WorkloadIdentity struct {
 	Namespace string
 	Name      string
 	UID       string
+}
+
+// ConfigurationSourceIdentity identifies the exact selected configuration
+// entry that supplied one meter source.
+type ConfigurationSourceIdentity struct {
+	Namespace       string
+	Name            string
+	UID             string
+	ResourceVersion string
+	Key             string
+}
+
+// MeterSourceIdentity identifies the exact external power trace selected for
+// one transition observation.
+type MeterSourceIdentity struct {
+	Kind                string
+	Endpoint            string
+	PowerMetric         string
+	Labels              map[string]string
+	GatewayWorkload     WorkloadIdentity
+	ConfigurationSource ConfigurationSourceIdentity
 }
 
 // IdleBaseline binds the numeric target-idle value to its exact retained
@@ -77,7 +97,8 @@ type IdleBaseline struct {
 }
 
 // FrozenContract is the immutable identity and estimator input for one
-// directed transition observation.
+// directed transition observation. Workload is the serving workload used as
+// the readiness and process-survival witness.
 type FrozenContract struct {
 	Node               NodeIdentity
 	DeviceClass        string
@@ -88,6 +109,7 @@ type FrozenContract struct {
 	Workload           WorkloadIdentity
 	ProtocolIdentity   string
 	MeterIdentity      string
+	MeterSource        MeterSourceIdentity
 	TargetIdleBaseline IdleBaseline
 }
 
@@ -165,6 +187,7 @@ type RawObservation struct {
 	Workload          WorkloadIdentity
 	ProtocolIdentity  string
 	MeterIdentity     string
+	MeterSource       MeterSourceIdentity
 	BaselineReference string
 	BaselineState     StateIdentity
 
@@ -220,7 +243,7 @@ func (r Result) Reason() Reason { return r.record.reason }
 func (r Result) Detail() string { return r.record.detail }
 
 // FrozenContract returns the immutable inputs retained with this result.
-func (r Result) FrozenContract() FrozenContract { return r.record.frozen }
+func (r Result) FrozenContract() FrozenContract { return cloneFrozen(r.record.frozen) }
 
 // RawObservation returns a copy of the factual evidence retained with this
 // result.

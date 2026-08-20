@@ -2,6 +2,7 @@ package transitioncost_test
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 const (
 	mode30W       = "MODE_30W"
+	meterUnit     = "unit-a"
 	otherWorkload = "other-workload"
 )
 
@@ -50,7 +52,7 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	if observation.BoundaryMappingUncertainty() != 20*time.Millisecond {
 		t.Fatalf("boundary uncertainty = %v, want 20ms", observation.BoundaryMappingUncertainty())
 	}
-	if result.FrozenContract() != frozen {
+	if !reflect.DeepEqual(result.FrozenContract(), frozen) {
 		t.Fatalf("frozen contract changed: %#v", result.FrozenContract())
 	}
 	retainedRaw := result.RawObservation()
@@ -343,6 +345,20 @@ func TestDeriveRejectsEveryFrozenIdentityContradiction(t *testing.T) {
 		{name: "workload", alter: func(raw *transitioncost.RawObservation) { raw.Workload.UID = otherWorkload }},
 		{name: "protocol", alter: func(raw *transitioncost.RawObservation) { raw.ProtocolIdentity = "other-protocol" }},
 		{name: "meter", alter: func(raw *transitioncost.RawObservation) { raw.MeterIdentity = "other-meter" }},
+		{name: "meter source kind", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Kind = "other-kind" }},
+		{name: "meter endpoint", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Endpoint = "http://meter.example/other" }},
+		{name: "power metric", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.PowerMetric = "other_power_watts" }},
+		{name: "meter label value", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels["unit"] = "other-unit" }},
+		{name: "meter label missing", alter: func(raw *transitioncost.RawObservation) { delete(raw.MeterSource.Labels, "unit") }},
+		{name: "meter label extra", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels["rack"] = "r1" }},
+		{name: "gateway workload", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.GatewayWorkload.UID = "other-gateway" }},
+		{name: "configuration namespace", alter: func(raw *transitioncost.RawObservation) {
+			raw.MeterSource.ConfigurationSource.Namespace = "other-system"
+		}},
+		{name: "configuration name", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.ConfigurationSource.Name = "other-config" }},
+		{name: "configuration UID", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.ConfigurationSource.UID = "other-config-uid" }},
+		{name: "configuration resource version", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.ConfigurationSource.ResourceVersion = "43" }},
+		{name: "configuration key", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.ConfigurationSource.Key = "other-key" }},
 		{
 			name:  "baseline evidence",
 			alter: func(raw *transitioncost.RawObservation) { raw.BaselineReference = "evidence://other" },
@@ -418,6 +434,34 @@ func TestDeriveRejectsMalformedFrozenInputsAsErrors(t *testing.T) {
 			match: "distinct power modes",
 		},
 		{
+			name: "meter source endpoint is empty",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.MeterSource.Endpoint = ""
+			},
+			match: "frozen identity",
+		},
+		{
+			name: "meter source label name is invalid",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.MeterSource.Labels["invalid-label"] = "value"
+			},
+			match: "frozen identity",
+		},
+		{
+			name: "power metric name is invalid",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.MeterSource.PowerMetric = "invalid-metric"
+			},
+			match: "frozen identity",
+		},
+		{
+			name: "meter source label value is invalid UTF-8",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.MeterSource.Labels["unit"] = string([]byte{0xff})
+			},
+			match: "frozen identity",
+		},
+		{
 			name: "invalid policy",
 			alter: func(_ *transitioncost.FrozenContract, policy *transitioncost.Policy) {
 				policy.MinimumCoverage = 1.1
@@ -461,6 +505,10 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			name:  "empty actuator target",
 			alter: func(raw *transitioncost.RawObservation) { raw.Actuator.Target = "" },
 		},
+		{
+			name:  "empty meter source labels",
+			alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels = map[string]string{} },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -498,6 +546,48 @@ func TestResultOwnsRawEvidenceCopy(t *testing.T) {
 	}
 }
 
+func TestResultOwnsMeterSourceLabelMaps(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frozen.MeterSource.Labels["unit"] = "caller-mutated-frozen"
+	raw.MeterSource.Labels["unit"] = "caller-mutated-raw"
+	if got := result.FrozenContract().MeterSource.Labels["unit"]; got != meterUnit {
+		t.Fatalf("retained frozen labels alias caller input: unit=%q", got)
+	}
+	if got := result.RawObservation().MeterSource.Labels["unit"]; got != meterUnit {
+		t.Fatalf("retained raw labels alias caller input: unit=%q", got)
+	}
+
+	returnedFrozen := result.FrozenContract()
+	returnedRaw := result.RawObservation()
+	returnedFrozen.MeterSource.Labels["unit"] = "accessor-mutated-frozen"
+	returnedRaw.MeterSource.Labels["unit"] = "accessor-mutated-raw"
+	if got := result.FrozenContract().MeterSource.Labels["unit"]; got != meterUnit {
+		t.Fatalf("FrozenContract accessor aliases retained labels: unit=%q", got)
+	}
+	if got := result.RawObservation().MeterSource.Labels["unit"]; got != meterUnit {
+		t.Fatalf("RawObservation accessor aliases retained labels: unit=%q", got)
+	}
+}
+
+func TestDeriveAcceptsValidUTF8LabelValuesWithoutIdentityTrimming(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	frozen.MeterSource.Labels["feed"] = ""
+	raw.MeterSource.Labels["feed"] = ""
+	frozen.MeterSource.Labels["unit"] = " rack 1 "
+	raw.MeterSource.Labels["unit"] = " rack 1 "
+
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+}
+
 func assertOutcome(t *testing.T, result transitioncost.Result, verdict transitioncost.Verdict, reason transitioncost.Reason) {
 	t.Helper()
 	if result.Verdict() != verdict || result.Reason() != reason {
@@ -517,6 +607,27 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 	source := transitioncost.StateIdentity{DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MODE_15W"}
 	target := transitioncost.StateIdentity{DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MAXN"}
 	workload := transitioncost.WorkloadIdentity{Namespace: "serving", Name: "mobilenet", UID: "workload-uid"}
+	meterSource := transitioncost.MeterSourceIdentity{
+		Kind:        "test-meter",
+		Endpoint:    "http://meter.example/prometheus",
+		PowerMetric: "experiment_input_watts",
+		Labels: map[string]string{
+			"feed": "wall",
+			"unit": meterUnit,
+		},
+		GatewayWorkload: transitioncost.WorkloadIdentity{
+			Namespace: "measurement", Name: "meter-gateway", UID: "gateway-uid",
+		},
+		ConfigurationSource: transitioncost.ConfigurationSourceIdentity{
+			Namespace: "measurement", Name: "meter-sources", UID: "config-uid",
+			ResourceVersion: "42", Key: "device-class-a",
+		},
+	}
+	rawMeterSource := meterSource
+	rawMeterSource.Labels = map[string]string{
+		"feed": "wall",
+		"unit": meterUnit,
+	}
 	frozen := transitioncost.FrozenContract{
 		Node:        transitioncost.NodeIdentity{Name: "orin", UID: "node-uid"},
 		DeviceClass: "jetson-orin-agx-64gb",
@@ -527,7 +638,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 			Namespace: "chill-system", Name: "to-maxn", UID: "actuation-uid",
 		},
 		SourceState: source, TargetState: target, Workload: workload,
-		ProtocolIdentity: "transition-cost-v1", MeterIdentity: "wall-meter-1",
+		ProtocolIdentity: "transition-cost-v1", MeterIdentity: "wall-meter-1", MeterSource: meterSource,
 		TargetIdleBaseline: transitioncost.IdleBaseline{
 			EvidenceReference: "evidence://idle-maxn", State: target, MeanWallWatts: 12,
 		},
@@ -541,6 +652,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		NodeActuation: frozen.NodeActuation,
 		SourceState:   source, TargetState: target, Workload: workload,
 		ProtocolIdentity: frozen.ProtocolIdentity, MeterIdentity: frozen.MeterIdentity,
+		MeterSource:       rawMeterSource,
 		BaselineReference: frozen.TargetIdleBaseline.EvidenceReference,
 		BaselineState:     frozen.TargetIdleBaseline.State,
 		SourceReadBack: transitioncost.StateReadBack{
