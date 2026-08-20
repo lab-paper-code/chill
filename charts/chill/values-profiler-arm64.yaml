@@ -164,7 +164,7 @@ profiling:
       endpoint: http://155.230.34.203:9102/metrics
       powerMetric: shelly_power_total_watts
       transitionPower:
-        endpoint: http://155.230.35.213:18766/prometheus
+        endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
         powerMetric: shelly_power_total_watts
         labels:
           hostname: jetson-orin

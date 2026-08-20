@@ -189,7 +189,7 @@ target Node, and reads the central Shelly Gateway there:
 ~~~text
 Shelly -> ws://155.230.35.213:18765
        -> edge-metrics-exporter-shelly-gateway
-       -> http://155.230.35.213:18766/prometheus
+       -> http://155.230.35.213:18766/prometheus?hostname=jetson-orin
        -> off-target transition observer
 ~~~
 
@@ -207,14 +207,20 @@ a series for another device never substitutes for the selected series. The
 three currently connected but unmapped Shellys are therefore outside this
 measurement and do not block it.
 
+The Gateway's `hostname` filter limits the response, but does not replace
+evidence validation. The configured query value must equal the frozen
+`hostname` label, and the observer still requires the returned series to have
+exactly both frozen labels, including `device_type`.
+
 The selected Gateway is Deployment
 `monitoring/edge-metrics-exporter-shelly-gateway`, currently delivered by Helm
-release `edge-metrics` revision 24. The enclosing measurement record selects
-the metric name, both label values, endpoint, and Gateway configuration once;
-individual transition observations do not repeat that selection. The Gateway
-is measurement infrastructure: neither `PowerModeTransitionCost` nor its
-observer owns, deploys, reconfigures, or restarts it. The existing per-Node
-exporter DaemonSet is not part of this meter path.
+release `edge-metrics` revision 26 with image tag `sha-94c425c`. The enclosing
+measurement record selects the metric name, both label values, filtered
+endpoint, and Gateway configuration once; individual transition observations
+do not repeat that selection. The Gateway is measurement infrastructure:
+neither `PowerModeTransitionCost` nor its observer owns, deploys, reconfigures,
+or restarts it. The existing per-Node exporter DaemonSet is not part of this
+meter path.
 
 The `PowerModeTransitionCost` controller freezes intent, sequences one
 `NodeActuation` at a time, verifies its evidence, and publishes compact status.
@@ -363,11 +369,14 @@ state is another explicitly requested and independently measured
 This gate changes no CHILL API or production controller. This document alone
 does not authorize the live transition in step 3.
 
-The central Gateway Deployment and device migration are complete, its static
-Prometheus endpoint is reachable, and all seven mapped device series are
-exposed. Per-device request failures are isolated by the Gateway. The old
-per-Node WebSocket servers have no connected devices and remain outside this
-path. These checks do not prove restart-spanning continuity. Gate 0 remains
+The central Gateway Deployment and device migration are complete. Its full
+Prometheus endpoint still exposes all seven mapped device series, each of the
+seven hostname-filtered requests returns only that Node's series, and an
+unknown hostname returns HTTP 200 with an empty body. The Prometheus target is
+up, per-device request failures are isolated by the Gateway, and the existing
+exporter DaemonSet image and generation are unchanged. The old per-Node
+WebSocket servers have no connected devices and remain outside this path.
+These checks do not prove restart-spanning continuity. Gate 0 remains
 incomplete until a bounded restart-required transition trace shows that the
 exact selected series continues to be collected while the target Node is
 unavailable and returns.

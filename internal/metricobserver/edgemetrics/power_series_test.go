@@ -84,11 +84,15 @@ func TestPowerSeriesSourceSelectsOneOfSevenConfiguredSeries(t *testing.T) {
 		`experiment_input_watts{feed="c",unit="node-6"} 6.6`,
 		`experiment_input_watts{unit="node-7",feed="b"} 7.7`,
 	}, "\n") + "\n"
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		hostnames := request.URL.Query()["hostname"]
+		if len(request.URL.Query()) != 1 || len(hostnames) != 1 || hostnames[0] != "node-7" {
+			t.Errorf("request query = %q", request.URL.RawQuery)
+		}
 		_, _ = response.Write([]byte(payload))
 	}))
 	defer server.Close()
-	identity.Endpoint = server.URL
+	identity.Endpoint = server.URL + "?hostname=node-7"
 
 	source, err := NewPowerSeries(identity, server.Client())
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha3"
+const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha4"
 
 var ErrMetricSourceUnavailable = errors.New("metric source unavailable")
 
@@ -179,9 +179,6 @@ func validateTransitionPowerSelector(selector transitionPowerSelectorDeclaration
 	if !prommodel.IsValidMetricName(prommodel.LabelValue(selector.PowerMetric)) {
 		return errors.New("powerMetric must be a valid Prometheus metric name")
 	}
-	if err := validateMetricEndpoint(selector.Endpoint); err != nil {
-		return err
-	}
 	if len(selector.Labels) == 0 {
 		return errors.New("exact labels are required")
 	}
@@ -193,27 +190,61 @@ func validateTransitionPowerSelector(selector transitionPowerSelectorDeclaration
 			return fmt.Errorf("label %q value is invalid UTF-8", name)
 		}
 	}
-	return nil
+	return validateTransitionPowerEndpoint(selector.Endpoint, selector.Labels)
 }
 
 func validateMetricEndpoint(raw string) error {
+	endpoint, err := parseMetricEndpoint(raw)
+	if err != nil {
+		return err
+	}
+	if endpoint.RawQuery != "" || endpoint.ForceQuery {
+		return errors.New("edge-metrics endpoint must not contain a query")
+	}
+	return nil
+}
+
+func validateTransitionPowerEndpoint(raw string, labels map[string]string) error {
+	endpoint, err := parseMetricEndpoint(raw)
+	if err != nil {
+		return err
+	}
+	query, err := url.ParseQuery(endpoint.RawQuery)
+	if err != nil {
+		return fmt.Errorf("parse transition-power endpoint query: %w", err)
+	}
+	hostnames := query["hostname"]
+	if len(query) != 1 || len(hostnames) != 1 {
+		return errors.New("transition-power endpoint must contain exactly one hostname query value")
+	}
+	hostname := hostnames[0]
+	if strings.TrimSpace(hostname) == "" || strings.TrimSpace(hostname) != hostname {
+		return errors.New("transition-power endpoint hostname query value is required without surrounding whitespace")
+	}
+	if labels["hostname"] != hostname {
+		return errors.New("transition-power endpoint hostname query value must match labels.hostname")
+	}
+	return nil
+}
+
+func parseMetricEndpoint(raw string) (*url.URL, error) {
 	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) != raw {
-		return errors.New("endpoint is required without surrounding whitespace")
+		return nil, errors.New("endpoint is required without surrounding whitespace")
 	}
 	endpoint, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("parse edge-metrics endpoint: %w", err)
+		return nil, fmt.Errorf("parse edge-metrics endpoint: %w", err)
 	}
 	if endpoint.Scheme != "http" || endpoint.Hostname() == "" || endpoint.User != nil ||
-		endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" {
-		return errors.New("edge-metrics endpoint must be an http URL without credentials, query, or fragment")
+		endpoint.Fragment != "" {
+		return nil, errors.New("edge-metrics endpoint must be an http URL without credentials or fragment")
 	}
 	port, err := strconv.Atoi(endpoint.Port())
 	if err != nil || port < 1 || port > 65535 {
-		return errors.New("edge-metrics endpoint must contain an explicit valid port")
+		return nil, errors.New("edge-metrics endpoint must contain an explicit valid port")
 	}
 	if endpoint.Path == "" || endpoint.RawPath != "" || path.Clean(endpoint.Path) != endpoint.Path {
-		return errors.New("edge-metrics endpoint must contain a clean nonempty path")
+		return nil, errors.New("edge-metrics endpoint must contain a clean nonempty path")
 	}
-	return nil
+	return endpoint, nil
 }

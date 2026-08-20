@@ -16,7 +16,9 @@ thermal-validity facts from the same scrape.
 The adapter also exposes a power-only exact-series source intended for the
 transition-cost observer. It consumes one frozen metric name and a non-empty
 label map, then accepts only the series whose label set and values match that
-map exactly.
+map exactly. It sends the already-resolved endpoint, including its validated
+hostname filter, unchanged; filtering the response does not weaken exact-label
+validation.
 
 It answers one question:
 
@@ -137,7 +139,8 @@ transport only.
 - edge-metrics parsing covers configured direct signals, counters, missing
   metrics, duplicates, malformed values, and unsupported observation;
 - the power-only path accepts exactly one configured metric-and-label match and
-  rejects zero matches, multiple matches, and label-set drift;
+  rejects zero matches, multiple matches, and label-set drift, while preserving
+  the resolved hostname-filtered endpoint in its request;
 - raw evidence validation binds the exact source and immutable Run intent;
 - admission tests distinguish unknown, throttled, counter-reset, and known
   non-throttled windows; and
