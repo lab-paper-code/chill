@@ -17,10 +17,9 @@
 Approved for implementation. This approval does not select a live target or
 authorize an unbounded Node restart, image publication, or cluster mutation.
 
-The Kubernetes-independent worker core now starts power and transition-fact
-observation together, reports readiness only after both paths are observable,
-and assembles their facts into one raw observation. Concrete Kubernetes fact
-observation and immutable evidence writing remain Unit 2 work.
+The Kubernetes-independent worker core, immutable raw-evidence write, and
+minimal `PowerModeTransitionCost` API now exist. Concrete Kubernetes fact
+observation and control-path wiring remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -396,7 +395,8 @@ Stop for review. This unit adds no API, controller, Job, or Helm surface.
 Stop for review. The observer still does not create or mutate a transition.
 
 The worker assembly and current raw-write boundary are implemented separately;
-concrete transition-fact observation and control-path wiring remain incomplete.
+the minimal `PowerModeTransitionCost` API now exists, while concrete
+transition-fact observation and control-path wiring remain incomplete.
 
 ### Unit 3: complete measurement control path
 

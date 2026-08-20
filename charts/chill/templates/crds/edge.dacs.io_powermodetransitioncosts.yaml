@@ -1,0 +1,302 @@
+{{- if .Values.crds.enabled }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+    helm.sh/resource-policy: keep
+  name: powermodetransitioncosts.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: PowerModeTransitionCost
+    listKind: PowerModeTransitionCostList
+    plural: powermodetransitioncosts
+    shortNames:
+    - pmtc
+    singular: powermodetransitioncost
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PowerModeTransitionCost requests and reports one repeated measurement of both
+          directed transitions between two power modes.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PowerModeTransitionCostSpec fixes one repeated measurement of both
+              directions between exactly two power modes.
+            properties:
+              acceptedCountTarget:
+                description: AcceptedCountTarget is required independently for each
+                  direction.
+                format: int32
+                minimum: 5
+                type: integer
+              attemptLimit:
+                description: AttemptLimit bounds retained attempts independently for
+                  each direction.
+                format: int32
+                minimum: 5
+                type: integer
+              deviceClass:
+                description: DeviceClass names the cluster-scoped DeviceClass.
+                maxLength: 253
+                minLength: 1
+                type: string
+              evidenceStore:
+                description: EvidenceStore is a logical CHILL-managed store name,
+                  not an endpoint.
+                maxLength: 253
+                minLength: 1
+                type: string
+              modelSpec:
+                description: ModelSpec names the cluster-scoped ModelSpec already
+                  serving on the Node.
+                maxLength: 253
+                minLength: 1
+                type: string
+              modes:
+                description: |-
+                  Modes defines the two directions in order: modes[0] to modes[1], then
+                  modes[1] to modes[0]. Each baseline is for transitions targeting that mode.
+                items:
+                  properties:
+                    actuationPolicy:
+                      description: ActuationPolicy identifies the configured policy
+                        used to reach this mode.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                      type: string
+                    idleBaseline:
+                      properties:
+                        key:
+                          description: Key is opaque to API consumers.
+                          maxLength: 1024
+                          minLength: 1
+                          type: string
+                        schemaVersion:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        size:
+                          format: int64
+                          minimum: 1
+                          type: integer
+                        store:
+                          description: Store is the logical CHILL-managed store identity,
+                            not an endpoint.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - schemaVersion
+                      - size
+                      - store
+                      type: object
+                    powerMode:
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                  required:
+                  - actuationPolicy
+                  - idleBaseline
+                  - powerMode
+                  type: object
+                maxItems: 2
+                minItems: 2
+                type: array
+              observationPolicy:
+                description: |-
+                  PowerModeTransitionCostObservationPolicySpec contains measurement policy
+                  only. Meter source and series selection are resolved outside this API.
+                properties:
+                  maximumBoundaryDistanceMilliseconds:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  maximumBoundaryUncertaintyMilliseconds:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  maximumReadyObservationDelayMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maximumSampleGapMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maximumTransitionDurationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minimumCoverage:
+                    description: MinimumCoverage is a decimal string in the interval
+                      (0, 1].
+                    pattern: ^(0\.[0-9]*[1-9][0-9]*|1(\.0+)?)$
+                    type: string
+                  powerIntervalMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  powerTimeoutMilliseconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - maximumBoundaryDistanceMilliseconds
+                - maximumBoundaryUncertaintyMilliseconds
+                - maximumReadyObservationDelayMilliseconds
+                - maximumSampleGapMilliseconds
+                - maximumTransitionDurationSeconds
+                - minimumCoverage
+                - powerIntervalMilliseconds
+                - powerTimeoutMilliseconds
+                type: object
+                x-kubernetes-validations:
+                - message: powerTimeoutMilliseconds must be less than powerIntervalMilliseconds
+                  rule: self.powerTimeoutMilliseconds < self.powerIntervalMilliseconds
+              servingContainer:
+                description: ServingContainer names the serving container whose process
+                  survival is observed.
+                maxLength: 63
+                minLength: 1
+                type: string
+              servingService:
+                description: ServingService selects the namespaced Service whose selected
+                  Pod readiness is observed.
+                maxLength: 253
+                minLength: 1
+                type: string
+              targetNode:
+                description: TargetNode names the Kubernetes Node being measured.
+                maxLength: 253
+                minLength: 1
+                type: string
+            required:
+            - acceptedCountTarget
+            - attemptLimit
+            - deviceClass
+            - evidenceStore
+            - modelSpec
+            - modes
+            - observationPolicy
+            - servingContainer
+            - servingService
+            - targetNode
+            type: object
+            x-kubernetes-validations:
+            - message: PowerModeTransitionCost spec is immutable
+              rule: self == oldSelf
+            - message: modes must name distinct power modes
+              rule: self.modes[0].powerMode != self.modes[1].powerMode
+            - message: attemptLimit must be at least acceptedCountTarget
+              rule: self.attemptLimit >= self.acceptedCountTarget
+          status:
+            properties:
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Measuring
+                - Complete
+                - Failed
+                type: string
+              progress:
+                items:
+                  properties:
+                    acceptedCount:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    attemptCount:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    sourceMode:
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                    targetMode:
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                  required:
+                  - acceptedCount
+                  - attemptCount
+                  - sourceMode
+                  - targetMode
+                  type: object
+                  x-kubernetes-validations:
+                  - message: acceptedCount must not exceed attemptCount
+                    rule: self.acceptedCount <= self.attemptCount
+                maxItems: 2
+                type: array
+              result:
+                properties:
+                  key:
+                    description: Key is opaque to API consumers.
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  schemaVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    description: Store is the logical CHILL-managed store identity,
+                      not an endpoint.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - schemaVersion
+                - size
+                - store
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+{{- end }}
