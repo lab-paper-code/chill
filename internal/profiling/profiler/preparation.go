@@ -75,9 +75,10 @@ type NodeSelection struct {
 }
 
 type ResolvedMetricSource struct {
-	Kind        string
-	Endpoint    string
-	PowerMetric string
+	Kind           string
+	Endpoint       string
+	PowerMetric    string
+	ThermalMetrics profilingrun.ThermalMetricContract
 }
 
 type ResolvedWorkloadObservation struct {
@@ -315,6 +316,7 @@ func (p *Preparer) freeze(
 		Measurement: request.Measurement,
 		Metrics: profilingrun.MetricContract{
 			SourceKind: metrics.Kind, NodeName: node.Name, Endpoint: metrics.Endpoint, PowerMetric: metrics.PowerMetric,
+			ThermalMetrics:       metrics.ThermalMetrics,
 			IntervalMilliseconds: request.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  request.Metrics.TimeoutMilliseconds, DurationSeconds: request.Metrics.DurationSeconds,
 		},

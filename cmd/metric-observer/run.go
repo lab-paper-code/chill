@@ -36,11 +36,20 @@ func execute(
 		return err
 	}
 	metrics := intentRecord.Metrics
+	thermalMetrics := metricobserver.ThermalMetricIdentity{
+		ObservationAvailable:      metrics.ThermalMetrics.ObservationAvailable,
+		Active:                    metrics.ThermalMetrics.Active,
+		CPUCoreThrottleEvents:     metrics.ThermalMetrics.CPUCoreThrottleEvents,
+		CPUPackageThrottleEvents:  metrics.ThermalMetrics.CPUPackageThrottleEvents,
+		Latched:                   metrics.ThermalMetrics.Latched,
+		MaximumTemperatureCelsius: metrics.ThermalMetrics.MaximumTemperatureCelsius,
+	}
 	source, err := edgemetrics.New(metricobserver.SourceIdentity{
-		Kind:     metrics.SourceKind,
-		NodeName: metrics.NodeName,
-		Endpoint: metrics.Endpoint,
-		Metric:   metrics.PowerMetric,
+		Kind:           metrics.SourceKind,
+		NodeName:       metrics.NodeName,
+		Endpoint:       metrics.Endpoint,
+		Metric:         metrics.PowerMetric,
+		ThermalMetrics: &thermalMetrics,
 	}, client)
 	if err != nil {
 		return fmt.Errorf("construct frozen metric source: %w", err)
@@ -48,7 +57,7 @@ func execute(
 	identity := source.Identity()
 	if identity.Kind != metrics.SourceKind || identity.NodeName != metrics.NodeName ||
 		identity.Endpoint != metrics.Endpoint || identity.Metric != metrics.PowerMetric ||
-		identity.ThermalMetrics == nil {
+		identity.ThermalMetrics == nil || *identity.ThermalMetrics != thermalMetrics {
 		return errors.New("frozen metric source is unsupported by the production observer")
 	}
 	observer, err := metricobserver.New(source)

@@ -8,6 +8,7 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.33.1
+	github.com/prometheus/common v0.55.0
 	github.com/spf13/pflag v1.0.5
 	gonum.org/v1/gonum v0.15.1
 	k8s.io/api v0.31.0
@@ -58,7 +59,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
-	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

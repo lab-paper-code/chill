@@ -50,6 +50,21 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	if err := drifted.Validate(intent); err == nil {
 		t.Fatal("expected missing thermal metric identity rejection")
 	}
+
+	drifted = raw
+	thermal := *raw.Metrics.Source.ThermalMetrics
+	thermal.Active = "other_thermal_active"
+	drifted.Metrics.Source.ThermalMetrics = &thermal
+	if err := drifted.Validate(intent); err == nil {
+		t.Fatal("expected thermal metric identity drift rejection")
+	}
+}
+
+func TestFrozenThermalIdentityKeepsExistingRawSchemas(t *testing.T) {
+	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha5" ||
+		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha3" {
+		t.Fatalf("raw schemas changed: active=%q idle=%q", RawMeasurementSchemaVersion, IdleRawMeasurementSchemaVersion)
+	}
 }
 
 func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
@@ -93,6 +108,20 @@ func TestVerifiedRawCompositionMatchesValidatedCanonicalForms(t *testing.T) {
 			verifiedIntent, raw.PodUID, verifiedRuntime, verifiedDrift, verifiedWorkload,
 		); err == nil || !strings.Contains(err.Error(), "source identity") {
 			t.Fatalf("expected verified cross-record drift rejection, got %v", err)
+		}
+
+		driftedMetrics = raw.Metrics
+		thermal := *raw.Metrics.Source.ThermalMetrics
+		thermal.Active = "other_thermal_active"
+		driftedMetrics.Source.ThermalMetrics = &thermal
+		verifiedDrift, err = metricobserver.VerifyResult(driftedMetrics)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ComposeRawMeasurement(
+			verifiedIntent, raw.PodUID, verifiedRuntime, verifiedDrift, verifiedWorkload,
+		); err == nil || !strings.Contains(err.Error(), "source identity") {
+			t.Fatalf("expected verified thermal-identity drift rejection, got %v", err)
 		}
 	})
 
@@ -139,7 +168,7 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha8"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha9"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -502,12 +531,12 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 				Endpoint: intent.Metrics.Endpoint,
 				Metric:   intent.Metrics.PowerMetric,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
-					ObservationAvailable:      "device_thermal_throttle_observation_available",
-					Active:                    "device_thermal_throttle_active",
-					CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
-					CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
-					Latched:                   "device_thermal_throttle_latched",
-					MaximumTemperatureCelsius: "device_thermal_max_celsius",
+					ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
+					Active:                    intent.Metrics.ThermalMetrics.Active,
+					CPUCoreThrottleEvents:     intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
+					CPUPackageThrottleEvents:  intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
+					Latched:                   intent.Metrics.ThermalMetrics.Latched,
+					MaximumTemperatureCelsius: intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 				},
 			},
 			StartedAt: started,

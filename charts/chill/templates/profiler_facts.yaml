@@ -15,7 +15,7 @@ data:
     declarations:
 {{- toYaml .Values.profiling.executionDeclarations | nindent 6 }}
   {{ .Values.profiler.factSource.metricSourcesKey | quote }}: |
-    schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha1
+    schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha2
     sources:
 {{- toYaml .Values.profiling.metricSources | nindent 6 }}
   {{ .Values.profiler.factSource.workloadObservationKey | quote }}: |

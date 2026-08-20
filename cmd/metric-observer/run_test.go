@@ -19,10 +19,10 @@ import (
 func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte(strings.Join([]string{
-			"shelly_power_total_watts 5.2",
-			"device_thermal_throttle_observation_available 1",
-			"device_thermal_throttle_active 0",
-			"device_thermal_max_celsius 41",
+			"frozen_wall_power_watts 5.2",
+			"frozen_thermal_observation_available 1",
+			"frozen_thermal_active 0",
+			"frozen_thermal_max_celsius 41",
 		}, "\n") + "\n"))
 	}))
 	defer server.Close()
@@ -55,6 +55,13 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	}
 	if result.Source.Kind != intent.Metrics.SourceKind || result.Source.NodeName != intent.TargetNode.Name ||
 		result.Source.Endpoint != intent.Metrics.Endpoint || result.Source.Metric != intent.Metrics.PowerMetric ||
+		result.Source.ThermalMetrics == nil ||
+		result.Source.ThermalMetrics.ObservationAvailable != intent.Metrics.ThermalMetrics.ObservationAvailable ||
+		result.Source.ThermalMetrics.Active != intent.Metrics.ThermalMetrics.Active ||
+		result.Source.ThermalMetrics.CPUCoreThrottleEvents != intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents ||
+		result.Source.ThermalMetrics.CPUPackageThrottleEvents != intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents ||
+		result.Source.ThermalMetrics.Latched != intent.Metrics.ThermalMetrics.Latched ||
+		result.Source.ThermalMetrics.MaximumTemperatureCelsius != intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius ||
 		result.Summary.SuccessfulSamples < 1 || result.Summary.Failures != 0 {
 		t.Fatalf("unexpected observation result: %#v", result)
 	}
@@ -67,7 +74,7 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 
 func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = response.Write([]byte("shelly_power_total_watts 5.2\n"))
+		_, _ = response.Write([]byte("frozen_wall_power_watts 5.2\n"))
 	}))
 	defer server.Close()
 
@@ -154,6 +161,15 @@ func writeTestIntent(t *testing.T, directory, endpoint string) profilingrun.Inte
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
 	intent.Metrics.Endpoint = endpoint
+	intent.Metrics.PowerMetric = "frozen_wall_power_watts"
+	intent.Metrics.ThermalMetrics = profilingrun.ThermalMetricContract{
+		ObservationAvailable:      "frozen_thermal_observation_available",
+		Active:                    "frozen_thermal_active",
+		CPUCoreThrottleEvents:     "frozen_thermal_cpu_core_events_total",
+		CPUPackageThrottleEvents:  "frozen_thermal_cpu_package_events_total",
+		Latched:                   "frozen_thermal_latched",
+		MaximumTemperatureCelsius: "frozen_thermal_max_celsius",
+	}
 	intent.Measurement.DurationSeconds = 1
 	intent.Metrics.DurationSeconds = 1
 	intent.Metrics.IntervalMilliseconds = 20

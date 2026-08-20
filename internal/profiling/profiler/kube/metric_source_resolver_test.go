@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const testPowerEndpoint = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/metrics"
+const (
+	testPowerEndpoint = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/prometheus"
+	testPowerMetric   = "configured_wall_power_watts"
+)
 
 func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 	resolver := newMetricSourceResolver(t, validMetricSourceConfigMap())
@@ -25,7 +29,8 @@ func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resolved.Kind != edgemetrics.SourceKind || resolved.Endpoint != testPowerEndpoint ||
-		resolved.PowerMetric != edgemetrics.ShellyPowerMetric {
+		resolved.PowerMetric != testPowerMetric ||
+		resolved.ThermalMetrics != testThermalMetricContract() {
 		t.Fatalf("unexpected resolved metric source: %#v", resolved)
 	}
 
@@ -51,6 +56,13 @@ func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.
     kind: edge-metrics
     endpoint: http://edge-device-jetsonx.monitoring.svc.cluster.local:9102/metrics
     powerMetric: shelly_power_total_watts
+    thermalMetrics:
+      observationAvailable: device_thermal_throttle_observation_available
+      active: device_thermal_throttle_active
+      cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+      cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+      latched: device_thermal_throttle_latched
+      maximumTemperatureCelsius: device_thermal_max_celsius
 `
 	second, err := newMetricSourceResolver(t, unrelated).ResolveMetricSource(context.Background(), "lattepanda")
 	if err != nil {
@@ -86,6 +98,15 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			is:     ErrMetricSourceUnavailable,
 		},
 		{
+			name: "retired schema",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], metricSourcesSchema, "chill.dacs.io/profiler-metric-sources.v1alpha1", 1,
+				)
+			},
+			match: "unsupported Profiler metric-sources schema",
+		},
+		{
 			name: "unsupported kind",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
@@ -95,13 +116,31 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "unsupported metric-source kind",
 		},
 		{
-			name: "wrong metric",
+			name: "invalid power metric name",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "shelly_power_total_watts", "other", 1,
+					config.Data["metric-sources.yaml"], testPowerMetric, "not-valid", 1,
 				)
 			},
-			match: "unsupported edge-metrics power metric",
+			match: "valid Prometheus metric name",
+		},
+		{
+			name: "missing thermal mapping",
+			mutate: func(config *corev1.ConfigMap) {
+				start := strings.Index(config.Data["metric-sources.yaml"], "    thermalMetrics:")
+				config.Data["metric-sources.yaml"] = config.Data["metric-sources.yaml"][:start]
+			},
+			match: "thermalMetrics.observationAvailable",
+		},
+		{
+			name: "duplicate typed metric",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"],
+					"configured_thermal_active", testPowerMetric, 1,
+				)
+			},
+			match: "is duplicated",
 		},
 		{
 			name: "endpoint credentials",
@@ -113,12 +152,37 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "without credentials",
 		},
 		{
+			name: "empty endpoint path",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "/prometheus", "", 1,
+				)
+			},
+			match: "clean nonempty path",
+		},
+		{
+			name: "unclean endpoint path",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "/prometheus", "/nested/../prometheus", 1,
+				)
+			},
+			match: "clean nonempty path",
+		},
+		{
 			name: "duplicate Node",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] += `  - node: lattepanda
     kind: edge-metrics
     endpoint: http://duplicate.monitoring.svc:9102/metrics
-    powerMetric: shelly_power_total_watts
+    powerMetric: ` + testPowerMetric + `
+    thermalMetrics:
+      observationAvailable: configured_thermal_observation_available
+      active: configured_thermal_active
+      cpuCoreThrottleEvents: configured_thermal_cpu_core_events_total
+      cpuPackageThrottleEvents: configured_thermal_cpu_package_events_total
+      latched: configured_thermal_latched
+      maximumTemperatureCelsius: configured_thermal_max_celsius
 `
 			},
 			match: "duplicate metric source",
@@ -207,12 +271,30 @@ func validMetricSourceConfigMap() *corev1.ConfigMap {
 			Namespace: "chill-system", Name: "chill-profiler-facts",
 			UID: types.UID("config-uid"), ResourceVersion: "30",
 		},
-		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha1
+		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha2
 sources:
   - node: lattepanda
     kind: edge-metrics
     endpoint: ` + testPowerEndpoint + `
-    powerMetric: shelly_power_total_watts
+    powerMetric: ` + testPowerMetric + `
+    thermalMetrics:
+      observationAvailable: configured_thermal_observation_available
+      active: configured_thermal_active
+      cpuCoreThrottleEvents: configured_thermal_cpu_core_events_total
+      cpuPackageThrottleEvents: configured_thermal_cpu_package_events_total
+      latched: configured_thermal_latched
+      maximumTemperatureCelsius: configured_thermal_max_celsius
 `},
+	}
+}
+
+func testThermalMetricContract() profilingrun.ThermalMetricContract {
+	return profilingrun.ThermalMetricContract{
+		ObservationAvailable:      "configured_thermal_observation_available",
+		Active:                    "configured_thermal_active",
+		CPUCoreThrottleEvents:     "configured_thermal_cpu_core_events_total",
+		CPUPackageThrottleEvents:  "configured_thermal_cpu_package_events_total",
+		Latched:                   "configured_thermal_latched",
+		MaximumTemperatureCelsius: "configured_thermal_max_celsius",
 	}
 }

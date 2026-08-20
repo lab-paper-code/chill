@@ -540,7 +540,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultS
 			},
 			Evidence: batchsaturation.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha8", Size: 23188,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha9", Size: 23188,
 			},
 		}},
 		Detail: json.RawMessage(`{"selectedBatch":1}`),

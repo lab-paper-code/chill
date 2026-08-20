@@ -4,7 +4,7 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha8`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha9`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against frozen intent. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
@@ -214,7 +214,7 @@ governs the actuation safety boundary,
 ownership from the Run, and
 [ADR 0017](../../adr/0017-power-mode-reachability-boundary.md) makes every
 catalogued mode reachable: the actuator applies a mode the device takes in place
-and restarts the Node into one the device establishes at boot. Execution evidence v1alpha8
+and restarts the Node into one the device establishes at boot. Execution evidence v1alpha9
 binds the confirming transition identity, target observation, and completion
 time to the Run, checks the target facts, and gives permanently invalid
 evidence the terminal `EvidenceInvalid` outcome.

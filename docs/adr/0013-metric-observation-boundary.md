@@ -8,7 +8,7 @@ Accepted
 
 CHILL profiling needs wall-power samples for energy derivation and thermal facts
 to decide whether a measured trial is usable. The testbed exposes both through
-each Node's edge-metrics `/metrics` endpoint. Normal Prometheus retention is
+configured edge-metrics exposition endpoints. Normal Prometheus retention is
 useful for monitoring, but its scrape interval does not define a short
 profiling experiment's observation window.
 
@@ -22,10 +22,11 @@ monitoring history.
 
 Use a typed MetricObserver contract for bounded profiling-time observation. A
 Profiler request identifies a Kubernetes Node; the Profiler resolves that Node
-to one edge-metrics endpoint before creating the measurement Job. Endpoint,
-required power metric, polling interval, timeout, duration, and the
-digest-pinned MetricObserver image are frozen in the Run intent. The pinned
-adapter records the thermal metric identities in its result.
+through static metric-source configuration before creating the measurement
+Job. The selected endpoint, required power metric name, six typed thermal
+metric names, polling interval, timeout, duration, and digest-pinned
+MetricObserver image are frozen in the Run intent. The adapter interprets those
+frozen names and records the same identities in its result.
 
 Each polling tick makes one HTTP request. A successful response records wall
 power and the thermal facts present in that same response with one CHILL receipt
@@ -33,15 +34,9 @@ timestamp and request latency. Whole-request failures and per-metric issues are
 different evidence. The observer does not rewrite edge-metrics configuration,
 discard repeated values, or treat temperature as a throttling threshold.
 
-The first adapter supports only the existing edge-metrics contract:
-
-- `shelly_power_total_watts`;
-- `device_thermal_throttle_observation_available`;
-- `device_thermal_throttle_active`;
-- `device_thermal_cpu_core_throttle_event_count`;
-- `device_thermal_cpu_package_throttle_event_count`;
-- `device_thermal_throttle_latched`; and
-- `device_thermal_max_celsius`.
+The first adapter supports one required wall-power slot and six fixed-semantic
+thermal slots. Static metric-source configuration owns their concrete metric
+names, and the selected mapping is frozen into the Run intent.
 
 The first profiling path requires a valid wall-power value for a successful
 sample. Thermal fields remain typed and optional because platforms expose

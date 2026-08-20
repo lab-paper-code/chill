@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha10",
+  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha11",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -68,6 +68,14 @@
     "nodeName": "lattepanda",
     "endpoint": "http://edge-metric.monitoring.svc:9102/metrics",
     "powerMetric": "shelly_power_total_watts",
+    "thermalMetrics": {
+      "observationAvailable": "device_thermal_throttle_observation_available",
+      "active": "device_thermal_throttle_active",
+      "cpuCoreThrottleEvents": "device_thermal_cpu_core_throttle_event_count",
+      "cpuPackageThrottleEvents": "device_thermal_cpu_package_throttle_event_count",
+      "latched": "device_thermal_throttle_latched",
+      "maximumTemperatureCelsius": "device_thermal_max_celsius"
+    },
     "intervalMilliseconds": 1000,
     "timeoutMilliseconds": 500,
     "durationSeconds": 31

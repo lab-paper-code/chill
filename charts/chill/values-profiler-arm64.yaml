@@ -141,14 +141,35 @@ profiling:
       kind: edge-metrics
       endpoint: http://155.230.34.243:9102/metrics
       powerMetric: shelly_power_total_watts
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
     - node: orangepi
       kind: edge-metrics
       endpoint: http://155.230.34.143:9102/metrics
       powerMetric: shelly_power_total_watts
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
     - node: jetsono
       kind: edge-metrics
       endpoint: http://155.230.34.203:9102/metrics
       powerMetric: shelly_power_total_watts
+      thermalMetrics:
+        observationAvailable: device_thermal_throttle_observation_available
+        active: device_thermal_throttle_active
+        cpuCoreThrottleEvents: device_thermal_cpu_core_throttle_event_count
+        cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
+        latched: device_thermal_throttle_latched
+        maximumTemperatureCelsius: device_thermal_max_celsius
   additionalAdmissionPolicies:
     - name: wall-power-2p5s-source-v1
       workloadMode: saturated-serial-fixed-batch

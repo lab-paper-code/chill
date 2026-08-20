@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -49,7 +50,6 @@ func (i Intent) Validate() error {
 		"metrics.sourceKind":           i.Metrics.SourceKind,
 		"metrics.nodeName":             i.Metrics.NodeName,
 		"metrics.endpoint":             i.Metrics.Endpoint,
-		"metrics.powerMetric":          i.Metrics.PowerMetric,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
@@ -73,6 +73,9 @@ func (i Intent) Validate() error {
 	if i.Metrics.NodeName != i.TargetNode.Name {
 		return errors.New("metrics nodeName must match target Node")
 	}
+	if err := i.Metrics.ValidateMetricIdentities(); err != nil {
+		return err
+	}
 	if err := i.validateCPUContract(); err != nil {
 		return err
 	}
@@ -86,6 +89,37 @@ func (i Intent) Validate() error {
 		i.Metrics.TimeoutMilliseconds >= i.Metrics.IntervalMilliseconds ||
 		i.Metrics.DurationSeconds < i.Measurement.DurationSeconds {
 		return errors.New("invalid or under-covering metric observation request")
+	}
+	return nil
+}
+
+// ValidateMetricIdentities checks the configured Prometheus names and ensures
+// that every typed slot denotes a distinct metric.
+func (m MetricContract) ValidateMetricIdentities() error {
+	metrics := []struct {
+		name  string
+		value string
+	}{
+		{name: "metrics.powerMetric", value: m.PowerMetric},
+		{name: "metrics.thermalMetrics.observationAvailable", value: m.ThermalMetrics.ObservationAvailable},
+		{name: "metrics.thermalMetrics.active", value: m.ThermalMetrics.Active},
+		{name: "metrics.thermalMetrics.cpuCoreThrottleEvents", value: m.ThermalMetrics.CPUCoreThrottleEvents},
+		{name: "metrics.thermalMetrics.cpuPackageThrottleEvents", value: m.ThermalMetrics.CPUPackageThrottleEvents},
+		{name: "metrics.thermalMetrics.latched", value: m.ThermalMetrics.Latched},
+		{name: "metrics.thermalMetrics.maximumTemperatureCelsius", value: m.ThermalMetrics.MaximumTemperatureCelsius},
+	}
+	seen := make(map[string]struct{}, len(metrics))
+	for _, metric := range metrics {
+		if strings.TrimSpace(metric.value) == "" || strings.TrimSpace(metric.value) != metric.value {
+			return fmt.Errorf("%s is required without surrounding whitespace", metric.name)
+		}
+		if !model.IsValidMetricName(model.LabelValue(metric.value)) {
+			return fmt.Errorf("%s must be a valid Prometheus metric name", metric.name)
+		}
+		if _, duplicate := seen[metric.value]; duplicate {
+			return fmt.Errorf("metric identity %q is duplicated", metric.value)
+		}
+		seen[metric.value] = struct{}{}
 	}
 	return nil
 }

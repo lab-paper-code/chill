@@ -18,25 +18,9 @@ import (
 )
 
 const (
-	SourceKind                        = "edge-metrics"
-	ShellyPowerMetric                 = "shelly_power_total_watts"
-	ThermalObservationAvailableMetric = "device_thermal_throttle_observation_available"
-	ThermalActiveMetric               = "device_thermal_throttle_active"
-	ThermalCPUCoreEventsMetric        = "device_thermal_cpu_core_throttle_event_count"
-	ThermalCPUPackageEventsMetric     = "device_thermal_cpu_package_throttle_event_count"
-	ThermalLatchedMetric              = "device_thermal_throttle_latched"
-	ThermalMaximumTemperatureMetric   = "device_thermal_max_celsius"
-	maximumResponseBytes              = 1 << 20
+	SourceKind           = "edge-metrics"
+	maximumResponseBytes = 1 << 20
 )
-
-var thermalMetricIdentity = metricobserver.ThermalMetricIdentity{
-	ObservationAvailable:      ThermalObservationAvailableMetric,
-	Active:                    ThermalActiveMetric,
-	CPUCoreThrottleEvents:     ThermalCPUCoreEventsMetric,
-	CPUPackageThrottleEvents:  ThermalCPUPackageEventsMetric,
-	Latched:                   ThermalLatchedMetric,
-	MaximumTemperatureCelsius: ThermalMaximumTemperatureMetric,
-}
 
 // Source reads one required wall-power value and the thermal facts exposed in
 // the same edge-metrics response.
@@ -53,18 +37,44 @@ func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, 
 	if strings.TrimSpace(identity.Endpoint) == "" || strings.TrimSpace(identity.Endpoint) != identity.Endpoint {
 		return nil, errors.New("endpoint is required without surrounding whitespace")
 	}
-	if identity.Metric != ShellyPowerMetric {
-		return nil, fmt.Errorf("unsupported edge-metrics power metric %q", identity.Metric)
+	if identity.ThermalMetrics == nil {
+		return nil, errors.New("thermal metric identity is required")
 	}
-	if identity.ThermalMetrics != nil {
-		return nil, errors.New("thermal metric identity is supplied by the edge-metrics adapter")
+	if err := validateMetricIdentity(identity.Metric, *identity.ThermalMetrics); err != nil {
+		return nil, err
 	}
 	if client == nil {
 		return nil, errors.New("HTTP client is required")
 	}
-	metrics := thermalMetricIdentity
+	metrics := *identity.ThermalMetrics
 	identity.ThermalMetrics = &metrics
 	return &Source{identity: identity, client: client}, nil
+}
+
+func validateMetricIdentity(power string, thermal metricobserver.ThermalMetricIdentity) error {
+	metrics := []struct {
+		name  string
+		value string
+	}{
+		{name: "power", value: power},
+		{name: "thermal observation-available", value: thermal.ObservationAvailable},
+		{name: "thermal active", value: thermal.Active},
+		{name: "thermal CPU-core-events", value: thermal.CPUCoreThrottleEvents},
+		{name: "thermal CPU-package-events", value: thermal.CPUPackageThrottleEvents},
+		{name: "thermal latched", value: thermal.Latched},
+		{name: "thermal maximum-temperature", value: thermal.MaximumTemperatureCelsius},
+	}
+	seen := make(map[string]struct{}, len(metrics))
+	for _, metric := range metrics {
+		if strings.TrimSpace(metric.value) == "" || strings.TrimSpace(metric.value) != metric.value {
+			return fmt.Errorf("%s metric identity is required without surrounding whitespace", metric.name)
+		}
+		if _, duplicate := seen[metric.value]; duplicate {
+			return fmt.Errorf("metric identity %q is duplicated", metric.value)
+		}
+		seen[metric.value] = struct{}{}
+	}
+	return nil
 }
 
 // Identity returns an owned copy of the source and typed metric identities.
@@ -102,7 +112,7 @@ func (s *Source) ReadMetrics(ctx context.Context) (metricobserver.Reading, error
 			"%w: edge-metrics response exceeds %d bytes", metricobserver.ErrInvalidReading, maximumResponseBytes,
 		)
 	}
-	return parseReading(bytes.NewReader(payload))
+	return parseReading(bytes.NewReader(payload), s.identity.Metric, *s.identity.ThermalMetrics)
 }
 
 type rawMetric struct {
@@ -111,15 +121,19 @@ type rawMetric struct {
 	err   error
 }
 
-func parseReading(reader io.Reader) (metricobserver.Reading, error) {
+func parseReading(
+	reader io.Reader,
+	powerMetric string,
+	thermalMetrics metricobserver.ThermalMetricIdentity,
+) (metricobserver.Reading, error) {
 	names := []string{
-		ShellyPowerMetric,
-		ThermalObservationAvailableMetric,
-		ThermalActiveMetric,
-		ThermalCPUCoreEventsMetric,
-		ThermalCPUPackageEventsMetric,
-		ThermalLatchedMetric,
-		ThermalMaximumTemperatureMetric,
+		powerMetric,
+		thermalMetrics.ObservationAvailable,
+		thermalMetrics.Active,
+		thermalMetrics.CPUCoreThrottleEvents,
+		thermalMetrics.CPUPackageThrottleEvents,
+		thermalMetrics.Latched,
+		thermalMetrics.MaximumTemperatureCelsius,
 	}
 	metrics := make(map[string]*rawMetric, len(names))
 	for _, name := range names {
@@ -159,30 +173,30 @@ func parseReading(reader io.Reader) (metricobserver.Reading, error) {
 		return metricobserver.Reading{}, fmt.Errorf("parse edge-metrics response: %w", err)
 	}
 
-	watts, err := requiredNonNegative(metrics[ShellyPowerMetric], ShellyPowerMetric)
+	watts, err := requiredNonNegative(metrics[powerMetric], powerMetric)
 	if err != nil {
 		return metricobserver.Reading{}, err
 	}
 	thermal := metricobserver.ThermalReading{}
 	thermal.ObservationAvailable = thermalBool(
-		metrics[ThermalObservationAvailableMetric], ThermalObservationAvailableMetric, true, &thermal,
+		metrics[thermalMetrics.ObservationAvailable], thermalMetrics.ObservationAvailable, true, &thermal,
 	)
-	thermal.Active = thermalBool(metrics[ThermalActiveMetric], ThermalActiveMetric, false, &thermal)
-	thermal.Latched = thermalBool(metrics[ThermalLatchedMetric], ThermalLatchedMetric, false, &thermal)
+	thermal.Active = thermalBool(metrics[thermalMetrics.Active], thermalMetrics.Active, false, &thermal)
+	thermal.Latched = thermalBool(metrics[thermalMetrics.Latched], thermalMetrics.Latched, false, &thermal)
 	thermal.CPUCoreThrottleEvents = thermalCounter(
-		metrics[ThermalCPUCoreEventsMetric], ThermalCPUCoreEventsMetric, &thermal,
+		metrics[thermalMetrics.CPUCoreThrottleEvents], thermalMetrics.CPUCoreThrottleEvents, &thermal,
 	)
 	thermal.CPUPackageThrottleEvents = thermalCounter(
-		metrics[ThermalCPUPackageEventsMetric], ThermalCPUPackageEventsMetric, &thermal,
+		metrics[thermalMetrics.CPUPackageThrottleEvents], thermalMetrics.CPUPackageThrottleEvents, &thermal,
 	)
 	thermal.MaximumTemperatureCelsius = thermalTemperature(
-		metrics[ThermalMaximumTemperatureMetric], ThermalMaximumTemperatureMetric, &thermal,
+		metrics[thermalMetrics.MaximumTemperatureCelsius], thermalMetrics.MaximumTemperatureCelsius, &thermal,
 	)
 	if thermal.ObservationAvailable != nil && *thermal.ObservationAvailable &&
 		thermal.Active == nil && thermal.CPUCoreThrottleEvents == nil && thermal.CPUPackageThrottleEvents == nil &&
 		len(thermal.Issues) == 0 {
 		thermal.Issues = append(thermal.Issues, metricobserver.MetricIssue{
-			Metric: ThermalObservationAvailableMetric, Reason: metricobserver.FailureReasonMetricMissing,
+			Metric: thermalMetrics.ObservationAvailable, Reason: metricobserver.FailureReasonMetricMissing,
 			Message: "thermal observation is available but no direct or cumulative throttling signal is exposed",
 		})
 	}

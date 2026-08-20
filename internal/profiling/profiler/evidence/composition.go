@@ -147,10 +147,7 @@ func validateVerifiedComposition(
 	if metrics.Source.ThermalMetrics == nil {
 		return errors.New("metric source thermal identity is required")
 	}
-	if metrics.Source.Kind != intentRecord.Metrics.SourceKind ||
-		metrics.Source.NodeName != intentRecord.Metrics.NodeName ||
-		metrics.Source.Endpoint != intentRecord.Metrics.Endpoint ||
-		metrics.Source.Metric != intentRecord.Metrics.PowerMetric {
+	if !metricSourceMatches(metrics.Source, intentRecord.Metrics) {
 		return errors.New("metric source identity mismatch")
 	}
 	if !metrics.StartedAt.Before(runtimeEnded) || !runtimeStarted.Before(metrics.EndedAt) {

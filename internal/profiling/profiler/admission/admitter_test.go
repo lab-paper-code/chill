@@ -308,6 +308,15 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	if metricSourceIdentities.StateIdentity == base.StateIdentity {
 		t.Fatal("wall-meter source must change execution-state identity")
 	}
+	thermalMetricSource := intent
+	thermalMetricSource.Metrics.ThermalMetrics.Active = "other_thermal_active"
+	thermalMetricSourceIdentities, err := ProjectRunIdentities(thermalMetricSource, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thermalMetricSourceIdentities.StateIdentity == base.StateIdentity {
+		t.Fatal("thermal metric mapping must change execution-state identity")
+	}
 
 	nodeIdentities, err := ProjectRunIdentities(intent, "node-b")
 	if err != nil {
@@ -368,6 +377,11 @@ func admissionIntent() profilingrun.Intent {
 		},
 		Metrics: profilingrun.MetricContract{
 			SourceKind: "edge-metrics", NodeName: "lattepanda", Endpoint: "http://metrics", PowerMetric: "watts",
+			ThermalMetrics: profilingrun.ThermalMetricContract{
+				ObservationAvailable: "thermal_observation_available", Active: "thermal_active",
+				CPUCoreThrottleEvents: "thermal_cpu_core_events", CPUPackageThrottleEvents: "thermal_cpu_package_events",
+				Latched: "thermal_latched", MaximumTemperatureCelsius: "thermal_max_celsius",
+			},
 			IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 		},
 	}
@@ -507,12 +521,12 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
-					ObservationAvailable:      "device_thermal_throttle_observation_available",
-					Active:                    "device_thermal_throttle_active",
-					CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
-					CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
-					Latched:                   "device_thermal_throttle_latched",
-					MaximumTemperatureCelsius: "device_thermal_max_celsius",
+					ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
+					Active:                    intent.Metrics.ThermalMetrics.Active,
+					CPUCoreThrottleEvents:     intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
+					CPUPackageThrottleEvents:  intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
+					Latched:                   intent.Metrics.ThermalMetrics.Latched,
+					MaximumTemperatureCelsius: intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 				},
 			},
 			StartedAt: started, EndedAt: started.Add(31 * time.Second), Samples: samples,

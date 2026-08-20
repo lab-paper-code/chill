@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha10"
+	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha11"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -150,11 +150,23 @@ type MeasurementContract struct {
 }
 
 type MetricContract struct {
-	SourceKind           string `json:"sourceKind"`
-	NodeName             string `json:"nodeName"`
-	Endpoint             string `json:"endpoint"`
-	PowerMetric          string `json:"powerMetric"`
-	IntervalMilliseconds int    `json:"intervalMilliseconds"`
-	TimeoutMilliseconds  int    `json:"timeoutMilliseconds"`
-	DurationSeconds      int    `json:"durationSeconds"`
+	SourceKind           string                `json:"sourceKind"`
+	NodeName             string                `json:"nodeName"`
+	Endpoint             string                `json:"endpoint"`
+	PowerMetric          string                `json:"powerMetric"`
+	ThermalMetrics       ThermalMetricContract `json:"thermalMetrics"`
+	IntervalMilliseconds int                   `json:"intervalMilliseconds"`
+	TimeoutMilliseconds  int                   `json:"timeoutMilliseconds"`
+	DurationSeconds      int                   `json:"durationSeconds"`
+}
+
+// ThermalMetricContract assigns configured metric names to the thermal facts
+// interpreted by MetricObserver.
+type ThermalMetricContract struct {
+	ObservationAvailable      string `json:"observationAvailable"`
+	Active                    string `json:"active"`
+	CPUCoreThrottleEvents     string `json:"cpuCoreThrottleEvents"`
+	CPUPackageThrottleEvents  string `json:"cpuPackageThrottleEvents"`
+	Latched                   string `json:"latched"`
+	MaximumTemperatureCelsius string `json:"maximumTemperatureCelsius"`
 }

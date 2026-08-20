@@ -62,7 +62,7 @@ func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
 	if err := profilingrun.ValidateIdleRuntime(intent, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate idle runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics, true); err != nil {
+	if err := validateMetricObservation(intent, m.Metrics); err != nil {
 		return err
 	}
 	windowStart, windowEnd, err := m.Runtime.MeasurementWindow()

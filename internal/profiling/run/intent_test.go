@@ -266,6 +266,32 @@ func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	}
 }
 
+func TestCurrentIntentRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Intent)
+	}{
+		{name: "missing thermal mapping", mutate: func(intent *Intent) {
+			intent.Metrics.ThermalMetrics = ThermalMetricContract{}
+		}},
+		{name: "invalid metric name", mutate: func(intent *Intent) {
+			intent.Metrics.ThermalMetrics.Active = "not-valid"
+		}},
+		{name: "duplicate metric name", mutate: func(intent *Intent) {
+			intent.Metrics.ThermalMetrics.Active = intent.Metrics.PowerMetric
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			intent := validIntent()
+			test.mutate(&intent)
+			if err := intent.Validate(); err == nil {
+				t.Fatal("invalid metric identities were accepted")
+			}
+		})
+	}
+}
+
 func validIntent() Intent {
 	d := "sha256:" + strings.Repeat("a", 64)
 	image := "registry.local/chill/image@" + d
@@ -327,10 +353,22 @@ func validIntent() Intent {
 			NodeName:             "lattepanda",
 			Endpoint:             "http://edge-metric.monitoring.svc:9102/metrics",
 			PowerMetric:          "shelly_power_total_watts",
+			ThermalMetrics:       testThermalMetricContract(),
 			IntervalMilliseconds: 1000,
 			TimeoutMilliseconds:  500,
 			DurationSeconds:      31,
 		},
 		Workload: CurrentWorkloadContract(),
+	}
+}
+
+func testThermalMetricContract() ThermalMetricContract {
+	return ThermalMetricContract{
+		ObservationAvailable:      "device_thermal_throttle_observation_available",
+		Active:                    "device_thermal_throttle_active",
+		CPUCoreThrottleEvents:     "device_thermal_cpu_core_throttle_event_count",
+		CPUPackageThrottleEvents:  "device_thermal_cpu_package_throttle_event_count",
+		Latched:                   "device_thermal_throttle_latched",
+		MaximumTemperatureCelsius: "device_thermal_max_celsius",
 	}
 }

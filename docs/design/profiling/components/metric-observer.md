@@ -35,9 +35,9 @@ MetricObserver owns:
 
 The edge-metrics adapter owns:
 
-- issuing one bounded HTTP request to one resolved `/metrics` endpoint;
-- parsing `shelly_power_total_watts` as the required wall-power value;
-- parsing the supported `device_thermal_*` family as typed thermal facts;
+- issuing one bounded HTTP request to one resolved exposition endpoint;
+- parsing the configured and frozen required wall-power metric;
+- parsing the configured and frozen typed thermal metrics;
 - rejecting duplicate, malformed, non-finite, or semantically invalid values;
   and
 - preserving a missing or invalid thermal fact without converting it into a
@@ -100,7 +100,7 @@ internal/metricobserver
 internal/metricobserver/edgemetrics
         |
         v
-edge-metrics /metrics
+edge-metrics exposition endpoint
 ```
 
 The core package imports no CHILL API, Kubernetes client, controller-runtime,
@@ -124,8 +124,8 @@ contract and standard HTTP parsing only.
 - required-power failure and partial thermal failure remain distinguishable;
 - bounded scheduling, timeout, cancellation, event limits, and summaries have
   deterministic tests;
-- edge-metrics parsing covers direct signals, counters, missing metrics,
-  duplicates, malformed values, and unsupported observation;
+- edge-metrics parsing covers configured direct signals, counters, missing
+  metrics, duplicates, malformed values, and unsupported observation;
 - raw evidence validation binds the exact source and immutable Run intent;
 - admission tests distinguish unknown, throttled, counter-reset, and known
   non-throttled windows; and

@@ -582,6 +582,7 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
 			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
+			ThermalMetrics: intent.Metrics.ThermalMetrics,
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
 			Image: intent.Images.WorkloadObserver,

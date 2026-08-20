@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha4"
+	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha5"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
 	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha1"
 )
@@ -23,10 +23,11 @@ type RunIdentities struct {
 }
 
 type metricSourceIdentity struct {
-	SourceKind  string `json:"sourceKind"`
-	NodeName    string `json:"nodeName"`
-	Endpoint    string `json:"endpoint"`
-	PowerMetric string `json:"powerMetric"`
+	SourceKind     string                             `json:"sourceKind"`
+	NodeName       string                             `json:"nodeName"`
+	Endpoint       string                             `json:"endpoint"`
+	PowerMetric    string                             `json:"powerMetric"`
+	ThermalMetrics profilingrun.ThermalMetricContract `json:"thermalMetrics"`
 }
 
 type metricSamplingProtocol struct {
@@ -51,6 +52,7 @@ func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdenti
 		MetricSource: metricSourceIdentity{
 			SourceKind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 			Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
+			ThermalMetrics: intent.Metrics.ThermalMetrics,
 		},
 	})
 	if err != nil {

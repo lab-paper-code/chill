@@ -18,12 +18,13 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha10`, and the Go and Python execution boundaries
+The internal intent is `v1alpha11`, and the Go and Python execution boundaries
 accept that current schema only. It carries semantic source-object identities,
-the typed host contract, and an optional typed actuation binding while
-preserving the common worker CPU quota and RKNNLite's omission of ORT-only
-thread settings. Each immutable intent record contains the structured intent,
-candidate report, admission policy, and execution policy.
+the configured power and typed thermal metric identities, the typed host
+contract, and an optional typed actuation binding while preserving the common
+worker CPU quota and RKNNLite's omission of ORT-only thread settings. Each
+immutable intent record contains the structured intent, candidate report,
+admission policy, and execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
 idle admission dispatch are implemented and live-verified. The accepted idle
@@ -299,7 +300,7 @@ or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 | stable hardware class and declared power modes | referenced `DeviceClass` | object identity, architecture, and selected power-mode identity |
 | trusted executable workload | fact-source ConfigMap referenced by Profiler Deployment configuration | declaration source object identity plus immutable OCI runtime and artifact workload images |
 | selected machine | Kubernetes `Node` | name, UID, resourceVersion, architecture, and allocatable CPU |
-| Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, metric, and configuration source object identity |
+| Shelly observation source | Node-keyed entry in the fact-source ConfigMap | resolved edge-metrics endpoint, source kind, configured power and typed thermal metric identities, and configuration source object identity |
 | single-Run admission policy | named entry in the fact-source ConfigMap | selected policy semantics and exact ConfigMap namespace, name, UID, resourceVersion, and key |
 | worker execution envelope | DeviceClass, execution-path, and workload-mode entry in the fact-source ConfigMap | timeout margins, producer capacities, container resources, and exact ConfigMap namespace, name, UID, resourceVersion, and key |
 

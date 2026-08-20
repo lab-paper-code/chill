@@ -411,6 +411,11 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		Metrics: profilingrun.MetricContract{
 			SourceKind: "edge-metrics", NodeName: request.TargetNode,
 			Endpoint: "http://edge-metric.monitoring.svc:9102/metrics", PowerMetric: "power_watts",
+			ThermalMetrics: profilingrun.ThermalMetricContract{
+				ObservationAvailable: "thermal_observation_available", Active: "thermal_active",
+				CPUCoreThrottleEvents: "thermal_cpu_core_events", CPUPackageThrottleEvents: "thermal_cpu_package_events",
+				Latched: "thermal_latched", MaximumTemperatureCelsius: "thermal_max_celsius",
+			},
 			IntervalMilliseconds: request.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  request.Metrics.TimeoutMilliseconds,
 			DurationSeconds:      request.Metrics.DurationSeconds,

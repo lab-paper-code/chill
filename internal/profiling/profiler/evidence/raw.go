@@ -63,7 +63,7 @@ func (m RawMeasurement) validate(intent profilingrun.Intent) error {
 	if err := profilingrun.ValidateRuntime(intent, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics, true); err != nil {
+	if err := validateMetricObservation(intent, m.Metrics); err != nil {
 		return err
 	}
 	runtimeStarted, runtimeEnded, err := m.Runtime.MeasurementWindow()
@@ -128,18 +128,30 @@ func validateWorkloadObservation(
 	return nil
 }
 
-func validateMetricObservation(intent profilingrun.Intent, result metricobserver.Result, requireThermalIdentity bool) error {
+func validateMetricObservation(intent profilingrun.Intent, result metricobserver.Result) error {
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("validate metric observation: %w", err)
 	}
-	if requireThermalIdentity && result.Source.ThermalMetrics == nil {
+	if result.Source.ThermalMetrics == nil {
 		return errors.New("metric source thermal identity is required")
 	}
-	if result.Source.Kind != intent.Metrics.SourceKind ||
-		result.Source.NodeName != intent.Metrics.NodeName ||
-		result.Source.Endpoint != intent.Metrics.Endpoint ||
-		result.Source.Metric != intent.Metrics.PowerMetric {
+	if !metricSourceMatches(result.Source, intent.Metrics) {
 		return errors.New("metric source identity mismatch")
 	}
 	return nil
+}
+
+func metricSourceMatches(source metricobserver.SourceIdentity, contract profilingrun.MetricContract) bool {
+	thermal := source.ThermalMetrics
+	return source.Kind == contract.SourceKind &&
+		source.NodeName == contract.NodeName &&
+		source.Endpoint == contract.Endpoint &&
+		source.Metric == contract.PowerMetric &&
+		thermal != nil &&
+		thermal.ObservationAvailable == contract.ThermalMetrics.ObservationAvailable &&
+		thermal.Active == contract.ThermalMetrics.Active &&
+		thermal.CPUCoreThrottleEvents == contract.ThermalMetrics.CPUCoreThrottleEvents &&
+		thermal.CPUPackageThrottleEvents == contract.ThermalMetrics.CPUPackageThrottleEvents &&
+		thermal.Latched == contract.ThermalMetrics.Latched &&
+		thermal.MaximumTemperatureCelsius == contract.ThermalMetrics.MaximumTemperatureCelsius
 }

@@ -5,18 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha1"
+const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha2"
 
 var ErrMetricSourceUnavailable = errors.New("metric source unavailable")
 
@@ -58,10 +60,11 @@ type metricSourcesDocument struct {
 }
 
 type metricSourceDeclaration struct {
-	Node        string `json:"node"`
-	Kind        string `json:"kind"`
-	Endpoint    string `json:"endpoint"`
-	PowerMetric string `json:"powerMetric"`
+	Node           string                             `json:"node"`
+	Kind           string                             `json:"kind"`
+	Endpoint       string                             `json:"endpoint"`
+	PowerMetric    string                             `json:"powerMetric"`
+	ThermalMetrics profilingrun.ThermalMetricContract `json:"thermalMetrics"`
 }
 
 func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
@@ -121,6 +124,7 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 	}
 	return profiler.ResolvedMetricSource{
 		Kind: selected.Kind, Endpoint: selected.Endpoint, PowerMetric: selected.PowerMetric,
+		ThermalMetrics: selected.ThermalMetrics,
 	}, nil
 }
 
@@ -135,20 +139,26 @@ func validateMetricSourceDeclaration(source metricSourceDeclaration) error {
 	if source.Kind != edgemetrics.SourceKind {
 		return fmt.Errorf("unsupported metric-source kind %q", source.Kind)
 	}
-	if source.PowerMetric != edgemetrics.ShellyPowerMetric {
-		return fmt.Errorf("unsupported edge-metrics power metric %q", source.PowerMetric)
+	metricContract := profilingrun.MetricContract{
+		PowerMetric: source.PowerMetric, ThermalMetrics: source.ThermalMetrics,
+	}
+	if err := metricContract.ValidateMetricIdentities(); err != nil {
+		return fmt.Errorf("validate metric identities: %w", err)
 	}
 	endpoint, err := url.Parse(source.Endpoint)
 	if err != nil {
 		return fmt.Errorf("parse edge-metrics endpoint: %w", err)
 	}
 	if endpoint.Scheme != "http" || endpoint.Hostname() == "" || endpoint.User != nil ||
-		endpoint.Path != "/metrics" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return errors.New("edge-metrics endpoint must be an http URL ending at /metrics without credentials, query, or fragment")
+		endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" {
+		return errors.New("edge-metrics endpoint must be an http URL without credentials, query, or fragment")
 	}
 	port, err := strconv.Atoi(endpoint.Port())
 	if err != nil || port < 1 || port > 65535 {
 		return errors.New("edge-metrics endpoint must contain an explicit valid port")
+	}
+	if endpoint.Path == "" || endpoint.RawPath != "" || path.Clean(endpoint.Path) != endpoint.Path {
+		return errors.New("edge-metrics endpoint must contain a clean nonempty path")
 	}
 	return nil
 }
