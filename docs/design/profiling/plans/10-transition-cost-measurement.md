@@ -48,10 +48,11 @@ s  = (device type t, model m, source power mode p)
 s' = (device type t, model m, target power mode p')
 ~~~
 
-The exact Node UID, device class, model, actuator kind and target, source mode,
-target mode, serving workload, request-readiness witness, serving-survival
-witness, meter source, idle-baseline evidence, direction order, accepted-count
-target, attempt bound, and measurement policy are frozen before execution.
+The exact Node UID, device class, model, execution path, actuator kind and
+target, source mode, target mode, serving workload, request-readiness witness,
+serving-survival witness, meter source, idle-baseline evidence, direction
+order, accepted-count target, attempt bound, and measurement policy are frozen
+before execution.
 
 This is a valid state-pair measurement, not a claim that every transition has
 the same cost. Source-state independence, target-only reduction, another
@@ -302,10 +303,10 @@ pre-window data proves source health and supports boundary placement.
 
 Raw samples and observation records never enter `NodeActuation.status` or
 `PowerModeTransitionCost.status`. The enclosing control and evidence record
-owns the measurement selection once: state pair, actuator, meter series,
-serving workload, observer placement, estimator, policy, and target-idle
-baseline. Each per-transition raw object retains only the observations made
-under that selection:
+owns the measurement selection once: state pair, execution path, actuator,
+meter series, serving workload, observer placement, estimator, policy, and
+target-idle baseline. Each per-transition raw object retains only the
+observations made under that selection:
 
 - source and target state read-backs;
 - every bounded power sample and failed read with its observer receipt time and

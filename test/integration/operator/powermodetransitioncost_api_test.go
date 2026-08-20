@@ -3,6 +3,7 @@ package operatorintegration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -63,6 +64,12 @@ var _ = Describe("PowerModeTransitionCost API", func() {
 			measurement.Spec.ObservationPolicy.PowerTimeoutMilliseconds =
 				measurement.Spec.ObservationPolicy.PowerIntervalMilliseconds
 		}),
+		Entry("empty execution path", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
+			measurement.Spec.ExecutionPath = ""
+		}),
+		Entry("execution path longer than 128 characters", func(measurement *edgev1alpha1.PowerModeTransitionCost) {
+			measurement.Spec.ExecutionPath = strings.Repeat("p", 129)
+		}),
 	)
 })
 
@@ -73,6 +80,7 @@ func validPowerModeTransitionCost(name string) *edgev1alpha1.PowerModeTransition
 			TargetNode:       "test-node",
 			DeviceClass:      "test-device-class",
 			ModelSpec:        "test-model",
+			ExecutionPath:    "ort-cpu",
 			ServingService:   "test-service",
 			ServingContainer: "test-container",
 			Modes: []edgev1alpha1.PowerModeTransitionCostModeSpec{

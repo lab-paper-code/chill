@@ -32,6 +32,12 @@ type PowerModeTransitionCostSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	ModelSpec string `json:"modelSpec"`
 
+	// ExecutionPath selects the ModelSpec path shared by the serving workload
+	// and target-mode idle baselines.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	ExecutionPath string `json:"executionPath"`
+
 	// Modes defines the two directions in order: modes[0] to modes[1], then
 	// modes[1] to modes[0]. Each baseline is for transitions targeting that mode.
 	// +kubebuilder:validation:MinItems=2

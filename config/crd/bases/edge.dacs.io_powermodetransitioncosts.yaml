@@ -75,6 +75,13 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
+              executionPath:
+                description: |-
+                  ExecutionPath selects the ModelSpec path shared by the serving workload
+                  and target-mode idle baselines.
+                maxLength: 128
+                minLength: 1
+                type: string
               modelSpec:
                 description: ModelSpec names the cluster-scoped ModelSpec already
                   serving on the Node.
@@ -206,6 +213,7 @@ spec:
             - attemptLimit
             - deviceClass
             - evidenceStore
+            - executionPath
             - modelSpec
             - modes
             - observationPolicy
