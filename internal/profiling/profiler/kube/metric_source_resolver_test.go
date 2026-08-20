@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,8 +19,10 @@ import (
 )
 
 const (
-	testPowerEndpoint = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/prometheus"
-	testPowerMetric   = "configured_wall_power_watts"
+	testPowerEndpoint           = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/prometheus"
+	testPowerMetric             = "configured_wall_power_watts"
+	testTransitionPowerEndpoint = "http://central-meter.example.test:18766/prometheus"
+	testTransitionPowerMetric   = "experiment_transition_watts"
 )
 
 func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
@@ -28,19 +31,29 @@ func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Kind != edgemetrics.SourceKind || resolved.Endpoint != testPowerEndpoint ||
-		resolved.PowerMetric != testPowerMetric ||
-		resolved.ThermalMetrics != testThermalMetricContract() {
-		t.Fatalf("unexpected resolved metric source: %#v", resolved)
-	}
+	assertTestMetricSource(t, resolved, true)
+	resolved.TransitionPower.Labels["rack"] = "caller-mutation"
 
 	again, err := resolver.ResolveMetricSource(context.Background(), "lattepanda")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again != resolved {
-		t.Fatal("identical metric-source entry produced different resolved facts")
+	assertTestMetricSource(t, again, true)
+	if again.TransitionPower.Labels["rack"] != "rack-9" {
+		t.Fatal("caller mutation changed subsequently resolved transition-power labels")
 	}
+}
+
+func TestKubernetesMetricSourceResolverPreservesLocalSourceWithoutTransitionPower(t *testing.T) {
+	config := validMetricSourceConfigMap()
+	config.Data["metric-sources.yaml"] = strings.Replace(
+		config.Data["metric-sources.yaml"], testTransitionPowerYAML(), "", 1,
+	)
+	resolved, err := newMetricSourceResolver(t, config).ResolveMetricSource(context.Background(), "lattepanda")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTestMetricSource(t, resolved, false)
 }
 
 func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.T) {
@@ -68,7 +81,9 @@ func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second != resolved {
+	assertTestMetricSource(t, second, true)
+	if second.Endpoint != resolved.Endpoint ||
+		second.TransitionPower.Endpoint != resolved.TransitionPower.Endpoint {
 		t.Fatal("unrelated Node entry changed selected metric-source facts")
 	}
 
@@ -101,7 +116,7 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			name: "retired schema",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], metricSourcesSchema, "chill.dacs.io/profiler-metric-sources.v1alpha1", 1,
+					config.Data["metric-sources.yaml"], metricSourcesSchema, "chill.dacs.io/profiler-metric-sources.v1alpha2", 1,
 				)
 			},
 			match: "unsupported Profiler metric-sources schema",
@@ -168,6 +183,44 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 				)
 			},
 			match: "clean nonempty path",
+		},
+		{
+			name: "invalid transition power metric name",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], testTransitionPowerMetric, "not-valid", 1,
+				)
+			},
+			match: "validate transition power: powerMetric must be a valid Prometheus metric name",
+		},
+		{
+			name: "empty transition power labels",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"],
+					"      labels:\n        rack: rack-9\n        outlet: outlet-b\n", "      labels: {}\n", 1,
+				)
+			},
+			match: "validate transition power: exact labels are required",
+		},
+		{
+			name: "invalid transition power label name",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "        rack: rack-9", "        not-valid: rack-9", 1,
+				)
+			},
+			match: `validate transition power: label name "not-valid" is invalid`,
+		},
+		{
+			name: "invalid transition power endpoint",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], testTransitionPowerEndpoint,
+					"http://user:pass@central-meter.example.test:18766/prometheus", 1,
+				)
+			},
+			match: "validate transition power: edge-metrics endpoint must be an http URL without credentials",
 		},
 		{
 			name: "duplicate Node",
@@ -271,13 +324,13 @@ func validMetricSourceConfigMap() *corev1.ConfigMap {
 			Namespace: "chill-system", Name: "chill-profiler-facts",
 			UID: types.UID("config-uid"), ResourceVersion: "30",
 		},
-		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha2
+		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha3
 sources:
   - node: lattepanda
     kind: edge-metrics
     endpoint: ` + testPowerEndpoint + `
     powerMetric: ` + testPowerMetric + `
-    thermalMetrics:
+` + testTransitionPowerYAML() + `    thermalMetrics:
       observationAvailable: configured_thermal_observation_available
       active: configured_thermal_active
       cpuCoreThrottleEvents: configured_thermal_cpu_core_events_total
@@ -285,6 +338,38 @@ sources:
       latched: configured_thermal_latched
       maximumTemperatureCelsius: configured_thermal_max_celsius
 `},
+	}
+}
+
+func testTransitionPowerYAML() string {
+	return `    transitionPower:
+      endpoint: ` + testTransitionPowerEndpoint + `
+      powerMetric: ` + testTransitionPowerMetric + `
+      labels:
+        rack: rack-9
+        outlet: outlet-b
+`
+}
+
+func assertTestMetricSource(t *testing.T, resolved profiler.ResolvedMetricSource, wantTransitionPower bool) {
+	t.Helper()
+	if resolved.Kind != edgemetrics.SourceKind || resolved.Endpoint != testPowerEndpoint ||
+		resolved.PowerMetric != testPowerMetric || resolved.ThermalMetrics != testThermalMetricContract() {
+		t.Fatalf("unexpected resolved local metric source: %#v", resolved)
+	}
+	if !wantTransitionPower {
+		if resolved.TransitionPower != nil {
+			t.Fatalf("unexpected transition-power selector: %#v", resolved.TransitionPower)
+		}
+		return
+	}
+	if resolved.TransitionPower == nil ||
+		resolved.TransitionPower.Endpoint != testTransitionPowerEndpoint ||
+		resolved.TransitionPower.PowerMetric != testTransitionPowerMetric ||
+		len(resolved.TransitionPower.Labels) != 2 ||
+		resolved.TransitionPower.Labels["rack"] != "rack-9" ||
+		resolved.TransitionPower.Labels["outlet"] != "outlet-b" {
+		t.Fatalf("unexpected resolved transition-power selector: %#v", resolved.TransitionPower)
 	}
 }
 

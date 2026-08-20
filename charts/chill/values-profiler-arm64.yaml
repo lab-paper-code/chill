@@ -163,6 +163,12 @@ profiling:
       kind: edge-metrics
       endpoint: http://155.230.34.203:9102/metrics
       powerMetric: shelly_power_total_watts
+      transitionPower:
+        endpoint: http://155.230.35.213:18766/prometheus
+        powerMetric: shelly_power_total_watts
+        labels:
+          hostname: jetson-orin
+          device_type: jetson_orin
       thermalMetrics:
         observationAvailable: device_thermal_throttle_observation_available
         active: device_thermal_throttle_active

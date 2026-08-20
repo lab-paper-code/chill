@@ -75,10 +75,17 @@ type NodeSelection struct {
 }
 
 type ResolvedMetricSource struct {
-	Kind           string
-	Endpoint       string
-	PowerMetric    string
-	ThermalMetrics profilingrun.ThermalMetricContract
+	Kind            string
+	Endpoint        string
+	PowerMetric     string
+	ThermalMetrics  profilingrun.ThermalMetricContract
+	TransitionPower *ResolvedTransitionPower
+}
+
+type ResolvedTransitionPower struct {
+	Endpoint    string
+	PowerMetric string
+	Labels      map[string]string
 }
 
 type ResolvedWorkloadObservation struct {
