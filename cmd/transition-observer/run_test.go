@@ -88,25 +88,35 @@ func TestExecuteDoesNotWriteBeforeReady(t *testing.T) {
 	}
 }
 
-func TestExecuteWritesNoReceiptAfterObservationOrWriteError(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		observeErr error
-		writeErr   error
-	}{
-		{name: "observation", observeErr: errors.New("observation failed")},
-		{name: "write", writeErr: errors.New("write failed")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			opts := testOptions(t)
-			writer := &writeStub{receipt: testReceipt(), err: test.writeErr}
-			err := execute(context.Background(), opts, testDependencies(
-				testAttempt(), observationStub(true, transitioncost.RawObservation{}, test.observeErr), writer,
-			))
-			if err == nil || writer.calls != 1 || pathExists(opts.terminationPath) {
-				t.Fatalf("error/writes/receipt = %v/%d/%t", err, writer.calls, pathExists(opts.terminationPath))
-			}
-		})
+func TestExecuteWritesReceiptAfterObservationError(t *testing.T) {
+	opts := testOptions(t)
+	observeErr := errors.New("observation failed")
+	writer := &writeStub{receipt: testReceipt()}
+	err := execute(context.Background(), opts, testDependencies(
+		testAttempt(), observationStub(true, transitioncost.RawObservation{}, observeErr), writer,
+	))
+	if !errors.Is(err, observeErr) || writer.calls != 1 {
+		t.Fatalf("error/writes = %v/%d", err, writer.calls)
+	}
+	payload, readErr := os.ReadFile(opts.terminationPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var receipt evidencestore.Receipt
+	if err := json.Unmarshal(payload, &receipt); err != nil || receipt != testReceipt() {
+		t.Fatalf("receipt = %#v, error %v", receipt, err)
+	}
+}
+
+func TestExecuteWritesNoReceiptAfterRawWriteError(t *testing.T) {
+	opts := testOptions(t)
+	writeErr := errors.New("write failed")
+	writer := &writeStub{receipt: testReceipt(), err: writeErr}
+	err := execute(context.Background(), opts, testDependencies(
+		testAttempt(), observationStub(true, transitioncost.RawObservation{}, nil), writer,
+	))
+	if !errors.Is(err, writeErr) || writer.calls != 1 || pathExists(opts.terminationPath) {
+		t.Fatalf("error/writes/receipt = %v/%d/%t", err, writer.calls, pathExists(opts.terminationPath))
 	}
 }
 

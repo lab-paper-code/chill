@@ -76,10 +76,8 @@ func execute(ctx context.Context, opts options, deps dependencies) error {
 	if writeErr != nil {
 		return errors.Join(observeErr, writeErr)
 	}
-	if observeErr != nil {
-		return observeErr
-	}
-	return writeReceipt(opts.terminationPath, receipt)
+	receiptErr := writeReceipt(opts.terminationPath, receipt)
+	return errors.Join(observeErr, receiptErr)
 }
 
 func publishReady(path string) error {
