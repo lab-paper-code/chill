@@ -29,10 +29,11 @@ between one selected pair of device power modes. One
 `NodeActuation` objects; each transition window produces both `tau` and `eta`
 and records whether serving survived. The approval does not select a live
 target or authorize an unbounded restart or cluster mutation.
-Its controller preparation boundary now combines the API selection, the
-Profiler metric-source resolver, MetricObserver request types, the transition
-core contract, and the validated BatchSaturation idle-baseline source into two
-ordered prepared directions; it does not create a Job or `NodeActuation`.
+Its controller preparation boundary now reads one DeviceClass, resolves the
+exact target Node name and UID, and freezes each selected actuator and its
+configured actuation policy alongside the metric source, observation policy,
+and validated target-mode idle baseline. The prepared pair retains the
+DeviceClass and execution path, but does not create a Job or `NodeActuation`.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory

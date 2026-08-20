@@ -180,10 +180,12 @@ deps:
     mayDependOn:
       - api
       - batch-saturation-core
+      - device-class
       - evidence-core
       - metric-core
       - profile-derivation
       - profiler-app
+      - profiling-run
       - transition-cost-core
   transition-cost-kube:
     mayDependOn:

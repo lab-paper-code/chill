@@ -11,10 +11,15 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // IdleBaselineReader resolves one admitted target-mode idle aggregate.
@@ -29,25 +34,37 @@ type IdleBaselineReader interface {
 // Preparer resolves the external facts needed before materializing transition
 // observation and actuation objects.
 type Preparer struct {
-	metrics   profiler.MetricSourceResolver
-	baselines IdleBaselineReader
+	deviceClasses client.Reader
+	nodes         profiler.NodeResolver
+	metrics       profiler.MetricSourceResolver
+	baselines     IdleBaselineReader
+	actuation     profiler.ActuationPolicyResolver
 }
 
 func NewPreparer(
+	deviceClasses client.Reader,
+	nodes profiler.NodeResolver,
 	metrics profiler.MetricSourceResolver,
 	baselines IdleBaselineReader,
+	actuation profiler.ActuationPolicyResolver,
 ) (*Preparer, error) {
-	if metrics == nil || baselines == nil {
-		return nil, errors.New("transition metric source and idle baseline reader are required")
+	if deviceClasses == nil || nodes == nil || metrics == nil || baselines == nil || actuation == nil {
+		return nil, errors.New(
+			"DeviceClass reader, Node, transition metric source, idle baseline, and actuation-policy resolvers are required",
+		)
 	}
-	return &Preparer{metrics: metrics, baselines: baselines}, nil
+	return &Preparer{
+		deviceClasses: deviceClasses, nodes: nodes, metrics: metrics, baselines: baselines, actuation: actuation,
+	}, nil
 }
 
 // PreparedMeasurement contains only the selections consumed by the next Job
 // and NodeActuation materialization boundary.
 type PreparedMeasurement struct {
 	Namespace                  string
-	TargetNode                 string
+	TargetNode                 edgev1alpha1.ProfilingRunObjectReference
+	DeviceClass                string
+	ExecutionPath              string
 	ServingService             string
 	ServingContainer           string
 	PowerSource                metricobserver.SourceIdentity
@@ -59,12 +76,13 @@ type PreparedMeasurement struct {
 	Directions                 [2]PreparedDirection
 }
 
-// PreparedDirection is one ordered transition with its target-mode baseline
-// and the configured actuation-policy name needed to reach that target.
+// PreparedDirection is one ordered transition with its target-mode baseline,
+// typed actuator target, and frozen configured policy needed to reach it.
 type PreparedDirection struct {
 	FrozenContract           transitioncost.FrozenContract
 	TargetIdleBaselineResult batchsaturation.StoredObjectReference
-	ActuationPolicy          string
+	Actuator                 edgev1alpha1.PowerModeActuator
+	ActuationPolicy          profiler.FrozenActuationPolicy
 }
 
 type preparedObservation struct {
@@ -85,6 +103,66 @@ func (p *Preparer) Prepare(
 	observation, err := prepareObservation(measurement.Spec.ObservationPolicy)
 	if err != nil {
 		return PreparedMeasurement{}, err
+	}
+
+	class := &edgev1alpha1.DeviceClass{}
+	if err := p.deviceClasses.Get(
+		ctx,
+		types.NamespacedName{Name: measurement.Spec.DeviceClass},
+		class,
+	); err != nil {
+		return PreparedMeasurement{}, fmt.Errorf("get DeviceClass %q: %w", measurement.Spec.DeviceClass, err)
+	}
+	if errs := deviceclass.ValidatePowerModes(class.Spec.PowerModes, field.NewPath("powerModes")); len(errs) > 0 {
+		return PreparedMeasurement{}, fmt.Errorf(
+			"validate DeviceClass %q power modes: %w",
+			measurement.Spec.DeviceClass,
+			errs.ToAggregate(),
+		)
+	}
+	var modes [2]edgev1alpha1.PowerMode
+	var policies [2]profiler.FrozenActuationPolicy
+	for index, requested := range measurement.Spec.Modes {
+		mode, found := selectPowerMode(class.Spec.PowerModes, requested.PowerMode)
+		if !found {
+			return PreparedMeasurement{}, fmt.Errorf(
+				"DeviceClass %q does not declare power mode %q",
+				measurement.Spec.DeviceClass,
+				requested.PowerMode,
+			)
+		}
+		modes[index] = mode
+	}
+	node, err := p.nodes.ResolveNode(ctx, profiler.NodeSelection{
+		Name: measurement.Spec.TargetNode, DeviceArchitecture: class.Spec.Architecture,
+		DeviceClassSelector: maps.Clone(class.Spec.NodeSelector),
+	})
+	if err != nil {
+		return PreparedMeasurement{}, fmt.Errorf("resolve transition target Node: %w", err)
+	}
+	for index, mode := range modes {
+		selection := profiler.ActuationSelection{
+			DeviceClass: measurement.Spec.DeviceClass,
+			PowerMode:   mode.Name,
+			Actuator:    projectActuationTarget(mode.Actuator),
+		}
+		policy, err := p.actuation.ResolveActuationPolicy(ctx, selection)
+		if err != nil {
+			return PreparedMeasurement{}, fmt.Errorf(
+				"resolve actuation policy for power mode %q: %w",
+				mode.Name,
+				err,
+			)
+		}
+		if policy.Policy.Name != measurement.Spec.Modes[index].ActuationPolicy {
+			return PreparedMeasurement{}, fmt.Errorf(
+				"resolved actuation policy %q does not match configured policy %q for power mode %q",
+				policy.Policy.Name,
+				measurement.Spec.Modes[index].ActuationPolicy,
+				mode.Name,
+			)
+		}
+		policies[index] = policy
 	}
 
 	resolvedMetrics, err := p.metrics.ResolveMetricSource(ctx, measurement.Spec.TargetNode)
@@ -130,18 +208,48 @@ func (p *Preparer) Prepare(
 				},
 			},
 			TargetIdleBaselineResult: reference,
-			ActuationPolicy:          targetMode.ActuationPolicy,
+			Actuator:                 *modes[targetIndex].Actuator.DeepCopy(),
+			ActuationPolicy:          policies[targetIndex],
 		}
 	}
 
 	return PreparedMeasurement{
-		Namespace: measurement.Namespace, TargetNode: measurement.Spec.TargetNode,
+		Namespace:   measurement.Namespace,
+		TargetNode:  edgev1alpha1.ProfilingRunObjectReference{Name: node.Name, UID: node.UID},
+		DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 		ServingService: measurement.Spec.ServingService, ServingContainer: measurement.Spec.ServingContainer,
 		PowerSource: powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,
 		BoundaryMappingUncertainty: observation.boundaryMappingUncertainty, Policy: observation.policy,
 		Directions: [2]PreparedDirection{direction(0, 1), direction(1, 0)},
 	}, nil
+}
+
+func selectPowerMode(modes []edgev1alpha1.PowerMode, name string) (edgev1alpha1.PowerMode, bool) {
+	for index := range modes {
+		if modes[index].Name == name {
+			return *modes[index].DeepCopy(), true
+		}
+	}
+	return edgev1alpha1.PowerMode{}, false
+}
+
+func projectActuationTarget(actuator edgev1alpha1.PowerModeActuator) profilingrun.ActuatorTarget {
+	projected := profilingrun.ActuatorTarget{Kind: string(actuator.Kind)}
+	if actuator.JetsonNVPModel != nil {
+		projected.JetsonNVPModel = &profilingrun.JetsonNVPModelTarget{ID: actuator.JetsonNVPModel.ID}
+	}
+	if actuator.NvidiaLockedGPUClock != nil {
+		projected.NvidiaLockedGPUClock = &profilingrun.NvidiaLockedGPUClockTarget{
+			MinMHz: actuator.NvidiaLockedGPUClock.MinMHz,
+			MaxMHz: actuator.NvidiaLockedGPUClock.MaxMHz,
+		}
+		if actuator.NvidiaLockedGPUClock.Mode != nil {
+			mode := *actuator.NvidiaLockedGPUClock.Mode
+			projected.NvidiaLockedGPUClock.Mode = &mode
+		}
+	}
+	return projected
 }
 
 func validatePreparationInput(measurement *edgev1alpha1.PowerModeTransitionCost) error {
