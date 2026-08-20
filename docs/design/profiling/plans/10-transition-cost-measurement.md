@@ -251,6 +251,11 @@ Raw evidence retains:
 - the mapping used to place both window boundaries in the meter trace; and
 - the measured upper bound on boundary-alignment error.
 
+`boundaryMappingUncertaintyMilliseconds` freezes that Gate 0 measured and
+selected marker-transfer upper bound. It must cover the frozen fact-poll
+interval. `maximumBoundaryUncertaintyMilliseconds` is a separate observation
+acceptance ceiling; it does not supply or replace the measured bound.
+
 If the selected path cannot bound that error tightly enough for the frozen
 sampling and integration policy, implementation stops at the feasibility gate.
 It does not invent an offset, assume host clocks are identical, or widen the

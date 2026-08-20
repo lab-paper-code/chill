@@ -147,6 +147,20 @@ spec:
                   PowerModeTransitionCostObservationPolicySpec contains measurement policy
                   only. Meter source and series selection are resolved outside this API.
                 properties:
+                  boundaryMappingUncertaintyMilliseconds:
+                    description: |-
+                      BoundaryMappingUncertaintyMilliseconds is the marker-transfer upper bound
+                      measured and selected at Gate 0. MaximumBoundaryUncertaintyMilliseconds is
+                      the separate observation-acceptance ceiling.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  factPollIntervalMilliseconds:
+                    description: FactPollIntervalMilliseconds fixes the Kubernetes
+                      fact-observation cadence.
+                    format: int32
+                    minimum: 1
+                    type: integer
                   maximumBoundaryDistanceMilliseconds:
                     format: int32
                     minimum: 0
@@ -181,6 +195,8 @@ spec:
                     minimum: 1
                     type: integer
                 required:
+                - boundaryMappingUncertaintyMilliseconds
+                - factPollIntervalMilliseconds
                 - maximumBoundaryDistanceMilliseconds
                 - maximumBoundaryUncertaintyMilliseconds
                 - maximumReadyObservationDelayMilliseconds
@@ -193,6 +209,11 @@ spec:
                 x-kubernetes-validations:
                 - message: powerTimeoutMilliseconds must be less than powerIntervalMilliseconds
                   rule: self.powerTimeoutMilliseconds < self.powerIntervalMilliseconds
+                - message: boundaryMappingUncertaintyMilliseconds must cover factPollIntervalMilliseconds
+                  rule: self.boundaryMappingUncertaintyMilliseconds >= self.factPollIntervalMilliseconds
+                - message: boundaryMappingUncertaintyMilliseconds must not exceed
+                    maximumBoundaryUncertaintyMilliseconds
+                  rule: self.boundaryMappingUncertaintyMilliseconds <= self.maximumBoundaryUncertaintyMilliseconds
               servingContainer:
                 description: ServingContainer names the serving container whose process
                   survival is observed.

@@ -87,6 +87,8 @@ type PowerModeTransitionCostModeSpec struct {
 // PowerModeTransitionCostObservationPolicySpec contains measurement policy
 // only. Meter source and series selection are resolved outside this API.
 // +kubebuilder:validation:XValidation:rule="self.powerTimeoutMilliseconds < self.powerIntervalMilliseconds",message="powerTimeoutMilliseconds must be less than powerIntervalMilliseconds"
+// +kubebuilder:validation:XValidation:rule="self.boundaryMappingUncertaintyMilliseconds >= self.factPollIntervalMilliseconds",message="boundaryMappingUncertaintyMilliseconds must cover factPollIntervalMilliseconds"
+// +kubebuilder:validation:XValidation:rule="self.boundaryMappingUncertaintyMilliseconds <= self.maximumBoundaryUncertaintyMilliseconds",message="boundaryMappingUncertaintyMilliseconds must not exceed maximumBoundaryUncertaintyMilliseconds"
 type PowerModeTransitionCostObservationPolicySpec struct {
 	// +kubebuilder:validation:Minimum=1
 	PowerIntervalMilliseconds int32 `json:"powerIntervalMilliseconds"`
@@ -96,6 +98,10 @@ type PowerModeTransitionCostObservationPolicySpec struct {
 
 	// +kubebuilder:validation:Minimum=1
 	MaximumTransitionDurationSeconds int32 `json:"maximumTransitionDurationSeconds"`
+
+	// FactPollIntervalMilliseconds fixes the Kubernetes fact-observation cadence.
+	// +kubebuilder:validation:Minimum=1
+	FactPollIntervalMilliseconds int32 `json:"factPollIntervalMilliseconds"`
 
 	// +kubebuilder:validation:Minimum=0
 	MaximumBoundaryDistanceMilliseconds int32 `json:"maximumBoundaryDistanceMilliseconds"`
@@ -109,6 +115,12 @@ type PowerModeTransitionCostObservationPolicySpec struct {
 
 	// +kubebuilder:validation:Minimum=0
 	MaximumBoundaryUncertaintyMilliseconds int32 `json:"maximumBoundaryUncertaintyMilliseconds"`
+
+	// BoundaryMappingUncertaintyMilliseconds is the marker-transfer upper bound
+	// measured and selected at Gate 0. MaximumBoundaryUncertaintyMilliseconds is
+	// the separate observation-acceptance ceiling.
+	// +kubebuilder:validation:Minimum=0
+	BoundaryMappingUncertaintyMilliseconds int32 `json:"boundaryMappingUncertaintyMilliseconds"`
 
 	// +kubebuilder:validation:Minimum=1
 	MaximumReadyObservationDelayMilliseconds int32 `json:"maximumReadyObservationDelayMilliseconds"`
