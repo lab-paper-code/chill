@@ -23,27 +23,19 @@ Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchSaturation` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its frozen state.
-Plan 10 is approved for implementation to measure both directed transitions
-between one selected pair of device power modes. One
-`PowerModeTransitionCost` directly owns one off-target observer Job per attempt
-and sequential `NodeActuation` objects, with at most one pair active; each
-transition window produces both `tau` and `eta` and records whether serving
-survived. The approval does not select a live target or authorize an unbounded
-restart or cluster mutation.
-Its controller preparation boundary now reads one DeviceClass, resolves the
-exact target Node name and UID, and freezes each selected actuator and its
-configured actuation policy alongside the metric source, observation policy,
-and validated target-mode idle baseline. The prepared pair retains the
-DeviceClass, execution path, and off-target observer placement in one immutable
-ConfigMap. The registered Profiler controller then alternates one observer Job
-and `NodeActuation` at a time, finalizes their immutable evidence, and writes the
-terminal two-direction result. Helm now renders its static placement, bounds,
-and least-privilege identities, but deployment and live transition evidence
-remain unverified.
-The static Run metric source now freezes an exact hostname-filtered central
-power series and a separate local thermal endpoint; one observation tick must
-read both under the same bounded context. This configuration is rendered but
-has not produced a new admitted live idle baseline.
+Plan 10 is implemented and live-verified for the exact `jetsono` /
+`mobilenet-v2-050` / `MAXN` and `MODE_15W` state pair. Two independent current
+idle-baseline results provide the target-state `P_idle` values. A bounded Gate
+0 restart trace retained 104 power samples without a failed read, and one
+Complete `PowerModeTransitionCost` retained five Accepted observations in each
+direction and its terminal two-row `tau`/`eta` table. The registered Profiler
+controller owns one off-target observer Job and sequential `NodeActuation`
+objects per attempt, with at most one attempt active, and writes the immutable
+raw, finalized, and terminal result evidence.
+The result is evidence only for that exact device, model, state pair, actuator,
+meter, readiness witness, and protocol. All ten observations recorded
+`servingSurvived=false`; the measurement does not establish a target-only cost,
+another device's result, or scheduler behavior.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory
@@ -353,9 +345,9 @@ the configured admitted-count target or attempt limit and writes a Complete
 immutable aggregate containing the exact measurement state, derived
 `IdleBaseline`, and accepted final-evidence references. An Insufficient request
 closes only in compact status and does not fabricate an aggregate result. The
-transition-cost controller consumes only this current Complete result, requires
-its exact measurement state, and freezes its mean and full stored-result
-reference into the enclosing preparation.
+transition-cost preparation accepts only a current Complete result whose stored
+measurement state matches the selected direction, then freezes its mean and
+full stored-result reference.
 Each baseline request also selects a required whole-core CPU quota. Its child
 Run transports that selection to preparation, which freezes it in the existing
 CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol

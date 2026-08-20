@@ -14,14 +14,16 @@
 
 ## Status
 
-Approved for implementation. This approval does not select a live target or
-authorize an unbounded Node restart, image publication, or cluster mutation.
+Implemented and live-verified for one bounded, exact `jetsono` /
+`mobilenet-v2-050` / `MAXN` and `MODE_15W` state pair. This result does not
+authorize an unbounded Node restart, image publication, or further cluster
+mutation.
 
 The Kubernetes-independent worker core, immutable raw-evidence write, minimal
 `PowerModeTransitionCost` API, and polling Kubernetes fact observer now exist.
 The controller preparation boundary resolves the selected transition-power
 source and both target-mode baselines into the two ordered directions needed by
-future attempt-scoped observation Jobs. One current-only immutable ConfigMap
+the attempt-scoped observation Jobs. One current-only immutable ConfigMap
 retains that enclosing preparation and the selected off-target observer Node
 before execution. Job projection and the repeatable one-attempt materialization
 operation now extend through strict raw-evidence finalization into one immutable,
@@ -30,8 +32,8 @@ alternating direction prefix, advances only its first missing attempt, and deriv
 the complete two-row table, writes one terminal result, and publishes compact
 status. `cmd/profiler` registers that complete lifecycle with the existing
 resolvers and Evidence Store; Helm supplies its off-target placement, operational
-bounds, and least-privilege identities. Deployment and live transition
-verification remain incomplete.
+bounds, and least-privilege identities. Gate 0 and the live vertical both
+completed with current immutable evidence, as recorded below.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -142,9 +144,10 @@ stored measurement state fixes the target Node, ModelSpec, DeviceClass,
 execution path, and power mode. The execution path is a frozen experimental
 compatibility condition for reusing that aggregate; it does not add a new axis
 to the state-pair equation above. The transition-cost baseline source accepts
-only the current independent result schema, requires its exact stored
-measurement state, and freezes the stored mean and full result reference. It
-does not read `BatchSaturation` results or support a compatibility reader.
+only the current independent result schema. It matches the stored measurement
+state to the selected target and freezes the stored mean and full result
+reference. It does not read `BatchSaturation` results or support a
+compatibility reader.
 
 The specification requires `tau`, `eta`, and the target-state idle term for its
 transition-cost equation but does not prescribe this subtraction algorithm.
@@ -413,29 +416,37 @@ unknown hostname returns HTTP 200 with an empty body. The Prometheus target is
 up, per-device request failures are isolated by the Gateway, and the existing
 exporter DaemonSet image and generation are unchanged. The old per-Node
 WebSocket servers have no connected devices and remain outside this path.
-These checks do not prove restart-spanning continuity. Gate 0 remains
-incomplete until a bounded restart-required transition trace shows that the
-exact selected series continues to be collected while the target Node is
-unavailable and returns.
+Gate 0 is complete for the selected path. Logical store
+`chill-evidence-store` retains
+`gate0/plan10-maxn-to-mode15w-001/raw.json` at schema
+`chill.dacs.io/transition-cost-raw-observation.v1alpha3` and 11,784 bytes. It
+contains 104 power samples, zero failed reads, and a maximum sample gap of
+1,018.508 ms across the restart-required transition. The three
+last-absent/first-present brackets are 259.327 ms, 259.551 ms, and 268.525 ms;
+the maximum bracket width rounds up to a measured mapping uncertainty of
+269 ms. The frozen Gate 0 acceptance ceiling was 1,000 ms. This evidence
+establishes restart-spanning meter continuity and marker-transfer uncertainty
+only for the selected path.
 
-After the ORT 1.27.0 rollout, a fresh `MODE_15W` model-loaded-idle child Run
-successfully imported the model but the runner rejected its frozen CPU
-contract: Node allocatable and the ORT intra-op count were 12, while the
-serving Pod's actual online CPUs and scheduler affinity were both four. The
-failed baseline request was deleted to stop retries. This is an execution-
-protocol mismatch, not a `PowerModeTransitionCost` measurement-state axis.
-Each independent `ModelLoadedIdleBaseline` therefore selects its own required
-whole-core CPU quota, and each child Run freezes that selection in its CPU
-intent and evidence. Neither code nor the transition-cost baseline reader
-requires the two modes to share a quota. Both `MAXN` and `MODE_15W` baselines
-must be measured again under their configured execution contracts; the older
-ORT 1.23.2 `MAXN` result is not current compatible evidence.
+The target-idle terms are two independent current immutable results:
+
+- `MODE_15W`: `chill-evidence-store` key
+  `model-loaded-idle-baselines/ee0a978e-799b-492a-a32b-e72efaa659a6/result.json`,
+  schema `chill.dacs.io/model-loaded-idle-baseline-result.v1alpha1`, size 3,843
+  bytes, 3/3 Accepted Runs, and mean `8.103891925539743 W`;
+- `MAXN`: `chill-evidence-store` key
+  `model-loaded-idle-baselines/5fa4c6b1-7aae-40f2-b242-1fa7fee74900/result.json`,
+  schema `chill.dacs.io/model-loaded-idle-baseline-result.v1alpha1`, size 3,841
+  bytes, 3/3 Accepted Runs, and mean `8.518397697661637 W`.
+
+Each baseline freezes its own configured whole-core CPU quota in child Run
+intent and evidence. CPU quota remains an execution-protocol condition, not a
+`PowerModeTransitionCost` measurement-state axis or a cross-mode equality
+requirement.
 
 The model-loaded HTTP readiness witness `plan10-serving-jetsono` is `Ready`, and
 Service `chill-serving-jetsono` has exactly one ready endpoint. This is not an
 inference or SLO server; it witnesses only Pod readiness and process continuity.
-Gate 0 remains incomplete because there is no current admitted idle baseline
-for either mode and no restart-required trace.
 
 ### Unit 1: pure observation and derivation contracts
 
@@ -478,8 +489,9 @@ finalizes one attempt at a time, and stops at the accepted-count target or froze
 attempt limit. A current-only terminal result writer retains the exact two-row
 table for a complete measurement, or the terminal reason and per-direction
 finalized-evidence progress for an insufficient or failed measurement. Compact
-status points to that terminal object; rendered configuration and RBAC do not
-constitute deployment or live measurement proof.
+status points to that terminal object. Rendered configuration and RBAC alone
+are not measurement proof; the current live authority is the immutable result
+and its referenced raw and finalized evidence recorded under Unit 4.
 
 ### Unit 3: complete measurement control path
 
@@ -517,19 +529,43 @@ later work.
 
 ### Unit 4: live vertical verification
 
-With explicit live-test authorization:
+Complete for the selected state pair. `PowerModeTransitionCost`
+`plan10-mode15w-maxn-transition-cost`, UID
+`ee53988c-6c76-4ddb-b2c3-8f8577b9f316`, reached Complete. Logical store
+`chill-evidence-store` retains its terminal result at
+`power-mode-transition-costs/ee53988c-6c76-4ddb-b2c3-8f8577b9f316/result.json`
+with schema `chill.dacs.io/transition-cost-measurement-result.v1alpha2` and size
+3,473 bytes. Its immutable Evidence Store set contains exactly 21 objects: ten
+`chill.dacs.io/transition-cost-raw-observation.v1alpha3` raw observations, ten
+`chill.dacs.io/transition-cost-finalized-observation.v1alpha2` finalized
+observations, and the terminal result. All ten attempts were Accepted, with
+zero power-read failures.
 
-1. create one `PowerModeTransitionCost` for the exact state pair proven
-   feasible by Gate 0;
-2. capture observer placement, meter continuity, every owned `NodeActuation`,
-   raw evidence, finalized transition evidence, and final result evidence; and
-3. independently reproduce each `startedAt`, `completedAt`, `tau`, wall
-   joules, `eta`, serving-survival value, and both directed table entries from
-   the immutable objects.
+The directed result table is:
 
-The live result proves only that exact device, model, state pair, actuator, and
-measurement protocol. It does not establish target-only cost or another
-device's result.
+| direction | attempts / Accepted | tau mean (ms) | tau SD (ms) | tau range (ms) | maximum uncertainty (ms) |
+|---|---:|---:|---:|---:|---:|
+| `MAXN -> MODE_15W` | 5 / 5 | 96573.6072038 | 30063.992603523282 | 71348.133239 .. 129810.896446 | 268 |
+| `MODE_15W -> MAXN` | 5 / 5 | 90903.1115796 | 32313.14056845471 | 66766.964844 .. 126591.89009 | 324 |
+
+| direction | eta mean (J) | eta SD (J) | eta range (J) | serving survived |
+|---|---:|---:|---:|---:|
+| `MAXN -> MODE_15W` | 817.9371549906379 | 7.561697260541281 | 812.0954294140929 .. 830.317627253934 | 0 / 5 |
+| `MODE_15W -> MAXN` | 832.1367824432166 | 12.947718118075997 | 819.5018054740543 .. 852.6752600725398 | 0 / 5 |
+
+The readiness delay acceptance ceiling was frozen at 122,250 ms: the declared
+120-second startup probe bound plus 2 seconds to the first readiness check and
+250 ms for the observer poll. KubeEdge/API propagation has no declared SLA, so
+this is a predeclared observation-rejection ceiling, not a guaranteed transport
+upper bound. Successful finalized observations recorded readiness delays from
+1.236 ms through 3,654.880 ms.
+
+Independent recomputation from the ten finalized objects reproduced both table
+rows and all listed statistics exactly. This proves only the exact `jetsono`
+device, `mobilenet-v2-050` model, `MAXN`/`MODE_15W` state pair, actuator, meter,
+readiness witness, and frozen protocol. All ten observations recorded
+`servingSurvived=false`. The result does not establish target-only cost, another
+device's result, serving continuity, or scheduler behavior.
 
 ## Verification gates
 
@@ -545,9 +581,10 @@ applicable repository gates:
   subtraction, request-readiness completion, serving interruption, sample-gap
   rejection, boundary uncertainty, and observation-before-transition ordering.
 
-Rendered configuration and offline executor-loss tests do not prove off-target
-placement, physical meter continuity, restart survival, evidence persistence,
-or a measured transition cost. Those claims require captured live evidence.
+Rendered configuration and offline executor-loss tests alone do not prove
+off-target placement, physical meter continuity, restart survival, evidence
+persistence, or a measured transition cost. The captured Unit 4 evidence
+supports those claims only for its exact frozen scope.
 
 ## Explicit exclusions
 
@@ -574,6 +611,6 @@ or a measured transition cost. Those claims require captured live evidence.
 3. Is admitted target-state idle evidence the accepted baseline for the signed
    `eta` estimator?
 4. Does Gate 0 bound restart-independent meter continuity and boundary timing
-   before production APIs are added?
+   for the selected live path?
 5. Does the repeated experiment produce the state-pair table needed by the
    research specification without prematurely publishing scheduler inputs?
