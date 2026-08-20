@@ -21,8 +21,10 @@ The Kubernetes-independent worker core, immutable raw-evidence write, minimal
 `PowerModeTransitionCost` API, and polling Kubernetes fact observer now exist.
 The controller preparation boundary resolves the selected transition-power
 source and both target-mode baselines into the two ordered directions needed by
-future attempt-scoped observation Jobs. Job projection exists, while Job and
-`NodeActuation` reconciliation and live verification remain incomplete.
+future attempt-scoped observation Jobs. One current-only immutable ConfigMap
+retains that enclosing preparation and the selected off-target observer Node
+before execution. Job projection exists, while preparation-record wiring, Job
+and `NodeActuation` reconciliation, and live verification remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation

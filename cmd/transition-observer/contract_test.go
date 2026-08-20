@@ -78,7 +78,8 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	}
 	prepared := transitioncontroller.PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
-		ServingService: "serving", ServingContainer: "runtime",
+		ObserverNodeName: "observer",
+		ServingService:   "serving", ServingContainer: "runtime",
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://metrics/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device"},
@@ -102,8 +103,8 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 		},
 		transitioncontroller.AttemptJobOptions{
 			ObserverImage: "registry/transition-observer@sha256:fixture", ImagePullPolicy: corev1.PullIfNotPresent,
-			ServiceAccountName: "transition-observer", ObserverNodeName: "observer",
-			ActiveDeadline: 6 * time.Second, CoordinationBytes: 1024, WorkspaceBytes: 4096,
+			ServiceAccountName: "transition-observer",
+			ActiveDeadline:     6 * time.Second, CoordinationBytes: 1024, WorkspaceBytes: 4096,
 		},
 		scheme,
 	)

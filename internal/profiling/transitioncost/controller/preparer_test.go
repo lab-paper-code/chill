@@ -41,9 +41,12 @@ func TestNewPreparerRequiresEveryResolver(t *testing.T) {
 		{name: "actuation-policy resolver", catalogs: catalogs, nodes: nodes, metrics: metrics, baselines: baselines},
 	}
 	for _, test := range tests {
-		if _, err := NewPreparer(test.catalogs, test.nodes, test.metrics, test.baselines, test.actuation); err == nil {
+		if _, err := NewPreparer(test.catalogs, test.nodes, test.metrics, test.baselines, test.actuation, "observer"); err == nil {
 			t.Fatalf("nil %s was accepted", test.name)
 		}
+	}
+	if _, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation, "NOT_A_NODE"); err == nil {
+		t.Fatal("invalid observer Node name was accepted")
 	}
 }
 
@@ -168,6 +171,7 @@ func assertPreparedSelection(
 	t.Helper()
 	if prepared.Namespace != measurement.Namespace ||
 		prepared.TargetNode != (edgev1alpha1.ProfilingRunObjectReference{Name: measurement.Spec.TargetNode, UID: "node-uid"}) ||
+		prepared.ObserverNodeName != "observer" ||
 		prepared.DeviceClass != measurement.Spec.DeviceClass ||
 		prepared.ExecutionPath != measurement.Spec.ExecutionPath ||
 		prepared.ServingService != measurement.Spec.ServingService ||
@@ -240,6 +244,26 @@ func TestPreparerStopsBeforeObservationResolutionWhenTransitionMaterialFails(t *
 					err, catalogs.calls, nodes.calls, actuation.calls, metrics.calls, len(baselines.calls))
 			}
 		})
+	}
+}
+
+func TestPreparerRejectsTargetLocalObserverBeforeResolution(t *testing.T) {
+	catalogs := newRecordingDeviceClassReader(validDeviceClass())
+	nodes := validNodeResolver()
+	metrics := &recordingTransitionMetricResolver{}
+	baselines := &recordingIdleBaselineReader{}
+	actuation := validActuationPolicyResolver()
+	preparer, err := NewPreparer(
+		catalogs, nodes, metrics, baselines, actuation, validTransitionMeasurement().Spec.TargetNode,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparer.Prepare(context.Background(), validTransitionMeasurement()); err == nil {
+		t.Fatal("target-local observer was accepted")
+	}
+	if catalogs.calls != 0 || nodes.calls != 0 || metrics.calls != 0 || len(baselines.calls) != 0 || actuation.calls != 0 {
+		t.Fatal("target-local observer reached an external resolver")
 	}
 }
 
@@ -406,7 +430,7 @@ func mustPreparerWith(
 	actuation profiler.ActuationPolicyResolver,
 ) *Preparer {
 	t.Helper()
-	preparer, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation)
+	preparer, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation, "observer")
 	if err != nil {
 		t.Fatal(err)
 	}

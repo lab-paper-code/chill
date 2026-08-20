@@ -18,6 +18,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -39,6 +40,7 @@ type Preparer struct {
 	metrics       profiler.MetricSourceResolver
 	baselines     IdleBaselineReader
 	actuation     profiler.ActuationPolicyResolver
+	observerNode  string
 }
 
 func NewPreparer(
@@ -47,14 +49,19 @@ func NewPreparer(
 	metrics profiler.MetricSourceResolver,
 	baselines IdleBaselineReader,
 	actuation profiler.ActuationPolicyResolver,
+	observerNode string,
 ) (*Preparer, error) {
 	if deviceClasses == nil || nodes == nil || metrics == nil || baselines == nil || actuation == nil {
 		return nil, errors.New(
 			"DeviceClass reader, Node, transition metric source, idle baseline, and actuation-policy resolvers are required",
 		)
 	}
+	if errs := validation.IsDNS1123Subdomain(observerNode); len(errs) > 0 {
+		return nil, fmt.Errorf("transition observer Node name is invalid: %s", strings.Join(errs, "; "))
+	}
 	return &Preparer{
 		deviceClasses: deviceClasses, nodes: nodes, metrics: metrics, baselines: baselines, actuation: actuation,
+		observerNode: observerNode,
 	}, nil
 }
 
@@ -63,6 +70,7 @@ func NewPreparer(
 type PreparedMeasurement struct {
 	Namespace                  string
 	TargetNode                 edgev1alpha1.ProfilingRunObjectReference
+	ObserverNodeName           string
 	DeviceClass                string
 	ExecutionPath              string
 	ServingService             string
@@ -99,6 +107,9 @@ func (p *Preparer) Prepare(
 ) (PreparedMeasurement, error) {
 	if err := validatePreparationInput(measurement); err != nil {
 		return PreparedMeasurement{}, err
+	}
+	if p.observerNode == measurement.Spec.TargetNode {
+		return PreparedMeasurement{}, errors.New("transition observer must run away from the target Node")
 	}
 	observation, err := prepareObservation(measurement.Spec.ObservationPolicy)
 	if err != nil {
@@ -214,9 +225,10 @@ func (p *Preparer) Prepare(
 	}
 
 	return PreparedMeasurement{
-		Namespace:   measurement.Namespace,
-		TargetNode:  edgev1alpha1.ProfilingRunObjectReference{Name: node.Name, UID: node.UID},
-		DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
+		Namespace:        measurement.Namespace,
+		TargetNode:       edgev1alpha1.ProfilingRunObjectReference{Name: node.Name, UID: node.UID},
+		ObserverNodeName: p.observerNode,
+		DeviceClass:      measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 		ServingService: measurement.Spec.ServingService, ServingContainer: measurement.Spec.ServingContainer,
 		PowerSource: powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,

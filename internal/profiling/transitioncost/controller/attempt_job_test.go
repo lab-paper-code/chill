@@ -30,7 +30,7 @@ func TestBuildAttemptJobProjectsOneOffTargetAttempt(t *testing.T) {
 	}
 	assertAttemptJobIdentityAndBounds(t, job, request)
 	pod := job.Spec.Template.Spec
-	assertAttemptPod(t, pod, options)
+	assertAttemptPod(t, pod, request, options)
 	container := pod.Containers[0]
 	assertAttemptContainer(t, container, options)
 	payload := envValue(container.Env, transitionAttemptJSONEnvName)
@@ -72,11 +72,11 @@ func assertAttemptJobIdentityAndBounds(
 	}
 }
 
-func assertAttemptPod(t *testing.T, pod corev1.PodSpec, options AttemptJobOptions) {
+func assertAttemptPod(t *testing.T, pod corev1.PodSpec, request AttemptJobRequest, options AttemptJobOptions) {
 	t.Helper()
 	if pod.RestartPolicy != corev1.RestartPolicyNever || pod.ServiceAccountName != options.ServiceAccountName ||
 		pod.AutomountServiceAccountToken == nil || !*pod.AutomountServiceAccountToken ||
-		pod.NodeSelector[corev1.LabelHostname] != options.ObserverNodeName ||
+		pod.NodeSelector[corev1.LabelHostname] != request.Prepared.ObserverNodeName ||
 		len(pod.Containers) != 1 || len(pod.InitContainers) != 0 || len(pod.Volumes) != 2 {
 		t.Fatalf("attempt Pod = %#v", pod)
 	}
@@ -134,9 +134,6 @@ func TestBuildAttemptJobRejectsInvalidOperationalSelection(t *testing.T) {
 		{name: "store mismatch", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
 			request.RawLocation.Store = "other"
 		}},
-		{name: "target-local observer", mutate: func(request *AttemptJobRequest, options *AttemptJobOptions) {
-			options.ObserverNodeName = request.Prepared.TargetNode.Name
-		}},
 		{name: "short active deadline", mutate: func(request *AttemptJobRequest, options *AttemptJobOptions) {
 			options.ActiveDeadline = request.Prepared.PowerRequest.Duration
 		}},
@@ -167,7 +164,8 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 	directions[1].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-b", Model: "model", PowerMode: "high"}
 	prepared := PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
-		ServingService: "serving", ServingContainer: "runtime",
+		ObserverNodeName: "observer",
+		ServingService:   "serving", ServingContainer: "runtime",
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://meter/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device-b"},
@@ -190,8 +188,8 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 			},
 		}, AttemptJobOptions{
 			ObserverImage: "registry/transition-observer@sha256:fixture", ImagePullPolicy: corev1.PullIfNotPresent,
-			ServiceAccountName: "transition-observer", ObserverNodeName: "observer",
-			ActiveDeadline: 6100 * time.Millisecond, CoordinationBytes: 1024, WorkspaceBytes: 4096,
+			ServiceAccountName: "transition-observer",
+			ActiveDeadline:     6100 * time.Millisecond, CoordinationBytes: 1024, WorkspaceBytes: 4096,
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m")},
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},

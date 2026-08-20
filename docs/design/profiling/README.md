@@ -34,7 +34,9 @@ Its controller preparation boundary now reads one DeviceClass, resolves the
 exact target Node name and UID, and freezes each selected actuator and its
 configured actuation policy alongside the metric source, observation policy,
 and validated target-mode idle baseline. The prepared pair retains the
-DeviceClass and execution path, but does not create a Job or `NodeActuation`.
+DeviceClass, execution path, and off-target observer placement in one immutable
+ConfigMap, but does not create a Job or `NodeActuation`; controller wiring
+remains incomplete.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory

@@ -53,7 +53,6 @@ type AttemptJobOptions struct {
 	ObserverImage      string
 	ImagePullPolicy    corev1.PullPolicy
 	ServiceAccountName string
-	ObserverNodeName   string
 	ActiveDeadline     time.Duration
 	CoordinationBytes  int64
 	WorkspaceBytes     int64
@@ -134,7 +133,7 @@ func BuildAttemptJob(
 					ServiceAccountName:           options.ServiceAccountName,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					NodeSelector: map[string]string{
-						corev1.LabelHostname: options.ObserverNodeName,
+						corev1.LabelHostname: request.Prepared.ObserverNodeName,
 					},
 					Tolerations:     cloneTolerations(options.Tolerations),
 					SecurityContext: restrictedAttemptPodSecurityContext(),
@@ -196,16 +195,13 @@ func validateAttemptJobRequest(
 			return PreparedDirection{}, fmt.Errorf("%s must be an exact millisecond duration", name)
 		}
 	}
-	if !clean(options.ObserverImage) || !clean(options.ServiceAccountName) || !clean(options.ObserverNodeName) {
-		return PreparedDirection{}, errors.New("observer image, ServiceAccount, and Node name are required")
+	if !clean(options.ObserverImage) || !clean(options.ServiceAccountName) {
+		return PreparedDirection{}, errors.New("observer image and ServiceAccount are required")
 	}
 	switch options.ImagePullPolicy {
 	case corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
 	default:
 		return PreparedDirection{}, errors.New("observer image pull policy is invalid")
-	}
-	if options.ObserverNodeName == request.Prepared.TargetNode.Name {
-		return PreparedDirection{}, errors.New("transition observer must run away from the target Node")
 	}
 	if options.ActiveDeadline <= request.Prepared.PowerRequest.Duration {
 		return PreparedDirection{}, errors.New("Job active deadline must outlast the power observation")
