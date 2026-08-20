@@ -54,11 +54,8 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 	measurement := validTransitionMeasurement()
 	labels := map[string]string{"hostname": "meter-target", "device_type": testDeviceType}
 	metrics := &recordingTransitionMetricResolver{result: profiler.ResolvedMetricSource{
-		Kind: "edge-metrics",
-		TransitionPower: &profiler.ResolvedTransitionPower{
-			Endpoint:    "http://meter.example:18766/prometheus?hostname=meter-target",
-			PowerMetric: "wall_power_watts", Labels: labels,
-		},
+		Kind: "edge-metrics", Endpoint: "http://meter.example:18766/prometheus?hostname=meter-target",
+		PowerMetric: "wall_power_watts", MetricLabels: labels,
 	}}
 	lowReference := storedObjectReference(measurement.Spec.Modes[0].IdleBaseline)
 	highReference := storedObjectReference(measurement.Spec.Modes[1].IdleBaseline)
@@ -97,8 +94,8 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 
 	assertPreparedSelection(t, prepared, measurement)
 	if prepared.PowerSource.Kind != metrics.result.Kind ||
-		prepared.PowerSource.Endpoint != metrics.result.TransitionPower.Endpoint ||
-		prepared.PowerSource.Metric != metrics.result.TransitionPower.PowerMetric ||
+		prepared.PowerSource.Endpoint != metrics.result.Endpoint ||
+		prepared.PowerSource.Metric != metrics.result.PowerMetric ||
 		prepared.PowerSource.NodeName != "" || prepared.PowerSource.ThermalMetrics != nil ||
 		len(prepared.PowerSource.MetricLabels) != 2 ||
 		prepared.PowerSource.MetricLabels["device_type"] != testDeviceType {
@@ -267,29 +264,21 @@ func TestPreparerRejectsTargetLocalObserverBeforeResolution(t *testing.T) {
 	}
 }
 
-func TestPreparerRequiresExperimentTransitionPowerLabels(t *testing.T) {
+func TestPreparerRequiresExperimentPowerLabels(t *testing.T) {
 	measurement := validTransitionMeasurement()
-	tests := map[string]*profiler.ResolvedTransitionPower{
-		"missing transition source": nil,
-		"missing hostname": {
-			Labels: map[string]string{"device_type": testDeviceType},
-		},
-		"missing device type": {
-			Labels: map[string]string{"hostname": "meter-target"},
-		},
+	tests := map[string]map[string]string{
+		"missing labels":      nil,
+		"missing hostname":    {"device_type": testDeviceType},
+		"missing device type": {"hostname": "meter-target"},
 		"extra label": {
-			Labels: map[string]string{
-				"hostname": "meter-target", "device_type": testDeviceType, "extra": "value",
-			},
+			"hostname": "meter-target", "device_type": testDeviceType, "extra": "value",
 		},
-		"unclean device type": {
-			Labels: map[string]string{"hostname": "meter-target", "device_type": " padded "},
-		},
+		"unclean device type": {"hostname": "meter-target", "device_type": " padded "},
 	}
-	for name, transitionPower := range tests {
+	for name, labels := range tests {
 		t.Run(name, func(t *testing.T) {
 			metrics := &recordingTransitionMetricResolver{result: profiler.ResolvedMetricSource{
-				Kind: "edge-metrics", TransitionPower: transitionPower,
+				Kind: "edge-metrics", MetricLabels: labels,
 			}}
 			baselines := &recordingIdleBaselineReader{}
 			_, err := mustPreparer(t, metrics, baselines).Prepare(context.Background(), measurement)
@@ -563,12 +552,9 @@ func validDeviceClass() *edgev1alpha1.DeviceClass {
 
 func validTransitionMetricResolver() *recordingTransitionMetricResolver {
 	return &recordingTransitionMetricResolver{result: profiler.ResolvedMetricSource{
-		Kind: "edge-metrics",
-		TransitionPower: &profiler.ResolvedTransitionPower{
-			Endpoint:    "http://meter.example:18766/prometheus?hostname=meter-target",
-			PowerMetric: "wall_power_watts",
-			Labels:      map[string]string{"hostname": "meter-target", "device_type": testDeviceType},
-		},
+		Kind: "edge-metrics", Endpoint: "http://meter.example:18766/prometheus?hostname=meter-target",
+		PowerMetric:  "wall_power_watts",
+		MetricLabels: map[string]string{"hostname": "meter-target", "device_type": testDeviceType},
 	}}
 }
 

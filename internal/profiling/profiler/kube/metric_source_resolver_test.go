@@ -19,47 +19,33 @@ import (
 )
 
 const (
-	testPowerEndpoint           = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/prometheus"
-	testPowerMetric             = "configured_wall_power_watts"
-	testTransitionPowerEndpoint = "http://central-meter.example.test:18766/prometheus?hostname=node-7"
-	testTransitionPowerMetric   = "experiment_transition_watts"
+	testPowerEndpoint   = "http://central-meter.example.test:18766/prometheus?hostname=node-7"
+	testThermalEndpoint = "http://edge-device-lattepanda.monitoring.svc.cluster.local:9102/prometheus"
+	testPowerMetric     = "configured_wall_power_watts"
 )
 
-func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
+func TestKubernetesMetricSourceResolverResolvesAndOwnsCompositeNodeEntry(t *testing.T) {
 	resolver := newMetricSourceResolver(t, validMetricSourceConfigMap())
 	resolved, err := resolver.ResolveMetricSource(context.Background(), "lattepanda")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTestMetricSource(t, resolved, true)
-	resolved.TransitionPower.Labels["device_type"] = "caller-mutation"
+	assertTestMetricSource(t, resolved)
+	resolved.MetricLabels["device_type"] = "caller-mutation"
 
 	again, err := resolver.ResolveMetricSource(context.Background(), "lattepanda")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTestMetricSource(t, again, true)
-	if again.TransitionPower.Labels["device_type"] != "test_device" {
-		t.Fatal("caller mutation changed subsequently resolved transition-power labels")
+	assertTestMetricSource(t, again)
+	if again.MetricLabels["device_type"] != "test_device" {
+		t.Fatal("caller mutation changed subsequently resolved labels")
 	}
-}
-
-func TestKubernetesMetricSourceResolverPreservesLocalSourceWithoutTransitionPower(t *testing.T) {
-	config := validMetricSourceConfigMap()
-	config.Data["metric-sources.yaml"] = strings.Replace(
-		config.Data["metric-sources.yaml"], testTransitionPowerYAML(), "", 1,
-	)
-	resolved, err := newMetricSourceResolver(t, config).ResolveMetricSource(context.Background(), "lattepanda")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTestMetricSource(t, resolved, false)
 }
 
 func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.T) {
 	base := validMetricSourceConfigMap()
-	first := newMetricSourceResolver(t, base.DeepCopy())
-	resolved, err := first.ResolveMetricSource(context.Background(), "lattepanda")
+	resolved, err := newMetricSourceResolver(t, base.DeepCopy()).ResolveMetricSource(context.Background(), "lattepanda")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +53,12 @@ func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.
 	unrelated := base.DeepCopy()
 	unrelated.Data["metric-sources.yaml"] += `  - node: jetsonx
     kind: edge-metrics
-    endpoint: http://edge-device-jetsonx.monitoring.svc.cluster.local:9102/metrics
+    endpoint: http://central-meter.example.test:18766/prometheus?hostname=jetson-xavier
     powerMetric: shelly_power_total_watts
+    metricLabels:
+      hostname: jetson-xavier
+      device_type: jetson_xavier
+    thermalEndpoint: http://edge-device-jetsonx.monitoring.svc.cluster.local:9102/metrics
     thermalMetrics:
       observationAvailable: device_thermal_throttle_observation_available
       active: device_thermal_throttle_active
@@ -81,22 +71,9 @@ func TestKubernetesMetricSourceResolverSelectsOnlyRequestedNodeEntry(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTestMetricSource(t, second, true)
-	if second.Endpoint != resolved.Endpoint ||
-		second.TransitionPower.Endpoint != resolved.TransitionPower.Endpoint {
+	assertTestMetricSource(t, second)
+	if second.Endpoint != resolved.Endpoint || second.ThermalEndpoint != resolved.ThermalEndpoint {
 		t.Fatal("unrelated Node entry changed selected metric-source facts")
-	}
-
-	changed := base.DeepCopy()
-	changed.Data["metric-sources.yaml"] = strings.Replace(
-		changed.Data["metric-sources.yaml"], "edge-device-lattepanda", "edge-device-lattepanda-v2", 1,
-	)
-	third, err := newMetricSourceResolver(t, changed).ResolveMetricSource(context.Background(), "lattepanda")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if third.Endpoint == resolved.Endpoint {
-		t.Fatal("changed selected entry was not observed")
 	}
 }
 
@@ -107,19 +84,26 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 		match  string
 		is     error
 	}{
+		{name: "Node unavailable", mutate: func(*corev1.ConfigMap) {}, is: ErrMetricSourceUnavailable},
 		{
-			name:   "Node unavailable",
-			mutate: func(config *corev1.ConfigMap) {},
-			is:     ErrMetricSourceUnavailable,
-		},
-		{
-			name: "retired schema",
+			name: "retired predecessor schema",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], metricSourcesSchema, "chill.dacs.io/profiler-metric-sources.v1alpha3", 1,
+					config.Data["metric-sources.yaml"], metricSourcesSchema,
+					"chill.dacs.io/profiler-metric-sources.v1alpha4", 1,
 				)
 			},
 			match: "unsupported Profiler metric-sources schema",
+		},
+		{
+			name: "retired transitionPower field",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "    thermalEndpoint:",
+					"    transitionPower: {}\n    thermalEndpoint:", 1,
+				)
+			},
+			match: `unknown field "transitionPower"`,
 		},
 		{
 			name: "unsupported kind",
@@ -140,99 +124,26 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "valid Prometheus metric name",
 		},
 		{
-			name: "missing thermal mapping",
-			mutate: func(config *corev1.ConfigMap) {
-				start := strings.Index(config.Data["metric-sources.yaml"], "    thermalMetrics:")
-				config.Data["metric-sources.yaml"] = config.Data["metric-sources.yaml"][:start]
-			},
-			match: "thermalMetrics.observationAvailable",
-		},
-		{
-			name: "duplicate typed metric",
+			name: "empty metric labels",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"],
-					"configured_thermal_active", testPowerMetric, 1,
+					"    metricLabels:\n      hostname: node-7\n      device_type: test_device\n", "    metricLabels: {}\n", 1,
 				)
 			},
-			match: "is duplicated",
+			match: "metrics.metricLabels is required",
 		},
 		{
-			name: "endpoint credentials",
+			name: "invalid metric label name",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "http://", "http://user:pass@", 1,
+					config.Data["metric-sources.yaml"], "      hostname: node-7", "      not-valid: node-7", 1,
 				)
 			},
-			match: "without credentials",
+			match: `metricLabels name "not-valid" is invalid`,
 		},
 		{
-			name: "empty endpoint path",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "/prometheus", "", 1,
-				)
-			},
-			match: "clean nonempty path",
-		},
-		{
-			name: "unclean endpoint path",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "/prometheus", "/nested/../prometheus", 1,
-				)
-			},
-			match: "clean nonempty path",
-		},
-		{
-			name: "local endpoint query",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], testPowerEndpoint, testPowerEndpoint+"?hostname=local", 1,
-				)
-			},
-			match: "endpoint must not contain a query",
-		},
-		{
-			name: "invalid transition power metric name",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], testTransitionPowerMetric, "not-valid", 1,
-				)
-			},
-			match: "validate transition power: powerMetric must be a valid Prometheus metric name",
-		},
-		{
-			name: "empty transition power labels",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"],
-					"      labels:\n        hostname: node-7\n        device_type: test_device\n", "      labels: {}\n", 1,
-				)
-			},
-			match: "validate transition power: exact labels are required",
-		},
-		{
-			name: "invalid transition power label name",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "        hostname: node-7", "        not-valid: node-7", 1,
-				)
-			},
-			match: `validate transition power: label name "not-valid" is invalid`,
-		},
-		{
-			name: "invalid transition power endpoint",
-			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], testTransitionPowerEndpoint,
-					"http://user:pass@central-meter.example.test:18766/prometheus", 1,
-				)
-			},
-			match: "validate transition power: edge-metrics endpoint must be an http URL without credentials",
-		},
-		{
-			name: "transition power endpoint without hostname query",
+			name: "power endpoint missing hostname query",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], "?hostname=node-7", "", 1,
@@ -241,7 +152,7 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "exactly one hostname query value",
 		},
 		{
-			name: "transition power endpoint with another query",
+			name: "power endpoint has another query",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], "?hostname=node-7", "?hostname=node-7&scope=one", 1,
@@ -250,16 +161,17 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "exactly one hostname query value",
 		},
 		{
-			name: "transition power endpoint with duplicate hostname query",
+			name: "power endpoint has duplicate hostname query",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], "?hostname=node-7", "?hostname=node-7&hostname=node-7", 1,
+					config.Data["metric-sources.yaml"], "?hostname=node-7",
+					"?hostname=node-7&hostname=node-7", 1,
 				)
 			},
 			match: "exactly one hostname query value",
 		},
 		{
-			name: "transition power endpoint with empty hostname query",
+			name: "power endpoint has empty hostname query",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], "?hostname=node-7", "?hostname=", 1,
@@ -268,7 +180,7 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "hostname query value is required",
 		},
 		{
-			name: "transition power endpoint with unclean hostname query",
+			name: "power endpoint has unclean hostname query",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], "?hostname=node-7", "?hostname=%20node-7", 1,
@@ -277,29 +189,47 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			match: "without surrounding whitespace",
 		},
 		{
-			name: "transition power endpoint hostname does not match exact labels",
+			name: "power endpoint hostname mismatch",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
 					config.Data["metric-sources.yaml"], "?hostname=node-7", "?hostname=other", 1,
 				)
 			},
-			match: "must match labels.hostname",
+			match: "must match metricLabels.hostname",
+		},
+		{
+			name: "thermal endpoint query",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], testThermalEndpoint, testThermalEndpoint+"?source=local", 1,
+				)
+			},
+			match: "validate thermal endpoint: edge-metrics endpoint must not contain a query",
+		},
+		{
+			name: "missing thermal endpoint",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "    thermalEndpoint: "+testThermalEndpoint+"\n", "", 1,
+				)
+			},
+			match: "validate thermal endpoint: endpoint is required",
+		},
+		{
+			name: "duplicate typed metric",
+			mutate: func(config *corev1.ConfigMap) {
+				config.Data["metric-sources.yaml"] = strings.Replace(
+					config.Data["metric-sources.yaml"], "configured_thermal_active", testPowerMetric, 1,
+				)
+			},
+			match: "is duplicated",
 		},
 		{
 			name: "duplicate Node",
 			mutate: func(config *corev1.ConfigMap) {
-				config.Data["metric-sources.yaml"] += `  - node: lattepanda
-    kind: edge-metrics
-    endpoint: http://duplicate.monitoring.svc:9102/metrics
-    powerMetric: ` + testPowerMetric + `
-    thermalMetrics:
-      observationAvailable: configured_thermal_observation_available
-      active: configured_thermal_active
-      cpuCoreThrottleEvents: configured_thermal_cpu_core_events_total
-      cpuPackageThrottleEvents: configured_thermal_cpu_package_events_total
-      latched: configured_thermal_latched
-      maximumTemperatureCelsius: configured_thermal_max_celsius
-`
+				config.Data["metric-sources.yaml"] += strings.SplitN(
+					config.Data["metric-sources.yaml"], "sources:\n", 2,
+				)[1]
 			},
 			match: "duplicate metric source",
 		},
@@ -387,13 +317,17 @@ func validMetricSourceConfigMap() *corev1.ConfigMap {
 			Namespace: "chill-system", Name: "chill-profiler-facts",
 			UID: types.UID("config-uid"), ResourceVersion: "30",
 		},
-		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha4
+		Data: map[string]string{"metric-sources.yaml": `schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha5
 sources:
   - node: lattepanda
     kind: edge-metrics
     endpoint: ` + testPowerEndpoint + `
     powerMetric: ` + testPowerMetric + `
-` + testTransitionPowerYAML() + `    thermalMetrics:
+    metricLabels:
+      hostname: node-7
+      device_type: test_device
+    thermalEndpoint: ` + testThermalEndpoint + `
+    thermalMetrics:
       observationAvailable: configured_thermal_observation_available
       active: configured_thermal_active
       cpuCoreThrottleEvents: configured_thermal_cpu_core_events_total
@@ -404,35 +338,13 @@ sources:
 	}
 }
 
-func testTransitionPowerYAML() string {
-	return `    transitionPower:
-      endpoint: ` + testTransitionPowerEndpoint + `
-      powerMetric: ` + testTransitionPowerMetric + `
-      labels:
-        hostname: node-7
-        device_type: test_device
-`
-}
-
-func assertTestMetricSource(t *testing.T, resolved profiler.ResolvedMetricSource, wantTransitionPower bool) {
+func assertTestMetricSource(t *testing.T, resolved profiler.ResolvedMetricSource) {
 	t.Helper()
 	if resolved.Kind != edgemetrics.SourceKind || resolved.Endpoint != testPowerEndpoint ||
-		resolved.PowerMetric != testPowerMetric || resolved.ThermalMetrics != testThermalMetricContract() {
-		t.Fatalf("unexpected resolved local metric source: %#v", resolved)
-	}
-	if !wantTransitionPower {
-		if resolved.TransitionPower != nil {
-			t.Fatalf("unexpected transition-power selector: %#v", resolved.TransitionPower)
-		}
-		return
-	}
-	if resolved.TransitionPower == nil ||
-		resolved.TransitionPower.Endpoint != testTransitionPowerEndpoint ||
-		resolved.TransitionPower.PowerMetric != testTransitionPowerMetric ||
-		len(resolved.TransitionPower.Labels) != 2 ||
-		resolved.TransitionPower.Labels["hostname"] != "node-7" ||
-		resolved.TransitionPower.Labels["device_type"] != "test_device" {
-		t.Fatalf("unexpected resolved transition-power selector: %#v", resolved.TransitionPower)
+		resolved.PowerMetric != testPowerMetric || resolved.ThermalEndpoint != testThermalEndpoint ||
+		resolved.ThermalMetrics != testThermalMetricContract() || len(resolved.MetricLabels) != 2 ||
+		resolved.MetricLabels["hostname"] != "node-7" || resolved.MetricLabels["device_type"] != "test_device" {
+		t.Fatalf("unexpected resolved metric source: %#v", resolved)
 	}
 }
 

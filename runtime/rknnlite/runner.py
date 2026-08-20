@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha5"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha11"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha6"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha12"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha1"

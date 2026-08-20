@@ -12,243 +12,236 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 )
 
-func TestNewValidatesAndRetainsFrozenMetricIdentity(t *testing.T) {
-	unsupportedKind := testSourceIdentity("http://example.test/metrics")
-	unsupportedKind.Kind = "prometheus"
-	missingPower := testSourceIdentity("http://example.test/metrics")
-	missingPower.Metric = ""
-	missingThermal := testSourceIdentity("http://example.test/metrics")
-	missingThermal.ThermalMetrics = nil
-	incompleteThermal := testSourceIdentity("http://example.test/metrics")
-	incompleteThermal.ThermalMetrics.Active = ""
-	duplicateMetric := testSourceIdentity("http://example.test/metrics")
-	duplicateMetric.ThermalMetrics.Active = duplicateMetric.Metric
-	withExactLabels := testSourceIdentity("http://example.test/metrics")
-	withExactLabels.MetricLabels = map[string]string{"unit": "node-7"}
-
+func TestNewRequiresCompositeIdentityAndOwnsIt(t *testing.T) {
+	valid := testCompositeIdentity("http://power.test/metrics", "http://thermal.test/metrics")
 	tests := []struct {
-		name     string
-		identity metricobserver.SourceIdentity
-		client   *http.Client
-		want     string
+		name   string
+		mutate func(*metricobserver.SourceIdentity)
+		client *http.Client
+		want   string
 	}{
-		{name: "missing endpoint", identity: testSourceIdentity(""), client: http.DefaultClient, want: "endpoint is required"},
-		{name: "endpoint whitespace", identity: testSourceIdentity(" http://example.test/metrics "), client: http.DefaultClient, want: "without surrounding whitespace"},
-		{name: "unsupported kind", identity: unsupportedKind, client: http.DefaultClient, want: "unsupported edge-metrics source kind"},
-		{name: "missing power metric", identity: missingPower, client: http.DefaultClient, want: "power metric identity is required"},
-		{name: "missing thermal identity", identity: missingThermal, client: http.DefaultClient, want: "thermal metric identity is required"},
-		{name: "incomplete thermal identity", identity: incompleteThermal, client: http.DefaultClient, want: "thermal active metric identity is required"},
-		{name: "duplicate metric identity", identity: duplicateMetric, client: http.DefaultClient, want: "is duplicated"},
-		{name: "exact labels", identity: withExactLabels, client: http.DefaultClient, want: "exact power label selector is not supported"},
-		{name: "missing client", identity: testSourceIdentity("http://example.test/metrics"), want: "HTTP client is required"},
+		{name: "kind", mutate: func(identity *metricobserver.SourceIdentity) { identity.Kind = "other" }, client: http.DefaultClient, want: "unsupported"},
+		{name: "power endpoint", mutate: func(identity *metricobserver.SourceIdentity) { identity.Endpoint = "" }, client: http.DefaultClient, want: "endpoint is required"},
+		{name: "power metric", mutate: func(identity *metricobserver.SourceIdentity) { identity.Metric = "" }, client: http.DefaultClient, want: "power metric identity"},
+		{name: "labels", mutate: func(identity *metricobserver.SourceIdentity) { identity.MetricLabels = nil }, client: http.DefaultClient, want: "exact power label selector"},
+		{name: "thermal endpoint", mutate: func(identity *metricobserver.SourceIdentity) { identity.ThermalEndpoint = "" }, client: http.DefaultClient, want: "thermal endpoint"},
+		{name: "thermal identity", mutate: func(identity *metricobserver.SourceIdentity) { identity.ThermalMetrics = nil }, client: http.DefaultClient, want: "thermal metric identity"},
+		{name: "semantic overlap", mutate: func(identity *metricobserver.SourceIdentity) { identity.ThermalMetrics.Active = identity.Metric }, client: http.DefaultClient, want: "duplicated"},
+		{name: "client", mutate: func(*metricobserver.SourceIdentity) {}, want: "HTTP client"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := New(test.identity, test.client); err == nil || !strings.Contains(err.Error(), test.want) {
+			candidate := valid
+			labels := cloneMetricLabels(valid.MetricLabels)
+			thermal := *valid.ThermalMetrics
+			candidate.MetricLabels = labels
+			candidate.ThermalMetrics = &thermal
+			test.mutate(&candidate)
+			if _, err := New(candidate, test.client); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("New() error = %v, want containing %q", err, test.want)
 			}
 		})
 	}
 
-	identity := testSourceIdentity("http://example.test/metrics")
-	identity.NodeName = "target-node"
-	identity.Namespace = "monitoring"
-	identity.PodName = "exporter"
-	expectedThermal := *identity.ThermalMetrics
-	source, err := New(identity, http.DefaultClient)
+	source, err := New(valid, http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity.ThermalMetrics.Active = "caller_mutation"
-	got := source.Identity()
-	if got.Kind != identity.Kind || got.NodeName != identity.NodeName || got.Namespace != identity.Namespace ||
-		got.PodName != identity.PodName || got.Metric != identity.Metric || got.Endpoint != identity.Endpoint ||
-		got.ThermalMetrics == nil || *got.ThermalMetrics != expectedThermal {
-		t.Fatalf("identity = %#v", got)
-	}
-	got.ThermalMetrics.Active = "returned_mutation"
-	if source.Identity().ThermalMetrics.Active != expectedThermal.Active {
-		t.Fatal("source identity retained a caller-owned thermal identity pointer")
+	valid.MetricLabels["hostname"] = callerMutation
+	valid.ThermalMetrics.Active = callerMutation
+	first := source.Identity()
+	first.MetricLabels["hostname"] = "result-mutation"
+	first.ThermalMetrics.Active = "result-mutation"
+	second := source.Identity()
+	if second.MetricLabels["hostname"] != selectedNodeLabel || second.ThermalMetrics.Active != "thermal_active" {
+		t.Fatalf("source identity aliases caller or returned values: %#v", second)
 	}
 }
 
-func testSourceIdentity(endpoint string) metricobserver.SourceIdentity {
-	return metricobserver.SourceIdentity{
-		Kind: SourceKind, Endpoint: endpoint, Metric: "configured_wall_power_watts",
-		ThermalMetrics: &metricobserver.ThermalMetricIdentity{
-			ObservationAvailable:      "configured_thermal_observation_available",
-			Active:                    "configured_thermal_active",
-			CPUCoreThrottleEvents:     "configured_thermal_cpu_core_events_total",
-			CPUPackageThrottleEvents:  "configured_thermal_cpu_package_events_total",
-			Latched:                   "configured_thermal_latched",
-			MaximumTemperatureCelsius: "configured_thermal_max_celsius",
+func TestSourceReadMetricsCombinesExactPowerAndTypedThermal(t *testing.T) {
+	power := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("hostname") != selectedNodeLabel {
+			t.Errorf("power query = %q", request.URL.RawQuery)
+		}
+		_, _ = response.Write([]byte("# TYPE wall_power_watts gauge\nwall_power_watts{hostname=\"node-7\",device_type=\"test_device\"} 5.2\n"))
+	}))
+	defer power.Close()
+	thermal := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.RawQuery != "" {
+			t.Errorf("thermal query = %q", request.URL.RawQuery)
+		}
+		_, _ = response.Write([]byte(strings.Join([]string{
+			"thermal_observation_available 1",
+			"thermal_active 0",
+			"thermal_core_events_total 4",
+			"thermal_package_events_total 2",
+			"thermal_latched 1",
+			"thermal_max_celsius 47.5",
+		}, "\n") + "\n"))
+	}))
+	defer thermal.Close()
+
+	identity := testCompositeIdentity(power.URL+"/prometheus?hostname=node-7", thermal.URL+"/metrics")
+	source, err := New(identity, power.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reading, err := source.ReadMetrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reading.Watts != 5.2 || reading.Thermal.ObservationAvailable == nil ||
+		!*reading.Thermal.ObservationAvailable || reading.Thermal.Active == nil || *reading.Thermal.Active ||
+		reading.Thermal.CPUCoreThrottleEvents == nil || *reading.Thermal.CPUCoreThrottleEvents != 4 ||
+		reading.Thermal.CPUPackageThrottleEvents == nil || *reading.Thermal.CPUPackageThrottleEvents != 2 ||
+		reading.Thermal.Latched == nil || !*reading.Thermal.Latched ||
+		reading.Thermal.MaximumTemperatureCelsius == nil || *reading.Thermal.MaximumTemperatureCelsius != 47.5 {
+		t.Fatalf("ReadMetrics() = %#v", reading)
+	}
+}
+
+func TestSourceReadMetricsFailsWhenEitherEndpointFailsOrIsOversized(t *testing.T) {
+	tests := []struct {
+		name          string
+		powerStatus   int
+		thermalStatus int
+		powerBody     string
+		thermalBody   string
+		want          string
+	}{
+		{name: "power status", powerStatus: http.StatusBadGateway, thermalStatus: http.StatusOK, want: "read power endpoint"},
+		{name: "thermal status", powerStatus: http.StatusOK, thermalStatus: http.StatusServiceUnavailable, powerBody: validPowerBody(), want: "read thermal endpoint"},
+		{name: "power oversized", powerStatus: http.StatusOK, thermalStatus: http.StatusOK, powerBody: strings.Repeat("x", maximumResponseBytes+1), want: "read power endpoint"},
+		{name: "thermal oversized", powerStatus: http.StatusOK, thermalStatus: http.StatusOK, powerBody: validPowerBody(), thermalBody: strings.Repeat("x", maximumResponseBytes+1), want: "read thermal endpoint"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			power := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(test.powerStatus)
+				_, _ = response.Write([]byte(test.powerBody))
+			}))
+			defer power.Close()
+			thermal := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(test.thermalStatus)
+				_, _ = response.Write([]byte(test.thermalBody))
+			}))
+			defer thermal.Close()
+			source, err := New(testCompositeIdentity(
+				power.URL+"/prometheus?hostname=node-7", thermal.URL+"/metrics",
+			), power.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := source.ReadMetrics(context.Background()); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ReadMetrics() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestSourceReadMetricsUsesOneContextForBothEndpoints(t *testing.T) {
+	for _, blocked := range []string{"power", "thermal"} {
+		t.Run(blocked, func(t *testing.T) {
+			power := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if blocked == "power" {
+					<-request.Context().Done()
+					return
+				}
+				_, _ = response.Write([]byte(validPowerBody()))
+			}))
+			defer power.Close()
+			thermal := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				<-request.Context().Done()
+			}))
+			defer thermal.Close()
+			source, err := New(testCompositeIdentity(
+				power.URL+"/prometheus?hostname=node-7", thermal.URL+"/metrics",
+			), power.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			_, err = source.ReadMetrics(ctx)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("ReadMetrics() error = %v, want deadline exceeded", err)
+			}
+		})
+	}
+}
+
+func TestParseThermalReadingRetainsTypedIssues(t *testing.T) {
+	thermal, err := parseThermalReading(strings.NewReader("thermal_observation_available 1\nthermal_active invalid\n"), testThermalIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thermal.ObservationAvailable == nil || !*thermal.ObservationAvailable || thermal.Active != nil || len(thermal.Issues) != 1 {
+		t.Fatalf("parseThermalReading() = %#v", thermal)
+	}
+}
+
+func TestParseThermalReadingPreservesMissingAndInvalidFacts(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		metric string
+		reason metricobserver.FailureReason
+	}{
+		{
+			name: "availability missing", body: "thermal_active 0\n",
+			metric: "thermal_observation_available", reason: metricobserver.FailureReasonMetricMissing,
+		},
+		{
+			name: "availability invalid", body: "thermal_observation_available 2\nthermal_active 0\n",
+			metric: "thermal_observation_available", reason: metricobserver.FailureReasonInvalidReading,
+		},
+		{
+			name: "available without throttling signal", body: "thermal_observation_available 1\n",
+			metric: "thermal_observation_available", reason: metricobserver.FailureReasonMetricMissing,
+		},
+		{
+			name: "invalid counter", body: "thermal_observation_available 1\nthermal_active 0\nthermal_core_events_total -1\n",
+			metric: "thermal_core_events_total", reason: metricobserver.FailureReasonInvalidReading,
+		},
+		{
+			name: "duplicate active", body: "thermal_observation_available 1\nthermal_active 0\nthermal_active 1\n",
+			metric: "thermal_active", reason: metricobserver.FailureReasonInvalidReading,
 		},
 	}
-}
-
-func TestParseReadingPreservesAlignedDirectThermalFacts(t *testing.T) {
-	identity := testSourceIdentity("")
-	metrics := *identity.ThermalMetrics
-	reading, err := parseReading(strings.NewReader(strings.Join([]string{
-		identity.Metric + `{node="target-node"} 6.5 1234`,
-		metrics.ObservationAvailable + " 1",
-		metrics.Active + " 0",
-		metrics.Latched + " 1",
-		metrics.MaximumTemperatureCelsius + " 52.125",
-	}, "\n")+"\n"), identity.Metric, metrics)
-	if err != nil {
-		t.Fatal(err)
-	}
-	thermal := reading.Thermal
-	if reading.Watts != 6.5 || thermal.ObservationAvailable == nil || !*thermal.ObservationAvailable ||
-		thermal.Active == nil || *thermal.Active || thermal.Latched == nil || !*thermal.Latched ||
-		thermal.MaximumTemperatureCelsius == nil || *thermal.MaximumTemperatureCelsius != 52.125 ||
-		len(thermal.Issues) != 0 {
-		t.Fatalf("reading = %#v", reading)
-	}
-}
-
-func TestParseReadingPreservesCPUCounterFacts(t *testing.T) {
-	identity := testSourceIdentity("")
-	metrics := *identity.ThermalMetrics
-	reading, err := parseReading(strings.NewReader(strings.Join([]string{
-		identity.Metric + " 4.2",
-		metrics.ObservationAvailable + " 1",
-		metrics.CPUCoreThrottleEvents + " 3.0",
-		metrics.CPUPackageThrottleEvents + " 7",
-		metrics.MaximumTemperatureCelsius + " 40",
-	}, "\n")+"\n"), identity.Metric, metrics)
-	if err != nil {
-		t.Fatal(err)
-	}
-	thermal := reading.Thermal
-	if thermal.Active != nil || thermal.CPUCoreThrottleEvents == nil || *thermal.CPUCoreThrottleEvents != 3 ||
-		thermal.CPUPackageThrottleEvents == nil || *thermal.CPUPackageThrottleEvents != 7 ||
-		len(thermal.Issues) != 0 {
-		t.Fatalf("thermal reading = %#v", thermal)
-	}
-}
-
-func TestParseReadingKeepsThermalProblemsSeparateFromRequiredPower(t *testing.T) {
-	identity := testSourceIdentity("")
-	metrics := *identity.ThermalMetrics
-	tests := []struct {
-		name    string
-		thermal string
-		metric  string
-	}{
-		{name: "availability missing", thermal: "", metric: metrics.ObservationAvailable},
-		{name: "availability invalid", thermal: metrics.ObservationAvailable + " 2\n", metric: metrics.ObservationAvailable},
-		{name: "signal missing", thermal: metrics.ObservationAvailable + " 1\n", metric: metrics.ObservationAvailable},
-		{name: "counter invalid", thermal: metrics.ObservationAvailable + " 1\n" + metrics.CPUCoreThrottleEvents + " 1.5\n", metric: metrics.CPUCoreThrottleEvents},
-		{name: "duplicate active", thermal: metrics.ObservationAvailable + " 1\n" + metrics.Active + " 0\n" + metrics.Active + " 0\n", metric: metrics.Active},
-	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			reading, err := parseReading(
-				strings.NewReader(identity.Metric+" 4.2\n"+test.thermal), identity.Metric, metrics,
-			)
+			thermal, err := parseThermalReading(strings.NewReader(test.body), testThermalIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if reading.Watts != 4.2 || len(reading.Thermal.Issues) != 1 ||
-				reading.Thermal.Issues[0].Metric != test.metric {
-				t.Fatalf("reading = %#v", reading)
+			if len(thermal.Issues) != 1 || thermal.Issues[0].Metric != test.metric ||
+				thermal.Issues[0].Reason != test.reason {
+				t.Fatalf("parseThermalReading() issues = %#v", thermal.Issues)
 			}
 		})
 	}
 }
 
-func TestParseReadingFailsWhenRequiredPowerIsUnavailable(t *testing.T) {
-	identity := testSourceIdentity("")
-	metrics := *identity.ThermalMetrics
-	tests := []struct {
-		name      string
-		payload   string
-		wantError error
-	}{
-		{name: "missing", payload: "other_metric 1\n", wantError: metricobserver.ErrMetricMissing},
-		{name: "duplicate", payload: identity.Metric + " 1\n" + identity.Metric + " 2\n", wantError: metricobserver.ErrInvalidReading},
-		{name: "not a number", payload: identity.Metric + " nope\n", wantError: metricobserver.ErrInvalidReading},
-		{name: "infinity", payload: identity.Metric + " +Inf\n", wantError: metricobserver.ErrInvalidReading},
-		{name: "negative", payload: identity.Metric + " -1\n", wantError: metricobserver.ErrInvalidReading},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := parseReading(strings.NewReader(test.payload), identity.Metric, metrics)
-			if !errors.Is(err, test.wantError) {
-				t.Fatalf("parseReading() error = %v, want %v", err, test.wantError)
-			}
-		})
+func testCompositeIdentity(powerEndpoint, thermalEndpoint string) metricobserver.SourceIdentity {
+	thermal := testThermalIdentity()
+	return metricobserver.SourceIdentity{
+		Kind: SourceKind, Endpoint: powerEndpoint, Metric: "wall_power_watts",
+		MetricLabels:    map[string]string{"hostname": selectedNodeLabel, "device_type": "test_device"},
+		ThermalEndpoint: thermalEndpoint, ThermalMetrics: &thermal,
 	}
 }
 
-func TestSourceReadMetrics(t *testing.T) {
-	identity := testSourceIdentity("")
-	tests := []struct {
-		name      string
-		status    int
-		payload   string
-		want      float64
-		wantError error
-	}{
-		{name: "success", status: http.StatusOK, payload: identity.Metric + " 4.2\n", want: 4.2},
-		{name: "HTTP failure", status: http.StatusInternalServerError, payload: "failed", wantError: errors.New("HTTP failure")},
-		{name: "missing power", status: http.StatusOK, payload: "other_metric 1\n", wantError: metricobserver.ErrMetricMissing},
-		{name: "oversized response", status: http.StatusOK, payload: strings.Repeat("x", maximumResponseBytes+1), wantError: metricobserver.ErrInvalidReading},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-				response.WriteHeader(test.status)
-				_, _ = response.Write([]byte(test.payload))
-			}))
-			defer server.Close()
-			source, err := New(testSourceIdentity(server.URL), server.Client())
-			if err != nil {
-				t.Fatal(err)
-			}
-			reading, err := source.ReadMetrics(context.Background())
-			if test.wantError != nil && err == nil {
-				t.Fatalf("ReadMetrics() error = nil, want %v", test.wantError)
-			}
-			if errors.Is(test.wantError, metricobserver.ErrMetricMissing) && !errors.Is(err, metricobserver.ErrMetricMissing) {
-				t.Fatalf("ReadMetrics() error = %v, want metric missing", err)
-			}
-			if errors.Is(test.wantError, metricobserver.ErrInvalidReading) && !errors.Is(err, metricobserver.ErrInvalidReading) {
-				t.Fatalf("ReadMetrics() error = %v, want invalid reading", err)
-			}
-			if test.wantError == nil && (err != nil || reading.Watts != test.want) {
-				t.Fatalf("ReadMetrics() = %#v, %v; want %v, nil", reading, err, test.want)
-			}
-		})
+func testThermalIdentity() metricobserver.ThermalMetricIdentity {
+	return metricobserver.ThermalMetricIdentity{
+		ObservationAvailable:      "thermal_observation_available",
+		Active:                    "thermal_active",
+		CPUCoreThrottleEvents:     "thermal_core_events_total",
+		CPUPackageThrottleEvents:  "thermal_package_events_total",
+		Latched:                   "thermal_latched",
+		MaximumTemperatureCelsius: "thermal_max_celsius",
 	}
 }
 
-func TestSourceReadMetricsHonorsContextCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		<-request.Context().Done()
-	}))
-	defer server.Close()
-	source, err := New(testSourceIdentity(server.URL), server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	_, err = source.ReadMetrics(ctx)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("ReadMetrics() error = %v, want deadline exceeded", err)
-	}
-}
-
-func TestSourceReadMetricsRejectsMalformedEndpoint(t *testing.T) {
-	source, err := New(testSourceIdentity("://bad"), http.DefaultClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = source.ReadMetrics(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "build edge-metrics request") {
-		t.Fatalf("ReadMetrics() error = %v, want request construction error", err)
-	}
+func validPowerBody() string {
+	return "# TYPE wall_power_watts gauge\nwall_power_watts{hostname=\"node-7\",device_type=\"test_device\"} 5.2\n"
 }

@@ -13,14 +13,13 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	prommodel "github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha4"
+const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha5"
 
 var ErrMetricSourceUnavailable = errors.New("metric source unavailable")
 
@@ -62,18 +61,13 @@ type metricSourcesDocument struct {
 }
 
 type metricSourceDeclaration struct {
-	Node            string                              `json:"node"`
-	Kind            string                              `json:"kind"`
-	Endpoint        string                              `json:"endpoint"`
-	PowerMetric     string                              `json:"powerMetric"`
-	ThermalMetrics  profilingrun.ThermalMetricContract  `json:"thermalMetrics"`
-	TransitionPower *transitionPowerSelectorDeclaration `json:"transitionPower,omitempty"`
-}
-
-type transitionPowerSelectorDeclaration struct {
-	Endpoint    string            `json:"endpoint"`
-	PowerMetric string            `json:"powerMetric"`
-	Labels      map[string]string `json:"labels"`
+	Node            string                             `json:"node"`
+	Kind            string                             `json:"kind"`
+	Endpoint        string                             `json:"endpoint"`
+	PowerMetric     string                             `json:"powerMetric"`
+	MetricLabels    map[string]string                  `json:"metricLabels"`
+	ThermalEndpoint string                             `json:"thermalEndpoint"`
+	ThermalMetrics  profilingrun.ThermalMetricContract `json:"thermalMetrics"`
 }
 
 func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
@@ -133,13 +127,8 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 	}
 	resolved := profiler.ResolvedMetricSource{
 		Kind: selected.Kind, Endpoint: selected.Endpoint, PowerMetric: selected.PowerMetric,
+		MetricLabels: maps.Clone(selected.MetricLabels), ThermalEndpoint: selected.ThermalEndpoint,
 		ThermalMetrics: selected.ThermalMetrics,
-	}
-	if selected.TransitionPower != nil {
-		resolved.TransitionPower = &profiler.ResolvedTransitionPower{
-			Endpoint: selected.TransitionPower.Endpoint, PowerMetric: selected.TransitionPower.PowerMetric,
-			Labels: maps.Clone(selected.TransitionPower.Labels),
-		}
 	}
 	return resolved, nil
 }
@@ -156,41 +145,19 @@ func validateMetricSourceDeclaration(source metricSourceDeclaration) error {
 		return fmt.Errorf("unsupported metric-source kind %q", source.Kind)
 	}
 	metricContract := profilingrun.MetricContract{
-		PowerMetric: source.PowerMetric, ThermalMetrics: source.ThermalMetrics,
+		PowerMetric: source.PowerMetric, MetricLabels: source.MetricLabels,
+		ThermalEndpoint: source.ThermalEndpoint, ThermalMetrics: source.ThermalMetrics,
 	}
 	if err := metricContract.ValidateMetricIdentities(); err != nil {
 		return fmt.Errorf("validate metric identities: %w", err)
 	}
-	if err := validateMetricEndpoint(source.Endpoint); err != nil {
+	if err := validateFilteredPowerEndpoint(source.Endpoint, source.MetricLabels); err != nil {
 		return err
 	}
-	if source.TransitionPower != nil {
-		if err := validateTransitionPowerSelector(*source.TransitionPower); err != nil {
-			return fmt.Errorf("validate transition power: %w", err)
-		}
+	if err := validateMetricEndpoint(source.ThermalEndpoint); err != nil {
+		return fmt.Errorf("validate thermal endpoint: %w", err)
 	}
 	return nil
-}
-
-func validateTransitionPowerSelector(selector transitionPowerSelectorDeclaration) error {
-	if strings.TrimSpace(selector.PowerMetric) == "" || strings.TrimSpace(selector.PowerMetric) != selector.PowerMetric {
-		return errors.New("powerMetric is required without surrounding whitespace")
-	}
-	if !prommodel.IsValidMetricName(prommodel.LabelValue(selector.PowerMetric)) {
-		return errors.New("powerMetric must be a valid Prometheus metric name")
-	}
-	if len(selector.Labels) == 0 {
-		return errors.New("exact labels are required")
-	}
-	for name, value := range selector.Labels {
-		if !prommodel.LabelName(name).IsValid() {
-			return fmt.Errorf("label name %q is invalid", name)
-		}
-		if !prommodel.LabelValue(value).IsValid() {
-			return fmt.Errorf("label %q value is invalid UTF-8", name)
-		}
-	}
-	return validateTransitionPowerEndpoint(selector.Endpoint, selector.Labels)
 }
 
 func validateMetricEndpoint(raw string) error {
@@ -204,25 +171,25 @@ func validateMetricEndpoint(raw string) error {
 	return nil
 }
 
-func validateTransitionPowerEndpoint(raw string, labels map[string]string) error {
+func validateFilteredPowerEndpoint(raw string, labels map[string]string) error {
 	endpoint, err := parseMetricEndpoint(raw)
 	if err != nil {
 		return err
 	}
 	query, err := url.ParseQuery(endpoint.RawQuery)
 	if err != nil {
-		return fmt.Errorf("parse transition-power endpoint query: %w", err)
+		return fmt.Errorf("parse power endpoint query: %w", err)
 	}
 	hostnames := query["hostname"]
 	if len(query) != 1 || len(hostnames) != 1 {
-		return errors.New("transition-power endpoint must contain exactly one hostname query value")
+		return errors.New("power endpoint must contain exactly one hostname query value")
 	}
 	hostname := hostnames[0]
 	if strings.TrimSpace(hostname) == "" || strings.TrimSpace(hostname) != hostname {
-		return errors.New("transition-power endpoint hostname query value is required without surrounding whitespace")
+		return errors.New("power endpoint hostname query value is required without surrounding whitespace")
 	}
 	if labels["hostname"] != hostname {
-		return errors.New("transition-power endpoint hostname query value must match labels.hostname")
+		return errors.New("power endpoint hostname query value must match metricLabels.hostname")
 	}
 	return nil
 }

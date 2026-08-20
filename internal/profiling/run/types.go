@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha11"
+	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha12"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -154,6 +154,8 @@ type MetricContract struct {
 	NodeName             string                `json:"nodeName"`
 	Endpoint             string                `json:"endpoint"`
 	PowerMetric          string                `json:"powerMetric"`
+	MetricLabels         map[string]string     `json:"metricLabels"`
+	ThermalEndpoint      string                `json:"thermalEndpoint"`
 	ThermalMetrics       ThermalMetricContract `json:"thermalMetrics"`
 	IntervalMilliseconds int                   `json:"intervalMilliseconds"`
 	TimeoutMilliseconds  int                   `json:"timeoutMilliseconds"`

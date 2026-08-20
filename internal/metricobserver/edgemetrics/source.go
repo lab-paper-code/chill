@@ -1,5 +1,5 @@
-// Package edgemetrics adapts one edge-metrics Prometheus endpoint to a typed
-// CHILL metricobserver.Source.
+// Package edgemetrics adapts resolved edge-metrics Prometheus endpoints to a
+// typed CHILL metricobserver.Source.
 package edgemetrics
 
 import (
@@ -25,8 +25,8 @@ const (
 	maximumResponseBytes = 1 << 20
 )
 
-// Source reads one configured wall-power source, with either aligned thermal
-// facts or one exact power-series selector.
+// Source reads one exact wall-power series and, for profiling Runs, typed
+// thermal facts from a second endpoint.
 type Source struct {
 	identity metricobserver.SourceIdentity
 	client   *http.Client
@@ -37,11 +37,18 @@ func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, 
 	if err := validateSourceLocation(identity); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(identity.Metric) == "" || strings.TrimSpace(identity.Metric) != identity.Metric {
+		return nil, errors.New("power metric identity is required without surrounding whitespace")
+	}
+	if err := validateExactPowerLabels(identity.MetricLabels); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(identity.ThermalEndpoint) == "" ||
+		strings.TrimSpace(identity.ThermalEndpoint) != identity.ThermalEndpoint {
+		return nil, errors.New("thermal endpoint is required without surrounding whitespace")
+	}
 	if identity.ThermalMetrics == nil {
 		return nil, errors.New("thermal metric identity is required")
-	}
-	if identity.MetricLabels != nil {
-		return nil, errors.New("exact power label selector is not supported by the aligned power and thermal source")
 	}
 	if err := validateMetricIdentity(identity.Metric, *identity.ThermalMetrics); err != nil {
 		return nil, err
@@ -50,6 +57,7 @@ func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, 
 		return nil, errors.New("HTTP client is required")
 	}
 	metrics := *identity.ThermalMetrics
+	identity.MetricLabels = cloneMetricLabels(identity.MetricLabels)
 	identity.ThermalMetrics = &metrics
 	return &Source{identity: identity, client: client}, nil
 }
@@ -65,6 +73,9 @@ func NewPowerSeries(identity metricobserver.SourceIdentity, client *http.Client)
 	}
 	if identity.ThermalMetrics != nil {
 		return nil, errors.New("thermal metric identity is not supported by the exact power-series source")
+	}
+	if identity.ThermalEndpoint != "" {
+		return nil, errors.New("thermal endpoint is not supported by the exact power-series source")
 	}
 	if err := validateExactPowerLabels(identity.MetricLabels); err != nil {
 		return nil, err
@@ -149,35 +160,57 @@ func (s *Source) Identity() metricobserver.SourceIdentity {
 	return identity
 }
 
-// ReadMetrics returns one aligned wall-power and thermal reading.
+// ReadMetrics returns one wall-power and thermal reading assembled under the
+// same bounded request context.
 func (s *Source) ReadMetrics(ctx context.Context) (metricobserver.Reading, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.identity.Endpoint, nil)
+	powerPayload, err := s.readEndpoint(ctx, s.identity.Endpoint)
 	if err != nil {
-		return metricobserver.Reading{}, fmt.Errorf("build edge-metrics request: %w", err)
+		return metricobserver.Reading{}, fmt.Errorf("read power endpoint: %w", err)
+	}
+	power, err := parsePowerSeries(bytes.NewReader(powerPayload), s.identity.Metric, s.identity.MetricLabels)
+	if err != nil {
+		return metricobserver.Reading{}, err
+	}
+	if s.identity.ThermalEndpoint == "" {
+		return power, nil
+	}
+	thermalPayload, err := s.readEndpoint(ctx, s.identity.ThermalEndpoint)
+	if err != nil {
+		return metricobserver.Reading{}, fmt.Errorf("read thermal endpoint: %w", err)
+	}
+	thermal, err := parseThermalReading(bytes.NewReader(thermalPayload), *s.identity.ThermalMetrics)
+	if err != nil {
+		return metricobserver.Reading{}, err
+	}
+	power.Thermal = thermal
+	return power, nil
+}
+
+func (s *Source) readEndpoint(ctx context.Context, endpoint string) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build edge-metrics request: %w", err)
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		return metricobserver.Reading{}, fmt.Errorf("read edge-metrics: %w", err)
+		return nil, fmt.Errorf("read edge-metrics: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return metricobserver.Reading{}, fmt.Errorf("read edge-metrics: HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("read edge-metrics: HTTP %d", response.StatusCode)
 	}
 
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	if err != nil {
-		return metricobserver.Reading{}, fmt.Errorf("read edge-metrics response: %w", err)
+		return nil, fmt.Errorf("read edge-metrics response: %w", err)
 	}
 	if len(payload) > maximumResponseBytes {
-		return metricobserver.Reading{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: edge-metrics response exceeds %d bytes", metricobserver.ErrInvalidReading, maximumResponseBytes,
 		)
 	}
-	if len(s.identity.MetricLabels) != 0 {
-		return parsePowerSeries(bytes.NewReader(payload), s.identity.Metric, s.identity.MetricLabels)
-	}
-	return parseReading(bytes.NewReader(payload), s.identity.Metric, *s.identity.ThermalMetrics)
+	return payload, nil
 }
 
 func parsePowerSeries(
@@ -246,13 +279,11 @@ type rawMetric struct {
 	err   error
 }
 
-func parseReading(
+func parseThermalReading(
 	reader io.Reader,
-	powerMetric string,
 	thermalMetrics metricobserver.ThermalMetricIdentity,
-) (metricobserver.Reading, error) {
+) (metricobserver.ThermalReading, error) {
 	names := []string{
-		powerMetric,
 		thermalMetrics.ObservationAvailable,
 		thermalMetrics.Active,
 		thermalMetrics.CPUCoreThrottleEvents,
@@ -295,12 +326,7 @@ func parseReading(
 		metric.value = fields[1]
 	}
 	if err := scanner.Err(); err != nil {
-		return metricobserver.Reading{}, fmt.Errorf("parse edge-metrics response: %w", err)
-	}
-
-	watts, err := requiredNonNegative(metrics[powerMetric], powerMetric)
-	if err != nil {
-		return metricobserver.Reading{}, err
+		return metricobserver.ThermalReading{}, fmt.Errorf("parse edge-metrics response: %w", err)
 	}
 	thermal := metricobserver.ThermalReading{}
 	thermal.ObservationAvailable = thermalBool(
@@ -325,21 +351,7 @@ func parseReading(
 			Message: "thermal observation is available but no direct or cumulative throttling signal is exposed",
 		})
 	}
-	return metricobserver.Reading{Watts: watts, Thermal: thermal}, nil
-}
-
-func requiredNonNegative(metric *rawMetric, name string) (float64, error) {
-	if !metric.found {
-		return 0, fmt.Errorf("%w: %s", metricobserver.ErrMetricMissing, name)
-	}
-	if metric.err != nil {
-		return 0, fmt.Errorf("%w: %v", metricobserver.ErrInvalidReading, metric.err)
-	}
-	value, err := strconv.ParseFloat(metric.value, 64)
-	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return 0, fmt.Errorf("%w: %s=%q", metricobserver.ErrInvalidReading, name, metric.value)
-	}
-	return value, nil
+	return thermal, nil
 }
 
 func thermalBool(

@@ -4,7 +4,7 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha9`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha10`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against frozen intent. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
@@ -40,6 +40,10 @@ and `NodeActuation` at a time, finalizes their immutable evidence, and writes th
 terminal two-direction result. Helm now renders its static placement, bounds,
 and least-privilege identities, but deployment and live transition evidence
 remain unverified.
+The static Run metric source now freezes an exact hostname-filtered central
+power series and a separate local thermal endpoint; one observation tick must
+read both under the same bounded context. This configuration is rendered but
+has not produced a new admitted live idle baseline.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory

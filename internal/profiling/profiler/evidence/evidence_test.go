@@ -60,10 +60,21 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
-func TestFrozenThermalIdentityKeepsExistingRawSchemas(t *testing.T) {
-	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha5" ||
-		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha3" {
+func TestCompositeMetricSourcePinsCurrentRawSchemas(t *testing.T) {
+	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha6" ||
+		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha4" {
 		t.Fatalf("raw schemas changed: active=%q idle=%q", RawMeasurementSchemaVersion, IdleRawMeasurementSchemaVersion)
+	}
+	intent := loadIntent(t)
+	active := validRaw(t, intent)
+	active.SchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha5"
+	if err := active.Validate(intent); err == nil {
+		t.Fatal("retired active raw schema was accepted")
+	}
+	idle := validIdleRaw(t, intent)
+	idle.SchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha3"
+	if err := idle.Validate(intent); err == nil {
+		t.Fatal("retired idle raw schema was accepted")
 	}
 }
 
@@ -166,9 +177,33 @@ func verifyIntentForTest(t *testing.T, intent profilingrun.Intent) profilingrun.
 	return verified
 }
 
+func TestRawMeasurementBindsCompositeMetricSourceToFrozenIntent(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*metricobserver.SourceIdentity)
+	}{
+		{name: "labels", mutate: func(source *metricobserver.SourceIdentity) {
+			source.MetricLabels = map[string]string{"hostname": "other", "device_type": "test_device"}
+		}},
+		{name: "thermal endpoint", mutate: func(source *metricobserver.SourceIdentity) {
+			source.ThermalEndpoint = "http://other-thermal.test:9102/metrics"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			intent := loadIntent(t)
+			raw := validRaw(t, intent)
+			test.mutate(&raw.Metrics.Source)
+			if err := raw.Validate(intent); err == nil || !strings.Contains(err.Error(), "metric source identity mismatch") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha9"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha10"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -199,8 +234,8 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 		{name: "retired same-shape schema", mutate: func(candidate *ExecutionEvidence) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
-		{name: "superseded schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha7"
+		{name: "retired predecessor schema", mutate: func(candidate *ExecutionEvidence) {
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha9"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {
@@ -526,10 +561,12 @@ func validRaw(t *testing.T, intent profilingrun.Intent) RawMeasurement {
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
-				Kind:     intent.Metrics.SourceKind,
-				NodeName: intent.Metrics.NodeName,
-				Endpoint: intent.Metrics.Endpoint,
-				Metric:   intent.Metrics.PowerMetric,
+				Kind:            intent.Metrics.SourceKind,
+				NodeName:        intent.Metrics.NodeName,
+				Endpoint:        intent.Metrics.Endpoint,
+				Metric:          intent.Metrics.PowerMetric,
+				MetricLabels:    intent.Metrics.MetricLabels,
+				ThermalEndpoint: intent.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 					ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
 					Active:                    intent.Metrics.ThermalMetrics.Active,

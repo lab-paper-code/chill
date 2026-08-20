@@ -14,14 +14,15 @@ const (
 
 // SourceIdentity identifies the concrete source and typed metrics observed in a run.
 type SourceIdentity struct {
-	Kind           string                 `json:"kind"`
-	NodeName       string                 `json:"nodeName,omitempty"`
-	Namespace      string                 `json:"namespace,omitempty"`
-	PodName        string                 `json:"podName,omitempty"`
-	Endpoint       string                 `json:"endpoint"`
-	Metric         string                 `json:"metric"`
-	MetricLabels   map[string]string      `json:"metricLabels,omitempty"`
-	ThermalMetrics *ThermalMetricIdentity `json:"thermalMetrics,omitempty"`
+	Kind            string                 `json:"kind"`
+	NodeName        string                 `json:"nodeName,omitempty"`
+	Namespace       string                 `json:"namespace,omitempty"`
+	PodName         string                 `json:"podName,omitempty"`
+	Endpoint        string                 `json:"endpoint"`
+	Metric          string                 `json:"metric"`
+	MetricLabels    map[string]string      `json:"metricLabels,omitempty"`
+	ThermalEndpoint string                 `json:"thermalEndpoint,omitempty"`
+	ThermalMetrics  *ThermalMetricIdentity `json:"thermalMetrics,omitempty"`
 }
 
 // ThermalMetricIdentity freezes the edge-metrics names interpreted by the adapter.

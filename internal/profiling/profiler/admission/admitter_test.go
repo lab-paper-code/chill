@@ -376,7 +376,10 @@ func admissionIntent() profilingrun.Intent {
 			WorkloadMode: "saturated", InputGenerator: "seeded", OutputValidation: "shape",
 		},
 		Metrics: profilingrun.MetricContract{
-			SourceKind: "edge-metrics", NodeName: "lattepanda", Endpoint: "http://metrics", PowerMetric: "watts",
+			SourceKind: "edge-metrics", NodeName: "lattepanda",
+			Endpoint: "http://central-meter/prometheus?hostname=lattepanda", PowerMetric: "watts",
+			MetricLabels:    map[string]string{"hostname": "lattepanda", "device_type": "test_device"},
+			ThermalEndpoint: "http://thermal/metrics",
 			ThermalMetrics: profilingrun.ThermalMetricContract{
 				ObservationAvailable: "thermal_observation_available", Active: "thermal_active",
 				CPUCoreThrottleEvents: "thermal_cpu_core_events", CPUPackageThrottleEvents: "thermal_cpu_package_events",
@@ -520,6 +523,7 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 			Source: metricobserver.SourceIdentity{
 				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
+				MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 					ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
 					Active:                    intent.Metrics.ThermalMetrics.Active,

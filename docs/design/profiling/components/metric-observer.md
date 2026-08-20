@@ -9,9 +9,10 @@ Approved for the first edge-metrics-backed profiling path.
 ## Purpose
 
 MetricObserver records the typed metric facts required while one profiling
-measurement window is active. The first source is one already-resolved
-edge-metrics endpoint, and the first contract records wall power together with
-thermal-validity facts from the same scrape.
+measurement window is active. The first Run source combines one already-resolved
+central exact-series power endpoint with one local thermal endpoint. One tick
+records their power and thermal-validity facts only when both reads complete
+under the same bounded request context.
 
 The adapter also exposes a power-only exact-series source intended for the
 transition-cost observer. It consumes one frozen metric name and a non-empty
@@ -42,11 +43,13 @@ MetricObserver owns:
 
 The edge-metrics adapter owns:
 
-- issuing one bounded HTTP request to one resolved exposition endpoint;
+- issuing sequential bounded reads to the resolved power and thermal endpoints
+  under one request context;
 - parsing the configured and frozen required wall-power metric;
 - parsing the configured and frozen typed thermal metrics;
-- selecting one configured power-only series by its exact frozen labels;
+- selecting the configured power series by its exact frozen labels;
 - rejecting zero or multiple exact-series matches;
+- failing the tick when either endpoint read fails, without a partial sample;
 - rejecting duplicate, malformed, non-finite, or semantically invalid values;
   and
 - preserving a missing or invalid thermal fact without converting it into a
@@ -69,8 +72,9 @@ One successful scrape produces one timestamped sample containing:
 - maximum device temperature as diagnostic context; and
 - any typed issue for a required or malformed metric.
 
-Power is required by the first profiling path. A missing or invalid power value
-is a failed source-read attempt. Thermal signals are heterogeneous, so their
+Power and a readable thermal endpoint are required by the first profiling
+path. A missing or invalid power value, or a failed endpoint read, is a failed
+source-read attempt. Thermal signals are heterogeneous, so their
 fields are optional and their exact presence remains evidence. A successful
 power read cannot silently turn missing thermal evidence into a healthy state.
 The power-only path makes no thermal claim and does not accept a series with
@@ -111,7 +115,7 @@ internal/metricobserver
 internal/metricobserver/edgemetrics
         |
         v
-edge-metrics exposition endpoint
+edge-metrics exposition endpoints
 ```
 
 The core package imports no CHILL API, Kubernetes client, controller-runtime,
@@ -132,7 +136,9 @@ transport only.
 
 ## Acceptance gates
 
-- one HTTP response yields aligned power and thermal facts;
+- one bounded tick combines exact central power with local thermal facts;
+- either endpoint failure or oversize response fails the tick without a partial
+  sample;
 - required-power failure and partial thermal failure remain distinguishable;
 - bounded scheduling, timeout, cancellation, event limits, and summaries have
   deterministic tests;

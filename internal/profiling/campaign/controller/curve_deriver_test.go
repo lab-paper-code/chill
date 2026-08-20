@@ -559,6 +559,7 @@ func curveFixtureActiveRaw(
 			Source: metricobserver.SourceIdentity{
 				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
+				MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 					ObservationAvailable:      "device_thermal_throttle_observation_available",
 					Active:                    "device_thermal_throttle_active",

@@ -268,14 +268,14 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "unsupported"
+            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha11"
             with self.assertRaisesRegex(
                 runner.ContractError, "supported CPU intent schema"
             ):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "unsupported"
+            request["schemaVersion"] = "chill.dacs.io/ort-cpu-runtime-request.v1alpha11"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):

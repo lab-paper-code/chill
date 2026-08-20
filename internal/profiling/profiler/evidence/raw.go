@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha5"
+const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha6"
 
 // RawMeasurement contains only facts available to the in-Job worker before it
 // exits. Kubernetes terminal state is deliberately excluded.
@@ -147,6 +148,8 @@ func metricSourceMatches(source metricobserver.SourceIdentity, contract profilin
 		source.NodeName == contract.NodeName &&
 		source.Endpoint == contract.Endpoint &&
 		source.Metric == contract.PowerMetric &&
+		maps.Equal(source.MetricLabels, contract.MetricLabels) &&
+		source.ThermalEndpoint == contract.ThermalEndpoint &&
 		thermal != nil &&
 		thermal.ObservationAvailable == contract.ThermalMetrics.ObservationAvailable &&
 		thermal.Active == contract.ThermalMetrics.Active &&

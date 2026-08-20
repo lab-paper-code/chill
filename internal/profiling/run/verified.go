@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 )
 
 // VerifiedIntent is populated only after one intent has passed structural and
@@ -104,6 +105,7 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 func cloneIntent(source Intent) Intent {
 	result := source
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
+	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
 	if source.Actuation != nil {
 		actuation := *source.Actuation
 		if source.Actuation.Actuator.JetsonNVPModel != nil {

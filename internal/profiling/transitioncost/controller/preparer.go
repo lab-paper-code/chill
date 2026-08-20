@@ -275,20 +275,16 @@ func validatePreparationInput(measurement *edgev1alpha1.PowerModeTransitionCost)
 }
 
 func preparePowerSource(resolved profiler.ResolvedMetricSource) (metricobserver.SourceIdentity, string, error) {
-	if resolved.TransitionPower == nil {
-		return metricobserver.SourceIdentity{}, "", errors.New("resolved metric source has no transition power source")
-	}
-	selected := resolved.TransitionPower
-	_, hasHostname := selected.Labels["hostname"]
-	deviceType, hasDeviceType := selected.Labels["device_type"]
-	if len(selected.Labels) != 2 || !hasHostname || !hasDeviceType || !clean(deviceType) {
+	_, hasHostname := resolved.MetricLabels["hostname"]
+	deviceType, hasDeviceType := resolved.MetricLabels["device_type"]
+	if len(resolved.MetricLabels) != 2 || !hasHostname || !hasDeviceType || !clean(deviceType) {
 		return metricobserver.SourceIdentity{}, "", errors.New(
-			"resolved transition power labels must contain exactly hostname and one clean device_type value",
+			"resolved power labels must contain exactly hostname and one clean device_type value",
 		)
 	}
-	labels := maps.Clone(selected.Labels)
+	labels := maps.Clone(resolved.MetricLabels)
 	return metricobserver.SourceIdentity{
-		Kind: resolved.Kind, Endpoint: selected.Endpoint, Metric: selected.PowerMetric, MetricLabels: labels,
+		Kind: resolved.Kind, Endpoint: resolved.Endpoint, Metric: resolved.PowerMetric, MetricLabels: labels,
 	}, deviceType, nil
 }
 

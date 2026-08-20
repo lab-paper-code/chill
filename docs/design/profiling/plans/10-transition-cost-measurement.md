@@ -227,6 +227,11 @@ evidence validation. The configured query value must equal the frozen
 `hostname` label, and the observer still requires the returned series to have
 exactly both frozen labels, including `device_type`.
 
+The same static Node declaration supplies this exact power source to profiling
+Runs together with a separate local thermal endpoint. A profiling Run combines
+both reads in one bounded tick; the transition observer remains power-only and
+consumes the declaration's exact power fields directly.
+
 The selected Gateway is Deployment
 `monitoring/edge-metrics-exporter-shelly-gateway`, currently delivered by Helm
 release `edge-metrics` revision 26 with image tag `sha-94c425c`. The enclosing
@@ -399,6 +404,9 @@ These checks do not prove restart-spanning continuity. Gate 0 remains
 incomplete until a bounded restart-required transition trace shows that the
 exact selected series continues to be collected while the target Node is
 unavailable and returns.
+The latest live idle-baseline attempt set was insufficient and its object was
+deleted; rendered composite-source configuration therefore does not establish
+a current target-mode idle baseline or a successful transition measurement.
 
 ### Unit 1: pure observation and derivation contracts
 

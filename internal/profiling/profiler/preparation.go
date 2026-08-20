@@ -78,14 +78,9 @@ type ResolvedMetricSource struct {
 	Kind            string
 	Endpoint        string
 	PowerMetric     string
+	MetricLabels    map[string]string
+	ThermalEndpoint string
 	ThermalMetrics  profilingrun.ThermalMetricContract
-	TransitionPower *ResolvedTransitionPower
-}
-
-type ResolvedTransitionPower struct {
-	Endpoint    string
-	PowerMetric string
-	Labels      map[string]string
 }
 
 type ResolvedWorkloadObservation struct {
@@ -323,6 +318,8 @@ func (p *Preparer) freeze(
 		Measurement: request.Measurement,
 		Metrics: profilingrun.MetricContract{
 			SourceKind: metrics.Kind, NodeName: node.Name, Endpoint: metrics.Endpoint, PowerMetric: metrics.PowerMetric,
+			MetricLabels:         maps.Clone(metrics.MetricLabels),
+			ThermalEndpoint:      metrics.ThermalEndpoint,
 			ThermalMetrics:       metrics.ThermalMetrics,
 			IntervalMilliseconds: request.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  request.Metrics.TimeoutMilliseconds, DurationSeconds: request.Metrics.DurationSeconds,

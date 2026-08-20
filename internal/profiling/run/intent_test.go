@@ -110,6 +110,9 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 		{name: "mixed actuator union", mutate: func(candidate *Intent) {
 			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
 		}},
+		{name: "retired predecessor schema", mutate: func(candidate *Intent) {
+			candidate.SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha11"
+		}},
 		{name: "unsupported schema", mutate: func(candidate *Intent) { candidate.SchemaVersion = "foreign" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -280,6 +283,18 @@ func TestCurrentIntentRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
 		{name: "duplicate metric name", mutate: func(intent *Intent) {
 			intent.Metrics.ThermalMetrics.Active = intent.Metrics.PowerMetric
 		}},
+		{name: "missing metric labels", mutate: func(intent *Intent) {
+			intent.Metrics.MetricLabels = nil
+		}},
+		{name: "invalid metric label name", mutate: func(intent *Intent) {
+			intent.Metrics.MetricLabels = map[string]string{"not-valid": "value"}
+		}},
+		{name: "empty metric label value", mutate: func(intent *Intent) {
+			intent.Metrics.MetricLabels = map[string]string{"hostname": ""}
+		}},
+		{name: "unclean thermal endpoint", mutate: func(intent *Intent) {
+			intent.Metrics.ThermalEndpoint = " http://thermal.test/metrics "
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -289,6 +304,30 @@ func TestCurrentIntentRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
 				t.Fatal("invalid metric identities were accepted")
 			}
 		})
+	}
+}
+
+func TestVerifiedIntentOwnsMetricLabels(t *testing.T) {
+	intent := validIntent()
+	verified, err := ValidateIntent(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Metrics.MetricLabels["hostname"] = "caller-mutation"
+	first, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Metrics.MetricLabels["hostname"] != "lattepanda" {
+		t.Fatalf("verified intent retained caller labels: %#v", first.Metrics.MetricLabels)
+	}
+	first.Metrics.MetricLabels["hostname"] = "record-mutation"
+	second, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Metrics.MetricLabels["hostname"] != "lattepanda" {
+		t.Fatalf("verified intent retained returned labels: %#v", second.Metrics.MetricLabels)
 	}
 }
 
@@ -351,8 +390,10 @@ func validIntent() Intent {
 		Metrics: MetricContract{
 			SourceKind:           "edge-metrics",
 			NodeName:             "lattepanda",
-			Endpoint:             "http://edge-metric.monitoring.svc:9102/metrics",
+			Endpoint:             "http://central-meter.test:18766/prometheus?hostname=lattepanda",
 			PowerMetric:          "shelly_power_total_watts",
+			MetricLabels:         map[string]string{"hostname": "lattepanda", "device_type": "test_device"},
+			ThermalEndpoint:      "http://edge-metric.monitoring.svc:9102/metrics",
 			ThermalMetrics:       testThermalMetricContract(),
 			IntervalMilliseconds: 1000,
 			TimeoutMilliseconds:  500,

@@ -116,6 +116,8 @@ func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
 }
 
 func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
+	const mutation = "changed"
+
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
 	preparer := newFixturePreparer(t, resolvers)
@@ -136,9 +138,13 @@ func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 	if first.CandidateReportBytes[0] == 'x' {
 		t.Fatal("prepared Run retained resolver-owned candidate bytes")
 	}
-	resolvers.workloads.result.Image = "changed"
-	if first.Intent.Images.WorkloadObserver == "changed" {
+	resolvers.workloads.result.Image = mutation
+	if first.Intent.Images.WorkloadObserver == mutation {
 		t.Fatal("prepared Run retained resolver-owned workload facts")
+	}
+	resolvers.metrics.result.MetricLabels["hostname"] = mutation
+	if first.Intent.Metrics.MetricLabels["hostname"] == mutation {
+		t.Fatal("prepared Run retained resolver-owned metric labels")
 	}
 }
 
@@ -582,6 +588,7 @@ func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparatio
 		node: &fakeNodeResolver{result: intent.TargetNode},
 		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
 			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
+			MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
 			ThermalMetrics: intent.Metrics.ThermalMetrics,
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{

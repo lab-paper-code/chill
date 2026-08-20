@@ -12,6 +12,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 )
 
+const (
+	callerMutation    = "caller-mutation"
+	selectedNodeLabel = "node-7"
+)
+
 func TestNewPowerSeriesValidatesAndOwnsExactLabels(t *testing.T) {
 	valid := testPowerSeriesIdentity("http://example.test/custom")
 	wrongKind := testPowerSeriesIdentity(valid.Endpoint)
@@ -27,7 +32,8 @@ func TestNewPowerSeriesValidatesAndOwnsExactLabels(t *testing.T) {
 	invalidLabelValue := testPowerSeriesIdentity(valid.Endpoint)
 	invalidLabelValue.MetricLabels = map[string]string{"unit": string([]byte{0xff})}
 	withThermal := testPowerSeriesIdentity(valid.Endpoint)
-	withThermal.ThermalMetrics = testSourceIdentity("").ThermalMetrics
+	thermal := testThermalIdentity()
+	withThermal.ThermalMetrics = &thermal
 
 	tests := []struct {
 		name     string
@@ -60,7 +66,7 @@ func TestNewPowerSeriesValidatesAndOwnsExactLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity.MetricLabels["unit"] = "caller-mutation"
+	identity.MetricLabels["unit"] = callerMutation
 	got := source.Identity()
 	if got.MetricLabels["unit"] != expectedUnit {
 		t.Fatalf("owned identity labels = %#v", got.MetricLabels)
@@ -86,13 +92,13 @@ func TestPowerSeriesSourceSelectsOneOfSevenConfiguredSeries(t *testing.T) {
 	}, "\n") + "\n"
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		hostnames := request.URL.Query()["hostname"]
-		if len(request.URL.Query()) != 1 || len(hostnames) != 1 || hostnames[0] != "node-7" {
+		if len(request.URL.Query()) != 1 || len(hostnames) != 1 || hostnames[0] != selectedNodeLabel {
 			t.Errorf("request query = %q", request.URL.RawQuery)
 		}
 		_, _ = response.Write([]byte(payload))
 	}))
 	defer server.Close()
-	identity.Endpoint = server.URL + "?hostname=node-7"
+	identity.Endpoint = server.URL + "?hostname=" + selectedNodeLabel
 
 	source, err := NewPowerSeries(identity, server.Client())
 	if err != nil {
@@ -198,6 +204,6 @@ func TestPowerSeriesSourceHonorsContextCancellation(t *testing.T) {
 func testPowerSeriesIdentity(endpoint string) metricobserver.SourceIdentity {
 	return metricobserver.SourceIdentity{
 		Kind: SourceKind, Endpoint: endpoint, Metric: "experiment_input_watts",
-		MetricLabels: map[string]string{"feed": "b", "unit": "node-7"},
+		MetricLabels: map[string]string{"feed": "b", "unit": selectedNodeLabel},
 	}
 }

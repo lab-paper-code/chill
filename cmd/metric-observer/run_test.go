@@ -16,19 +16,33 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+func TestExecutePublishesFrozenCompositeMetricObservation(t *testing.T) {
+	powerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("hostname") != "lattepanda" {
+			t.Errorf("power query = %q", request.URL.RawQuery)
+		}
 		_, _ = response.Write([]byte(strings.Join([]string{
-			"frozen_wall_power_watts 5.2",
+			"# TYPE frozen_wall_power_watts gauge",
+			"frozen_wall_power_watts{hostname=\"lattepanda\",device_type=\"test_device\"} 5.2",
+		}, "\n") + "\n"))
+	}))
+	defer powerServer.Close()
+	thermalServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.RawQuery != "" {
+			t.Errorf("thermal query = %q", request.URL.RawQuery)
+		}
+		_, _ = response.Write([]byte(strings.Join([]string{
 			"frozen_thermal_observation_available 1",
 			"frozen_thermal_active 0",
 			"frozen_thermal_max_celsius 41",
 		}, "\n") + "\n"))
 	}))
-	defer server.Close()
+	defer thermalServer.Close()
 
 	directory := t.TempDir()
-	intent := writeTestIntent(t, directory, server.URL)
+	intent := writeTestIntent(
+		t, directory, powerServer.URL+"/prometheus?hostname=lattepanda", thermalServer.URL+"/metrics",
+	)
 	options := testOptions(directory)
 	if err := worker.PublishSignal(options.startPath); err != nil {
 		t.Fatal(err)
@@ -36,7 +50,7 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	if err := worker.PublishSignal(options.endPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := execute(context.Background(), options, server.Client(), time.Second, time.Millisecond); err != nil {
+	if err := execute(context.Background(), options, powerServer.Client(), time.Second, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(options.readyPath); err != nil || !info.Mode().IsRegular() {
@@ -53,8 +67,16 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	assertCompositeObservation(t, intent, result)
+}
+
+func assertCompositeObservation(t *testing.T, intent profilingrun.Intent, result metricobserver.Result) {
+	t.Helper()
 	if result.Source.Kind != intent.Metrics.SourceKind || result.Source.NodeName != intent.TargetNode.Name ||
 		result.Source.Endpoint != intent.Metrics.Endpoint || result.Source.Metric != intent.Metrics.PowerMetric ||
+		result.Source.ThermalEndpoint != intent.Metrics.ThermalEndpoint ||
+		len(result.Source.MetricLabels) != 2 || result.Source.MetricLabels["hostname"] != "lattepanda" ||
+		result.Source.MetricLabels["device_type"] != "test_device" ||
 		result.Source.ThermalMetrics == nil ||
 		result.Source.ThermalMetrics.ObservationAvailable != intent.Metrics.ThermalMetrics.ObservationAvailable ||
 		result.Source.ThermalMetrics.Active != intent.Metrics.ThermalMetrics.Active ||
@@ -146,7 +168,7 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	}
 }
 
-func writeTestIntent(t *testing.T, directory, endpoint string) profilingrun.Intent {
+func writeTestIntent(t *testing.T, directory, endpoint string, thermalEndpoints ...string) profilingrun.Intent {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -162,6 +184,11 @@ func writeTestIntent(t *testing.T, directory, endpoint string) profilingrun.Inte
 	intent.Workload = profilingrun.CurrentWorkloadContract()
 	intent.Metrics.Endpoint = endpoint
 	intent.Metrics.PowerMetric = "frozen_wall_power_watts"
+	intent.Metrics.MetricLabels = map[string]string{"hostname": "lattepanda", "device_type": "test_device"}
+	intent.Metrics.ThermalEndpoint = endpoint
+	if len(thermalEndpoints) != 0 {
+		intent.Metrics.ThermalEndpoint = thermalEndpoints[0]
+	}
 	intent.Metrics.ThermalMetrics = profilingrun.ThermalMetricContract{
 		ObservationAvailable:      "frozen_thermal_observation_available",
 		Active:                    "frozen_thermal_active",

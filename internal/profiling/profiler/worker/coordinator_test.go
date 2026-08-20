@@ -465,6 +465,7 @@ func testMetricResult(intent profilingrun.Intent) metricobserver.Result {
 		Source: metricobserver.SourceIdentity{
 			Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
 			Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
+			MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
 			ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 				ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
 				Active:                    intent.Metrics.ThermalMetrics.Active,

@@ -340,12 +340,12 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "unsupported"
+            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha11"
             with self.assertRaisesRegex(runner.ContractError, "current intent schema"):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "unsupported"
+            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha5"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):

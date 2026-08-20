@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha11"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha11"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha12"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha12"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"

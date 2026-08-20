@@ -73,6 +73,10 @@ func (i Intent) Validate() error {
 	if i.Metrics.NodeName != i.TargetNode.Name {
 		return errors.New("metrics nodeName must match target Node")
 	}
+	if strings.TrimSpace(i.Metrics.ThermalEndpoint) == "" ||
+		strings.TrimSpace(i.Metrics.ThermalEndpoint) != i.Metrics.ThermalEndpoint {
+		return errors.New("metrics.thermalEndpoint is required without surrounding whitespace")
+	}
 	if err := i.Metrics.ValidateMetricIdentities(); err != nil {
 		return err
 	}
@@ -96,6 +100,17 @@ func (i Intent) Validate() error {
 // ValidateMetricIdentities checks the configured Prometheus names and ensures
 // that every typed slot denotes a distinct metric.
 func (m MetricContract) ValidateMetricIdentities() error {
+	if len(m.MetricLabels) == 0 {
+		return errors.New("metrics.metricLabels is required")
+	}
+	for name, value := range m.MetricLabels {
+		if !model.LabelName(name).IsValid() {
+			return fmt.Errorf("metrics.metricLabels name %q is invalid", name)
+		}
+		if value == "" || !model.LabelValue(value).IsValid() {
+			return fmt.Errorf("metrics.metricLabels value for %q must be nonempty valid UTF-8", name)
+		}
+	}
 	metrics := []struct {
 		name  string
 		value string

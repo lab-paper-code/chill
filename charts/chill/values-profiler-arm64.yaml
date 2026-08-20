@@ -141,8 +141,12 @@ profiling:
   metricSources:
     - node: rasp5
       kind: edge-metrics
-      endpoint: http://155.230.34.243:9102/metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=raspberrypi-5
       powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: raspberrypi-5
+        device_type: raspberry_pi
+      thermalEndpoint: http://155.230.34.243:9102/metrics
       thermalMetrics:
         observationAvailable: device_thermal_throttle_observation_available
         active: device_thermal_throttle_active
@@ -152,8 +156,12 @@ profiling:
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: orangepi
       kind: edge-metrics
-      endpoint: http://155.230.34.143:9102/metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=orangepi-5-plus
       powerMetric: shelly_power_total_watts
+      metricLabels:
+        hostname: orangepi-5-plus
+        device_type: orange_pi
+      thermalEndpoint: http://155.230.34.143:9102/metrics
       thermalMetrics:
         observationAvailable: device_thermal_throttle_observation_available
         active: device_thermal_throttle_active
@@ -163,14 +171,12 @@ profiling:
         maximumTemperatureCelsius: device_thermal_max_celsius
     - node: jetsono
       kind: edge-metrics
-      endpoint: http://155.230.34.203:9102/metrics
+      endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
       powerMetric: shelly_power_total_watts
-      transitionPower:
-        endpoint: http://155.230.35.213:18766/prometheus?hostname=jetson-orin
-        powerMetric: shelly_power_total_watts
-        labels:
-          hostname: jetson-orin
-          device_type: jetson_orin
+      metricLabels:
+        hostname: jetson-orin
+        device_type: jetson_orin
+      thermalEndpoint: http://155.230.34.203:9102/metrics
       thermalMetrics:
         observationAvailable: device_thermal_throttle_observation_available
         active: device_thermal_throttle_active

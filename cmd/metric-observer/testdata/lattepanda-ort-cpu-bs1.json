@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha11",
+  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha12",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -66,8 +66,13 @@
   "metrics": {
     "sourceKind": "edge-metrics",
     "nodeName": "lattepanda",
-    "endpoint": "http://edge-metric.monitoring.svc:9102/metrics",
+    "endpoint": "http://central-metric.example.test:18766/prometheus?hostname=lattepanda",
     "powerMetric": "shelly_power_total_watts",
+    "metricLabels": {
+      "hostname": "lattepanda",
+      "device_type": "test_device"
+    },
+    "thermalEndpoint": "http://edge-metric.monitoring.svc:9102/metrics",
     "thermalMetrics": {
       "observationAvailable": "device_thermal_throttle_observation_available",
       "active": "device_thermal_throttle_active",
