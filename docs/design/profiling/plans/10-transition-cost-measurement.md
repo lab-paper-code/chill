@@ -341,8 +341,8 @@ state is another explicitly requested and independently measured
 
 ### Gate 0: physical measurement feasibility
 
-1. Use the selected target device, exact state pair, off-target observer on
-   `genesis1`, and central Shelly Gateway path declared above.
+1. Select one exact target Node and state pair while using the off-target
+   observer on `genesis1` and central Shelly Gateway path declared above.
 2. Select one concrete transition-start marker, target read-back,
    request-readiness witness, and serving-survival witness for that path.
 3. With separate live-test authorization, capture one bounded trace across a
