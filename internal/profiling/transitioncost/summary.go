@@ -50,9 +50,9 @@ type DirectedEntry struct {
 	TauMilliseconds DistributionSummary `json:"tauMilliseconds"`
 	EtaJoules       DistributionSummary `json:"etaJoules"`
 
-	MaximumBoundaryMappingUncertainty time.Duration `json:"maximumBoundaryMappingUncertainty"`
-	ServingSurvivedTrueCount          int           `json:"servingSurvivedTrueCount"`
-	ServingSurvivedFalseCount         int           `json:"servingSurvivedFalseCount"`
+	MaximumBoundaryMappingUncertaintyMilliseconds int64 `json:"maximumBoundaryMappingUncertaintyMilliseconds"`
+	ServingSurvivedTrueCount                      int   `json:"servingSurvivedTrueCount"`
+	ServingSurvivedFalseCount                     int   `json:"servingSurvivedFalseCount"`
 }
 
 // DirectedTableRecord is the stable factual projection consumed by a later
@@ -70,6 +70,31 @@ type DirectedTable struct {
 // Record returns an isolated copy of the complete directed table.
 func (t DirectedTable) Record() DirectedTableRecord {
 	return cloneDirectedTableRecord(t.record)
+}
+
+// RestoreDirectedTable validates one untrusted stored table record and returns
+// an owned complete table.
+func RestoreDirectedTable(record DirectedTableRecord) (DirectedTable, error) {
+	restored := cloneDirectedTableRecord(record)
+	if restored.SummaryMethod != DirectedSummaryMethod {
+		return DirectedTable{}, fmt.Errorf("unsupported directed summary method %q", restored.SummaryMethod)
+	}
+	if len(restored.Entries) != 2 {
+		return DirectedTable{}, errors.New("stored directed table must contain exactly two entries")
+	}
+	directions := make([]DirectedStatePair, len(restored.Entries))
+	for index, entry := range restored.Entries {
+		directions[index] = DirectedStatePair{Source: entry.SourceState, Target: entry.TargetState}
+	}
+	if _, err := validateDirections(directions, 5); err != nil {
+		return DirectedTable{}, fmt.Errorf("validate stored directed table directions: %w", err)
+	}
+	for index, entry := range restored.Entries {
+		if err := validateDirectedEntry(entry); err != nil {
+			return DirectedTable{}, fmt.Errorf("validate stored directed table entry %d: %w", index, err)
+		}
+	}
+	return DirectedTable{record: restored}, nil
 }
 
 // DirectionProgress exposes non-numeric progress when a complete table cannot
@@ -225,17 +250,17 @@ func (a directionAccumulator) entry() (DirectedEntry, error) {
 		return DirectedEntry{}, fmt.Errorf("summarize eta: %w", err)
 	}
 	return DirectedEntry{
-		SourceState:                       a.direction.Source,
-		TargetState:                       a.direction.Target,
-		TargetIdleBaseline:                a.targetIdleBaseline,
-		AttemptCount:                      totalVerdicts(a.verdictCounts),
-		VerdictCounts:                     a.verdictCounts,
-		AcceptedCount:                     a.verdictCounts.Accepted,
-		TauMilliseconds:                   tau,
-		EtaJoules:                         eta,
-		MaximumBoundaryMappingUncertainty: a.maximumUncertainty,
-		ServingSurvivedTrueCount:          a.servingSurvivedTrue,
-		ServingSurvivedFalseCount:         a.servingSurvivedFalse,
+		SourceState:        a.direction.Source,
+		TargetState:        a.direction.Target,
+		TargetIdleBaseline: a.targetIdleBaseline,
+		AttemptCount:       totalVerdicts(a.verdictCounts),
+		VerdictCounts:      a.verdictCounts,
+		AcceptedCount:      a.verdictCounts.Accepted,
+		TauMilliseconds:    tau,
+		EtaJoules:          eta,
+		MaximumBoundaryMappingUncertaintyMilliseconds: a.maximumUncertainty.Milliseconds(),
+		ServingSurvivedTrueCount:                      a.servingSurvivedTrue,
+		ServingSurvivedFalseCount:                     a.servingSurvivedFalse,
 	}, nil
 }
 
@@ -291,6 +316,59 @@ func summarizeDistribution(values []float64) (DistributionSummary, error) {
 		Minimum:                 minimum,
 		Maximum:                 maximum,
 	}, nil
+}
+
+func validateDirectedEntry(entry DirectedEntry) error {
+	if err := validateFrozen(FrozenContract{
+		SourceState: entry.SourceState, TargetState: entry.TargetState,
+		TargetIdleBaseline: entry.TargetIdleBaseline,
+	}); err != nil {
+		return err
+	}
+	counts := entry.VerdictCounts
+	if counts.Accepted < 0 || counts.Invalid < 0 || counts.Failed < 0 || counts.Insufficient < 0 ||
+		entry.AttemptCount < 0 || entry.AcceptedCount < 5 || entry.AcceptedCount != counts.Accepted {
+		return errors.New("attempt and verdict counts are inconsistent")
+	}
+	remainingAttempts := entry.AttemptCount
+	for _, count := range []int{counts.Accepted, counts.Invalid, counts.Failed, counts.Insufficient} {
+		if count > remainingAttempts {
+			return errors.New("attempt and verdict counts are inconsistent")
+		}
+		remainingAttempts -= count
+	}
+	if remainingAttempts != 0 {
+		return errors.New("attempt and verdict counts are inconsistent")
+	}
+	if entry.ServingSurvivedTrueCount < 0 || entry.ServingSurvivedFalseCount < 0 ||
+		entry.ServingSurvivedTrueCount > entry.AcceptedCount ||
+		entry.ServingSurvivedFalseCount != entry.AcceptedCount-entry.ServingSurvivedTrueCount {
+		return errors.New("serving-survival counts are inconsistent with accepted count")
+	}
+	if err := validateDistribution(entry.TauMilliseconds); err != nil {
+		return fmt.Errorf("validate tau distribution: %w", err)
+	}
+	if entry.TauMilliseconds.Minimum <= 0 {
+		return errors.New("tau distribution must be positive")
+	}
+	if err := validateDistribution(entry.EtaJoules); err != nil {
+		return fmt.Errorf("validate eta distribution: %w", err)
+	}
+	if entry.MaximumBoundaryMappingUncertaintyMilliseconds < 0 ||
+		entry.MaximumBoundaryMappingUncertaintyMilliseconds > maximumFinalizedDurationMilliseconds {
+		return errors.New("maximum boundary-mapping uncertainty is invalid")
+	}
+	return nil
+}
+
+func validateDistribution(distribution DistributionSummary) error {
+	if !finite(distribution.Mean) || !finite(distribution.SampleStandardDeviation) ||
+		!finite(distribution.Minimum) || !finite(distribution.Maximum) ||
+		distribution.SampleStandardDeviation < 0 || distribution.Minimum > distribution.Mean ||
+		distribution.Mean > distribution.Maximum {
+		return errors.New("distribution summary is invalid")
+	}
+	return nil
 }
 
 func totalVerdicts(counts VerdictCounts) int {

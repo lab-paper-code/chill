@@ -435,7 +435,10 @@ target-mode baselines, and prepares the two directed core contracts. Its power
 request extends one sample interval beyond the fact timeout only to retain the
 last possible sample; factual completion and integration boundaries do not
 move. One-attempt materialization and finalization exist; controller lifecycle
-orchestration remains incomplete.
+orchestration remains incomplete. A current-only terminal result writer retains
+the exact two-row table for a complete measurement, or the terminal reason and
+per-direction finalized-evidence progress for an insufficient or failed
+measurement. Reconciler registration and status publication remain incomplete.
 
 ### Unit 3: complete measurement control path
 

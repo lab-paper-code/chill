@@ -47,9 +47,9 @@ func TestSummarizeBuildsCompleteDirectedTableInFrozenOrder(t *testing.T) {
 		forward.EtaJoules.SampleStandardDeviation, math.Sqrt(10))
 	assertClose(t, "eta minimum preserves sign", forward.EtaJoules.Minimum, -4)
 	assertClose(t, "eta maximum", forward.EtaJoules.Maximum, 4)
-	if forward.MaximumBoundaryMappingUncertainty != 5*time.Millisecond {
-		t.Fatalf("maximum boundary uncertainty = %v, want 5ms",
-			forward.MaximumBoundaryMappingUncertainty)
+	if forward.MaximumBoundaryMappingUncertaintyMilliseconds != 5 {
+		t.Fatalf("maximum boundary uncertainty = %dms, want 5ms",
+			forward.MaximumBoundaryMappingUncertaintyMilliseconds)
 	}
 	if forward.ServingSurvivedTrueCount != 3 || forward.ServingSurvivedFalseCount != 2 {
 		t.Fatalf("survival counts = true:%d false:%d, want true:3 false:2",
@@ -163,6 +163,83 @@ func TestDirectedTableOwnsCallerAndRecordSlices(t *testing.T) {
 	if got := table.Record().Entries[0]; got != wantFirst {
 		t.Fatalf("directed table aliases a caller or returned slice: got %#v, want %#v", got, wantFirst)
 	}
+}
+
+func TestRestoreDirectedTableValidatesStoredRecordAndOwnsIt(t *testing.T) {
+	record := completeDirectedTableRecord(t)
+	wantFirst := record.Entries[0]
+
+	table, err := transitioncost.RestoreDirectedTable(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Entries[0] = transitioncost.DirectedEntry{}
+	if got := table.Record().Entries[0]; got != wantFirst {
+		t.Fatalf("restored table aliases stored record: got %#v, want %#v", got, wantFirst)
+	}
+}
+
+func TestRestoreDirectedTableRejectsMalformedStoredRecord(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*transitioncost.DirectedTableRecord)
+	}{
+		{name: "summary method", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.SummaryMethod = "retired"
+		}},
+		{name: "entry count", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries = record.Entries[:1]
+		}},
+		{name: "reverse direction", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[1].TargetState = record.Entries[0].TargetState
+		}},
+		{name: "baseline target", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].TargetIdleBaseline.State = record.Entries[0].SourceState
+		}},
+		{name: "verdict counts", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].VerdictCounts.Invalid++
+		}},
+		{name: "accepted count", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].AcceptedCount = 4
+		}},
+		{name: "survival counts", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].ServingSurvivedTrueCount++
+		}},
+		{name: "non-finite distribution", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].EtaJoules.Mean = math.NaN()
+		}},
+		{name: "unordered distribution", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].TauMilliseconds.Minimum = record.Entries[0].TauMilliseconds.Maximum + 1
+		}},
+		{name: "non-positive tau", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].TauMilliseconds.Minimum = 0
+		}},
+		{name: "negative uncertainty", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].MaximumBoundaryMappingUncertaintyMilliseconds = -1
+		}},
+		{name: "excessive uncertainty", mutate: func(record *transitioncost.DirectedTableRecord) {
+			record.Entries[0].MaximumBoundaryMappingUncertaintyMilliseconds = math.MaxInt64
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := completeDirectedTableRecord(t)
+			test.mutate(&record)
+			if _, err := transitioncost.RestoreDirectedTable(record); err == nil {
+				t.Fatal("RestoreDirectedTable() unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func completeDirectedTableRecord(t *testing.T) transitioncost.DirectedTableRecord {
+	t.Helper()
+	directions := testDirections()
+	table, err := transitioncost.Summarize(directions, 5, completeResults(t, directions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return table.Record()
 }
 
 type attemptOutcome int
