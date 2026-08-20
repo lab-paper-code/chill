@@ -67,6 +67,13 @@ type WorkloadIdentity struct {
 	UID       string
 }
 
+// ObserverIdentity identifies the off-target Node and exact immutable OCI
+// image identity used to observe one transition.
+type ObserverIdentity struct {
+	Node          NodeIdentity
+	ImageIdentity string
+}
+
 // ConfigurationSourceIdentity identifies the exact selected configuration
 // entry that supplied one meter source.
 type ConfigurationSourceIdentity struct {
@@ -84,6 +91,7 @@ type MeterSourceIdentity struct {
 	Endpoint            string
 	PowerMetric         string
 	Labels              map[string]string
+	TimestampAuthority  string
 	GatewayWorkload     WorkloadIdentity
 	ConfigurationSource ConfigurationSourceIdentity
 }
@@ -107,6 +115,7 @@ type FrozenContract struct {
 	SourceState        StateIdentity
 	TargetState        StateIdentity
 	Workload           WorkloadIdentity
+	Observer           ObserverIdentity
 	ProtocolIdentity   string
 	MeterIdentity      string
 	MeterSource        MeterSourceIdentity
@@ -136,16 +145,27 @@ type StateReadBack struct {
 	State StateIdentity
 }
 
-// Failure is one timestamped failed operation or meter read.
+// Failure is one timestamped failed actuation or state read-back.
 type Failure struct {
 	ObservedAt time.Time
 	Message    string
 }
 
-// PowerSample is one timestamped wall-power fact.
+// PowerSample is one wall-power fact. ObservedAt is the observer's HTTP
+// receipt time.
 type PowerSample struct {
-	ObservedAt time.Time
-	Watts      float64
+	ObservedAt     time.Time
+	RequestLatency time.Duration
+	Watts          float64
+}
+
+// PowerReadFailure is one retained failed meter read. ObservedAt is the
+// observer's HTTP receipt time; Reason is the retained factual failure class.
+type PowerReadFailure struct {
+	ObservedAt     time.Time
+	RequestLatency time.Duration
+	Reason         string
+	Message        string
 }
 
 // ReadyObservation is one observation of the exact frozen workload's
@@ -185,6 +205,7 @@ type RawObservation struct {
 	SourceState       StateIdentity
 	TargetState       StateIdentity
 	Workload          WorkloadIdentity
+	Observer          ObserverIdentity
 	ProtocolIdentity  string
 	MeterIdentity     string
 	MeterSource       MeterSourceIdentity
@@ -198,7 +219,7 @@ type RawObservation struct {
 	TargetReadBackFailure *Failure
 
 	PowerSamples  []PowerSample
-	PowerFailures []Failure
+	PowerFailures []PowerReadFailure
 	Readiness     []ReadyObservation
 
 	PreTransitionProcess  *ProcessObservation

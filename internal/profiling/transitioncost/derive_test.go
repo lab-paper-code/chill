@@ -287,7 +287,11 @@ func TestDeriveClassifiesPowerQualityInsufficient(t *testing.T) {
 
 func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T) {
 	frozen, raw, policy := validInputs()
-	raw.PowerFailures = []transitioncost.Failure{{ObservedAt: testTime(5), Message: "one meter timeout"}}
+	wantFailure := transitioncost.PowerReadFailure{
+		ObservedAt: testTime(5), RequestLatency: 125 * time.Millisecond,
+		Reason: "RequestTimeout", Message: "one meter timeout",
+	}
+	raw.PowerFailures = []transitioncost.PowerReadFailure{wantFailure}
 
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
@@ -295,7 +299,7 @@ func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T
 	}
 	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
 	if len(result.RawObservation().PowerFailures) != 1 ||
-		result.RawObservation().PowerFailures[0].Message != "one meter timeout" {
+		result.RawObservation().PowerFailures[0] != wantFailure {
 		t.Fatalf("failed reads not retained: %#v", result.RawObservation().PowerFailures)
 	}
 }
@@ -343,11 +347,16 @@ func TestDeriveRejectsEveryFrozenIdentityContradiction(t *testing.T) {
 			alter: func(raw *transitioncost.RawObservation) { raw.TargetState.PowerMode = mode30W },
 		},
 		{name: "workload", alter: func(raw *transitioncost.RawObservation) { raw.Workload.UID = otherWorkload }},
+		{name: "observer Node", alter: func(raw *transitioncost.RawObservation) { raw.Observer.Node.UID = "other-observer" }},
+		{name: "observer image", alter: func(raw *transitioncost.RawObservation) {
+			raw.Observer.ImageIdentity = "registry.example/observer@sha256:other"
+		}},
 		{name: "protocol", alter: func(raw *transitioncost.RawObservation) { raw.ProtocolIdentity = "other-protocol" }},
 		{name: "meter", alter: func(raw *transitioncost.RawObservation) { raw.MeterIdentity = "other-meter" }},
 		{name: "meter source kind", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Kind = "other-kind" }},
 		{name: "meter endpoint", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Endpoint = "http://meter.example/other" }},
 		{name: "power metric", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.PowerMetric = "other_power_watts" }},
+		{name: "timestamp authority", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.TimestampAuthority = "other-receipt-clock" }},
 		{name: "meter label value", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels["unit"] = "other-unit" }},
 		{name: "meter label missing", alter: func(raw *transitioncost.RawObservation) { delete(raw.MeterSource.Labels, "unit") }},
 		{name: "meter label extra", alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels["rack"] = "r1" }},
@@ -434,6 +443,13 @@ func TestDeriveRejectsMalformedFrozenInputsAsErrors(t *testing.T) {
 			match: "distinct power modes",
 		},
 		{
+			name: "observer has target Node name with another UID",
+			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
+				frozen.Observer.Node.Name = frozen.Node.Name
+			},
+			match: "off-target",
+		},
+		{
 			name: "meter source endpoint is empty",
 			alter: func(frozen *transitioncost.FrozenContract, _ *transitioncost.Policy) {
 				frozen.MeterSource.Endpoint = ""
@@ -508,6 +524,46 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 		{
 			name:  "empty meter source labels",
 			alter: func(raw *transitioncost.RawObservation) { raw.MeterSource.Labels = map[string]string{} },
+		},
+		{
+			name: "negative power sample latency",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerSamples[0].RequestLatency = -time.Nanosecond
+			},
+		},
+		{
+			name:  "non-finite power sample",
+			alter: func(raw *transitioncost.RawObservation) { raw.PowerSamples[0].Watts = math.NaN() },
+		},
+		{
+			name:  "negative power sample",
+			alter: func(raw *transitioncost.RawObservation) { raw.PowerSamples[0].Watts = -1 },
+		},
+		{
+			name: "empty power failure reason",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerFailures = []transitioncost.PowerReadFailure{{
+					ObservedAt: testTime(5), RequestLatency: time.Millisecond, Message: "meter unavailable",
+				}}
+			},
+		},
+		{
+			name: "padded power failure message",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerFailures = []transitioncost.PowerReadFailure{{
+					ObservedAt: testTime(5), RequestLatency: time.Millisecond,
+					Reason: "Unavailable", Message: " meter unavailable",
+				}}
+			},
+		},
+		{
+			name: "negative power failure latency",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerFailures = []transitioncost.PowerReadFailure{{
+					ObservedAt: testTime(5), RequestLatency: -time.Nanosecond,
+					Reason: "Unavailable", Message: "meter unavailable",
+				}}
+			},
 		},
 	}
 	for _, test := range tests {
@@ -608,9 +664,10 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 	target := transitioncost.StateIdentity{DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MAXN"}
 	workload := transitioncost.WorkloadIdentity{Namespace: "serving", Name: "mobilenet", UID: "workload-uid"}
 	meterSource := transitioncost.MeterSourceIdentity{
-		Kind:        "test-meter",
-		Endpoint:    "http://meter.example/prometheus",
-		PowerMetric: "experiment_input_watts",
+		Kind:               "test-meter",
+		Endpoint:           "http://meter.example/prometheus",
+		PowerMetric:        "experiment_input_watts",
+		TimestampAuthority: "observer-receipt-clock",
 		Labels: map[string]string{
 			"feed": "wall",
 			"unit": meterUnit,
@@ -638,6 +695,10 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 			Namespace: "chill-system", Name: "to-maxn", UID: "actuation-uid",
 		},
 		SourceState: source, TargetState: target, Workload: workload,
+		Observer: transitioncost.ObserverIdentity{
+			Node:          transitioncost.NodeIdentity{Name: "observer-node", UID: "observer-node-uid"},
+			ImageIdentity: "registry.example/observer@sha256:test",
+		},
 		ProtocolIdentity: "transition-cost-v1", MeterIdentity: "wall-meter-1", MeterSource: meterSource,
 		TargetIdleBaseline: transitioncost.IdleBaseline{
 			EvidenceReference: "evidence://idle-maxn", State: target, MeanWallWatts: 12,
@@ -650,7 +711,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		ObservationStartedAt: testTime(0), ObservationEndedAt: testTime(8),
 		Node: frozen.Node, DeviceClass: frozen.DeviceClass, Actuator: frozen.Actuator,
 		NodeActuation: frozen.NodeActuation,
-		SourceState:   source, TargetState: target, Workload: workload,
+		SourceState:   source, TargetState: target, Workload: workload, Observer: frozen.Observer,
 		ProtocolIdentity: frozen.ProtocolIdentity, MeterIdentity: frozen.MeterIdentity,
 		MeterSource:       rawMeterSource,
 		BaselineReference: frozen.TargetIdleBaseline.EvidenceReference,
@@ -663,11 +724,11 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 			Fact: transitioncost.MappedFact{OccurredAt: testTime(4), MappedAt: testTime(4)}, State: target,
 		},
 		PowerSamples: []transitioncost.PowerSample{
-			{ObservedAt: testTimeMillis(2100), Watts: 10},
-			{ObservedAt: testTime(3), Watts: 10},
-			{ObservedAt: testTime(4), Watts: 10},
-			{ObservedAt: testTimeMillis(4900), Watts: 10},
-			{ObservedAt: testTimeMillis(5900), Watts: 10},
+			{ObservedAt: testTimeMillis(2100), RequestLatency: 10 * time.Millisecond, Watts: 10},
+			{ObservedAt: testTime(3), RequestLatency: 10 * time.Millisecond, Watts: 10},
+			{ObservedAt: testTime(4), RequestLatency: 10 * time.Millisecond, Watts: 10},
+			{ObservedAt: testTimeMillis(4900), RequestLatency: 10 * time.Millisecond, Watts: 10},
+			{ObservedAt: testTimeMillis(5900), RequestLatency: 10 * time.Millisecond, Watts: 10},
 		},
 		Readiness: []transitioncost.ReadyObservation{
 			{ObservedAt: testTime(6), Workload: workload, Ready: true},
