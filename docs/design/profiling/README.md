@@ -396,6 +396,8 @@ profile derivation
         -> bounded power-window integration leaf
 
 transition-cost derivation -> bounded power-window integration leaf
+
+transition-cost worker -> bounded MetricObserver + transition-cost derivation
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or

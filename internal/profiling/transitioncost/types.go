@@ -86,18 +86,18 @@ type Failure struct {
 // PowerSample is one wall-power fact. ObservedAt is the observer's HTTP
 // receipt time.
 type PowerSample struct {
-	ObservedAt     time.Time
-	RequestLatency time.Duration
-	Watts          float64
+	ObservedAt            time.Time
+	RequestLatencySeconds float64
+	Watts                 float64
 }
 
 // PowerReadFailure is one retained failed meter read. ObservedAt is the
 // observer's HTTP receipt time; Reason is the retained factual failure class.
 type PowerReadFailure struct {
-	ObservedAt     time.Time
-	RequestLatency time.Duration
-	Reason         string
-	Message        string
+	ObservedAt            time.Time
+	RequestLatencySeconds float64
+	Reason                string
+	Message               string
 }
 
 // ReadyObservation is one observation of the selected serving workload's

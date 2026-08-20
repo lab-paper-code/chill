@@ -17,6 +17,11 @@
 Approved for implementation. This approval does not select a live target or
 authorize an unbounded Node restart, image publication, or cluster mutation.
 
+The Kubernetes-independent worker core now starts power and transition-fact
+observation together, reports readiness only after both paths are observable,
+and assembles their facts into one raw observation. Concrete Kubernetes fact
+observation and immutable evidence writing remain Unit 2 work.
+
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
 window and derives both its elapsed time `tau` and its energy overhead `eta`

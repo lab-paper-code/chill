@@ -213,7 +213,7 @@ func validateTransitionFacts(raw RawObservation) string {
 
 func validateObservedFacts(raw RawObservation) string {
 	for _, sample := range raw.PowerSamples {
-		if sample.ObservedAt.IsZero() || sample.RequestLatency < 0 ||
+		if sample.ObservedAt.IsZero() || !finiteNonNegative(sample.RequestLatencySeconds) ||
 			!finiteNonNegative(sample.Watts) ||
 			!within(sample.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
 			return "power sample is malformed or outside raw observation coverage"
@@ -296,7 +296,7 @@ func validateFailure(failure *Failure, start, end time.Time) string {
 
 func validatePowerReadFailure(failure PowerReadFailure, start, end time.Time) string {
 	if failure.ObservedAt.IsZero() || !within(failure.ObservedAt, start, end) ||
-		failure.RequestLatency < 0 || !validText(failure.Reason) ||
+		!finiteNonNegative(failure.RequestLatencySeconds) || !validText(failure.Reason) ||
 		!validText(failure.Message) {
 		return "is malformed or outside coverage"
 	}

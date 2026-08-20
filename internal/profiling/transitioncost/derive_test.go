@@ -271,7 +271,7 @@ func TestDeriveClassifiesPowerQualityInsufficient(t *testing.T) {
 func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	wantFailure := transitioncost.PowerReadFailure{
-		ObservedAt: testTime(5), RequestLatency: 125 * time.Millisecond,
+		ObservedAt: testTime(5), RequestLatencySeconds: 0.125,
 		Reason: "RequestTimeout", Message: "one meter timeout",
 	}
 	raw.PowerFailures = []transitioncost.PowerReadFailure{wantFailure}
@@ -369,7 +369,13 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 		{
 			name: "negative power sample latency",
 			alter: func(raw *transitioncost.RawObservation) {
-				raw.PowerSamples[0].RequestLatency = -time.Nanosecond
+				raw.PowerSamples[0].RequestLatencySeconds = -0.001
+			},
+		},
+		{
+			name: "non-finite power sample latency",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerSamples[0].RequestLatencySeconds = math.NaN()
 			},
 		},
 		{
@@ -384,7 +390,7 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			name: "empty power failure reason",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.PowerFailures = []transitioncost.PowerReadFailure{{
-					ObservedAt: testTime(5), RequestLatency: time.Millisecond, Message: "meter unavailable",
+					ObservedAt: testTime(5), RequestLatencySeconds: 0.001, Message: "meter unavailable",
 				}}
 			},
 		},
@@ -392,7 +398,7 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			name: "padded power failure message",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.PowerFailures = []transitioncost.PowerReadFailure{{
-					ObservedAt: testTime(5), RequestLatency: time.Millisecond,
+					ObservedAt: testTime(5), RequestLatencySeconds: 0.001,
 					Reason: "Unavailable", Message: " meter unavailable",
 				}}
 			},
@@ -401,7 +407,16 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			name: "negative power failure latency",
 			alter: func(raw *transitioncost.RawObservation) {
 				raw.PowerFailures = []transitioncost.PowerReadFailure{{
-					ObservedAt: testTime(5), RequestLatency: -time.Nanosecond,
+					ObservedAt: testTime(5), RequestLatencySeconds: -0.000000001,
+					Reason: "Unavailable", Message: "meter unavailable",
+				}}
+			},
+		},
+		{
+			name: "non-finite power failure latency",
+			alter: func(raw *transitioncost.RawObservation) {
+				raw.PowerFailures = []transitioncost.PowerReadFailure{{
+					ObservedAt: testTime(5), RequestLatencySeconds: math.Inf(1),
 					Reason: "Unavailable", Message: "meter unavailable",
 				}}
 			},
@@ -481,11 +496,11 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 			Fact: transitioncost.MappedFact{OccurredAt: testTime(4), MappedAt: testTime(4)}, State: target,
 		},
 		PowerSamples: []transitioncost.PowerSample{
-			{ObservedAt: testTimeMillis(2100), RequestLatency: 10 * time.Millisecond, Watts: 10},
-			{ObservedAt: testTime(3), RequestLatency: 10 * time.Millisecond, Watts: 10},
-			{ObservedAt: testTime(4), RequestLatency: 10 * time.Millisecond, Watts: 10},
-			{ObservedAt: testTimeMillis(4900), RequestLatency: 10 * time.Millisecond, Watts: 10},
-			{ObservedAt: testTimeMillis(5900), RequestLatency: 10 * time.Millisecond, Watts: 10},
+			{ObservedAt: testTimeMillis(2100), RequestLatencySeconds: 0.01, Watts: 10},
+			{ObservedAt: testTime(3), RequestLatencySeconds: 0.01, Watts: 10},
+			{ObservedAt: testTime(4), RequestLatencySeconds: 0.01, Watts: 10},
+			{ObservedAt: testTimeMillis(4900), RequestLatencySeconds: 0.01, Watts: 10},
+			{ObservedAt: testTimeMillis(5900), RequestLatencySeconds: 0.01, Watts: 10},
 		},
 		Readiness: []transitioncost.ReadyObservation{
 			{ObservedAt: testTime(6), Ready: true},

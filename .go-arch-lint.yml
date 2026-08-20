@@ -51,6 +51,7 @@ components:
   profile-derivation: { in: internal/profiling/derivation }
   power-window: { in: internal/profiling/powerwindow }
   transition-cost-core: { in: internal/profiling/transitioncost }
+  transition-cost-worker: { in: internal/profiling/transitioncost/worker }
   profiling-run: { in: internal/profiling/run }
   profiler-app: { in: internal/profiling/profiler }
   profiler-controller: { in: internal/profiling/profiler/controller }
@@ -173,6 +174,10 @@ deps:
   transition-cost-core:
     mayDependOn:
       - power-window
+  transition-cost-worker:
+    mayDependOn:
+      - metric-core
+      - transition-cost-core
   profiling-run:
     anyVendorDeps: true
 
