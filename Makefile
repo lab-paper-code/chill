@@ -48,7 +48,10 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" OPERATOR_IMG="$(OPERATOR_IMG)" NODE_DISCOVERY_IMG="$(NODE_DISCOVERY_IMG)" NODE_ACTUATOR_IMG="$(NODE_ACTUATOR_IMG)" PROFILER_IMG="$(PROFILER_IMG)" CONSOLE_IMG="$(CONSOLE_IMG)"
+HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_DISCOVERY_IMG NODE_ACTUATOR_IMG PROFILER_IMG CONSOLE_IMG
+helm_flow_image_assignment = $(if $(and $(strip $(HELM_VALUES)),$(filter file,$(origin $(1)))),,$(1)="$($(1))")
+HELM_FLOW_IMAGE_ENV = $(foreach variable,$(HELM_FLOW_IMAGE_VARIABLES),$(call helm_flow_image_assignment,$(variable)))
+HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -112,8 +115,12 @@ test-runtime: ## Run production runtime contract tests.
 test-artifact-tools: ## Run model-artifact build-tool tests.
 	python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
 
+.PHONY: test-helm-release-flow
+test-helm-release-flow: ## Verify values-file and explicit image precedence in the Helm release flow.
+	./hack/helm-release-flow-test.sh
+
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-helm-release-flow ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
