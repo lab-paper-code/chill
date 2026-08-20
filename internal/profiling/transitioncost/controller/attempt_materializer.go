@@ -50,9 +50,8 @@ type AttemptProgress struct {
 	NodeActuation *edgev1alpha1.NodeActuation
 }
 
-// AttemptMaterializer advances exactly one caller-selected directed attempt.
-// It is deliberately not registered as a controller until evidence
-// finalization can consume FinalizationReady in the same lifecycle.
+// AttemptMaterializer advances exactly one caller-selected directed attempt
+// within the enclosing PowerModeTransitionCost reconciler.
 type AttemptMaterializer struct {
 	client  client.Client
 	scheme  *runtime.Scheme

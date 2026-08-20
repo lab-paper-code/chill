@@ -155,21 +155,7 @@ func buildMeasurementResult(progress measurementProgress) (measurementResultReco
 		SchemaVersion: measurementResultSchemaVersion,
 		Outcome:       progress.stage,
 		Reason:        progress.reason,
-		Directions: []measurementResultDirection{
-			{
-				FinalEvidence: make([]evidencestore.ObjectIdentity, 0, (len(progress.attempts)+1)/2),
-			},
-			{
-				FinalEvidence: make([]evidencestore.ObjectIdentity, 0, len(progress.attempts)/2),
-			},
-		},
-	}
-	for index, attempt := range progress.attempts {
-		direction := &record.Directions[index%2]
-		if attempt.Observation.Verdict() == transitioncost.VerdictAccepted {
-			direction.AcceptedCount++
-		}
-		direction.FinalEvidence = append(direction.FinalEvidence, attempt.FinalReference)
+		Directions:    measurementResultDirections(progress.attempts),
 	}
 	switch progress.stage {
 	case measurementStageComplete:
@@ -186,6 +172,21 @@ func buildMeasurementResult(progress measurementProgress) (measurementResultReco
 		return measurementResultRecord{}, fmt.Errorf("transition measurement stage %q is not terminal", progress.stage)
 	}
 	return record, nil
+}
+
+func measurementResultDirections(attempts []FinalizedAttempt) []measurementResultDirection {
+	directions := []measurementResultDirection{
+		{FinalEvidence: make([]evidencestore.ObjectIdentity, 0, (len(attempts)+1)/2)},
+		{FinalEvidence: make([]evidencestore.ObjectIdentity, 0, len(attempts)/2)},
+	}
+	for index, attempt := range attempts {
+		direction := &directions[index%2]
+		if attempt.Observation.Verdict() == transitioncost.VerdictAccepted {
+			direction.AcceptedCount++
+		}
+		direction.FinalEvidence = append(direction.FinalEvidence, attempt.FinalReference)
+	}
+	return directions
 }
 
 func decodeMeasurementResult(payload []byte) (measurementResultRecord, error) {

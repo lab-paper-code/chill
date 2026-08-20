@@ -51,8 +51,8 @@ type measurementAttemptFinalizer interface {
 	) (FinalizedAttempt, error)
 }
 
-// measurementProgress is the package-local handoff to a future registered
-// reconciler and final-result writer. It retains no mutable cursor.
+// measurementProgress is the package-local handoff to the enclosing reconciler
+// and final-result writer. It retains no mutable cursor.
 type measurementProgress struct {
 	stage    measurementStage
 	reason   string
@@ -61,8 +61,7 @@ type measurementProgress struct {
 }
 
 // measurementSequence reconstructs and advances the fixed alternating prefix
-// of one two-direction measurement. It remains unregistered until its terminal
-// result can be written and published in the same controller lifecycle.
+// of one two-direction measurement within the enclosing reconciler.
 type measurementSequence struct {
 	preparations measurementPreparationSource
 	materializer measurementAttemptMaterializer
