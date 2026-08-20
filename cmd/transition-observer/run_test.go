@@ -18,13 +18,33 @@ import (
 func TestExecuteLoadsBeforeBuildingExternalComponents(t *testing.T) {
 	buildCalls := 0
 	deps := testDependencies(testAttempt(), nil, &writeStub{})
-	deps.load = func(string, int64) (attemptContract, error) { return attemptContract{}, errors.New("bad contract") }
+	deps.load = func([]byte, int64) (attemptContract, error) { return attemptContract{}, errors.New("bad contract") }
 	deps.build = func(options, attemptContract) (components, error) {
 		buildCalls++
 		return components{}, nil
 	}
 	if err := execute(context.Background(), testOptions(t), deps); err == nil || buildCalls != 0 {
 		t.Fatalf("execute() error/build calls = %v/%d", err, buildCalls)
+	}
+}
+
+func TestProbeReadyFileModeUsesOnlyTheMarker(t *testing.T) {
+	opts := testOptions(t)
+	opts.probeReadyFile = true
+	opts.contractJSON = ""
+	opts.maxContractBytes = 0
+	opts.terminationPath = ""
+	if err := opts.validate(); err != nil {
+		t.Fatalf("probe options: %v", err)
+	}
+	if err := probeReadyFile(opts.readyPath); err == nil {
+		t.Fatal("missing ready marker was accepted")
+	}
+	if err := os.WriteFile(opts.readyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := probeReadyFile(opts.readyPath); err != nil {
+		t.Fatalf("regular ready marker: %v", err)
 	}
 }
 
@@ -136,7 +156,7 @@ func testDependencies(
 	writer *writeStub,
 ) dependencies {
 	return dependencies{
-		load:    func(string, int64) (attemptContract, error) { return attempt, nil },
+		load:    func([]byte, int64) (attemptContract, error) { return attempt, nil },
 		build:   func(options, attemptContract) (components, error) { return components{}, nil },
 		observe: observe, writeRaw: writer.write,
 	}
@@ -170,7 +190,7 @@ func observationStub(
 func testOptions(t *testing.T) options {
 	dir := t.TempDir()
 	return options{
-		contractPath: "ignored", maxContractBytes: 1,
+		contractJSON: "{}", maxContractBytes: 2,
 		readyPath: filepath.Join(dir, "ready"), terminationPath: filepath.Join(dir, "termination"),
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -73,23 +72,9 @@ func (m *milliseconds) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-func loadContract(path string, maximumBytes int64) (attemptContract, error) {
+func loadContract(payload []byte, maximumBytes int64) (attemptContract, error) {
 	if maximumBytes < 1 || maximumBytes == int64(^uint64(0)>>1) {
 		return attemptContract{}, errors.New("maximum transition attempt contract bytes must be positive")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return attemptContract{}, fmt.Errorf("open transition attempt contract: %w", err)
-	}
-	info, statErr := file.Stat()
-	if statErr != nil || !info.Mode().IsRegular() {
-		_ = file.Close()
-		return attemptContract{}, errors.New("transition attempt contract must be a regular file")
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(file, maximumBytes+1))
-	closeErr := file.Close()
-	if readErr != nil || closeErr != nil {
-		return attemptContract{}, errors.Join(readErr, closeErr)
 	}
 	if int64(len(payload)) > maximumBytes {
 		return attemptContract{}, fmt.Errorf("transition attempt contract exceeds %d-byte limit", maximumBytes)

@@ -21,8 +21,8 @@ The Kubernetes-independent worker core, immutable raw-evidence write, minimal
 `PowerModeTransitionCost` API, and polling Kubernetes fact observer now exist.
 The controller preparation boundary resolves the selected transition-power
 source and both target-mode baselines into the two ordered directions needed by
-the future observation Job. Job and `NodeActuation` materialization and live
-verification remain incomplete.
+future attempt-scoped observation Jobs. Job projection exists, while Job and
+`NodeActuation` reconciliation and live verification remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -161,17 +161,19 @@ the table value.
 One `PowerModeTransitionCost` is one repeated measurement of two directed state
 pairs. It directly owns:
 
-- one observation Job placed away from the target Node;
-- the sequential `NodeActuation` objects it creates only after
-  `PowerObservationReady=True`.
+- one observation Job per attempted `NodeActuation`, placed away from the
+  target Node, with at most one attempt Job active; and
+- the sequential `NodeActuation` objects it creates only after the
+  corresponding Job Pod becomes Ready after the observer-ready marker exists.
 
 It retains compact references to one immutable raw and one immutable finalized
 evidence object per `NodeActuation`, plus one immutable final result object
 containing the two directed table entries.
 
-There is no additional Kubernetes object for an individual measured
-transition. The `NodeActuation` name and UID identify the execution, and its
-finalized evidence identifies the corresponding scientific observation.
+There is no additional CHILL API object for an individual measured transition.
+The native attempt Job and `NodeActuation` share one deterministic name; the
+`NodeActuation` UID identifies the execution, and its finalized evidence
+identifies the corresponding scientific observation.
 
 `NodeActuation` remains the one-way state-changing atom and the per-Node
 actuator remains the sole host-state writer. It applies the target and performs
@@ -270,15 +272,13 @@ error bound after seeing the result.
 freeze one PowerModeTransitionCost
     |
     v
-create off-target power/workload observer
-    |
-    v
-PowerObservationReady=True
-    |
-    v
 repeat one directed transition at a time
     |
     +-> confirm the exact required source state
+    |
+    +-> create one off-target attempt observer Job
+    |       |
+    |       +-> observer-ready marker -> Job Pod Ready
     |
     +-> create one NodeActuation
     |       |
@@ -289,6 +289,7 @@ repeat one directed transition at a time
     |                                             power integration ends
     |
     +-> observer writes one immutable raw object
+    +-> attempt observer Job exits
     +-> controller verifies and finalizes the transition observation
     +-> continue only from the independently confirmed target state
     |
@@ -410,7 +411,7 @@ Stop for review. This unit adds no API, controller, Job, or Helm surface.
    selects the exact metric and label pair declared above; do not add a generic
    meter-source or plugin framework.
 2. Add one worker that verifies its meter and workload-observation paths,
-   reports `PowerObservationReady=True`, buffers each pre-window, observes exact
+   creates the observer-ready marker, buffers each pre-window, observes exact
    boundaries, and writes one raw evidence object per observed
    `NodeActuation`.
 3. Prove offline that the worker retains samples and workload events while a
@@ -433,8 +434,8 @@ move. Job and `NodeActuation` materialization remain incomplete.
 1. Add the minimal `PowerModeTransitionCost` API and generated artifacts. Its
    immutable spec contains the exact states, direction order, accepted-count
    target, attempt bound, observation policy, estimator, and evidence binding.
-2. Reconcile one off-target observation Job before directly creating any owned
-   `NodeActuation`.
+2. For each attempt, reconcile one off-target observation Job before creating
+   its owned `NodeActuation`, with at most one attempt Job active.
 3. Create at most one `NodeActuation` at a time and expose only the device-side
    facts required to locate actual transition start and independent target
    read-back.

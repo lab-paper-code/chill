@@ -24,7 +24,7 @@ type components struct {
 }
 
 type dependencies struct {
-	load    func(string, int64) (attemptContract, error)
+	load    func([]byte, int64) (attemptContract, error)
 	build   func(options, attemptContract) (components, error)
 	observe func(
 		context.Context,
@@ -42,7 +42,7 @@ type dependencies struct {
 }
 
 func execute(ctx context.Context, opts options, deps dependencies) error {
-	attempt, err := deps.load(opts.contractPath, opts.maxContractBytes)
+	attempt, err := deps.load([]byte(opts.contractJSON), opts.maxContractBytes)
 	if err != nil {
 		return err
 	}

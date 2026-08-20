@@ -182,7 +182,9 @@ deps:
       - batch-saturation-core
       - device-class
       - evidence-core
+      - evidence-kube
       - metric-core
+      - platform-core
       - profile-derivation
       - profiler-app
       - profiling-run

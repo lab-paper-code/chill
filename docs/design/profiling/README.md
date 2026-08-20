@@ -25,10 +25,11 @@ establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its frozen state.
 Plan 10 is approved for implementation to measure both directed transitions
 between one selected pair of device power modes. One
-`PowerModeTransitionCost` directly owns an off-target observer and sequential
-`NodeActuation` objects; each transition window produces both `tau` and `eta`
-and records whether serving survived. The approval does not select a live
-target or authorize an unbounded restart or cluster mutation.
+`PowerModeTransitionCost` directly owns one off-target observer Job per attempt
+and sequential `NodeActuation` objects, with at most one pair active; each
+transition window produces both `tau` and `eta` and records whether serving
+survived. The approval does not select a live target or authorize an unbounded
+restart or cluster mutation.
 Its controller preparation boundary now reads one DeviceClass, resolves the
 exact target Node name and UID, and freezes each selected actuator and its
 configured actuation policy alongside the metric source, observation policy,
@@ -405,6 +406,7 @@ transition-cost derivation -> bounded power-window integration leaf
 transition-cost controller
         -> BatchSaturation result contract + profile derivation
         -> immutable Evidence Store reader
+        -> native attempt Job projection + Evidence Store delivery binding
 
 transition-cost Kubernetes observer -> API status facts + transition-cost derivation
 

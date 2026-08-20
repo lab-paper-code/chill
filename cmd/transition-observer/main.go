@@ -25,18 +25,22 @@ import (
 )
 
 type options struct {
-	contractPath, readyPath, terminationPath   string
+	contractJSON, readyPath, terminationPath   string
 	storeEndpoint, storeBucket, storeRegion    string
 	tempDir                                    string
 	accessKeyID, secretAccessKey, sessionToken string
 	maxContractBytes                           int64
+	probeReadyFile                             bool
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
-	set.StringVar(&o.contractPath, "contract-file", "/etc/chill/transition/attempt.json", "frozen transition attempt JSON")
 	set.StringVar(
 		&o.readyPath, "ready-file", "/coordination/transition-observer-ready",
 		"presence-only observation-ready file",
+	)
+	set.BoolVar(
+		&o.probeReadyFile, "probe-ready-file", false,
+		"exit successfully only when the observation-ready file exists",
 	)
 	set.StringVar(
 		&o.terminationPath, "termination-message-file", "/dev/termination-log",
@@ -47,21 +51,34 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.storeBucket, "store-bucket", "", "resolved evidence bucket")
 	set.StringVar(&o.storeRegion, "store-region", "", "resolved Evidence Store region")
 	set.StringVar(&o.tempDir, "temp-dir", "/workspace", "temporary evidence staging directory")
+	o.contractJSON = os.Getenv("CHILL_TRANSITION_ATTEMPT_JSON")
 	o.accessKeyID = os.Getenv("AWS_ACCESS_KEY_ID")
 	o.secretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	o.sessionToken = os.Getenv("AWS_SESSION_TOKEN")
 }
 
 func (o options) validate() error {
+	if err := validateAbsolutePath("ready", o.readyPath); err != nil {
+		return err
+	}
+	if o.probeReadyFile {
+		return nil
+	}
+	if o.contractJSON == "" {
+		return errors.New("CHILL_TRANSITION_ATTEMPT_JSON is required")
+	}
 	if o.maxContractBytes < 1 {
 		return errors.New("maximum contract bytes must be supplied by the Job")
 	}
-	for name, path := range map[string]string{
-		"contract": o.contractPath, "ready": o.readyPath, "termination message": o.terminationPath,
-	} {
-		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
-			return fmt.Errorf("%s path must be a clean absolute file path", name)
-		}
+	if err := validateAbsolutePath("termination message", o.terminationPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAbsolutePath(name, path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
+		return fmt.Errorf("%s path must be a clean absolute file path", name)
 	}
 	return nil
 }
@@ -74,6 +91,12 @@ func main() {
 		log.Printf("invalid transition-observer options: %v", err)
 		os.Exit(2)
 	}
+	if opts.probeReadyFile {
+		if err := probeReadyFile(opts.readyPath); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	deps := dependencies{
@@ -84,6 +107,17 @@ func main() {
 		log.Printf("transition observer failed: %v", err)
 		os.Exit(4)
 	}
+}
+
+func probeReadyFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("observation-ready marker is not a regular file")
+	}
+	return nil
 }
 
 func buildComponents(opts options, attempt attemptContract) (components, error) {
