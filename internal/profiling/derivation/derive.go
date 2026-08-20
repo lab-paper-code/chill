@@ -56,6 +56,16 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 	return baseline, nil
 }
 
+// RestoreIdleBaseline admits an idle aggregate decoded from an untrusted
+// stored result. Fresh DeriveIdleBaseline results do not pass through it.
+func RestoreIdleBaseline(record IdleBaseline) (IdleBaseline, error) {
+	record.Trials = append([]IdleTrial(nil), record.Trials...)
+	if err := validateIdleBaseline(record); err != nil {
+		return IdleBaseline{}, err
+	}
+	return record, nil
+}
+
 func validateIdleBaseline(baseline IdleBaseline) error {
 	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
 		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||

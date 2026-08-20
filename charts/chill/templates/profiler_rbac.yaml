@@ -42,6 +42,21 @@ rules:
   - apiGroups:
       - edge.dacs.io
     resources:
+      - modelloadedidlebaselines
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - modelloadedidlebaselines/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - edge.dacs.io
+    resources:
       - powermodetransitioncosts
     verbs:
       - get

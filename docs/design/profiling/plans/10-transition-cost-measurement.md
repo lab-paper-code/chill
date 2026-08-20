@@ -133,12 +133,18 @@ etaJoules              = transitionWallJoules - P_idle(s') * tauSeconds
 reference, sample trace, integration policy, and boundary uncertainty remain
 available so the result can be reproduced.
 
-`P_idle(s')` is the aggregate `profilederivation.IdleBaseline` retained in the
-referenced successful `BatchSaturation` terminal result, not one
-`ProfilingRun` value. Its stored measurement state must match the target Node,
-ModelSpec, DeviceClass, execution path, and power mode. The execution path is a
-frozen experimental compatibility condition for reusing that model-loaded-idle
-baseline; it does not add a new axis to the state-pair equation above.
+`P_idle(s')` is an aggregate `profilederivation.IdleBaseline`, not one
+`ProfilingRun` value. The independent `ModelLoadedIdleBaseline` producer now
+runs only model-loaded-idle Runs, admits their retained evidence through
+`EvaluateIdle`, derives the aggregate through `DeriveIdleBaseline`, and writes
+one immutable Complete result with its accepted final-evidence references. Its
+stored measurement state fixes the target Node, ModelSpec, DeviceClass,
+execution path, and power mode. The execution path is a frozen experimental
+compatibility condition for reusing that aggregate; it does not add a new axis
+to the state-pair equation above. The transition-cost baseline source still
+reads the earlier successful `BatchSaturation` result contract in this producer
+work unit; switching that consumer to the independent result is separate and
+there is no compatibility reader.
 
 The specification requires `tau`, `eta`, and the target-state idle term for its
 transition-cost equation but does not prescribe this subtraction algorithm.

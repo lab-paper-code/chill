@@ -5,6 +5,7 @@ resources:
 - bases/edge.dacs.io_deviceprofiles.yaml
 - bases/edge.dacs.io_clusterenergymodels.yaml
 - bases/edge.dacs.io_profilingruns.yaml
+- bases/edge.dacs.io_modelloadedidlebaselines.yaml
 - bases/edge.dacs.io_nodeactuations.yaml
 - bases/edge.dacs.io_powermodetransitioncosts.yaml
 # +kubebuilder:scaffold:crdkustomizeresource

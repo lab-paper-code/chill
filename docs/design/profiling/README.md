@@ -345,6 +345,16 @@ clock alignment are the first gate; repeated observations produce the directed
 state-pair table, while profile publication and scheduler use remain later
 work.
 
+The independent `ModelLoadedIdleBaseline` producer is implemented for Plan
+10's `P_idle(s')` input. It owns only model-loaded-idle `ProfilingRun` objects,
+runs one at a time until the configured admitted-count target or attempt limit,
+and writes a Complete immutable aggregate containing the exact measurement
+state, derived `IdleBaseline`, and accepted final-evidence references. An
+Insufficient request closes only in compact status and does not fabricate an
+aggregate result. Transition-cost consumption of this new result remains the
+next boundary; the current consumer still reads the earlier BatchSaturation
+result contract.
+
 ## Component contracts
 
 These documents define reusable internal subsystem boundaries. They support the
@@ -409,6 +419,10 @@ bounded MetricObserver helper
 
 profile derivation
         -> bounded power-window integration leaf
+
+model-loaded idle baseline controller
+        -> retained idle ProfilingRun evidence + profile admission/derivation
+        -> immutable Complete aggregate result
 
 transition-cost derivation -> bounded power-window integration leaf
 

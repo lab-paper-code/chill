@@ -1,0 +1,275 @@
+{{- if .Values.crds.enabled }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+    helm.sh/resource-policy: keep
+  name: modelloadedidlebaselines.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: ModelLoadedIdleBaseline
+    listKind: ModelLoadedIdleBaselineList
+    plural: modelloadedidlebaselines
+    shortNames:
+    - idlebase
+    singular: modelloadedidlebaseline
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.acceptedRuns
+      name: Accepted
+      type: integer
+    - jsonPath: .status.attemptedRuns
+      name: Attempts
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ModelLoadedIdleBaseline owns the idle-only ProfilingRuns contributing to one
+          admitted aggregate.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ModelLoadedIdleBaselineSpec requests one admitted idle-power
+              aggregate.
+            properties:
+              attemptLimit:
+                description: AttemptLimit bounds all terminal child Runs, including
+                  admitted Runs.
+                format: int32
+                maximum: 100
+                minimum: 3
+                type: integer
+              batch:
+                format: int32
+                minimum: 1
+                type: integer
+              pointPolicy:
+                description: ModelLoadedIdleBaselinePointPolicySpec fixes the aggregate
+                  estimator inputs.
+                properties:
+                  confidenceLevel:
+                    description: ConfidenceLevel is a decimal string in the interval
+                      (0, 1).
+                    pattern: ^0\.[0-9]*[1-9][0-9]*$
+                    type: string
+                  minimumAcceptedRuns:
+                    format: int32
+                    minimum: 3
+                    type: integer
+                  version:
+                    description: Version identifies the complete point-estimation
+                      rule.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
+                required:
+                - confidenceLevel
+                - minimumAcceptedRuns
+                - version
+                type: object
+              protocol:
+                properties:
+                  admissionPolicy:
+                    description: AdmissionPolicy identifies the configured admission
+                      policy for idle Runs.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
+                  durationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  metricObservation:
+                    description: ProfilingRunMetricObservationSpec contains policy
+                      only, never an endpoint.
+                    properties:
+                      durationSeconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      intervalMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      timeoutMilliseconds:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - durationSeconds
+                    - intervalMilliseconds
+                    - timeoutMilliseconds
+                    type: object
+                    x-kubernetes-validations:
+                    - message: timeoutMilliseconds must be less than intervalMilliseconds
+                      rule: self.timeoutMilliseconds < self.intervalMilliseconds
+                  settlingDurationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - admissionPolicy
+                - durationSeconds
+                - metricObservation
+                - settlingDurationSeconds
+                type: object
+                x-kubernetes-validations:
+                - message: metricObservation.durationSeconds must cover durationSeconds
+                  rule: self.metricObservation.durationSeconds >= self.durationSeconds
+              state:
+                description: |-
+                  MeasurementStateSpec fixes the execution state every trial of one
+                  measurement shares.
+                properties:
+                  candidate:
+                    description: Candidate selects one static catalog execution path.
+                    properties:
+                      deviceClass:
+                        description: DeviceClass names the cluster-scoped DeviceClass.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      executionPath:
+                        description: ExecutionPath selects one path declared by ModelSpec.
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                      modelSpec:
+                        description: ModelSpec names the cluster-scoped ModelSpec.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      powerMode:
+                        description: |-
+                          PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
+                          directly; a non-fixed selection requires a frozen configured actuation
+                          policy and a completed transition that confirms the required state.
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - deviceClass
+                    - executionPath
+                    - modelSpec
+                    - powerMode
+                    type: object
+                  cpuRequest:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPURequest is the non-exclusive scheduling request
+                      for the runtime container.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  targetNode:
+                    description: TargetNode names the Kubernetes Node on which the
+                      Run is requested.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - candidate
+                - cpuRequest
+                - targetNode
+                type: object
+            required:
+            - attemptLimit
+            - batch
+            - pointPolicy
+            - protocol
+            - state
+            type: object
+            x-kubernetes-validations:
+            - message: attemptLimit must cover minimumAcceptedRuns
+              rule: self.attemptLimit >= self.pointPolicy.minimumAcceptedRuns
+            - message: ModelLoadedIdleBaseline spec is immutable
+              rule: self == oldSelf
+          status:
+            description: |-
+              ModelLoadedIdleBaselineStatus is a compact projection of owned Runs and the
+              retained aggregate result.
+            properties:
+              acceptedRuns:
+                format: int32
+                type: integer
+              attemptedRuns:
+                format: int32
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Measuring
+                - Complete
+                - Insufficient
+                type: string
+              result:
+                properties:
+                  key:
+                    description: Key is opaque to API consumers.
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  schemaVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    description: Store is the logical CHILL-managed store identity,
+                      not an endpoint.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - schemaVersion
+                - size
+                - store
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 243 characters so the longest generated Run
+            name fits
+          rule: size(self.metadata.name) <= 243
+    served: true
+    storage: true
+    subresources:
+      status: {}
+{{- end }}

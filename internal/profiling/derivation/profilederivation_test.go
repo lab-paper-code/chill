@@ -150,6 +150,29 @@ func TestAdmissionIntegratesExactWindowAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRestoreIdleBaselineValidatesStoredAggregateAndOwnsTrials(t *testing.T) {
+	baseline, err := DeriveIdleBaseline([]IdleTrial{
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-1", RawEvidence: rawEvidence("1"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 5},
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-2", RawEvidence: rawEvidence("2"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 5.1},
+		{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", TrialID: "idle-3", RawEvidence: rawEvidence("3"), AdmissionPolicyVersion: "v1", ModelLoadedIdleMeanWallWatts: 4.9},
+	}, pointPolicy("idle-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := RestoreIdleBaseline(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline.Trials[0].TrialID = "caller-mutated"
+	if restored.Trials[0].TrialID == "caller-mutated" {
+		t.Fatal("RestoreIdleBaseline retained the caller's trial slice")
+	}
+	restored.ModelLoadedIdleMeanWallWatts = -1
+	if _, err := RestoreIdleBaseline(restored); err == nil {
+		t.Fatal("RestoreIdleBaseline accepted an invalid stored summary")
+	}
+}
+
 func TestIdleAdmissionUsesSharedWindowQualityAndIdleCompleteness(t *testing.T) {
 	start := time.Unix(0, 0).UTC()
 	observation := IdleObservation{

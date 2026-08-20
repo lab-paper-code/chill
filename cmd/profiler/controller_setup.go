@@ -16,6 +16,7 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
+	idlebaselinecontroller "github.com/lab-paper-code/chill/internal/profiling/idlebaseline/controller"
 	profilerapp "github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -24,7 +25,7 @@ import (
 	transitioncontroller "github.com/lab-paper-code/chill/internal/profiling/transitioncost/controller"
 )
 
-const batchSaturationMaximumObjectBytes int64 = 64 << 20
+const profilingResultMaximumObjectBytes int64 = 64 << 20
 
 type profilerControllerShared struct {
 	reader            client.Reader
@@ -50,6 +51,9 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 		return err
 	}
 	if err := setupBatchSaturationController(mgr, opts, shared); err != nil {
+		return err
+	}
+	if err := setupModelLoadedIdleBaselineController(mgr, opts, shared); err != nil {
 		return err
 	}
 	return setupTransitionCostController(mgr, opts, shared)
@@ -214,7 +218,7 @@ func setupBatchSaturationController(
 	curvePlans, err := batchcontroller.NewCurvePlanSource(
 		shared.reader, shared.candidates, shared.preparer, shared.evidence,
 		batchcontroller.CurvePlanSourceOptions{
-			Store: logicalStore, MaxObjectBytes: batchSaturationMaximumObjectBytes,
+			Store: logicalStore, MaxObjectBytes: profilingResultMaximumObjectBytes,
 		},
 	)
 	if err != nil {
@@ -230,7 +234,7 @@ func setupBatchSaturationController(
 	results, err := batchcontroller.NewResultWriter(
 		shared.evidence,
 		batchcontroller.ResultWriterOptions{
-			Store: logicalStore, MaxObjectBytes: batchSaturationMaximumObjectBytes,
+			Store: logicalStore, MaxObjectBytes: profilingResultMaximumObjectBytes,
 		},
 	)
 	if err != nil {
@@ -244,6 +248,38 @@ func setupBatchSaturationController(
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up BatchSaturation reconciler: %w", err)
+	}
+	return nil
+}
+
+func setupModelLoadedIdleBaselineController(
+	mgr ctrl.Manager,
+	opts options,
+	shared *profilerControllerShared,
+) error {
+	deriver, err := idlebaselinecontroller.NewDeriver(
+		shared.records,
+		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
+	)
+	if err != nil {
+		return fmt.Errorf("construct model-loaded idle baseline deriver: %w", err)
+	}
+	results, err := idlebaselinecontroller.NewResultWriter(
+		shared.evidence,
+		idlebaselinecontroller.ResultWriterOptions{
+			Store:          component.EvidenceStoreServiceName(opts.systemName),
+			MaxObjectBytes: profilingResultMaximumObjectBytes,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("construct model-loaded idle baseline result writer: %w", err)
+	}
+	reconciler, err := idlebaselinecontroller.NewReconciler(mgr.GetClient(), deriver, results)
+	if err != nil {
+		return fmt.Errorf("construct ModelLoadedIdleBaseline reconciler: %w", err)
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up ModelLoadedIdleBaseline reconciler: %w", err)
 	}
 	return nil
 }

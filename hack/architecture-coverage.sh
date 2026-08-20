@@ -12,6 +12,8 @@ components=(
   api
   batch-saturation-core
   batch-saturation-controller
+  idle-baseline-core
+  idle-baseline-controller
   entrypoints
   platform-core
   device-class
@@ -55,6 +57,8 @@ component_for() {
     api/v1alpha1) echo api ;;
     internal/profiling/campaign) echo batch-saturation-core ;;
     internal/profiling/campaign/controller) echo batch-saturation-controller ;;
+    internal/profiling/idlebaseline) echo idle-baseline-core ;;
+    internal/profiling/idlebaseline/controller) echo idle-baseline-controller ;;
     cmd|cmd/*) echo entrypoints ;;
     internal/component|internal/kubeconfig|internal/metadata|internal/nodeprobe)
       echo platform-core

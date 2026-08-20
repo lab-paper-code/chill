@@ -1,0 +1,95 @@
+package v1alpha1
+
+import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+const (
+	ModelLoadedIdleBaselinePhaseMeasuring    = "Measuring"
+	ModelLoadedIdleBaselinePhaseComplete     = "Complete"
+	ModelLoadedIdleBaselinePhaseInsufficient = "Insufficient"
+)
+
+// ModelLoadedIdleBaselinePointPolicySpec fixes the aggregate estimator inputs.
+type ModelLoadedIdleBaselinePointPolicySpec struct {
+	// Version identifies the complete point-estimation rule.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
+	Version string `json:"version"`
+
+	// +kubebuilder:validation:Minimum=3
+	MinimumAcceptedRuns int32 `json:"minimumAcceptedRuns"`
+
+	// ConfidenceLevel is a decimal string in the interval (0, 1).
+	// +kubebuilder:validation:Pattern=`^0\.[0-9]*[1-9][0-9]*$`
+	ConfidenceLevel string `json:"confidenceLevel"`
+}
+
+// ModelLoadedIdleBaselineSpec requests one admitted idle-power aggregate.
+// +kubebuilder:validation:XValidation:rule="self.attemptLimit >= self.pointPolicy.minimumAcceptedRuns",message="attemptLimit must cover minimumAcceptedRuns"
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelLoadedIdleBaseline spec is immutable"
+type ModelLoadedIdleBaselineSpec struct {
+	State MeasurementStateSpec `json:"state"`
+
+	// +kubebuilder:validation:Minimum=1
+	Batch int32 `json:"batch"`
+
+	Protocol IdleProtocolSpec `json:"protocol"`
+
+	PointPolicy ModelLoadedIdleBaselinePointPolicySpec `json:"pointPolicy"`
+
+	// AttemptLimit bounds all terminal child Runs, including admitted Runs.
+	// +kubebuilder:validation:Minimum=3
+	// +kubebuilder:validation:Maximum=100
+	AttemptLimit int32 `json:"attemptLimit"`
+}
+
+// ModelLoadedIdleBaselineStatus is a compact projection of owned Runs and the
+// retained aggregate result.
+type ModelLoadedIdleBaselineStatus struct {
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Enum=Measuring;Complete;Insufficient
+	Phase string `json:"phase,omitempty"`
+
+	// +optional
+	AttemptedRuns int32 `json:"attemptedRuns,omitempty"`
+
+	// +optional
+	AcceptedRuns int32 `json:"acceptedRuns,omitempty"`
+
+	// +optional
+	Result *ProfilingRunEvidenceReference `json:"result,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced,shortName=idlebase
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Accepted",type=integer,JSONPath=`.status.acceptedRuns`
+// +kubebuilder:printcolumn:name="Attempts",type=integer,JSONPath=`.status.attemptedRuns`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 243",message="name must be at most 243 characters so the longest generated Run name fits"
+
+// ModelLoadedIdleBaseline owns the idle-only ProfilingRuns contributing to one
+// admitted aggregate.
+type ModelLoadedIdleBaseline struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ModelLoadedIdleBaselineSpec   `json:"spec"`
+	Status ModelLoadedIdleBaselineStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+type ModelLoadedIdleBaselineList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ModelLoadedIdleBaseline `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&ModelLoadedIdleBaseline{}, &ModelLoadedIdleBaselineList{})
+}
