@@ -16,10 +16,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const (
-	metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha1"
-	edgeMetricsKind     = "edge-metrics"
-)
+const metricSourcesSchema = "chill.dacs.io/profiler-metric-sources.v1alpha1"
 
 var ErrMetricSourceUnavailable = errors.New("metric source unavailable")
 
@@ -135,7 +132,7 @@ func validateMetricSourceDeclaration(source metricSourceDeclaration) error {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
 	}
-	if source.Kind != edgeMetricsKind {
+	if source.Kind != edgemetrics.SourceKind {
 		return fmt.Errorf("unsupported metric-source kind %q", source.Kind)
 	}
 	if source.PowerMetric != edgemetrics.ShellyPowerMetric {

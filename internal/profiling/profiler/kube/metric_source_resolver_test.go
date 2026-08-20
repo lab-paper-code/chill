@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,8 +24,8 @@ func TestKubernetesMetricSourceResolverResolvesNodeEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Kind != edgeMetricsKind || resolved.Endpoint != testPowerEndpoint ||
-		resolved.PowerMetric != "shelly_power_total_watts" {
+	if resolved.Kind != edgemetrics.SourceKind || resolved.Endpoint != testPowerEndpoint ||
+		resolved.PowerMetric != edgemetrics.ShellyPowerMetric {
 		t.Fatalf("unexpected resolved metric source: %#v", resolved)
 	}
 
@@ -88,7 +89,7 @@ func TestKubernetesMetricSourceResolverFailsClosed(t *testing.T) {
 			name: "unsupported kind",
 			mutate: func(config *corev1.ConfigMap) {
 				config.Data["metric-sources.yaml"] = strings.Replace(
-					config.Data["metric-sources.yaml"], edgeMetricsKind, "Other", 1,
+					config.Data["metric-sources.yaml"], edgemetrics.SourceKind, "Other", 1,
 				)
 			},
 			match: "unsupported metric-source kind",

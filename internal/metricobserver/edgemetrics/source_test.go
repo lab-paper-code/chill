@@ -12,29 +12,57 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 )
 
-func TestNewValidatesDependenciesAndFreezesTypedIdentity(t *testing.T) {
-	if _, err := New(metricobserver.SourceIdentity{}, http.DefaultClient); err == nil {
-		t.Fatal("New() error = nil, want endpoint validation error")
+func TestNewValidatesFrozenIdentityAndFreezesTypedThermalMetrics(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity metricobserver.SourceIdentity
+		client   *http.Client
+		want     string
+	}{
+		{name: "missing endpoint", identity: supportedIdentity(""), client: http.DefaultClient, want: "endpoint is required"},
+		{name: "endpoint whitespace", identity: supportedIdentity(" http://example.test/metrics "), client: http.DefaultClient, want: "without surrounding whitespace"},
+		{name: "unsupported kind", identity: metricobserver.SourceIdentity{
+			Kind: "prometheus", Endpoint: "http://example.test/metrics", Metric: ShellyPowerMetric,
+		}, client: http.DefaultClient, want: "unsupported edge-metrics source kind"},
+		{name: "unsupported metric", identity: metricobserver.SourceIdentity{
+			Kind: SourceKind, Endpoint: "http://example.test/metrics", Metric: "other_power_watts",
+		}, client: http.DefaultClient, want: "unsupported edge-metrics power metric"},
+		{name: "caller thermal identity", identity: metricobserver.SourceIdentity{
+			Kind: SourceKind, Endpoint: "http://example.test/metrics", Metric: ShellyPowerMetric,
+			ThermalMetrics: &metricobserver.ThermalMetricIdentity{Active: "caller_owned"},
+		}, client: http.DefaultClient, want: "thermal metric identity is supplied"},
+		{name: "missing client", identity: supportedIdentity("http://example.test/metrics"), want: "HTTP client is required"},
 	}
-	if _, err := New(metricobserver.SourceIdentity{Endpoint: "http://example.test/metrics"}, nil); err == nil {
-		t.Fatal("New() error = nil, want client validation error")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := New(test.identity, test.client); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("New() error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
-	source, err := New(metricobserver.SourceIdentity{
-		NodeName: "jetsonx", Namespace: "monitoring", PodName: "exporter", Endpoint: " http://example.test/metrics ",
-	}, http.DefaultClient)
+
+	identity := supportedIdentity("http://example.test/metrics")
+	identity.NodeName = "jetsonx"
+	identity.Namespace = "monitoring"
+	identity.PodName = "exporter"
+	source, err := New(identity, http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := source.Identity()
-	if identity.Kind != "edge-metrics" || identity.Metric != ShellyPowerMetric ||
-		identity.Endpoint != "http://example.test/metrics" || identity.ThermalMetrics == nil ||
-		identity.ThermalMetrics.Active != ThermalActiveMetric {
-		t.Fatalf("identity = %#v", identity)
+	got := source.Identity()
+	if got.Kind != identity.Kind || got.NodeName != identity.NodeName || got.Namespace != identity.Namespace ||
+		got.PodName != identity.PodName || got.Metric != identity.Metric || got.Endpoint != identity.Endpoint ||
+		got.ThermalMetrics == nil || got.ThermalMetrics.Active != ThermalActiveMetric {
+		t.Fatalf("identity = %#v", got)
 	}
-	identity.ThermalMetrics.Active = "mutated"
+	got.ThermalMetrics.Active = "mutated"
 	if source.Identity().ThermalMetrics.Active != ThermalActiveMetric {
-		t.Fatal("source identity retained a caller-owned pointer")
+		t.Fatal("source identity retained the returned thermal identity pointer")
 	}
+}
+
+func supportedIdentity(endpoint string) metricobserver.SourceIdentity {
+	return metricobserver.SourceIdentity{Kind: SourceKind, Endpoint: endpoint, Metric: ShellyPowerMetric}
 }
 
 func TestParseReadingPreservesAlignedDirectThermalFacts(t *testing.T) {
@@ -144,7 +172,7 @@ func TestSourceReadMetrics(t *testing.T) {
 				_, _ = response.Write([]byte(test.payload))
 			}))
 			defer server.Close()
-			source, err := New(metricobserver.SourceIdentity{Endpoint: server.URL}, server.Client())
+			source, err := New(supportedIdentity(server.URL), server.Client())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +198,7 @@ func TestSourceReadMetricsHonorsContextCancellation(t *testing.T) {
 		<-request.Context().Done()
 	}))
 	defer server.Close()
-	source, err := New(metricobserver.SourceIdentity{Endpoint: server.URL}, server.Client())
+	source, err := New(supportedIdentity(server.URL), server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +211,7 @@ func TestSourceReadMetricsHonorsContextCancellation(t *testing.T) {
 }
 
 func TestSourceReadMetricsRejectsMalformedEndpoint(t *testing.T) {
-	source, err := New(metricobserver.SourceIdentity{Endpoint: "://bad"}, http.DefaultClient)
+	source, err := New(supportedIdentity("://bad"), http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}

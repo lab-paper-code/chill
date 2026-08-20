@@ -53,8 +53,9 @@ func TestExecutePublishesFrozenMetricObservation(t *testing.T) {
 	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if result.Source.NodeName != intent.TargetNode.Name || result.Summary.SuccessfulSamples < 1 ||
-		result.Summary.Failures != 0 {
+	if result.Source.Kind != intent.Metrics.SourceKind || result.Source.NodeName != intent.TargetNode.Name ||
+		result.Source.Endpoint != intent.Metrics.Endpoint || result.Source.Metric != intent.Metrics.PowerMetric ||
+		result.Summary.SuccessfulSamples < 1 || result.Summary.Failures != 0 {
 		t.Fatalf("unexpected observation result: %#v", result)
 	}
 	if result.Samples[0].Thermal == nil || result.Samples[0].Thermal.ObservationAvailable == nil ||

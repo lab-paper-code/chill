@@ -37,8 +37,10 @@ func execute(
 	}
 	metrics := intentRecord.Metrics
 	source, err := edgemetrics.New(metricobserver.SourceIdentity{
+		Kind:     metrics.SourceKind,
 		NodeName: metrics.NodeName,
 		Endpoint: metrics.Endpoint,
+		Metric:   metrics.PowerMetric,
 	}, client)
 	if err != nil {
 		return fmt.Errorf("construct frozen metric source: %w", err)

@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	SourceKind                        = "edge-metrics"
 	ShellyPowerMetric                 = "shelly_power_total_watts"
 	ThermalObservationAvailableMetric = "device_thermal_throttle_observation_available"
 	ThermalActiveMetric               = "device_thermal_throttle_active"
@@ -46,15 +47,21 @@ type Source struct {
 
 // New returns an edge-metrics source for an already-resolved endpoint.
 func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, error) {
-	if strings.TrimSpace(identity.Endpoint) == "" {
-		return nil, errors.New("endpoint is required")
+	if identity.Kind != SourceKind {
+		return nil, fmt.Errorf("unsupported edge-metrics source kind %q", identity.Kind)
+	}
+	if strings.TrimSpace(identity.Endpoint) == "" || strings.TrimSpace(identity.Endpoint) != identity.Endpoint {
+		return nil, errors.New("endpoint is required without surrounding whitespace")
+	}
+	if identity.Metric != ShellyPowerMetric {
+		return nil, fmt.Errorf("unsupported edge-metrics power metric %q", identity.Metric)
+	}
+	if identity.ThermalMetrics != nil {
+		return nil, errors.New("thermal metric identity is supplied by the edge-metrics adapter")
 	}
 	if client == nil {
 		return nil, errors.New("HTTP client is required")
 	}
-	identity.Kind = "edge-metrics"
-	identity.Endpoint = strings.TrimSpace(identity.Endpoint)
-	identity.Metric = ShellyPowerMetric
 	metrics := thermalMetricIdentity
 	identity.ThermalMetrics = &metrics
 	return &Source{identity: identity, client: client}, nil
