@@ -9,7 +9,11 @@ import (
 )
 
 const (
-	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha12"
+	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha13"
+
+	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
+	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
+	CPUQuotaPolicyVersion     = "v1"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"

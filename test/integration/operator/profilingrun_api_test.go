@@ -38,6 +38,16 @@ var _ = Describe("ProfilingRun API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
 	})
 
+	It("accepts a configured whole-core CPU quota", func() {
+		ctx := context.Background()
+		run := validProfilingRun(uniqueProfilingRunName("configured-cpu-quota"))
+		quota := resource.MustParse("4")
+		run.Spec.Measurement.CPUQuota = &quota
+
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
+	})
+
 	It("accepts one batch-fixed model-loaded idle Run request", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("idle-batch-fixed"))
@@ -78,6 +88,15 @@ var _ = Describe("ProfilingRun API", func() {
 		}),
 		Entry("non-positive CPU request", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.CPURequest = resource.MustParse("-1")
+		}),
+		Entry("fractional CPU quota", func(run *edgev1alpha1.ProfilingRun) {
+			quota := resource.MustParse("500m")
+			run.Spec.Measurement.CPUQuota = &quota
+		}),
+		Entry("CPU request above quota", func(run *edgev1alpha1.ProfilingRun) {
+			quota := resource.MustParse("1")
+			run.Spec.Measurement.CPUQuota = &quota
+			run.Spec.CPURequest = resource.MustParse("2")
 		}),
 		Entry("power timeout not below interval", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.MetricObservation.TimeoutMilliseconds = run.Spec.MetricObservation.IntervalMilliseconds
@@ -132,7 +151,7 @@ var _ = Describe("ProfilingRun API", func() {
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha10", Size: 1024,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha11", Size: 1024,
 			},
 			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
 				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",

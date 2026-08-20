@@ -15,14 +15,13 @@ import (
 )
 
 const (
-	firstCPUPolicy        = "AllocatableCPUQuota"
-	firstCPUPolicyVersion = "v1"
-	firstExecutionPath    = "ort-cpu"
-	firstRuntimeFamily    = "onnxruntime"
-	firstRuntimeBackend   = "CPUExecutionProvider"
+	firstExecutionPath  = "ort-cpu"
+	firstRuntimeFamily  = "onnxruntime"
+	firstRuntimeBackend = "CPUExecutionProvider"
 )
 
 var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected Node allocatable CPU")
+var ErrCPUQuotaExceedsAllocatable = errors.New("CPU quota exceeds selected Node allocatable CPU")
 
 type CandidateSelection struct {
 	ModelSpec     string
@@ -37,6 +36,7 @@ type PreparationRequest struct {
 	Candidate   CandidateSelection
 	TargetNode  string
 	CPURequest  string
+	CPUQuota    string
 	Measurement profilingrun.MeasurementContract
 	Metrics     MetricObservationPolicy
 }
@@ -186,6 +186,10 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := validateCPURequestFitsNode(request.CPURequest, node.AllocatableCPU); err != nil {
 		return PreparedRun{}, err
 	}
+	cpuContract, err := freezeCPUContract(request, candidate, node)
+	if err != nil {
+		return PreparedRun{}, err
+	}
 	metrics, err := p.metrics.ResolveMetricSource(ctx, request.TargetNode)
 	if err != nil {
 		return PreparedRun{}, fmt.Errorf("resolve metric source: %w", err)
@@ -199,7 +203,7 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, err
 	}
-	intent, err := p.freeze(request, candidate, node, metrics, workload, actuation)
+	intent, err := p.freeze(request, candidate, node, metrics, workload, actuation, cpuContract)
 	if err != nil {
 		return PreparedRun{}, err
 	}
@@ -278,6 +282,49 @@ func validateCPURequestFitsNode(request, allocatable string) error {
 	return nil
 }
 
+func freezeCPUContract(
+	request PreparationRequest,
+	candidate ResolvedCandidate,
+	node profilingrun.NodeSnapshot,
+) (profilingrun.CPUContract, error) {
+	allocatableCores, err := strconv.Atoi(node.AllocatableCPU)
+	if err != nil || allocatableCores < 1 {
+		return profilingrun.CPUContract{}, errors.New("resolved Node allocatable CPU must be a positive integer")
+	}
+	contract := profilingrun.CPUContract{
+		Policy: profilingrun.AllocatableCPUQuotaPolicy, PolicyVersion: profilingrun.CPUQuotaPolicyVersion,
+		Request: request.CPURequest, Limit: node.AllocatableCPU,
+	}
+	threadCount := allocatableCores
+	if request.CPUQuota != "" {
+		quota, err := resource.ParseQuantity(request.CPUQuota)
+		if err != nil {
+			return profilingrun.CPUContract{}, errors.New("CPU quota must be a positive whole-core count")
+		}
+		quotaCores, exact := quota.AsInt64()
+		if !exact || quotaCores < 1 || int64(int(quotaCores)) != quotaCores {
+			return profilingrun.CPUContract{}, errors.New("CPU quota must be a positive whole-core count")
+		}
+		allocatable, err := resource.ParseQuantity(node.AllocatableCPU)
+		if err != nil || allocatable.Sign() <= 0 {
+			return profilingrun.CPUContract{}, errors.New("resolved Node allocatable CPU must be a positive Kubernetes quantity")
+		}
+		if quota.Cmp(allocatable) > 0 {
+			return profilingrun.CPUContract{}, fmt.Errorf(
+				"%w: quota %s, allocatable %s", ErrCPUQuotaExceedsAllocatable, request.CPUQuota, node.AllocatableCPU,
+			)
+		}
+		contract.Policy = profilingrun.ConfiguredCPUQuotaPolicy
+		contract.Limit = strconv.FormatInt(quotaCores, 10)
+		threadCount = int(quotaCores)
+	}
+	if candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend {
+		contract.ORTIntraOpThreads = threadCount
+		contract.ORTInterOpThreads = 1
+	}
+	return contract, nil
+}
+
 func (p *Preparer) freeze(
 	request PreparationRequest,
 	candidate ResolvedCandidate,
@@ -285,21 +332,10 @@ func (p *Preparer) freeze(
 	metrics ResolvedMetricSource,
 	workload ResolvedWorkloadObservation,
 	actuation *profilingrun.ActuationContract,
+	cpuContract profilingrun.CPUContract,
 ) (profilingrun.Intent, error) {
 	if node.Name != request.TargetNode {
 		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
-	}
-	cpu, err := strconv.Atoi(node.AllocatableCPU)
-	if err != nil || cpu < 1 {
-		return profilingrun.Intent{}, errors.New("resolved Node allocatable CPU must be a positive integer")
-	}
-	cpuContract := profilingrun.CPUContract{
-		Policy: firstCPUPolicy, PolicyVersion: firstCPUPolicyVersion,
-		Request: request.CPURequest, Limit: node.AllocatableCPU,
-	}
-	if candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend {
-		cpuContract.ORTIntraOpThreads = cpu
-		cpuContract.ORTInterOpThreads = 1
 	}
 	intent := profilingrun.Intent{
 		SchemaVersion: profilingrun.SchemaVersion,
@@ -426,6 +462,18 @@ func (r PreparationRequest) Validate() error {
 	cpuRequest, err := resource.ParseQuantity(r.CPURequest)
 	if err != nil || cpuRequest.Sign() <= 0 {
 		return errors.New("CPU request must be a positive Kubernetes quantity")
+	}
+	if r.CPUQuota != "" {
+		cpuQuota, err := resource.ParseQuantity(r.CPUQuota)
+		if err != nil || cpuQuota.Sign() <= 0 {
+			return errors.New("CPU quota must be a positive Kubernetes quantity")
+		}
+		if _, exact := cpuQuota.AsInt64(); !exact {
+			return errors.New("CPU quota must be a whole number of CPU cores")
+		}
+		if cpuRequest.Cmp(cpuQuota) > 0 {
+			return errors.New("CPU request must not exceed CPU quota")
+		}
 	}
 	if r.Metrics.IntervalMilliseconds < 1 || r.Metrics.TimeoutMilliseconds < 1 ||
 		r.Metrics.TimeoutMilliseconds >= r.Metrics.IntervalMilliseconds ||

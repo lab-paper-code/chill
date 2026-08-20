@@ -41,6 +41,15 @@ var _ = Describe("ModelLoadedIdleBaseline API", func() {
 		Entry("active-style zero batch", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.Batch = 0
 		}),
+		Entry("non-positive CPU quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
+			request.Spec.CPUQuota = resource.MustParse("0")
+		}),
+		Entry("fractional CPU quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
+			request.Spec.CPUQuota = resource.MustParse("500m")
+		}),
+		Entry("CPU request above quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
+			request.Spec.State.CPURequest = resource.MustParse("5")
+		}),
 		Entry("confidence outside the open interval", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.PointPolicy.ConfidenceLevel = "1.0"
 		}),
@@ -73,7 +82,8 @@ func validModelLoadedIdleBaseline(name string) *edgev1alpha1.ModelLoadedIdleBase
 				},
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			},
-			Batch: 1,
+			CPUQuota: resource.MustParse("4"),
+			Batch:    1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
 				AdmissionPolicy: "idle-wall-power-v1", SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

@@ -18,11 +18,12 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha11`, and the Go and Python execution boundaries
+The internal intent is `v1alpha13`, and the Go and Python execution boundaries
 accept that current schema only. It carries semantic source-object identities,
 the configured power and typed thermal metric identities, the typed host
-contract, and an optional typed actuation binding while preserving the common
-worker CPU quota and RKNNLite's omission of ORT-only thread settings. Each
+contract, and an optional typed actuation binding. Its common worker CPU
+contract freezes either the Node-allocatable quota or an explicitly configured
+whole-core Run quota; RKNNLite omits ORT-only thread settings. Each
 immutable intent record contains the structured intent, candidate report,
 admission policy, and execution policy.
 The public request schema, request-to-intent projection, bounded Job envelope,

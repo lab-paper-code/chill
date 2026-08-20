@@ -25,7 +25,7 @@ The NodeActuator transition path is implemented under
 `NodeActuation` records one state change toward a declared target, independently
 reads that target back, settles it, releases the Node Lease at terminal `Ready`,
 and leaves the established state in place. Execution evidence uses
-`chill.dacs.io/profiling-execution-evidence.v1alpha10`, retains the confirming
+`chill.dacs.io/profiling-execution-evidence.v1alpha11`, retains the confirming
 transition identity, target observation, and completion time, and validates
 the target against frozen intent. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
@@ -227,14 +227,15 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Complete two additional active and idle trials and verify stable
   derivation identities across all six retained objects.
 
-The current intent v1alpha11 retains the optional `actuation` object with the
+The current intent v1alpha13 retains the optional `actuation` object with the
 selected power mode, exact typed actuator target, and configured-policy name,
-and freezes the configured power and typed thermal metric identities. Fixed
-Runs omit the actuation object. The current execution-state-identity v1alpha5
+freezes the configured power and typed thermal metric identities, and binds
+either the Node-allocatable or explicitly configured whole-core CPU quota.
+Fixed Runs omit the actuation object. The current execution-state-identity v1alpha5
 binds both the exact metric mapping and, for an actuated Run, the whole
 actuation object while leaving measurement-protocol identity unchanged. Older
 schemas are not accepted by the current execution boundary. CPU ORT and
-RKNNLite Go/Python decoders pair only with current v1alpha11. The candidate
+RKNNLite Go/Python decoders pair only with current v1alpha13. The candidate
 report carries the exact
 selected target. The Profiler selects a configured policy by exact DeviceClass,
 mode, and actuator kind, binds its name into the intent, and retains its typed
@@ -359,9 +360,11 @@ Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform, declared batch sizes, and the explicit
 non-batch runtime tensor contract. Their decoders accept the current schemas
 only.
-Intent v1alpha11 retains the normalized physical host contract and optional
+Intent v1alpha13 retains the normalized physical host contract and optional
 typed actuation binding, freezes configured power and typed thermal metric
-identities, and omits ORT-only thread settings from RKNNLite's common CPU quota.
+identities, and supports either the Node-allocatable CPU quota or an explicitly
+selected whole-core Run quota. RKNNLite shares that CPU limit but omits ORT-only
+thread settings.
 Host-bound derivation identities use execution-state-identity v1alpha5. The
 installed RKNN declaration pins the arm64-only runtime image,
 declared-batch-size artifact supply image and path, exact host ABI/device

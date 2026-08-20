@@ -223,7 +223,7 @@ func validatePreparedForRun(
 }
 
 func preparationFromIntent(intent profilingrun.Intent) profiler.PreparationRequest {
-	return profiler.PreparationRequest{
+	request := profiler.PreparationRequest{
 		Candidate: profiler.CandidateSelection{
 			ModelSpec:     intent.State.Model,
 			DeviceClass:   intent.State.DeviceClass,
@@ -239,6 +239,10 @@ func preparationFromIntent(intent profilingrun.Intent) profiler.PreparationReque
 			DurationSeconds:      intent.Metrics.DurationSeconds,
 		},
 	}
+	if intent.CPU.Policy == profilingrun.ConfiguredCPUQuotaPolicy {
+		request.CPUQuota = intent.CPU.Limit
+	}
+	return request
 }
 
 func verifyExpectedIntentRecord(

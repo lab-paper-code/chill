@@ -74,6 +74,21 @@ func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	}
 }
 
+func TestPreparationFromIntentRestoresCPUQuotaSelection(t *testing.T) {
+	allocatable := testFrozenIntent(t)
+	if request := preparationFromIntent(allocatable); request.CPUQuota != "" {
+		t.Fatalf("allocatable policy restored CPU quota %q", request.CPUQuota)
+	}
+
+	configured := allocatable
+	configured.CPU.Policy = profilingrun.ConfiguredCPUQuotaPolicy
+	configured.CPU.Limit = "2"
+	configured.CPU.ORTIntraOpThreads = 2
+	if request := preparationFromIntent(configured); request.CPUQuota != "2" {
+		t.Fatalf("configured policy restored CPU quota %q", request.CPUQuota)
+	}
+}
+
 func TestIntentRecordsRetainExactActuationPolicy(t *testing.T) {
 	ctx := context.Background()
 	run, frozen := testActuatedRunAndFrozen(t)

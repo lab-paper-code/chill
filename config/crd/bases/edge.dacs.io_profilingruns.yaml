@@ -111,6 +111,15 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  cpuQuota:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      CPUQuota optionally selects a configured whole-core runtime quota. It is
+                      consumed while freezing the Run and is not duplicated in MeasurementContract.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -154,6 +163,11 @@ spec:
                     == ''none'' && self.outputValidation == ''none'' : !has(self.settlingDurationSeconds)
                     && self.inputGenerator == ''numpy-default-rng-seed-0-fp32-v1''
                     && self.outputValidation == ''nonempty-shape-batch-v1'''
+                - message: cpuQuota must be positive
+                  rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity(''0''))
+                    > 0'
+                - message: cpuQuota must be a whole number of CPU cores
+                  rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()'
               metricObservation:
                 description: MetricObservation fixes polling behavior. The source
                   is resolved from TargetNode.
@@ -199,6 +213,9 @@ spec:
               rule: self.metricObservation.durationSeconds >= self.measurement.durationSeconds
             - message: cpuRequest must be positive
               rule: quantity(self.cpuRequest).compareTo(quantity('0')) > 0
+            - message: cpuRequest must not exceed measurement.cpuQuota
+              rule: '!has(self.measurement.cpuQuota) || quantity(self.cpuRequest).compareTo(quantity(self.measurement.cpuQuota))
+                <= 0'
           status:
             description: ProfilingRunStatus contains compact, reconstructable Run
               outcomes.

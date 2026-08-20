@@ -15,7 +15,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha12"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha13"
 
 type ORTCPURuntimeConfig struct {
 	Command                 []string

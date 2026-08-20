@@ -24,7 +24,8 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 				},
 				TargetNode: "node-a", CPURequest: resource.MustParse("100m"),
 			},
-			Batch: 1,
+			CPUQuota: resource.MustParse("4"),
+			Batch:    1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
 				AdmissionPolicy: "idle-admission-v1", SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

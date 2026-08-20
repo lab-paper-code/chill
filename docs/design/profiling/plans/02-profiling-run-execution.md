@@ -39,8 +39,13 @@ facts, and duplicating them would create two validation and finalization paths.
 The current intent schema retains the measurement-protocol
 `settlingDurationSeconds` field and an optional semantic physical host contract.
 CPU ORT omits that state field.
-The common CPU quota remains frozen for all workers, while RKNNLite omits the
-ORT-only intra/inter-op settings. The optional `actuation` object binds a
+The common CPU quota remains frozen for all workers. A Run without an explicit
+measurement quota retains `AllocatableCPUQuota/v1`; an explicit positive
+whole-core quota selects `ConfiguredCPUQuota/v1` and must be at least the CPU
+request and no greater than the frozen Node allocatable value. CPU ORT derives
+its intra-op thread count from that quota and keeps one inter-op thread, while
+RKNNLite omits the ORT-only settings. No worker detects, clamps, or substitutes
+a runtime value. The optional `actuation` object binds a
 non-fixed mode to its exact typed target and configured policy name; fixed
 Runs omit it. The Go and Python runtime boundaries accept only the matching
 current schema.

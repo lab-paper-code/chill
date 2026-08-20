@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha12"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha12"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha13"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha13"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
-DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha1"
+DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
@@ -306,11 +306,7 @@ def validate_request(request: dict[str, Any]) -> None:
         },
         "intent.cpu",
     )
-    if (
-        cpu["policy"] != "AllocatableCPUQuota"
-        or cpu["policyVersion"] != "v1"
-        or cpu["exclusivityClaimed"] is not False
-    ):
+    if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
         raise ContractError("unsupported CPU policy")
     require_integer(cpu["ortIntraOpThreads"], "intent.cpu.ortIntraOpThreads", 1)
     if (
@@ -318,8 +314,24 @@ def validate_request(request: dict[str, Any]) -> None:
         != 1
     ):
         raise ContractError("CPU ORT runtime requires one inter-op thread")
-    if require_string(cpu["limit"], "intent.cpu.limit") != target["allocatableCPU"]:
-        raise ContractError("CPU limit does not match the frozen allocatable CPU")
+    limit = require_string(cpu["limit"], "intent.cpu.limit")
+    if cpu["policy"] == "AllocatableCPUQuota":
+        if limit != target["allocatableCPU"]:
+            raise ContractError("CPU limit does not match the frozen allocatable CPU")
+    elif cpu["policy"] == "ConfiguredCPUQuota":
+        try:
+            limit_cores = int(limit)
+            allocatable_cores = int(target["allocatableCPU"])
+        except ValueError as error:
+            raise ContractError(
+                "configured CPU quota requires whole-core values"
+            ) from error
+        if limit_cores < 1 or limit_cores > allocatable_cores:
+            raise ContractError("configured CPU quota is outside Node allocatable CPU")
+        if cpu["ortIntraOpThreads"] != limit_cores:
+            raise ContractError("ORT intra-op threads do not match configured CPU quota")
+    else:
+        raise ContractError("unsupported CPU policy")
 
     measurement = require_object(intent["measurement"], "intent.measurement")
     common_measurement_fields = {
@@ -592,7 +604,11 @@ def derived_contract(intent: dict[str, Any]) -> dict[str, Any]:
         "provider": intent["state"]["backend"],
         "nodeSnapshot": intent["targetNode"],
         "cpu": {
-            "budgetSource": "KubernetesNodeStatusAllocatable",
+            "budgetSource": (
+                "ProfilingRunMeasurementCPUQuota"
+                if cpu["policy"] == "ConfiguredCPUQuota"
+                else "KubernetesNodeStatusAllocatable"
+            ),
             "exclusivityClaimed": cpu["exclusivityClaimed"],
             "limit": cpu["limit"],
             "observedAllocatable": intent["targetNode"]["allocatableCPU"],

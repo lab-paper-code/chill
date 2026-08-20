@@ -17,6 +17,7 @@ func TestBuildRunCreatesOnlyOneModelLoadedIdleExecution(t *testing.T) {
 		measurement.WorkloadMode != idleWorkloadMode || measurement.Batch != parent.Spec.Batch ||
 		measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 		*measurement.SettlingDurationSeconds != parent.Spec.Protocol.SettlingDurationSeconds ||
+		measurement.CPUQuota == nil || measurement.CPUQuota.Cmp(parent.Spec.CPUQuota) != 0 ||
 		measurement.InputGenerator != idleInputGenerator || measurement.OutputValidation != idleOutputValidation ||
 		len(run.OwnerReferences) != 1 || run.OwnerReferences[0].Kind != "ModelLoadedIdleBaseline" ||
 		run.OwnerReferences[0].UID != parent.UID {

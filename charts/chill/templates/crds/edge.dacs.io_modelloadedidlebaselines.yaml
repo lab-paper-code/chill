@@ -70,6 +70,14 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              cpuQuota:
+                anyOf:
+                - type: integer
+                - type: string
+                description: CPUQuota fixes the whole-core runtime quota for each
+                  owned idle Run.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
               pointPolicy:
                 description: ModelLoadedIdleBaselinePointPolicySpec fixes the aggregate
                   estimator inputs.
@@ -204,6 +212,7 @@ spec:
             required:
             - attemptLimit
             - batch
+            - cpuQuota
             - pointPolicy
             - protocol
             - state
@@ -211,6 +220,13 @@ spec:
             x-kubernetes-validations:
             - message: attemptLimit must cover minimumAcceptedRuns
               rule: self.attemptLimit >= self.pointPolicy.minimumAcceptedRuns
+            - message: cpuQuota must be positive
+              rule: quantity(self.cpuQuota).compareTo(quantity('0')) > 0
+            - message: cpuQuota must be a whole number of CPU cores
+              rule: quantity(self.cpuQuota).isInteger()
+            - message: state.cpuRequest must not exceed cpuQuota
+              rule: quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota))
+                <= 0
             - message: ModelLoadedIdleBaseline spec is immutable
               rule: self == oldSelf
           status:

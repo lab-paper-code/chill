@@ -111,7 +111,7 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
 		}},
 		{name: "retired predecessor schema", mutate: func(candidate *Intent) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha11"
+			candidate.SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha12"
 		}},
 		{name: "unsupported schema", mutate: func(candidate *Intent) { candidate.SchemaVersion = "foreign" }},
 	} {
@@ -252,10 +252,24 @@ func TestIntentRejectsCPURequestAboveFrozenLimit(t *testing.T) {
 	}
 }
 
+func TestIntentAcceptsConfiguredCPUQuotaBelowAllocatable(t *testing.T) {
+	intent := validIntent()
+	intent.TargetNode.AllocatableCPU = "12"
+	intent.CPU.Policy = ConfiguredCPUQuotaPolicy
+	intent.CPU.Limit = "4"
+	if err := intent.Validate(); err != nil {
+		t.Fatalf("configured CPU quota was rejected: %v", err)
+	}
+}
+
 func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*Intent){
 		func(i *Intent) { i.Candidate.Verdict = "Unknown" },
 		func(i *Intent) { i.TargetNode.ResourceVersion = "" },
+		func(i *Intent) { i.CPU.Policy = "unknown" },
+		func(i *Intent) { i.CPU.PolicyVersion = "v2" },
+		func(i *Intent) { i.CPU.Policy = ConfiguredCPUQuotaPolicy; i.CPU.Limit = "500m" },
+		func(i *Intent) { i.CPU.Policy = ConfiguredCPUQuotaPolicy; i.CPU.Limit = "5" },
 		func(i *Intent) { i.CPU.ORTIntraOpThreads = 2 },
 		func(i *Intent) { i.CPU.ExclusivityClaimed = true },
 		func(i *Intent) { i.Metrics.NodeName = "other" },
@@ -372,8 +386,8 @@ func validIntent() Intent {
 			AllocatableCPU:  "4",
 		},
 		CPU: CPUContract{
-			Policy:            "AllocatableCPUQuota",
-			PolicyVersion:     "v1",
+			Policy:            AllocatableCPUQuotaPolicy,
+			PolicyVersion:     CPUQuotaPolicyVersion,
 			Request:           "100m",
 			Limit:             "4",
 			ORTIntraOpThreads: 4,

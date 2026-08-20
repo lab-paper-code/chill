@@ -219,7 +219,10 @@ func supportedCPUORTIdleIntentSchema(schemaVersion string) bool {
 
 func (i Intent) validateCPUContract() error {
 	if i.CPU.ExclusivityClaimed {
-		return errors.New("first CPU policy must not claim Node exclusivity")
+		return errors.New("CPU quota policy must not claim Node exclusivity")
+	}
+	if i.CPU.PolicyVersion != CPUQuotaPolicyVersion {
+		return errors.New("unsupported CPU quota policy version")
 	}
 	requestCPU, err := resource.ParseQuantity(i.CPU.Request)
 	if err != nil || requestCPU.Sign() <= 0 {
@@ -232,12 +235,30 @@ func (i Intent) validateCPUContract() error {
 	if requestCPU.Cmp(limitCPU) > 0 {
 		return errors.New("CPU request must not exceed CPU limit")
 	}
-	cpu, err := strconv.Atoi(i.TargetNode.AllocatableCPU)
-	if err != nil || cpu < 1 {
-		return errors.New("target allocatableCPU must be a positive integer")
-	}
-	if i.CPU.Limit != i.TargetNode.AllocatableCPU {
-		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+	var threadCount int
+	switch i.CPU.Policy {
+	case AllocatableCPUQuotaPolicy:
+		threadCount, err = strconv.Atoi(i.TargetNode.AllocatableCPU)
+		if err != nil || threadCount < 1 {
+			return errors.New("target allocatableCPU must be a positive integer")
+		}
+		if i.CPU.Limit != i.TargetNode.AllocatableCPU {
+			return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+		}
+	case ConfiguredCPUQuotaPolicy:
+		threadCount, err = strconv.Atoi(i.CPU.Limit)
+		if err != nil || threadCount < 1 {
+			return errors.New("configured CPU quota must be a positive whole-core count")
+		}
+		allocatableCPU, parseErr := resource.ParseQuantity(i.TargetNode.AllocatableCPU)
+		if parseErr != nil || allocatableCPU.Sign() <= 0 {
+			return errors.New("target allocatableCPU must be a positive Kubernetes quantity")
+		}
+		if limitCPU.Cmp(allocatableCPU) > 0 {
+			return errors.New("configured CPU quota exceeds target allocatableCPU")
+		}
+	default:
+		return errors.New("unsupported CPU quota policy")
 	}
 	if i.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
@@ -245,8 +266,8 @@ func (i Intent) validateCPUContract() error {
 		}
 		return nil
 	}
-	if i.CPU.ORTIntraOpThreads != cpu || i.CPU.ORTInterOpThreads != 1 {
-		return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
+	if i.CPU.ORTIntraOpThreads != threadCount || i.CPU.ORTInterOpThreads != 1 {
+		return errors.New("CPU contract does not match the selected CPU quota policy")
 	}
 	return nil
 }

@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha6"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha12"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
+INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha13"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
-DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha1"
+DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
@@ -316,12 +316,23 @@ def validate_request(request: dict[str, Any]) -> None:
         {"policy", "policyVersion", "request", "limit", "exclusivityClaimed"},
         "intent.cpu",
     )
-    if (
-        cpu["policy"] != "AllocatableCPUQuota"
-        or cpu["policyVersion"] != "v1"
-        or cpu["exclusivityClaimed"] is not False
-        or require_string(cpu["limit"], "intent.cpu.limit") != target["allocatableCPU"]
-    ):
+    if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
+        raise ContractError("unsupported RKNNLite CPU quota contract")
+    limit = require_string(cpu["limit"], "intent.cpu.limit")
+    if cpu["policy"] == "AllocatableCPUQuota":
+        if limit != target["allocatableCPU"]:
+            raise ContractError("unsupported RKNNLite CPU quota contract")
+    elif cpu["policy"] == "ConfiguredCPUQuota":
+        try:
+            limit_cores = int(limit)
+            allocatable_cores = int(target["allocatableCPU"])
+        except ValueError as error:
+            raise ContractError(
+                "configured CPU quota requires whole-core values"
+            ) from error
+        if limit_cores < 1 or limit_cores > allocatable_cores:
+            raise ContractError("configured CPU quota is outside Node allocatable CPU")
+    else:
         raise ContractError("unsupported RKNNLite CPU quota contract")
 
     measurement = require_object(intent["measurement"], "intent.measurement")
@@ -800,7 +811,11 @@ def derived_contract(intent: dict[str, Any]) -> dict[str, Any]:
         "backend": intent["state"]["backend"],
         "nodeSnapshot": intent["targetNode"],
         "cpu": {
-            "budgetSource": "KubernetesNodeStatusAllocatable",
+            "budgetSource": (
+                "ProfilingRunMeasurementCPUQuota"
+                if cpu["policy"] == "ConfiguredCPUQuota"
+                else "KubernetesNodeStatusAllocatable"
+            ),
             "exclusivityClaimed": cpu["exclusivityClaimed"],
             "limit": cpu["limit"],
             "observedAllocatable": intent["targetNode"]["allocatableCPU"],

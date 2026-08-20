@@ -15,7 +15,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha6"
+const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
 
 type RKNNLiteRuntimeConfig struct {
 	Command                 []string

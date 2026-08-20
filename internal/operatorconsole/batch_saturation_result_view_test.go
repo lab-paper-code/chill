@@ -174,7 +174,7 @@ func campaignResultFixture(t *testing.T) (
 			},
 			Evidence: batchsaturation.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha10", Size: 23188,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha11", Size: 23188,
 			},
 		}},
 		ExcludedTrials: []batchsaturation.ExcludedTrialReference{{

@@ -57,6 +57,20 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	}
 }
 
+func TestProjectRequestMovesCPUQuotaOnlyToPreparationSelection(t *testing.T) {
+	run := testRun()
+	quota := resource.MustParse("4")
+	run.Spec.Measurement.CPUQuota = &quota
+
+	request, err := ProjectRequest(run.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Preparation.CPUQuota != "4" {
+		t.Fatalf("projected CPU quota = %q", request.Preparation.CPUQuota)
+	}
+}
+
 func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 	run := testRun()
 	run.Spec.CPURequest = resource.MustParse("-1")

@@ -234,6 +234,26 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             runner.validate_request(valid_request(model))
 
+    def test_validate_request_accepts_configured_cpu_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["targetNode"]["allocatableCPU"] = "12"
+            request["intent"]["cpu"].update(
+                {
+                    "policy": "ConfiguredCPUQuota",
+                    "limit": "4",
+                    "ortIntraOpThreads": 4,
+                }
+            )
+
+            runner.validate_request(request)
+            self.assertEqual(
+                runner.derived_contract(request["intent"])["cpu"]["budgetSource"],
+                "ProfilingRunMeasurementCPUQuota",
+            )
+
     def test_validate_request_binds_current_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
@@ -268,14 +288,14 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha11"
+            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha12"
             with self.assertRaisesRegex(
                 runner.ContractError, "supported CPU intent schema"
             ):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/ort-cpu-runtime-request.v1alpha11"
+            request["schemaVersion"] = "chill.dacs.io/ort-cpu-runtime-request.v1alpha12"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):

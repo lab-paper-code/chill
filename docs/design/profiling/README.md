@@ -4,7 +4,7 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha10`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha11`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against frozen intent. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
@@ -354,6 +354,11 @@ Insufficient request closes only in compact status and does not fabricate an
 aggregate result. The transition-cost controller consumes only this current
 Complete result, requires its exact measurement state, and freezes its mean and
 full stored-result reference into the enclosing preparation.
+Each baseline request also selects a required whole-core CPU quota. Its child
+Run transports that selection to preparation, which freezes it in the existing
+CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol
+condition retained by Run evidence, not another baseline-state or transition-
+cost compatibility dimension.
 
 ## Component contracts
 

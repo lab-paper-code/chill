@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha12",
+  "schemaVersion": "chill.dacs.io/profiling-run-intent.v1alpha13",
   "candidate": {
     "inputs": {
       "modelSpec": {

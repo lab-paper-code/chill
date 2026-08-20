@@ -411,23 +411,24 @@ incomplete until a bounded restart-required transition trace shows that the
 exact selected series continues to be collected while the target Node is
 unavailable and returns.
 
-Under Helm revision 5 and the current split-source configuration on 2026-08-20,
-BatchSaturation `plan10-gate0-maxn-baseline` reached
-`Complete`/`Stopped-CapabilityBoundary` with 6/6 trials `Accepted`. Its
-`chill.dacs.io/batch-saturation-result.v1alpha3` result fixes the measurement
-state to `jetsono` / `mobilenet-v2-050` / `jetson-agx-orin-64g` / `ort-cpu` /
-`MAXN`. Three model-loaded-idle trials produced an aggregate mean of
-`8.484698057297415 W`, variance `0.000047230885953752635`, 2 degrees of freedom,
-and a 95% half-width of `0.029569864969649712 W`. The first idle trial's metric
-observer retained 31/31 power samples with zero failed reads; thermal
-observation was available for 31/31 samples, throttling was active for 0/31,
-and the maximum temperature was `45.218 C`.
+After the ORT 1.27.0 rollout, a fresh `MODE_15W` model-loaded-idle child Run
+successfully imported the model but the runner rejected its frozen CPU
+contract: Node allocatable and the ORT intra-op count were 12, while the
+serving Pod's actual online CPUs and scheduler affinity were both four. The
+failed baseline request was deleted to stop retries. This is an execution-
+protocol mismatch, not a `PowerModeTransitionCost` measurement-state axis.
+Each independent `ModelLoadedIdleBaseline` therefore selects its own required
+whole-core CPU quota, and each child Run freezes that selection in its CPU
+intent and evidence. Neither code nor the transition-cost baseline reader
+requires the two modes to share a quota. Both `MAXN` and `MODE_15W` baselines
+must be measured again under their configured execution contracts; the older
+ORT 1.23.2 `MAXN` result is not current compatible evidence.
 
 The model-loaded HTTP readiness witness `plan10-serving-jetsono` is `Ready`, and
 Service `chill-serving-jetsono` has exactly one ready endpoint. This is not an
 inference or SLO server; it witnesses only Pod readiness and process continuity.
-Gate 0 remains incomplete because there is no `MODE_15W` idle baseline and no
-restart-required trace. The separate reboot approval is still pending.
+Gate 0 remains incomplete because there is no current admitted idle baseline
+for either mode and no restart-required trace.
 
 ### Unit 1: pure observation and derivation contracts
 

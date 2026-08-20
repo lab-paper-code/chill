@@ -54,6 +54,9 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 	if spec.Measurement.SettlingDurationSeconds != nil {
 		request.Preparation.Measurement.SettlingDurationSeconds = int(*spec.Measurement.SettlingDurationSeconds)
 	}
+	if spec.Measurement.CPUQuota != nil {
+		request.Preparation.CPUQuota = spec.Measurement.CPUQuota.String()
+	}
 	if spec.CPURequest.Sign() <= 0 {
 		return RequestedRun{}, errors.New("ProfilingRun CPU request must be positive")
 	}

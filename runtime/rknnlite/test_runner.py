@@ -306,6 +306,22 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             runner.validate_request(valid_request(model))
 
+    def test_validate_request_accepts_configured_cpu_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["intent"]["targetNode"]["allocatableCPU"] = "12"
+            request["intent"]["cpu"].update(
+                {"policy": "ConfiguredCPUQuota", "limit": "4"}
+            )
+
+            runner.validate_request(request)
+            self.assertEqual(
+                runner.derived_contract(request["intent"])["cpu"]["budgetSource"],
+                "ProfilingRunMeasurementCPUQuota",
+            )
+
     def test_validate_request_binds_current_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
@@ -340,12 +356,12 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha11"
+            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha12"
             with self.assertRaisesRegex(runner.ContractError, "current intent schema"):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha5"
+            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha6"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):

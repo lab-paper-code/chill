@@ -35,6 +35,7 @@ type MeasurementStateSpec struct {
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.measurement.cpuQuota) || quantity(self.cpuRequest).compareTo(quantity(self.measurement.cpuQuota)) <= 0",message="cpuRequest must not exceed measurement.cpuQuota"
 type ProfilingRunSpec struct {
 	MeasurementStateSpec `json:",inline"`
 
@@ -76,12 +77,19 @@ type ProfilingRunCandidateSpec struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && self.inputGenerator == 'none' && self.outputValidation == 'none' : !has(self.settlingDurationSeconds) && self.inputGenerator == 'numpy-default-rng-seed-0-fp32-v1' && self.outputValidation == 'nonempty-shape-batch-v1'",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
 
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
+
+	// CPUQuota optionally selects a configured whole-core runtime quota. It is
+	// consumed while freezing the Run and is not duplicated in MeasurementContract.
+	// +optional
+	CPUQuota *resource.Quantity `json:"cpuQuota,omitempty"`
 
 	// SettlingDurationSeconds is required only for model-loaded idle. The
 	// runtime loads the model before this observer-independent settling period.

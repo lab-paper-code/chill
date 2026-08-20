@@ -37,6 +37,39 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	}
 }
 
+func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
+	for _, runtimePath := range []string{"ort", "rknn"} {
+		t.Run(runtimePath, func(t *testing.T) {
+			var expected profilingrun.Intent
+			var candidateBytes []byte
+			if runtimePath == "ort" {
+				expected, candidateBytes = preparationFixture(t)
+			} else {
+				expected, candidateBytes = rknnPreparationFixture(t)
+			}
+			expected.TargetNode.AllocatableCPU = "12"
+			expected.CPU.Policy = profilingrun.ConfiguredCPUQuotaPolicy
+			expected.CPU.PolicyVersion = profilingrun.CPUQuotaPolicyVersion
+			expected.CPU.Limit = "4"
+			if runtimePath == "ort" {
+				expected.CPU.ORTIntraOpThreads = 4
+			}
+			request := fixtureRequest(expected)
+			request.CPUQuota = "4"
+
+			prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
+				context.Background(), request,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(prepared.Intent, expected) {
+				t.Fatalf("configured CPU quota intent drifted\nwant: %#v\n got: %#v", expected, prepared.Intent)
+			}
+		})
+	}
+}
+
 func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 	expected, candidateBytes := rknnPreparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
@@ -400,6 +433,21 @@ func TestPreparerRejectsCPURequestAboveNodeCapacityBeforeMetricResolution(t *tes
 	}
 }
 
+func TestPreparerRejectsCPUQuotaAboveNodeCapacityBeforeMetricResolution(t *testing.T) {
+	expected, candidateBytes := preparationFixture(t)
+	resolvers := fixtureResolvers(expected, candidateBytes)
+	request := fixtureRequest(expected)
+	request.CPUQuota = "5"
+
+	_, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), request)
+	if !errors.Is(err, ErrCPUQuotaExceedsAllocatable) {
+		t.Fatalf("expected CPU quota capacity rejection, got %v", err)
+	}
+	if resolvers.metrics.calls != 0 || resolvers.workloads.calls != 0 {
+		t.Fatal("CPU quota capacity rejection reached downstream resolvers")
+	}
+}
+
 func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	for _, test := range []struct {
@@ -409,6 +457,12 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		{name: "zero batch", mutate: func(request *PreparationRequest) { request.Measurement.Batch = 0 }},
 		{name: "invalid CPU request", mutate: func(request *PreparationRequest) {
 			request.CPURequest = "not-a-quantity"
+		}},
+		{name: "fractional CPU quota", mutate: func(request *PreparationRequest) {
+			request.CPUQuota = "500m"
+		}},
+		{name: "CPU request above quota", mutate: func(request *PreparationRequest) {
+			request.CPURequest, request.CPUQuota = "2", "1"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
