@@ -116,29 +116,11 @@ func Summarize(
 		{direction: frozenDirections[0]},
 		{direction: frozenDirections[1]},
 	}
-	seenActuations := make(map[string]struct{}, len(results))
-	var commonScope summaryScope
 	for index, result := range results {
 		if err := validateTerminalResult(result); err != nil {
 			return DirectedTable{}, fmt.Errorf("validate transition result %d: %w", index, err)
 		}
 		frozen := result.record.frozen
-		if _, duplicate := seenActuations[frozen.NodeActuation.UID]; duplicate {
-			return DirectedTable{}, fmt.Errorf(
-				"transition result %d duplicates NodeActuation UID %q",
-				index,
-				frozen.NodeActuation.UID,
-			)
-		}
-		seenActuations[frozen.NodeActuation.UID] = struct{}{}
-
-		candidateScope := scopeOf(frozen)
-		if index == 0 {
-			commonScope = candidateScope
-		} else if candidateScope != commonScope {
-			return DirectedTable{}, fmt.Errorf("transition result %d differs from frozen measurement scope", index)
-		}
-
 		directionIndex := directionIndex(frozenDirections, DirectedStatePair{
 			Source: frozen.SourceState,
 			Target: frozen.TargetState,
@@ -180,30 +162,6 @@ func Summarize(
 	}}, nil
 }
 
-type summaryScope struct {
-	node             NodeIdentity
-	deviceClass      string
-	actuator         ActuatorIdentity
-	deviceType       string
-	model            string
-	workload         WorkloadIdentity
-	protocolIdentity string
-	meterIdentity    string
-}
-
-func scopeOf(frozen FrozenContract) summaryScope {
-	return summaryScope{
-		node:             frozen.Node,
-		deviceClass:      frozen.DeviceClass,
-		actuator:         frozen.Actuator,
-		deviceType:       frozen.SourceState.DeviceType,
-		model:            frozen.SourceState.Model,
-		workload:         frozen.Workload,
-		protocolIdentity: frozen.ProtocolIdentity,
-		meterIdentity:    frozen.MeterIdentity,
-	}
-}
-
 type directionAccumulator struct {
 	direction             DirectedStatePair
 	targetIdleBaseline    IdleBaseline
@@ -222,7 +180,7 @@ func (a *directionAccumulator) add(result Result) error {
 		a.targetIdleBaseline = baseline
 		a.hasTargetIdleBaseline = true
 	} else if baseline != a.targetIdleBaseline {
-		return errors.New("target idle baseline identity or value changed within one direction")
+		return errors.New("target idle baseline changed within one direction")
 	}
 
 	switch result.record.verdict {

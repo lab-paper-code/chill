@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
-	"github.com/prometheus/common/model"
 )
 
 // Derive validates one frozen contract and one factual raw observation, then
 // produces one terminal scientific result. Malformed frozen inputs are caller
 // errors; terminal properties of retained raw evidence are typed results.
 func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, error) {
-	verifiedFrozen := cloneFrozen(frozen)
+	verifiedFrozen := frozen
 	verifiedRaw := cloneRaw(raw)
 	if err := validateFrozen(verifiedFrozen); err != nil {
 		return Result{}, fmt.Errorf("validate frozen transition contract: %w", err)
@@ -27,9 +26,6 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, e
 	verified := verifiedInput{frozen: verifiedFrozen, raw: verifiedRaw, policy: policy}
 	if detail := validateRawStructure(verified.raw); detail != "" {
 		return classified(verified, VerdictInvalid, ReasonObservationMalformed, detail), nil
-	}
-	if detail := identityContradiction(verified.frozen, verified.raw); detail != "" {
-		return classified(verified, VerdictInvalid, ReasonIdentityContradiction, detail), nil
 	}
 	if verified.raw.SourceReadBack.State != verified.frozen.SourceState {
 		return classified(verified, VerdictInvalid, ReasonSourceStateMismatch,
@@ -124,22 +120,14 @@ func classified(input verifiedInput, verdict Verdict, reason Reason, detail stri
 }
 
 func validateFrozen(frozen FrozenContract) error {
-	if !validObject(frozen.Node) || !plainIdentity(frozen.DeviceClass) ||
-		!validActuator(frozen.Actuator) || !validNodeActuation(frozen.NodeActuation) ||
-		!validState(frozen.SourceState) || !validState(frozen.TargetState) ||
-		!validWorkload(frozen.Workload) || !validObserver(frozen.Observer) ||
-		!plainIdentity(frozen.ProtocolIdentity) ||
-		!plainIdentity(frozen.MeterIdentity) || !validMeterSource(frozen.MeterSource) ||
-		!plainIdentity(frozen.TargetIdleBaseline.EvidenceReference) {
-		return errors.New("frozen identity is incomplete or contains surrounding whitespace")
+	if !validState(frozen.SourceState) || !validState(frozen.TargetState) ||
+		!validText(frozen.TargetIdleBaseline.EvidenceReference) {
+		return errors.New("frozen transition inputs are incomplete or contain surrounding whitespace")
 	}
 	if frozen.SourceState.DeviceType != frozen.TargetState.DeviceType ||
 		frozen.SourceState.Model != frozen.TargetState.Model ||
 		frozen.SourceState.PowerMode == frozen.TargetState.PowerMode {
 		return errors.New("source and target must be distinct power modes of one exact device type and model")
-	}
-	if frozen.Observer.Node.Name == frozen.Node.Name {
-		return errors.New("observer Node must be off-target")
 	}
 	if frozen.TargetIdleBaseline.State != frozen.TargetState {
 		return errors.New("target idle baseline state differs from the frozen target state")
@@ -175,15 +163,8 @@ func validateRawHeader(raw RawObservation) string {
 		!raw.ObservationEndedAt.After(raw.ObservationStartedAt) {
 		return "raw observation coverage window is invalid"
 	}
-	if !validObject(raw.Node) || !plainIdentity(raw.DeviceClass) ||
-		!validActuator(raw.Actuator) || !validNodeActuation(raw.NodeActuation) ||
-		!validState(raw.SourceState) || !validState(raw.TargetState) ||
-		!validWorkload(raw.Workload) || !validObserver(raw.Observer) ||
-		!plainIdentity(raw.ProtocolIdentity) ||
-		!plainIdentity(raw.MeterIdentity) || !validMeterSource(raw.MeterSource) ||
-		!plainIdentity(raw.BaselineReference) ||
-		!validState(raw.BaselineState) || !validStateReadBack(raw.SourceReadBack) {
-		return "raw observation identity or source read-back is malformed"
+	if !validStateReadBack(raw.SourceReadBack) {
+		return "source read-back is malformed"
 	}
 	if raw.BoundaryMappingUncertainty < 0 {
 		return "boundary mapping uncertainty is negative"
@@ -244,7 +225,7 @@ func validateObservedFacts(raw RawObservation) string {
 		}
 	}
 	for _, readiness := range raw.Readiness {
-		if readiness.ObservedAt.IsZero() || !validWorkload(readiness.Workload) ||
+		if readiness.ObservedAt.IsZero() ||
 			!within(readiness.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
 			return "readiness observation is malformed or outside coverage"
 		}
@@ -254,53 +235,8 @@ func validateObservedFacts(raw RawObservation) string {
 			continue
 		}
 		if process.ObservedAt.IsZero() || !within(process.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) ||
-			!validWorkload(process.Workload) || !validProcess(process.Process) {
+			!validProcess(process.Process) {
 			return "serving process observation is malformed or outside coverage"
-		}
-	}
-	return ""
-}
-
-func identityContradiction(frozen FrozenContract, raw RawObservation) string {
-	if raw.Node != frozen.Node {
-		return "raw Node identity differs from the frozen Node"
-	}
-	if raw.DeviceClass != frozen.DeviceClass {
-		return "raw DeviceClass differs from the frozen DeviceClass"
-	}
-	if raw.Actuator != frozen.Actuator {
-		return "raw actuator identity differs from the frozen actuator"
-	}
-	if raw.NodeActuation != frozen.NodeActuation {
-		return "raw NodeActuation identity differs from the frozen execution"
-	}
-	if raw.SourceState != frozen.SourceState || raw.TargetState != frozen.TargetState {
-		return "raw declared state pair differs from the frozen state pair"
-	}
-	if raw.Workload != frozen.Workload {
-		return "raw workload identity differs from the frozen workload"
-	}
-	if raw.Observer != frozen.Observer {
-		return "raw observer identity differs from the frozen observer"
-	}
-	if raw.ProtocolIdentity != frozen.ProtocolIdentity || raw.MeterIdentity != frozen.MeterIdentity {
-		return "raw protocol or meter identity differs from the frozen identity"
-	}
-	if !meterSourceMatches(raw.MeterSource, frozen.MeterSource) {
-		return "raw meter source identity differs from the frozen meter source"
-	}
-	if raw.BaselineReference != frozen.TargetIdleBaseline.EvidenceReference ||
-		raw.BaselineState != frozen.TargetIdleBaseline.State {
-		return "raw target idle baseline identity differs from the frozen baseline"
-	}
-	for _, readiness := range raw.Readiness {
-		if readiness.Workload != frozen.Workload {
-			return "readiness evidence refers to a different workload"
-		}
-	}
-	for _, process := range []*ProcessObservation{raw.PreTransitionProcess, raw.PostTransitionProcess} {
-		if process != nil && process.Workload != frozen.Workload {
-			return "serving process evidence refers to a different workload"
 		}
 	}
 	return ""
@@ -352,7 +288,7 @@ func validateFailure(failure *Failure, start, end time.Time) string {
 		return ""
 	}
 	if failure.ObservedAt.IsZero() || !within(failure.ObservedAt, start, end) ||
-		!plainIdentity(failure.Message) {
+		!validText(failure.Message) {
 		return "is malformed or outside coverage"
 	}
 	return ""
@@ -360,84 +296,23 @@ func validateFailure(failure *Failure, start, end time.Time) string {
 
 func validatePowerReadFailure(failure PowerReadFailure, start, end time.Time) string {
 	if failure.ObservedAt.IsZero() || !within(failure.ObservedAt, start, end) ||
-		failure.RequestLatency < 0 || !plainIdentity(failure.Reason) ||
-		!plainIdentity(failure.Message) {
+		failure.RequestLatency < 0 || !validText(failure.Reason) ||
+		!validText(failure.Message) {
 		return "is malformed or outside coverage"
 	}
 	return ""
 }
 
-func validObject(identity NodeIdentity) bool {
-	return plainIdentity(identity.Name) && plainIdentity(identity.UID)
+func validState(state StateIdentity) bool {
+	return validText(state.DeviceType) && validText(state.Model) && validText(state.PowerMode)
 }
 
-func validActuator(identity ActuatorIdentity) bool {
-	return plainIdentity(identity.Kind) && plainIdentity(identity.Target)
+func validProcess(process ProcessIdentity) bool {
+	return validText(process.ContainerName) && validText(process.ContainerID) &&
+		!process.StartedAt.IsZero() && process.RestartCount >= 0
 }
 
-func validNodeActuation(identity NodeActuationIdentity) bool {
-	return plainIdentity(identity.Namespace) && plainIdentity(identity.Name) && plainIdentity(identity.UID)
-}
-
-func validState(identity StateIdentity) bool {
-	return plainIdentity(identity.DeviceType) && plainIdentity(identity.Model) && plainIdentity(identity.PowerMode)
-}
-
-func validWorkload(identity WorkloadIdentity) bool {
-	return plainIdentity(identity.Namespace) && plainIdentity(identity.Name) && plainIdentity(identity.UID)
-}
-
-func validObserver(identity ObserverIdentity) bool {
-	return validObject(identity.Node) && plainIdentity(identity.ImageIdentity)
-}
-
-func validConfigurationSource(identity ConfigurationSourceIdentity) bool {
-	return plainIdentity(identity.Namespace) && plainIdentity(identity.Name) &&
-		plainIdentity(identity.UID) && plainIdentity(identity.ResourceVersion) &&
-		plainIdentity(identity.Key)
-}
-
-func validMeterSource(identity MeterSourceIdentity) bool {
-	if !plainIdentity(identity.Kind) || !plainIdentity(identity.Endpoint) ||
-		!plainIdentity(identity.PowerMetric) ||
-		!plainIdentity(identity.TimestampAuthority) ||
-		!model.IsValidMetricName(model.LabelValue(identity.PowerMetric)) ||
-		!validWorkload(identity.GatewayWorkload) ||
-		!validConfigurationSource(identity.ConfigurationSource) || len(identity.Labels) == 0 {
-		return false
-	}
-	for name, value := range identity.Labels {
-		if !plainIdentity(name) || !model.LabelName(name).IsValid() ||
-			!model.LabelValue(value).IsValid() {
-			return false
-		}
-	}
-	return true
-}
-
-func meterSourceMatches(left, right MeterSourceIdentity) bool {
-	if left.Kind != right.Kind || left.Endpoint != right.Endpoint ||
-		left.PowerMetric != right.PowerMetric ||
-		left.TimestampAuthority != right.TimestampAuthority ||
-		left.GatewayWorkload != right.GatewayWorkload ||
-		left.ConfigurationSource != right.ConfigurationSource ||
-		len(left.Labels) != len(right.Labels) {
-		return false
-	}
-	for name, value := range left.Labels {
-		if rightValue, ok := right.Labels[name]; !ok || rightValue != value {
-			return false
-		}
-	}
-	return true
-}
-
-func validProcess(identity ProcessIdentity) bool {
-	return plainIdentity(identity.ContainerName) && plainIdentity(identity.ContainerID) &&
-		!identity.StartedAt.IsZero() && identity.RestartCount >= 0
-}
-
-func plainIdentity(value string) bool {
+func validText(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
 }
 
@@ -451,7 +326,6 @@ func within(value, start, end time.Time) bool {
 
 func cloneRaw(raw RawObservation) RawObservation {
 	clone := raw
-	clone.MeterSource = cloneMeterSource(raw.MeterSource)
 	clone.PowerSamples = append([]PowerSample(nil), raw.PowerSamples...)
 	clone.PowerFailures = append([]PowerReadFailure(nil), raw.PowerFailures...)
 	clone.Readiness = append([]ReadyObservation(nil), raw.Readiness...)
@@ -478,21 +352,6 @@ func cloneRaw(raw RawObservation) RawObservation {
 	if raw.PostTransitionProcess != nil {
 		value := *raw.PostTransitionProcess
 		clone.PostTransitionProcess = &value
-	}
-	return clone
-}
-
-func cloneFrozen(frozen FrozenContract) FrozenContract {
-	clone := frozen
-	clone.MeterSource = cloneMeterSource(frozen.MeterSource)
-	return clone
-}
-
-func cloneMeterSource(identity MeterSourceIdentity) MeterSourceIdentity {
-	clone := identity
-	clone.Labels = make(map[string]string, len(identity.Labels))
-	for name, value := range identity.Labels {
-		clone.Labels[name] = value
 	}
 	return clone
 }

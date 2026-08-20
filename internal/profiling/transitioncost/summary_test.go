@@ -107,63 +107,6 @@ func TestSummarizeRequiresAtLeastFiveAcceptedPerDirection(t *testing.T) {
 	assertErrorContains(t, err, "at least five")
 }
 
-func TestSummarizeRejectsEveryMixedScopeIdentity(t *testing.T) {
-	directions := testDirections()
-	tests := []struct {
-		name   string
-		mutate func(*transitioncost.FrozenContract, *transitioncost.RawObservation)
-	}{
-		{name: "Node name", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.Node.Name = "mixed-node"
-			r.Node = f.Node
-		}},
-		{name: "Node UID", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.Node.UID = "mixed-node-uid"
-			r.Node = f.Node
-		}},
-		{name: "DeviceClass", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.DeviceClass = "mixed-device-class"
-			r.DeviceClass = f.DeviceClass
-		}},
-		{name: "actuator kind", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.Actuator.Kind = "mixed-actuator"
-			r.Actuator = f.Actuator
-		}},
-		{name: "actuator target", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.Actuator.Target = "/mixed/target"
-			r.Actuator = f.Actuator
-		}},
-		{name: "workload", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.Workload.UID = "mixed-workload-uid"
-			r.Workload = f.Workload
-			for index := range r.Readiness {
-				r.Readiness[index].Workload = f.Workload
-			}
-			r.PreTransitionProcess.Workload = f.Workload
-			r.PostTransitionProcess.Workload = f.Workload
-		}},
-		{name: "protocol", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.ProtocolIdentity = "mixed-protocol"
-			r.ProtocolIdentity = f.ProtocolIdentity
-		}},
-		{name: "meter", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
-			f.MeterIdentity = "mixed-meter"
-			r.MeterIdentity = f.MeterIdentity
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			first := deriveAttempt(t, directions[0], "first", 2, 0, true, acceptedAttempt, nil)
-			mixed := deriveAttempt(t, directions[1], "mixed", 2, 0, true, acceptedAttempt,
-				func(frozen *transitioncost.FrozenContract, raw *transitioncost.RawObservation) {
-					test.mutate(frozen, raw)
-				})
-			_, err := transitioncost.Summarize(directions, 5, []transitioncost.Result{first, mixed})
-			assertErrorContains(t, err, "frozen measurement scope")
-		})
-	}
-}
-
 func TestSummarizeRejectsThirdOrWrongDirection(t *testing.T) {
 	directions := testDirections()
 	thirdMode := directions[0]
@@ -177,22 +120,14 @@ func TestSummarizeRejectsThirdOrWrongDirection(t *testing.T) {
 	assertErrorContains(t, err, "exactly reverse")
 }
 
-func TestSummarizeRejectsDuplicateNodeActuationUID(t *testing.T) {
-	direction := testDirections()[0]
-	result := deriveAttempt(t, direction, "duplicate", 2, 0, true, acceptedAttempt, nil)
-	_, err := transitioncost.Summarize(testDirections(), 5, []transitioncost.Result{result, result})
-	assertErrorContains(t, err, "duplicates NodeActuation UID")
-}
-
 func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 	direction := testDirections()[0]
 	tests := []struct {
 		name   string
 		mutate func(*transitioncost.FrozenContract, *transitioncost.RawObservation)
 	}{
-		{name: "identity", mutate: func(f *transitioncost.FrozenContract, r *transitioncost.RawObservation) {
+		{name: "evidence reference", mutate: func(f *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
 			f.TargetIdleBaseline.EvidenceReference = "evidence://other-baseline"
-			r.BaselineReference = f.TargetIdleBaseline.EvidenceReference
 		}},
 		{name: "value", mutate: func(f *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
 			f.TargetIdleBaseline.MeanWallWatts++
@@ -285,19 +220,12 @@ func deriveAttempt(
 	frozen, raw, policy := validInputs()
 	frozen.SourceState = direction.Source
 	frozen.TargetState = direction.Target
-	frozen.NodeActuation.Name = id
-	frozen.NodeActuation.UID = id + "-uid"
 	frozen.TargetIdleBaseline = baselineFor(direction.Target)
 
 	startedAt := testTime(10)
 	completedAt := startedAt.Add(time.Duration(tauSeconds) * time.Second)
 	raw.ObservationStartedAt = startedAt.Add(-2 * time.Second)
 	raw.ObservationEndedAt = completedAt.Add(2 * time.Second)
-	raw.NodeActuation = frozen.NodeActuation
-	raw.SourceState = direction.Source
-	raw.TargetState = direction.Target
-	raw.BaselineReference = frozen.TargetIdleBaseline.EvidenceReference
-	raw.BaselineState = direction.Target
 	raw.SourceReadBack = transitioncost.StateReadBack{
 		Fact: transitioncost.MappedFact{
 			OccurredAt: startedAt.Add(-time.Second),
@@ -314,7 +242,7 @@ func deriveAttempt(
 		State: direction.Target,
 	}
 	raw.Readiness = []transitioncost.ReadyObservation{{
-		ObservedAt: completedAt, Workload: frozen.Workload, Ready: true,
+		ObservedAt: completedAt, Ready: true,
 	}}
 	raw.PreTransitionProcess.ObservedAt = startedAt.Add(-time.Second)
 	raw.PostTransitionProcess.ObservedAt = completedAt.Add(time.Second)

@@ -125,21 +125,21 @@ from the specification.
 ## Serving-survival observation
 
 The specification asks whether the serving process survives the transition in
-addition to time and energy. The same observation therefore watches the exact
-pre-transition workload and process/container identity from before `startedAt`
-through `completedAt`.
+addition to time and energy. The same observation therefore records the
+serving process/container facts before `startedAt` and after `completedAt`.
 
-- `servingSurvived=true` means the frozen survival witness proves that the
-  original serving process was not replaced or restarted;
+- `servingSurvived=true` means the pre- and post-transition process facts show
+  that the serving process was not replaced or restarted;
 - `servingSurvived=false` is a valid measured result when that process is
   observed to terminate or restart; and
 - missing or untrustworthy survival evidence makes the transition observation
   insufficient rather than silently producing `false`.
 
-The first path selects one concrete identity and restart witness supported by
-the serving workload. The observation adds no synthetic inference traffic to
-the measured device. Raw identity, restart, and readiness events remain
-evidence; the compact boolean is the table value.
+The enclosing measurement selects one serving workload and its restart witness.
+Each observation retains only the resulting process, restart, and readiness
+facts; it does not repeat the workload selection. The observation adds no
+synthetic inference traffic to the measured device, and the compact boolean is
+the table value.
 
 ## Ownership and placement
 
@@ -198,12 +198,12 @@ measurement and do not block it.
 
 The selected Gateway is Deployment
 `monitoring/edge-metrics-exporter-shelly-gateway`, currently delivered by Helm
-release `edge-metrics` revision 24. Raw evidence freezes the metric name, both
-label values, endpoint, Gateway workload identity, and selected configuration
-source identity used for the observed trace. The Gateway is measurement
-infrastructure: neither `PowerModeTransitionCost` nor its observer owns,
-deploys, reconfigures, or restarts it. The existing per-Node exporter DaemonSet
-is not part of this meter path.
+release `edge-metrics` revision 24. The enclosing measurement record selects
+the metric name, both label values, endpoint, and Gateway configuration once;
+individual transition observations do not repeat that selection. The Gateway
+is measurement infrastructure: neither `PowerModeTransitionCost` nor its
+observer owns, deploys, reconfigures, or restarts it. The existing per-Node
+exporter DaemonSet is not part of this meter path.
 
 The `PowerModeTransitionCost` controller freezes intent, sequences one
 `NodeActuation` at a time, verifies its evidence, and publishes compact status.
@@ -229,7 +229,7 @@ Raw evidence retains:
 
 - the device-side transition-start and target-read-back facts;
 - the observer-side meter samples, workload-readiness facts, and serving
-  identity facts;
+  process/restart facts;
 - the mapping used to place both window boundaries in the meter trace; and
 - the measured upper bound on boundary-alignment error.
 
@@ -283,19 +283,19 @@ pre-window data proves source health and supports boundary placement.
 
 ## Evidence contract
 
-Raw samples and workload records never enter `NodeActuation.status` or
-`PowerModeTransitionCost.status`. Each raw Evidence Store object retains:
+Raw samples and observation records never enter `NodeActuation.status` or
+`PowerModeTransitionCost.status`. The enclosing control and evidence record
+owns the measurement selection once: state pair, actuator, meter series,
+serving workload, observer placement, estimator, policy, and target-idle
+baseline. Each per-transition raw object retains only the observations made
+under that selection:
 
-- schema, producer, measurement, Node, and `NodeActuation` identities;
-- exact source and target states and their observed read-backs;
-- frozen actuator, meter, readiness, survival, and estimator identities;
-- observer placement and image identity;
-- every bounded power sample, failed read, workload identity, restart event,
-  and readiness event;
-- transition-start, target-read-back, and request-readiness boundary facts;
-- sample cadence, maximum gap, readiness freshness, timestamp authority, and
-  boundary uncertainty; and
-- the exact admitted target-idle evidence reference.
+- source and target state read-backs;
+- every bounded power sample and failed read with its observer receipt time and
+  request latency;
+- every process/restart fact and readiness event;
+- transition-start, target-read-back, and request-readiness boundary facts; and
+- boundary-mapping uncertainty.
 
 Each finalized transition object records the state pair, transition window,
 `tau`, raw wall energy, baseline, `eta`, serving-survival flag, verdict, and
@@ -304,9 +304,8 @@ into the two directed table entries. Kubernetes status carries only phase,
 compact outcome, accepted counts, and verified immutable references.
 
 A worker receipt is only a hint. The controller independently reads the raw
-object, strictly decodes it, validates exact-object and state links once,
-derives the result from that verified value, and writes a separate finalized
-object.
+object, strictly decodes it, validates its structure and state read-backs once,
+derives the result from that value, and writes a separate finalized object.
 
 The first stored schema is current-only. A later stored-contract change is one
 explicit work unit; obsolete test objects are deleted rather than supported by
@@ -330,9 +329,6 @@ compatibility readers.
   the state transition itself succeeds.
 - A measured serving interruption produces `servingSurvived=false`; it does not
   invalidate otherwise complete time and energy evidence.
-- Evidence contradicting frozen identities is terminally invalid rather than
-  retried indefinitely.
-
 No outcome starts an automatic recovery transition. Returning to the source
 state is another explicitly requested and independently measured
 `NodeActuation`.
@@ -367,7 +363,7 @@ unavailable and returns.
 
 ### Unit 1: pure observation and derivation contracts
 
-1. Define Kubernetes-independent raw and verified types for one transition
+1. Define Kubernetes-independent raw fact and result types for one transition
    observation and a result type for the two directed table entries.
 2. Implement structural validation, bounded integration, target-idle
    subtraction, serving-survival reduction, directed summary construction, and
@@ -415,9 +411,8 @@ Stop for review. The observer still does not create or mutate a transition.
 7. Report `tau`, `eta`, and serving survival per direction with the
    predeclared summary and uncertainty method. Energy results require at least
    five accepted observations per direction.
-8. Write one final table keyed by device type, model, actuator kind, source
-   mode, target mode, and protocol identity. Do not reduce it to target-only
-   costs until sampled state pairs support that assumption.
+8. Write one final table with the two directed state-pair rows. Do not reduce
+   it to target-only costs until sampled state pairs support that assumption.
 9. Remove the current `NodeActuation.status.transitionCost` aggregate and
    segment fields after their diagnostic consumers are migrated. Operational
    lifecycle timestamps may remain, but finalized observation evidence becomes

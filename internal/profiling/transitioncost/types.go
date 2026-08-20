@@ -1,5 +1,5 @@
 // Package transitioncost derives one power-mode transition-cost observation
-// from frozen identities and raw, Kubernetes-independent facts.
+// from frozen estimator inputs and raw, Kubernetes-independent facts.
 package transitioncost
 
 import "time"
@@ -21,7 +21,6 @@ type Reason string
 const (
 	ReasonAccepted                    Reason = "Accepted"
 	ReasonObservationMalformed        Reason = "ObservationMalformed"
-	ReasonIdentityContradiction       Reason = "IdentityContradiction"
 	ReasonSourceStateMismatch         Reason = "SourceStateMismatch"
 	ReasonActuationFailed             Reason = "ActuationFailed"
 	ReasonTargetReadBackFailed        Reason = "TargetReadBackFailed"
@@ -32,68 +31,11 @@ const (
 	ReasonServingSurvivalUnknown      Reason = "ServingSurvivalUnknown"
 )
 
-// NodeIdentity identifies the exact measured Node without importing a
-// Kubernetes API type.
-type NodeIdentity struct {
-	Name string
-	UID  string
-}
-
-// NodeActuationIdentity identifies the exact transition execution.
-type NodeActuationIdentity struct {
-	Namespace string
-	Name      string
-	UID       string
-}
-
-// ActuatorIdentity identifies the exact actuation path and factual target
-// used for one transition observation.
-type ActuatorIdentity struct {
-	Kind   string
-	Target string
-}
-
 // StateIdentity is one exact Layer-0 device, model, and power-mode state.
 type StateIdentity struct {
 	DeviceType string
 	Model      string
 	PowerMode  string
-}
-
-// WorkloadIdentity identifies one exact Kubernetes workload.
-type WorkloadIdentity struct {
-	Namespace string
-	Name      string
-	UID       string
-}
-
-// ObserverIdentity identifies the off-target Node and exact immutable OCI
-// image identity used to observe one transition.
-type ObserverIdentity struct {
-	Node          NodeIdentity
-	ImageIdentity string
-}
-
-// ConfigurationSourceIdentity identifies the exact selected configuration
-// entry that supplied one meter source.
-type ConfigurationSourceIdentity struct {
-	Namespace       string
-	Name            string
-	UID             string
-	ResourceVersion string
-	Key             string
-}
-
-// MeterSourceIdentity identifies the exact external power trace selected for
-// one transition observation.
-type MeterSourceIdentity struct {
-	Kind                string
-	Endpoint            string
-	PowerMetric         string
-	Labels              map[string]string
-	TimestampAuthority  string
-	GatewayWorkload     WorkloadIdentity
-	ConfigurationSource ConfigurationSourceIdentity
 }
 
 // IdleBaseline binds the numeric target-idle value to its exact retained
@@ -104,21 +46,11 @@ type IdleBaseline struct {
 	MeanWallWatts     float64
 }
 
-// FrozenContract is the immutable identity and estimator input for one
-// directed transition observation. Workload is the serving workload used as
-// the readiness and process-survival witness.
+// FrozenContract contains the immutable estimator inputs for one directed
+// transition observation.
 type FrozenContract struct {
-	Node               NodeIdentity
-	DeviceClass        string
-	Actuator           ActuatorIdentity
-	NodeActuation      NodeActuationIdentity
 	SourceState        StateIdentity
 	TargetState        StateIdentity
-	Workload           WorkloadIdentity
-	Observer           ObserverIdentity
-	ProtocolIdentity   string
-	MeterIdentity      string
-	MeterSource        MeterSourceIdentity
 	TargetIdleBaseline IdleBaseline
 }
 
@@ -168,11 +100,10 @@ type PowerReadFailure struct {
 	Message        string
 }
 
-// ReadyObservation is one observation of the exact frozen workload's
+// ReadyObservation is one observation of the selected serving workload's
 // existing request-readiness signal.
 type ReadyObservation struct {
 	ObservedAt time.Time
-	Workload   WorkloadIdentity
 	Ready      bool
 }
 
@@ -184,11 +115,9 @@ type ProcessIdentity struct {
 	RestartCount  int32
 }
 
-// ProcessObservation binds one serving-process identity to its workload and
-// observer timestamp.
+// ProcessObservation binds one serving-process observation to its timestamp.
 type ProcessObservation struct {
 	ObservedAt time.Time
-	Workload   WorkloadIdentity
 	Process    ProcessIdentity
 }
 
@@ -197,20 +126,6 @@ type ProcessObservation struct {
 type RawObservation struct {
 	ObservationStartedAt time.Time
 	ObservationEndedAt   time.Time
-
-	Node              NodeIdentity
-	DeviceClass       string
-	Actuator          ActuatorIdentity
-	NodeActuation     NodeActuationIdentity
-	SourceState       StateIdentity
-	TargetState       StateIdentity
-	Workload          WorkloadIdentity
-	Observer          ObserverIdentity
-	ProtocolIdentity  string
-	MeterIdentity     string
-	MeterSource       MeterSourceIdentity
-	BaselineReference string
-	BaselineState     StateIdentity
 
 	SourceReadBack        StateReadBack
 	TransitionStart       *MappedFact
@@ -264,7 +179,7 @@ func (r Result) Reason() Reason { return r.record.reason }
 func (r Result) Detail() string { return r.record.detail }
 
 // FrozenContract returns the immutable inputs retained with this result.
-func (r Result) FrozenContract() FrozenContract { return cloneFrozen(r.record.frozen) }
+func (r Result) FrozenContract() FrozenContract { return r.record.frozen }
 
 // RawObservation returns a copy of the factual evidence retained with this
 // result.
