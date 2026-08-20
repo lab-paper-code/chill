@@ -19,7 +19,10 @@ authorize an unbounded Node restart, image publication, or cluster mutation.
 
 The Kubernetes-independent worker core, immutable raw-evidence write, minimal
 `PowerModeTransitionCost` API, and polling Kubernetes fact observer now exist.
-Control-path wiring and live verification remain incomplete.
+The controller preparation boundary resolves the selected transition-power
+source and both target-mode baselines into the two ordered directions needed by
+the future observation Job. Job and `NodeActuation` materialization and live
+verification remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -418,8 +421,12 @@ Stop for review. The observer still does not create or mutate a transition.
 
 The worker assembly, current raw-write boundary, and concrete polling
 transition-fact observer are implemented separately. The minimal
-`PowerModeTransitionCost` API exists, while control-path wiring remains
-incomplete.
+`PowerModeTransitionCost` API exists. Controller preparation now projects its
+observation policy, resolves one central transition-power source and both
+target-mode baselines, and prepares the two directed core contracts. Its power
+request extends one sample interval beyond the fact timeout only to retain the
+last possible sample; factual completion and integration boundaries do not
+move. Job and `NodeActuation` materialization remain incomplete.
 
 ### Unit 3: complete measurement control path
 

@@ -178,9 +178,13 @@ deps:
       - power-window
   transition-cost-controller:
     mayDependOn:
+      - api
       - batch-saturation-core
       - evidence-core
+      - metric-core
       - profile-derivation
+      - profiler-app
+      - transition-cost-core
   transition-cost-kube:
     mayDependOn:
       - api
