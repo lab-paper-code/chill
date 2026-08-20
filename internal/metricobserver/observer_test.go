@@ -76,7 +76,10 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	ticks <- time.Unix(1, 0)
 	close(ticks)
 
-	result, err := observer.observe(context.Background(), time.Second, 2, ticks)
+	firstSamples := 0
+	result, err := observer.observe(context.Background(), time.Second, 2, ticks, func() {
+		firstSamples++
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +102,80 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	if !result.Summary.SourceTimestampAbsent {
 		t.Fatal("source timestamp absence was not preserved")
 	}
+	if firstSamples != 1 {
+		t.Fatalf("first sample callbacks = %d, want 1", firstSamples)
+	}
+}
+
+func TestObserveReportsFirstSampleAfterFailedRead(t *testing.T) {
+	source := &fakeSource{
+		values: []Reading{{}, {Watts: 4.2}},
+		errs:   []error{errors.New("temporarily unavailable")},
+	}
+	observer, err := New(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer.now = sequenceClock(t, []time.Time{
+		time.Unix(0, 0),
+		time.Unix(0, int64(time.Millisecond)),
+		time.Unix(0, int64(2*time.Millisecond)),
+		time.Unix(0, int64(time.Second)),
+		time.Unix(0, int64(time.Second+time.Millisecond)),
+		time.Unix(0, int64(2*time.Second)),
+	})
+	ticks := make(chan time.Time, 1)
+	ticks <- time.Unix(1, 0)
+	close(ticks)
+
+	firstSamples := 0
+	result, observeErr := observer.observe(context.Background(), time.Second, 2, ticks, func() {
+		firstSamples++
+	})
+	if observeErr != nil {
+		t.Fatal(observeErr)
+	}
+	if firstSamples != 1 || len(result.Failures) != 1 || len(result.Samples) != 1 {
+		t.Fatalf("callbacks/failures/samples = %d/%d/%d, want 1/1/1",
+			firstSamples, len(result.Failures), len(result.Samples))
+	}
+}
+
+func TestObserveRetainsSampleWhenFirstSampleCallbackCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
+	observer, err := New(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, observeErr := observer.Observe(ctx, Request{
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+	}, cancel)
+	if observeErr != nil {
+		t.Fatal(observeErr)
+	}
+	if len(result.Samples) != 1 || result.Samples[0].Watts != 4.2 {
+		t.Fatalf("samples = %#v, want retained callback-triggering sample", result.Samples)
+	}
+}
+
+func TestObserveRejectsNilFirstSampleCallbackBeforeSourceRead(t *testing.T) {
+	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
+	observer, err := New(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, observeErr := observer.Observe(context.Background(), Request{
+		Interval: time.Second, Duration: 2 * time.Second, RequestTimeout: 500 * time.Millisecond, MaxEvents: 4,
+	}, nil)
+	if observeErr == nil || !strings.Contains(observeErr.Error(), "first sample callback") {
+		t.Fatalf("Observe() error = %v, want callback validation error", observeErr)
+	}
+	if source.reads != 0 {
+		t.Fatalf("nil callback performed %d source reads", source.reads)
+	}
 }
 
 func TestObserveRejectsInsufficientEventCapacityBeforeSourceRead(t *testing.T) {
@@ -109,7 +186,7 @@ func TestObserveRejectsInsufficientEventCapacityBeforeSourceRead(t *testing.T) {
 	}
 	_, err = observer.Observe(context.Background(), Request{
 		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 61,
-	})
+	}, func() {})
 	if err == nil || !strings.Contains(err.Error(), "cannot cover") {
 		t.Fatalf("Observe() error = %v, want preflight capacity rejection", err)
 	}
@@ -139,7 +216,7 @@ func TestObserveClassifiesSourceFailures(t *testing.T) {
 			observer.now = sequenceClock(t, []time.Time{time.Unix(0, 0), time.Unix(0, 0), time.Unix(0, int64(time.Millisecond)), time.Unix(0, int64(time.Second))})
 			ticks := make(chan time.Time)
 			close(ticks)
-			result, observeErr := observer.observe(context.Background(), time.Second, 1, ticks)
+			result, observeErr := observer.observe(context.Background(), time.Second, 1, ticks, func() {})
 			if observeErr != nil {
 				t.Fatal(observeErr)
 			}
@@ -162,7 +239,7 @@ func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 	}
 	result, err := observer.Observe(ctx, Request{
 		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
-	})
+	}, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +261,7 @@ func TestObserveEnforcesProducerEventCap(t *testing.T) {
 	ticks <- time.Unix(1, 0)
 	close(ticks)
 
-	result, err := observer.observe(context.Background(), time.Second, 1, ticks)
+	result, err := observer.observe(context.Background(), time.Second, 1, ticks, func() {})
 	if !errors.Is(err, errEventBudgetExceeded) {
 		t.Fatalf("observe error = %v, want event budget failure", err)
 	}

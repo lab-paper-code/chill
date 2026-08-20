@@ -59,10 +59,18 @@ func (r Request) Validate() error {
 }
 
 // Observe samples immediately and then at a fixed interval until the bounded
-// duration expires or ctx is cancelled. Cancellation returns the evidence
-// collected so far. A defensive producer cap fails closed if scheduling ever
-// exceeds the capacity admitted by request validation.
-func (o *Observer) Observe(ctx context.Context, request Request) (Result, error) {
+// duration expires or ctx is cancelled. It calls onFirstSample exactly once,
+// immediately after retaining the first successful sample. Cancellation
+// returns the evidence collected so far. A defensive producer cap fails closed
+// if scheduling ever exceeds the capacity admitted by request validation.
+func (o *Observer) Observe(
+	ctx context.Context,
+	request Request,
+	onFirstSample func(),
+) (Result, error) {
+	if onFirstSample == nil {
+		return Result{}, errors.New("first sample callback is required")
+	}
 	if err := request.Validate(); err != nil {
 		return Result{}, fmt.Errorf("validate observation request: %w", err)
 	}
@@ -72,7 +80,7 @@ func (o *Observer) Observe(ctx context.Context, request Request) (Result, error)
 	ticker := time.NewTicker(request.Interval)
 	defer ticker.Stop()
 
-	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C)
+	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C, onFirstSample)
 }
 
 func (o *Observer) observe(
@@ -80,9 +88,19 @@ func (o *Observer) observe(
 	requestTimeout time.Duration,
 	maxEvents int,
 	ticks <-chan time.Time,
+	onFirstSample func(),
 ) (Result, error) {
 	result := Result{Source: o.source.Identity(), StartedAt: o.now()}
-	if err := o.sample(ctx, requestTimeout, maxEvents, &result); err != nil {
+	firstSampleReported := false
+	sample := func() error {
+		err := o.sample(ctx, requestTimeout, maxEvents, &result)
+		if !firstSampleReported && len(result.Samples) > 0 {
+			firstSampleReported = true
+			onFirstSample()
+		}
+		return err
+	}
+	if err := sample(); err != nil {
 		return o.finish(result), err
 	}
 	for {
@@ -93,7 +111,7 @@ func (o *Observer) observe(
 			if !ok {
 				return o.finish(result), nil
 			}
-			if err := o.sample(ctx, requestTimeout, maxEvents, &result); err != nil {
+			if err := sample(); err != nil {
 				return o.finish(result), err
 			}
 		}

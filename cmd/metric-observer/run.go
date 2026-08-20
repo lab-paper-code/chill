@@ -76,7 +76,7 @@ func execute(
 		Duration:       time.Duration(metrics.DurationSeconds) * time.Second,
 		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
 		MaxEvents:      opts.maxEvents,
-	})
+	}, func() {})
 	if err != nil {
 		return err
 	}
