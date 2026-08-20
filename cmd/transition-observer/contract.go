@@ -11,15 +11,12 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 )
 
-const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha1"
+const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha2"
 
 type attemptContract struct {
-	frozen       transitioncost.FrozenContract
-	policy       transitioncost.Policy
 	powerSource  metricobserver.SourceIdentity
 	powerRequest metricobserver.Request
 	facts        transitionkube.Request
@@ -27,21 +24,11 @@ type attemptContract struct {
 }
 
 type attemptWire struct {
-	SchemaVersion    string                        `json:"schemaVersion"`
-	FrozenContract   transitioncost.FrozenContract `json:"frozenContract"`
-	Policy           policyWire                    `json:"policy"`
-	PowerSource      powerSourceWire               `json:"powerSource"`
-	PowerObservation powerObservationWire          `json:"powerObservation"`
-	TransitionFacts  transitionFactsWire           `json:"transitionFacts"`
-	RawLocation      evidencestore.ObjectLocation  `json:"rawLocation"`
-}
-
-type policyWire struct {
-	MaximumBoundaryDistanceMilliseconds      milliseconds `json:"maximumBoundaryDistanceMilliseconds"`
-	MinimumCoverage                          float64      `json:"minimumCoverage"`
-	MaximumSampleGapMilliseconds             milliseconds `json:"maximumSampleGapMilliseconds"`
-	MaximumBoundaryUncertaintyMilliseconds   milliseconds `json:"maximumBoundaryUncertaintyMilliseconds"`
-	MaximumReadyObservationDelayMilliseconds milliseconds `json:"maximumReadyObservationDelayMilliseconds"`
+	SchemaVersion    string                       `json:"schemaVersion"`
+	PowerSource      powerSourceWire              `json:"powerSource"`
+	PowerObservation powerObservationWire         `json:"powerObservation"`
+	TransitionFacts  transitionFactsWire          `json:"transitionFacts"`
+	RawLocation      evidencestore.ObjectLocation `json:"rawLocation"`
 }
 
 type powerSourceWire struct {
@@ -62,6 +49,8 @@ type transitionFactsWire struct {
 	Namespace                              string       `json:"namespace"`
 	NodeActuationName                      string       `json:"nodeActuationName"`
 	TargetNode                             string       `json:"targetNode"`
+	DeviceType                             string       `json:"deviceType"`
+	Model                                  string       `json:"model"`
 	ServingService                         string       `json:"servingService"`
 	ServingContainer                       string       `json:"servingContainer"`
 	PollIntervalMilliseconds               milliseconds `json:"pollIntervalMilliseconds"`
@@ -139,14 +128,6 @@ func (w attemptWire) contract() (attemptContract, error) {
 		return attemptContract{}, fmt.Errorf("validate raw evidence location: %w", err)
 	}
 	return attemptContract{
-		frozen: w.FrozenContract,
-		policy: transitioncost.Policy{
-			MaximumBoundaryDistance:      time.Duration(w.Policy.MaximumBoundaryDistanceMilliseconds),
-			MinimumCoverage:              w.Policy.MinimumCoverage,
-			MaximumSampleGap:             time.Duration(w.Policy.MaximumSampleGapMilliseconds),
-			MaximumBoundaryUncertainty:   time.Duration(w.Policy.MaximumBoundaryUncertaintyMilliseconds),
-			MaximumReadyObservationDelay: time.Duration(w.Policy.MaximumReadyObservationDelayMilliseconds),
-		},
 		powerSource: metricobserver.SourceIdentity{
 			Kind: w.PowerSource.Kind, Endpoint: w.PowerSource.Endpoint,
 			Metric: w.PowerSource.Metric, MetricLabels: w.PowerSource.MetricLabels,
@@ -156,7 +137,7 @@ func (w attemptWire) contract() (attemptContract, error) {
 			Namespace: w.TransitionFacts.Namespace, NodeActuationName: w.TransitionFacts.NodeActuationName,
 			TargetNode: w.TransitionFacts.TargetNode, ServingService: w.TransitionFacts.ServingService,
 			ServingContainer: w.TransitionFacts.ServingContainer,
-			DeviceType:       w.FrozenContract.SourceState.DeviceType, Model: w.FrozenContract.SourceState.Model,
+			DeviceType:       w.TransitionFacts.DeviceType, Model: w.TransitionFacts.Model,
 			PollInterval:               time.Duration(w.TransitionFacts.PollIntervalMilliseconds),
 			ObservationTimeout:         time.Duration(w.TransitionFacts.ObservationTimeoutMilliseconds),
 			BoundaryMappingUncertainty: time.Duration(w.TransitionFacts.BoundaryMappingUncertaintyMilliseconds),

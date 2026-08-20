@@ -12,8 +12,8 @@ import (
 	transitionworker "github.com/lab-paper-code/chill/internal/profiling/transitioncost/worker"
 )
 
-func TestWriteRawStoresOneDecodableRecord(t *testing.T) {
-	frozen, raw, policy := writeInputs()
+func TestWriteRawStoresOneDecodableObservation(t *testing.T) {
+	raw := writeObservation()
 	location := evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"}
 	var storedIdentity evidencestore.ObjectIdentity
 	var storedPayload []byte
@@ -31,14 +31,9 @@ func TestWriteRawStoresOneDecodableRecord(t *testing.T) {
 		return validReceipt(identity), nil
 	})
 
-	receipt, result, err := transitionworker.WriteRaw(
-		context.Background(), store, location, frozen, raw, policy,
-	)
+	receipt, err := transitionworker.WriteRaw(context.Background(), store, location, raw)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if result.Verdict() != transitioncost.VerdictAccepted {
-		t.Fatalf("result = %s/%s", result.Verdict(), result.Reason())
 	}
 	if storedIdentity.Location() != location || storedIdentity.Size != int64(len(storedPayload)) {
 		t.Fatalf("stored identity = %#v, want location %#v and size %d",
@@ -51,22 +46,13 @@ func TestWriteRawStoresOneDecodableRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Verdict() != transitioncost.VerdictAccepted {
-		t.Fatalf("stored result = %s/%s", decoded.Verdict(), decoded.Reason())
-	}
-	writtenAccepted, _ := result.AcceptedObservation()
-	decodedAccepted, _ := decoded.AcceptedObservation()
-	if decodedAccepted.TauMilliseconds() != writtenAccepted.TauMilliseconds() ||
-		decodedAccepted.TransitionWallJoules() != writtenAccepted.TransitionWallJoules() ||
-		decodedAccepted.EtaJoules() != writtenAccepted.EtaJoules() {
-		t.Fatalf("decoded stored values = tau %v, wall %v, eta %v; want %v, %v, %v",
-			decodedAccepted.TauMilliseconds(), decodedAccepted.TransitionWallJoules(), decodedAccepted.EtaJoules(),
-			writtenAccepted.TauMilliseconds(), writtenAccepted.TransitionWallJoules(), writtenAccepted.EtaJoules())
+	if !decoded.ObservationStartedAt.Equal(raw.ObservationStartedAt) ||
+		len(decoded.PowerSamples) != 1 || decoded.PowerSamples[0].Watts != raw.PowerSamples[0].Watts {
+		t.Fatalf("decoded raw observation changed: %#v", decoded)
 	}
 }
 
 func TestWriteRawRejectsInvalidLocationBeforeWriting(t *testing.T) {
-	frozen, raw, policy := writeInputs()
 	calls := 0
 	store := immutableWriterFunc(func(
 		context.Context,
@@ -77,8 +63,8 @@ func TestWriteRawRejectsInvalidLocationBeforeWriting(t *testing.T) {
 		return evidencestore.Receipt{}, nil
 	})
 
-	_, _, err := transitionworker.WriteRaw(
-		context.Background(), store, evidencestore.ObjectLocation{}, frozen, raw, policy,
+	_, err := transitionworker.WriteRaw(
+		context.Background(), store, evidencestore.ObjectLocation{}, writeObservation(),
 	)
 	if err == nil || calls != 0 {
 		t.Fatalf("WriteRaw() error = %v, writer calls = %d; want validation error before write", err, calls)
@@ -86,7 +72,6 @@ func TestWriteRawRejectsInvalidLocationBeforeWriting(t *testing.T) {
 }
 
 func TestWriteRawReportsWriterAndReceiptFailures(t *testing.T) {
-	frozen, raw, policy := writeInputs()
 	location := evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"}
 	writeErr := errors.New("store unavailable")
 	tests := map[string]immutableWriterFunc{
@@ -109,14 +94,10 @@ func TestWriteRawReportsWriterAndReceiptFailures(t *testing.T) {
 	}
 	for name, store := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, result, err := transitionworker.WriteRaw(
-				context.Background(), store, location, frozen, raw, policy,
-			)
-			if err == nil {
+			if _, err := transitionworker.WriteRaw(
+				context.Background(), store, location, writeObservation(),
+			); err == nil {
 				t.Fatal("WriteRaw() unexpectedly succeeded")
-			}
-			if result.Verdict() != transitioncost.VerdictAccepted {
-				t.Fatalf("result = %s/%s, want retained Accepted classification", result.Verdict(), result.Reason())
 			}
 		})
 	}
@@ -144,37 +125,12 @@ func validReceipt(identity evidencestore.ObjectIdentity) evidencestore.Receipt {
 	}
 }
 
-func writeInputs() (
-	transitioncost.FrozenContract,
-	transitioncost.RawObservation,
-	transitioncost.Policy,
-) {
+func writeObservation() transitioncost.RawObservation {
 	base := time.Date(2026, time.August, 20, 0, 0, 0, 0, time.UTC)
-	source := transitioncost.StateIdentity{
-		DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MODE_15W",
+	return transitioncost.RawObservation{
+		ObservationStartedAt: base,
+		PowerSamples: []transitioncost.PowerSample{{
+			ObservedAt: base.Add(time.Second), RequestLatencySeconds: 0.01, Watts: 20,
+		}},
 	}
-	target := transitioncost.StateIdentity{
-		DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MAXN",
-	}
-	raw := completedRestartFacts(base, source, target)
-	for _, offset := range []time.Duration{
-		2100 * time.Millisecond, 3 * time.Second, 4 * time.Second,
-		4900 * time.Millisecond, 5900 * time.Millisecond,
-	} {
-		raw.PowerSamples = append(raw.PowerSamples, transitioncost.PowerSample{
-			ObservedAt: base.Add(offset), RequestLatencySeconds: 0.01, Watts: 20,
-		})
-	}
-	return transitioncost.FrozenContract{
-			SourceState: source, TargetState: target,
-			TargetIdleBaseline: transitioncost.IdleBaseline{
-				EvidenceReference: "evidence://idle-maxn", State: target, MeanWallWatts: 12,
-			},
-		}, raw, transitioncost.Policy{
-			MaximumBoundaryDistance:      200 * time.Millisecond,
-			MinimumCoverage:              0.9,
-			MaximumSampleGap:             1100 * time.Millisecond,
-			MaximumBoundaryUncertainty:   50 * time.Millisecond,
-			MaximumReadyObservationDelay: 3 * time.Second,
-		}
 }

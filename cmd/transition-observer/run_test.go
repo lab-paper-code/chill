@@ -117,13 +117,11 @@ func (s *writeStub) write(
 	_ context.Context,
 	_ evidencestore.ImmutableWriter,
 	_ evidencestore.ObjectLocation,
-	_ transitioncost.FrozenContract,
 	raw transitioncost.RawObservation,
-	_ transitioncost.Policy,
-) (evidencestore.Receipt, transitioncost.Result, error) {
+) (evidencestore.Receipt, error) {
 	s.calls++
 	s.raw = raw
-	return s.receipt, transitioncost.Result{}, s.err
+	return s.receipt, s.err
 }
 
 func testDependencies(

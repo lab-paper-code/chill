@@ -37,10 +37,8 @@ type dependencies struct {
 		context.Context,
 		evidencestore.ImmutableWriter,
 		evidencestore.ObjectLocation,
-		transitioncost.FrozenContract,
 		transitioncost.RawObservation,
-		transitioncost.Policy,
-	) (evidencestore.Receipt, transitioncost.Result, error)
+	) (evidencestore.Receipt, error)
 }
 
 func execute(ctx context.Context, opts options, deps dependencies) error {
@@ -74,9 +72,7 @@ func execute(ctx context.Context, opts options, deps dependencies) error {
 		}
 		return errors.New("transition observation ended before ready")
 	}
-	receipt, _, writeErr := deps.writeRaw(
-		ctx, parts.store, attempt.rawLocation, attempt.frozen, raw, attempt.policy,
-	)
+	receipt, writeErr := deps.writeRaw(ctx, parts.store, attempt.rawLocation, raw)
 	if writeErr != nil {
 		return errors.Join(observeErr, writeErr)
 	}

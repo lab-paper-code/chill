@@ -10,9 +10,24 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 )
 
-func TestRawRecordRoundTripRetainsAcceptedCommonWindow(t *testing.T) {
-	frozen, raw, policy := validInputs()
-	payload, encoded, err := transitioncost.EncodeRawRecord(frozen, raw, policy)
+func TestRawRecordRoundTripRetainsOnlyObservedFacts(t *testing.T) {
+	base := time.Date(2026, time.August, 20, 0, 0, 0, 0, time.UTC)
+	raw := transitioncost.RawObservation{
+		ObservationStartedAt: base,
+		ObservationEndedAt:   base.Add(5 * time.Second),
+		SourceReadBack: transitioncost.StateReadBack{
+			Fact: transitioncost.MappedFact{OccurredAt: base, MappedAt: base.Add(10 * time.Millisecond)},
+			State: transitioncost.StateIdentity{
+				DeviceType: "jetson-orin", Model: "mobilenet-v2", PowerMode: "MODE_15W",
+			},
+		},
+		PowerSamples: []transitioncost.PowerSample{{
+			ObservedAt: base.Add(time.Second), RequestLatencySeconds: 0.123456789, Watts: 20,
+		}},
+		BoundaryMappingUncertainty: 50 * time.Millisecond,
+	}
+
+	payload, err := transitioncost.EncodeRawRecord(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,90 +35,31 @@ func TestRawRecordRoundTripRetainsAcceptedCommonWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !decoded.ObservationStartedAt.Equal(raw.ObservationStartedAt) ||
+		decoded.SourceReadBack.State != raw.SourceReadBack.State ||
+		len(decoded.PowerSamples) != 1 ||
+		math.Abs(decoded.PowerSamples[0].RequestLatencySeconds-raw.PowerSamples[0].RequestLatencySeconds) > 1e-12 {
+		t.Fatalf("decoded raw observation changed: %#v", decoded)
+	}
 
-	encodedAccepted, ok := encoded.AcceptedObservation()
+	var record map[string]any
+	if err := json.Unmarshal(payload, &record); err != nil {
+		t.Fatal(err)
+	}
+	if len(record) != 2 || record["schemaVersion"] != transitioncost.RawRecordSchemaVersion {
+		t.Fatalf("top-level raw record = %v, want schemaVersion and rawObservation only", record)
+	}
+	wireRaw, ok := record["rawObservation"].(map[string]any)
 	if !ok {
-		t.Fatalf("encoded result = %s/%s", encoded.Verdict(), encoded.Reason())
+		t.Fatalf("rawObservation = %#v", record["rawObservation"])
 	}
-	decodedAccepted, ok := decoded.AcceptedObservation()
-	if !ok {
-		t.Fatalf("decoded result = %s/%s", decoded.Verdict(), decoded.Reason())
-	}
-	if decodedAccepted.TauMilliseconds() != encodedAccepted.TauMilliseconds() ||
-		decodedAccepted.TransitionWallJoules() != encodedAccepted.TransitionWallJoules() ||
-		decodedAccepted.EtaJoules() != encodedAccepted.EtaJoules() {
-		t.Fatalf(
-			"decoded common-window values = tau %v ms, wall %v J, eta %v J; want %v, %v, %v",
-			decodedAccepted.TauMilliseconds(), decodedAccepted.TransitionWallJoules(), decodedAccepted.EtaJoules(),
-			encodedAccepted.TauMilliseconds(), encodedAccepted.TransitionWallJoules(), encodedAccepted.EtaJoules(),
-		)
-	}
-	if decoded.RawObservation().PowerSamples[0].RequestLatencySeconds !=
-		raw.PowerSamples[0].RequestLatencySeconds {
-		t.Fatal("request latency changed across the raw-record boundary")
-	}
-}
-
-func TestRawRecordRoundTripRetainsTypedNonAcceptedOutcomes(t *testing.T) {
-	tests := []struct {
-		name    string
-		mutate  func(*transitioncost.RawObservation)
-		verdict transitioncost.Verdict
-		reason  transitioncost.Reason
-	}{
-		{
-			name: "invalid observation window",
-			mutate: func(raw *transitioncost.RawObservation) {
-				raw.ObservationEndedAt = raw.ObservationStartedAt
-			},
-			verdict: transitioncost.VerdictInvalid,
-			reason:  transitioncost.ReasonObservationMalformed,
-		},
-		{
-			name: "failed actuation",
-			mutate: func(raw *transitioncost.RawObservation) {
-				raw.TransitionStart = nil
-				raw.TargetReadBack = nil
-				raw.Readiness = nil
-				raw.PostTransitionProcess = nil
-				raw.ActuationFailure = &transitioncost.Failure{
-					ObservedAt: testTime(2), Message: "apply failed",
-				}
-			},
-			verdict: transitioncost.VerdictFailed,
-			reason:  transitioncost.ReasonActuationFailed,
-		},
-		{
-			name: "insufficient power window",
-			mutate: func(raw *transitioncost.RawObservation) {
-				raw.PowerSamples = nil
-			},
-			verdict: transitioncost.VerdictInsufficient,
-			reason:  transitioncost.ReasonPowerWindowInsufficient,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			frozen, raw, policy := validInputs()
-			test.mutate(&raw)
-			payload, encoded, err := transitioncost.EncodeRawRecord(frozen, raw, policy)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertOutcome(t, encoded, test.verdict, test.reason)
-			decoded, err := transitioncost.DecodeRawRecord(payload)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertOutcome(t, decoded, test.verdict, test.reason)
-		})
+	if got := wireRaw["boundaryMappingUncertaintyNanoseconds"]; got != float64(raw.BoundaryMappingUncertainty) {
+		t.Fatalf("raw boundary uncertainty = %v, want %d", got, raw.BoundaryMappingUncertainty)
 	}
 }
 
 func TestDecodeRawRecordRejectsUnknownTrailingAndRetiredContracts(t *testing.T) {
-	frozen, raw, policy := validInputs()
-	payload, _, err := transitioncost.EncodeRawRecord(frozen, raw, policy)
+	payload, err := transitioncost.EncodeRawRecord(transitioncost.RawObservation{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +70,7 @@ func TestDecodeRawRecordRejectsUnknownTrailingAndRetiredContracts(t *testing.T) 
 		"trailing value": append(append([]byte(nil), payload...), []byte(` {}`)...),
 		"retired schema": []byte(strings.Replace(
 			string(payload), transitioncost.RawRecordSchemaVersion,
-			"chill.dacs.io/transition-cost-raw-observation.v1alpha0", 1,
+			"chill.dacs.io/transition-cost-raw-observation.v1alpha1", 1,
 		)),
 	}
 	for name, candidate := range tests {
@@ -123,41 +79,5 @@ func TestDecodeRawRecordRejectsUnknownTrailingAndRetiredContracts(t *testing.T) 
 				t.Fatal("DecodeRawRecord() unexpectedly accepted the candidate")
 			}
 		})
-	}
-}
-
-func TestRawRecordDurationFieldsDeclareTheirWireUnits(t *testing.T) {
-	frozen, raw, policy := validInputs()
-	payload, _, err := transitioncost.EncodeRawRecord(frozen, raw, policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record map[string]any
-	if err := json.Unmarshal(payload, &record); err != nil {
-		t.Fatal(err)
-	}
-	if len(record) != 4 {
-		t.Fatalf("top-level raw record fields = %v, want exactly four", record)
-	}
-	wirePolicy := record["policy"].(map[string]any)
-	wantDurations := map[string]time.Duration{
-		"maximumBoundaryDistanceNanoseconds":      policy.MaximumBoundaryDistance,
-		"maximumSampleGapNanoseconds":             policy.MaximumSampleGap,
-		"maximumBoundaryUncertaintyNanoseconds":   policy.MaximumBoundaryUncertainty,
-		"maximumReadyObservationDelayNanoseconds": policy.MaximumReadyObservationDelay,
-	}
-	for field, duration := range wantDurations {
-		if got := wirePolicy[field]; got != float64(duration) {
-			t.Fatalf("policy.%s = %v, want %d", field, got, duration)
-		}
-	}
-	wireRaw := record["rawObservation"].(map[string]any)
-	if got := wireRaw["boundaryMappingUncertaintyNanoseconds"]; got != float64(raw.BoundaryMappingUncertainty) {
-		t.Fatalf("raw boundary uncertainty = %v, want %d", got, raw.BoundaryMappingUncertainty)
-	}
-	wireSamples := wireRaw["powerSamples"].([]any)
-	wireSample := wireSamples[0].(map[string]any)
-	if got := wireSample["requestLatencySeconds"]; math.Abs(got.(float64)-raw.PowerSamples[0].RequestLatencySeconds) > 1e-12 {
-		t.Fatalf("sample request latency = %v, want %v", got, raw.PowerSamples[0].RequestLatencySeconds)
 	}
 }

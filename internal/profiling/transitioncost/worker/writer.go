@@ -11,26 +11,24 @@ import (
 )
 
 // WriteRaw encodes and immutably writes one already-observed transition. It
-// does not perform observation, retry, recovery, or downstream revalidation.
+// does not classify, derive, retry, or recover the observation.
 func WriteRaw(
 	ctx context.Context,
 	store evidencestore.ImmutableWriter,
 	location evidencestore.ObjectLocation,
-	frozen transitioncost.FrozenContract,
 	raw transitioncost.RawObservation,
-	policy transitioncost.Policy,
-) (evidencestore.Receipt, transitioncost.Result, error) {
+) (evidencestore.Receipt, error) {
 	if store == nil {
-		return evidencestore.Receipt{}, transitioncost.Result{}, errors.New("immutable evidence writer is required")
+		return evidencestore.Receipt{}, errors.New("immutable evidence writer is required")
 	}
 	if err := location.Validate(); err != nil {
-		return evidencestore.Receipt{}, transitioncost.Result{}, fmt.Errorf(
+		return evidencestore.Receipt{}, fmt.Errorf(
 			"validate transition raw evidence location: %w", err,
 		)
 	}
-	payload, result, err := transitioncost.EncodeRawRecord(frozen, raw, policy)
+	payload, err := transitioncost.EncodeRawRecord(raw)
 	if err != nil {
-		return evidencestore.Receipt{}, result, err
+		return evidencestore.Receipt{}, err
 	}
 	identity := evidencestore.ObjectIdentity{
 		Store: location.Store,
@@ -39,12 +37,12 @@ func WriteRaw(
 	}
 	receipt, err := store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
-		return evidencestore.Receipt{}, result, fmt.Errorf("write transition raw evidence: %w", err)
+		return evidencestore.Receipt{}, fmt.Errorf("write transition raw evidence: %w", err)
 	}
 	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return evidencestore.Receipt{}, result, errors.New(
+		return evidencestore.Receipt{}, errors.New(
 			"transition raw evidence writer returned an invalid receipt",
 		)
 	}
-	return receipt, result, nil
+	return receipt, nil
 }
