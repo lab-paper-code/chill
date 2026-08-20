@@ -744,10 +744,10 @@ func completedTransitionForRun(
 			ObservedGeneration: 1,
 			Phase:              edgev1alpha1.NodeActuationPhaseReady,
 			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewTime(previousObservedAt),
+				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewMicroTime(previousObservedAt),
 			},
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewTime(targetObservedAt),
+				PowerMode: powerMode, Actuator: actuator, ObservedAt: metav1.NewMicroTime(targetObservedAt),
 			},
 			ReadyAt: &ready,
 		},

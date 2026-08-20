@@ -63,6 +63,7 @@ var _ = Describe("NodeActuation API", func() {
 		Expect(k8sClient.Create(ctx, transition)).To(Succeed())
 
 		now := metav1.Now()
+		observedAt := metav1.NewMicroTime(now.Time)
 		readyAt := metav1.NewMicroTime(now.Time)
 		transition.Status = edgev1alpha1.NodeActuationStatus{
 			ObservedGeneration: transition.Generation,
@@ -70,10 +71,10 @@ var _ = Describe("NodeActuation API", func() {
 			Reason:             "TargetSettled",
 			Message:            "target was independently observed and settled",
 			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: now,
+				PowerMode: "MODE_10W", Actuator: jetsonNVPModelActuator(1), ObservedAt: observedAt,
 			},
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: transition.Spec.PowerMode, Actuator: transition.Spec.Actuator, ObservedAt: now,
+				PowerMode: transition.Spec.PowerMode, Actuator: transition.Spec.Actuator, ObservedAt: observedAt,
 			},
 			ReadyAt: &readyAt,
 		}

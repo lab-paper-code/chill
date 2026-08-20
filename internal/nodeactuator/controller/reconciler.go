@@ -494,7 +494,7 @@ func projectHostObservation(observation nodeactuator.Observation) *edgev1alpha1.
 	return &edgev1alpha1.NodeActuationObservation{
 		PowerMode:  observation.PowerMode,
 		Actuator:   projectAPITarget(observation.Target),
-		ObservedAt: metav1.NewTime(observation.ObservedAt),
+		ObservedAt: metav1.NewMicroTime(observation.ObservedAt),
 	}
 }
 

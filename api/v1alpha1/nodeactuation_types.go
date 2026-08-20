@@ -93,7 +93,7 @@ type NodeActuationObservation struct {
 
 	Actuator PowerModeActuator `json:"actuator"`
 
-	ObservedAt metav1.Time `json:"observedAt"`
+	ObservedAt metav1.MicroTime `json:"observedAt"`
 }
 
 // NodeActuationFailure is a terminal, operator-visible actuation failure.

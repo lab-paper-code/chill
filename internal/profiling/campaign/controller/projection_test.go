@@ -104,7 +104,7 @@ func TestProjectSnapshotProjectsEstablishedStateFromTheOwnedTransition(t *testin
 		ObservedGeneration: 1, Phase: edgev1alpha1.NodeActuationPhaseReady,
 		TargetObservation: &edgev1alpha1.NodeActuationObservation{
 			PowerMode: material.PowerMode, Actuator: material.Actuator,
-			ObservedAt: metav1.NewTime(time.Unix(1090, 0)),
+			ObservedAt: metav1.NewMicroTime(time.Unix(1090, 0)),
 		},
 		ReadyAt: &readyAt,
 	}

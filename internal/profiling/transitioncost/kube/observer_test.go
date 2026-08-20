@@ -313,11 +313,11 @@ type transitionTimes struct {
 }
 
 func actuationTimes() transitionTimes {
-	base := time.Now().UTC().Add(-10 * time.Second)
+	base := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Second)
 	return transitionTimes{
-		previous: base,
-		apply:    base.Add(time.Second),
-		target:   base.Add(3 * time.Second),
+		previous: base.Add(100 * time.Millisecond),
+		apply:    base.Add(200 * time.Millisecond),
+		target:   base.Add(300 * time.Millisecond),
 	}
 }
 
@@ -328,11 +328,11 @@ func successfulActuation(times transitionTimes) *edgev1alpha1.NodeActuation {
 		Status: edgev1alpha1.NodeActuationStatus{
 			Phase: edgev1alpha1.NodeActuationPhaseVerifying,
 			PreviousObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MAXN", ObservedAt: metav1.NewTime(times.previous),
+				PowerMode: "MAXN", ObservedAt: metav1.NewMicroTime(times.previous),
 			},
 			ApplyStartedAt: &apply,
 			TargetObservation: &edgev1alpha1.NodeActuationObservation{
-				PowerMode: "MODE_30W", ObservedAt: metav1.NewTime(times.target),
+				PowerMode: "MODE_30W", ObservedAt: metav1.NewMicroTime(times.target),
 			},
 		},
 	}
