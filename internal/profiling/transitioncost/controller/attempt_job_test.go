@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -134,8 +135,12 @@ func TestBuildAttemptJobRejectsInvalidOperationalSelection(t *testing.T) {
 		{name: "store mismatch", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
 			request.RawLocation.Store = "other"
 		}},
-		{name: "short active deadline", mutate: func(request *AttemptJobRequest, options *AttemptJobOptions) {
-			options.ActiveDeadline = request.Prepared.PowerRequest.Duration
+		{name: "missing active deadline overhead", mutate: func(_ *AttemptJobRequest, options *AttemptJobOptions) {
+			options.ActiveDeadlineOverhead = 0
+		}},
+		{name: "active deadline overflow", mutate: func(request *AttemptJobRequest, options *AttemptJobOptions) {
+			request.Prepared.PowerRequest.Duration = time.Duration(math.MaxInt64)
+			options.ActiveDeadlineOverhead = time.Nanosecond
 		}},
 	}
 	for _, test := range tests {
@@ -188,8 +193,9 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 			},
 		}, AttemptJobOptions{
 			ObserverImage: "registry/transition-observer@sha256:fixture", ImagePullPolicy: corev1.PullIfNotPresent,
-			ServiceAccountName: "transition-observer",
-			ActiveDeadline:     6100 * time.Millisecond, CoordinationBytes: 1024, WorkspaceBytes: 4096,
+			ServiceAccountName:     "transition-observer",
+			ActiveDeadlineOverhead: 1100 * time.Millisecond,
+			CoordinationBytes:      1024, WorkspaceBytes: 4096,
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m")},
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},

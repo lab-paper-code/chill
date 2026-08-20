@@ -136,5 +136,9 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 		WorkloadObserver: operatorprofiler.WorkloadObserverConfig{
 			ServiceAccountName: "chill-profiler-workload-observer",
 		},
+		TransitionObserver: operatorprofiler.TransitionObserverConfig{
+			ObserverNodeName: "observer-node", ServiceAccountName: "chill-profiler-transition-observer",
+			ActiveDeadlineOverheadSeconds: 180, MaximumObjectBytes: 67108864,
+		},
 	}
 }

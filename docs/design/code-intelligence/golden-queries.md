@@ -63,16 +63,23 @@ impact and affected-test results are explicitly insufficient.
 
 ## Q6. What does enabling the Profiler add to the Helm render?
 
-Compared with the default profile, `profiler.enabled=true` adds:
+Compared with the default profile, `profiler.enabled=true` plus the review-only
+synthetic transition-observer Node adds:
 
 ```text
 ClusterRole/chill-profiler
+ClusterRole/chill-profiler-workload-observer
 ClusterRoleBinding/chill-profiler
+ClusterRoleBinding/chill-profiler-workload-observer
 ConfigMap/chill-profiler-config
 ConfigMap/chill-profiler-facts
 Role/chill-profiler
+Role/chill-profiler-transition-observer
 RoleBinding/chill-profiler
+RoleBinding/chill-profiler-transition-observer
 ServiceAccount/chill-profiler
+ServiceAccount/chill-profiler-transition-observer
+ServiceAccount/chill-profiler-workload-observer
 ```
 
 It does not add a Profiler Deployment. Helm installs identity, configuration,

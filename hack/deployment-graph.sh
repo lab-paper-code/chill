@@ -93,8 +93,11 @@ render_profile() {
     default)
       ;;
     profiler)
-      profile_args=(--set profiler.enabled=true)
-      set_args_json='["profiler.enabled=true"]'
+      profile_args=(
+        --set profiler.enabled=true
+        --set profiler.transitionObserver.observerNodeName=observer-node
+      )
+      set_args_json='["profiler.enabled=true","profiler.transitionObserver.observerNodeName=observer-node"]'
       ;;
     *)
       fail "unknown profile: $profile"
@@ -260,6 +263,8 @@ check_outputs() {
     fail "Profiler diagram is missing its Role binding edge"
   check_edge_text "$profiler_dir/diagram.dot_json" $'kind: ClusterRole\n  name: chill-profiler' || \
     fail "Profiler diagram is missing its ClusterRole binding edge"
+  check_edge_text "$profiler_dir/diagram.dot_json" $'kind: Role\n  name: chill-profiler-transition-observer' || \
+    fail "Profiler diagram is missing its transition-observer Role binding edge"
   check_edge_text "$default_dir/diagram.dot_json" 'spec.nodeDiscovery.configMapName' || \
     fail "default diagram is missing the ChillSystem node-discovery config reference"
   check_edge_text "$default_dir/diagram.dot_json" 'spec.deviceDiscovery.catalog.name' || \
@@ -275,7 +280,7 @@ check_outputs() {
   ' "$default_dir/metadata.json" >/dev/null
   jq -e --arg image "$kubediagrams_image" '
     .profile == "profiler" and
-    .helm.setArgs == ["profiler.enabled=true"] and
+    .helm.setArgs == ["profiler.enabled=true","profiler.transitionObserver.observerNodeName=observer-node"] and
     .diagram.role == "non-authoritative-review-view" and
     .diagram.image == $image and
     .inputs.resourceCount > 0

@@ -103,8 +103,9 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 		},
 		transitioncontroller.AttemptJobOptions{
 			ObserverImage: "registry/transition-observer@sha256:fixture", ImagePullPolicy: corev1.PullIfNotPresent,
-			ServiceAccountName: "transition-observer",
-			ActiveDeadline:     6 * time.Second, CoordinationBytes: 1024, WorkspaceBytes: 4096,
+			ServiceAccountName:     "transition-observer",
+			ActiveDeadlineOverhead: time.Second,
+			CoordinationBytes:      1024, WorkspaceBytes: 4096,
 		},
 		scheme,
 	)

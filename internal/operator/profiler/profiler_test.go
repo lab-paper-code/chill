@@ -58,6 +58,12 @@ func TestConfigValidate(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("overlapping Profiler fact-source keys accepted")
 	}
+
+	config = validConfig()
+	config.TransitionObserver.ActiveDeadlineOverheadSeconds = 0
+	if err := config.Validate(); err == nil {
+		t.Fatal("zero transition-observer deadline overhead accepted")
+	}
 }
 
 func TestBuildDeployment(t *testing.T) {
@@ -86,6 +92,12 @@ func TestBuildDeployment(t *testing.T) {
 		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
 		"--workload-observer-kube-api-server=https://kubernetes.example:6443",
+		"--transition-observer-image=daclab/chill-profiler:test",
+		"--transition-observer-image-pull-policy=IfNotPresent",
+		"--transition-observer-node-name=observer-node",
+		"--transition-observer-service-account=chill-profiler-transition-observer",
+		"--transition-observer-active-deadline-overhead-seconds=180",
+		"--transition-maximum-object-bytes=67108864",
 	} {
 		if !containsArg(container.Args, wanted) {
 			t.Fatalf("args lost %q: %v", wanted, container.Args)
@@ -271,6 +283,10 @@ func validConfig() Config {
 		WorkloadObserver: WorkloadObserverConfig{
 			ServiceAccountName: "chill-profiler-workload-observer",
 			KubeAPIServer:      "https://kubernetes.example:6443",
+		},
+		TransitionObserver: TransitionObserverConfig{
+			ObserverNodeName: "observer-node", ServiceAccountName: "chill-profiler-transition-observer",
+			ActiveDeadlineOverheadSeconds: 180, MaximumObjectBytes: 67108864,
 		},
 	}
 }

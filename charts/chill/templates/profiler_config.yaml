@@ -29,6 +29,11 @@ data:
     workloadObserver:
       serviceAccountName: {{ include "chill.profilerWorkloadObserverServiceAccountName" . | quote }}
       kubeAPIServer: {{ $workloadObserverKubeAPIServer | quote }}
+    transitionObserver:
+      observerNodeName: {{ .Values.profiler.transitionObserver.observerNodeName | quote }}
+      serviceAccountName: {{ include "chill.profilerTransitionObserverServiceAccountName" . | quote }}
+      activeDeadlineOverheadSeconds: {{ .Values.profiler.transitionObserver.activeDeadlineOverheadSeconds }}
+      maximumObjectBytes: {{ int64 .Values.profiler.transitionObserver.maximumObjectBytes }}
     nodeSelector:
 {{- toYaml .Values.profiler.nodeSelector | nindent 6 }}
     {{- with .Values.profiler.affinity }}

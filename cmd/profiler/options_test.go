@@ -20,6 +20,12 @@ func TestOptionsBindFlags(t *testing.T) {
 		"--execution-policies-key=execution-policies.yaml",
 		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
+		"--transition-observer-image=registry/chill-profiler:test",
+		"--transition-observer-image-pull-policy=IfNotPresent",
+		"--transition-observer-node-name=observer-node",
+		"--transition-observer-service-account=chill-profiler-transition-observer",
+		"--transition-observer-active-deadline-overhead-seconds=180",
+		"--transition-maximum-object-bytes=67108864",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +33,10 @@ func TestOptionsBindFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if opts.systemName != "chill" || opts.watchNamespace != "chill-system" ||
-		opts.metricsAddr != "0" || opts.probeAddr != ":8081" {
+		opts.metricsAddr != "0" || opts.probeAddr != ":8081" ||
+		opts.transitionObserverNodeName != "observer-node" ||
+		opts.transitionObserverDeadlineOverheadSeconds != 180 ||
+		opts.transitionMaximumObjectBytes != 67108864 {
 		t.Fatalf("unexpected bound options: %#v", opts)
 	}
 }
@@ -36,11 +45,17 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 	valid := options{
 		systemName: "chill", watchNamespace: "chill-system", factSourceConfigMap: "chill-profiler-facts",
 		executionFactsKey: "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
-		workloadObservationKey:         "workload-observation.yaml",
-		admissionPoliciesKey:           "admission-policies.yaml",
-		executionPoliciesKey:           "execution-policies.yaml",
-		actuationPoliciesKey:           "actuation-policies.yaml",
-		workloadObserverServiceAccount: "chill-profiler-workload-observer",
+		workloadObservationKey:                    "workload-observation.yaml",
+		admissionPoliciesKey:                      "admission-policies.yaml",
+		executionPoliciesKey:                      "execution-policies.yaml",
+		actuationPoliciesKey:                      "actuation-policies.yaml",
+		workloadObserverServiceAccount:            "chill-profiler-workload-observer",
+		transitionObserverImage:                   "registry/chill-profiler:test",
+		transitionObserverPullPolicy:              "IfNotPresent",
+		transitionObserverNodeName:                "observer-node",
+		transitionObserverServiceAccount:          "chill-profiler-transition-observer",
+		transitionObserverDeadlineOverheadSeconds: 180,
+		transitionMaximumObjectBytes:              67108864,
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)
@@ -51,6 +66,9 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 		func(options *options) { options.factSourceConfigMap = "" },
 		func(options *options) { options.executionFactsKey = " " },
 		func(options *options) { options.metricSourcesKey = options.executionFactsKey },
+		func(options *options) { options.transitionObserverNodeName = "" },
+		func(options *options) { options.transitionObserverDeadlineOverheadSeconds = 0 },
+		func(options *options) { options.transitionMaximumObjectBytes = 0 },
 	} {
 		candidate := valid
 		mutate(&candidate)

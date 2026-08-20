@@ -92,6 +92,18 @@ func profilerArgs(options Options, config Config) []string {
 		"--execution-policies-key=" + config.FactSource.ExecutionPoliciesKey,
 		"--actuation-policies-key=" + config.FactSource.ActuationPoliciesKey,
 		"--workload-observer-service-account=" + config.WorkloadObserver.ServiceAccountName,
+		"--transition-observer-image=" + config.Image,
+		"--transition-observer-image-pull-policy=" + string(config.ImagePullPolicy),
+		"--transition-observer-node-name=" + config.TransitionObserver.ObserverNodeName,
+		"--transition-observer-service-account=" + config.TransitionObserver.ServiceAccountName,
+		fmt.Sprintf(
+			"--transition-observer-active-deadline-overhead-seconds=%d",
+			config.TransitionObserver.ActiveDeadlineOverheadSeconds,
+		),
+		fmt.Sprintf(
+			"--transition-maximum-object-bytes=%d",
+			config.TransitionObserver.MaximumObjectBytes,
+		),
 	}
 	if config.WorkloadObserver.KubeAPIServer != "" {
 		args = append(args, "--workload-observer-kube-api-server="+config.WorkloadObserver.KubeAPIServer)

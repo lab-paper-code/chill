@@ -11,7 +11,7 @@ are review views. Generation is local and absent from correctness CI.
 | Profile | Helm input |
 |---|---|
 | `default` | chart defaults |
-| `profiler` | chart defaults plus `profiler.enabled=true` |
+| `profiler` | chart defaults plus `profiler.enabled=true` and a synthetic observer Node |
 
 Profiles are rendered and stored separately. A combined graph must not be
 described as one deployable state.
@@ -28,7 +28,7 @@ make code-intelligence-review
 `deployment-graph-check` regenerates both profiles and verifies:
 
 - kubeconform accepts both manifests;
-- the Profiler profile adds the reviewed seven-resource set;
+- the Profiler profile adds the reviewed thirteen-resource set;
 - the Profiler graph contains its ServiceAccount and Role/ClusterRole binding
   relationships;
 - `ChillSystem` references the Profiler ConfigMap;

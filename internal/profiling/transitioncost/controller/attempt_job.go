@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -50,14 +51,14 @@ type AttemptJobRequest struct {
 // AttemptJobOptions contains operational Job material supplied by static
 // Profiler configuration. None of these values changes the measured window.
 type AttemptJobOptions struct {
-	ObserverImage      string
-	ImagePullPolicy    corev1.PullPolicy
-	ServiceAccountName string
-	ActiveDeadline     time.Duration
-	CoordinationBytes  int64
-	WorkspaceBytes     int64
-	Resources          corev1.ResourceRequirements
-	Tolerations        []corev1.Toleration
+	ObserverImage          string
+	ImagePullPolicy        corev1.PullPolicy
+	ServiceAccountName     string
+	ActiveDeadlineOverhead time.Duration
+	CoordinationBytes      int64
+	WorkspaceBytes         int64
+	Resources              corev1.ResourceRequirements
+	Tolerations            []corev1.Toleration
 }
 
 type attemptPayload struct {
@@ -110,7 +111,8 @@ func BuildAttemptJob(
 	if err != nil {
 		return nil, err
 	}
-	deadlineSeconds := durationSecondsCeiling(options.ActiveDeadline)
+	activeDeadline := request.Prepared.PowerRequest.Duration + options.ActiveDeadlineOverhead
+	deadlineSeconds := durationSecondsCeiling(activeDeadline)
 	labels := map[string]string{
 		"app.kubernetes.io/name":      component.DefaultSystemName,
 		"app.kubernetes.io/component": transitionObserverContainerName,
@@ -203,8 +205,11 @@ func validateAttemptJobRequest(
 	default:
 		return PreparedDirection{}, errors.New("observer image pull policy is invalid")
 	}
-	if options.ActiveDeadline <= request.Prepared.PowerRequest.Duration {
-		return PreparedDirection{}, errors.New("Job active deadline must outlast the power observation")
+	if options.ActiveDeadlineOverhead <= 0 {
+		return PreparedDirection{}, errors.New("Job active deadline overhead must be positive")
+	}
+	if request.Prepared.PowerRequest.Duration > time.Duration(math.MaxInt64)-options.ActiveDeadlineOverhead {
+		return PreparedDirection{}, errors.New("Job active deadline overflows time.Duration")
 	}
 	if options.CoordinationBytes < 1 || options.WorkspaceBytes < 1 {
 		return PreparedDirection{}, errors.New("coordination and workspace byte limits must be positive")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -19,6 +21,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
+	transitioncontroller "github.com/lab-paper-code/chill/internal/profiling/transitioncost/controller"
 )
 
 const batchSaturationMaximumObjectBytes int64 = 64 << 20
@@ -26,11 +29,15 @@ const batchSaturationMaximumObjectBytes int64 = 64 << 20
 type profilerControllerShared struct {
 	reader            client.Reader
 	candidates        profilerapp.CandidateResolver
+	nodes             profilerapp.NodeResolver
+	power             profilerapp.MetricSourceResolver
+	actuationPolicies profilerapp.ActuationPolicyResolver
 	preparer          profilercontroller.RunPreparer
 	records           *profilercontroller.IntentRecords
 	policies          profilercontroller.AdmissionPolicyResolver
 	executionPolicies profilercontroller.ExecutionPolicyResolver
 	stores            profilercontroller.EvidenceStoreBindingResolver
+	evidence          *currentEvidenceStore
 	retainedEvidence  *evidencekube.RetainedLoader
 }
 
@@ -42,7 +49,10 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupRunController(mgr, opts, shared); err != nil {
 		return err
 	}
-	return setupBatchSaturationController(mgr, opts, shared)
+	if err := setupBatchSaturationController(mgr, opts, shared); err != nil {
+		return err
+	}
+	return setupTransitionCostController(mgr, opts, shared)
 }
 
 // setupRunController is the composition root for bounded ProfilingRun
@@ -183,10 +193,15 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, err
 	}
+	evidence := &currentEvidenceStore{
+		reader: reader, namespace: opts.watchNamespace,
+		resolver: stores, factory: newEvidenceObjectStore,
+	}
 	return &profilerControllerShared{
-		reader: reader, candidates: candidates, preparer: preparer, records: records,
+		reader: reader, candidates: candidates, nodes: nodes, power: power,
+		actuationPolicies: actuationPolicies, preparer: preparer, records: records,
 		policies: policies, executionPolicies: executionPolicies, stores: stores,
-		retainedEvidence: retainedEvidence,
+		evidence: evidence, retainedEvidence: retainedEvidence,
 	}, nil
 }
 
@@ -195,13 +210,9 @@ func setupBatchSaturationController(
 	opts options,
 	shared *profilerControllerShared,
 ) error {
-	store := &currentEvidenceStore{
-		reader: shared.reader, namespace: opts.watchNamespace,
-		resolver: shared.stores, factory: newEvidenceObjectStore,
-	}
 	logicalStore := component.EvidenceStoreServiceName(opts.systemName)
 	curvePlans, err := batchcontroller.NewCurvePlanSource(
-		shared.reader, shared.candidates, shared.preparer, store,
+		shared.reader, shared.candidates, shared.preparer, shared.evidence,
 		batchcontroller.CurvePlanSourceOptions{
 			Store: logicalStore, MaxObjectBytes: batchSaturationMaximumObjectBytes,
 		},
@@ -217,7 +228,7 @@ func setupBatchSaturationController(
 		return fmt.Errorf("construct BatchSaturation curve deriver: %w", err)
 	}
 	results, err := batchcontroller.NewResultWriter(
-		store,
+		shared.evidence,
 		batchcontroller.ResultWriterOptions{
 			Store: logicalStore, MaxObjectBytes: batchSaturationMaximumObjectBytes,
 		},
@@ -233,6 +244,32 @@ func setupBatchSaturationController(
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up BatchSaturation reconciler: %w", err)
+	}
+	return nil
+}
+
+func setupTransitionCostController(
+	mgr ctrl.Manager,
+	opts options,
+	shared *profilerControllerShared,
+) error {
+	deadlineOverhead := time.Duration(opts.transitionObserverDeadlineOverheadSeconds) * time.Second
+	err := transitioncontroller.SetupWithManager(mgr, transitioncontroller.SetupOptions{
+		Nodes: shared.nodes, Metrics: shared.power, ActuationPolicies: shared.actuationPolicies,
+		StoreBindings: shared.stores, Evidence: shared.evidence,
+		ObserverNodeName: opts.transitionObserverNodeName,
+		AttemptJob: transitioncontroller.AttemptJobOptions{
+			ObserverImage:          opts.transitionObserverImage,
+			ImagePullPolicy:        corev1.PullPolicy(opts.transitionObserverPullPolicy),
+			ServiceAccountName:     opts.transitionObserverServiceAccount,
+			ActiveDeadlineOverhead: deadlineOverhead,
+			CoordinationBytes:      opts.transitionMaximumObjectBytes,
+			WorkspaceBytes:         opts.transitionMaximumObjectBytes,
+		},
+		MaximumObjectBytes: opts.transitionMaximumObjectBytes,
+	})
+	if err != nil {
+		return fmt.Errorf("set up PowerModeTransitionCost controller: %w", err)
 	}
 	return nil
 }
@@ -258,6 +295,13 @@ func (s *currentEvidenceStore) PutImmutable(
 		return evidencestore.Receipt{}, err
 	}
 	return store.PutImmutable(ctx, identity, content)
+}
+
+func (s *currentEvidenceStore) Open(
+	ctx context.Context,
+	identity evidencestore.ObjectIdentity,
+) (io.ReadCloser, error) {
+	return s.OpenLocation(ctx, identity.Location())
 }
 
 func (s *currentEvidenceStore) OpenLocation(

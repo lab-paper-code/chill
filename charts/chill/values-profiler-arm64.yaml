@@ -68,6 +68,8 @@ profiler:
     repository: "155.230.35.213:5000/chill/chill-profiler"
     tag: "sha-643e9b5"
     pullPolicy: Always
+  transitionObserver:
+    observerNodeName: genesis1
 
 profiling:
   metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:b0f57109e39f30066745b23c0547093d3ed040e2439177281f968c6745b5b4ba"

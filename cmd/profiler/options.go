@@ -3,26 +3,36 @@ package main
 import (
 	"errors"
 	"flag"
+	"math"
 	"os"
 	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 type options struct {
-	metricsAddr                    string
-	probeAddr                      string
-	systemName                     string
-	watchNamespace                 string
-	enableLeaderElection           bool
-	leaderElectionID               string
-	factSourceConfigMap            string
-	executionFactsKey              string
-	metricSourcesKey               string
-	workloadObservationKey         string
-	admissionPoliciesKey           string
-	executionPoliciesKey           string
-	actuationPoliciesKey           string
-	workloadObserverServiceAccount string
-	workloadObserverKubeAPIServer  string
+	metricsAddr                               string
+	probeAddr                                 string
+	systemName                                string
+	watchNamespace                            string
+	enableLeaderElection                      bool
+	leaderElectionID                          string
+	factSourceConfigMap                       string
+	executionFactsKey                         string
+	metricSourcesKey                          string
+	workloadObservationKey                    string
+	admissionPoliciesKey                      string
+	executionPoliciesKey                      string
+	actuationPoliciesKey                      string
+	workloadObserverServiceAccount            string
+	workloadObserverKubeAPIServer             string
+	transitionObserverImage                   string
+	transitionObserverPullPolicy              string
+	transitionObserverNodeName                string
+	transitionObserverServiceAccount          string
+	transitionObserverDeadlineOverheadSeconds int64
+	transitionMaximumObjectBytes              int64
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -46,6 +56,42 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"workload-observer-kube-api-server",
 		"",
 		"Kubernetes API URL supplied to edge-hosted WorkloadObserver containers.",
+	)
+	flags.StringVar(
+		&o.transitionObserverImage,
+		"transition-observer-image",
+		"",
+		"Profiler image containing the transition-observer binary.",
+	)
+	flags.StringVar(
+		&o.transitionObserverPullPolicy,
+		"transition-observer-image-pull-policy",
+		"",
+		"Image pull policy for transition-observer Jobs.",
+	)
+	flags.StringVar(
+		&o.transitionObserverNodeName,
+		"transition-observer-node-name",
+		"",
+		"Exact off-target Node for transition-observer Jobs.",
+	)
+	flags.StringVar(
+		&o.transitionObserverServiceAccount,
+		"transition-observer-service-account",
+		"",
+		"Dedicated ServiceAccount for transition-observer Jobs.",
+	)
+	flags.Int64Var(
+		&o.transitionObserverDeadlineOverheadSeconds,
+		"transition-observer-active-deadline-overhead-seconds",
+		0,
+		"Operational Job deadline overhead beyond the frozen power observation.",
+	)
+	flags.Int64Var(
+		&o.transitionMaximumObjectBytes,
+		"transition-maximum-object-bytes",
+		0,
+		"Maximum bytes for one retained transition object and observer workspace.",
 	)
 	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
 	flags.StringVar(&o.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
@@ -93,6 +139,10 @@ func (o options) validate() error {
 		{name: "execution-policies key", value: o.executionPoliciesKey},
 		{name: "actuation-policies key", value: o.actuationPoliciesKey},
 		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
+		{name: "transition-observer image", value: o.transitionObserverImage},
+		{name: "transition-observer image pull policy", value: o.transitionObserverPullPolicy},
+		{name: "transition-observer Node", value: o.transitionObserverNodeName},
+		{name: "transition-observer ServiceAccount", value: o.transitionObserverServiceAccount},
 	}
 	if strings.TrimSpace(o.workloadObserverKubeAPIServer) != o.workloadObserverKubeAPIServer {
 		return errors.New("workload-observer Kubernetes API server must not have surrounding whitespace")
@@ -112,6 +162,18 @@ func (o options) validate() error {
 	}
 	if len(keys) != 6 {
 		return errors.New("Profiler fact-source keys must be different")
+	}
+	switch corev1.PullPolicy(o.transitionObserverPullPolicy) {
+	case corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
+	default:
+		return errors.New("transition-observer image pull policy is invalid")
+	}
+	if o.transitionObserverDeadlineOverheadSeconds < 1 ||
+		o.transitionObserverDeadlineOverheadSeconds > math.MaxInt64/int64(time.Second) {
+		return errors.New("transition-observer active deadline overhead is invalid")
+	}
+	if o.transitionMaximumObjectBytes < 1 || o.transitionMaximumObjectBytes == math.MaxInt64 {
+		return errors.New("transition maximum object bytes is invalid")
 	}
 	return nil
 }

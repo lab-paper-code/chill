@@ -3,7 +3,9 @@ package profiler
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -26,6 +28,7 @@ type Config struct {
 	SecurityContext    *corev1.SecurityContext     `json:"securityContext,omitempty"`
 	FactSource         FactSourceConfig            `json:"factSource"`
 	WorkloadObserver   WorkloadObserverConfig      `json:"workloadObserver"`
+	TransitionObserver TransitionObserverConfig    `json:"transitionObserver"`
 }
 
 type FactSourceConfig struct {
@@ -41,6 +44,13 @@ type FactSourceConfig struct {
 type WorkloadObserverConfig struct {
 	ServiceAccountName string `json:"serviceAccountName"`
 	KubeAPIServer      string `json:"kubeAPIServer,omitempty"`
+}
+
+type TransitionObserverConfig struct {
+	ObserverNodeName              string `json:"observerNodeName"`
+	ServiceAccountName            string `json:"serviceAccountName"`
+	ActiveDeadlineOverheadSeconds int64  `json:"activeDeadlineOverheadSeconds"`
+	MaximumObjectBytes            int64  `json:"maximumObjectBytes"`
 }
 
 func (c Config) Validate() error {
@@ -61,6 +71,8 @@ func (c Config) Validate() error {
 		{name: "factSource.executionPoliciesKey", value: c.FactSource.ExecutionPoliciesKey},
 		{name: "factSource.actuationPoliciesKey", value: c.FactSource.ActuationPoliciesKey},
 		{name: "workloadObserver.serviceAccountName", value: c.WorkloadObserver.ServiceAccountName},
+		{name: "transitionObserver.observerNodeName", value: c.TransitionObserver.ObserverNodeName},
+		{name: "transitionObserver.serviceAccountName", value: c.TransitionObserver.ServiceAccountName},
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			problems = append(problems, field.name+" is required")
@@ -98,6 +110,14 @@ func (c Config) Validate() error {
 	}
 	if c.LeaderElection && strings.TrimSpace(c.LeaderElectionID) == "" {
 		problems = append(problems, "leaderElectionID is required when leaderElection is enabled")
+	}
+	if c.TransitionObserver.ActiveDeadlineOverheadSeconds < 1 ||
+		c.TransitionObserver.ActiveDeadlineOverheadSeconds > math.MaxInt64/int64(time.Second) {
+		problems = append(problems, "transitionObserver.activeDeadlineOverheadSeconds is invalid")
+	}
+	if c.TransitionObserver.MaximumObjectBytes < 1 ||
+		c.TransitionObserver.MaximumObjectBytes == math.MaxInt64 {
+		problems = append(problems, "transitionObserver.maximumObjectBytes is invalid")
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))

@@ -82,6 +82,15 @@ app.kubernetes.io/component: operator
 {{- end -}}
 {{- end -}}
 
+{{- define "chill.profilerTransitionObserverServiceAccountName" -}}
+{{- if .Values.profiler.transitionObserver.serviceAccount.create -}}
+{{- $defaultName := printf "%s-transition-observer" (include "chill.profilerName" .) -}}
+{{- default $defaultName .Values.profiler.transitionObserver.serviceAccount.name -}}
+{{- else -}}
+{{- .Values.profiler.transitionObserver.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "chill.profilerWorkloadObserverKubernetesAPIServer" -}}
 {{- if .Values.profiler.workloadObserver.kubernetesClient.apiServer -}}
 {{- .Values.profiler.workloadObserver.kubernetesClient.apiServer -}}

@@ -256,7 +256,7 @@ func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attem
 		CredentialsSecretName: "credentials",
 	}}
 	_, options, _ := validAttemptJobInputs(t)
-	options.ActiveDeadline = 20 * time.Minute
+	options.ActiveDeadlineOverhead = 20 * time.Minute
 	materializer, err := NewAttemptMaterializer(kubeClient, scheme, stores, options)
 	if err != nil {
 		t.Fatal(err)

@@ -35,8 +35,11 @@ exact target Node name and UID, and freezes each selected actuator and its
 configured actuation policy alongside the metric source, observation policy,
 and validated target-mode idle baseline. The prepared pair retains the
 DeviceClass, execution path, and off-target observer placement in one immutable
-ConfigMap, but does not create a Job or `NodeActuation`; controller wiring
-remains incomplete.
+ConfigMap. The registered Profiler controller then alternates one observer Job
+and `NodeActuation` at a time, finalizes their immutable evidence, and writes the
+terminal two-direction result. Helm now renders its static placement, bounds,
+and least-privilege identities, but deployment and live transition evidence
+remain unverified.
 This document itself does not authorize later API or internal changes.
 
 ## How to use this directory

@@ -85,6 +85,13 @@ profiler:
     kubernetesClient:
       apiServer: ""
       discoverFromDefaultEndpoint: true
+  transitionObserver:
+    observerNodeName: ""
+    activeDeadlineOverheadSeconds: 180
+    maximumObjectBytes: 67108864
+    serviceAccount:
+      create: true
+      name: ""
   factSource:
     executionFactsKey: execution-facts.yaml
     metricSourcesKey: metric-sources.yaml

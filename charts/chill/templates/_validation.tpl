@@ -171,6 +171,19 @@
 {{- if and (not .Values.profiler.workloadObserver.serviceAccount.create) (empty .Values.profiler.workloadObserver.serviceAccount.name) -}}
 {{- fail "profiler.workloadObserver.serviceAccount.name is required when create=false" -}}
 {{- end -}}
+{{- if empty .Values.profiler.transitionObserver.observerNodeName -}}
+{{- fail "profiler.transitionObserver.observerNodeName must not be empty when profiler.enabled=true" -}}
+{{- end -}}
+{{- $transitionObserverServiceAccount := .Values.profiler.transitionObserver.serviceAccount -}}
+{{- if and (not $transitionObserverServiceAccount.create) (empty $transitionObserverServiceAccount.name) -}}
+{{- fail "profiler.transitionObserver.serviceAccount.name is required when create=false" -}}
+{{- end -}}
+{{- if lt (int64 .Values.profiler.transitionObserver.activeDeadlineOverheadSeconds) 1 -}}
+{{- fail "profiler.transitionObserver.activeDeadlineOverheadSeconds must be positive when profiler.enabled=true" -}}
+{{- end -}}
+{{- if lt (int64 .Values.profiler.transitionObserver.maximumObjectBytes) 1 -}}
+{{- fail "profiler.transitionObserver.maximumObjectBytes must be positive when profiler.enabled=true" -}}
+{{- end -}}
 {{- if empty .Values.profiler.image.repository -}}
 {{- fail "profiler.image.repository must not be empty when profiler.enabled=true" -}}
 {{- end -}}

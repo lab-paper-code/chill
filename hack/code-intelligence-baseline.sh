@@ -31,7 +31,8 @@ go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... |
 
 helm template chill charts/chill --namespace chill-system >"$default_manifest"
 helm template chill charts/chill --namespace chill-system \
-  --set profiler.enabled=true >"$profiler_manifest"
+  --set profiler.enabled=true \
+  --set profiler.transitionObserver.observerNodeName=observer-node >"$profiler_manifest"
 
 extract_resources() {
   local manifest="$1"

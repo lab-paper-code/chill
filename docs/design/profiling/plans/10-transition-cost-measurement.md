@@ -27,9 +27,11 @@ before execution. Job projection and the repeatable one-attempt materialization
 operation now extend through strict raw-evidence finalization into one immutable,
 raw-free observation. A package-local control core now reconstructs the retained
 alternating direction prefix, advances only its first missing attempt, and derives
-the complete two-row table in memory. It remains deliberately unregistered until
-terminal result writing and compact status publication close the lifecycle. Live
-verification remains incomplete.
+the complete two-row table, writes one terminal result, and publishes compact
+status. `cmd/profiler` registers that complete lifecycle with the existing
+resolvers and Evidence Store; Helm supplies its off-target placement, operational
+bounds, and least-privilege identities. Deployment and live transition
+verification remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -434,11 +436,13 @@ observation policy, resolves one central transition-power source and both
 target-mode baselines, and prepares the two directed core contracts. Its power
 request extends one sample interval beyond the fact timeout only to retain the
 last possible sample; factual completion and integration boundaries do not
-move. One-attempt materialization and finalization exist; controller lifecycle
-orchestration remains incomplete. A current-only terminal result writer retains
-the exact two-row table for a complete measurement, or the terminal reason and
-per-direction finalized-evidence progress for an insufficient or failed
-measurement. Reconciler registration and status publication remain incomplete.
+move. The registered controller alternates the two directions, materializes and
+finalizes one attempt at a time, and stops at the accepted-count target or frozen
+attempt limit. A current-only terminal result writer retains the exact two-row
+table for a complete measurement, or the terminal reason and per-direction
+finalized-evidence progress for an insufficient or failed measurement. Compact
+status points to that terminal object; rendered configuration and RBAC do not
+constitute deployment or live measurement proof.
 
 ### Unit 3: complete measurement control path
 
@@ -498,8 +502,8 @@ applicable repository gates:
 - `make lint` and `make test` for Go behavior;
 - `make arch-check` for a new production package or dependency;
 - `make manifests generate` with generated-drift inspection for API changes;
-- `make helm-lint helm-template` and separate default and
-  `profiler.enabled=true` renders for Job, RBAC, or values changes; and
+- `make helm-lint helm-template` and separate default and explicitly configured
+  Profiler-enabled renders for Job, RBAC, or values changes; and
 - mutation-to-red tests for shared window boundaries, integration, baseline
   subtraction, request-readiness completion, serving interruption, sample-gap
   rejection, boundary uncertainty, and observation-before-transition ordering.

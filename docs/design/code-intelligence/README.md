@@ -107,7 +107,8 @@ directly and does not replace manifest, test, or live-cluster validation.
 Two canonical profiles remain separate:
 
 - default chart values; and
-- `profiler.enabled=true`.
+- `profiler.enabled=true` with the synthetic transition-observer Node declared
+  by the review profile.
 
 The check verifies the exact Profiler-only resource set, Profiler RBAC
 relationships, `ChillSystem` ConfigMap references, and the absence of a
