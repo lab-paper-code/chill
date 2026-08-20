@@ -170,6 +170,41 @@ remain available while the target Node restarts. Moving the process off-target
 is insufficient when its data source is an exporter that disappears with the
 target Node.
 
+### Selected meter path
+
+The first implementation places the observer on `genesis1`, away from the
+target Node, and reads the central Shelly Gateway there:
+
+~~~text
+Shelly -> ws://155.230.35.213:18765
+       -> edge-metrics-exporter-shelly-gateway
+       -> http://155.230.35.213:18766/prometheus
+       -> off-target transition observer
+~~~
+
+The observer selects exactly this Prometheus series:
+
+~~~promql
+shelly_power_total_watts{
+  hostname="jetson-orin",
+  device_type="jetson_orin"
+}
+~~~
+
+Zero or multiple matching series is a failed meter read. An unmapped Shelly or
+a series for another device never substitutes for the selected series. The
+three currently connected but unmapped Shellys are therefore outside this
+measurement and do not block it.
+
+The selected Gateway is Deployment
+`monitoring/edge-metrics-exporter-shelly-gateway`, currently delivered by Helm
+release `edge-metrics` revision 24. Raw evidence freezes the metric name, both
+label values, endpoint, Gateway workload identity, and selected configuration
+source identity used for the observed trace. The Gateway is measurement
+infrastructure: neither `PowerModeTransitionCost` nor its observer owns,
+deploys, reconfigures, or restarts it. The existing per-Node exporter DaemonSet
+is not part of this meter path.
+
 The `PowerModeTransitionCost` controller freezes intent, sequences one
 `NodeActuation` at a time, verifies its evidence, and publishes compact status.
 It does not poll the meter in `Reconcile` or keep authoritative samples only in
@@ -182,6 +217,13 @@ Width and area can share a window only when transition markers and power
 samples are comparable in one declared time domain. The first implementation
 selects one concrete marker-transfer and meter-timestamp path; it does not add
 a generic clock-synchronization framework.
+
+The selected Prometheus endpoint supplies no device-source timestamp. The
+observer therefore records its HTTP receipt time and request latency for every
+read and retains both in raw evidence. It does not synthesize or claim a Shelly
+timestamp. Window-boundary uncertainty covers mapping transition markers into
+that observer time domain; the per-read receipt and latency records remain
+available to audit the samples used by the integration.
 
 Raw evidence retains:
 
@@ -299,8 +341,8 @@ state is another explicitly requested and independently measured
 
 ### Gate 0: physical measurement feasibility
 
-1. Select one target device, exact state pair, off-target observer placement,
-   and physical meter path.
+1. Use the selected target device, exact state pair, off-target observer on
+   `genesis1`, and central Shelly Gateway path declared above.
 2. Select one concrete transition-start marker, target read-back,
    request-readiness witness, and serving-survival witness for that path.
 3. With separate live-test authorization, capture one bounded trace across a
@@ -313,6 +355,15 @@ state is another explicitly requested and independently measured
 
 This gate changes no CHILL API or production controller. This document alone
 does not authorize the live transition in step 3.
+
+The central Gateway Deployment and device migration are complete, its static
+Prometheus endpoint is reachable, and all seven mapped device series are
+exposed. Per-device request failures are isolated by the Gateway. The old
+per-Node WebSocket servers have no connected devices and remain outside this
+path. These checks do not prove restart-spanning continuity. Gate 0 remains
+incomplete until a bounded restart-required transition trace shows that the
+exact selected series continues to be collected while the target Node is
+unavailable and returns.
 
 ### Unit 1: pure observation and derivation contracts
 
@@ -330,7 +381,9 @@ Stop for review. This unit adds no API, controller, Job, or Helm surface.
 ### Unit 2: one restart-independent observer
 
 1. Reuse the bounded metric-observation polling core where its existing
-   contract fits and add only the concrete meter reader selected by Gate 0.
+   contract fits. Add only a central Shelly Gateway Prometheus reader that
+   selects the exact metric and label pair declared above; do not add a generic
+   meter-source or plugin framework.
 2. Add one worker that verifies its meter and workload-observation paths,
    reports `PowerObservationReady=True`, buffers each pre-window, observes exact
    boundaries, and writes one raw evidence object per observed
