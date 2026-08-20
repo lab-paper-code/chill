@@ -404,9 +404,24 @@ These checks do not prove restart-spanning continuity. Gate 0 remains
 incomplete until a bounded restart-required transition trace shows that the
 exact selected series continues to be collected while the target Node is
 unavailable and returns.
-The latest live idle-baseline attempt set was insufficient and its object was
-deleted; rendered composite-source configuration therefore does not establish
-a current target-mode idle baseline or a successful transition measurement.
+
+Under Helm revision 5 and the current split-source configuration on 2026-08-20,
+BatchSaturation `plan10-gate0-maxn-baseline` reached
+`Complete`/`Stopped-CapabilityBoundary` with 6/6 trials `Accepted`. Its
+`chill.dacs.io/batch-saturation-result.v1alpha3` result fixes the measurement
+state to `jetsono` / `mobilenet-v2-050` / `jetson-agx-orin-64g` / `ort-cpu` /
+`MAXN`. Three model-loaded-idle trials produced an aggregate mean of
+`8.484698057297415 W`, variance `0.000047230885953752635`, 2 degrees of freedom,
+and a 95% half-width of `0.029569864969649712 W`. The first idle trial's metric
+observer retained 31/31 power samples with zero failed reads; thermal
+observation was available for 31/31 samples, throttling was active for 0/31,
+and the maximum temperature was `45.218 C`.
+
+The model-loaded HTTP readiness witness `plan10-serving-jetsono` is `Ready`, and
+Service `chill-serving-jetsono` has exactly one ready endpoint. This is not an
+inference or SLO server; it witnesses only Pod readiness and process continuity.
+Gate 0 remains incomplete because there is no `MODE_15W` idle baseline and no
+restart-required trace. The separate reboot approval is still pending.
 
 ### Unit 1: pure observation and derivation contracts
 
