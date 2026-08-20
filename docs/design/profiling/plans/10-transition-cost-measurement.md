@@ -395,6 +395,9 @@ Stop for review. This unit adds no API, controller, Job, or Helm surface.
 
 Stop for review. The observer still does not create or mutate a transition.
 
+The worker assembly and current raw-write boundary are implemented separately;
+concrete transition-fact observation and control-path wiring remain incomplete.
+
 ### Unit 3: complete measurement control path
 
 1. Add the minimal `PowerModeTransitionCost` API and generated artifacts. Its

@@ -33,114 +33,114 @@ const (
 
 // StateIdentity is one exact Layer-0 device, model, and power-mode state.
 type StateIdentity struct {
-	DeviceType string
-	Model      string
-	PowerMode  string
+	DeviceType string `json:"deviceType"`
+	Model      string `json:"model"`
+	PowerMode  string `json:"powerMode"`
 }
 
 // IdleBaseline binds the numeric target-idle value to its exact retained
 // evidence and state.
 type IdleBaseline struct {
-	EvidenceReference string
-	State             StateIdentity
-	MeanWallWatts     float64
+	EvidenceReference string        `json:"evidenceReference"`
+	State             StateIdentity `json:"state"`
+	MeanWallWatts     float64       `json:"meanWallWatts"`
 }
 
 // FrozenContract contains the immutable estimator inputs for one directed
 // transition observation.
 type FrozenContract struct {
-	SourceState        StateIdentity
-	TargetState        StateIdentity
-	TargetIdleBaseline IdleBaseline
+	SourceState        StateIdentity `json:"sourceState"`
+	TargetState        StateIdentity `json:"targetState"`
+	TargetIdleBaseline IdleBaseline  `json:"targetIdleBaseline"`
 }
 
 // Policy contains only the quality bounds needed to close and integrate one
 // transition window.
 type Policy struct {
-	MaximumBoundaryDistance      time.Duration
-	MinimumCoverage              float64
-	MaximumSampleGap             time.Duration
-	MaximumBoundaryUncertainty   time.Duration
-	MaximumReadyObservationDelay time.Duration
+	MaximumBoundaryDistance      time.Duration `json:"maximumBoundaryDistanceNanoseconds"`
+	MinimumCoverage              float64       `json:"minimumCoverage"`
+	MaximumSampleGap             time.Duration `json:"maximumSampleGapNanoseconds"`
+	MaximumBoundaryUncertainty   time.Duration `json:"maximumBoundaryUncertaintyNanoseconds"`
+	MaximumReadyObservationDelay time.Duration `json:"maximumReadyObservationDelayNanoseconds"`
 }
 
 // MappedFact retains a device-side fact and its corresponding timestamp in
 // the meter/observer time domain.
 type MappedFact struct {
-	OccurredAt time.Time
-	MappedAt   time.Time
+	OccurredAt time.Time `json:"occurredAt"`
+	MappedAt   time.Time `json:"mappedAt"`
 }
 
 // StateReadBack is one independently observed state fact.
 type StateReadBack struct {
-	Fact  MappedFact
-	State StateIdentity
+	Fact  MappedFact    `json:"fact"`
+	State StateIdentity `json:"state"`
 }
 
 // Failure is one timestamped failed actuation or state read-back.
 type Failure struct {
-	ObservedAt time.Time
-	Message    string
+	ObservedAt time.Time `json:"observedAt"`
+	Message    string    `json:"message"`
 }
 
 // PowerSample is one wall-power fact. ObservedAt is the observer's HTTP
 // receipt time.
 type PowerSample struct {
-	ObservedAt            time.Time
-	RequestLatencySeconds float64
-	Watts                 float64
+	ObservedAt            time.Time `json:"observedAt"`
+	RequestLatencySeconds float64   `json:"requestLatencySeconds"`
+	Watts                 float64   `json:"watts"`
 }
 
 // PowerReadFailure is one retained failed meter read. ObservedAt is the
 // observer's HTTP receipt time; Reason is the retained factual failure class.
 type PowerReadFailure struct {
-	ObservedAt            time.Time
-	RequestLatencySeconds float64
-	Reason                string
-	Message               string
+	ObservedAt            time.Time `json:"observedAt"`
+	RequestLatencySeconds float64   `json:"requestLatencySeconds"`
+	Reason                string    `json:"reason"`
+	Message               string    `json:"message"`
 }
 
 // ReadyObservation is one observation of the selected serving workload's
 // existing request-readiness signal.
 type ReadyObservation struct {
-	ObservedAt time.Time
-	Ready      bool
+	ObservedAt time.Time `json:"observedAt"`
+	Ready      bool      `json:"ready"`
 }
 
 // ProcessIdentity is the exact serving process/container incarnation.
 type ProcessIdentity struct {
-	ContainerName string
-	ContainerID   string
-	StartedAt     time.Time
-	RestartCount  int32
+	ContainerName string    `json:"containerName"`
+	ContainerID   string    `json:"containerID"`
+	StartedAt     time.Time `json:"startedAt"`
+	RestartCount  int32     `json:"restartCount"`
 }
 
 // ProcessObservation binds one serving-process observation to its timestamp.
 type ProcessObservation struct {
-	ObservedAt time.Time
-	Process    ProcessIdentity
+	ObservedAt time.Time       `json:"observedAt"`
+	Process    ProcessIdentity `json:"process"`
 }
 
 // RawObservation is one factual observation of one NodeActuation. It contains
 // no derived transition boundary, duration, energy, or scientific verdict.
 type RawObservation struct {
-	ObservationStartedAt time.Time
-	ObservationEndedAt   time.Time
+	ObservationStartedAt time.Time `json:"observationStartedAt"`
+	ObservationEndedAt   time.Time `json:"observationEndedAt"`
 
-	SourceReadBack        StateReadBack
-	TransitionStart       *MappedFact
-	ActuationFailure      *Failure
-	TargetReadBack        *StateReadBack
-	TargetReadBackFailure *Failure
+	SourceReadBack        StateReadBack  `json:"sourceReadBack"`
+	TransitionStart       *MappedFact    `json:"transitionStart"`
+	ActuationFailure      *Failure       `json:"actuationFailure"`
+	TargetReadBack        *StateReadBack `json:"targetReadBack"`
+	TargetReadBackFailure *Failure       `json:"targetReadBackFailure"`
 
-	PowerSamples  []PowerSample
-	PowerFailures []PowerReadFailure
-	Readiness     []ReadyObservation
+	PowerSamples  []PowerSample      `json:"powerSamples"`
+	PowerFailures []PowerReadFailure `json:"powerFailures"`
+	Readiness     []ReadyObservation `json:"readiness"`
 
-	PreTransitionProcess  *ProcessObservation
-	PostTransitionProcess *ProcessObservation
+	PreTransitionProcess  *ProcessObservation `json:"preTransitionProcess"`
+	PostTransitionProcess *ProcessObservation `json:"postTransitionProcess"`
 
-	BoundaryMappingUncertainty time.Duration
+	BoundaryMappingUncertainty time.Duration `json:"boundaryMappingUncertaintyNanoseconds"`
 }
 
 type acceptedRecord struct {

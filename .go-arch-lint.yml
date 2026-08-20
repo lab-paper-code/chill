@@ -176,6 +176,7 @@ deps:
       - power-window
   transition-cost-worker:
     mayDependOn:
+      - evidence-core
       - metric-core
       - transition-cost-core
   profiling-run:

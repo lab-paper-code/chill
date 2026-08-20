@@ -397,7 +397,7 @@ profile derivation
 
 transition-cost derivation -> bounded power-window integration leaf
 
-transition-cost worker -> bounded MetricObserver + transition-cost derivation
+transition-cost worker -> bounded MetricObserver + transition-cost derivation + immutable Evidence Store writer
 ```
 
 Pure packages do not import `api/v1alpha1`, Kubernetes APIs, or
