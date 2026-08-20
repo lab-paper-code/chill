@@ -91,9 +91,105 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			); err != nil {
 				t.Fatal(err)
 			}
-			if fixture.stores.calls != 1 || objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
+			if fixture.stores.calls != 1 ||
+				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
 				objectCount(t, fixture.client, fixture.measurement.Namespace, &edgev1alpha1.NodeActuationList{}) != 2 {
 				t.Fatalf("recovery duplicated attempt resources; store calls = %d", fixture.stores.calls)
+			}
+		})
+	}
+}
+
+func TestAttemptMaterializerWaitsForRetainedActuationAfterObserverCompletes(t *testing.T) {
+	for _, test := range []struct {
+		condition  batchv1.JobConditionType
+		wantStage  AttemptStage
+		wantReason string
+	}{
+		{condition: batchv1.JobComplete, wantStage: AttemptStageActuationRunning},
+		{condition: batchv1.JobFailed, wantStage: AttemptStageTerminal, wantReason: AttemptReasonObserverFailed},
+	} {
+		t.Run(string(test.condition), func(t *testing.T) {
+			fixture := newAttemptMaterializerFixture(
+				t,
+				confirmedSourceActuation(t, 0, time.Unix(100, 0)),
+			)
+			progress, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setJobReady(t, fixture.client, progress.Job)
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actuation := progress.NodeActuation.DeepCopy()
+			actuation.Status = edgev1alpha1.NodeActuationStatus{
+				ObservedGeneration: actuation.Generation,
+				Phase:              edgev1alpha1.NodeActuationPhaseSettling,
+			}
+			if err := fixture.client.Status().Update(context.Background(), actuation); err != nil {
+				t.Fatal(err)
+			}
+			setJobCondition(t, fixture.client, progress.Job, test.condition)
+
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if progress.Stage != test.wantStage || progress.Reason != test.wantReason ||
+				progress.Job == nil || progress.NodeActuation == nil ||
+				progress.Job.Name != progress.NodeActuation.Name || fixture.stores.calls != 1 ||
+				objectCount(t, fixture.client, fixture.measurement.Namespace, &batchv1.JobList{}) != 1 ||
+				objectCount(t, fixture.client, fixture.measurement.Namespace, &edgev1alpha1.NodeActuationList{}) != 2 {
+				t.Fatalf("retained attempt progress = %#v, store calls = %d", progress, fixture.stores.calls)
+			}
+		})
+	}
+}
+
+func TestAttemptMaterializerFailsWhenObserverTerminatesBeforeActuation(t *testing.T) {
+	for _, test := range []struct {
+		condition batchv1.JobConditionType
+		reason    string
+	}{
+		{condition: batchv1.JobComplete, reason: AttemptReasonObserverEndedEarly},
+		{condition: batchv1.JobFailed, reason: AttemptReasonObserverFailed},
+	} {
+		t.Run(string(test.condition), func(t *testing.T) {
+			fixture := newAttemptMaterializerFixture(
+				t,
+				confirmedSourceActuation(t, 0, time.Unix(100, 0)),
+			)
+			progress, err := fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setJobCondition(t, fixture.client, progress.Job, test.condition)
+
+			progress, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if progress.Stage != AttemptStageTerminal || progress.Reason != test.reason ||
+				progress.Job == nil || progress.NodeActuation != nil ||
+				objectCount(
+					t,
+					fixture.client,
+					fixture.measurement.Namespace,
+					&edgev1alpha1.NodeActuationList{},
+				) != 1 {
+				t.Fatalf("terminal-before-actuation progress = %#v", progress)
 			}
 		})
 	}
@@ -210,13 +306,7 @@ func TestAttemptMaterializerReturnsTerminalPairForFinalization(t *testing.T) {
 			if err := fixture.client.Status().Update(context.Background(), actuation); err != nil {
 				t.Fatal(err)
 			}
-			job := progress.Job.DeepCopy()
-			job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-				Type: conditionType, Status: corev1.ConditionTrue,
-			})
-			if err := fixture.client.Status().Update(context.Background(), job); err != nil {
-				t.Fatal(err)
-			}
+			setJobCondition(t, fixture.client, progress.Job, conditionType)
 
 			progress, err = fixture.materializer.Advance(
 				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
@@ -297,6 +387,22 @@ func setJobReady(t *testing.T, kubeClient client.Client, job *batchv1.Job) {
 	t.Helper()
 	job = job.DeepCopy()
 	job.Status.Ready = ptr.To[int32](1)
+	if err := kubeClient.Status().Update(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setJobCondition(
+	t *testing.T,
+	kubeClient client.Client,
+	job *batchv1.Job,
+	conditionType batchv1.JobConditionType,
+) {
+	t.Helper()
+	job = job.DeepCopy()
+	job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
+		Type: conditionType, Status: corev1.ConditionTrue,
+	})
 	if err := kubeClient.Status().Update(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}

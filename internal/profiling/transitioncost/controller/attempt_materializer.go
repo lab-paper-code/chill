@@ -386,9 +386,6 @@ func progressForRetainedAttempt(
 		progress.Stage, progress.Reason = AttemptStageTerminal, AttemptReasonObserverFailed
 		return progress
 	}
-	if jobComplete(job) {
-		progress.Stage, progress.Reason = AttemptStageTerminal, AttemptReasonObserverEndedEarly
-	}
 	return progress
 }
 
