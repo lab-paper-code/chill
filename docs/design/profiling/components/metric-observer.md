@@ -43,11 +43,6 @@ The edge-metrics adapter owns:
 - preserving a missing or invalid thermal fact without converting it into a
   healthy thermal state.
 
-The central Shelly Gateway adapter is separate from edge-metrics. It selects
-exactly one `shelly_power_total_watts` gauge by its frozen `device_type` and
-`hostname` labels from the shared `/prometheus` endpoint. It reports wall power
-only and makes no thermal claim.
-
 The Profiler owns source resolution, observation policy, Job lifecycle,
 evidence admission, retry, persistence, and scientific derivation. edge-metrics
 owns platform sensor access, platform interpretation, metric exposition, and
@@ -106,20 +101,11 @@ internal/metricobserver/edgemetrics
         |
         v
 edge-metrics /metrics
-
-internal/metricobserver
-        ^
-        | implements target-specific power source
-internal/metricobserver/shellygateway
-        |
-        v
-central Shelly Gateway /prometheus
 ```
 
 The core package imports no CHILL API, Kubernetes client, controller-runtime,
-Profiler, admission, or derivation package. Both adapters import only the core
-contract for CHILL types; the central adapter delegates Prometheus text parsing
-to the maintained Prometheus common library.
+Profiler, admission, or derivation package. The adapter imports the core
+contract and standard HTTP parsing only.
 
 ## Explicit non-goals
 
@@ -140,7 +126,6 @@ to the maintained Prometheus common library.
   deterministic tests;
 - edge-metrics parsing covers direct signals, counters, missing metrics,
   duplicates, malformed values, and unsupported observation;
-- central Shelly Gateway parsing selects exactly one frozen target series;
 - raw evidence validation binds the exact source and immutable Run intent;
 - admission tests distinguish unknown, throttled, counter-reset, and known
   non-throttled windows; and
