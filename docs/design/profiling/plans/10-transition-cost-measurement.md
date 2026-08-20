@@ -24,9 +24,10 @@ source and both target-mode baselines into the two ordered directions needed by
 future attempt-scoped observation Jobs. One current-only immutable ConfigMap
 retains that enclosing preparation and the selected off-target observer Node
 before execution. Job projection and the repeatable one-attempt materialization
-operation exist, but the operation remains deliberately unregistered until raw
-evidence finalization can close the same lifecycle. Controller setup, repeated
-attempt decisions, and live verification remain incomplete.
+operation now extend through strict raw-evidence finalization into one immutable,
+raw-free observation. They remain deliberately unregistered until controller
+sequencing closes the lifecycle. Repeated attempt decisions and live verification
+remain incomplete.
 
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
@@ -431,7 +432,8 @@ observation policy, resolves one central transition-power source and both
 target-mode baselines, and prepares the two directed core contracts. Its power
 request extends one sample interval beyond the fact timeout only to retain the
 last possible sample; factual completion and integration boundaries do not
-move. Job and `NodeActuation` materialization remain incomplete.
+move. One-attempt materialization and finalization exist; controller lifecycle
+orchestration remains incomplete.
 
 ### Unit 3: complete measurement control path
 

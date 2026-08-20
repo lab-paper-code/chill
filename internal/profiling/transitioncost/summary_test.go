@@ -77,7 +77,7 @@ func TestSummarizeBuildsCompleteDirectedTableInFrozenOrder(t *testing.T) {
 
 func TestSummarizeReturnsTypedInsufficientWithoutPartialTable(t *testing.T) {
 	directions := testDirections()
-	results := make([]transitioncost.Result, 0, 9)
+	results := make([]transitioncost.FinalizedObservation, 0, 9)
 	for index := 0; index < 4; index++ {
 		results = append(results, deriveAttempt(t, directions[0], fmt.Sprintf("forward-%d", index),
 			2+index, float64(index), true, acceptedAttempt, nil))
@@ -112,7 +112,7 @@ func TestSummarizeRejectsThirdOrWrongDirection(t *testing.T) {
 	thirdMode := directions[0]
 	thirdMode.Target.PowerMode = mode30W
 	result := deriveAttempt(t, thirdMode, "third-mode", 2, 0, true, acceptedAttempt, nil)
-	_, err := transitioncost.Summarize(directions, 5, []transitioncost.Result{result})
+	_, err := transitioncost.Summarize(directions, 5, []transitioncost.FinalizedObservation{result})
 	assertErrorContains(t, err, "undeclared direction")
 
 	wrongOrder := []transitioncost.DirectedStatePair{directions[0], thirdMode}
@@ -141,7 +141,7 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 					test.mutate(frozen, raw)
 				})
 			_, err := transitioncost.Summarize(testDirections(), 5,
-				[]transitioncost.Result{first, drifted})
+				[]transitioncost.FinalizedObservation{first, drifted})
 			assertErrorContains(t, err, "target idle baseline")
 		})
 	}
@@ -157,7 +157,7 @@ func TestDirectedTableOwnsCallerAndRecordSlices(t *testing.T) {
 	wantFirst := table.Record().Entries[0]
 
 	directions[0] = transitioncost.DirectedStatePair{}
-	results[0] = transitioncost.Result{}
+	results[0] = transitioncost.FinalizedObservation{}
 	firstRecord := table.Record()
 	firstRecord.Entries[0] = transitioncost.DirectedEntry{}
 	if got := table.Record().Entries[0]; got != wantFirst {
@@ -177,9 +177,9 @@ const (
 func completeResults(
 	t *testing.T,
 	directions []transitioncost.DirectedStatePair,
-) []transitioncost.Result {
+) []transitioncost.FinalizedObservation {
 	t.Helper()
-	results := make([]transitioncost.Result, 0, 16)
+	results := make([]transitioncost.FinalizedObservation, 0, 16)
 	forwardEta := []float64{-4, -2, 0, 2, 4}
 	reverseEta := []float64{-10, -5, 0, 5, 10}
 	for directionIndex, direction := range directions {
@@ -215,7 +215,7 @@ func deriveAttempt(
 	servingSurvived bool,
 	outcome attemptOutcome,
 	mutate func(*transitioncost.FrozenContract, *transitioncost.RawObservation),
-) transitioncost.Result {
+) transitioncost.FinalizedObservation {
 	t.Helper()
 	frozen, raw, policy := validInputs()
 	frozen.SourceState = direction.Source
@@ -282,7 +282,11 @@ func deriveAttempt(
 		t.Fatalf("attempt %q verdict = %s/%s (%s), want %s",
 			id, result.Verdict(), result.Reason(), result.Detail(), wantVerdict)
 	}
-	return result
+	finalized, err := transitioncost.FinalizeResult(result)
+	if err != nil {
+		t.Fatalf("finalize attempt %q: %v", id, err)
+	}
+	return finalized
 }
 
 func baselineFor(target transitioncost.StateIdentity) transitioncost.IdleBaseline {

@@ -56,6 +56,8 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 			if payload.RawLocation.Store != "evidence" || payload.RawLocation.Key != wantRawKey {
 				t.Fatalf("raw location = %#v", payload.RawLocation)
 			}
+			requireFinalLocation(t, fixture.measurement, test.direction, test.attempt,
+				strings.TrimSuffix(wantRawKey, "raw.json")+"final.json")
 
 			setJobReady(t, fixture.client, progress.Job)
 			progress, err = fixture.materializer.Advance(context.Background(), fixture.measurement, test.direction, test.attempt)
@@ -88,6 +90,16 @@ func TestAttemptMaterializerProjectsBothDirectionsAndRecovers(t *testing.T) {
 				t.Fatalf("recovery duplicated attempt resources; store calls = %d", fixture.stores.calls)
 			}
 		})
+	}
+}
+
+func requireFinalLocation(t *testing.T, measurement *edgev1alpha1.PowerModeTransitionCost,
+	direction int, attempt int32, want string,
+) {
+	t.Helper()
+	selection, err := selectAttempt(measurement, direction, attempt)
+	if err != nil || selection.finalLocation.Key != want {
+		t.Fatalf("final location = %#v, error = %v", selection.finalLocation, err)
 	}
 }
 

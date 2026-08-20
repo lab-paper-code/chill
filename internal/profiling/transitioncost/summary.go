@@ -105,7 +105,7 @@ func (e *InsufficientAcceptedCountError) Error() string {
 func Summarize(
 	directions []DirectedStatePair,
 	acceptedCountTarget int,
-	results []Result,
+	results []FinalizedObservation,
 ) (DirectedTable, error) {
 	frozenDirections, err := validateDirections(directions, acceptedCountTarget)
 	if err != nil {
@@ -117,10 +117,7 @@ func Summarize(
 		{direction: frozenDirections[1]},
 	}
 	for index, result := range results {
-		if err := validateTerminalResult(result); err != nil {
-			return DirectedTable{}, fmt.Errorf("validate transition result %d: %w", index, err)
-		}
-		frozen := result.record.frozen
+		frozen := result.record.FrozenContract
 		directionIndex := directionIndex(frozenDirections, DirectedStatePair{
 			Source: frozen.SourceState,
 			Target: frozen.TargetState,
@@ -174,8 +171,8 @@ type directionAccumulator struct {
 	servingSurvivedFalse  int
 }
 
-func (a *directionAccumulator) add(result Result) error {
-	baseline := result.record.frozen.TargetIdleBaseline
+func (a *directionAccumulator) add(result FinalizedObservation) error {
+	baseline := result.record.FrozenContract.TargetIdleBaseline
 	if !a.hasTargetIdleBaseline {
 		a.targetIdleBaseline = baseline
 		a.hasTargetIdleBaseline = true
@@ -183,21 +180,17 @@ func (a *directionAccumulator) add(result Result) error {
 		return errors.New("target idle baseline changed within one direction")
 	}
 
-	switch result.record.verdict {
+	switch result.record.Verdict {
 	case VerdictAccepted:
 		a.verdictCounts.Accepted++
-		observation := result.record.accepted
-		if !finite(observation.tauMilliseconds) ||
-			!finite(observation.transitionWallJoules) ||
-			!finite(observation.etaJoules) {
-			return errors.New("accepted transition contains a non-finite derived value")
+		observation := result.record.AcceptedObservation
+		a.tauMilliseconds = append(a.tauMilliseconds, observation.TauMilliseconds)
+		a.etaJoules = append(a.etaJoules, observation.EtaJoules)
+		uncertainty := time.Duration(observation.BoundaryMappingUncertaintyMilliseconds) * time.Millisecond
+		if uncertainty > a.maximumUncertainty {
+			a.maximumUncertainty = uncertainty
 		}
-		a.tauMilliseconds = append(a.tauMilliseconds, observation.tauMilliseconds)
-		a.etaJoules = append(a.etaJoules, observation.etaJoules)
-		if observation.boundaryMappingUncertainty > a.maximumUncertainty {
-			a.maximumUncertainty = observation.boundaryMappingUncertainty
-		}
-		if observation.servingSurvived {
+		if observation.ServingSurvived {
 			a.servingSurvivedTrue++
 		} else {
 			a.servingSurvivedFalse++
@@ -271,25 +264,6 @@ func validateDirections(directions []DirectedStatePair, acceptedCountTarget int)
 		return [2]DirectedStatePair{}, errors.New("the second direction must exactly reverse the first")
 	}
 	return frozen, nil
-}
-
-func validateTerminalResult(result Result) error {
-	if err := validateFrozen(result.record.frozen); err != nil {
-		return fmt.Errorf("invalid retained frozen contract: %w", err)
-	}
-	switch result.record.verdict {
-	case VerdictAccepted:
-		if result.record.reason != ReasonAccepted || result.record.accepted == nil {
-			return errors.New("accepted result is missing its accepted observation")
-		}
-	case VerdictInvalid, VerdictFailed, VerdictInsufficient:
-		if result.record.accepted != nil {
-			return errors.New("non-accepted result contains an accepted observation")
-		}
-	default:
-		return errors.New("result is not a terminal Derive result")
-	}
-	return nil
 }
 
 func directionIndex(directions [2]DirectedStatePair, candidate DirectedStatePair) int {

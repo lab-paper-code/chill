@@ -183,6 +183,7 @@ type attemptSelection struct {
 	directionIndex int
 	name           string
 	rawLocation    evidencestore.ObjectLocation
+	finalLocation  evidencestore.ObjectLocation
 }
 
 func selectAttempt(
@@ -204,12 +205,11 @@ func selectAttempt(
 	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
 		return attemptSelection{}, fmt.Errorf("deterministic transition attempt name is invalid: %v", errs)
 	}
+	prefix := "power-mode-transition-costs/" + string(measurement.UID) + "/" + suffix + "/"
 	return attemptSelection{
 		directionIndex: directionIndex, name: name,
-		rawLocation: evidencestore.ObjectLocation{
-			Store: measurement.Spec.EvidenceStore,
-			Key:   "power-mode-transition-costs/" + string(measurement.UID) + "/" + suffix + "/raw.json",
-		},
+		rawLocation:   evidencestore.ObjectLocation{Store: measurement.Spec.EvidenceStore, Key: prefix + "raw.json"},
+		finalLocation: evidencestore.ObjectLocation{Store: measurement.Spec.EvidenceStore, Key: prefix + "final.json"},
 	}, nil
 }
 
