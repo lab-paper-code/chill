@@ -71,11 +71,16 @@ func (w *ResultWriter) Write(
 		return batchsaturation.StoredObjectReference{}, err
 	}
 	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
-		Outcome:        batchsaturation.TerminalOutcome(result.Outcome),
-		CurvePlan:      curvePlan,
-		AdmittedTrials: admitted,
-		ExcludedTrials: excluded,
-		Detail:         detail,
+		Outcome: batchsaturation.TerminalOutcome(result.Outcome),
+		MeasurementState: batchsaturation.ResultMeasurementState{
+			TargetNode:    parent.Spec.State.TargetNode,
+			ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
+			DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
+			ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
+			PowerMode:     parent.Spec.State.Candidate.PowerMode,
+		},
+		CurvePlan: curvePlan, AdmittedTrials: admitted,
+		ExcludedTrials: excluded, Detail: detail,
 	})
 	if err != nil {
 		return batchsaturation.StoredObjectReference{}, fmt.Errorf("construct result record: %w", err)

@@ -34,11 +34,14 @@ func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing
 		t.Fatalf("canonical encoding is not idempotent:\n got: %s\nwant: %s", reencoded, payload)
 	}
 	decodedSpec := decoded.Spec()
+	if decodedSpec.MeasurementState != spec.MeasurementState {
+		t.Fatalf("measurement state = %+v, want %+v", decodedSpec.MeasurementState, spec.MeasurementState)
+	}
 	if decodedSpec.AdmittedTrials[0].Run.Namespace != "chill-system" ||
 		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
 		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
 	}
-	if decoded.SchemaVersion() != "chill.dacs.io/batch-saturation-result.v1alpha2" {
+	if decoded.SchemaVersion() != "chill.dacs.io/batch-saturation-result.v1alpha3" {
 		t.Fatalf("schema version = %q", decoded.SchemaVersion())
 	}
 }
@@ -53,18 +56,38 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, schema := range []string{
+		"chill.dacs.io/batch-saturation-result.v1alpha2",
 		"chill.dacs.io/batch-saturation-result.v1alpha1",
 		"chill.dacs.io/batch-saturation-result.v1alpha0",
-		"chill.example.io/batch-saturation-result.v1alpha2",
+		"chill.example.io/batch-saturation-result.v1alpha3",
 	} {
 		mutated := bytes.Replace(
 			payload,
-			[]byte("chill.dacs.io/batch-saturation-result.v1alpha2"),
+			[]byte("chill.dacs.io/batch-saturation-result.v1alpha3"),
 			[]byte(schema),
 			1,
 		)
 		if _, err := DecodeResultRecord(mutated); err == nil {
 			t.Fatalf("schema version %q was accepted", schema)
+		}
+	}
+}
+
+func TestResultRecordRequiresCleanMeasurementState(t *testing.T) {
+	fields := map[string]func(*ResultMeasurementState, string){
+		"target Node":    func(state *ResultMeasurementState, value string) { state.TargetNode = value },
+		"ModelSpec":      func(state *ResultMeasurementState, value string) { state.ModelSpec = value },
+		"DeviceClass":    func(state *ResultMeasurementState, value string) { state.DeviceClass = value },
+		"execution path": func(state *ResultMeasurementState, value string) { state.ExecutionPath = value },
+		"power mode":     func(state *ResultMeasurementState, value string) { state.PowerMode = value },
+	}
+	for name, set := range fields {
+		for _, value := range []string{"", " padded "} {
+			spec := validResultRecordSpec()
+			set(&spec.MeasurementState, value)
+			if _, err := NewResultRecord(spec); err == nil {
+				t.Fatalf("%s value %q was accepted", name, value)
+			}
 		}
 	}
 }
@@ -104,6 +127,10 @@ func TestResultRecordRequiresRunNamespace(t *testing.T) {
 func validResultRecordSpec() ResultRecordSpec {
 	return ResultRecordSpec{
 		Outcome: "Stopped/NoFurtherImprovement",
+		MeasurementState: ResultMeasurementState{
+			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
+			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
+		},
 		CurvePlan: StoredObjectReference{
 			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 1024,

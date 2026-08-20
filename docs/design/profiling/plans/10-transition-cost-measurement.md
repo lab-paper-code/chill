@@ -120,6 +120,13 @@ etaJoules              = transitionWallJoules - P_idle(s') * tauSeconds
 reference, sample trace, integration policy, and boundary uncertainty remain
 available so the result can be reproduced.
 
+`P_idle(s')` is the aggregate `profilederivation.IdleBaseline` retained in the
+referenced successful `BatchSaturation` terminal result, not one
+`ProfilingRun` value. Its stored measurement state must match the target Node,
+ModelSpec, DeviceClass, execution path, and power mode. The execution path is a
+frozen experimental compatibility condition for reusing that model-loaded-idle
+baseline; it does not add a new axis to the state-pair equation above.
+
 The specification requires `tau`, `eta`, and the target-state idle term for its
 transition-cost equation but does not prescribe this subtraction algorithm.
 This equation is Plan 10's explicit measurement estimator. It must be validated

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const resultRecordSchemaVersion = "chill.dacs.io/batch-saturation-result.v1alpha2"
+const resultRecordSchemaVersion = "chill.dacs.io/batch-saturation-result.v1alpha3"
 
 // TerminalOutcome is the stable terminal outcome published by a measurement
 // method.
@@ -40,6 +40,16 @@ type ResultMeasurement struct {
 	Batch        int          `json:"batch"`
 }
 
+// ResultMeasurementState names the experimental state shared by every trial
+// contributing to one terminal result.
+type ResultMeasurementState struct {
+	TargetNode    string `json:"targetNode"`
+	ModelSpec     string `json:"modelSpec"`
+	DeviceClass   string `json:"deviceClass"`
+	ExecutionPath string `json:"executionPath"`
+	PowerMode     string `json:"powerMode"`
+}
+
 // AdmittedTrialReference locates one admitted Run and its retained evidence.
 type AdmittedTrialReference struct {
 	Run         RunReference          `json:"run"`
@@ -58,11 +68,12 @@ type ExcludedTrialReference struct {
 
 // ResultRecordSpec is the validated payload of one terminal result record.
 type ResultRecordSpec struct {
-	Outcome        TerminalOutcome          `json:"outcome"`
-	CurvePlan      StoredObjectReference    `json:"curvePlan"`
-	AdmittedTrials []AdmittedTrialReference `json:"admittedTrials"`
-	ExcludedTrials []ExcludedTrialReference `json:"excludedTrials"`
-	Detail         json.RawMessage          `json:"detail"`
+	Outcome          TerminalOutcome          `json:"outcome"`
+	MeasurementState ResultMeasurementState   `json:"measurementState"`
+	CurvePlan        StoredObjectReference    `json:"curvePlan"`
+	AdmittedTrials   []AdmittedTrialReference `json:"admittedTrials"`
+	ExcludedTrials   []ExcludedTrialReference `json:"excludedTrials"`
+	Detail           json.RawMessage          `json:"detail"`
 }
 
 type resultRecord struct {
@@ -175,6 +186,9 @@ func validateResultRecordSpec(spec ResultRecordSpec) error {
 	if !cleanResultValue(string(spec.Outcome)) {
 		return errors.New("batch-saturation result outcome is required without surrounding whitespace")
 	}
+	if err := validateResultMeasurementState(spec.MeasurementState); err != nil {
+		return err
+	}
 	if err := validateStoredObjectReference("curve plan", spec.CurvePlan); err != nil {
 		return err
 	}
@@ -217,6 +231,19 @@ func validateResultRecordSpec(spec ResultRecordSpec) error {
 	}
 	if !json.Valid(spec.Detail) {
 		return errors.New("batch-saturation result detail must contain exactly one JSON value")
+	}
+	return nil
+}
+
+func validateResultMeasurementState(state ResultMeasurementState) error {
+	for name, value := range map[string]string{
+		"target Node": state.TargetNode, "ModelSpec": state.ModelSpec,
+		"DeviceClass": state.DeviceClass, "execution path": state.ExecutionPath,
+		"power mode": state.PowerMode,
+	} {
+		if !cleanResultValue(value) {
+			return fmt.Errorf("batch-saturation result measurement state %s is required without surrounding whitespace", name)
+		}
 	}
 	return nil
 }

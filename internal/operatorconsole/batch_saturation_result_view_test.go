@@ -66,7 +66,8 @@ func TestBuildBatchSaturationResultPassesDetailThroughUninterpreted(t *testing.T
 	// a later measurement method may publish one.
 	detail := json.RawMessage(`{"method":"not-yet-invented","points":[{"batch":7,"value":1.5}]}`)
 	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
-		Outcome: "Stopped/NoFurtherImprovement",
+		Outcome:          "Stopped/NoFurtherImprovement",
+		MeasurementState: resultMeasurementState(),
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,
@@ -96,7 +97,7 @@ func TestBuildBatchSaturationResultPassesDetailThroughUninterpreted(t *testing.T
 	}
 	// The record fields are embedded, so they must appear beside schemaVersion
 	// rather than nested under a wrapper key.
-	if !bytes.Contains(encoded, []byte(`"schemaVersion":"chill.dacs.io/batch-saturation-result.v1alpha2"`)) ||
+	if !bytes.Contains(encoded, []byte(`"schemaVersion":"chill.dacs.io/batch-saturation-result.v1alpha3"`)) ||
 		bytes.Contains(encoded, []byte(`"ResultRecordSpec"`)) {
 		t.Fatalf("record encoding = %s", encoded)
 	}
@@ -158,7 +159,8 @@ func campaignResultFixture(t *testing.T) (
 ) {
 	t.Helper()
 	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
-		Outcome: "Stopped/NoFurtherImprovement",
+		Outcome:          "Stopped/NoFurtherImprovement",
+		MeasurementState: resultMeasurementState(),
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,
@@ -211,4 +213,11 @@ func campaignResultFixture(t *testing.T) (
 		},
 	}
 	return campaign, identity, record
+}
+
+func resultMeasurementState() batchsaturation.ResultMeasurementState {
+	return batchsaturation.ResultMeasurementState{
+		TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
+		DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
+	}
 }

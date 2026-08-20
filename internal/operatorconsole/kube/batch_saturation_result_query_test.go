@@ -166,7 +166,7 @@ func TestBatchSaturationResultQueryRejectsContentTheReferenceDoesNotDescribe(t *
 		"trailing content": {payload: append(bytes.Clone(payload), ' '), match: "where the reference declares"},
 		"unsupported schema": {
 			payload: bytes.Replace(
-				payload, []byte("batch-saturation-result.v1alpha2"), []byte("batch-saturation-result.v9alpha9"), 1,
+				payload, []byte("batch-saturation-result.v1alpha3"), []byte("batch-saturation-result.v9alpha9"), 1,
 			),
 			match: "unsupported batch-saturation result schema",
 		},
@@ -248,6 +248,10 @@ func campaignResultFixture(t *testing.T) (
 	t.Helper()
 	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
 		Outcome: "Stopped/NoFurtherImprovement",
+		MeasurementState: batchsaturation.ResultMeasurementState{
+			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
+			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
+		},
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,

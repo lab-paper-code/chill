@@ -527,6 +527,10 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultS
 	t.Helper()
 	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
 		Outcome: "Stopped/NoFurtherImprovement",
+		MeasurementState: batchsaturation.ResultMeasurementState{
+			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
+			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
+		},
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,

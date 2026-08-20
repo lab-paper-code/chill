@@ -217,7 +217,7 @@ func assertCreatedResultReference(
 	wantKey := "batch-saturations/parent-uid/result.json"
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if reference.Store != "evidence" || reference.Key != wantKey ||
-		reference.SchemaVersion != "chill.dacs.io/batch-saturation-result.v1alpha2" ||
+		reference.SchemaVersion != "chill.dacs.io/batch-saturation-result.v1alpha3" ||
 		reference.Size != int64(len(storedPayload)) || reference.Size != store.lastIdentity.Size {
 		t.Fatalf("created reference = %+v, identity = %+v, payload bytes = %d", reference, store.lastIdentity, len(storedPayload))
 	}
@@ -239,6 +239,15 @@ func assertStoredResult(
 		t.Fatalf("decode stored result: %v", err)
 	}
 	spec := stored.Spec()
+	wantState := batchsaturation.ResultMeasurementState{
+		TargetNode: parent.Spec.State.TargetNode, ModelSpec: parent.Spec.State.Candidate.ModelSpec,
+		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
+		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
+		PowerMode:     parent.Spec.State.Candidate.PowerMode,
+	}
+	if spec.MeasurementState != wantState {
+		t.Fatalf("measurement state = %+v, want %+v", spec.MeasurementState, wantState)
+	}
 	if spec.CurvePlan != curvePlan {
 		t.Fatalf("curve-plan reference = %+v, want %+v", spec.CurvePlan, curvePlan)
 	}
