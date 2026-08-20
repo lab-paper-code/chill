@@ -13,6 +13,11 @@ measurement window is active. The first source is one already-resolved
 edge-metrics endpoint, and the first contract records wall power together with
 thermal-validity facts from the same scrape.
 
+The adapter also exposes a power-only exact-series source intended for the
+transition-cost observer. It consumes one frozen metric name and a non-empty
+label map, then accepts only the series whose label set and values match that
+map exactly.
+
 It answers one question:
 
 > During a bounded interval, what power and thermal facts, partial metric
@@ -38,6 +43,8 @@ The edge-metrics adapter owns:
 - issuing one bounded HTTP request to one resolved exposition endpoint;
 - parsing the configured and frozen required wall-power metric;
 - parsing the configured and frozen typed thermal metrics;
+- selecting one configured power-only series by its exact frozen labels;
+- rejecting zero or multiple exact-series matches;
 - rejecting duplicate, malformed, non-finite, or semantically invalid values;
   and
 - preserving a missing or invalid thermal fact without converting it into a
@@ -64,6 +71,8 @@ Power is required by the first profiling path. A missing or invalid power value
 is a failed source-read attempt. Thermal signals are heterogeneous, so their
 fields are optional and their exact presence remains evidence. A successful
 power read cannot silently turn missing thermal evidence into a healthy state.
+The power-only path makes no thermal claim and does not accept a series with
+missing or additional labels as a substitute.
 
 The observer records receipt timestamps because edge-metrics does not provide a
 trusted source timestamp for every value. It preserves repeated values and does
@@ -105,7 +114,8 @@ edge-metrics exposition endpoint
 
 The core package imports no CHILL API, Kubernetes client, controller-runtime,
 Profiler, admission, or derivation package. The adapter imports the core
-contract and standard HTTP parsing only.
+contract, the maintained Prometheus exposition parser, and standard HTTP
+transport only.
 
 ## Explicit non-goals
 
@@ -126,6 +136,8 @@ contract and standard HTTP parsing only.
   deterministic tests;
 - edge-metrics parsing covers configured direct signals, counters, missing
   metrics, duplicates, malformed values, and unsupported observation;
+- the power-only path accepts exactly one configured metric-and-label match and
+  rejects zero matches, multiple matches, and label-set drift;
 - raw evidence validation binds the exact source and immutable Run intent;
 - admission tests distinguish unknown, throttled, counter-reset, and known
   non-throttled windows; and

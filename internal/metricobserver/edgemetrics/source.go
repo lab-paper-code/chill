@@ -15,6 +15,9 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	prommodel "github.com/prometheus/common/model"
 )
 
 const (
@@ -22,8 +25,8 @@ const (
 	maximumResponseBytes = 1 << 20
 )
 
-// Source reads one required wall-power value and the thermal facts exposed in
-// the same edge-metrics response.
+// Source reads one configured wall-power source, with either aligned thermal
+// facts or one exact power-series selector.
 type Source struct {
 	identity metricobserver.SourceIdentity
 	client   *http.Client
@@ -31,14 +34,14 @@ type Source struct {
 
 // New returns an edge-metrics source for an already-resolved endpoint.
 func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, error) {
-	if identity.Kind != SourceKind {
-		return nil, fmt.Errorf("unsupported edge-metrics source kind %q", identity.Kind)
-	}
-	if strings.TrimSpace(identity.Endpoint) == "" || strings.TrimSpace(identity.Endpoint) != identity.Endpoint {
-		return nil, errors.New("endpoint is required without surrounding whitespace")
+	if err := validateSourceLocation(identity); err != nil {
+		return nil, err
 	}
 	if identity.ThermalMetrics == nil {
 		return nil, errors.New("thermal metric identity is required")
+	}
+	if identity.MetricLabels != nil {
+		return nil, errors.New("exact power label selector is not supported by the aligned power and thermal source")
 	}
 	if err := validateMetricIdentity(identity.Metric, *identity.ThermalMetrics); err != nil {
 		return nil, err
@@ -49,6 +52,64 @@ func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, 
 	metrics := *identity.ThermalMetrics
 	identity.ThermalMetrics = &metrics
 	return &Source{identity: identity, client: client}, nil
+}
+
+// NewPowerSeries returns a power-only source selecting exactly one configured
+// Prometheus series from an already-resolved edge-metrics endpoint.
+func NewPowerSeries(identity metricobserver.SourceIdentity, client *http.Client) (*Source, error) {
+	if err := validateSourceLocation(identity); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(identity.Metric) == "" || strings.TrimSpace(identity.Metric) != identity.Metric {
+		return nil, errors.New("power metric identity is required without surrounding whitespace")
+	}
+	if identity.ThermalMetrics != nil {
+		return nil, errors.New("thermal metric identity is not supported by the exact power-series source")
+	}
+	if err := validateExactPowerLabels(identity.MetricLabels); err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, errors.New("HTTP client is required")
+	}
+	identity.MetricLabels = cloneMetricLabels(identity.MetricLabels)
+	return &Source{identity: identity, client: client}, nil
+}
+
+func validateSourceLocation(identity metricobserver.SourceIdentity) error {
+	if identity.Kind != SourceKind {
+		return fmt.Errorf("unsupported edge-metrics source kind %q", identity.Kind)
+	}
+	if strings.TrimSpace(identity.Endpoint) == "" || strings.TrimSpace(identity.Endpoint) != identity.Endpoint {
+		return errors.New("endpoint is required without surrounding whitespace")
+	}
+	return nil
+}
+
+func validateExactPowerLabels(labels map[string]string) error {
+	if len(labels) == 0 {
+		return errors.New("exact power label selector is required")
+	}
+	for name, value := range labels {
+		if !prommodel.LabelName(name).IsValid() {
+			return fmt.Errorf("exact power label name %q is invalid", name)
+		}
+		if !prommodel.LabelValue(value).IsValid() {
+			return fmt.Errorf("exact power label %q value is invalid UTF-8", name)
+		}
+	}
+	return nil
+}
+
+func cloneMetricLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(labels))
+	for name, value := range labels {
+		cloned[name] = value
+	}
+	return cloned
 }
 
 func validateMetricIdentity(power string, thermal metricobserver.ThermalMetricIdentity) error {
@@ -80,6 +141,7 @@ func validateMetricIdentity(power string, thermal metricobserver.ThermalMetricId
 // Identity returns an owned copy of the source and typed metric identities.
 func (s *Source) Identity() metricobserver.SourceIdentity {
 	identity := s.identity
+	identity.MetricLabels = cloneMetricLabels(s.identity.MetricLabels)
 	if s.identity.ThermalMetrics != nil {
 		metrics := *s.identity.ThermalMetrics
 		identity.ThermalMetrics = &metrics
@@ -112,7 +174,70 @@ func (s *Source) ReadMetrics(ctx context.Context) (metricobserver.Reading, error
 			"%w: edge-metrics response exceeds %d bytes", metricobserver.ErrInvalidReading, maximumResponseBytes,
 		)
 	}
+	if len(s.identity.MetricLabels) != 0 {
+		return parsePowerSeries(bytes.NewReader(payload), s.identity.Metric, s.identity.MetricLabels)
+	}
 	return parseReading(bytes.NewReader(payload), s.identity.Metric, *s.identity.ThermalMetrics)
+}
+
+func parsePowerSeries(
+	reader io.Reader,
+	metricName string,
+	labels map[string]string,
+) (metricobserver.Reading, error) {
+	parser := expfmt.TextParser{}
+	families, err := parser.TextToMetricFamilies(reader)
+	if err != nil {
+		return metricobserver.Reading{}, fmt.Errorf("%w: parse Prometheus exposition: %v", metricobserver.ErrInvalidReading, err)
+	}
+	family, found := families[metricName]
+	if !found {
+		return metricobserver.Reading{}, fmt.Errorf("%w: %s", metricobserver.ErrMetricMissing, metricName)
+	}
+	if family.GetType() != dto.MetricType_GAUGE {
+		return metricobserver.Reading{}, fmt.Errorf(
+			"%w: %s is %s, want GAUGE", metricobserver.ErrInvalidReading, metricName, family.GetType(),
+		)
+	}
+
+	var match *dto.Metric
+	for _, metric := range family.GetMetric() {
+		if !hasExactLabels(metric, labels) {
+			continue
+		}
+		if match != nil {
+			return metricobserver.Reading{}, fmt.Errorf(
+				"%w: multiple %s series match the exact label selector", metricobserver.ErrInvalidReading, metricName,
+			)
+		}
+		match = metric
+	}
+	if match == nil {
+		return metricobserver.Reading{}, fmt.Errorf(
+			"%w: %s with the exact label selector", metricobserver.ErrMetricMissing, metricName,
+		)
+	}
+	if match.Gauge == nil {
+		return metricobserver.Reading{}, fmt.Errorf("%w: %s gauge value is absent", metricobserver.ErrInvalidReading, metricName)
+	}
+	watts := match.GetGauge().GetValue()
+	if math.IsNaN(watts) || math.IsInf(watts, 0) || watts < 0 {
+		return metricobserver.Reading{}, fmt.Errorf("%w: %s power value is not finite and non-negative", metricobserver.ErrInvalidReading, metricName)
+	}
+	return metricobserver.Reading{Watts: watts}, nil
+}
+
+func hasExactLabels(metric *dto.Metric, expected map[string]string) bool {
+	if len(metric.GetLabel()) != len(expected) {
+		return false
+	}
+	for _, label := range metric.GetLabel() {
+		value, found := expected[label.GetName()]
+		if !found || value != label.GetValue() {
+			return false
+		}
+	}
+	return true
 }
 
 type rawMetric struct {

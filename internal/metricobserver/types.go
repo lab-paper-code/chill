@@ -20,6 +20,7 @@ type SourceIdentity struct {
 	PodName        string                 `json:"podName,omitempty"`
 	Endpoint       string                 `json:"endpoint"`
 	Metric         string                 `json:"metric"`
+	MetricLabels   map[string]string      `json:"metricLabels,omitempty"`
 	ThermalMetrics *ThermalMetricIdentity `json:"thermalMetrics,omitempty"`
 }
 

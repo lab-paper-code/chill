@@ -23,6 +23,8 @@ func TestNewValidatesAndRetainsFrozenMetricIdentity(t *testing.T) {
 	incompleteThermal.ThermalMetrics.Active = ""
 	duplicateMetric := testSourceIdentity("http://example.test/metrics")
 	duplicateMetric.ThermalMetrics.Active = duplicateMetric.Metric
+	withExactLabels := testSourceIdentity("http://example.test/metrics")
+	withExactLabels.MetricLabels = map[string]string{"unit": "node-7"}
 
 	tests := []struct {
 		name     string
@@ -37,6 +39,7 @@ func TestNewValidatesAndRetainsFrozenMetricIdentity(t *testing.T) {
 		{name: "missing thermal identity", identity: missingThermal, client: http.DefaultClient, want: "thermal metric identity is required"},
 		{name: "incomplete thermal identity", identity: incompleteThermal, client: http.DefaultClient, want: "thermal active metric identity is required"},
 		{name: "duplicate metric identity", identity: duplicateMetric, client: http.DefaultClient, want: "is duplicated"},
+		{name: "exact labels", identity: withExactLabels, client: http.DefaultClient, want: "exact power label selector is not supported"},
 		{name: "missing client", identity: testSourceIdentity("http://example.test/metrics"), want: "HTTP client is required"},
 	}
 	for _, test := range tests {
