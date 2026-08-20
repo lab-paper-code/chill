@@ -11,7 +11,7 @@
 operator:
   image:
     repository: "155.230.35.213:5000/chill/chill-operator"
-    tag: "sha-643e9b5"
+    tag: "sha-44fae46"
     pullPolicy: Always
 
 # Pin Node discovery here because an unpinned operand silently resolves the
@@ -38,7 +38,7 @@ nodeActuator:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-node-actuator"
-    tag: "sha-643e9b5"
+    tag: "sha-44fae46"
     pullPolicy: Always
   # Every actuatable Node in this testbed is a KubeEdge edge Node carrying
   # node-role.kubernetes.io/edge:NoSchedule. The chart default
