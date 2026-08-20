@@ -66,20 +66,20 @@ profiler:
   enabled: true
   image:
     repository: "155.230.35.213:5000/chill/chill-profiler"
-    tag: "sha-2afadbe"
+    tag: "sha-094c48f"
     pullPolicy: Always
   transitionObserver:
     observerNodeName: genesis1
 
 profiling:
-  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:20f1115ad28df1945be53803cee22aca8243d81546a85452f15fd11b86bca079"
-  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:7a3fd2adcd8f4f33def0e42f2672b081606c4f9a8b2be9a18377d92e2ded1114"
+  metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:2afcec16bdd6a3b6680d4062cd548afbc2d2faa01fa2d35bf48b1121a4d04324"
+  workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:98a2ace849d0529d693f15a4249a1e89bfdfd0cc53725c7412482121b31f5560"
   executionDeclarations:
     - modelSpec: mobilenet-v2-050
       deviceClass: raspberry-pi-5-8g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:72a11923247348e1a7700cea3ed7cfd70c4370827e12f1a4e82c9b335b47c285","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:75b5e5cd66898a3e13546711dfe7cee4be50f059dad38fba2ff637b12d8b0f02","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -89,7 +89,7 @@ profiling:
       deviceClass: orangepi-5-plus-16g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:72a11923247348e1a7700cea3ed7cfd70c4370827e12f1a4e82c9b335b47c285","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:75b5e5cd66898a3e13546711dfe7cee4be50f059dad38fba2ff637b12d8b0f02","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -99,7 +99,7 @@ profiling:
       deviceClass: jetson-agx-orin-64g
       executionPath: ort-cpu
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:72a11923247348e1a7700cea3ed7cfd70c4370827e12f1a4e82c9b335b47c285","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:75b5e5cd66898a3e13546711dfe7cee4be50f059dad38fba2ff637b12d8b0f02","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
@@ -109,7 +109,7 @@ profiling:
       deviceClass: orangepi-5-plus-16g
       executionPath: rknnlite
       runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:a92860171c82cd6978d7e2db6057441d69efec613339fe6358a87a10e2dde33c","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
+        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:ad93e2e669c9caffaa05bf6624c45ed2ed73f5dd27a0254c82a3b50e3af68aba","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
       artifact:
         schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
         image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
