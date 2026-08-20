@@ -351,9 +351,9 @@ runs one at a time until the configured admitted-count target or attempt limit,
 and writes a Complete immutable aggregate containing the exact measurement
 state, derived `IdleBaseline`, and accepted final-evidence references. An
 Insufficient request closes only in compact status and does not fabricate an
-aggregate result. Transition-cost consumption of this new result remains the
-next boundary; the current consumer still reads the earlier BatchSaturation
-result contract.
+aggregate result. The transition-cost controller consumes only this current
+Complete result, requires its exact measurement state, and freezes its mean and
+full stored-result reference into the enclosing preparation.
 
 ## Component contracts
 
@@ -427,7 +427,7 @@ model-loaded idle baseline controller
 transition-cost derivation -> bounded power-window integration leaf
 
 transition-cost controller
-        -> BatchSaturation result contract + profile derivation
+        -> model-loaded idle baseline result contract
         -> immutable Evidence Store reader
         -> native attempt Job projection + Evidence Store delivery binding
 

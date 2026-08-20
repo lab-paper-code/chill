@@ -15,7 +15,7 @@ func TestResultRoundTripRetainsCompleteAggregateAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted["trial-0"] = FinalEvidenceReference{
+	accepted["trial-0"] = StoredObjectReference{
 		Store: "evidence", Key: "caller-mutated", SchemaVersion: "final.v1", Size: 20,
 	}
 	baseline.Trials[0].TrialID = "caller-mutated"
@@ -34,7 +34,7 @@ func TestResultRoundTripRetainsCompleteAggregateAuthority(t *testing.T) {
 		t.Fatalf("restored result drifted: %#v", restored)
 	}
 	gotEvidence := restored.AcceptedFinalEvidence()
-	gotEvidence["trial-0"] = FinalEvidenceReference{
+	gotEvidence["trial-0"] = StoredObjectReference{
 		Store: "evidence", Key: "returned-mutated", SchemaVersion: "final.v1", Size: 20,
 	}
 	gotBaseline := restored.IdleBaseline()
@@ -120,7 +120,7 @@ func resultBaseline(t *testing.T) profilederivation.IdleBaseline {
 func resultEvidence(count int) AcceptedFinalEvidence {
 	references := make(AcceptedFinalEvidence, count)
 	for index := 0; index < count; index++ {
-		references[fmt.Sprintf("trial-%d", index)] = FinalEvidenceReference{
+		references[fmt.Sprintf("trial-%d", index)] = StoredObjectReference{
 			Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", index),
 			SchemaVersion: "final.v1", Size: 20,
 		}

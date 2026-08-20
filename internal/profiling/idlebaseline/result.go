@@ -23,9 +23,8 @@ type MeasurementState struct {
 	PowerMode     string `json:"powerMode"`
 }
 
-// FinalEvidenceReference retains the finalized evidence chain for one
-// accepted Run. The derived aggregate separately retains its raw object.
-type FinalEvidenceReference struct {
+// StoredObjectReference identifies one retained evidence object.
+type StoredObjectReference struct {
 	Store         string `json:"store"`
 	Key           string `json:"key"`
 	SchemaVersion string `json:"schemaVersion"`
@@ -34,7 +33,7 @@ type FinalEvidenceReference struct {
 
 // AcceptedFinalEvidence binds each admitted scientific TrialID to the final
 // retained execution evidence from which that trial was evaluated.
-type AcceptedFinalEvidence map[string]FinalEvidenceReference
+type AcceptedFinalEvidence map[string]StoredObjectReference
 
 type resultRecord struct {
 	SchemaVersion         string                         `json:"schemaVersion"`
@@ -138,7 +137,7 @@ func validateAcceptedFinalEvidence(
 		if !found || trial.TrialID == "" {
 			return errors.New("accepted final evidence does not match the idle trial IDs")
 		}
-		if err := validateFinalEvidenceReference(reference); err != nil {
+		if err := validateStoredObjectReference(reference); err != nil {
 			return err
 		}
 	}
@@ -166,7 +165,7 @@ func validateMeasurementState(state MeasurementState) error {
 	return nil
 }
 
-func validateFinalEvidenceReference(reference FinalEvidenceReference) error {
+func validateStoredObjectReference(reference StoredObjectReference) error {
 	values := []string{reference.Store, reference.Key, reference.SchemaVersion}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {

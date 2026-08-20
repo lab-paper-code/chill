@@ -64,7 +64,7 @@ func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline
 func testFinalReferences(count int) idlebaseline.AcceptedFinalEvidence {
 	references := make(idlebaseline.AcceptedFinalEvidence, count)
 	for index := 0; index < count; index++ {
-		references[fmt.Sprintf("trial-%d", index)] = idlebaseline.FinalEvidenceReference{
+		references[fmt.Sprintf("trial-%d", index)] = idlebaseline.StoredObjectReference{
 			Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", index),
 			SchemaVersion: "final.v1", Size: 20,
 		}

@@ -9,7 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
@@ -81,7 +81,7 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 	assertTransitionMaterialResolution(t, measurement, catalogs, nodes, actuation)
 	for index, mode := range measurement.Spec.Modes {
 		call := baselines.calls[index]
-		wantState := batchsaturation.ResultMeasurementState{
+		wantState := idlebaseline.MeasurementState{
 			TargetNode: measurement.Spec.TargetNode, ModelSpec: measurement.Spec.ModelSpec,
 			DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 			PowerMode: mode.PowerMode,
@@ -324,7 +324,7 @@ func assertPreparedDirection(
 	direction PreparedDirection,
 	sourceMode, targetMode, actuationPolicy string,
 	actuatorID int32,
-	reference batchsaturation.StoredObjectReference,
+	reference idlebaseline.StoredObjectReference,
 	meanWallWatts float64,
 ) {
 	t.Helper()
@@ -368,8 +368,8 @@ func (r *recordingTransitionMetricResolver) ResolveMetricSource(
 }
 
 type baselineReadCall struct {
-	state     batchsaturation.ResultMeasurementState
-	reference batchsaturation.StoredObjectReference
+	state     idlebaseline.MeasurementState
+	reference idlebaseline.StoredObjectReference
 }
 
 type recordingIdleBaselineReader struct {
@@ -380,8 +380,8 @@ type recordingIdleBaselineReader struct {
 
 func (r *recordingIdleBaselineReader) Read(
 	_ context.Context,
-	state batchsaturation.ResultMeasurementState,
-	reference batchsaturation.StoredObjectReference,
+	state idlebaseline.MeasurementState,
+	reference idlebaseline.StoredObjectReference,
 ) (ResolvedIdleBaseline, error) {
 	r.calls = append(r.calls, baselineReadCall{state: state, reference: reference})
 	if r.err != nil {

@@ -141,10 +141,10 @@ one immutable Complete result with its accepted final-evidence references. Its
 stored measurement state fixes the target Node, ModelSpec, DeviceClass,
 execution path, and power mode. The execution path is a frozen experimental
 compatibility condition for reusing that aggregate; it does not add a new axis
-to the state-pair equation above. The transition-cost baseline source still
-reads the earlier successful `BatchSaturation` result contract in this producer
-work unit; switching that consumer to the independent result is separate and
-there is no compatibility reader.
+to the state-pair equation above. The transition-cost baseline source accepts
+only the current independent result schema, requires its exact stored
+measurement state, and freezes the stored mean and full result reference. It
+does not read `BatchSaturation` results or support a compatibility reader.
 
 The specification requires `tau`, `eta`, and the target-state idle term for its
 transition-cost equation but does not prescribe this subtraction algorithm.

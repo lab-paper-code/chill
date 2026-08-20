@@ -13,7 +13,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
@@ -27,8 +27,8 @@ import (
 type IdleBaselineReader interface {
 	Read(
 		context.Context,
-		batchsaturation.ResultMeasurementState,
-		batchsaturation.StoredObjectReference,
+		idlebaseline.MeasurementState,
+		idlebaseline.StoredObjectReference,
 	) (ResolvedIdleBaseline, error)
 }
 
@@ -88,7 +88,7 @@ type PreparedMeasurement struct {
 // typed actuator target, and frozen configured policy needed to reach it.
 type PreparedDirection struct {
 	FrozenContract           transitioncost.FrozenContract
-	TargetIdleBaselineResult batchsaturation.StoredObjectReference
+	TargetIdleBaselineResult idlebaseline.StoredObjectReference
 	Actuator                 edgev1alpha1.PowerModeActuator
 	ActuationPolicy          profiler.FrozenActuationPolicy
 }
@@ -187,7 +187,7 @@ func (p *Preparer) Prepare(
 
 	var baselines [2]ResolvedIdleBaseline
 	for index, mode := range measurement.Spec.Modes {
-		expected := batchsaturation.ResultMeasurementState{
+		expected := idlebaseline.MeasurementState{
 			TargetNode: measurement.Spec.TargetNode, ModelSpec: measurement.Spec.ModelSpec,
 			DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 			PowerMode: mode.PowerMode,
@@ -336,8 +336,8 @@ func retainedEventCount(duration, interval time.Duration) (int, error) {
 	return int(events), nil
 }
 
-func storedObjectReference(reference edgev1alpha1.ProfilingRunEvidenceReference) batchsaturation.StoredObjectReference {
-	return batchsaturation.StoredObjectReference{
+func storedObjectReference(reference edgev1alpha1.ProfilingRunEvidenceReference) idlebaseline.StoredObjectReference {
+	return idlebaseline.StoredObjectReference{
 		Store: reference.Store, Key: reference.Key, SchemaVersion: reference.SchemaVersion, Size: reference.Size,
 	}
 }

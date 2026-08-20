@@ -195,13 +195,12 @@ deps:
   transition-cost-controller:
     mayDependOn:
       - api
-      - batch-saturation-core
       - device-class
       - evidence-core
       - evidence-kube
+      - idle-baseline-core
       - metric-core
       - platform-core
-      - profile-derivation
       - profiler-app
       - profiling-run
       - transition-cost-core

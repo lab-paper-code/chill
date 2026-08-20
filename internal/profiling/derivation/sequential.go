@@ -1,11 +1,7 @@
 package profilederivation
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"math"
 )
 
@@ -54,30 +50,6 @@ type SequentialResult struct {
 	DivergenceFactor                 float64                 `json:"divergenceFactor"`
 	CurvePlanName                    string                  `json:"curvePlanName"`
 	IdleBaselinesByState             map[string]IdleBaseline `json:"idleBaselinesByState"`
-}
-
-// DecodeSequentialResult strict-decodes one retained sequential result and
-// validates the aggregate idle baselines it carries.
-func DecodeSequentialResult(payload []byte) (SequentialResult, error) {
-	var result SequentialResult
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return SequentialResult{}, fmt.Errorf("decode sequential result: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return SequentialResult{}, errors.New("sequential result contains a trailing JSON value")
-	}
-	for key, baseline := range result.IdleBaselinesByState {
-		if key != baseline.StateIdentity {
-			return SequentialResult{}, fmt.Errorf("idle baseline key %q differs from its state", key)
-		}
-		if err := validateIdleBaseline(baseline); err != nil {
-			return SequentialResult{}, fmt.Errorf("validate idle baseline %q: %w", key, err)
-		}
-	}
-	return result, nil
 }
 
 // DeriveSequentialBatchDecision applies the relative best-so-far stopping rule

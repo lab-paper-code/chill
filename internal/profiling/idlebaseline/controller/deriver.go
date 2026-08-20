@@ -72,7 +72,7 @@ func (d *Deriver) Derive(
 				fmt.Errorf("ProfilingRun %q status is Accepted but retained evidence evaluates as %q", run.Name, result.Verdict)
 		}
 		trials = append(trials, *trial)
-		references[trial.TrialID] = idlebaseline.FinalEvidenceReference{
+		references[trial.TrialID] = idlebaseline.StoredObjectReference{
 			Store: run.Status.Evidence.Store, Key: run.Status.Evidence.Key,
 			SchemaVersion: run.Status.Evidence.SchemaVersion, Size: run.Status.Evidence.Size,
 		}

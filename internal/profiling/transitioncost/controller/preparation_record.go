@@ -12,7 +12,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	corev1 "k8s.io/api/core/v1"
@@ -190,10 +190,10 @@ type preparationPolicyWire struct {
 }
 
 type preparationDirectionWire struct {
-	FrozenContract           transitioncost.FrozenContract         `json:"frozenContract"`
-	TargetIdleBaselineResult batchsaturation.StoredObjectReference `json:"targetIdleBaselineResult"`
-	Actuator                 edgev1alpha1.PowerModeActuator        `json:"actuator"`
-	ActuationPolicy          profiler.FrozenActuationPolicy        `json:"actuationPolicy"`
+	FrozenContract           transitioncost.FrozenContract      `json:"frozenContract"`
+	TargetIdleBaselineResult idlebaseline.StoredObjectReference `json:"targetIdleBaselineResult"`
+	Actuator                 edgev1alpha1.PowerModeActuator     `json:"actuator"`
+	ActuationPolicy          profiler.FrozenActuationPolicy     `json:"actuationPolicy"`
 }
 
 func encodePreparationRecord(prepared PreparedMeasurement) ([]byte, error) {

@@ -7,27 +7,25 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strings"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 )
 
 // ResolvedIdleBaseline is a target-idle aggregate that crossed the retained
-// BatchSaturation result boundary once.
+// ModelLoadedIdleBaseline result boundary once.
 type ResolvedIdleBaseline struct {
 	meanWallWatts float64
-	reference     batchsaturation.StoredObjectReference
+	reference     idlebaseline.StoredObjectReference
 }
 
 func (b ResolvedIdleBaseline) MeanWallWatts() float64 { return b.meanWallWatts }
 
-func (b ResolvedIdleBaseline) Reference() batchsaturation.StoredObjectReference {
+func (b ResolvedIdleBaseline) Reference() idlebaseline.StoredObjectReference {
 	return b.reference
 }
 
-// IdleBaselineSource reads one exact retained BatchSaturation result.
+// IdleBaselineSource reads one exact retained ModelLoadedIdleBaseline result.
 type IdleBaselineSource struct {
 	reader         evidencestore.Reader
 	maxObjectBytes int64
@@ -48,8 +46,8 @@ func NewIdleBaselineSource(
 
 func (s *IdleBaselineSource) Read(
 	ctx context.Context,
-	expected batchsaturation.ResultMeasurementState,
-	reference batchsaturation.StoredObjectReference,
+	expected idlebaseline.MeasurementState,
+	reference idlebaseline.StoredObjectReference,
 ) (ResolvedIdleBaseline, error) {
 	identity := evidencestore.ObjectIdentity{
 		Store: reference.Store, Key: reference.Key, Size: reference.Size,
@@ -57,9 +55,10 @@ func (s *IdleBaselineSource) Read(
 	if err := identity.Validate(); err != nil {
 		return ResolvedIdleBaseline{}, fmt.Errorf("validate idle baseline result reference: %w", err)
 	}
-	if strings.TrimSpace(reference.SchemaVersion) == "" ||
-		strings.TrimSpace(reference.SchemaVersion) != reference.SchemaVersion {
-		return ResolvedIdleBaseline{}, errors.New("idle baseline result schema version is required without surrounding whitespace")
+	if reference.SchemaVersion != idlebaseline.ResultSchemaVersion {
+		return ResolvedIdleBaseline{}, fmt.Errorf(
+			"idle baseline result schema %q is not current", reference.SchemaVersion,
+		)
 	}
 	if identity.Size > s.maxObjectBytes {
 		return ResolvedIdleBaseline{}, fmt.Errorf(
@@ -70,35 +69,19 @@ func (s *IdleBaselineSource) Read(
 	if err != nil {
 		return ResolvedIdleBaseline{}, err
 	}
-	record, err := batchsaturation.DecodeResultRecord(payload)
+	result, err := idlebaseline.DecodeResult(payload)
 	if err != nil {
 		return ResolvedIdleBaseline{}, fmt.Errorf("decode idle baseline result: %w", err)
 	}
-	if record.SchemaVersion() != reference.SchemaVersion {
-		return ResolvedIdleBaseline{}, errors.New("idle baseline result schema differs from its reference")
-	}
-	spec := record.Spec()
-	if !successfulBatchSaturationOutcome(spec.Outcome) {
-		return ResolvedIdleBaseline{}, fmt.Errorf("BatchSaturation result outcome %q is not successful", spec.Outcome)
-	}
-	if spec.MeasurementState != expected {
-		return ResolvedIdleBaseline{}, errors.New("BatchSaturation result measurement state differs from the transition target")
-	}
-	detail, err := profilederivation.DecodeSequentialResult(spec.Detail)
-	if err != nil {
-		return ResolvedIdleBaseline{}, fmt.Errorf("decode BatchSaturation sequential result: %w", err)
-	}
-	if len(detail.IdleBaselinesByState) != 1 {
-		return ResolvedIdleBaseline{}, fmt.Errorf(
-			"BatchSaturation result contains %d idle baselines, want exactly one",
-			len(detail.IdleBaselinesByState),
+	if result.MeasurementState() != expected {
+		return ResolvedIdleBaseline{}, errors.New(
+			"ModelLoadedIdleBaseline result measurement state differs from the transition target",
 		)
 	}
-	var meanWallWatts float64
-	for _, baseline := range detail.IdleBaselinesByState {
-		meanWallWatts = baseline.ModelLoadedIdleMeanWallWatts
-	}
-	return ResolvedIdleBaseline{meanWallWatts: meanWallWatts, reference: reference}, nil
+	return ResolvedIdleBaseline{
+		meanWallWatts: result.IdleBaseline().ModelLoadedIdleMeanWallWatts,
+		reference:     reference,
+	}, nil
 }
 
 func (s *IdleBaselineSource) read(
@@ -121,13 +104,4 @@ func (s *IdleBaselineSource) read(
 		)
 	}
 	return payload, nil
-}
-
-func successfulBatchSaturationOutcome(outcome batchsaturation.TerminalOutcome) bool {
-	switch outcome {
-	case "Stopped/NoFurtherImprovement", "Stopped/EnergyDivergence", "Stopped/CapabilityBoundary":
-		return true
-	default:
-		return false
-	}
 }
