@@ -12,8 +12,7 @@ spec: # User-declared model registration contract.
       architecture: arm64 # Kubernetes architecture on which this carrier runs.
       path: /artifact/mobilenet-v2-050.onnx # Absolute file path inside the carrier.
     input: # Tensor contract CHILL uses to generate profiling inputs.
-      inputSampleShape: [3, 224, 224] # Excludes batch N: C=3, H=224, W=224.
-      layout: NCHW # Tensor axis order: batch, channel, height, width.
+      inputSampleShape: [3, 224, 224] # Ordered dimensions after batch; CHILL prepends the selected batch size.
       dataType: float32 # Scalar type of every generated input element.
   - name: mobilenet-v2-050-rk3588 # Derived artifact for the RK3588 NPU.
     format: rknn # RKNN model format consumed by RKNNLite.
@@ -23,8 +22,7 @@ spec: # User-declared model registration contract.
       architecture: arm64 # Kubernetes architecture on which this carrier runs.
       path: /artifact/mobilenet-v2-050-rk3588.rknn # Absolute file path inside the carrier.
     input: # Tensor contract encoded by this derived artifact.
-      inputSampleShape: [224, 224, 3] # Excludes batch N: H=224, W=224, C=3.
-      layout: NHWC # Tensor axis order: batch, height, width, channel.
+      inputSampleShape: [224, 224, 3] # Ordered dimensions after batch; CHILL prepends the selected batch size.
       dataType: float32 # Scalar type expected by the RKNN artifact.
     derivation: # Records how this artifact was produced from another artifact.
       sourceArtifact: canonical-onnx # Source artifact name in this ModelSpec.

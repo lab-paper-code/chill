@@ -190,7 +190,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "targetPlatform": "rk3588",
                 "declaredBatchSizes": [1, 2, 4],
                 "inputSampleShape": [224, 224, 3],
-                "inputLayout": "NHWC",
                 "inputDataType": "float32",
             },
             "runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
@@ -361,7 +360,7 @@ class RunnerTest(unittest.TestCase):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha6"
+            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):
@@ -403,8 +402,17 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             request = valid_request(model)
             runner.validate_request(request)
-            request["candidate"]["artifactCapability"]["inputLayout"] = "NCHW"
+            request["candidate"]["artifactCapability"]["inputDataType"] = "uint8"
             with self.assertRaisesRegex(runner.ContractError, "artifact capability"):
+                runner.validate_request(request)
+
+    def test_validate_request_rejects_retired_configured_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["candidate"]["artifactCapability"]["inputLayout"] = "NHWC"
+            with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
                 runner.validate_request(request)
 
     def test_validate_request_keeps_active_and_idle_fields_disjoint(self) -> None:

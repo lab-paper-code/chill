@@ -351,7 +351,7 @@ func newResultWriter(t *testing.T, store ResultStore, maximumBytes int64) *Resul
 func resultWriterCurvePlanReference() batchsaturation.StoredObjectReference {
 	return batchsaturation.StoredObjectReference{
 		Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
-		SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 4096,
+		SchemaVersion: "chill.dacs.io/curve-plan.v1alpha5", Size: 4096,
 	}
 }
 

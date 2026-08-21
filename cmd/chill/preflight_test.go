@@ -72,7 +72,7 @@ func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 	for _, want := range []string{
 		"READ_AT", "NAMESPACE", preflightTestNamespace, "CAMPAIGN", "hourly-curve", "RESOLVES", "yes",
 		"PLANNED_BATCH_SIZES", "1,2,4", "mobilenet.rknn", "rknnlite", "orangepi-5-plus", "fixed",
-		"NHWC", "float32", "224,224,3",
+		"float32", "224,224,3",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("table missing %q:\n%s", want, stdout.String())
@@ -163,7 +163,7 @@ func testBatchSaturationPreflight(resolves bool) operatorconsole.BatchSaturation
 			"artifact":{"name":"mobilenet.rknn","executionPath":"rknnlite"},
 			"deviceClass":"orangepi-5-plus",
 			"powerMode":"fixed",
-			"tensor":{"layout":"NHWC","dataType":"float32","inputSampleShape":[224,224,3]}
+			"tensor":{"dataType":"float32","inputSampleShape":[224,224,3]}
 		}
 	}`)
 	return preflight

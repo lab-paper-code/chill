@@ -254,7 +254,7 @@ func campaignResultFixture(t *testing.T) (
 		},
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha5", Size: 2459,
 		},
 		AdmittedTrials: []batchsaturation.AdmittedTrialReference{{
 			Run: batchsaturation.RunReference{
@@ -265,7 +265,7 @@ func campaignResultFixture(t *testing.T) (
 			},
 			Evidence: batchsaturation.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha11", Size: 23188,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha12", Size: 23188,
 			},
 		}},
 		ExcludedTrials: []batchsaturation.ExcludedTrialReference{{

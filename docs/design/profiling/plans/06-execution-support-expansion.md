@@ -25,7 +25,7 @@ The NodeActuator transition path is implemented under
 `NodeActuation` records one state change toward a declared target, independently
 reads that target back, settles it, releases the Node Lease at terminal `Ready`,
 and leaves the established state in place. Execution evidence uses
-`chill.dacs.io/profiling-execution-evidence.v1alpha11`, retains the confirming
+`chill.dacs.io/profiling-execution-evidence.v1alpha12`, retains the confirming
 transition identity, target observation, and completion time, and validates
 the target against frozen intent. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
@@ -353,7 +353,7 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha6 and candidate-report v1alpha8 keep image-owned
+Execution-facts v1alpha6 and candidate-report v1alpha9 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
@@ -375,8 +375,9 @@ Pod-level supplemental groups, runtime-only privilege, and an optional extended
 resource. Observer containers receive neither host mounts nor privilege. The
 worker reads the projected candidate record at its process boundary, selects
 the explicit RKNNLite adapter, and compares the producer's package, host-library
-path, driver, platform, device, batch, layout, and active input-
-shape observations with that sealed candidate delivery. The Python producer
+path, driver, platform, device, batch, and active input-shape observations with
+that sealed candidate delivery. The runtime-result validator independently
+requires the RKNN implementation's observed input layout. The Python producer
 emits the corresponding active or model-loaded-idle runtime result.
 
 The current active and idle runtime results discriminate the common backend

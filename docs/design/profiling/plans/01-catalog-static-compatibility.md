@@ -63,7 +63,7 @@ group:
 source artifact reference     canonical ONNX artifact in the same ModelSpec
 target platform               rk3588
 declared batch sizes          finite declared set of positive batches
-runtime input tensor          input sample shape + layout + data type
+runtime input tensor          ordered input sample shape + data type
 conversion identity           tool + version
 ```
 
@@ -123,7 +123,7 @@ execution-facts v1alpha6 separately retains an expected host-library, driver,
 platform-compatible token, device-path, and Kubernetes allocation contract.
 It also keeps privileged mode and supplemental groups in a distinct runtime-
 access contract because those are delivery requirements, not physical state.
-Candidate-report v1alpha8 freezes these groups plus the selected derived
+Candidate-report v1alpha9 freezes these groups plus the selected derived
 artifact's target platform, declared batch sizes, runtime input tensor contract, and
 the exact typed actuator target for a non-fixed selection into the immutable
 Run input. Intent v1alpha9 retains the order-normalized physical

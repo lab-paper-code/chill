@@ -53,7 +53,6 @@ func ProjectCurvePlanSpec(
 		},
 		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
 		Tensor: profilederivation.CurveTensorContract{
-			Layout:           capability.InputLayout,
 			DataType:         capability.InputDataType,
 			InputSampleShape: inputSampleShape,
 		},

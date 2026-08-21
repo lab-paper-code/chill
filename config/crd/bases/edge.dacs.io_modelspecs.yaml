@@ -109,21 +109,17 @@ spec:
                           type: string
                         inputSampleShape:
                           description: |-
-                            InputSampleShape is the input tensor shape without its batch axis. The
-                            selected measurement batch supplies that axis.
+                            InputSampleShape is the ordered input tensor dimensions without its batch
+                            axis. The selected measurement batch supplies that axis.
                           items:
                             format: int32
                             minimum: 1
                             type: integer
                           minItems: 1
                           type: array
-                        layout:
-                          minLength: 1
-                          type: string
                       required:
                       - dataType
                       - inputSampleShape
-                      - layout
                       type: object
                     name:
                       description: Name is unique within one ModelSpec and is referenced

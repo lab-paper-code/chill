@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha8"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha13"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
@@ -394,7 +394,7 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "declaredBatchSizes", "inputSampleShape", "inputLayout", "inputDataType"},
+        {"targetPlatform", "declaredBatchSizes", "inputSampleShape", "inputDataType"},
         "candidate.artifactCapability",
     )
     declared_batch_sizes = capability["declaredBatchSizes"]
@@ -409,7 +409,6 @@ def validate_candidate(value: Any) -> None:
         require_integer(value, "candidate inputSampleShape item", 1)
     if (
         capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
-        or capability["inputLayout"] != SUPPORTED_INPUT_LAYOUT
         or capability["inputDataType"] != SUPPORTED_INPUT_DATA_TYPE
     ):
         raise ContractError("candidate artifact capability is unsupported")

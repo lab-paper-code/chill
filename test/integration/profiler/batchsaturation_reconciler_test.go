@@ -565,7 +565,7 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
-			Layout: "NCHW", DataType: "float32", InputSampleShape: []int{3, 224, 224},
+			DataType: "float32", InputSampleShape: []int{3, 224, 224},
 		},
 	})
 	if err != nil {

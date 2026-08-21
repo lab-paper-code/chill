@@ -80,14 +80,11 @@ type ModelArtifactDerivation struct {
 }
 
 type ModelArtifactInputContract struct {
-	// InputSampleShape is the input tensor shape without its batch axis. The
-	// selected measurement batch supplies that axis.
+	// InputSampleShape is the ordered input tensor dimensions without its batch
+	// axis. The selected measurement batch supplies that axis.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
 	InputSampleShape []int32 `json:"inputSampleShape"`
-
-	// +kubebuilder:validation:MinLength=1
-	Layout string `json:"layout"`
 
 	// +kubebuilder:validation:MinLength=1
 	DataType string `json:"dataType"`

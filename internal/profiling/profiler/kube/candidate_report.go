@@ -119,7 +119,6 @@ func reportArtifactCapability(
 	}
 	if artifact.Input != nil {
 		capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)
-		capability.InputLayout = artifact.Input.Layout
 		capability.InputDataType = artifact.Input.DataType
 	}
 	return capability

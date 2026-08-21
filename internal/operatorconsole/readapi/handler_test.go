@@ -451,7 +451,7 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
 		Tensor: profilederivation.CurveTensorContract{
-			Layout: "NHWC", DataType: "float32", InputSampleShape: []int{224, 224, 3},
+			DataType: "float32", InputSampleShape: []int{224, 224, 3},
 		},
 	})
 	if err != nil {
@@ -533,7 +533,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultS
 		},
 		CurvePlan: batchsaturation.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha5", Size: 2459,
 		},
 		AdmittedTrials: []batchsaturation.AdmittedTrialReference{{
 			Run: batchsaturation.RunReference{
@@ -544,7 +544,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultS
 			},
 			Evidence: batchsaturation.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha11", Size: 23188,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha12", Size: 23188,
 			},
 		}},
 		Detail: json.RawMessage(`{"selectedBatch":1}`),

@@ -133,7 +133,7 @@ func validResultRecordSpec() ResultRecordSpec {
 		},
 		CurvePlan: StoredObjectReference{
 			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha4", Size: 1024,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha5", Size: 1024,
 		},
 		AdmittedTrials: []AdmittedTrialReference{{
 			Run: RunReference{

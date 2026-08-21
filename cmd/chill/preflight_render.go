@@ -56,7 +56,6 @@ func writeBatchSaturationPreflightTable(
 			DeviceClass string `json:"deviceClass"`
 			PowerMode   string `json:"powerMode"`
 			Tensor      struct {
-				Layout           string `json:"layout"`
 				DataType         string `json:"dataType"`
 				InputSampleShape []int  `json:"inputSampleShape"`
 			} `json:"tensor"`
@@ -68,10 +67,10 @@ func writeBatchSaturationPreflightTable(
 		}
 	}
 	_, err := fmt.Fprintf(table, "PLANNED_BATCH_SIZES\t%s\nARTIFACT\t%s\nEXECUTION_PATH\t%s\n"+
-		"DEVICE_CLASS\t%s\nPOWER_MODE\t%s\nTENSOR_LAYOUT\t%s\nTENSOR_DATA_TYPE\t%s\nINPUT_SAMPLE_SHAPE\t%s\n",
+		"DEVICE_CLASS\t%s\nPOWER_MODE\t%s\nTENSOR_DATA_TYPE\t%s\nINPUT_SAMPLE_SHAPE\t%s\n",
 		display(formatIntegers(plan.Shared.PlannedBatchSizes)), display(plan.Shared.Artifact.Name),
 		display(plan.Shared.Artifact.ExecutionPath), display(plan.Shared.DeviceClass),
-		display(plan.Shared.PowerMode), display(plan.Shared.Tensor.Layout), display(plan.Shared.Tensor.DataType),
+		display(plan.Shared.PowerMode), display(plan.Shared.Tensor.DataType),
 		display(formatIntegers(plan.Shared.Tensor.InputSampleShape)))
 	if err != nil {
 		return err

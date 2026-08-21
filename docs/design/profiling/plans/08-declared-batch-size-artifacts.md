@@ -8,9 +8,10 @@
 
 ## Status
 
-Implemented for two single-artifact paths. Every artifact declares its
-batch-invariant input tensor contract. Derived RKNN artifacts additionally
-declare the finite batch-size set fixed by conversion. Canonical ONNX artifacts
+Implemented for two single-artifact paths. Every artifact declares its ordered
+batch-invariant input dimensions and data type. Derived RKNN artifacts
+additionally declare the finite batch-size set fixed by conversion. Canonical
+ONNX artifacts
 with a symbolic batch axis leave the finite sweep set to
 `BatchSaturation.spec.batchSizes`. Exactly one source supplies the batch sizes
 in the recorded curve plan, and one execution path serves the selected set.
@@ -30,11 +31,12 @@ to the measurement campaign.
 
 The canonical `mobilenet-v2-050.onnx` graph input `input` is
 `["batch", 3, 224, 224]`, its graph output `output` is `["batch", 1000]`, and
-its element type is `float32` with `NCHW` layout. These facts were read from the
-artifact image with `onnx.load`. The symbolic first axis permits ONNX Runtime to
-receive batch at execution. The artifact declaration records `[3, 224, 224]`
-without that axis, and the worker builds its input from the selected batch and
-the declared non-batch dimensions.
+its element type is `float32`. These facts were read from the artifact image
+with `onnx.load`; ONNX tensor type metadata does not provide a portable layout
+field. The symbolic first axis permits ONNX Runtime to receive batch at
+execution. The artifact declaration records the ordered dimensions
+`[3, 224, 224]` without that axis, and the worker builds its input from the
+selected batch and the declared non-batch dimensions.
 
 RKNN-Toolkit2 2.3.2 built one artifact holding declared batch sizes
 `1, 2, 4, 8, 16`:
@@ -60,13 +62,14 @@ batch  3 (UNDECLARED) -> refused; runtime enumerated [16,8,4,2,1]x224x224x3 NHWC
 Environment: `librknnrt 2.3.2 (429f97ae6b@2025-04-09)`, driver `0.9.6`, model
 version 6, target `RKNPU v2 / rk3588`, `model inference type: dynamic_shape`.
 The Lite API selects a declared profile from the input array shape, and the
-runtime refuses an undeclared profile. The runtime reports its shapes as NHWC
-while the framework layout is NCHW; CHILL preserves that runtime boundary.
+runtime refuses an undeclared profile. The runtime reports its shapes as NHWC;
+CHILL records that runtime-owned observation in execution evidence instead of
+asking the registration object to predict it.
 
 ## Declaration contracts
 
-Every artifact carries its input tensor contract, and a derived artifact also
-carries the finite conversion constraint:
+Every artifact carries its ordered input dimensions and data type, and a
+derived artifact also carries the finite conversion constraint:
 
 ```go
 type ModelArtifact struct {
@@ -119,8 +122,8 @@ prepare active and idle intents at the first selected batch
 record curve-plan.json with PlannedBatchSizes
 ```
 
-The plan copies the selected artifact's declared input tensor contract. A
-missing declaration returns `ArtifactInputContractMissingError` naming that
+The plan copies the selected artifact's ordered input dimensions and data type.
+A missing declaration returns `ArtifactInputContractMissingError` naming that
 artifact; the controller does not probe, introspect, infer, or default it.
 
 The plan records the batch-set source through its conversion contract. The
@@ -132,8 +135,8 @@ derivation layers.
 
 For the supported `mobilenet-v2-050` canonical ONNX path, the recorded tensor
 contract comes from the `canonical-onnx` catalog declaration:
-`[3, 224, 224]`, `NCHW`, `float32`. The controller does not open the artifact.
-The ONNX Runtime worker reads the graph as part of executing each Run.
+`[3, 224, 224]`, `float32`. The controller does not open the artifact. The ONNX
+Runtime worker reads the graph as part of executing each Run.
 
 The stored plan is authoritative on later reconciles. Semantic disagreement
 between a recomputed plan and the immutable stored plan terminates resolution

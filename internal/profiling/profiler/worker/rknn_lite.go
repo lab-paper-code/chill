@@ -15,7 +15,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
+const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha8"
 
 type RKNNLiteRuntimeConfig struct {
 	Command                 []string
@@ -208,7 +208,6 @@ func validateRKNNLiteDelivery(delivery profilingrun.CandidateRuntimeDelivery) er
 	}
 	capability := delivery.ArtifactCapability
 	if len(capability.InputSampleShape) == 0 ||
-		capability.InputLayout != profilingrun.RKNNLiteInputLayout ||
 		capability.InputDataType != profilingrun.RKNNLiteInputDataType {
 		return errors.New("verified RKNNLite artifact input contract is unsupported")
 	}

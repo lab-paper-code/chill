@@ -221,6 +221,27 @@ func TestDecodeCandidateReportRequiresPositiveArtifactDeclaredBatchSizes(t *test
 	}
 }
 
+func TestDecodeCandidateReportRejectsRetiredConfiguredLayout(t *testing.T) {
+	report := completeCandidateReportForTest()
+	report.ArtifactCapability = rknnArtifactCapabilityForTest()
+	payload, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["artifactCapability"].(map[string]any)["inputLayout"] = RKNNLiteInputLayout
+	payload, err = json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCandidateReport(payload); err == nil {
+		t.Fatal("expected retired configured layout rejection")
+	}
+}
+
 func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	report := completeCandidateReportForTest()
 	contract := rknnHostContractForTest()
@@ -368,7 +389,7 @@ func rknnHostContractForTest() CandidateReportHostContract {
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
 		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
-		InputLayout: RKNNLiteInputLayout, InputDataType: RKNNLiteInputDataType,
+		InputDataType: RKNNLiteInputDataType,
 	}
 }
 
@@ -422,6 +443,9 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 	}{
 		{name: "unsupported schema", mutate: func(report map[string]any) {
 			report["schemaVersion"] = "foreign"
+		}},
+		{name: "retired predecessor schema", mutate: func(report map[string]any) {
+			report["schemaVersion"] = "chill.dacs.io/modelcompat-report.v1alpha8"
 		}},
 		{name: "ModelSpec name drift", mutate: func(report map[string]any) {
 			report["inputs"].(map[string]any)["modelSpec"].(map[string]any)["name"] = "other-model"
