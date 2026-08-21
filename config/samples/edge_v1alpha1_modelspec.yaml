@@ -1,44 +1,46 @@
-apiVersion: edge.dacs.io/v1alpha1
-kind: ModelSpec
-metadata:
-  name: mobilenet-v2-050
-spec:
-  artifacts:
-  - name: canonical-onnx
-    format: onnx
-    source:
+apiVersion: edge.dacs.io/v1alpha1 # CHILL API version that defines ModelSpec.
+kind: ModelSpec # Registers one logical model and its executable artifacts.
+metadata: # Standard Kubernetes object identity.
+  name: mobilenet-v2-050 # Cluster-wide name referenced by profiling requests.
+spec: # User-declared model registration contract.
+  artifacts: # Executable representations of this logical model.
+  - name: canonical-onnx # Artifact name referenced by an execution path below.
+    format: onnx # File format consumed by the selected runtime family.
+    source: # Published OCI carrier and in-container artifact location.
+      # Prefer an immutable digest reference so later Runs select the same bytes.
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
-      architecture: arm64
-      path: /artifact/mobilenet-v2-050.onnx
-    input: # CHILL이 profiling용 입력 tensor를 생성할 때 사용하는 모델 계약입니다.
-      inputSampleShape: [3, 224, 224] # batch 축 N 제외: C=3, H=224, W=224
-      layout: NCHW # 실제 tensor 축 순서: batch, channel, height, width
-      dataType: float32 # 입력 tensor 원소 하나의 자료형
-  - name: mobilenet-v2-050-rk3588
-    format: rknn
-    source:
+      architecture: arm64 # Kubernetes architecture on which this carrier runs.
+      path: /artifact/mobilenet-v2-050.onnx # Absolute file path inside the carrier.
+    input: # Tensor contract CHILL uses to generate profiling inputs.
+      inputSampleShape: [3, 224, 224] # Excludes batch N: C=3, H=224, W=224.
+      layout: NCHW # Tensor axis order: batch, channel, height, width.
+      dataType: float32 # Scalar type of every generated input element.
+  - name: mobilenet-v2-050-rk3588 # Derived artifact for the RK3588 NPU.
+    format: rknn # RKNN model format consumed by RKNNLite.
+    source: # Independently published carrier for the derived artifact.
+      # This digest identifies the image that contains the RKNN file below.
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
-      architecture: arm64
-      path: /artifact/mobilenet-v2-050-rk3588.rknn
-    input: # 이 RKNN artifact가 기대하는 profiling 입력 tensor 계약입니다.
-      inputSampleShape: [224, 224, 3] # batch 축 N 제외: H=224, W=224, C=3
-      layout: NHWC # 실제 tensor 축 순서: batch, height, width, channel
-      dataType: float32 # 입력 tensor 원소 하나의 자료형
-    derivation:
-      sourceArtifact: canonical-onnx
-      targetPlatform: rk3588
-      declaredBatchSizes: [1, 2, 4, 8, 16]
-      conversion:
-        tool: rknn-toolkit2
-        version: 2.3.2
-  executionPaths:
-  - name: ort-cpu
-    artifact: canonical-onnx
-    runtime:
-      family: onnxruntime
-      backend: CPUExecutionProvider
-  - name: rknnlite
-    artifact: mobilenet-v2-050-rk3588
-    runtime:
-      family: rknnlite
-      backend: not-applicable
+      architecture: arm64 # Kubernetes architecture on which this carrier runs.
+      path: /artifact/mobilenet-v2-050-rk3588.rknn # Absolute file path inside the carrier.
+    input: # Tensor contract encoded by this derived artifact.
+      inputSampleShape: [224, 224, 3] # Excludes batch N: H=224, W=224, C=3.
+      layout: NHWC # Tensor axis order: batch, height, width, channel.
+      dataType: float32 # Scalar type expected by the RKNN artifact.
+    derivation: # Records how this artifact was produced from another artifact.
+      sourceArtifact: canonical-onnx # Source artifact name in this ModelSpec.
+      targetPlatform: rk3588 # Hardware platform selected during conversion.
+      declaredBatchSizes: [1, 2, 4, 8, 16] # Batch sizes encoded in the artifact.
+      conversion: # Converter identity needed to reproduce the derived artifact.
+        tool: rknn-toolkit2 # Converter family used to build the RKNN artifact.
+        version: 2.3.2 # Exact converter version used for this artifact.
+  executionPaths: # Stable ways CHILL may execute the registered artifacts.
+  - name: ort-cpu # User-facing path name selected by profiling requests.
+    artifact: canonical-onnx # Artifact from spec.artifacts used by this path.
+    runtime: # Runtime capability required from the target installation.
+      family: onnxruntime # Runtime family; its image is platform-owned configuration.
+      backend: CPUExecutionProvider # Backend that must be supplied by the runtime.
+  - name: rknnlite # Execution path for the derived RKNN artifact.
+    artifact: mobilenet-v2-050-rk3588 # Artifact used by this execution path.
+    runtime: # Runtime capability required from the target installation.
+      family: rknnlite # Runtime family; its image is platform-owned configuration.
+      backend: not-applicable # RKNNLite does not select a named execution provider.
