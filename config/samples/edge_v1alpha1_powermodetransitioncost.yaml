@@ -1,0 +1,27 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: PowerModeTransitionCost
+metadata:
+  name: example-power-mode-transition-cost
+  namespace: chill-system
+spec:
+  targetNode: example-transition-node
+  deviceClass: example-transition-device-class
+  modelSpec: mobilenet-v2-050
+  executionPath: ort-cpu
+  modes:
+    - powerMode: MAXN
+    - powerMode: MODE_15W
+  servingService: example-serving
+  servingContainer: runtime
+  acceptedCountTarget: 5
+  attemptLimit: 8
+  observationPolicy:
+    powerIntervalMilliseconds: 1000
+    powerTimeoutMilliseconds: 500
+    maximumTransitionDurationSeconds: 900
+    factPollIntervalMilliseconds: 250
+    maximumBoundaryDistanceMilliseconds: 1000
+    minimumCoverage: "0.95"
+    maximumSampleGapMilliseconds: 2000
+    maximumBoundaryUncertaintyMilliseconds: 1000
+    maximumReadyObservationDelayMilliseconds: 5000

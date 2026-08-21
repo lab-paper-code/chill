@@ -1,0 +1,29 @@
+apiVersion: edge.dacs.io/v1alpha1
+kind: ModelLoadedIdleBaseline
+metadata:
+  name: example-model-loaded-idle-baseline
+  namespace: chill-system
+spec:
+  state:
+    candidate:
+      modelSpec: mobilenet-v2-050
+      deviceClass: example-device-class
+      executionPath: ort-cpu
+      powerMode: fixed
+    targetNode: example-node
+    cpuRequest: 100m
+  cpuQuota: "4"
+  batch: 1
+  protocol:
+    admissionPolicy: idle-wall-power-v1
+    settlingDurationSeconds: 60
+    durationSeconds: 30
+    metricObservation:
+      intervalMilliseconds: 1000
+      timeoutMilliseconds: 500
+      durationSeconds: 31
+  pointPolicy:
+    version: idle-point-v1
+    minimumAcceptedRuns: 3
+    confidenceLevel: "0.95"
+  attemptLimit: 5
