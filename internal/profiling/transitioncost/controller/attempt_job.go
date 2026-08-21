@@ -180,9 +180,9 @@ func validateAttemptJobRequest(
 	if err := request.StoreBinding.Validate(); err != nil {
 		return PreparedDirection{}, err
 	}
-	if request.RawLocation.Store != measurement.Spec.EvidenceStore ||
+	if request.RawLocation.Store != request.Prepared.EvidenceStore ||
 		request.RawLocation.Store != request.StoreBinding.Store {
-		return PreparedDirection{}, errors.New("raw evidence store differs from the measurement or delivery binding")
+		return PreparedDirection{}, errors.New("raw evidence store differs from the preparation or delivery binding")
 	}
 	for name, duration := range map[string]time.Duration{
 		"power interval":           request.Prepared.PowerRequest.Interval,

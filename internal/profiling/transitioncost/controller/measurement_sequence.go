@@ -54,10 +54,11 @@ type measurementAttemptFinalizer interface {
 // measurementProgress is the package-local handoff to the enclosing reconciler
 // and final-result writer. It retains no mutable cursor.
 type measurementProgress struct {
-	stage    measurementStage
-	reason   string
-	attempts []FinalizedAttempt
-	table    *transitioncost.DirectedTable
+	stage         measurementStage
+	reason        string
+	evidenceStore string
+	attempts      []FinalizedAttempt
+	table         *transitioncost.DirectedTable
 }
 
 // measurementSequence reconstructs and advances the fixed alternating prefix
@@ -94,7 +95,9 @@ func (s *measurementSequence) advance(
 	accepted := [2]int32{}
 	for attemptNumber := int32(1); attemptNumber <= measurement.Spec.AttemptLimit; attemptNumber++ {
 		for directionIndex := 0; directionIndex < len(prepared.Directions); directionIndex++ {
-			selection, err := selectAttempt(measurement, directionIndex, attemptNumber)
+			selection, err := selectAttempt(
+				measurement, prepared.EvidenceStore, directionIndex, attemptNumber,
+			)
 			if err != nil {
 				return measurementProgress{}, err
 			}
@@ -124,10 +127,13 @@ func (s *measurementSequence) advance(
 			}
 			switch progress.Stage {
 			case AttemptStageObserverStarting, AttemptStageActuationRunning:
-				return measurementProgress{stage: measurementStageAttemptActive, attempts: attempts}, nil
+				return measurementProgress{
+					stage: measurementStageAttemptActive, evidenceStore: prepared.EvidenceStore, attempts: attempts,
+				}, nil
 			case AttemptStageTerminal:
 				return measurementProgress{
-					stage: measurementStageFailed, reason: progress.Reason, attempts: attempts,
+					stage: measurementStageFailed, reason: progress.Reason,
+					evidenceStore: prepared.EvidenceStore, attempts: attempts,
 				}, nil
 			case AttemptStageFinalizationReady:
 				finalized, err = s.finalizer.Finalize(
@@ -144,7 +150,10 @@ func (s *measurementSequence) advance(
 				); terminal || err != nil {
 					return decision, err
 				}
-				return measurementProgress{stage: measurementStageAttemptFinalized, attempts: attempts}, nil
+				return measurementProgress{
+					stage:         measurementStageAttemptFinalized,
+					evidenceStore: prepared.EvidenceStore, attempts: attempts,
+				}, nil
 			default:
 				return measurementProgress{}, fmt.Errorf("unsupported transition attempt stage %q", progress.Stage)
 			}
@@ -192,13 +201,15 @@ func evaluateMeasurement(
 			return measurementProgress{}, false, fmt.Errorf("summarize transition measurement: %w", err)
 		}
 		return measurementProgress{
-			stage: measurementStageComplete, attempts: attempts, table: &table,
+			stage: measurementStageComplete, evidenceStore: prepared.EvidenceStore,
+			attempts: attempts, table: &table,
 		}, true, nil
 	}
 	if attemptNumber == measurement.Spec.AttemptLimit &&
 		accepted[directionIndex] < measurement.Spec.AcceptedCountTarget {
 		return measurementProgress{
-			stage: measurementStageInsufficient, reason: measurementReasonAttemptLimitReached, attempts: attempts,
+			stage: measurementStageInsufficient, reason: measurementReasonAttemptLimitReached,
+			evidenceStore: prepared.EvidenceStore, attempts: attempts,
 		}, true, nil
 	}
 	return measurementProgress{}, false, nil

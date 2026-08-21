@@ -60,7 +60,9 @@ func NewAttemptFinalizer(
 func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alpha1.PowerModeTransitionCost,
 	prepared PreparedMeasurement, directionIndex int, attemptNumber int32, progress AttemptProgress,
 ) (FinalizedAttempt, error) {
-	selection, err := selectAttempt(measurement, directionIndex, attemptNumber)
+	selection, err := selectAttempt(
+		measurement, prepared.EvidenceStore, directionIndex, attemptNumber,
+	)
 	if err != nil {
 		return FinalizedAttempt{}, err
 	}

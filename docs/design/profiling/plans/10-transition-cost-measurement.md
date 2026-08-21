@@ -62,13 +62,14 @@ s  = (device type t, model m, source power mode p)
 s' = (device type t, model m, target power mode p')
 ~~~
 
-The request selects the source and target modes, not storage references or
-installation policy names. Preparation resolves the exact Node UID, unique
-configured actuator policy, and unique current Complete exact-state idle
-baseline for each mode. It freezes those materials with the device class,
-model, execution path, serving workload, request-readiness witness,
-serving-survival witness, meter source, direction order, accepted-count target,
-attempt bound, and measurement policy before execution.
+The request selects the source and target modes, not storage references,
+result-store names, or installation policy names. Preparation resolves the
+exact Node UID, unique configured actuator policy, installation Evidence Store,
+and unique current Complete exact-state idle baseline for each mode. It freezes
+those materials with the device class, model, execution path, serving workload,
+request-readiness witness, serving-survival witness, meter source, direction
+order, accepted-count target, attempt bound, and measurement policy before
+execution.
 
 This is a valid state-pair measurement, not a claim that every transition has
 the same cost. Source-state independence, target-only reduction, another
@@ -501,9 +502,10 @@ and its referenced raw and finalized evidence recorded under Unit 4.
 
 1. Add the minimal `PowerModeTransitionCost` API and generated artifacts. Its
    immutable spec contains the exact requested states, direction order,
-   accepted-count target, attempt bound, observation policy, and estimator.
+   accepted-count target, attempt bound, and observation policy.
    Preparation resolves and freezes the unique configured actuation policy and
-   current Complete exact-state idle baseline for each mode.
+   current Complete exact-state idle baseline for each mode, plus the
+   installation-selected logical Evidence Store.
 2. For each attempt, reconcile one off-target observation Job before creating
    its owned `NodeActuation`, with at most one attempt Job active.
 3. Create at most one `NodeActuation` at a time and expose only the device-side

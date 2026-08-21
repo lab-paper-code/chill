@@ -24,6 +24,7 @@ type SetupOptions struct {
 		evidencestore.LocationReader
 		evidencestore.ImmutableWriter
 	}
+	EvidenceStore      string
 	ObserverNodeName   string
 	AttemptJob         AttemptJobOptions
 	MaximumObjectBytes int64
@@ -43,7 +44,7 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 	}
 	preparer, err := NewPreparer(
 		manager.GetAPIReader(), options.Nodes, options.Metrics, baselines,
-		options.ActuationPolicies, options.ObserverNodeName,
+		options.ActuationPolicies, options.ObserverNodeName, options.EvidenceStore,
 	)
 	if err != nil {
 		return fmt.Errorf("construct transition preparer: %w", err)

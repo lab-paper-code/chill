@@ -349,7 +349,8 @@ transition-cost preparation lists the namespaced baseline requests for each
 selected mode and requires exactly one current Complete result whose stored
 measurement state matches the target. It then freezes that result's mean and
 full stored reference. The request names only the two power modes; installation
-configuration supplies the unique actuation policy for each selected mode.
+configuration supplies the unique actuation policy for each selected mode and
+the logical Evidence Store used for raw, finalized, and aggregate objects.
 Each baseline request also selects a required whole-core CPU quota. Its child
 Run transports that selection to preparation, which freezes it in the existing
 CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol

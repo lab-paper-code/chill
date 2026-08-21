@@ -86,7 +86,7 @@ func (m *AttemptMaterializer) Advance(
 	directionIndex int,
 	attemptNumber int32,
 ) (AttemptProgress, error) {
-	selection, err := selectAttempt(measurement, directionIndex, attemptNumber)
+	selection, err := selectAttempt(measurement, prepared.EvidenceStore, directionIndex, attemptNumber)
 	if err != nil {
 		return AttemptProgress{}, err
 	}
@@ -181,6 +181,7 @@ type attemptSelection struct {
 
 func selectAttempt(
 	measurement *edgev1alpha1.PowerModeTransitionCost,
+	evidenceStore string,
 	directionIndex int,
 	attemptNumber int32,
 ) (attemptSelection, error) {
@@ -201,8 +202,8 @@ func selectAttempt(
 	prefix := "power-mode-transition-costs/" + string(measurement.UID) + "/" + suffix + "/"
 	return attemptSelection{
 		directionIndex: directionIndex, name: name,
-		rawLocation:   evidencestore.ObjectLocation{Store: measurement.Spec.EvidenceStore, Key: prefix + "raw.json"},
-		finalLocation: evidencestore.ObjectLocation{Store: measurement.Spec.EvidenceStore, Key: prefix + "final.json"},
+		rawLocation:   evidencestore.ObjectLocation{Store: evidenceStore, Key: prefix + "raw.json"},
+		finalLocation: evidencestore.ObjectLocation{Store: evidenceStore, Key: prefix + "final.json"},
 	}, nil
 }
 

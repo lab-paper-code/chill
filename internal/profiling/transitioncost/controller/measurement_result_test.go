@@ -26,7 +26,7 @@ func TestMeasurementResultWriterStoresCompleteTableAndParityProgress(t *testing.
 		stored.record.Reason != "" || stored.record.DirectedTable == nil {
 		t.Fatalf("stored result = %#v, puts = %d", stored, store.puts)
 	}
-	if stored.reference.Store != measurement.Spec.EvidenceStore ||
+	if stored.reference.Store != progress.evidenceStore ||
 		stored.reference.Key != "power-mode-transition-costs/transition-cost-uid/result.json" ||
 		stored.reference.SchemaVersion != measurementResultSchemaVersion || stored.reference.Size < 1 {
 		t.Fatalf("stored reference = %#v", stored.reference)
@@ -63,13 +63,16 @@ func TestMeasurementResultWriterStoresTerminalOutcomeWithoutInventingTable(t *te
 			name: "insufficient retained attempts",
 			progress: measurementProgress{
 				stage: measurementStageInsufficient, reason: measurementReasonAttemptLimitReached,
-				attempts: complete.attempts[:3],
+				evidenceStore: complete.evidenceStore, attempts: complete.attempts[:3],
 			},
 			wantAccepted: [2]int32{2, 1}, wantReferences: [2]int{2, 1},
 		},
 		{
-			name:         "failed before finalized attempt",
-			progress:     measurementProgress{stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch},
+			name: "failed before finalized attempt",
+			progress: measurementProgress{
+				stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch,
+				evidenceStore: complete.evidenceStore,
+			},
 			wantAccepted: [2]int32{}, wantReferences: [2]int{},
 		},
 	}
@@ -99,7 +102,7 @@ func TestMeasurementResultWriterLoadsExistingObjectAsAuthority(t *testing.T) {
 	measurement, incoming := completeMeasurementResultFixture(t)
 	winner := measurementProgress{stage: measurementStageFailed, reason: AttemptReasonSourceStateMismatch}
 	winnerPayload := measurementResultPayload(t, winner)
-	location, err := measurementResultLocation(measurement)
+	location, err := measurementResultLocation(measurement, incoming.evidenceStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +186,7 @@ func TestMeasurementResultWriterRejectsNonterminalProgressAndUnexpectedReceipt(t
 	measurement, progress := completeMeasurementResultFixture(t)
 	writer := mustMeasurementResultWriter(t, newMeasurementResultMemoryStore())
 	if _, err := writer.write(context.Background(), measurement, measurementProgress{
-		stage: measurementStageAttemptActive,
+		stage: measurementStageAttemptActive, evidenceStore: progress.evidenceStore,
 	}); err == nil {
 		t.Fatal("nonterminal progress was stored")
 	}
@@ -224,7 +227,8 @@ func completeMeasurementResultFixture(
 		t.Fatal(err)
 	}
 	return fixture.measurement, measurementProgress{
-		stage: measurementStageComplete, attempts: attempts, table: &table,
+		stage: measurementStageComplete, evidenceStore: fixture.prepared.EvidenceStore,
+		attempts: attempts, table: &table,
 	}
 }
 

@@ -68,7 +68,8 @@ func TestAttemptFinalizerRetainsEveryVerdictFromCompleteOrFailedJob(t *testing.T
 			}
 			delete(fixture.store.objects, fixture.rawReference.Location())
 			recovered, err := restarted.Finalize(
-				context.Background(), fixture.measurement, PreparedMeasurement{}, 0, 1, AttemptProgress{},
+				context.Background(), fixture.measurement,
+				PreparedMeasurement{EvidenceStore: fixture.prepared.EvidenceStore}, 0, 1, AttemptProgress{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -242,11 +243,11 @@ func newAttemptFinalizerFixture(t *testing.T, outcome finalizationOutcome, condi
 ) attemptFinalizerFixture {
 	t.Helper()
 	measurement, prepared, scheme := preparationRecordFixture(t)
-	measurement.Spec.AttemptLimit, measurement.Spec.EvidenceStore = 5, attemptEvidenceStore
+	measurement.Spec.AttemptLimit = 5
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	selection, err := selectAttempt(measurement, 0, 1)
+	selection, err := selectAttempt(measurement, prepared.EvidenceStore, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

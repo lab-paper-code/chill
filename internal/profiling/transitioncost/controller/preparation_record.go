@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha2"
+	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha3"
 	preparationRecordDataKey       = "preparation.json"
 	maximumDurationMilliseconds    = int64((1<<63 - 1) / time.Millisecond)
 )
@@ -154,6 +154,7 @@ type preparedMeasurementWire struct {
 	Namespace                          string                                   `json:"namespace"`
 	TargetNode                         edgev1alpha1.ProfilingRunObjectReference `json:"targetNode"`
 	ObserverNodeName                   string                                   `json:"observerNodeName"`
+	EvidenceStore                      string                                   `json:"evidenceStore"`
 	DeviceClass                        string                                   `json:"deviceClass"`
 	ExecutionPath                      string                                   `json:"executionPath"`
 	ServingService                     string                                   `json:"servingService"`
@@ -221,7 +222,8 @@ func projectPreparationWire(prepared PreparedMeasurement) (preparedMeasurementWi
 	}
 	wire := preparedMeasurementWire{
 		Namespace: prepared.Namespace, TargetNode: prepared.TargetNode, ObserverNodeName: prepared.ObserverNodeName,
-		DeviceClass: prepared.DeviceClass, ExecutionPath: prepared.ExecutionPath,
+		EvidenceStore: prepared.EvidenceStore,
+		DeviceClass:   prepared.DeviceClass, ExecutionPath: prepared.ExecutionPath,
 		ServingService: prepared.ServingService, ServingContainer: prepared.ServingContainer,
 		PowerSource: preparationPowerSourceWire{
 			Kind: prepared.PowerSource.Kind, Endpoint: prepared.PowerSource.Endpoint, Metric: prepared.PowerSource.Metric,
@@ -283,7 +285,8 @@ func decodePreparationRecord(payload []byte) (PreparedMeasurement, error) {
 func restorePreparedMeasurement(wire preparedMeasurementWire) (PreparedMeasurement, error) {
 	for name, value := range map[string]string{
 		"namespace": wire.Namespace, "target Node name": wire.TargetNode.Name, "target Node UID": wire.TargetNode.UID,
-		"observer Node name": wire.ObserverNodeName, "DeviceClass": wire.DeviceClass,
+		"observer Node name": wire.ObserverNodeName, "Evidence Store": wire.EvidenceStore,
+		"DeviceClass":    wire.DeviceClass,
 		"execution path": wire.ExecutionPath, "serving Service": wire.ServingService,
 		"serving container": wire.ServingContainer, "power source kind": wire.PowerSource.Kind,
 		"power source endpoint": wire.PowerSource.Endpoint, "power metric": wire.PowerSource.Metric,
@@ -309,7 +312,8 @@ func restorePreparedMeasurement(wire preparedMeasurementWire) (PreparedMeasureme
 
 	prepared := PreparedMeasurement{
 		Namespace: wire.Namespace, TargetNode: wire.TargetNode, ObserverNodeName: wire.ObserverNodeName,
-		DeviceClass: wire.DeviceClass, ExecutionPath: wire.ExecutionPath,
+		EvidenceStore: wire.EvidenceStore,
+		DeviceClass:   wire.DeviceClass, ExecutionPath: wire.ExecutionPath,
 		ServingService: wire.ServingService, ServingContainer: wire.ServingContainer,
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: wire.PowerSource.Kind, Endpoint: wire.PowerSource.Endpoint, Metric: wire.PowerSource.Metric,

@@ -292,9 +292,10 @@ func setupTransitionCostController(
 	shared *profilerControllerShared,
 ) error {
 	deadlineOverhead := time.Duration(opts.transitionObserverDeadlineOverheadSeconds) * time.Second
+	logicalStore := component.EvidenceStoreServiceName(opts.systemName)
 	err := transitioncontroller.SetupWithManager(mgr, transitioncontroller.SetupOptions{
 		Nodes: shared.nodes, Metrics: shared.power, ActuationPolicies: shared.actuationPolicies,
-		StoreBindings: shared.stores, Evidence: shared.evidence,
+		StoreBindings: shared.stores, Evidence: shared.evidence, EvidenceStore: logicalStore,
 		ObserverNodeName: opts.transitionObserverNodeName,
 		AttemptJob: transitioncontroller.AttemptJobOptions{
 			ObserverImage:          opts.transitionObserverImage,

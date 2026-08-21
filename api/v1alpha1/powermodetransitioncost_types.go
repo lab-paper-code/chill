@@ -63,11 +63,6 @@ type PowerModeTransitionCostSpec struct {
 	AttemptLimit int32 `json:"attemptLimit"`
 
 	ObservationPolicy PowerModeTransitionCostObservationPolicySpec `json:"observationPolicy"`
-
-	// EvidenceStore is a logical CHILL-managed store name, not an endpoint.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	EvidenceStore string `json:"evidenceStore"`
 }
 
 type PowerModeTransitionCostModeSpec struct {

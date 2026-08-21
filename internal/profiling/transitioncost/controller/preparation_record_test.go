@@ -96,8 +96,13 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 		{name: "old schema", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
 				string(record.BinaryData[preparationRecordDataKey]), preparationRecordSchemaVersion,
-				"chill.dacs.io/power-mode-transition-preparation.v1alpha1", 1,
+				"chill.dacs.io/power-mode-transition-preparation.v1alpha2", 1,
 			))
+		}},
+		{name: "missing Evidence Store", mutate: func(record *corev1.ConfigMap) {
+			mutatePreparationWire(t, record, func(wire *preparationRecordWire) {
+				wire.Prepared.EvidenceStore = ""
+			})
 		}},
 		{name: "trailing value", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = append(record.BinaryData[preparationRecordDataKey], []byte(" {}")...)
@@ -127,7 +132,8 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 func assertRecoveredPreparation(t *testing.T, recovered, expected PreparedMeasurement) {
 	t.Helper()
 	if recovered.Namespace != expected.Namespace || recovered.TargetNode != expected.TargetNode ||
-		recovered.ObserverNodeName != expected.ObserverNodeName || recovered.DeviceClass != expected.DeviceClass ||
+		recovered.ObserverNodeName != expected.ObserverNodeName || recovered.EvidenceStore != expected.EvidenceStore ||
+		recovered.DeviceClass != expected.DeviceClass ||
 		recovered.ExecutionPath != expected.ExecutionPath || recovered.ServingService != expected.ServingService ||
 		recovered.ServingContainer != expected.ServingContainer ||
 		recovered.PowerSource.Kind != expected.PowerSource.Kind ||

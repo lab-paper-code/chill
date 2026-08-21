@@ -199,7 +199,7 @@ func requireFinalLocation(t *testing.T, measurement *edgev1alpha1.PowerModeTrans
 	direction int, attempt int32, want string,
 ) {
 	t.Helper()
-	selection, err := selectAttempt(measurement, direction, attempt)
+	selection, err := selectAttempt(measurement, attemptEvidenceStore, direction, attempt)
 	if err != nil || selection.finalLocation.Key != want {
 		t.Fatalf("final location = %#v, error = %v", selection.finalLocation, err)
 	}
@@ -334,7 +334,6 @@ func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attem
 	t.Helper()
 	measurement, prepared, scheme := preparationRecordFixture(t)
 	measurement.Spec.AttemptLimit = 3
-	measurement.Spec.EvidenceStore = attemptEvidenceStore
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}

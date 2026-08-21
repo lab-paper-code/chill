@@ -68,6 +68,7 @@ func TestMeasurementSequenceStopsWhenOneDirectionCannotReachTarget(t *testing.T)
 			t.Fatal(err)
 		}
 		if progress.stage != measurementStageInsufficient || progress.reason != measurementReasonAttemptLimitReached ||
+			progress.evidenceStore != fixture.prepared.EvidenceStore ||
 			len(progress.attempts) != 9 || len(fixture.materializer.calls) != 1 ||
 			fixture.materializer.calls[0] != (sequenceCoordinate{0, 5}) {
 			t.Fatalf("progress = %#v, materializer calls = %#v", progress, fixture.materializer.calls)
@@ -90,7 +91,8 @@ func TestMeasurementSequenceStopsWhenOneDirectionCannotReachTarget(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if progress.stage != measurementStageInsufficient || len(progress.attempts) != 10 ||
+		if progress.stage != measurementStageInsufficient ||
+			progress.evidenceStore != fixture.prepared.EvidenceStore || len(progress.attempts) != 10 ||
 			len(fixture.finalizer.loads) != 10 {
 			t.Fatalf("progress = %#v, load count = %d", progress, len(fixture.finalizer.loads))
 		}
@@ -114,7 +116,8 @@ func TestMeasurementSequenceCompletesExactDirectedTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress.stage != measurementStageComplete || progress.table == nil || len(progress.attempts) != 10 ||
+	if progress.stage != measurementStageComplete || progress.evidenceStore != fixture.prepared.EvidenceStore ||
+		progress.table == nil || len(progress.attempts) != 10 ||
 		len(fixture.materializer.calls) != 1 || fixture.materializer.calls[0] != (sequenceCoordinate{1, 5}) {
 		t.Fatalf("progress = %#v", progress)
 	}
@@ -164,6 +167,7 @@ func TestMeasurementSequenceStopsOnAttemptTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if progress.stage != measurementStageFailed || progress.reason != AttemptReasonSourceStateMismatch ||
+		progress.evidenceStore != fixture.prepared.EvidenceStore ||
 		len(fixture.finalizer.finalizeCalls) != 0 {
 		t.Fatalf("progress = %#v", progress)
 	}
@@ -192,7 +196,6 @@ func newMeasurementSequenceFixture(t *testing.T) measurementSequenceFixture {
 	measurement, prepared, _ := preparationRecordFixture(t)
 	measurement.Spec.AcceptedCountTarget = 5
 	measurement.Spec.AttemptLimit = 5
-	measurement.Spec.EvidenceStore = attemptEvidenceStore
 	preparations := &sequencePreparationSource{prepared: prepared}
 	materializer := &sequenceMaterializer{progress: AttemptProgress{Stage: AttemptStageObserverStarting}}
 	finalizer := &sequenceFinalizer{retained: map[evidencestore.ObjectLocation]FinalizedAttempt{}}
@@ -213,7 +216,7 @@ func (f *measurementSequenceFixture) retain(
 	verdict transitioncost.Verdict,
 ) {
 	t.Helper()
-	selection, err := selectAttempt(f.measurement, direction, attempt)
+	selection, err := selectAttempt(f.measurement, f.prepared.EvidenceStore, direction, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +301,7 @@ type sequenceMaterializer struct {
 func (m *sequenceMaterializer) Advance(
 	_ context.Context,
 	_ *edgev1alpha1.PowerModeTransitionCost,
-	_ PreparedMeasurement,
+	prepared PreparedMeasurement,
 	direction int,
 	attempt int32,
 ) (AttemptProgress, error) {
@@ -330,7 +333,7 @@ func (f *sequenceFinalizer) load(
 func (f *sequenceFinalizer) Finalize(
 	_ context.Context,
 	measurement *edgev1alpha1.PowerModeTransitionCost,
-	_ PreparedMeasurement,
+	prepared PreparedMeasurement,
 	direction int,
 	attempt int32,
 	_ AttemptProgress,
@@ -340,7 +343,7 @@ func (f *sequenceFinalizer) Finalize(
 	if f.finalizeErr != nil {
 		return FinalizedAttempt{}, f.finalizeErr
 	}
-	selection, err := selectAttempt(measurement, direction, attempt)
+	selection, err := selectAttempt(measurement, prepared.EvidenceStore, direction, attempt)
 	if err != nil {
 		return FinalizedAttempt{}, err
 	}

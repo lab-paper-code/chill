@@ -162,15 +162,15 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 	}
 	measurement := &edgev1alpha1.PowerModeTransitionCost{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "measure", Name: "cost", UID: types.UID("cost-uid")},
-		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target", EvidenceStore: "evidence"},
+		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target"},
 	}
 	directions := [2]PreparedDirection{}
 	directions[0].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-a", Model: "model", PowerMode: "low"}
 	directions[1].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-b", Model: "model", PowerMode: "high"}
 	prepared := PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
-		ObserverNodeName: "observer",
-		ServingService:   "serving", ServingContainer: "runtime",
+		ObserverNodeName: "observer", EvidenceStore: "evidence",
+		ServingService: "serving", ServingContainer: "runtime",
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://meter/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device-b"},

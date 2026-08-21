@@ -62,7 +62,7 @@ func (w *measurementResultWriter) write(
 	measurement *edgev1alpha1.PowerModeTransitionCost,
 	progress measurementProgress,
 ) (storedMeasurementResult, error) {
-	location, err := measurementResultLocation(measurement)
+	location, err := measurementResultLocation(measurement, progress.evidenceStore)
 	if err != nil {
 		return storedMeasurementResult{}, err
 	}
@@ -136,12 +136,13 @@ func (w *measurementResultWriter) load(
 
 func measurementResultLocation(
 	measurement *edgev1alpha1.PowerModeTransitionCost,
+	evidenceStore string,
 ) (evidencestore.ObjectLocation, error) {
 	if measurement == nil || !cleanMeasurementResultText(string(measurement.UID)) {
 		return evidencestore.ObjectLocation{}, errors.New("transition measurement and UID are required")
 	}
 	location := evidencestore.ObjectLocation{
-		Store: measurement.Spec.EvidenceStore,
+		Store: evidenceStore,
 		Key:   fmt.Sprintf("power-mode-transition-costs/%s/result.json", measurement.UID),
 	}
 	if err := location.Validate(); err != nil {

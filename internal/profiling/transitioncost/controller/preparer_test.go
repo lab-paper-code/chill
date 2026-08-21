@@ -41,12 +41,20 @@ func TestNewPreparerRequiresEveryResolver(t *testing.T) {
 		{name: "actuation-policy resolver", catalogs: catalogs, nodes: nodes, metrics: metrics, baselines: baselines},
 	}
 	for _, test := range tests {
-		if _, err := NewPreparer(test.catalogs, test.nodes, test.metrics, test.baselines, test.actuation, "observer"); err == nil {
+		if _, err := NewPreparer(
+			test.catalogs, test.nodes, test.metrics, test.baselines, test.actuation,
+			"observer", attemptEvidenceStore,
+		); err == nil {
 			t.Fatalf("nil %s was accepted", test.name)
 		}
 	}
-	if _, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation, "NOT_A_NODE"); err == nil {
+	if _, err := NewPreparer(
+		catalogs, nodes, metrics, baselines, actuation, "NOT_A_NODE", attemptEvidenceStore,
+	); err == nil {
 		t.Fatal("invalid observer Node name was accepted")
+	}
+	if _, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation, "observer", " "); err == nil {
+		t.Fatal("invalid Evidence Store was accepted")
 	}
 }
 
@@ -167,7 +175,7 @@ func assertPreparedSelection(
 	t.Helper()
 	if prepared.Namespace != measurement.Namespace ||
 		prepared.TargetNode != (edgev1alpha1.ProfilingRunObjectReference{Name: measurement.Spec.TargetNode, UID: "node-uid"}) ||
-		prepared.ObserverNodeName != "observer" ||
+		prepared.ObserverNodeName != "observer" || prepared.EvidenceStore != attemptEvidenceStore ||
 		prepared.DeviceClass != measurement.Spec.DeviceClass ||
 		prepared.ExecutionPath != measurement.Spec.ExecutionPath ||
 		prepared.ServingService != measurement.Spec.ServingService ||
@@ -245,7 +253,8 @@ func TestPreparerRejectsTargetLocalObserverBeforeResolution(t *testing.T) {
 	baselines := &recordingIdleBaselineReader{}
 	actuation := validActuationPolicyResolver()
 	preparer, err := NewPreparer(
-		catalogs, nodes, metrics, baselines, actuation, validTransitionMeasurement().Spec.TargetNode,
+		catalogs, nodes, metrics, baselines, actuation,
+		validTransitionMeasurement().Spec.TargetNode, attemptEvidenceStore,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -413,7 +422,9 @@ func mustPreparerWith(
 	actuation profiler.ActuationPolicyResolver,
 ) *Preparer {
 	t.Helper()
-	preparer, err := NewPreparer(catalogs, nodes, metrics, baselines, actuation, "observer")
+	preparer, err := NewPreparer(
+		catalogs, nodes, metrics, baselines, actuation, "observer", attemptEvidenceStore,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

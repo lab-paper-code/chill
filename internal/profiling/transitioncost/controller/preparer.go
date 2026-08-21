@@ -41,6 +41,7 @@ type Preparer struct {
 	baselines     IdleBaselineResolver
 	actuation     profiler.ActuationPolicyResolver
 	observerNode  string
+	evidenceStore string
 }
 
 func NewPreparer(
@@ -50,6 +51,7 @@ func NewPreparer(
 	baselines IdleBaselineResolver,
 	actuation profiler.ActuationPolicyResolver,
 	observerNode string,
+	evidenceStore string,
 ) (*Preparer, error) {
 	if deviceClasses == nil || nodes == nil || metrics == nil || baselines == nil || actuation == nil {
 		return nil, errors.New(
@@ -59,18 +61,22 @@ func NewPreparer(
 	if errs := validation.IsDNS1123Subdomain(observerNode); len(errs) > 0 {
 		return nil, fmt.Errorf("transition observer Node name is invalid: %s", strings.Join(errs, "; "))
 	}
+	if !clean(evidenceStore) {
+		return nil, errors.New("transition Evidence Store is required without surrounding whitespace")
+	}
 	return &Preparer{
 		deviceClasses: deviceClasses, nodes: nodes, metrics: metrics, baselines: baselines, actuation: actuation,
-		observerNode: observerNode,
+		observerNode: observerNode, evidenceStore: evidenceStore,
 	}, nil
 }
 
-// PreparedMeasurement contains only the selections consumed by the next Job
-// and NodeActuation materialization boundary.
+// PreparedMeasurement contains only the selections consumed by downstream
+// attempt and result materialization boundaries.
 type PreparedMeasurement struct {
 	Namespace              string
 	TargetNode             edgev1alpha1.ProfilingRunObjectReference
 	ObserverNodeName       string
+	EvidenceStore          string
 	DeviceClass            string
 	ExecutionPath          string
 	ServingService         string
@@ -217,8 +223,8 @@ func (p *Preparer) Prepare(
 	return PreparedMeasurement{
 		Namespace:        measurement.Namespace,
 		TargetNode:       edgev1alpha1.ProfilingRunObjectReference{Name: node.Name, UID: node.UID},
-		ObserverNodeName: p.observerNode,
-		DeviceClass:      measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
+		ObserverNodeName: p.observerNode, EvidenceStore: p.evidenceStore,
+		DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 		ServingService: measurement.Spec.ServingService, ServingContainer: measurement.Spec.ServingContainer,
 		PowerSource: powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,

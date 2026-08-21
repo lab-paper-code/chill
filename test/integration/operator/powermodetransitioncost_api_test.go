@@ -103,7 +103,6 @@ func validPowerModeTransitionCost(name string) *edgev1alpha1.PowerModeTransition
 				MaximumBoundaryUncertaintyMilliseconds:   100,
 				MaximumReadyObservationDelayMilliseconds: 5000,
 			},
-			EvidenceStore: "test-store",
 		},
 	}
 }

@@ -71,12 +71,6 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
-              evidenceStore:
-                description: EvidenceStore is a logical CHILL-managed store name,
-                  not an endpoint.
-                maxLength: 253
-                minLength: 1
-                type: string
               executionPath:
                 description: |-
                   ExecutionPath selects the ModelSpec path shared by the serving workload
@@ -188,7 +182,6 @@ spec:
             - acceptedCountTarget
             - attemptLimit
             - deviceClass
-            - evidenceStore
             - executionPath
             - modelSpec
             - modes

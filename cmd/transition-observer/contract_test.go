@@ -70,7 +70,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	}
 	measurement := &edgev1alpha1.PowerModeTransitionCost{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "measure", Name: "transition-cost", UID: types.UID("measurement-uid")},
-		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target", EvidenceStore: "evidence"},
+		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target"},
 	}
 	directions := [2]transitioncontroller.PreparedDirection{}
 	directions[1].FrozenContract = transitioncost.FrozenContract{
@@ -78,8 +78,8 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	}
 	prepared := transitioncontroller.PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
-		ObserverNodeName: "observer",
-		ServingService:   "serving", ServingContainer: "runtime",
+		ObserverNodeName: "observer", EvidenceStore: "evidence",
+		ServingService: "serving", ServingContainer: "runtime",
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://metrics/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device"},
