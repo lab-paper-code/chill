@@ -10,20 +10,20 @@ spec:
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
       architecture: arm64
       path: /artifact/mobilenet-v2-050.onnx
-    input:
-      inputSampleShape: [3, 224, 224]
-      layout: NCHW
-      dataType: float32
+    input: # CHILL이 profiling용 입력 tensor를 생성할 때 사용하는 모델 계약입니다.
+      inputSampleShape: [3, 224, 224] # batch 축 N 제외: C=3, H=224, W=224
+      layout: NCHW # 실제 tensor 축 순서: batch, channel, height, width
+      dataType: float32 # 입력 tensor 원소 하나의 자료형
   - name: mobilenet-v2-050-rk3588
     format: rknn
     source:
       image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
       architecture: arm64
       path: /artifact/mobilenet-v2-050-rk3588.rknn
-    input:
-      inputSampleShape: [224, 224, 3]
-      layout: NHWC
-      dataType: float32
+    input: # 이 RKNN artifact가 기대하는 profiling 입력 tensor 계약입니다.
+      inputSampleShape: [224, 224, 3] # batch 축 N 제외: H=224, W=224, C=3
+      layout: NHWC # 실제 tensor 축 순서: batch, height, width, channel
+      dataType: float32 # 입력 tensor 원소 하나의 자료형
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588
