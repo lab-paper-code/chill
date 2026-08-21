@@ -80,7 +80,13 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	declaration, err := selectExecutionDeclaration(configMap, r.options.ConfigMapKey, selection)
+	declaration, err := selectExecutionDeclaration(
+		configMap,
+		r.options.ConfigMapKey,
+		selection.DeviceClass,
+		modelPath.Runtime.Family,
+		modelPath.Runtime.Backend,
+	)
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
@@ -105,7 +111,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		)
 	}
 
-	if declaration.Artifact.Architecture != deviceClass.Spec.Architecture {
+	if artifact.Source.Architecture != deviceClass.Spec.Architecture {
 		return profiler.ResolvedCandidate{}, errors.New("artifact supply architecture does not match DeviceClass")
 	}
 	report, err := buildCandidateReport(candidateReportInput{
@@ -136,7 +142,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		State: profilingrun.ExecutionState{
 			DeviceClass: selection.DeviceClass,
 			Model:       selection.ModelSpec, Artifact: artifact.Name,
-			ArtifactPath:  declaration.Artifact.Path,
+			ArtifactPath:  artifact.Source.Path,
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
 			PowerMode: selection.PowerMode, HostContract: reportHostContract(declaration.Host),
 		},
@@ -145,9 +151,9 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 		DevicePowerModes:     deviceFacts.powerModes,
 		SelectedActuator:     cloneActuatorTarget(deviceFacts.selectedActuator),
 		RuntimeImage:         declaration.Runtime.Image,
-		ArtifactImage:        declaration.Artifact.Image,
-		ArtifactArchitecture: declaration.Artifact.Architecture,
-		ArtifactPath:         declaration.Artifact.Path,
+		ArtifactImage:        artifact.Source.Image,
+		ArtifactArchitecture: artifact.Source.Architecture,
+		ArtifactPath:         artifact.Source.Path,
 		MetricObserverImage:  declaration.MetricObserverImage,
 	}, nil
 }

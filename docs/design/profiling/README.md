@@ -387,8 +387,8 @@ plans or competing architecture authorities:
 
 - `DeviceClass` describes stable hardware-class facts, not live Node or
   runtime state.
-- `ModelSpec` describes logical models, immutable artifacts, and stable
-  execution-path requirements, not execution results.
+- `ModelSpec` registers logical models, immutable OCI artifact carriers, and
+  stable execution-path requirements, not execution results.
 - Kubernetes owns admission, placement, allocation, Job retry, and Pod
   lifecycle.
 - Helm owns installation-time identities, permissions, and base configuration;

@@ -9,9 +9,9 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	corev1 "k8s.io/api/core/v1"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha5"
+	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha6"
 	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha2"
-	artifactSupplySchema     = "chill.dacs.io/artifact-supply.v1alpha1"
 	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
 )
 
@@ -34,13 +33,10 @@ type executionFactsDocument struct {
 }
 
 type executionDeclaration struct {
-	ModelSpec     string                   `json:"modelSpec"`
-	DeviceClass   string                   `json:"deviceClass"`
-	ExecutionPath string                   `json:"executionPath"`
-	Runtime       runtimeDeclarationSource `json:"runtime"`
-	Artifact      artifactSupply           `json:"artifact"`
-	Host          *hostExecutionContract   `json:"host,omitempty"`
-	Access        *runtimeAccessContract   `json:"access,omitempty"`
+	DeviceClass string                   `json:"deviceClass"`
+	Runtime     runtimeDeclarationSource `json:"runtime"`
+	Host        *hostExecutionContract   `json:"host,omitempty"`
+	Access      *runtimeAccessContract   `json:"access,omitempty"`
 }
 
 // runtimeDeclarationSource preserves the exact producer output instead of
@@ -64,14 +60,6 @@ type runtimeDeclaration struct {
 type runtimePackage struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
-}
-
-// artifactSupply is a versioned delivery contract.
-type artifactSupply struct {
-	SchemaVersion string `json:"schemaVersion"`
-	Image         string `json:"image"`
-	Architecture  string `json:"architecture"`
-	Path          string `json:"path"`
 }
 
 // hostExecutionContract is installation configuration, not a current host
@@ -119,11 +107,8 @@ type npuAllocationClaim struct {
 }
 
 type resolvedExecutionDeclaration struct {
-	ModelSpec           string
 	DeviceClass         string
-	ExecutionPath       string
 	Runtime             runtimeDeclaration
-	Artifact            artifactSupply
 	Host                *hostExecutionContract
 	Access              *runtimeAccessContract
 	MetricObserverImage string
@@ -132,7 +117,9 @@ type resolvedExecutionDeclaration struct {
 func selectExecutionDeclaration(
 	configMap *corev1.ConfigMap,
 	configMapKey string,
-	selection profiler.CandidateSelection,
+	deviceClass string,
+	runtimeFamily string,
+	runtimeBackend string,
 ) (resolvedExecutionDeclaration, error) {
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
 		return resolvedExecutionDeclaration{}, errors.New("Profiler fact-source ConfigMap has incomplete API identity")
@@ -163,18 +150,33 @@ func selectExecutionDeclaration(
 	seen := make(map[string]struct{}, len(document.Declarations))
 	var selected *resolvedExecutionDeclaration
 	for index := range document.Declarations {
-		declaration, err := validateExecutionDeclaration(document.SchemaVersion, document.Declarations[index])
+		declaration, err := validateExecutionDeclaration(document.Declarations[index])
 		if err != nil {
 			return resolvedExecutionDeclaration{}, fmt.Errorf("validate execution declaration %d: %w", index, err)
 		}
-		identity := declaration.ModelSpec + "\x00" + declaration.DeviceClass + "\x00" + declaration.ExecutionPath
+		backends := append([]string(nil), declaration.Runtime.Runtime.Backends...)
+		slices.Sort(backends)
+		identity := declaration.DeviceClass + "\x00" + declaration.Runtime.Runtime.Family +
+			"\x00" + strings.Join(backends, "\x00")
 		if _, duplicate := seen[identity]; duplicate {
-			return resolvedExecutionDeclaration{}, fmt.Errorf("duplicate execution declaration for %s/%s/%s",
-				declaration.ModelSpec, declaration.DeviceClass, declaration.ExecutionPath)
+			return resolvedExecutionDeclaration{}, fmt.Errorf(
+				"duplicate execution declaration for %s/%s/%s",
+				declaration.DeviceClass,
+				declaration.Runtime.Runtime.Family,
+				strings.Join(backends, ","),
+			)
 		}
 		seen[identity] = struct{}{}
-		if declaration.ModelSpec == selection.ModelSpec && declaration.DeviceClass == selection.DeviceClass &&
-			declaration.ExecutionPath == selection.ExecutionPath {
+		if declaration.DeviceClass == deviceClass && declaration.Runtime.Runtime.Family == runtimeFamily &&
+			slices.Contains(declaration.Runtime.Runtime.Backends, runtimeBackend) {
+			if selected != nil {
+				return resolvedExecutionDeclaration{}, fmt.Errorf(
+					"multiple trusted execution declarations for %s/%s/%s",
+					deviceClass,
+					runtimeFamily,
+					runtimeBackend,
+				)
+			}
 			copy := declaration
 			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
 			copy.Runtime.Packages = append([]runtimePackage(nil), declaration.Runtime.Packages...)
@@ -185,8 +187,12 @@ func selectExecutionDeclaration(
 		}
 	}
 	if selected == nil {
-		return resolvedExecutionDeclaration{}, fmt.Errorf("no trusted execution declaration for %s/%s/%s",
-			selection.ModelSpec, selection.DeviceClass, selection.ExecutionPath)
+		return resolvedExecutionDeclaration{}, fmt.Errorf(
+			"no trusted execution declaration for %s/%s/%s",
+			deviceClass,
+			runtimeFamily,
+			runtimeBackend,
+		)
 	}
 	return *selected, nil
 }
@@ -213,20 +219,14 @@ func readSingleYAMLDocument(raw []byte) ([]byte, error) {
 	return document, nil
 }
 
-func validateExecutionDeclaration(schemaVersion string, source executionDeclaration) (resolvedExecutionDeclaration, error) {
-	for name, value := range map[string]string{
-		"modelSpec": source.ModelSpec, "deviceClass": source.DeviceClass,
-		"executionPath": source.ExecutionPath,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return resolvedExecutionDeclaration{}, fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
+func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutionDeclaration, error) {
+	if strings.TrimSpace(source.DeviceClass) == "" || strings.TrimSpace(source.DeviceClass) != source.DeviceClass {
+		return resolvedExecutionDeclaration{}, errors.New(
+			"deviceClass is required without surrounding whitespace",
+		)
 	}
 	runtime, err := decodeRuntimeDeclaration(source.Runtime)
 	if err != nil {
-		return resolvedExecutionDeclaration{}, err
-	}
-	if err := validateArtifactSupply(source.Artifact); err != nil {
 		return resolvedExecutionDeclaration{}, err
 	}
 	if source.Host != nil {
@@ -234,7 +234,7 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 			return resolvedExecutionDeclaration{}, err
 		}
 	}
-	if schemaVersion == executionFactsSchema && (source.Host == nil) != (source.Access == nil) {
+	if (source.Host == nil) != (source.Access == nil) {
 		return resolvedExecutionDeclaration{}, errors.New("host and runtime access contracts must be supplied together")
 	}
 	if source.Access != nil {
@@ -243,8 +243,7 @@ func validateExecutionDeclaration(schemaVersion string, source executionDeclarat
 		}
 	}
 	return resolvedExecutionDeclaration{
-		ModelSpec: source.ModelSpec, DeviceClass: source.DeviceClass, ExecutionPath: source.ExecutionPath,
-		Runtime: runtime, Artifact: source.Artifact,
+		DeviceClass: source.DeviceClass, Runtime: runtime,
 		Host: cloneHostExecutionContract(source.Host), Access: cloneRuntimeAccessContract(source.Access),
 	}, nil
 }
@@ -391,22 +390,4 @@ func cloneRuntimeAccessContract(source *runtimeAccessContract) *runtimeAccessCon
 
 func cleanAbsolutePath(value string) bool {
 	return artifactPath.MatchString(value) && path.Clean(value) == value
-}
-
-func validateArtifactSupply(artifact artifactSupply) error {
-	if artifact.SchemaVersion != artifactSupplySchema {
-		return fmt.Errorf("unsupported artifact supply schema %q", artifact.SchemaVersion)
-	}
-	for name, value := range map[string]string{
-		"artifact image": artifact.Image, "artifact architecture": artifact.Architecture,
-		"artifact path": artifact.Path,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
-	}
-	if !cleanAbsolutePath(artifact.Path) {
-		return errors.New("artifact path must be a clean absolute container path")
-	}
-	return nil
 }

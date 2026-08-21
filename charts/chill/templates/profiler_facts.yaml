@@ -10,7 +10,7 @@ metadata:
     {{- include "chill.labels" . | nindent 4 }}
 data:
   {{ .Values.profiler.factSource.executionFactsKey | quote }}: |
-    schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha5
+    schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha6
     metricObserverImage: {{ .Values.profiling.metricObserverImage | quote }}
     declarations:
 {{- toYaml .Values.profiling.executionDeclarations | nindent 6 }}

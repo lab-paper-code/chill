@@ -32,7 +32,7 @@ Accepted for the first CPU ORT path:
 
 ```text
 Model identity              metadata.name
-Artifact                    local name + format
+Artifact                    local name + format + exact OCI carrier source
 Execution path              local name + artifact reference
 Runtime requirement         family + backend
 ```
@@ -42,17 +42,17 @@ selected image supplies or actually uses them.
 
 Not included in the first schema:
 
-- architecture or accelerator requirements
+- model-level architecture or accelerator requirements
 - artifact batch capability
 - runtime version or image
-- artifact retrieval location
 - CPU quota, thread, placement, or other Run decisions
 - campaign, power-observation, execution-result, profile, or status fields
 
-The demonstrated canonical ONNX artifact is not architecture-specific, and
-the selected campaign batches do not establish an artifact batch
-capability. Those fields remain absent rather than being guessed from one CPU
-Run or added for future runtimes.
+The demonstrated canonical ONNX content is not architecture-specific. Its
+current OCI carrier still declares the exact Kubernetes architecture on which
+the artifact image can be delivered. The selected campaign batches do not
+establish an artifact batch capability, so that capability remains absent
+rather than being guessed from one CPU Run.
 
 ### Plan 6 extension: one declared-batch-size RKNN artifact
 
@@ -111,14 +111,15 @@ producer output, but are not declaration fields because the first consumer
 does not compare them. No CRD, registry controller, signing, attestation, or
 generic provenance schema is introduced.
 
-Configured declarations now live in the trusted Profiler fact source and are
-bound by exact source and content identity when a Run is frozen. A consumer
-treats a missing or untrusted declaration as `Unknown` and never rebinds an
-older declaration to a new image.
+Configured runtime declarations now live in the trusted Profiler fact source
+and are bound by exact source and content identity when a Run is frozen. They
+are reusable across models because the artifact carrier belongs to
+`ModelSpec`. A consumer treats a missing or untrusted declaration as an input
+failure and never rebinds an older declaration to a new image.
 
 Plan 6 extends this configuration envelope without changing the CPU producer:
 runtime-declaration v1alpha2 can retain image-owned package versions, while
-execution-facts v1alpha4 separately retains an expected host-library, driver,
+execution-facts v1alpha6 separately retains an expected host-library, driver,
 platform-compatible token, device-path, and Kubernetes allocation contract.
 It also keeps privileged mode and supplemental groups in a distinct runtime-
 access contract because those are delivery requirements, not physical state.
@@ -127,8 +128,8 @@ artifact's target platform, declared batch sizes, runtime input tensor contract,
 the exact typed actuator target for a non-fixed selection into the immutable
 Run input. Intent v1alpha9 retains the order-normalized physical
 host contract in state and defines the optional typed actuation binding
-consumed by Plan 6. Existing v1alpha1 runtime declarations and v1alpha2/v1alpha3
-execution facts remain readable but cannot carry the later fields.
+consumed by Plan 6. The execution-facts decoder accepts only v1alpha6 and
+rejects the retired model-specific v1alpha5 document.
 Candidate-report v1alpha2 through v1alpha7 were historical generations; the
 current decoder accepts only v1alpha8 and rejects every earlier version. These
 are expected contracts, not proof that a particular Job observed or satisfied
@@ -151,9 +152,9 @@ evaluator once. The pure evaluator has no Kubernetes client, hidden defaults,
 discovery, enumeration, status write, image inspection, or workload execution.
 
 The adapter preserves exact Kubernetes object and content identity, the
-selected path/artifact identity, and the declaration's immutable image
-reference. The deterministic candidate report never describes the result as
-runnable, schedulable, executable, ready, or admitted.
+selected path/artifact source from `ModelSpec`, and the declaration's immutable
+runtime image reference. The deterministic candidate report never describes
+the result as runnable, schedulable, executable, ready, or admitted.
 
 `Compatible`, `Incompatible`, and `Unknown` are computed domain results.
 Configuration I/O, strict decoding, structural reference, and identity-
@@ -290,8 +291,9 @@ authorize profiling execution.
 
 The first CPU ONNX Runtime path now closes this plan's acceptance boundary:
 
-- `ModelSpec` carries immutable artifacts and stable execution-path
-  requirements without compatibility-result or Run status fields.
+- `ModelSpec` carries each immutable artifact's exact OCI carrier and stable
+  execution-path requirements without compatibility-result or Run status
+  fields.
 - the isolated producer binds observed CPU runtime facts to the immutable
   runnable OCI image reference;
 - `internal/modelcompat` returns deterministic `Compatible`, `Incompatible`,

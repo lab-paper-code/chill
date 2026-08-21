@@ -69,8 +69,8 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 			PowerModes:   append([]string(nil), input.DeviceFacts.powerModes...),
 		},
 		ArtifactSupply: profilingrun.CandidateReportArtifactSupply{
-			Image: input.Declaration.Artifact.Image, Architecture: input.Declaration.Artifact.Architecture,
-			Path: input.Declaration.Artifact.Path,
+			Image: input.Artifact.Source.Image, Architecture: input.Artifact.Source.Architecture,
+			Path: input.Artifact.Source.Path,
 		},
 		ArtifactCapability:  reportArtifactCapability(input.Artifact),
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),

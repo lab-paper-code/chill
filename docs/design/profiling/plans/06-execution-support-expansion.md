@@ -353,7 +353,7 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha5 and candidate-report v1alpha7 keep image-owned
+Execution-facts v1alpha6 and candidate-report v1alpha8 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
@@ -366,9 +366,9 @@ identities, and supports either the Node-allocatable CPU quota or an explicitly
 selected whole-core Run quota. RKNNLite shares that CPU limit but omits ORT-only
 thread settings.
 Host-bound derivation identities use execution-state-identity v1alpha5. The
-installed RKNN declaration pins the arm64-only runtime image,
-declared-batch-size artifact supply image and path, exact host ABI/device
-contract, and runtime access contract.
+installed RKNN declaration pins the arm64-only runtime image, exact host
+ABI/device contract, and runtime access contract. `ModelSpec` pins the
+declared-batch-size artifact supply image, architecture, and path.
 The production Job consumes the verified report once and projects the
 runtime-specific artifact destination, exact file/device hostPaths,
 Pod-level supplemental groups, runtime-only privilege, and an optional extended

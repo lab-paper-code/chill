@@ -42,6 +42,43 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 	assertCandidateReport(t, resolved, selection)
 }
 
+func TestKubernetesCandidateResolverReusesRuntimeDeclarationAcrossModels(t *testing.T) {
+	objects := validCandidateObjects()
+	model := objects[0].(*edgev1alpha1.ModelSpec)
+	model.Name = "another-onnx-model"
+	selection := validCandidateSelection()
+	selection.ModelSpec = model.Name
+
+	resolved, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State.Model != model.Name || resolved.ArtifactImage != testArtifactImage {
+		t.Fatalf("runtime declaration did not resolve the second model: %#v", resolved)
+	}
+}
+
+func TestKubernetesCandidateResolverRejectsAmbiguousRuntimeDeclarations(t *testing.T) {
+	objects := validCandidateObjects()
+	config := objects[2].(*corev1.ConfigMap)
+	payload := strings.Replace(
+		validRuntimeDeclaration(),
+		`"backends":["CPUExecutionProvider"]`,
+		`"backends":["CPUExecutionProvider","CUDAExecutionProvider"]`,
+		1,
+	)
+	config.Data["execution-facts.yaml"] += `  - deviceClass: lattepanda-3-delta-8g
+    runtime:
+      payload: |-
+        ` + payload + `
+`
+
+	_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
+	if err == nil || !strings.Contains(err.Error(), "multiple trusted execution declarations") {
+		t.Fatalf("ambiguous runtime declarations returned %v", err)
+	}
+}
+
 func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.T) {
 	objects := validRKNNCandidateObjects()
 	resolver := newCandidateResolver(t, objects...)
@@ -287,7 +324,7 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "RuntimeArchitectureMismatch",
 		},
 		{
-			name: "runtime backend incompatible",
+			name: "runtime backend unavailable",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
 				replaceRuntimeDeclaration(
@@ -296,27 +333,47 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 					`"backends":["CUDAExecutionProvider"]`,
 				)
 			},
-			match: "RuntimeBackendUnavailable",
+			match: "no trusted execution declaration",
 		},
 		{
 			name: "artifact architecture mismatch",
 			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], "      architecture: amd64", "      architecture: arm64", 1,
-				)
+				objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0].Source.Architecture = "arm64"
 			},
 			match: "artifact supply architecture does not match DeviceClass",
 		},
 		{
 			name: "unsafe artifact path",
 			mutate: func(objects []client.Object) {
+				objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0].Source.Path = "/artifact/../hidden"
+			},
+			match: "source: path must be a clean absolute container path",
+		},
+		{
+			name: "previous execution facts schema",
+			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
 				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"], testArtifactPath, "/artifact/../hidden", 1,
+					config.Data["execution-facts.yaml"],
+					"profiler-execution-facts.v1alpha6",
+					"profiler-execution-facts.v1alpha5",
+					1,
 				)
 			},
-			match: "artifact path must be a clean absolute container path",
+			match: "unsupported Profiler execution facts schema",
+		},
+		{
+			name: "retired model-specific execution field",
+			mutate: func(objects []client.Object) {
+				config := objects[2].(*corev1.ConfigMap)
+				config.Data["execution-facts.yaml"] = strings.Replace(
+					config.Data["execution-facts.yaml"],
+					"  - deviceClass:",
+					"  - modelSpec: mobilenet-v2-050\n    deviceClass:",
+					1,
+				)
+			},
+			match: `unknown field "modelSpec"`,
 		},
 		{
 			name: "unknown execution fact field",
@@ -487,6 +544,12 @@ func validCandidateObjects() []client.Object {
 		Spec: edgev1alpha1.ModelSpecSpec{
 			Artifacts: []edgev1alpha1.ModelArtifact{{
 				Name: "canonical-onnx", Format: "onnx",
+				Source: edgev1alpha1.ModelArtifactSource{
+					Image: testArtifactImage, Architecture: testArchitecture, Path: testArtifactPath,
+				},
+				Input: &edgev1alpha1.ModelArtifactInputContract{
+					InputSampleShape: []int32{3, 224, 224}, Layout: "NCHW", DataType: "float32",
+				},
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 				Name: "ort-cpu", Artifact: "canonical-onnx",
@@ -522,6 +585,10 @@ func validRKNNCandidateObjects() []client.Object {
 	model := objects[0].(*edgev1alpha1.ModelSpec)
 	model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
 		Name: "mobilenet-v2-050-rk3588-bs1", Format: "rknn",
+		Source: edgev1alpha1.ModelArtifactSource{
+			Image: testArtifactImage, Architecture: testARM64Architecture,
+			Path: "/artifact/mobilenet-v2-050-rk3588-bs1.rknn",
+		},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
 			InputSampleShape: []int32{224, 224, 3}, Layout: profilingrun.RKNNLiteInputLayout,
 			DataType: profilingrun.RKNNLiteInputDataType,
@@ -542,39 +609,25 @@ func validRKNNCandidateObjects() []client.Object {
 
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha5
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha6
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
-  - modelSpec: mobilenet-v2-050
-    deviceClass: lattepanda-3-delta-8g
-    executionPath: ort-cpu
+  - deviceClass: lattepanda-3-delta-8g
     runtime:
       payload: |-
         ` + payload + `
-    artifact:
-      schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
-      image: ` + testArtifactImage + `
-      architecture: amd64
-      path: /artifact/mobilenet-v2-050.onnx
 `
 }
 
 func validRKNNExecutionFacts() string {
 	payload := validRKNNRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha5
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha6
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
-  - modelSpec: mobilenet-v2-050
-    deviceClass: orangepi-5-plus-16g
-    executionPath: rknnlite
+  - deviceClass: orangepi-5-plus-16g
     runtime:
       payload: |-
         ` + payload + `
-    artifact:
-      schemaVersion: chill.dacs.io/artifact-supply.v1alpha1
-      image: ` + testArtifactImage + `
-      architecture: arm64
-      path: /artifact/mobilenet-v2-050-rk3588-bs1.rknn
     host:
       libraries:
         - name: librknnrt

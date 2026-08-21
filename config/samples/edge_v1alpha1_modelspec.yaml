@@ -6,12 +6,20 @@ spec:
   artifacts:
   - name: canonical-onnx
     format: onnx
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721"
+      architecture: arm64
+      path: /artifact/mobilenet-v2-050.onnx
     input:
       inputSampleShape: [3, 224, 224]
       layout: NCHW
       dataType: float32
   - name: mobilenet-v2-050-rk3588
     format: rknn
+    source:
+      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
+      architecture: arm64
+      path: /artifact/mobilenet-v2-050-rk3588.rknn
     input:
       inputSampleShape: [224, 224, 3]
       layout: NHWC

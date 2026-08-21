@@ -132,9 +132,36 @@ spec:
                         by execution paths.
                       minLength: 1
                       type: string
+                    source:
+                      description: |-
+                        Source identifies the immutable OCI artifact carrier used to deliver this
+                        representation to a measurement worker.
+                      properties:
+                        architecture:
+                          description: Architecture is the Kubernetes architecture
+                            supported by the carrier.
+                          minLength: 1
+                          type: string
+                        image:
+                          description: Image is an immutable OCI image reference containing
+                            the artifact.
+                          minLength: 1
+                          type: string
+                        path:
+                          description: Path is the clean absolute path of the artifact
+                            in the carrier image.
+                          pattern: ^/[A-Za-z0-9._/-]+$
+                          type: string
+                      required:
+                      - architecture
+                      - image
+                      - path
+                      type: object
                   required:
                   - format
+                  - input
                   - name
+                  - source
                   type: object
                 minItems: 1
                 type: array

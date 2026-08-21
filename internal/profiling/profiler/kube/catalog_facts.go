@@ -124,6 +124,13 @@ func selectModelPath(
 			"execution path %q references missing artifact %q", selected.Name, selected.Artifact,
 		)
 	}
+	if err := validateModelArtifactSource(artifact.Source); err != nil {
+		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
+			"artifact %q source: %w",
+			artifact.Name,
+			err,
+		)
+	}
 	if artifact.Derivation != nil {
 		if artifact.Derivation.SourceArtifact == artifact.Name {
 			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
@@ -156,6 +163,22 @@ func selectModelPath(
 		}
 	}
 	return *selected, artifact, nil
+}
+
+func validateModelArtifactSource(source edgev1alpha1.ModelArtifactSource) error {
+	for name, value := range map[string]string{
+		"image":        source.Image,
+		"architecture": source.Architecture,
+		"path":         source.Path,
+	} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%s is required without surrounding whitespace", name)
+		}
+	}
+	if !cleanAbsolutePath(source.Path) {
+		return errors.New("path must be a clean absolute container path")
+	}
+	return nil
 }
 
 func validateObjectIdentity(kind, name string, uid types.UID, resourceVersion string) error {

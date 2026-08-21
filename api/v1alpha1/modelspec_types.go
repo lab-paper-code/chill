@@ -29,14 +29,32 @@ type ModelArtifact struct {
 	// +kubebuilder:validation:MinLength=1
 	Format string `json:"format"`
 
+	// Source identifies the immutable OCI artifact carrier used to deliver this
+	// representation to a measurement worker.
+	Source ModelArtifactSource `json:"source"`
+
 	// Input declares this artifact's input tensor contract without its batch axis.
-	// +optional
-	Input *ModelArtifactInputContract `json:"input,omitempty"`
+	Input *ModelArtifactInputContract `json:"input"`
 
 	// Derivation binds a derived executable to its source artifact and conversion settings.
 	// It is absent for canonical source artifacts.
 	// +optional
 	Derivation *ModelArtifactDerivation `json:"derivation,omitempty"`
+}
+
+// ModelArtifactSource identifies one exact artifact carrier and its in-container path.
+type ModelArtifactSource struct {
+	// Image is an immutable OCI image reference containing the artifact.
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+
+	// Architecture is the Kubernetes architecture supported by the carrier.
+	// +kubebuilder:validation:MinLength=1
+	Architecture string `json:"architecture"`
+
+	// Path is the clean absolute path of the artifact in the carrier image.
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._/-]+$`
+	Path string `json:"path"`
 }
 
 // ModelArtifactDerivation identifies how one derived artifact was produced.

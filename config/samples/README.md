@@ -8,6 +8,13 @@ for mutable power modes, may create a `NodeActuation`:
 - `edge_v1alpha1_modelloadedidlebaseline.yaml`
 - `edge_v1alpha1_powermodetransitioncost.yaml`
 
+`edge_v1alpha1_modelspec.yaml` is the complete registration record for the
+already-published model artifacts used by these examples. Each artifact owns
+its immutable OCI image, carrier architecture, and in-container path. To
+register another model, replace those source fields together with the model's
+format and input contract; no model-specific Helm execution declaration is
+required.
+
 Before applying one, replace the `example-*` identities and namespace with
 resources visible to the Profiler. `BatchSaturation`,
 `ModelLoadedIdleBaseline`, and `PowerModeTransitionCost` are normal user entry

@@ -28,8 +28,15 @@ var _ = Describe("ModelSpec API", func() {
 		ctx := context.Background()
 		model := validModelSpec(uniqueModelSpecName("derived"))
 		model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
-			Name:       "mobilenet-v2-050-rk3588-bs1",
-			Format:     "rknn",
+			Name:   "mobilenet-v2-050-rk3588-bs1",
+			Format: "rknn",
+			Source: edgev1alpha1.ModelArtifactSource{
+				Image: "registry.example/model-rknn@sha256:digest", Architecture: "arm64",
+				Path: "/artifact/model.rknn",
+			},
+			Input: &edgev1alpha1.ModelArtifactInputContract{
+				InputSampleShape: []int32{224, 224, 3}, Layout: "NHWC", DataType: "float32",
+			},
 			Derivation: validDerivedArtifact(),
 		})
 
@@ -60,6 +67,18 @@ var _ = Describe("ModelSpec API", func() {
 		}),
 		Entry("empty artifact format", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Format = ""
+		}),
+		Entry("empty artifact source image", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Source.Image = ""
+		}),
+		Entry("empty artifact source architecture", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Source.Architecture = ""
+		}),
+		Entry("relative artifact source path", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Source.Path = "artifact/model.onnx"
+		}),
+		Entry("missing artifact input contract", func(model *edgev1alpha1.ModelSpec) {
+			model.Spec.Artifacts[0].Input = nil
 		}),
 		Entry("duplicate artifact name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts = append(model.Spec.Artifacts, model.Spec.Artifacts[0])
@@ -142,6 +161,13 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 				{
 					Name:   "canonical-onnx",
 					Format: "onnx",
+					Source: edgev1alpha1.ModelArtifactSource{
+						Image: "registry.example/model@sha256:digest", Architecture: "arm64",
+						Path: "/artifact/model.onnx",
+					},
+					Input: &edgev1alpha1.ModelArtifactInputContract{
+						InputSampleShape: []int32{3, 224, 224}, Layout: "NCHW", DataType: "float32",
+					},
 				},
 			},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{
