@@ -130,14 +130,14 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	if _, err := DecodeCurvePlan(unknown); err == nil {
 		t.Fatal("expected unknown plan field rejection")
 	}
-	retiredLayout := bytes.Replace(
+	retiredDataType := bytes.Replace(
 		canonical,
-		[]byte(`"dataType":`),
-		[]byte(`"layout":"NHWC","dataType":`),
+		[]byte(`"inputSampleShape":`),
+		[]byte(`"dataType":"float32","inputSampleShape":`),
 		1,
 	)
-	if _, err := DecodeCurvePlan(retiredLayout); err == nil {
-		t.Fatal("expected retired configured layout rejection")
+	if _, err := DecodeCurvePlan(retiredDataType); err == nil {
+		t.Fatal("expected retired configured data type rejection")
 	}
 	if _, err := DecodeCurvePlan(append(canonical, []byte(` {}`)...)); err == nil {
 		t.Fatal("expected trailing plan value rejection")
@@ -145,7 +145,7 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	previousSchema := bytes.Replace(
 		canonical,
 		[]byte(curvePlanSchemaVersion),
-		[]byte("chill.dacs.io/curve-plan.v1alpha4"),
+		[]byte("chill.dacs.io/curve-plan.v1alpha5"),
 		1,
 	)
 	if _, err := DecodeCurvePlan(previousSchema); err == nil {
@@ -490,7 +490,7 @@ func validCurvePlanSpec() CurvePlanSpec {
 			Path: "/artifact/model.rknn", Image: testImage("artifact", "c"),
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
-		Tensor:            CurveTensorContract{DataType: "float32", InputSampleShape: []int{224, 224, 3}},
+		Tensor:            CurveTensorContract{InputSampleShape: []int{224, 224, 3}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
 	shared.IdleProtocol.InputGenerator = "none"

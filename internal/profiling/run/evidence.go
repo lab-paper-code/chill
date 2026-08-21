@@ -13,10 +13,9 @@ import (
 const (
 	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha4"
 
-	RKNNLiteCoreMask      = "NPU_CORE_0"
-	RKNNLiteInputLayout   = "NHWC"
-	RKNNLiteInputDataType = "float32"
-	runtimeAArch64        = "aarch64"
+	RKNNLiteCoreMask    = "NPU_CORE_0"
+	RKNNLiteInputLayout = "NHWC"
+	runtimeAArch64      = "aarch64"
 )
 
 type RuntimeResult struct {

@@ -147,8 +147,7 @@ func selectModelPath(
 	if selected.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily {
 		if artifact.Derivation == nil || artifact.Input == nil ||
 			len(artifact.Derivation.DeclaredBatchSizes) == 0 ||
-			len(artifact.Input.InputSampleShape) == 0 ||
-			artifact.Input.DataType != profilingrun.RKNNLiteInputDataType {
+			len(artifact.Input.InputSampleShape) == 0 {
 			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
 				"RKNNLite artifact requires a matching input tensor contract",
 			)

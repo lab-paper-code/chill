@@ -59,7 +59,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if firstReference.Store != storeName || firstReference.Key != wantKey ||
-		firstReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha5" ||
+		firstReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha6" ||
 		firstReference.Size != int64(len(storedPayload)) {
 		t.Fatalf("created curve-plan reference = %+v, payload bytes = %d", firstReference, len(storedPayload))
 	}
@@ -80,7 +80,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 	if store.puts != 2 || store.opens != 1 || recoveredReference.Store != storeName ||
 		recoveredReference.Key != wantKey ||
-		recoveredReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha5" ||
+		recoveredReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha6" ||
 		recoveredReference.Size != int64(len(storedPayload)) ||
 		recoveredReference.Size == firstReference.Size {
 		t.Fatalf("recovery = reference %+v, puts %d, opens %d", recoveredReference, store.puts, store.opens)
@@ -105,7 +105,7 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 	model := curvePlanModel(report)
 	model.Spec.Artifacts[0].Derivation = nil
 	model.Spec.Artifacts[0].Input = &edgev1alpha1.ModelArtifactInputContract{
-		InputSampleShape: []int32{3, 192, 256}, DataType: "float16",
+		InputSampleShape: []int32{3, 192, 256},
 	}
 	preparer := &fakeCurvePlanPreparer{
 		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
@@ -133,8 +133,7 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 		shared.Conversion.ToolVersion != "" {
 		t.Fatalf("canonical artifact conversion contract = %+v", shared.Conversion)
 	}
-	if shared.Tensor.DataType != "float16" ||
-		!slices.Equal(shared.Tensor.InputSampleShape, []int{3, 192, 256}) {
+	if !slices.Equal(shared.Tensor.InputSampleShape, []int{3, 192, 256}) {
 		t.Fatalf("canonical artifact tensor contract = %+v", shared.Tensor)
 	}
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
@@ -288,7 +287,7 @@ func curvePlanCandidateReport(
 		},
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "cpu", DeclaredBatchSizes: []int32{4, 1, 2},
-			InputSampleShape: []int32{3, 224, 224}, InputDataType: "float32",
+			InputSampleShape: []int32{3, 224, 224},
 		},
 		MetricObserverImage: "metric@sha256:cccccccc",
 		Verdict:             "Compatible",
@@ -317,7 +316,7 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 		Spec: edgev1alpha1.ModelSpecSpec{Artifacts: []edgev1alpha1.ModelArtifact{{
 			Name: report.Selection.Artifact, Format: "onnx",
 			Input: &edgev1alpha1.ModelArtifactInputContract{
-				InputSampleShape: []int32{3, 224, 224}, DataType: "float32",
+				InputSampleShape: []int32{3, 224, 224},
 			},
 			Derivation: &edgev1alpha1.ModelArtifactDerivation{
 				SourceArtifact: "canonical-onnx", TargetPlatform: "cpu",

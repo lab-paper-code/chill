@@ -170,7 +170,6 @@ func (p *CurvePlanProjector) Project(
 	}
 	capability := profilingrun.CandidateArtifactCapability{
 		InputSampleShape: append([]int32(nil), artifact.Input.InputSampleShape...),
-		InputDataType:    artifact.Input.DataType,
 	}
 	if report.ArtifactCapability != nil {
 		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/modelcompat-report.v1alpha9",
+  "schemaVersion": "chill.dacs.io/modelcompat-report.v1alpha10",
   "scope": "StaticCompatibility",
   "inputs": {
     "modelSpec": {

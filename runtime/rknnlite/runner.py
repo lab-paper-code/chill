@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha8"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha9"
 INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha13"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
@@ -32,7 +32,6 @@ NO_OUTPUT_VALIDATION = "none"
 SUPPORTED_RUNTIME_PACKAGE = "rknn-toolkit-lite2"
 SUPPORTED_TARGET_PLATFORM = "rk3588"
 SUPPORTED_INPUT_LAYOUT = "NHWC"
-SUPPORTED_INPUT_DATA_TYPE = "float32"
 CORE_MASK_NAME = "NPU_CORE_0"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
@@ -394,7 +393,7 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "declaredBatchSizes", "inputSampleShape", "inputDataType"},
+        {"targetPlatform", "declaredBatchSizes", "inputSampleShape"},
         "candidate.artifactCapability",
     )
     declared_batch_sizes = capability["declaredBatchSizes"]
@@ -407,10 +406,7 @@ def validate_candidate(value: Any) -> None:
         raise ContractError("candidate inputSampleShape must be a non-empty array")
     for value in shape:
         require_integer(value, "candidate inputSampleShape item", 1)
-    if (
-        capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM
-        or capability["inputDataType"] != SUPPORTED_INPUT_DATA_TYPE
-    ):
+    if capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM:
         raise ContractError("candidate artifact capability is unsupported")
 
     packages = candidate["runtimePackages"]

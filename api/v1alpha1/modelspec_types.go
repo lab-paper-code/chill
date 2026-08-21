@@ -85,9 +85,6 @@ type ModelArtifactInputContract struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
 	InputSampleShape []int32 `json:"inputSampleShape"`
-
-	// +kubebuilder:validation:MinLength=1
-	DataType string `json:"dataType"`
 }
 
 // ModelArtifactConversion identifies the executable converter and conversion recipe.

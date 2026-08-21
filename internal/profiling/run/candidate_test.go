@@ -221,7 +221,7 @@ func TestDecodeCandidateReportRequiresPositiveArtifactDeclaredBatchSizes(t *test
 	}
 }
 
-func TestDecodeCandidateReportRejectsRetiredConfiguredLayout(t *testing.T) {
+func TestDecodeCandidateReportRejectsRetiredConfiguredTensorFields(t *testing.T) {
 	report := completeCandidateReportForTest()
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
 	payload, err := json.Marshal(report)
@@ -232,13 +232,16 @@ func TestDecodeCandidateReportRejectsRetiredConfiguredLayout(t *testing.T) {
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		t.Fatal(err)
 	}
-	wire["artifactCapability"].(map[string]any)["inputLayout"] = RKNNLiteInputLayout
-	payload, err = json.Marshal(wire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeCandidateReport(payload); err == nil {
-		t.Fatal("expected retired configured layout rejection")
+	for field, value := range map[string]any{"inputLayout": RKNNLiteInputLayout, "inputDataType": "float32"} {
+		wire["artifactCapability"].(map[string]any)[field] = value
+		payload, err = json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeCandidateReport(payload); err == nil {
+			t.Fatalf("expected retired configured %s rejection", field)
+		}
+		delete(wire["artifactCapability"].(map[string]any), field)
 	}
 }
 
@@ -389,7 +392,6 @@ func rknnHostContractForTest() CandidateReportHostContract {
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
 		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
-		InputDataType: RKNNLiteInputDataType,
 	}
 }
 
@@ -445,7 +447,7 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 			report["schemaVersion"] = "foreign"
 		}},
 		{name: "retired predecessor schema", mutate: func(report map[string]any) {
-			report["schemaVersion"] = "chill.dacs.io/modelcompat-report.v1alpha8"
+			report["schemaVersion"] = "chill.dacs.io/modelcompat-report.v1alpha9"
 		}},
 		{name: "ModelSpec name drift", mutate: func(report map[string]any) {
 			report["inputs"].(map[string]any)["modelSpec"].(map[string]any)["name"] = "other-model"

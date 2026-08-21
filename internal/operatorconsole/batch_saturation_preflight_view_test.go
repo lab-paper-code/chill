@@ -147,7 +147,7 @@ func batchSaturationPreflightPlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
 		Tensor: profilederivation.CurveTensorContract{
-			DataType: "float32", InputSampleShape: []int{224, 224, 3},
+			InputSampleShape: []int{224, 224, 3},
 		},
 	})
 	if err != nil {

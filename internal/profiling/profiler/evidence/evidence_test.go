@@ -203,7 +203,7 @@ func TestRawMeasurementBindsCompositeMetricSourceToFrozenIntent(t *testing.T) {
 
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha12"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha13"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}
@@ -235,7 +235,7 @@ func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha4"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "retired predecessor schema", mutate: func(candidate *ExecutionEvidence) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha11"
+			candidate.SchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha12"
 		}, match: "unsupported execution evidence schemaVersion"},
 		{name: "missing actuation", mutate: func(candidate *ExecutionEvidence) { candidate.Actuation = nil }, permanent: true},
 		{name: "target drift", mutate: func(candidate *ExecutionEvidence) {

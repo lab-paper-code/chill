@@ -106,9 +106,6 @@ spec:
                       description: Input declares this artifact's input tensor contract
                         without its batch axis.
                       properties:
-                        dataType:
-                          minLength: 1
-                          type: string
                         inputSampleShape:
                           description: |-
                             InputSampleShape is the ordered input tensor dimensions without its batch
@@ -120,7 +117,6 @@ spec:
                           minItems: 1
                           type: array
                       required:
-                      - dataType
                       - inputSampleShape
                       type: object
                     name:

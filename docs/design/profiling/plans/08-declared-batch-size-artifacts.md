@@ -9,7 +9,7 @@
 ## Status
 
 Implemented for two single-artifact paths. Every artifact declares its ordered
-batch-invariant input dimensions and data type. Derived RKNN artifacts
+batch-invariant input dimensions. Derived RKNN artifacts
 additionally declare the finite batch-size set fixed by conversion. Canonical
 ONNX artifacts
 with a symbolic batch axis leave the finite sweep set to
@@ -36,7 +36,9 @@ with `onnx.load`; ONNX tensor type metadata does not provide a portable layout
 field. The symbolic first axis permits ONNX Runtime to receive batch at
 execution. The artifact declaration records the ordered dimensions
 `[3, 224, 224]` without that axis, and the worker builds its input from the
-selected batch and the declared non-batch dimensions.
+selected batch and the declared non-batch dimensions. The ORT worker validates
+the loaded graph's element type and generates `float32` input as runtime
+behavior; model registration does not repeat that fact.
 
 RKNN-Toolkit2 2.3.2 built one artifact holding declared batch sizes
 `1, 2, 4, 8, 16`:
@@ -68,8 +70,9 @@ asking the registration object to predict it.
 
 ## Declaration contracts
 
-Every artifact carries its ordered input dimensions and data type, and a
-derived artifact also carries the finite conversion constraint:
+Every artifact carries its ordered input dimensions, and a derived artifact
+also carries the finite conversion constraint. Input data type remains a
+runtime implementation and loaded-artifact fact rather than user configuration:
 
 ```go
 type ModelArtifact struct {
@@ -122,7 +125,7 @@ prepare active and idle intents at the first selected batch
 record curve-plan.json with PlannedBatchSizes
 ```
 
-The plan copies the selected artifact's ordered input dimensions and data type.
+The plan copies the selected artifact's ordered input dimensions.
 A missing declaration returns `ArtifactInputContractMissingError` naming that
 artifact; the controller does not probe, introspect, infer, or default it.
 
@@ -134,9 +137,10 @@ both paths expose the same `PlannedBatchSizes` contract to the control and
 derivation layers.
 
 For the supported `mobilenet-v2-050` canonical ONNX path, the recorded tensor
-contract comes from the `canonical-onnx` catalog declaration:
-`[3, 224, 224]`, `float32`. The controller does not open the artifact. The ONNX
-Runtime worker reads the graph as part of executing each Run.
+contract comes from the `canonical-onnx` catalog declaration: `[3, 224, 224]`.
+The controller does not open the artifact. The ONNX Runtime worker reads the
+graph, requires `tensor(float)`, and generates `float32` input while executing
+each Run.
 
 The stored plan is authoritative on later reconciles. Semantic disagreement
 between a recomputed plan and the immutable stored plan terminates resolution

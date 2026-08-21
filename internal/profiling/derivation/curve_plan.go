@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha5"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha6"
 )
 
 // CurveCPUContract is the execution CPU contract shared by every planned batch.
@@ -62,8 +62,7 @@ type CurveConversionContract struct {
 }
 
 type CurveTensorContract struct {
-	DataType         string `json:"dataType"`
-	InputSampleShape []int  `json:"inputSampleShape"`
+	InputSampleShape []int `json:"inputSampleShape"`
 }
 
 // CurveArtifactContract binds the one immutable artifact every planned batch
@@ -268,7 +267,7 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 		}
 		seenBatches[plannedBatchSize] = struct{}{}
 	}
-	if !cleanCurveValue(shared.Tensor.DataType) || len(shared.Tensor.InputSampleShape) == 0 {
+	if len(shared.Tensor.InputSampleShape) == 0 {
 		return errors.New("curve plan tensor contract is incomplete")
 	}
 	for _, dimension := range shared.Tensor.InputSampleShape {

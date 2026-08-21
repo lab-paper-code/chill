@@ -706,7 +706,6 @@ func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
 	return profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
-			InputDataType: profilingrun.RKNNLiteInputDataType,
 		},
 		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
 		HostContract: &profilingrun.CandidateReportHostContract{

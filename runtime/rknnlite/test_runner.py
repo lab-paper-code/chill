@@ -190,7 +190,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "targetPlatform": "rk3588",
                 "declaredBatchSizes": [1, 2, 4],
                 "inputSampleShape": [224, 224, 3],
-                "inputDataType": "float32",
             },
             "runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
             "hostContract": host_contract,
@@ -360,7 +359,7 @@ class RunnerTest(unittest.TestCase):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha7"
+            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha8"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):
@@ -396,14 +395,13 @@ class RunnerTest(unittest.TestCase):
             ):
                 runner.validate_request(request)
 
-    def test_validate_request_rejects_candidate_tensor_drift(self) -> None:
+    def test_validate_request_rejects_retired_configured_data_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            runner.validate_request(request)
-            request["candidate"]["artifactCapability"]["inputDataType"] = "uint8"
-            with self.assertRaisesRegex(runner.ContractError, "artifact capability"):
+            request["candidate"]["artifactCapability"]["inputDataType"] = "float32"
+            with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
                 runner.validate_request(request)
 
     def test_validate_request_rejects_retired_configured_layout(self) -> None:

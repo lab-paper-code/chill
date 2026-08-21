@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha9"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha10"
 	candidateReportScope         = "StaticCompatibility"
 )
 
@@ -82,7 +82,6 @@ type CandidateArtifactCapability struct {
 	TargetPlatform     string  `json:"targetPlatform"`
 	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
 	InputSampleShape   []int32 `json:"inputSampleShape"`
-	InputDataType      string  `json:"inputDataType,omitempty"`
 }
 
 // CandidateReportRuntimePackage is one image-owned package fact from the
@@ -448,9 +447,8 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 		return VerifiedCandidateReport{}, err
 	}
 	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
-		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil ||
-			report.ArtifactCapability.InputDataType != RKNNLiteInputDataType {
-			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact input data type is unsupported")
+		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil {
+			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability is required")
 		}
 		if len(report.ArtifactCapability.InputSampleShape) == 0 {
 			return VerifiedCandidateReport{}, errors.New("candidate report artifact input shape is required")

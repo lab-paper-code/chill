@@ -30,7 +30,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 		"test-curve", active, idle,
 		profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-			InputSampleShape: []int32{224, 224, 3}, InputDataType: "uint8",
+			InputSampleShape: []int32{224, 224, 3},
 		},
 		profilederivation.CurveConversionContract{
 			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
@@ -40,8 +40,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project curve plan: %v", err)
 	}
-	if spec.Tensor.DataType != "uint8" ||
-		!slices.Equal(spec.Tensor.InputSampleShape, []int{224, 224, 3}) {
+	if !slices.Equal(spec.Tensor.InputSampleShape, []int{224, 224, 3}) {
 		t.Fatalf("projected tensor contract = %+v", spec.Tensor)
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
@@ -95,7 +94,7 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 				"test-curve", active, idle,
 				profilingrun.CandidateArtifactCapability{
 					TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-					InputSampleShape: []int32{224, 224, 3}, InputDataType: "uint8",
+					InputSampleShape: []int32{224, 224, 3},
 				},
 				profilederivation.CurveConversionContract{
 					TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
@@ -194,7 +193,7 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 		},
 		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
-			DataType: "float32", InputSampleShape: []int{3, 224, 224},
+			InputSampleShape: []int{3, 224, 224},
 		},
 	}
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {

@@ -594,7 +594,6 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{2}, InputSampleShape: []int32{224, 224, 3},
-		InputDataType: profilingrun.RKNNLiteInputDataType,
 	}
 	report.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
 	report.HostContract = &host

@@ -4,7 +4,7 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha12`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha13`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against frozen intent. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
@@ -275,9 +275,10 @@ Answers only:
 It is CHILL's own. RKNN-Toolkit2 enumerates several batch shapes into one
 artifact, and an RK3588 probe confirmed one artifact executing batches 1, 2, and
 4 while refusing an undeclared batch. Every artifact declares its ordered
-non-batch input shape and data type. A derived artifact additionally supplies
-the finite set fixed by its conversion as an artifact constraint. A canonical
-ONNX artifact with a symbolic
+non-batch input shape. Data type is owned by the runtime implementation and
+checked against the loaded artifact instead of copied from model registration.
+A derived artifact additionally supplies the finite set fixed by its conversion
+as an artifact constraint. A canonical ONNX artifact with a symbolic
 batch axis leaves the sweep set to `BatchSaturation.spec.batchSizes` because
 ONNX Runtime takes batch as a call argument. Exactly one source supplies the
 recorded plan, whose exhaustion is `CapabilityBoundary` for either source. One

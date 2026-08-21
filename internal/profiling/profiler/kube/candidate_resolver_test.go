@@ -107,8 +107,7 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 	}
 	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
 		!slices.Equal(report.ArtifactCapability.DeclaredBatchSizes, []int32{1}) ||
-		!slices.Equal(report.ArtifactCapability.InputSampleShape, []int32{224, 224, 3}) ||
-		report.ArtifactCapability.InputDataType != profilingrun.RKNNLiteInputDataType || report.RuntimeAccess == nil ||
+		!slices.Equal(report.ArtifactCapability.InputSampleShape, []int32{224, 224, 3}) || report.RuntimeAccess == nil ||
 		!report.RuntimeAccess.Privileged || !slices.Equal(report.RuntimeAccess.SupplementalGroups, []int64{44, 110}) {
 		t.Fatalf("artifact capability or runtime access was not retained: %#v %#v",
 			report.ArtifactCapability, report.RuntimeAccess)
@@ -547,7 +546,7 @@ func validCandidateObjects() []client.Object {
 					Image: testArtifactImage, Architecture: testArchitecture, Path: testArtifactPath,
 				},
 				Input: &edgev1alpha1.ModelArtifactInputContract{
-					InputSampleShape: []int32{3, 224, 224}, DataType: "float32",
+					InputSampleShape: []int32{3, 224, 224},
 				},
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
@@ -589,7 +588,7 @@ func validRKNNCandidateObjects() []client.Object {
 			Path: "/artifact/mobilenet-v2-050-rk3588-bs1.rknn",
 		},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
-			InputSampleShape: []int32{224, 224, 3}, DataType: profilingrun.RKNNLiteInputDataType,
+			InputSampleShape: []int32{224, 224, 3},
 		},
 		Derivation: validArtifactDerivation("canonical-onnx"),
 	})

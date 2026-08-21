@@ -214,7 +214,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	}
 	capability := profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "test", DeclaredBatchSizes: []int32{1, 2},
-		InputSampleShape: []int32{3, 224, 224}, InputDataType: "float32",
+		InputSampleShape: []int32{3, 224, 224},
 	}
 	spec, err := profileradmission.ProjectCurvePlanSpec(
 		"test-curve", base, idleIntent, capability,
