@@ -8,26 +8,37 @@ import (
 	"math"
 	"testing"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const otherMeasurementStateValue = "other"
+const (
+	baselineNamespace          = "measurements"
+	otherMeasurementStateValue = "different-state"
+)
 
 func TestNewIdleBaselineSourceValidatesDependencies(t *testing.T) {
 	reader := &baselineResultReader{}
+	kube := newBaselineKube(t)
 	tests := map[string]struct {
+		kube    client.Reader
 		reader  evidencestore.Reader
 		maximum int64
 	}{
-		"nil reader":        {maximum: 1},
-		"zero bound":        {reader: reader},
-		"overflowing bound": {reader: reader, maximum: math.MaxInt64},
+		"nil Kubernetes reader": {reader: reader, maximum: 1},
+		"nil result reader":     {kube: kube, maximum: 1},
+		"zero bound":            {kube: kube, reader: reader},
+		"overflowing bound":     {kube: kube, reader: reader, maximum: math.MaxInt64},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewIdleBaselineSource(test.reader, test.maximum); err == nil {
+			if _, err := NewIdleBaselineSource(test.kube, test.reader, test.maximum); err == nil {
 				t.Fatal("invalid baseline source dependencies were accepted")
 			}
 		})
@@ -39,9 +50,11 @@ func TestIdleBaselineSourceReadsOneMatchingAggregate(t *testing.T) {
 	baseline := retainedIdleBaseline(t)
 	reference, payload := retainedIdleResult(t, state, baseline)
 	reader := &baselineResultReader{payload: payload}
-	source := newIdleBaselineSource(t, reader, int64(len(payload)))
+	source := newIdleBaselineSource(
+		t, reader, int64(len(payload)), currentBaselineObject("baseline", state, reference),
+	)
 
-	resolved, err := source.Read(context.Background(), state, reference)
+	resolved, err := source.Resolve(context.Background(), baselineNamespace, state)
 	if err != nil {
 		t.Fatalf("read idle baseline: %v", err)
 	}
@@ -84,8 +97,10 @@ func TestIdleBaselineSourceRejectsReferenceBeforeOpen(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			reader := &baselineResultReader{payload: payload}
-			source := newIdleBaselineSource(t, reader, test.maximum)
-			if _, err := source.Read(context.Background(), state, test.reference); err == nil {
+			source := newIdleBaselineSource(
+				t, reader, test.maximum, currentBaselineObject("baseline", state, test.reference),
+			)
+			if _, err := source.Resolve(context.Background(), baselineNamespace, state); err == nil {
 				t.Fatal("invalid reference was accepted")
 			}
 			if reader.calls != 0 {
@@ -158,8 +173,11 @@ func TestIdleBaselineSourceRequiresExactCurrentResultBytes(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			reader := &baselineResultReader{payload: test.payload}
-			source := newIdleBaselineSource(t, reader, int64(len(test.payload))+1)
-			if _, err := source.Read(context.Background(), state, test.reference); err == nil {
+			source := newIdleBaselineSource(
+				t, reader, int64(len(test.payload))+1,
+				currentBaselineObject("baseline", state, test.reference),
+			)
+			if _, err := source.Resolve(context.Background(), baselineNamespace, state); err == nil {
 				t.Fatal("invalid retained result was accepted")
 			}
 		})
@@ -195,11 +213,70 @@ func TestIdleBaselineSourceRequiresExactMeasurementState(t *testing.T) {
 				t,
 				&baselineResultReader{payload: payload},
 				int64(len(payload)),
+				currentBaselineObject("baseline", expected, reference),
 			)
-			if _, err := source.Read(context.Background(), expected, reference); err == nil {
+			if _, err := source.Resolve(context.Background(), baselineNamespace, expected); err == nil {
 				t.Fatal("mismatched measurement state was accepted")
 			}
 		})
+	}
+}
+
+func TestIdleBaselineSourceRequiresExactlyOneCurrentCompleteExactState(t *testing.T) {
+	state := baselineMeasurementState()
+	baseline := retainedIdleBaseline(t)
+	reference, payload := retainedIdleResult(t, state, baseline)
+	matching := currentBaselineObject("matching", state, reference)
+	wrongState := currentBaselineObject("wrong-state", state, reference)
+	wrongState.Spec.State.Candidate.PowerMode = otherMeasurementStateValue
+	noncurrent := currentBaselineObject("noncurrent", state, reference)
+	noncurrent.Status.ObservedGeneration = 0
+	incomplete := currentBaselineObject("incomplete", state, reference)
+	incomplete.Status.Phase = edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring
+	missingResult := currentBaselineObject("missing-result", state, reference)
+	missingResult.Status.Result = nil
+	deleting := currentBaselineObject("deleting", state, reference)
+	now := metav1.Now()
+	deleting.DeletionTimestamp = &now
+	deleting.Finalizers = []string{"test-finalizer"}
+	otherNamespace := currentBaselineObject("other-namespace", state, reference)
+	otherNamespace.Namespace = "other-namespace"
+
+	reader := &baselineResultReader{payload: payload}
+	source := newIdleBaselineSource(
+		t, reader, int64(len(payload)), matching, wrongState, noncurrent,
+		incomplete, missingResult, deleting, otherNamespace,
+	)
+	if _, err := source.Resolve(context.Background(), baselineNamespace, state); err != nil {
+		t.Fatalf("resolve sole current Complete baseline: %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("result reader calls = %d, want 1", reader.calls)
+	}
+
+	for name, objects := range map[string][]*edgev1alpha1.ModelLoadedIdleBaseline{
+		"missing":   {wrongState, noncurrent, incomplete, missingResult, deleting, otherNamespace},
+		"ambiguous": {matching, currentBaselineObject("second-match", state, reference)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := &baselineResultReader{payload: payload}
+			source := newIdleBaselineSource(t, reader, int64(len(payload)), objects...)
+			if _, err := source.Resolve(context.Background(), baselineNamespace, state); err == nil {
+				t.Fatal("non-unique baseline selection was accepted")
+			}
+			if reader.calls != 0 {
+				t.Fatalf("non-unique selection opened evidence: calls = %d", reader.calls)
+			}
+		})
+	}
+
+	reader = &baselineResultReader{payload: payload}
+	source = newIdleBaselineSource(t, reader, int64(len(payload)), matching)
+	if _, err := source.Resolve(context.Background(), "", state); err == nil {
+		t.Fatal("empty measurement namespace was accepted")
+	}
+	if reader.calls != 0 {
+		t.Fatalf("empty namespace opened evidence: calls = %d", reader.calls)
 	}
 }
 
@@ -222,13 +299,51 @@ func newIdleBaselineSource(
 	t *testing.T,
 	reader evidencestore.Reader,
 	maximumBytes int64,
+	baselines ...*edgev1alpha1.ModelLoadedIdleBaseline,
 ) *IdleBaselineSource {
 	t.Helper()
-	source, err := NewIdleBaselineSource(reader, maximumBytes)
+	objects := make([]client.Object, len(baselines))
+	for index := range baselines {
+		objects[index] = baselines[index]
+	}
+	source, err := NewIdleBaselineSource(newBaselineKube(t, objects...), reader, maximumBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return source
+}
+
+func newBaselineKube(t *testing.T, objects ...client.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+}
+
+func currentBaselineObject(
+	name string,
+	state idlebaseline.MeasurementState,
+	reference idlebaseline.StoredObjectReference,
+) *edgev1alpha1.ModelLoadedIdleBaseline {
+	return &edgev1alpha1.ModelLoadedIdleBaseline{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: baselineNamespace, Generation: 1},
+		Spec: edgev1alpha1.ModelLoadedIdleBaselineSpec{State: edgev1alpha1.MeasurementStateSpec{
+			TargetNode: state.TargetNode,
+			Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+				ModelSpec: state.ModelSpec, DeviceClass: state.DeviceClass,
+				ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
+			},
+		}},
+		Status: edgev1alpha1.ModelLoadedIdleBaselineStatus{
+			ObservedGeneration: 1, Phase: edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete,
+			Result: &edgev1alpha1.ProfilingRunEvidenceReference{
+				Store: reference.Store, Key: reference.Key,
+				SchemaVersion: reference.SchemaVersion, Size: reference.Size,
+			},
+		},
+	}
 }
 
 func baselineMeasurementState() idlebaseline.MeasurementState {

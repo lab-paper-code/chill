@@ -35,7 +35,9 @@ func SetupWithManager(manager ctrl.Manager, options SetupOptions) error {
 	if manager == nil {
 		return errors.New("controller manager is required")
 	}
-	baselines, err := NewIdleBaselineSource(options.Evidence, options.MaximumObjectBytes)
+	baselines, err := NewIdleBaselineSource(
+		manager.GetAPIReader(), options.Evidence, options.MaximumObjectBytes,
+	)
 	if err != nil {
 		return fmt.Errorf("construct transition idle-baseline source: %w", err)
 	}

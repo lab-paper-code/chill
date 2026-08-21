@@ -62,11 +62,13 @@ s  = (device type t, model m, source power mode p)
 s' = (device type t, model m, target power mode p')
 ~~~
 
-The exact Node UID, device class, model, execution path, actuator kind and
-target, source mode, target mode, serving workload, request-readiness witness,
-serving-survival witness, meter source, idle-baseline evidence, direction
-order, accepted-count target, attempt bound, and measurement policy are frozen
-before execution.
+The request selects the source and target modes, not storage references or
+installation policy names. Preparation resolves the exact Node UID, unique
+configured actuator policy, and unique current Complete exact-state idle
+baseline for each mode. It freezes those materials with the device class,
+model, execution path, serving workload, request-readiness witness,
+serving-survival witness, meter source, direction order, accepted-count target,
+attempt bound, and measurement policy before execution.
 
 This is a valid state-pair measurement, not a claim that every transition has
 the same cost. Source-state independence, target-only reduction, another
@@ -143,10 +145,12 @@ one immutable Complete result with its accepted final-evidence references. Its
 stored measurement state fixes the target Node, ModelSpec, DeviceClass,
 execution path, and power mode. The execution path is a frozen experimental
 compatibility condition for reusing that aggregate; it does not add a new axis
-to the state-pair equation above. The transition-cost baseline source accepts
-only the current independent result schema. It matches the stored measurement
-state to the selected target and freezes the stored mean and full result
-reference. It does not read `BatchSaturation` results or support a
+to the state-pair equation above. The transition-cost baseline source lists
+baseline requests in the measurement namespace and accepts exactly one
+current-generation Complete result matching each selected target state. Zero
+or multiple matches stop preparation. The source strictly reads the selected
+immutable result, then freezes its mean and full stored reference. It does not
+read `BatchSaturation` results, select a latest result, or support a
 compatibility reader.
 
 The specification requires `tau`, `eta`, and the target-state idle term for its
@@ -496,8 +500,10 @@ and its referenced raw and finalized evidence recorded under Unit 4.
 ### Unit 3: complete measurement control path
 
 1. Add the minimal `PowerModeTransitionCost` API and generated artifacts. Its
-   immutable spec contains the exact states, direction order, accepted-count
-   target, attempt bound, observation policy, estimator, and evidence binding.
+   immutable spec contains the exact requested states, direction order,
+   accepted-count target, attempt bound, observation policy, and estimator.
+   Preparation resolves and freezes the unique configured actuation policy and
+   current Complete exact-state idle baseline for each mode.
 2. For each attempt, reconcile one off-target observation Job before creating
    its owned `NodeActuation`, with at most one attempt Job active.
 3. Create at most one `NodeActuation` at a time and expose only the device-side

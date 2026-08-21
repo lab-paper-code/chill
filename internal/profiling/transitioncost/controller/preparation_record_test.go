@@ -159,8 +159,8 @@ func preparationRecordFixture(
 	measurement := validTransitionMeasurement()
 	measurement.Name = "transition-cost"
 	measurement.UID = types.UID("transition-cost-uid")
-	lowReference := storedObjectReference(measurement.Spec.Modes[0].IdleBaseline)
-	highReference := storedObjectReference(measurement.Spec.Modes[1].IdleBaseline)
+	lowReference := baselineStoredReference("low")
+	highReference := baselineStoredReference("high")
 	baselines := &recordingIdleBaselineReader{results: map[string]ResolvedIdleBaseline{
 		"low": {meanWallWatts: 8, reference: lowReference}, "high": {meanWallWatts: 12, reference: highReference},
 	}}

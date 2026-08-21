@@ -96,47 +96,14 @@ spec:
                   modes[1] to modes[0]. Each baseline is for transitions targeting that mode.
                 items:
                   properties:
-                    actuationPolicy:
-                      description: ActuationPolicy identifies the configured policy
-                        used to reach this mode.
-                      maxLength: 63
-                      minLength: 1
-                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                      type: string
-                    idleBaseline:
-                      properties:
-                        key:
-                          description: Key is opaque to API consumers.
-                          maxLength: 1024
-                          minLength: 1
-                          type: string
-                        schemaVersion:
-                          maxLength: 128
-                          minLength: 1
-                          type: string
-                        size:
-                          format: int64
-                          minimum: 1
-                          type: integer
-                        store:
-                          description: Store is the logical CHILL-managed store identity,
-                            not an endpoint.
-                          maxLength: 253
-                          minLength: 1
-                          type: string
-                      required:
-                      - key
-                      - schemaVersion
-                      - size
-                      - store
-                      type: object
                     powerMode:
+                      description: |-
+                        PowerMode selects one state. Preparation resolves and freezes the unique
+                        configured actuation policy and current Complete exact-state idle baseline.
                       maxLength: 128
                       minLength: 1
                       type: string
                   required:
-                  - actuationPolicy
-                  - idleBaseline
                   - powerMode
                   type: object
                 maxItems: 2

@@ -345,9 +345,11 @@ the configured admitted-count target or attempt limit and writes a Complete
 immutable aggregate containing the exact measurement state, derived
 `IdleBaseline`, and accepted final-evidence references. An Insufficient request
 closes only in compact status and does not fabricate an aggregate result. The
-transition-cost preparation accepts only a current Complete result whose stored
-measurement state matches the selected direction, then freezes its mean and
-full stored-result reference.
+transition-cost preparation lists the namespaced baseline requests for each
+selected mode and requires exactly one current Complete result whose stored
+measurement state matches the target. It then freezes that result's mean and
+full stored reference. The request names only the two power modes; installation
+configuration supplies the unique actuation policy for each selected mode.
 Each baseline request also selects a required whole-core CPU quota. Its child
 Run transports that selection to preparation, which freezes it in the existing
 CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol

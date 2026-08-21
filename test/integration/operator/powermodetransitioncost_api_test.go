@@ -87,14 +87,8 @@ func validPowerModeTransitionCost(name string) *edgev1alpha1.PowerModeTransition
 			ServingService:   "test-service",
 			ServingContainer: "test-container",
 			Modes: []edgev1alpha1.PowerModeTransitionCostModeSpec{
-				{
-					PowerMode: "test-mode-a", ActuationPolicy: "test-mode-a-policy",
-					IdleBaseline: powerModeTransitionCostEvidence("test-baselines/mode-a.json"),
-				},
-				{
-					PowerMode: "test-mode-b", ActuationPolicy: "test-mode-b-policy",
-					IdleBaseline: powerModeTransitionCostEvidence("test-baselines/mode-b.json"),
-				},
+				{PowerMode: "test-mode-a"},
+				{PowerMode: "test-mode-b"},
 			},
 			AcceptedCountTarget: 5,
 			AttemptLimit:        8,
@@ -111,13 +105,6 @@ func validPowerModeTransitionCost(name string) *edgev1alpha1.PowerModeTransition
 			},
 			EvidenceStore: "test-store",
 		},
-	}
-}
-
-func powerModeTransitionCostEvidence(key string) edgev1alpha1.ProfilingRunEvidenceReference {
-	return edgev1alpha1.ProfilingRunEvidenceReference{
-		Store: "test-store", Key: key,
-		SchemaVersion: "test.example/idle-baseline.v1", Size: 1024,
 	}
 }
 

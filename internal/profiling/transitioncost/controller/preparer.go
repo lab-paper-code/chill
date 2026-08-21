@@ -23,12 +23,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// IdleBaselineReader resolves one admitted target-mode idle aggregate.
-type IdleBaselineReader interface {
-	Read(
+// IdleBaselineResolver resolves one admitted target-mode idle aggregate.
+type IdleBaselineResolver interface {
+	Resolve(
 		context.Context,
+		string,
 		idlebaseline.MeasurementState,
-		idlebaseline.StoredObjectReference,
 	) (ResolvedIdleBaseline, error)
 }
 
@@ -38,7 +38,7 @@ type Preparer struct {
 	deviceClasses client.Reader
 	nodes         profiler.NodeResolver
 	metrics       profiler.MetricSourceResolver
-	baselines     IdleBaselineReader
+	baselines     IdleBaselineResolver
 	actuation     profiler.ActuationPolicyResolver
 	observerNode  string
 }
@@ -47,7 +47,7 @@ func NewPreparer(
 	deviceClasses client.Reader,
 	nodes profiler.NodeResolver,
 	metrics profiler.MetricSourceResolver,
-	baselines IdleBaselineReader,
+	baselines IdleBaselineResolver,
 	actuation profiler.ActuationPolicyResolver,
 	observerNode string,
 ) (*Preparer, error) {
@@ -163,14 +163,6 @@ func (p *Preparer) Prepare(
 				err,
 			)
 		}
-		if policy.Policy.Name != measurement.Spec.Modes[index].ActuationPolicy {
-			return PreparedMeasurement{}, fmt.Errorf(
-				"resolved actuation policy %q does not match configured policy %q for power mode %q",
-				policy.Policy.Name,
-				measurement.Spec.Modes[index].ActuationPolicy,
-				mode.Name,
-			)
-		}
 		policies[index] = policy
 	}
 
@@ -190,7 +182,7 @@ func (p *Preparer) Prepare(
 			DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 			PowerMode: mode.PowerMode,
 		}
-		baseline, err := p.baselines.Read(ctx, expected, storedObjectReference(mode.IdleBaseline))
+		baseline, err := p.baselines.Resolve(ctx, measurement.Namespace, expected)
 		if err != nil {
 			return PreparedMeasurement{}, fmt.Errorf("resolve idle baseline for power mode %q: %w", mode.PowerMode, err)
 		}
@@ -331,12 +323,6 @@ func retainedEventCount(duration, interval time.Duration) (int, error) {
 		return 0, errors.New("power observation event count overflows int")
 	}
 	return int(events), nil
-}
-
-func storedObjectReference(reference edgev1alpha1.ProfilingRunEvidenceReference) idlebaseline.StoredObjectReference {
-	return idlebaseline.StoredObjectReference{
-		Store: reference.Store, Key: reference.Key, SchemaVersion: reference.SchemaVersion, Size: reference.Size,
-	}
 }
 
 func clean(value string) bool {

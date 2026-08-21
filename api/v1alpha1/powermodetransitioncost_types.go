@@ -71,17 +71,11 @@ type PowerModeTransitionCostSpec struct {
 }
 
 type PowerModeTransitionCostModeSpec struct {
+	// PowerMode selects one state. Preparation resolves and freezes the unique
+	// configured actuation policy and current Complete exact-state idle baseline.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	PowerMode string `json:"powerMode"`
-
-	// ActuationPolicy identifies the configured policy used to reach this mode.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
-	ActuationPolicy string `json:"actuationPolicy"`
-
-	IdleBaseline ProfilingRunEvidenceReference `json:"idleBaseline"`
 }
 
 // PowerModeTransitionCostObservationPolicySpec contains measurement policy

@@ -31,7 +31,7 @@ func TestNewPreparerRequiresEveryResolver(t *testing.T) {
 		catalogs  client.Reader
 		nodes     profiler.NodeResolver
 		metrics   profiler.MetricSourceResolver
-		baselines IdleBaselineReader
+		baselines IdleBaselineResolver
 		actuation profiler.ActuationPolicyResolver
 	}{
 		{name: "DeviceClass reader", nodes: nodes, metrics: metrics, baselines: baselines, actuation: actuation},
@@ -57,8 +57,8 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 		Kind: "edge-metrics", Endpoint: "http://meter.example:18766/prometheus?hostname=meter-target",
 		PowerMetric: "wall_power_watts", MetricLabels: labels,
 	}}
-	lowReference := storedObjectReference(measurement.Spec.Modes[0].IdleBaseline)
-	highReference := storedObjectReference(measurement.Spec.Modes[1].IdleBaseline)
+	lowReference := baselineStoredReference("low")
+	highReference := baselineStoredReference("high")
 	baselines := &recordingIdleBaselineReader{results: map[string]ResolvedIdleBaseline{
 		"low":  {meanWallWatts: 8, reference: lowReference},
 		"high": {meanWallWatts: 12, reference: highReference},
@@ -86,9 +86,9 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 			DeviceClass: measurement.Spec.DeviceClass, ExecutionPath: measurement.Spec.ExecutionPath,
 			PowerMode: mode.PowerMode,
 		}
-		if call.state != wantState || call.reference != storedObjectReference(mode.IdleBaseline) {
-			t.Fatalf("baseline call %d = %+v, want state %+v and reference %+v",
-				index, call, wantState, storedObjectReference(mode.IdleBaseline))
+		if call.namespace != measurement.Namespace || call.state != wantState {
+			t.Fatalf("baseline call %d = %+v, want namespace %q and state %+v",
+				index, call, measurement.Namespace, wantState)
 		}
 	}
 
@@ -216,11 +216,6 @@ func TestPreparerStopsBeforeObservationResolutionWhenTransitionMaterialFails(t *
 		}},
 		{name: "policy resolver", wantNode: 1, wantPolicies: 1, configure: func(_ *recordingDeviceClassReader, _ *recordingNodeResolver, a *recordingActuationPolicyResolver, _ *edgev1alpha1.PowerModeTransitionCost) {
 			a.err = errors.New("policy unavailable")
-		}},
-		{name: "configured policy name", wantNode: 1, wantPolicies: 1, configure: func(_ *recordingDeviceClassReader, _ *recordingNodeResolver, a *recordingActuationPolicyResolver, _ *edgev1alpha1.PowerModeTransitionCost) {
-			wrong := a.results["low"]
-			wrong.Policy.Name = "different-policy"
-			a.results["low"] = wrong
 		}},
 	}
 	for _, test := range tests {
@@ -367,8 +362,8 @@ func (r *recordingTransitionMetricResolver) ResolveMetricSource(
 }
 
 type baselineReadCall struct {
+	namespace string
 	state     idlebaseline.MeasurementState
-	reference idlebaseline.StoredObjectReference
 }
 
 type recordingIdleBaselineReader struct {
@@ -377,12 +372,12 @@ type recordingIdleBaselineReader struct {
 	calls   []baselineReadCall
 }
 
-func (r *recordingIdleBaselineReader) Read(
+func (r *recordingIdleBaselineReader) Resolve(
 	_ context.Context,
+	namespace string,
 	state idlebaseline.MeasurementState,
-	reference idlebaseline.StoredObjectReference,
 ) (ResolvedIdleBaseline, error) {
-	r.calls = append(r.calls, baselineReadCall{state: state, reference: reference})
+	r.calls = append(r.calls, baselineReadCall{namespace: namespace, state: state})
 	if r.err != nil {
 		return ResolvedIdleBaseline{}, r.err
 	}
@@ -396,7 +391,7 @@ func (r *recordingIdleBaselineReader) Read(
 func mustPreparer(
 	t *testing.T,
 	metrics profiler.MetricSourceResolver,
-	baselines IdleBaselineReader,
+	baselines IdleBaselineResolver,
 ) *Preparer {
 	t.Helper()
 	return mustPreparerWith(
@@ -414,7 +409,7 @@ func mustPreparerWith(
 	catalogs client.Reader,
 	nodes profiler.NodeResolver,
 	metrics profiler.MetricSourceResolver,
-	baselines IdleBaselineReader,
+	baselines IdleBaselineResolver,
 	actuation profiler.ActuationPolicyResolver,
 ) *Preparer {
 	t.Helper()
@@ -564,8 +559,8 @@ func validTransitionMeasurement() *edgev1alpha1.PowerModeTransitionCost {
 			TargetNode: "node-under-test", DeviceClass: "class-under-test",
 			ModelSpec: "model-under-test", ExecutionPath: "path-under-test",
 			Modes: []edgev1alpha1.PowerModeTransitionCostModeSpec{
-				{PowerMode: "low", ActuationPolicy: "to-low", IdleBaseline: baselineAPIReference("low")},
-				{PowerMode: "high", ActuationPolicy: "to-high", IdleBaseline: baselineAPIReference("high")},
+				{PowerMode: "low"},
+				{PowerMode: "high"},
 			},
 			ServingService: "serving", ServingContainer: "runtime",
 			ObservationPolicy: edgev1alpha1.PowerModeTransitionCostObservationPolicySpec{
@@ -579,9 +574,9 @@ func validTransitionMeasurement() *edgev1alpha1.PowerModeTransitionCost {
 	}
 }
 
-func baselineAPIReference(mode string) edgev1alpha1.ProfilingRunEvidenceReference {
-	return edgev1alpha1.ProfilingRunEvidenceReference{
+func baselineStoredReference(mode string) idlebaseline.StoredObjectReference {
+	return idlebaseline.StoredObjectReference{
 		Store: "evidence", Key: "baselines/" + mode + "/result.json",
-		SchemaVersion: "chill.dacs.io/batch-saturation-result.v1alpha3", Size: 2048,
+		SchemaVersion: idlebaseline.ResultSchemaVersion, Size: 2048,
 	}
 }

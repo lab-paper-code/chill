@@ -8,8 +8,10 @@ import (
 	"io"
 	"math"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ResolvedIdleBaseline is a target-idle aggregate that crossed the retained
@@ -25,30 +27,37 @@ func (b ResolvedIdleBaseline) Reference() idlebaseline.StoredObjectReference {
 	return b.reference
 }
 
-// IdleBaselineSource reads one exact retained ModelLoadedIdleBaseline result.
+// IdleBaselineSource resolves the only current Complete baseline for one exact
+// state and reads its retained result.
 type IdleBaselineSource struct {
-	reader         evidencestore.Reader
+	kube           client.Reader
+	objects        evidencestore.Reader
 	maxObjectBytes int64
 }
 
 func NewIdleBaselineSource(
-	reader evidencestore.Reader,
+	kube client.Reader,
+	objects evidencestore.Reader,
 	maxObjectBytes int64,
 ) (*IdleBaselineSource, error) {
-	if reader == nil {
-		return nil, errors.New("idle baseline result reader is required")
+	if kube == nil || objects == nil {
+		return nil, errors.New("idle baseline Kubernetes and result readers are required")
 	}
 	if maxObjectBytes < 1 || maxObjectBytes == math.MaxInt64 {
 		return nil, errors.New("maximum idle baseline result bytes must be positive and below MaxInt64")
 	}
-	return &IdleBaselineSource{reader: reader, maxObjectBytes: maxObjectBytes}, nil
+	return &IdleBaselineSource{kube: kube, objects: objects, maxObjectBytes: maxObjectBytes}, nil
 }
 
-func (s *IdleBaselineSource) Read(
+func (s *IdleBaselineSource) Resolve(
 	ctx context.Context,
+	namespace string,
 	expected idlebaseline.MeasurementState,
-	reference idlebaseline.StoredObjectReference,
 ) (ResolvedIdleBaseline, error) {
+	reference, err := s.resolveReference(ctx, namespace, expected)
+	if err != nil {
+		return ResolvedIdleBaseline{}, err
+	}
 	identity := evidencestore.ObjectIdentity{
 		Store: reference.Store, Key: reference.Key, Size: reference.Size,
 	}
@@ -84,11 +93,55 @@ func (s *IdleBaselineSource) Read(
 	}, nil
 }
 
+func (s *IdleBaselineSource) resolveReference(
+	ctx context.Context,
+	namespace string,
+	expected idlebaseline.MeasurementState,
+) (idlebaseline.StoredObjectReference, error) {
+	if !clean(namespace) {
+		return idlebaseline.StoredObjectReference{}, errors.New("idle baseline namespace is required")
+	}
+	baselines := &edgev1alpha1.ModelLoadedIdleBaselineList{}
+	if err := s.kube.List(ctx, baselines, client.InNamespace(namespace)); err != nil {
+		return idlebaseline.StoredObjectReference{}, fmt.Errorf("list ModelLoadedIdleBaselines: %w", err)
+	}
+	matches := make([]idlebaseline.StoredObjectReference, 0, 1)
+	for index := range baselines.Items {
+		candidate := &baselines.Items[index]
+		if candidate.DeletionTimestamp != nil || candidate.Status.ObservedGeneration != candidate.Generation ||
+			candidate.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete ||
+			candidate.Status.Result == nil || projectBaselineMeasurementState(candidate.Spec.State) != expected {
+			continue
+		}
+		matches = append(matches, storedObjectReference(*candidate.Status.Result))
+	}
+	if len(matches) != 1 {
+		return idlebaseline.StoredObjectReference{}, fmt.Errorf(
+			"exact state has %d current Complete ModelLoadedIdleBaselines; require exactly one", len(matches),
+		)
+	}
+	return matches[0], nil
+}
+
+func projectBaselineMeasurementState(state edgev1alpha1.MeasurementStateSpec) idlebaseline.MeasurementState {
+	return idlebaseline.MeasurementState{
+		TargetNode: state.TargetNode, ModelSpec: state.Candidate.ModelSpec,
+		DeviceClass: state.Candidate.DeviceClass, ExecutionPath: state.Candidate.ExecutionPath,
+		PowerMode: state.Candidate.PowerMode,
+	}
+}
+
+func storedObjectReference(reference edgev1alpha1.ProfilingRunEvidenceReference) idlebaseline.StoredObjectReference {
+	return idlebaseline.StoredObjectReference{
+		Store: reference.Store, Key: reference.Key, SchemaVersion: reference.SchemaVersion, Size: reference.Size,
+	}
+}
+
 func (s *IdleBaselineSource) read(
 	ctx context.Context,
 	identity evidencestore.ObjectIdentity,
 ) ([]byte, error) {
-	stream, err := s.reader.Open(ctx, identity)
+	stream, err := s.objects.Open(ctx, identity)
 	if err != nil {
 		return nil, fmt.Errorf("open idle baseline result: %w", err)
 	}
