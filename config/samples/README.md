@@ -13,6 +13,10 @@ config/samples
 device catalog. `manual/edge_v1alpha1_deviceclass.yaml` is only for an
 intentionally manual installation.
 
+Before editing a `ModelSpec`, follow the
+[model artifact preparation guide](catalog/README.md) to produce its immutable
+OCI reference and collect the input, architecture, and runtime facts.
+
 The default Kustomize path registers only the model catalog:
 
 ```sh
