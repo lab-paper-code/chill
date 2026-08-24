@@ -2,13 +2,13 @@
 
 ## Catalog
 
-`kustomization.yaml` registers only the catalog objects:
+`DeviceClass` is normally created automatically from Node facts and the Helm
+device catalog. `edge_v1alpha1_deviceclass.yaml` is only a manual example.
 
-- `DeviceClass`: where a workload can run.
-- `ModelSpec`: what model artifacts exist and how CHILL can execute them.
+On a discovery-managed installation, register only the model:
 
 ```sh
-kubectl apply -k config/samples
+kubectl apply -f config/samples/edge_v1alpha1_modelspec.yaml
 ```
 
 ## ModelSpec structure
