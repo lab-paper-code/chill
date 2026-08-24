@@ -15,7 +15,7 @@ import (
 
 var _ = Describe("profiling request samples", func() {
 	DescribeTable("match the current API schema", func(name string, object client.Object) {
-		path := filepath.Join("..", "..", "..", "config", "samples", name)
+		path := filepath.Join("..", "..", "..", "config", "samples", "profiling", name)
 		payload, err := os.ReadFile(path)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(yaml.UnmarshalStrict(payload, object)).To(Succeed())

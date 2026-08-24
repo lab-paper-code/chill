@@ -1,14 +1,22 @@
 # CHILL samples
 
-## Catalog
+```text
+config/samples
+├── catalog/    normal model registration
+├── manual/     optional manual DeviceClass registration
+└── profiling/  experiment requests; apply one at a time
+```
+
+## Registration
 
 `DeviceClass` is normally created automatically from Node facts and the Helm
-device catalog. `edge_v1alpha1_deviceclass.yaml` is only a manual example.
+device catalog. `manual/edge_v1alpha1_deviceclass.yaml` is only for an
+intentionally manual installation.
 
-On a discovery-managed installation, register only the model:
+The default Kustomize path registers only the model catalog:
 
 ```sh
-kubectl apply -f config/samples/edge_v1alpha1_modelspec.yaml
+kubectl apply -k config/samples
 ```
 
 ## ModelSpec structure
@@ -28,7 +36,7 @@ artifact records its source, target platform, supported batches, and converter.
 
 ## Profiling requests
 
-These samples are not part of `kustomization.yaml` because applying one starts
+The `profiling/` samples are excluded from Kustomize because applying one starts
 an experiment and may actuate a device:
 
 | Kind | Purpose |
@@ -41,7 +49,7 @@ Replace the `example-*` names with catalog and cluster resources visible to the
 Profiler. Run each request separately:
 
 ```sh
-kubectl apply -f config/samples/edge_v1alpha1_batchsaturation.yaml
-kubectl apply -f config/samples/edge_v1alpha1_modelloadedidlebaseline.yaml
-kubectl apply -f config/samples/edge_v1alpha1_powermodetransitioncost.yaml
+kubectl apply -f config/samples/profiling/edge_v1alpha1_batchsaturation.yaml
+kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.yaml
+kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```

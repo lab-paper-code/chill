@@ -1,3 +1,2 @@
 resources:
-- edge_v1alpha1_deviceclass.yaml
-- edge_v1alpha1_modelspec.yaml
+- catalog
