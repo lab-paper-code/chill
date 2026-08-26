@@ -73,18 +73,8 @@ func (j *ExecutionJobs) Ensure(
 	key := types.NamespacedName{Namespace: run.Namespace, Name: jobName}
 	existing := &batchv1.Job{}
 	if err := j.client.Get(ctx, key, existing); err == nil {
-		binding, err := executionJobEvidenceStoreBinding(existing)
-		if err != nil {
-			return nil, false, err
-		}
-		desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
-		if err != nil {
-			return nil, false, err
-		}
-		if err := verifyExecutionJob(run, existing, desired); err != nil {
-			return nil, false, err
-		}
-		return existing, false, nil
+		retained, err := j.verifyRetainedExecutionJob(run, frozen, existing)
+		return retained, false, err
 	} else if !apierrors.IsNotFound(err) {
 		return nil, false, fmt.Errorf("get measurement Job %s: %w", key, err)
 	}
@@ -105,18 +95,27 @@ func (j *ExecutionJobs) Ensure(
 	if err := j.client.Get(ctx, key, existing); err != nil {
 		return nil, false, fmt.Errorf("get concurrently created measurement Job %s: %w", key, err)
 	}
-	retainedBinding, err := executionJobEvidenceStoreBinding(existing)
+	retained, err := j.verifyRetainedExecutionJob(run, frozen, existing)
+	return retained, false, err
+}
+
+func (j *ExecutionJobs) verifyRetainedExecutionJob(
+	run *edgev1alpha1.ProfilingRun,
+	frozen FrozenRun,
+	retained *batchv1.Job,
+) (*batchv1.Job, error) {
+	binding, err := executionJobEvidenceStoreBinding(retained)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	desired, err = buildExecutionJob(run, frozen, retainedBinding, j.options, j.scheme)
+	desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if err := verifyExecutionJob(run, existing, desired); err != nil {
-		return nil, false, err
+	if err := verifyExecutionJob(run, retained, desired); err != nil {
+		return nil, err
 	}
-	return existing, false, nil
+	return retained, nil
 }
 
 func executionJobEvidenceStoreBinding(job *batchv1.Job) (EvidenceStoreBinding, error) {

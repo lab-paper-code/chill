@@ -14,9 +14,12 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -29,6 +32,24 @@ type staticEvidenceStoreResolver struct {
 
 func (r staticEvidenceStoreResolver) Resolve(context.Context) (EvidenceStoreBinding, error) {
 	return r.binding, r.err
+}
+
+type concurrentJobCreateClient struct {
+	client.Client
+	job         *batchv1.Job
+	createCalls int
+}
+
+func (c *concurrentJobCreateClient) Create(
+	ctx context.Context,
+	object client.Object,
+	_ ...client.CreateOption,
+) error {
+	c.createCalls++
+	if err := c.Client.Create(ctx, c.job.DeepCopy()); err != nil {
+		return err
+	}
+	return apierrors.NewAlreadyExists(schema.GroupResource{Group: "batch", Resource: "jobs"}, object.GetName())
 }
 
 func TestBuildExecutionJobProjectsFrozenIntentAndDeliveryBinding(t *testing.T) {
@@ -353,6 +374,78 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	}
 	if _, _, err := jobs.Ensure(ctx, run, frozen); err == nil || !strings.Contains(err.Error(), "frozen execution contract") {
 		t.Fatalf("conflicting retained Job accepted: %v", err)
+	}
+}
+
+func TestExecutionJobsRecoverConcurrentlyCreatedJobAndRejectConflict(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mutate    func(*batchv1.Job)
+		wantError string
+	}{
+		{name: "exact"},
+		{
+			name: "drift",
+			mutate: func(job *batchv1.Job) {
+				job.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] = "other-node"
+			},
+			wantError: "frozen execution contract",
+		},
+		{
+			name: "invalid retained binding",
+			mutate: func(job *batchv1.Job) {
+				for index := range job.Spec.Template.Spec.Containers {
+					if job.Spec.Template.Spec.Containers[index].Name == runtimeContainerName {
+						job.Spec.Template.Spec.Containers[index].Name = "other"
+					}
+				}
+			},
+			wantError: "existing measurement Job has no runtime container",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			run := testRun()
+			prepared := currentPreparedRun(t)
+			scheme := executionJobTestScheme(t)
+			frozen := frozenRunForPrepared(t, prepared)
+			retainedBinding := testEvidenceStoreBinding()
+			concurrent, err := buildExecutionJob(
+				run, frozen, retainedBinding, testExecutionJobOptions(), scheme,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			concurrent.UID = testJobUID
+			if test.mutate != nil {
+				test.mutate(concurrent)
+			}
+			baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			kubeClient := &concurrentJobCreateClient{Client: baseClient, job: concurrent}
+			currentBinding := testEvidenceStoreBinding()
+			currentBinding.Endpoint = "http://new-evidence-store.chill-system.svc.cluster.local:9000"
+			jobs, err := NewExecutionJobs(
+				kubeClient,
+				scheme,
+				staticEvidenceStoreResolver{binding: currentBinding},
+				testExecutionJobOptions(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			recovered, created, ensureErr := jobs.Ensure(ctx, run, frozen)
+			if test.wantError != "" {
+				if ensureErr == nil || !strings.Contains(ensureErr.Error(), test.wantError) || recovered != nil || created {
+					t.Fatalf("conflicting concurrent Job result: created=%v job=%#v err=%v", created, recovered, ensureErr)
+				}
+			} else if ensureErr != nil || created || recovered == nil || recovered.UID != testJobUID {
+				t.Fatalf("exact concurrent Job recovery: created=%v job=%#v err=%v", created, recovered, ensureErr)
+			}
+			if kubeClient.createCalls != 1 {
+				t.Fatalf("create calls = %d, want 1", kubeClient.createCalls)
+			}
+		})
 	}
 }
 
