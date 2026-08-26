@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,6 +128,101 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	if fixture.intents.calls != 0 || fixture.evidence.calls != 0 {
 		t.Fatalf("invalid prefix loaded evidence: intent calls=%d evidence calls=%d",
 			fixture.intents.calls, fixture.evidence.calls)
+	}
+}
+
+func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
+	fixture := newCurveDeriverFixture(t)
+	activeRuns := []edgev1alpha1.ProfilingRun{
+		fixture.activeRuns[1], fixture.activeRuns[0], fixture.activeRuns[5], fixture.activeRuns[4],
+	}
+	passBatches, activeWitness, err := fixture.deriver.collectActiveAdmissions(
+		context.Background(), activeRuns, []int{1, 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(passBatches) != 2 || passBatches[0].Batch != 1 || passBatches[1].Batch != 2 {
+		t.Fatalf("pass batches = %+v", passBatches)
+	}
+	wantActiveTrials := [][]string{
+		{"active-b1-t2-pod", "active-b1-t1-pod"},
+		{"active-b2-t2-pod", "active-b2-t1-pod"},
+	}
+	for batchIndex := range passBatches {
+		got := make([]string, len(passBatches[batchIndex].Admissions))
+		for index, admission := range passBatches[batchIndex].Admissions {
+			got[index] = admission.Trial.TrialID
+		}
+		if !reflect.DeepEqual(got, wantActiveTrials[batchIndex]) {
+			t.Fatalf("batch %d trial order = %v, want %v", batchIndex, got, wantActiveTrials[batchIndex])
+		}
+	}
+	activeExecution, _, err := activeWitness.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activeExecution.Terminal.Pod.UID != "active-b1-t2-pod" {
+		t.Fatalf("active witness Pod UID = %q", activeExecution.Terminal.Pod.UID)
+	}
+
+	idleRuns := []edgev1alpha1.ProfilingRun{fixture.idleRuns[1], fixture.idleRuns[0]}
+	idleTrials, idleWitness, err := fixture.deriver.collectIdleTrials(context.Background(), idleRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idleTrials) != 2 || idleTrials[0].TrialID != "idle-t2-pod" || idleTrials[1].TrialID != "idle-t1-pod" {
+		t.Fatalf("idle trials = %+v", idleTrials)
+	}
+	idleExecution, _, err := idleWitness.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idleExecution.Terminal.Pod.UID != "idle-t2-pod" {
+		t.Fatalf("idle witness Pod UID = %q", idleExecution.Terminal.Pod.UID)
+	}
+}
+
+func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
+	fixture := newCurveDeriverFixture(t)
+	run := fixture.activeRuns[4]
+
+	_, err := fixture.deriver.Derive(
+		context.Background(), fixture.plan, []edgev1alpha1.ProfilingRun{run}, fixture.idleRuns,
+		[]int{1}, fixture.policy,
+	)
+	wantError := fmt.Sprintf(
+		"ProfilingRun %q batch %d is outside the requested curve prefix", run.Name, run.Spec.Measurement.Batch,
+	)
+	if err == nil || err.Error() != wantError {
+		t.Fatalf("Derive() error = %v, want %q", err, wantError)
+	}
+	if fixture.intents.calls != 0 || fixture.evidence.calls != 0 {
+		t.Fatalf(
+			"out-of-prefix Run loaded evidence: intent calls=%d evidence calls=%d",
+			fixture.intents.calls, fixture.evidence.calls,
+		)
+	}
+}
+
+func TestCurveDeriverPreservesCollectorLoadErrorIdentity(t *testing.T) {
+	fixture := newCurveDeriverFixture(t)
+	run := fixture.activeRuns[0]
+	loadErr := errors.New("intent load failed")
+	fixture.intents.errors = map[string]error{run.Name: loadErr}
+
+	_, err := fixture.deriver.Derive(
+		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
+		[]int{1, 2}, fixture.policy,
+	)
+	wantError := fmt.Sprintf("load ProfilingRun %q frozen intent: %s", run.Name, loadErr)
+	if !errors.Is(err, loadErr) || err.Error() != wantError {
+		t.Fatalf("Derive() error = %v, want %q wrapping %q", err, wantError, loadErr)
+	}
+	if fixture.intents.calls != 1 || fixture.evidence.calls != 0 {
+		t.Fatalf(
+			"load failure calls: intent=%d evidence=%d", fixture.intents.calls, fixture.evidence.calls,
+		)
 	}
 }
 
@@ -282,8 +378,9 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 }
 
 type fakeCurveIntentLoader struct {
-	byRun map[string]profilercontroller.FrozenRun
-	calls int
+	byRun  map[string]profilercontroller.FrozenRun
+	calls  int
+	errors map[string]error
 }
 
 func (l *fakeCurveIntentLoader) Load(
@@ -291,6 +388,9 @@ func (l *fakeCurveIntentLoader) Load(
 	run *edgev1alpha1.ProfilingRun,
 ) (profilercontroller.FrozenRun, error) {
 	l.calls++
+	if err := l.errors[run.Name]; err != nil {
+		return profilercontroller.FrozenRun{}, err
+	}
 	frozen, exists := l.byRun[run.Name]
 	if !exists {
 		return profilercontroller.FrozenRun{}, fmt.Errorf("unexpected Run %q", run.Name)

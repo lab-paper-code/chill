@@ -81,63 +81,13 @@ func (d *CurveDeriver) Derive(
 		ConfidenceLevel: sequentialPointConfidenceLevel,
 	}
 
-	passBatches := make([]profilederivation.PassBatch, len(batches))
-	batchIndexes := make(map[int]int, len(batches))
-	for index, batch := range batches {
-		passBatches[index] = profilederivation.PassBatch{Batch: batch}
-		batchIndexes[batch] = index
+	passBatches, activeWitness, err := d.collectActiveAdmissions(ctx, activeRuns, batches)
+	if err != nil {
+		return batchsaturation.CurveResult{}, err
 	}
-
-	var activeWitness profilerevidence.VerifiedEvidence
-	for index := range activeRuns {
-		run := &activeRuns[index]
-		batchIndex, exists := batchIndexes[int(run.Spec.Measurement.Batch)]
-		if !exists {
-			return batchsaturation.CurveResult{}, fmt.Errorf(
-				"ProfilingRun %q batch %d is outside the requested curve prefix",
-				run.Name, run.Spec.Measurement.Batch,
-			)
-		}
-		frozen, verified, err := d.loadActive(ctx, run)
-		if err != nil {
-			return batchsaturation.CurveResult{}, err
-		}
-		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, frozen.AdmissionPolicy)
-		if err != nil {
-			return batchsaturation.CurveResult{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
-		}
-		if admission == nil {
-			return batchsaturation.CurveResult{}, fmt.Errorf(
-				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
-			)
-		}
-		passBatches[batchIndex].Admissions = append(passBatches[batchIndex].Admissions, *admission)
-		if index == 0 {
-			activeWitness = verified
-		}
-	}
-
-	idleTrials := make([]profilederivation.IdleTrial, 0, len(idleRuns))
-	var idleWitness profilerevidence.VerifiedIdleEvidence
-	for index := range idleRuns {
-		run := &idleRuns[index]
-		frozen, verified, err := d.loadIdle(ctx, run)
-		if err != nil {
-			return batchsaturation.CurveResult{}, err
-		}
-		result, trial, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
-		if err != nil {
-			return batchsaturation.CurveResult{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
-		}
-		if trial == nil {
-			return batchsaturation.CurveResult{}, fmt.Errorf(
-				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
-			)
-		}
-		idleTrials = append(idleTrials, *trial)
-		if index == 0 {
-			idleWitness = verified
-		}
+	idleTrials, idleWitness, err := d.collectIdleTrials(ctx, idleRuns)
+	if err != nil {
+		return batchsaturation.CurveResult{}, err
 	}
 
 	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, pointPolicy)
@@ -166,6 +116,78 @@ func (d *CurveDeriver) Derive(
 		return batchsaturation.CurveResult{}, fmt.Errorf("derive sequential batch decision: %w", err)
 	}
 	return projectSequentialCurveResult(result)
+}
+
+func (d *CurveDeriver) collectActiveAdmissions(
+	ctx context.Context,
+	runs []edgev1alpha1.ProfilingRun,
+	batches []int,
+) ([]profilederivation.PassBatch, profilerevidence.VerifiedEvidence, error) {
+	passBatches := make([]profilederivation.PassBatch, len(batches))
+	batchIndexes := make(map[int]int, len(batches))
+	for index, batch := range batches {
+		passBatches[index] = profilederivation.PassBatch{Batch: batch}
+		batchIndexes[batch] = index
+	}
+
+	var witness profilerevidence.VerifiedEvidence
+	for index := range runs {
+		run := &runs[index]
+		batchIndex, exists := batchIndexes[int(run.Spec.Measurement.Batch)]
+		if !exists {
+			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+				"ProfilingRun %q batch %d is outside the requested curve prefix",
+				run.Name, run.Spec.Measurement.Batch,
+			)
+		}
+		frozen, verified, err := d.loadActive(ctx, run)
+		if err != nil {
+			return nil, profilerevidence.VerifiedEvidence{}, err
+		}
+		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, frozen.AdmissionPolicy)
+		if err != nil {
+			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
+		}
+		if admission == nil {
+			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
+			)
+		}
+		passBatches[batchIndex].Admissions = append(passBatches[batchIndex].Admissions, *admission)
+		if index == 0 {
+			witness = verified
+		}
+	}
+	return passBatches, witness, nil
+}
+
+func (d *CurveDeriver) collectIdleTrials(
+	ctx context.Context,
+	runs []edgev1alpha1.ProfilingRun,
+) ([]profilederivation.IdleTrial, profilerevidence.VerifiedIdleEvidence, error) {
+	trials := make([]profilederivation.IdleTrial, 0, len(runs))
+	var witness profilerevidence.VerifiedIdleEvidence
+	for index := range runs {
+		run := &runs[index]
+		frozen, verified, err := d.loadIdle(ctx, run)
+		if err != nil {
+			return nil, profilerevidence.VerifiedIdleEvidence{}, err
+		}
+		result, trial, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
+		if err != nil {
+			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
+		}
+		if trial == nil {
+			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
+				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
+			)
+		}
+		trials = append(trials, *trial)
+		if index == 0 {
+			witness = verified
+		}
+	}
+	return trials, witness, nil
 }
 
 func (d *CurveDeriver) loadActive(
