@@ -111,28 +111,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	case profiler.ActionFinalizeEvidence:
 		finalized, finalizeErr := r.finalize.Finalize(ctx, run, frozen.Run.Prepared, job)
 		if finalizeErr != nil {
-			if errors.Is(finalizeErr, profilerevidence.ErrPermanentValidation) {
-				statusErr := r.publishEvidenceFailure(
-					ctx,
-					run,
-					evidenceReasonInvalid,
-					"retained execution evidence is permanently invalid: "+finalizeErr.Error(),
-				)
-				if statusErr != nil {
-					return ctrl.Result{}, fmt.Errorf("publish permanent evidence failure: %w", statusErr)
-				}
-				return ctrl.Result{}, nil
-			}
-			statusErr := r.publishEvidenceFailure(
-				ctx,
-				run,
-				evidenceReasonVerificationFailed,
-				"retained execution evidence could not be verified",
+			return ctrl.Result{}, r.handleEvidenceFinalizationFailure(
+				ctx, req.NamespacedName, run, finalizeErr,
 			)
-			if statusErr != nil {
-				return ctrl.Result{}, errors.Join(finalizeErr, statusErr)
-			}
-			return ctrl.Result{}, fmt.Errorf("finalize ProfilingRun %s evidence: %w", req.NamespacedName, finalizeErr)
 		}
 		if err := r.publishFinalizedEvidence(ctx, run, finalized); err != nil {
 			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s evidence: %w", req.NamespacedName, err)
@@ -159,6 +140,32 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	default:
 		return ctrl.Result{}, fmt.Errorf("unexpected ProfilingRun lifecycle action %q", decision.Action)
 	}
+}
+
+func (r *RunReconciler) handleEvidenceFinalizationFailure(
+	ctx context.Context,
+	key types.NamespacedName,
+	run *edgev1alpha1.ProfilingRun,
+	failure error,
+) error {
+	permanent := errors.Is(failure, profilerevidence.ErrPermanentValidation)
+	reason := evidenceReasonVerificationFailed
+	message := "retained execution evidence could not be verified"
+	if permanent {
+		reason = evidenceReasonInvalid
+		message = "retained execution evidence is permanently invalid: " + failure.Error()
+	}
+
+	if statusErr := r.publishEvidenceFailure(ctx, run, reason, message); statusErr != nil {
+		if permanent {
+			return fmt.Errorf("publish permanent evidence failure: %w", statusErr)
+		}
+		return errors.Join(failure, statusErr)
+	}
+	if !permanent {
+		return fmt.Errorf("finalize ProfilingRun %s evidence: %w", key, failure)
+	}
+	return nil
 }
 
 func (r *RunReconciler) loadRecordedJob(
@@ -223,11 +230,8 @@ func (r *RunReconciler) publishActuationReference(
 
 func (r *RunReconciler) publishAdmissionFailure(ctx context.Context, run *edgev1alpha1.ProfilingRun) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
-			Status: metav1.ConditionUnknown, ObservedGeneration: run.Generation,
-			Reason: "AdmissionEvaluationFailed", Message: "verified evidence could not be evaluated",
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+			metav1.ConditionUnknown, "AdmissionEvaluationFailed", "verified evidence could not be evaluated")
 	})
 }
 
@@ -245,11 +249,8 @@ func (r *RunReconciler) publishAdmission(
 			Verdict: string(result.Verdict), PolicyVersion: result.PolicyVersion,
 			ReasonCodes: append([]string(nil), result.ReasonCodes...),
 		}
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
-			Status: conditionStatus, ObservedGeneration: run.Generation,
-			Reason: reason, Message: message,
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+			conditionStatus, reason, message)
 	})
 }
 
@@ -306,11 +307,8 @@ func (r *RunReconciler) publishExecutionOutcome(
 	reason, message string,
 ) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
-			Status: status, ObservedGeneration: run.Generation,
-			Reason: reason, Message: message,
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			status, reason, message)
 	})
 }
 
@@ -321,11 +319,8 @@ func (r *RunReconciler) publishIntentFreezeFailure(
 ) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
 		desired.ObservedGeneration = run.Generation
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
-			Status: metav1.ConditionFalse, ObservedGeneration: run.Generation,
-			Reason: reason, Message: "Run intent could not be frozen: " + message,
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			metav1.ConditionFalse, reason, "Run intent could not be frozen: "+message)
 	})
 }
 
@@ -336,16 +331,10 @@ func (r *RunReconciler) publishEvidenceFailure(
 	message string,
 ) error {
 	return r.patchStatus(ctx, run, func(desired *edgev1alpha1.ProfilingRunStatus) {
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
-			Status: metav1.ConditionTrue, ObservedGeneration: run.Generation,
-			Reason: "JobSucceeded", Message: "measurement Job completed successfully",
-		})
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
-			Status: metav1.ConditionFalse, ObservedGeneration: run.Generation,
-			Reason: reason, Message: message,
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			metav1.ConditionTrue, "JobSucceeded", "measurement Job completed successfully")
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceVerified,
+			metav1.ConditionFalse, reason, message)
 	})
 }
 
@@ -373,16 +362,23 @@ func (r *RunReconciler) publishFinalizedEvidence(
 			SchemaVersion: finalized.SchemaVersion,
 			Size:          finalized.Reference.Size,
 		}
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionExecutionComplete,
-			Status: metav1.ConditionTrue, ObservedGeneration: run.Generation,
-			Reason: "JobSucceeded", Message: "measurement Job completed successfully",
-		})
-		meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
-			Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
-			Status: metav1.ConditionTrue, ObservedGeneration: run.Generation,
-			Reason: "EvidenceVerified", Message: "immutable execution evidence was independently verified",
-		})
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionExecutionComplete,
+			metav1.ConditionTrue, "JobSucceeded", "measurement Job completed successfully")
+		setRunCondition(desired, run, edgev1alpha1.ProfilingRunConditionEvidenceVerified,
+			metav1.ConditionTrue, "EvidenceVerified", "immutable execution evidence was independently verified")
+	})
+}
+
+func setRunCondition(
+	desired *edgev1alpha1.ProfilingRunStatus,
+	run *edgev1alpha1.ProfilingRun,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason, message string,
+) {
+	meta.SetStatusCondition(&desired.Conditions, metav1.Condition{
+		Type: conditionType, Status: status, ObservedGeneration: run.Generation,
+		Reason: reason, Message: message,
 	})
 }
 

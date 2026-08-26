@@ -414,6 +414,9 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 	if !errors.Is(err, want) || result != (ctrl.Result{}) {
 		t.Fatalf("transient finalization result = %#v, error = %v, want wrapped %v", result, err, want)
 	}
+	if !strings.Contains(err.Error(), "finalize ProfilingRun chill-system/run evidence") {
+		t.Fatalf("transient finalization error context = %q", err)
+	}
 	if finalizer.calls != 1 {
 		t.Fatalf("finalizer calls = %d, want 1", finalizer.calls)
 	}
