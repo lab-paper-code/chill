@@ -113,26 +113,9 @@ func (m *AttemptMaterializer) Advance(
 		if !confirmed {
 			return AttemptProgress{Stage: AttemptStageTerminal, Reason: reason}, nil
 		}
-		binding, err := m.stores.Resolve(ctx)
-		if err != nil {
-			return AttemptProgress{}, fmt.Errorf("resolve transition attempt Evidence Store binding: %w", err)
-		}
-		job, err = BuildAttemptJob(AttemptJobRequest{
-			Measurement: measurement, Prepared: prepared, DirectionIndex: directionIndex,
-			NodeActuationName: selection.name, RawLocation: selection.rawLocation,
-			StoreBinding: binding,
-		}, m.options, m.scheme)
+		job, err = m.createOrRecoverObserverJob(ctx, measurement, prepared, selection)
 		if err != nil {
 			return AttemptProgress{}, err
-		}
-		if err := m.client.Create(ctx, job); err != nil {
-			if !apierrors.IsAlreadyExists(err) {
-				return AttemptProgress{}, fmt.Errorf("create transition attempt Job %q: %w", selection.name, err)
-			}
-			job, err = m.loadJob(ctx, measurement, selection)
-			if err != nil {
-				return AttemptProgress{}, err
-			}
 		}
 		return AttemptProgress{Stage: AttemptStageObserverStarting, Job: job}, nil
 	}
@@ -154,22 +137,59 @@ func (m *AttemptMaterializer) Advance(
 	if !confirmed {
 		return AttemptProgress{Stage: AttemptStageTerminal, Reason: reason, Job: job}, nil
 	}
-	actuation, err = buildAttemptActuation(measurement, prepared, selection, m.now(), m.scheme)
+	actuation, err = m.createOrRecoverAttemptActuation(ctx, measurement, prepared, selection)
 	if err != nil {
 		return AttemptProgress{}, err
-	}
-	if err := m.client.Create(ctx, actuation); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return AttemptProgress{}, fmt.Errorf("create transition attempt NodeActuation %q: %w", selection.name, err)
-		}
-		actuation, err = m.loadActuation(ctx, measurement, selection)
-		if err != nil {
-			return AttemptProgress{}, err
-		}
 	}
 	return AttemptProgress{
 		Stage: AttemptStageActuationRunning, Job: job, NodeActuation: actuation,
 	}, nil
+}
+
+func (m *AttemptMaterializer) createOrRecoverObserverJob(
+	ctx context.Context,
+	measurement *edgev1alpha1.PowerModeTransitionCost,
+	prepared PreparedMeasurement,
+	selection attemptSelection,
+) (*batchv1.Job, error) {
+	binding, err := m.stores.Resolve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve transition attempt Evidence Store binding: %w", err)
+	}
+	job, err := BuildAttemptJob(AttemptJobRequest{
+		Measurement: measurement, Prepared: prepared, DirectionIndex: selection.directionIndex,
+		NodeActuationName: selection.name, RawLocation: selection.rawLocation,
+		StoreBinding: binding,
+	}, m.options, m.scheme)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.client.Create(ctx, job); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create transition attempt Job %q: %w", selection.name, err)
+		}
+		return m.loadJob(ctx, measurement, selection)
+	}
+	return job, nil
+}
+
+func (m *AttemptMaterializer) createOrRecoverAttemptActuation(
+	ctx context.Context,
+	measurement *edgev1alpha1.PowerModeTransitionCost,
+	prepared PreparedMeasurement,
+	selection attemptSelection,
+) (*edgev1alpha1.NodeActuation, error) {
+	actuation, err := buildAttemptActuation(measurement, prepared, selection, m.now(), m.scheme)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.client.Create(ctx, actuation); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create transition attempt NodeActuation %q: %w", selection.name, err)
+		}
+		return m.loadActuation(ctx, measurement, selection)
+	}
+	return actuation, nil
 }
 
 type attemptSelection struct {

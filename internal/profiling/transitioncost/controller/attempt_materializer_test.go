@@ -13,7 +13,10 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -270,6 +273,133 @@ func TestAttemptMaterializerFailsClosedOnUnconfirmedSource(t *testing.T) {
 	}
 }
 
+func TestAttemptMaterializerRecoversConcurrentObserverJob(t *testing.T) {
+	fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+	raceClient := &attemptCreationRaceClient{Client: fixture.client, target: raceObserverJob}
+	fixture.materializer.client = raceClient
+
+	progress, err := fixture.materializer.Advance(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Stage != AttemptStageObserverStarting || progress.Job == nil ||
+		progress.Job.UID != "concurrent-winner" || raceClient.createCalls != 1 || fixture.stores.calls != 1 {
+		t.Fatalf(
+			"concurrent Job progress = %#v, creates = %d, store calls = %d",
+			progress, raceClient.createCalls, fixture.stores.calls,
+		)
+	}
+
+	if _, err := fixture.materializer.Advance(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if raceClient.createCalls != 1 || fixture.stores.calls != 1 {
+		t.Fatalf("retained Job was recreated: creates = %d, store calls = %d", raceClient.createCalls, fixture.stores.calls)
+	}
+}
+
+func TestAttemptMaterializerRecoversConcurrentNodeActuation(t *testing.T) {
+	fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+	progress, err := fixture.materializer.Advance(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setJobReady(t, fixture.client, progress.Job)
+	raceClient := &attemptCreationRaceClient{Client: fixture.client, target: raceNodeActuation}
+	fixture.materializer.client = raceClient
+
+	progress, err = fixture.materializer.Advance(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Stage != AttemptStageActuationRunning || progress.NodeActuation == nil ||
+		progress.NodeActuation.UID != "concurrent-winner" ||
+		!progress.NodeActuation.Spec.StageRequestedAt.Time.Equal(time.Unix(150, 0).UTC()) ||
+		raceClient.createCalls != 1 || fixture.stores.calls != 1 {
+		t.Fatalf(
+			"concurrent NodeActuation progress = %#v, creates = %d, store calls = %d",
+			progress, raceClient.createCalls, fixture.stores.calls,
+		)
+	}
+
+	if _, err := fixture.materializer.Advance(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if raceClient.createCalls != 1 || fixture.stores.calls != 1 {
+		t.Fatalf(
+			"retained NodeActuation was recreated: creates = %d, store calls = %d",
+			raceClient.createCalls, fixture.stores.calls,
+		)
+	}
+}
+
+func TestAttemptMaterializerPreservesConcurrentWinnerReloadErrors(t *testing.T) {
+	reloadErr := errors.New("reload failed")
+	for _, test := range []struct {
+		name        string
+		target      attemptCreationRaceTarget
+		prepare     func(*testing.T, attemptMaterializerFixture)
+		wantContext string
+	}{
+		{
+			name: "observer Job", target: raceObserverJob,
+			prepare:     func(*testing.T, attemptMaterializerFixture) {},
+			wantContext: "get transition attempt Job",
+		},
+		{
+			name: "NodeActuation", target: raceNodeActuation,
+			prepare: func(t *testing.T, fixture attemptMaterializerFixture) {
+				progress, err := fixture.materializer.Advance(
+					context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				setJobReady(t, fixture.client, progress.Job)
+			},
+			wantContext: "get transition attempt NodeActuation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAttemptMaterializerFixture(t, confirmedSourceActuation(t, 0, time.Unix(100, 0)))
+			test.prepare(t, fixture)
+			selection, err := selectAttempt(fixture.measurement, fixture.prepared.EvidenceStore, 0, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raceClient := &attemptCreationRaceClient{
+				Client: fixture.client, target: test.target, reloadErr: reloadErr,
+			}
+			fixture.materializer.client = raceClient
+
+			_, err = fixture.materializer.Advance(
+				context.Background(), fixture.measurement, fixture.prepared, 0, 1,
+			)
+			wantError := fmt.Sprintf(
+				"%s %s/%s: %s", test.wantContext, fixture.measurement.Namespace, selection.name, reloadErr,
+			)
+			if !errors.Is(err, reloadErr) || err.Error() != wantError {
+				t.Fatalf("Advance() error = %v, want %q wrapping %q", err, wantError, reloadErr)
+			}
+			if raceClient.createCalls != 1 || fixture.stores.calls != 1 {
+				t.Fatalf(
+					"race calls: creates = %d, store = %d", raceClient.createCalls, fixture.stores.calls,
+				)
+			}
+		})
+	}
+}
+
 func TestAttemptMaterializerReturnsTerminalPairForFinalization(t *testing.T) {
 	for _, conditionType := range []batchv1.JobConditionType{batchv1.JobComplete, batchv1.JobFailed} {
 		t.Run(string(conditionType), func(t *testing.T) {
@@ -328,6 +458,69 @@ type attemptMaterializerFixture struct {
 	client       client.Client
 	materializer *AttemptMaterializer
 	stores       *recordingAttemptStoreResolver
+}
+
+type attemptCreationRaceTarget string
+
+const (
+	raceObserverJob   attemptCreationRaceTarget = "observer-job"
+	raceNodeActuation attemptCreationRaceTarget = "node-actuation"
+)
+
+type attemptCreationRaceClient struct {
+	client.Client
+	target      attemptCreationRaceTarget
+	reloadErr   error
+	raced       bool
+	createCalls int
+}
+
+func (c *attemptCreationRaceClient) Create(
+	ctx context.Context,
+	object client.Object,
+	options ...client.CreateOption,
+) error {
+	if !c.matches(object) {
+		return c.Client.Create(ctx, object, options...)
+	}
+	c.createCalls++
+	if c.raced {
+		return c.Client.Create(ctx, object, options...)
+	}
+	c.raced = true
+	winner := object.DeepCopyObject().(client.Object)
+	winner.SetUID(types.UID("concurrent-winner"))
+	if err := c.Client.Create(ctx, winner, options...); err != nil {
+		return err
+	}
+	resource := schema.GroupResource{Group: "batch", Resource: "jobs"}
+	if c.target == raceNodeActuation {
+		resource = schema.GroupResource{Group: edgev1alpha1.GroupVersion.Group, Resource: "nodeactuations"}
+	}
+	return apierrors.NewAlreadyExists(resource, object.GetName())
+}
+
+func (c *attemptCreationRaceClient) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	object client.Object,
+	options ...client.GetOption,
+) error {
+	if c.raced && c.reloadErr != nil && c.matches(object) {
+		return c.reloadErr
+	}
+	return c.Client.Get(ctx, key, object, options...)
+}
+
+func (c *attemptCreationRaceClient) matches(object client.Object) bool {
+	switch object.(type) {
+	case *batchv1.Job:
+		return c.target == raceObserverJob
+	case *edgev1alpha1.NodeActuation:
+		return c.target == raceNodeActuation
+	default:
+		return false
+	}
 }
 
 func newAttemptMaterializerFixture(t *testing.T, objects ...client.Object) attemptMaterializerFixture {
