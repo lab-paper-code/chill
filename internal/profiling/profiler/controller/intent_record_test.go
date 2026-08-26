@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -12,8 +13,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/yaml"
 )
@@ -22,6 +26,37 @@ const (
 	testSystemNamespace = "chill-system"
 	testFactsUID        = "facts-uid"
 )
+
+type concurrentIntentRecordClient struct {
+	client.Client
+	record            *corev1.ConfigMap
+	getAfterCreateErr error
+	createCalls       int
+}
+
+func (c *concurrentIntentRecordClient) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	object client.Object,
+	options ...client.GetOption,
+) error {
+	if c.createCalls > 0 && c.getAfterCreateErr != nil {
+		return c.getAfterCreateErr
+	}
+	return c.Client.Get(ctx, key, object, options...)
+}
+
+func (c *concurrentIntentRecordClient) Create(
+	ctx context.Context,
+	object client.Object,
+	_ ...client.CreateOption,
+) error {
+	c.createCalls++
+	if err := c.Client.Create(ctx, c.record.DeepCopy()); err != nil {
+		return err
+	}
+	return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, object.GetName())
+}
 
 func TestIntentRecordsCreateReuseAndRestartLoad(t *testing.T) {
 	ctx := context.Background()
@@ -157,6 +192,71 @@ func TestIntentRecordsNeverOverwriteConflictingRecord(t *testing.T) {
 	if err := json.Unmarshal(after.BinaryData[intentRecordCandidateKey], &afterCandidate); err != nil ||
 		afterCandidate["scope"] != "foreign" {
 		t.Fatalf("conflicting frozen intent record was overwritten: %#v, %v", afterCandidate, err)
+	}
+}
+
+func TestIntentRecordsRecoverConcurrentlyCreatedRecord(t *testing.T) {
+	apiErr := errors.New("ConfigMap read temporarily unavailable")
+	for _, test := range []struct {
+		name       string
+		mutate     func(*corev1.ConfigMap)
+		getErr     error
+		wantError  string
+		wantAPIErr bool
+	}{
+		{name: "exact"},
+		{
+			name: "conflict",
+			mutate: func(record *corev1.ConfigMap) {
+				immutable := false
+				record.Immutable = &immutable
+			},
+			wantError: "frozen intent ConfigMap is not immutable",
+		},
+		{
+			name:       "second get failure",
+			getErr:     apiErr,
+			wantError:  "get concurrently created frozen intent ConfigMap",
+			wantAPIErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			run := testRun()
+			frozen := testFrozenRun(t)
+			scheme := intentRecordTestScheme(t)
+			concurrent, err := buildIntentRecord(run, frozen, scheme)
+			if err != nil {
+				t.Fatal(err)
+			}
+			concurrent.UID = "intent-record-uid"
+			if test.mutate != nil {
+				test.mutate(concurrent)
+			}
+			baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			kubeClient := &concurrentIntentRecordClient{
+				Client: baseClient, record: concurrent, getAfterCreateErr: test.getErr,
+			}
+			records, err := NewIntentRecords(kubeClient, scheme)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			recovered, created, ensureErr := records.Ensure(ctx, run, frozen)
+			if test.wantError != "" {
+				if ensureErr == nil || !strings.Contains(ensureErr.Error(), test.wantError) || recovered != nil || created {
+					t.Fatalf("concurrent record failure: created=%v record=%#v err=%v", created, recovered, ensureErr)
+				}
+				if test.wantAPIErr && !errors.Is(ensureErr, apiErr) {
+					t.Fatalf("concurrent record API error = %v, want wrapped %v", ensureErr, apiErr)
+				}
+			} else if ensureErr != nil || created || recovered == nil || recovered.UID != concurrent.UID {
+				t.Fatalf("exact concurrent record recovery: created=%v record=%#v err=%v", created, recovered, ensureErr)
+			}
+			if kubeClient.createCalls != 1 {
+				t.Fatalf("create calls = %d, want 1", kubeClient.createCalls)
+			}
+		})
 	}
 }
 

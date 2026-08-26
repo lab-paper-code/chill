@@ -63,10 +63,8 @@ func (r *IntentRecords) Ensure(
 	key := client.ObjectKeyFromObject(desired)
 	existing := &corev1.ConfigMap{}
 	if err := r.client.Get(ctx, key, existing); err == nil {
-		if err := verifyExpectedIntentRecord(run, existing, frozen); err != nil {
-			return nil, false, err
-		}
-		return existing, false, nil
+		retained, err := verifyRetainedIntentRecord(run, frozen, existing)
+		return retained, false, err
 	} else if !apierrors.IsNotFound(err) {
 		return nil, false, fmt.Errorf("get frozen intent ConfigMap %s: %w", key, err)
 	}
@@ -79,10 +77,19 @@ func (r *IntentRecords) Ensure(
 	if err := r.client.Get(ctx, key, existing); err != nil {
 		return nil, false, fmt.Errorf("get concurrently created frozen intent ConfigMap %s: %w", key, err)
 	}
-	if err := verifyExpectedIntentRecord(run, existing, frozen); err != nil {
-		return nil, false, err
+	retained, err := verifyRetainedIntentRecord(run, frozen, existing)
+	return retained, false, err
+}
+
+func verifyRetainedIntentRecord(
+	run *edgev1alpha1.ProfilingRun,
+	frozen FrozenRun,
+	retained *corev1.ConfigMap,
+) (*corev1.ConfigMap, error) {
+	if err := verifyExpectedIntentRecord(run, retained, frozen); err != nil {
+		return nil, err
 	}
-	return existing, false, nil
+	return retained, nil
 }
 
 func (r *IntentRecords) Load(
