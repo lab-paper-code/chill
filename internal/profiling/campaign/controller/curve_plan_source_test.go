@@ -203,6 +203,58 @@ func TestCurvePlanSourceRejectsCampaignBatchSizesForDerivedArtifact(t *testing.T
 	}
 }
 
+func TestCurvePlanProjectorPreservesPhaseOrderAndErrorIdentity(t *testing.T) {
+	parent := testParent()
+	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	calls := []string{}
+	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report), calls: &calls}
+	resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes, calls: &calls}
+	preparer := &fakeCurvePlanPreparer{
+		report: report, reportBytes: reportBytes, nodeUID: "node-uid", calls: &calls,
+	}
+	projector, err := NewCurvePlanProjector(modelReader, resolver, preparer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := projector.Project(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := []string{
+		"resolve-candidate",
+		"prepare:" + profilingrun.SaturatedSerialFixedBatchWorkloadMode,
+		"prepare:" + profilingrun.IdleModelLoadedWorkloadMode,
+		"read-model",
+	}
+	if !slices.Equal(calls, wantCalls) {
+		t.Fatalf("Project() calls = %v, want %v", calls, wantCalls)
+	}
+
+	calls = nil
+	modelErr := errors.New("model read failed")
+	modelReader.err = modelErr
+	_, _, err = projector.Project(context.Background(), parent)
+	wantError := fmt.Sprintf(
+		"get ModelSpec %q for curve-plan artifact: %s", parent.Spec.State.Candidate.ModelSpec, modelErr,
+	)
+	if !errors.Is(err, modelErr) || err.Error() != wantError {
+		t.Fatalf("Project() error = %v, want %q wrapping %q", err, wantError, modelErr)
+	}
+	if !slices.Equal(calls, wantCalls) {
+		t.Fatalf("failed Project() calls = %v, want %v", calls, wantCalls)
+	}
+
+	calls = nil
+	_, _, err = projector.Project(context.Background(), nil)
+	if err == nil || err.Error() != "a parent BatchSaturation is required" {
+		t.Fatalf("Project(nil) error = %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("Project(nil) crossed resolver boundary: %v", calls)
+	}
+}
+
 func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -247,6 +299,9 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
 				!strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
+			}
+			if test.preparedArtifact != "" && len(preparer.requests) != 1 {
+				t.Fatalf("active artifact mismatch prepared %d Runs, want 1", len(preparer.requests))
 			}
 		})
 	}
@@ -329,6 +384,8 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 
 type fakeCurvePlanModelReader struct {
 	model *edgev1alpha1.ModelSpec
+	calls *[]string
+	err   error
 }
 
 func (r *fakeCurvePlanModelReader) Get(
@@ -337,6 +394,12 @@ func (r *fakeCurvePlanModelReader) Get(
 	object client.Object,
 	_ ...client.GetOption,
 ) error {
+	if r.calls != nil {
+		*r.calls = append(*r.calls, "read-model")
+	}
+	if r.err != nil {
+		return r.err
+	}
 	model, ok := object.(*edgev1alpha1.ModelSpec)
 	if !ok {
 		return fmt.Errorf("unexpected object type %T", object)
@@ -358,12 +421,16 @@ func (*fakeCurvePlanModelReader) List(
 
 type fakeCurvePlanCandidateResolver struct {
 	reportBytes []byte
+	calls       *[]string
 }
 
 func (r *fakeCurvePlanCandidateResolver) ResolveCandidate(
 	_ context.Context,
 	_ profiler.CandidateSelection,
 ) (profiler.ResolvedCandidate, error) {
+	if r.calls != nil {
+		*r.calls = append(*r.calls, "resolve-candidate")
+	}
 	return profiler.ResolvedCandidate{ReportBytes: append([]byte(nil), r.reportBytes...)}, nil
 }
 
@@ -373,6 +440,7 @@ type fakeCurvePlanPreparer struct {
 	nodeUID          string
 	preparedArtifact string
 	requests         []profiler.PreparationRequest
+	calls            *[]string
 }
 
 func (p *fakeCurvePlanPreparer) Prepare(
@@ -380,6 +448,9 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	request profiler.PreparationRequest,
 ) (profiler.PreparedRun, error) {
 	p.requests = append(p.requests, request)
+	if p.calls != nil {
+		*p.calls = append(*p.calls, "prepare:"+request.Measurement.WorkloadMode)
+	}
 	artifact := p.report.Selection.Artifact
 	if p.preparedArtifact != "" {
 		artifact = p.preparedArtifact

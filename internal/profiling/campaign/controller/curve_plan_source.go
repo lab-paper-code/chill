@@ -116,67 +116,21 @@ func (p *CurvePlanProjector) Project(
 		return profilederivation.CurvePlan{}, nil, errors.New("a parent BatchSaturation is required")
 	}
 
-	selection := profiler.CandidateSelection{
-		ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
-		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
-		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
-		PowerMode:     parent.Spec.State.Candidate.PowerMode,
-	}
-	resolved, err := p.resolver.ResolveCandidate(ctx, selection)
+	report, plannedBatchSizes, err := p.resolveCandidateReportAndBatches(ctx, parent)
 	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
+		return profilederivation.CurvePlan{}, nil, err
 	}
-	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
+	active, idle, transition, err := p.prepareCurveIntentsAndTransition(ctx, parent, report, plannedBatchSizes)
 	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
+		return profilederivation.CurvePlan{}, nil, err
 	}
-	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
+	capability, conversion, err := p.resolveCurveArtifactContracts(
+		ctx, parent.Spec.State.Candidate.ModelSpec, report,
+	)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
 
-	active, err := p.prepare(ctx, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive,
-		Batch:        plannedBatchSizes[0],
-	})
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
-	}
-	if active.Intent.State.Artifact != report.Selection.Artifact {
-		return profilederivation.CurvePlan{}, nil, errors.New("prepared active intent artifact disagrees with the resolved candidate report")
-	}
-	transition, err := projectTransitionMaterial(active)
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project campaign transition: %w", err)
-	}
-	idle, err := p.prepare(ctx, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle,
-		Batch:        plannedBatchSizes[0],
-	})
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
-	}
-	artifact, err := p.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, err
-	}
-	conversion, err := resolveConversion(artifact, report)
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, err
-	}
-	if artifact.Input == nil {
-		return profilederivation.CurvePlan{}, nil,
-			&ArtifactInputContractMissingError{Artifact: artifact.Name}
-	}
-	capability := profilingrun.CandidateArtifactCapability{
-		InputSampleShape: append([]int32(nil), artifact.Input.InputSampleShape...),
-	}
-	if report.ArtifactCapability != nil {
-		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform
-		capability.DeclaredBatchSizes = append(
-			[]int32(nil), report.ArtifactCapability.DeclaredBatchSizes...,
-		)
-	}
 	spec, err := admission.ProjectCurvePlanSpec(
 		parent.Name,
 		active.Intent,
@@ -193,6 +147,91 @@ func (p *CurvePlanProjector) Project(
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("construct curve plan: %w", err)
 	}
 	return plan, transition, nil
+}
+
+func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchSaturation,
+) (profilingrun.CandidateReport, []int, error) {
+	selection := profiler.CandidateSelection{
+		ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
+		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
+		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
+		PowerMode:     parent.Spec.State.Candidate.PowerMode,
+	}
+	resolved, err := p.resolver.ResolveCandidate(ctx, selection)
+	if err != nil {
+		return profilingrun.CandidateReport{}, nil, fmt.Errorf("resolve curve-plan candidate: %w", err)
+	}
+	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
+	if err != nil {
+		return profilingrun.CandidateReport{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
+	}
+	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
+	if err != nil {
+		return profilingrun.CandidateReport{}, nil, err
+	}
+	return report, plannedBatchSizes, nil
+}
+
+func (p *CurvePlanProjector) prepareCurveIntentsAndTransition(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchSaturation,
+	report profilingrun.CandidateReport,
+	plannedBatchSizes []int,
+) (profiler.PreparedRun, profiler.PreparedRun, *TransitionMaterial, error) {
+	active, err := p.prepare(ctx, parent, batchsaturation.Measurement{
+		WorkloadMode: batchsaturation.WorkloadModeActive,
+		Batch:        plannedBatchSizes[0],
+	})
+	if err != nil {
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
+	}
+	if active.Intent.State.Artifact != report.Selection.Artifact {
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil,
+			errors.New("prepared active intent artifact disagrees with the resolved candidate report")
+	}
+	transition, err := projectTransitionMaterial(active)
+	if err != nil {
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("project campaign transition: %w", err)
+	}
+	idle, err := p.prepare(ctx, parent, batchsaturation.Measurement{
+		WorkloadMode: batchsaturation.WorkloadModeIdle,
+		Batch:        plannedBatchSizes[0],
+	})
+	if err != nil {
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
+	}
+	return active, idle, transition, nil
+}
+
+func (p *CurvePlanProjector) resolveCurveArtifactContracts(
+	ctx context.Context,
+	modelSpecName string,
+	report profilingrun.CandidateReport,
+) (profilingrun.CandidateArtifactCapability, profilederivation.CurveConversionContract, error) {
+	artifact, err := p.resolveArtifact(ctx, modelSpecName, report)
+	if err != nil {
+		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{}, err
+	}
+	conversion, err := resolveConversion(artifact, report)
+	if err != nil {
+		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{}, err
+	}
+	if artifact.Input == nil {
+		return profilingrun.CandidateArtifactCapability{}, profilederivation.CurveConversionContract{},
+			&ArtifactInputContractMissingError{Artifact: artifact.Name}
+	}
+	capability := profilingrun.CandidateArtifactCapability{
+		InputSampleShape: append([]int32(nil), artifact.Input.InputSampleShape...),
+	}
+	if report.ArtifactCapability != nil {
+		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform
+		capability.DeclaredBatchSizes = append(
+			[]int32(nil), report.ArtifactCapability.DeclaredBatchSizes...,
+		)
+	}
+	return capability, conversion, nil
 }
 
 // Resolve recomputes the selected plan and records it immutably. When the
