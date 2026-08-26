@@ -37,6 +37,12 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 	if created.Reused || store.puts != 1 {
 		t.Fatalf("first finalization = %+v, puts = %d", created, store.puts)
 	}
+	requireStoreCalls(t, store,
+		"open:"+record.RawMeasurement.Key,
+		"open:"+request.FinalLocation.Key,
+		"put:"+request.FinalLocation.Key,
+		"open:"+request.FinalLocation.Key,
+	)
 
 	// Simulate controller restart and later mutable cluster observation. The
 	// deterministic location must recover the first immutable record.
@@ -49,6 +55,7 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 	request.Terminal.NodeWorkload.Pods = append(request.Terminal.NodeWorkload.Pods, WorkloadPod{
 		Namespace: "later", Name: "unrelated", UID: "later-pod", Phase: "Running",
 	})
+	store.calls = nil
 	reused, err := restarted.Finalize(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +63,73 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 	if !reused.Reused || reused.Reference != created.Reference || store.puts != 1 {
 		t.Fatalf("restart finalization = %+v, first = %+v, puts = %d", reused, created, store.puts)
 	}
+	requireStoreCalls(t, store,
+		"open:"+record.RawMeasurement.Key,
+		"open:"+request.FinalLocation.Key,
+	)
+}
+
+func TestFinalizerReportsConcurrentImmutableWinnerAsReused(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	record := validExecutionEvidence(t, intent, raw)
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeObjectStore()
+	store.objects[record.RawMeasurement.Location()] = rawBytes
+	store.putOutcome = evidencestore.CreateOutcomeExisting
+	finalizer, err := NewFinalizer(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := requestFrom(record)
+
+	result, err := finalizer.Finalize(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Reused || result.SchemaVersion != ExecutionEvidenceSchemaVersion || store.puts != 1 {
+		t.Fatalf("concurrent finalization = %+v, puts = %d", result, store.puts)
+	}
+	requireStoreCalls(t, store,
+		"open:"+record.RawMeasurement.Key,
+		"open:"+request.FinalLocation.Key,
+		"put:"+request.FinalLocation.Key,
+		"open:"+request.FinalLocation.Key,
+	)
+}
+
+func TestFinalizerPreservesReadAfterCreateError(t *testing.T) {
+	intent := loadIntent(t)
+	raw := validRaw(t, intent)
+	record := validExecutionEvidence(t, intent, raw)
+	rawBytes, err := raw.CanonicalJSON(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readErr := errors.New("retained read failed")
+	store := newFakeObjectStore()
+	store.objects[record.RawMeasurement.Location()] = rawBytes
+	store.openErrors = map[int]error{3: readErr}
+	finalizer, err := NewFinalizer(store, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := requestFrom(record)
+
+	_, err = finalizer.Finalize(context.Background(), request)
+	wantError := "read finalized evidence after create: retained read failed"
+	if !errors.Is(err, readErr) || err.Error() != wantError {
+		t.Fatalf("Finalize() error = %v, want %q wrapping %q", err, wantError, readErr)
+	}
+	requireStoreCalls(t, store,
+		"open:"+record.RawMeasurement.Key,
+		"open:"+request.FinalLocation.Key,
+		"put:"+request.FinalLocation.Key,
+		"open:"+request.FinalLocation.Key,
+	)
 }
 
 func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
@@ -228,6 +302,10 @@ type fakeObjectStore struct {
 	objects         map[evidencestore.ObjectLocation][]byte
 	puts            int
 	corruptAfterPut bool
+	putOutcome      evidencestore.CreateOutcome
+	openErrors      map[int]error
+	openCalls       int
+	calls           []string
 }
 
 func newFakeObjectStore() *fakeObjectStore {
@@ -238,6 +316,11 @@ func (s *fakeObjectStore) OpenLocation(
 	_ context.Context,
 	location evidencestore.ObjectLocation,
 ) (io.ReadCloser, error) {
+	s.openCalls++
+	s.calls = append(s.calls, "open:"+location.Key)
+	if err := s.openErrors[s.openCalls]; err != nil {
+		return nil, err
+	}
 	payload, ok := s.objects[location]
 	if !ok {
 		return nil, evidencestore.ErrNotFound
@@ -251,6 +334,7 @@ func (s *fakeObjectStore) PutImmutable(
 	content io.Reader,
 ) (evidencestore.Receipt, error) {
 	s.puts++
+	s.calls = append(s.calls, "put:"+identity.Key)
 	payload, err := io.ReadAll(content)
 	if err != nil {
 		return evidencestore.Receipt{}, err
@@ -263,7 +347,18 @@ func (s *fakeObjectStore) PutImmutable(
 	if s.corruptAfterPut {
 		s.objects[location] = []byte(fmt.Sprintf("corrupt-%d", len(payload)))
 	}
-	return fakeReceipt(identity, evidencestore.CreateOutcomeCreated), nil
+	outcome := s.putOutcome
+	if outcome == "" {
+		outcome = evidencestore.CreateOutcomeCreated
+	}
+	return fakeReceipt(identity, outcome), nil
+}
+
+func requireStoreCalls(t *testing.T, store *fakeObjectStore, want ...string) {
+	t.Helper()
+	if fmt.Sprint(store.calls) != fmt.Sprint(want) {
+		t.Fatalf("store calls = %v, want %v", store.calls, want)
+	}
 }
 
 func fakeReceipt(

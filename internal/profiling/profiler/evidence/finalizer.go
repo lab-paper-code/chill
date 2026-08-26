@@ -50,33 +50,55 @@ func NewFinalizer(store ObjectStore, maxObjectBytes int64) (*Finalizer, error) {
 }
 
 func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (FinalizeResult, error) {
+	raw, err := f.validateAndRestoreRawEvidence(ctx, request)
+	if err != nil {
+		return FinalizeResult{}, err
+	}
+	candidate, candidateBytes, err := constructVerifiedExecutionEvidence(request, raw)
+	if err != nil {
+		return FinalizeResult{}, err
+	}
+	return f.reuseOrRetainFinalEvidence(ctx, request, raw, candidate, candidateBytes)
+}
+
+func (f *Finalizer) validateAndRestoreRawEvidence(
+	ctx context.Context,
+	request FinalizeRequest,
+) (rawRecord, error) {
 	if err := request.RawReceipt.Validate(); err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate raw receipt: %w", err)
+		return nil, fmt.Errorf("validate raw receipt: %w", err)
 	}
 	if err := request.FinalLocation.Validate(); err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate final evidence location: %w", err)
+		return nil, fmt.Errorf("validate final evidence location: %w", err)
 	}
 	if request.RawReceipt.Object.Location() == request.FinalLocation {
-		return FinalizeResult{}, errors.New("raw and finalized evidence locations must differ")
+		return nil, errors.New("raw and finalized evidence locations must differ")
 	}
 
 	rawBytes, err := readBounded(ctx, f.store, request.RawReceipt.Object.Location(), f.maxObjectBytes)
 	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("read raw measurement: %w", err)
+		return nil, fmt.Errorf("read raw measurement: %w", err)
 	}
 	if int64(len(rawBytes)) != request.RawReceipt.Object.Size {
-		return FinalizeResult{}, fmt.Errorf("%w: raw measurement size does not match its receipt", evidencestore.ErrContentMismatch)
+		return nil, fmt.Errorf("%w: raw measurement size does not match its receipt", evidencestore.ErrContentMismatch)
 	}
 	raw, err := decodeRawRecord(rawBytes, request.Intent)
 	if err != nil {
-		return FinalizeResult{}, err
+		return nil, err
 	}
 	if err := raw.validate(request.Intent); err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate raw measurement: %w", err)
+		return nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
+	return raw, nil
+}
+
+func constructVerifiedExecutionEvidence(
+	request FinalizeRequest,
+	raw rawRecord,
+) (ExecutionEvidence, []byte, error) {
 	verifiedCandidate, err := profilingrun.VerifyCandidateReport(request.CandidateReportBytes, request.Intent)
 	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate candidate report: %w", err)
+		return ExecutionEvidence{}, nil, fmt.Errorf("validate candidate report: %w", err)
 	}
 	candidate := ExecutionEvidence{
 		SchemaVersion:   ExecutionEvidenceSchemaVersion,
@@ -88,13 +110,22 @@ func (f *Finalizer) Finalize(ctx context.Context, request FinalizeRequest) (Fina
 		FinalizedAt:     request.FinalizedAt,
 	}
 	if err := raw.validateExecution(candidate); err != nil {
-		return FinalizeResult{}, fmt.Errorf("validate execution evidence: %w", err)
+		return ExecutionEvidence{}, nil, fmt.Errorf("validate execution evidence: %w", err)
 	}
 	candidateBytes, err := candidate.canonicalJSON()
 	if err != nil {
-		return FinalizeResult{}, fmt.Errorf("canonicalize execution evidence: %w", err)
+		return ExecutionEvidence{}, nil, fmt.Errorf("canonicalize execution evidence: %w", err)
 	}
+	return candidate, candidateBytes, nil
+}
 
+func (f *Finalizer) reuseOrRetainFinalEvidence(
+	ctx context.Context,
+	request FinalizeRequest,
+	raw rawRecord,
+	candidate ExecutionEvidence,
+	candidateBytes []byte,
+) (FinalizeResult, error) {
 	existingBytes, err := readBounded(ctx, f.store, request.FinalLocation, f.maxObjectBytes)
 	if err == nil {
 		return f.reuseExisting(existingBytes, request, raw)
