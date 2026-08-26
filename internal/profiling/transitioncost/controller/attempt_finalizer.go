@@ -71,28 +71,46 @@ func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alph
 	} else if found {
 		return existing, nil
 	}
-	job, err := validateFinalizationProgress(measurement, selection, progress)
+	rawReference, observation, err := f.deriveFinalizedObservationFromTerminalEvidence(
+		ctx, measurement, prepared, selection, progress,
+	)
 	if err != nil {
 		return FinalizedAttempt{}, err
+	}
+	return f.retainFinalizedAttempt(ctx, selection.finalLocation, rawReference, observation)
+}
+
+func (f *AttemptFinalizer) deriveFinalizedObservationFromTerminalEvidence(
+	ctx context.Context,
+	measurement *edgev1alpha1.PowerModeTransitionCost,
+	prepared PreparedMeasurement,
+	selection attemptSelection,
+	progress AttemptProgress,
+) (evidencestore.ObjectIdentity, transitioncost.FinalizedObservation, error) {
+	job, err := validateFinalizationProgress(measurement, selection, progress)
+	if err != nil {
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
 	pod, err := f.ownedAttemptPod(ctx, measurement.Namespace, job)
 	if err != nil {
-		return FinalizedAttempt{}, err
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
 	rawReceipt, err := transitionTerminationReceipt(pod)
 	if err != nil {
-		return FinalizedAttempt{}, err
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
 	if rawReceipt.Object.Location() != selection.rawLocation {
-		return FinalizedAttempt{}, errors.New("transition raw receipt does not match the deterministic attempt location")
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
+			errors.New("transition raw receipt does not match the deterministic attempt location")
 	}
 	rawBytes, err := readExactTransitionObject(ctx, f.store, rawReceipt.Object, f.maximumObjectBytes)
 	if err != nil {
-		return FinalizedAttempt{}, fmt.Errorf("read transition raw evidence: %w", err)
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
+			fmt.Errorf("read transition raw evidence: %w", err)
 	}
 	raw, err := transitioncost.DecodeRawRecord(rawBytes)
 	if err != nil {
-		return FinalizedAttempt{}, err
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
 	result, err := transitioncost.Derive(
 		prepared.Directions[selection.directionIndex].FrozenContract,
@@ -100,13 +118,22 @@ func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alph
 		prepared.Policy,
 	)
 	if err != nil {
-		return FinalizedAttempt{}, err
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
 	observation, err := transitioncost.FinalizeResult(result)
 	if err != nil {
-		return FinalizedAttempt{}, err
+		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
-	payload, err := encodeFinalizedTransition(rawReceipt.Object, observation)
+	return rawReceipt.Object, observation, nil
+}
+
+func (f *AttemptFinalizer) retainFinalizedAttempt(
+	ctx context.Context,
+	location evidencestore.ObjectLocation,
+	rawReference evidencestore.ObjectIdentity,
+	observation transitioncost.FinalizedObservation,
+) (FinalizedAttempt, error) {
+	payload, err := encodeFinalizedTransition(rawReference, observation)
 	if err != nil {
 		return FinalizedAttempt{}, err
 	}
@@ -114,7 +141,7 @@ func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alph
 		return FinalizedAttempt{}, fmt.Errorf("finalized transition evidence exceeds %d-byte limit", f.maximumObjectBytes)
 	}
 	finalReference := evidencestore.ObjectIdentity{
-		Store: selection.finalLocation.Store, Key: selection.finalLocation.Key, Size: int64(len(payload)),
+		Store: location.Store, Key: location.Key, Size: int64(len(payload)),
 	}
 	receipt, err := f.store.PutImmutable(ctx, finalReference, bytes.NewReader(payload))
 	if err != nil {
@@ -127,7 +154,7 @@ func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alph
 		return FinalizedAttempt{}, errors.New("finalized transition writer returned an unexpected object reference")
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeExisting {
-		winner, found, err := f.load(ctx, selection.finalLocation)
+		winner, found, err := f.load(ctx, location)
 		if err != nil {
 			return FinalizedAttempt{}, err
 		}
@@ -137,7 +164,7 @@ func (f *AttemptFinalizer) Finalize(ctx context.Context, measurement *edgev1alph
 		return winner, nil
 	}
 	return FinalizedAttempt{
-		RawReference: rawReceipt.Object, FinalReference: finalReference, Observation: observation,
+		RawReference: rawReference, FinalReference: finalReference, Observation: observation,
 	}, nil
 }
 func validateFinalizationProgress(measurement *edgev1alpha1.PowerModeTransitionCost, selection attemptSelection,

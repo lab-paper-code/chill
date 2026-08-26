@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -74,8 +75,11 @@ func TestAttemptFinalizerRetainsEveryVerdictFromCompleteOrFailedJob(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if recovered.Observation.Verdict() != test.verdict || fixture.store.puts != 1 {
-				t.Fatalf("recovered finalization = %#v, puts = %d", recovered, fixture.store.puts)
+			if recovered.Observation.Verdict() != test.verdict || fixture.store.puts != 1 || fixture.store.opens != 3 {
+				t.Fatalf(
+					"recovered finalization = %#v, puts = %d, opens = %d",
+					recovered, fixture.store.puts, fixture.store.opens,
+				)
 			}
 		})
 	}
@@ -106,8 +110,25 @@ func TestAttemptFinalizerUsesImmutableWinnerWithoutComparison(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finalized.Observation.Verdict() != transitioncost.VerdictInvalid || fixture.store.puts != 1 {
-		t.Fatalf("winner finalization = %#v, puts = %d", finalized, fixture.store.puts)
+	if finalized.Observation.Verdict() != transitioncost.VerdictInvalid ||
+		fixture.store.puts != 1 || fixture.store.opens != 3 {
+		t.Fatalf("winner finalization = %#v, puts = %d, opens = %d", finalized, fixture.store.puts, fixture.store.opens)
+	}
+}
+
+func TestAttemptFinalizerPreservesRetentionFailure(t *testing.T) {
+	fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
+	want := errors.New("Evidence Store temporarily unavailable")
+	fixture.store.putErr = want
+
+	_, err := fixture.finalizer.Finalize(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1, fixture.progress,
+	)
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "create finalized transition evidence:") {
+		t.Fatalf("retention error = %v, want wrapped %v", err, want)
+	}
+	if fixture.store.opens != 2 || fixture.store.puts != 1 {
+		t.Fatalf("retention failure calls: opens=%d puts=%d", fixture.store.opens, fixture.store.puts)
 	}
 }
 
@@ -387,6 +408,7 @@ func receiptPod(jobUID types.UID, message string) *corev1.Pod {
 type finalizationStore struct {
 	objects     map[evidencestore.ObjectLocation][]byte
 	winnerOnPut []byte
+	putErr      error
 	puts        int
 	opens       int
 	badReceipt  bool
@@ -412,6 +434,9 @@ func (s *finalizationStore) PutImmutable(_ context.Context, identity evidencesto
 	content io.Reader,
 ) (evidencestore.Receipt, error) {
 	s.puts++
+	if s.putErr != nil {
+		return evidencestore.Receipt{}, s.putErr
+	}
 	if s.winnerOnPut != nil {
 		s.objects[identity.Location()] = append([]byte(nil), s.winnerOnPut...)
 		s.winnerOnPut = nil
