@@ -125,11 +125,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		admission, admitErr := r.admit.Admit(ctx, run, frozen.Run, job, *decision.EvidenceReference)
 		if admitErr != nil {
-			statusErr := r.publishAdmissionFailure(ctx, run)
-			if statusErr != nil {
-				return ctrl.Result{}, errors.Join(admitErr, statusErr)
-			}
-			return ctrl.Result{}, fmt.Errorf("admit ProfilingRun %s evidence: %w", req.NamespacedName, admitErr)
+			return ctrl.Result{}, r.handleAdmissionFailure(ctx, req.NamespacedName, run, admitErr)
 		}
 		if err := r.publishAdmission(ctx, run, admission); err != nil {
 			return ctrl.Result{}, fmt.Errorf("publish ProfilingRun %s admission: %w", req.NamespacedName, err)
@@ -166,6 +162,18 @@ func (r *RunReconciler) handleEvidenceFinalizationFailure(
 		return fmt.Errorf("finalize ProfilingRun %s evidence: %w", key, failure)
 	}
 	return nil
+}
+
+func (r *RunReconciler) handleAdmissionFailure(
+	ctx context.Context,
+	key types.NamespacedName,
+	run *edgev1alpha1.ProfilingRun,
+	failure error,
+) error {
+	if statusErr := r.publishAdmissionFailure(ctx, run); statusErr != nil {
+		return errors.Join(failure, statusErr)
+	}
+	return fmt.Errorf("admit ProfilingRun %s evidence: %w", key, failure)
 }
 
 func (r *RunReconciler) loadRecordedJob(

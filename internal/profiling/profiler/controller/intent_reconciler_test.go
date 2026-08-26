@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -58,6 +59,29 @@ type recordingRunEvidenceAdmitter struct {
 	calls  int
 	result profileradmission.Result
 	err    error
+}
+
+type statusPatchFailureClient struct {
+	client.Client
+	err error
+}
+
+func (c *statusPatchFailureClient) Status() client.SubResourceWriter {
+	return &statusPatchFailureWriter{SubResourceWriter: c.Client.Status(), err: c.err}
+}
+
+type statusPatchFailureWriter struct {
+	client.SubResourceWriter
+	err error
+}
+
+func (w *statusPatchFailureWriter) Patch(
+	context.Context,
+	client.Object,
+	client.Patch,
+	...client.SubResourcePatchOption,
+) error {
+	return w.err
 }
 
 func (a *recordingRunEvidenceAdmitter) Admit(
@@ -528,17 +552,8 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			scheme := runReconcilerTestScheme(t)
-			run := testRun()
+			run, job := admissionReadyRun()
 			prepared := currentPreparedRun(t)
-			recordIntentAndJob(run)
-			run.Status.Evidence = testEvidenceReference()
-			run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
-				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
-				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
-			}
-			job := ownedJob(run, &batchv1.JobStatus{
-				Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
-			})
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
 			admitter := &recordingRunEvidenceAdmitter{result: profileradmission.Result{
 				Verdict: test.verdict, PolicyVersion: "wall-power-v2",
@@ -577,6 +592,87 @@ func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing
 			}
 		})
 	}
+}
+
+func TestRunReconcilerRetriesAdmissionEvaluationFailure(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run, job := admissionReadyRun()
+	prepared := currentPreparedRun(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
+	want := errors.New("admission evaluator temporarily unavailable")
+	admitter := &recordingRunEvidenceAdmitter{err: want}
+	jobs := &recordingExecutionJobs{}
+	finalizer := &recordingRunEvidenceFinalizer{}
+	reconciler, err := NewRunReconciler(
+		kubeClient,
+		&recordingIntentFreezer{result: FreezeIntentResult{Run: frozenRunForPrepared(t, prepared)}},
+		jobs,
+		finalizer,
+		admitter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		result, reconcileErr := reconciler.Reconcile(context.Background(), request)
+		if !errors.Is(reconcileErr, want) || result != (ctrl.Result{}) {
+			t.Fatalf("attempt %d result = %#v, error = %v, want wrapped %v", attempt, result, reconcileErr, want)
+		}
+		if !strings.Contains(reconcileErr.Error(), "admit ProfilingRun chill-system/run evidence") {
+			t.Fatalf("attempt %d error context = %q", attempt, reconcileErr)
+		}
+		if admitter.calls != attempt || jobs.calls != 0 || finalizer.calls != 0 {
+			t.Fatalf(
+				"attempt %d transition calls: admit=%d jobs=%d finalize=%d",
+				attempt, admitter.calls, jobs.calls, finalizer.calls,
+			)
+		}
+	}
+
+	actual := &edgev1alpha1.ProfilingRun{}
+	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
+	if actual.Status.Admission != nil || condition == nil || condition.Status != metav1.ConditionUnknown ||
+		condition.ObservedGeneration != run.Generation || condition.Reason != "AdmissionEvaluationFailed" ||
+		condition.Message != "verified evidence could not be evaluated" {
+		t.Fatalf("retryable admission failure status = %#v", actual.Status)
+	}
+}
+
+func TestRunReconcilerJoinsAdmissionAndStatusPublicationFailures(t *testing.T) {
+	t.Parallel()
+	scheme := runReconcilerTestScheme(t)
+	run := testRun()
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
+	statusErr := errors.New("status API temporarily unavailable")
+	reconciler := &RunReconciler{Client: &statusPatchFailureClient{Client: baseClient, err: statusErr}}
+	admissionErr := errors.New("admission evaluator temporarily unavailable")
+
+	err := reconciler.handleAdmissionFailure(
+		context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, run, admissionErr,
+	)
+	if !errors.Is(err, admissionErr) || !errors.Is(err, statusErr) {
+		t.Fatalf("joined admission failure = %v, want %v and %v", err, admissionErr, statusErr)
+	}
+}
+
+func admissionReadyRun() (*edgev1alpha1.ProfilingRun, *batchv1.Job) {
+	run := testRun()
+	recordIntentAndJob(run)
+	run.Status.Evidence = testEvidenceReference()
+	run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
+		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
+		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
+	}
+	job := ownedJob(run, &batchv1.JobStatus{
+		Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+	})
+	return run, job
 }
 
 func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
