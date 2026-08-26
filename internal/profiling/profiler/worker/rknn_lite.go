@@ -1,14 +1,11 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -125,24 +122,14 @@ func (r *RKNNLiteRuntime) Measure(
 	if !profilingrun.IsSupportedRKNNLiteIntent(intent) {
 		return RuntimeMeasurement{}, errors.New("RKNNLite adapter received an unsupported runtime path")
 	}
-	if _, err := os.Lstat(r.config.ResultPath); err == nil {
-		return RuntimeMeasurement{}, errors.New("RKNNLite result path already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return RuntimeMeasurement{}, fmt.Errorf("inspect RKNNLite result path: %w", err)
-	}
 	payload, err := r.encodeRequest(request)
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-
-	arguments := append([]string(nil), r.config.Command[1:]...)
-	arguments = append(arguments, "--result-file", r.config.ResultPath)
-	command := exec.CommandContext(ctx, r.config.Command[0], arguments...)
-	command.Stdin = bytes.NewReader(payload)
-	command.Stdout = r.config.Stdout
-	command.Stderr = r.config.Stderr
-	if err := command.Run(); err != nil {
-		return RuntimeMeasurement{}, fmt.Errorf("run RKNNLite entrypoint: %w", err)
+	if err := runRuntimeEntrypoint(
+		ctx, "RKNNLite", r.config.Command, r.config.ResultPath, payload, r.config.Stdout, r.config.Stderr,
+	); err != nil {
+		return RuntimeMeasurement{}, err
 	}
 	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		var result profilingrun.IdleRuntimeResult
