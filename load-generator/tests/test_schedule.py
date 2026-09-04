@@ -1,6 +1,6 @@
 import unittest
 
-from chill_loadgen.schedule import ScheduledRequest, run_schedule
+from chill_loadgen.schedule import ScheduledRequest, partition_schedule, run_schedule
 
 
 class FakeClock:
@@ -22,6 +22,25 @@ class ScheduledRequestTest(unittest.TestCase):
             ScheduledRequest("request-1", -1, 1)
         with self.assertRaisesRegex(ValueError, "item_count"):
             ScheduledRequest("request-1", 0, 0)
+
+
+class PartitionScheduleTest(unittest.TestCase):
+    def test_distributes_requests_round_robin_without_changing_them(self) -> None:
+        requests = [
+            ScheduledRequest("request-1", 0, 1),
+            ScheduledRequest("request-2", 10, 8),
+            ScheduledRequest("request-3", 20, 4),
+            ScheduledRequest("request-4", 30, 2),
+        ]
+
+        self.assertEqual(
+            [[requests[0], requests[2]], [requests[1], requests[3]]],
+            partition_schedule(requests, worker_count=2),
+        )
+
+    def test_requires_at_least_one_worker(self) -> None:
+        with self.assertRaisesRegex(ValueError, "worker_count"):
+            partition_schedule([], worker_count=0)
 
 
 class RunScheduleTest(unittest.TestCase):

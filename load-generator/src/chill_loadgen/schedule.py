@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, List, Sequence
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,22 @@ class ScheduledRequest:
             raise ValueError("scheduled_offset_ns must be non-negative")
         if self.item_count < 1:
             raise ValueError("item_count must be positive")
+
+
+def partition_schedule(
+    requests: Sequence[ScheduledRequest], worker_count: int
+) -> List[List[ScheduledRequest]]:
+    """Distribute one schedule across workers in round-robin order."""
+
+    if worker_count < 1:
+        raise ValueError("worker_count must be positive")
+
+    worker_schedules: List[List[ScheduledRequest]] = [
+        [] for _ in range(worker_count)
+    ]
+    for index, request in enumerate(requests):
+        worker_schedules[index % worker_count].append(request)
+    return worker_schedules
 
 
 def run_schedule(
