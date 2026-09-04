@@ -48,9 +48,9 @@ The durable handoff introduced with the first implementation must separate:
 - apply, verification, settling, restoration, and failure timestamps; and
 - desired lifecycle stage from observed phase, reason, and terminal failure.
 
-The immutable Run intent binds the selected mode, typed target, and policy
-name. Mutable convergence and restoration observations do not rewrite that
-intent. The exact Kubernetes API shape for the handoff is delivered with its
+RunConfig binds the selected mode, typed target, and policy name. Mutable
+convergence and restoration observations do not rewrite it. The exact
+Kubernetes API shape for the transition is delivered with its
 controller and consumer; it must follow the separate per-Node state rule in
 ADR 0011 rather than adding mutable state to `DeviceClass.status`.
 

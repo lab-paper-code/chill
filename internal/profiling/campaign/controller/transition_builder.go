@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TransitionMaterial is the exact Node, target, and frozen policy needed to
+// TransitionMaterial is the exact Node, target, and selected policy needed to
 // create the one transition that establishes a campaign state.
 type TransitionMaterial struct {
 	Node                        edgev1alpha1.ProfilingRunObjectReference

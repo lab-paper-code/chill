@@ -59,7 +59,7 @@ func ProjectCurvePlanSpec(
 	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
-	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
+	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	return spec, nil
@@ -131,7 +131,7 @@ func validateCurvePlanRunConfigs(
 	if !activeUsesPlannedBatchSize {
 		return fmt.Errorf("batch %d is not listed in the curve plan", active.Measurement.Batch)
 	}
-	if err := validateCurvePlanIntent(
+	if err := validateCurvePlanRunConfig(
 		active, activeNodeUID, spec, spec.ActiveProtocol,
 	); err != nil {
 		return fmt.Errorf("active curve state: %w", err)
@@ -139,7 +139,7 @@ func validateCurvePlanRunConfigs(
 	if idle.Measurement.Batch != spec.PlannedBatchSizes[0] {
 		return errors.New("idle curve state does not use the first planned batch size")
 	}
-	if err := validateCurvePlanIntent(
+	if err := validateCurvePlanRunConfig(
 		idle, idleNodeUID, spec, spec.IdleProtocol,
 	); err != nil {
 		return fmt.Errorf("idle curve state: %w", err)
@@ -150,12 +150,12 @@ func validateCurvePlanRunConfigs(
 func validateCurvePlanNodeFacts(active, idle profilingrun.RunConfig) error {
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
-		return errors.New("active and idle frozen candidate or Node snapshots disagree")
+		return errors.New("active and idle recorded candidate or Node snapshots disagree")
 	}
 	return nil
 }
 
-func validateCurvePlanIntent(
+func validateCurvePlanRunConfig(
 	config profilingrun.RunConfig,
 	actualNodeUID string,
 	spec profilederivation.CurvePlanSpec,
@@ -201,7 +201,7 @@ func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederiva
 
 func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.CurveProtocolContract, error) {
 	if err := config.Workload.Validate(); err != nil {
-		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate frozen workload contract: %w", err)
+		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate recorded workload contract: %w", err)
 	}
 	return profilederivation.CurveProtocolContract{
 		WorkloadMode:               config.Measurement.WorkloadMode,

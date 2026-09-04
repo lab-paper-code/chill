@@ -269,10 +269,10 @@ func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *tes
 	}
 }
 
-func admissionIntentWithWorkloadContract() profilingrun.RunConfig {
-	intent := admissionIntent()
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	return intent
+func admissionRunConfigWithWorkloadContract() profilingrun.RunConfig {
+	config := admissionRunConfig()
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	return config
 }
 
 func projectDefaultWorkloadWindow(

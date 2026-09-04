@@ -2,7 +2,7 @@
 
 > Navigation: [Profiling design index](../README.md)
 >
-> Row status: `BatchSaturation` status and the Run evidence it references
+> Row status: `BatchEnergyOptimization` status and the Run evidence it references
 
 ## Status
 
@@ -27,7 +27,7 @@ reads that target back, settles it, releases the Node Lease at terminal `Ready`,
 and leaves the established state in place. Execution evidence uses
 `chill.dacs.io/profiling-execution-evidence.v1alpha14`, retains the confirming
 transition identity, target observation, and completion time, and validates
-the target against frozen intent. A permanent semantic contradiction produces
+the target against RunConfig. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an
 error requeue.
 [ADR 0017](../../../adr/0017-power-mode-reachability-boundary.md) makes every
@@ -116,12 +116,12 @@ corresponding level.
   Node-wide mutation exclusively to a dedicated per-Node actuator operand;
   Profiler orchestrates the durable Run lifecycle, while discovery and the
   measurement worker remain unprivileged.
-- Exact runnable child OCI image references, not manifest-list references, are frozen into
-  runtime, artifact, MetricObserver, and WorkloadObserver facts.
+- Exact runnable child OCI image references, not manifest-list references, are recorded in
+  RunConfig runtime, artifact, MetricObserver, and WorkloadObserver facts.
 - Execution-path names select catalog entries and configured envelopes; the
   realized runtime family/backend selects the production adapter. A
-  declared-batch-size artifact declares its planned batch size set for active intents and uses
-  the first declared batch for its model-loaded-idle intent, while idle still
+  declared-batch-size artifact declares its planned batch size set for active RunConfigs and uses
+  the first declared batch for its model-loaded-idle RunConfig, while idle still
   performs no inference.
 - Installed facts are configuration. A row advances only from retained
   production evidence at the applicable level.
@@ -139,7 +139,7 @@ pre-repair evidence.
   `get_throttled=0` throughout one 30-second active diagnostic.
 - [ ] Run one clean active `ProfilingRun` and require execution complete,
   evidence verified, and admission accepted before paying for repetitions.
-- [ ] Under the unchanged post-repair intent and environment identities, run
+- [ ] Under the unchanged post-repair RunConfig and environment identities, run
   three new active and three new model-loaded-idle trials sequentially.
 - [ ] Reload all six retained evidence objects, compare identities within and
   across modes, and promote the two matrix rows to L3 only if all admissions
@@ -156,7 +156,7 @@ proves a shared implementation change is necessary.
 
 - [x] Add and install the exact runtime and artifact declarations.
 - [x] Add and install the Node-specific metric source; record the current
-  physical wall-meter association as live corroboration, not a frozen serial.
+  physical wall-meter association as live corroboration, not a configured identity.
 - [x] Verify the direct CPU thermal/throttle channel against live raw sysfs and
   the fail-closed admission contract.
 - [x] Bind CPU request, ORT thread count, runtime memory, and workspace to the
@@ -182,9 +182,9 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
   settling, and ready timestamps; and the successful state change's end-to-end,
   apply-and-read-back, and settling durations in integer milliseconds in the
   durable transition.
-- [x] Freeze the selected target and configured actuation-policy name into
-  immutable Run intent.
-- [x] Keep the current intent and Go/Python decoders on one strict schema
+- [x] Record the selected target and configured actuation-policy name in
+  RunConfig.
+- [x] Keep the current RunConfig and Go/Python decoders on one strict schema
   before wiring any selectable-mode producer.
 - [x] Define one independently submitted durable transition and verify its exact
   local-Node consumer projection before host mutation.
@@ -199,7 +199,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Implement a fail-closed Kubernetes workload-safety observation that
   retains every active blocking Pod identity outside explicit namespace and
   exact Pod-UID allowances; install no implicit default policy.
-- [x] Reject any handoff whose actuation-policy name is absent from
+- [x] Reject any transition whose actuation-policy name is absent from
   the actuator's explicit authorization set before crossing a Lease, safety,
   or host port.
 - [x] Add an opt-in command and Operator-owned/Helm-configured DaemonSet
@@ -209,7 +209,7 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Wire the first Jetson NVPModel adapter with a bounded configured argv and
   explicit narrow host mounts; keep the chart disabled until live apply and
   read-back proof closes the mutation gate.
-- [x] Serialize every runnable-operand handoff with the exact Node-UID Lease;
+- [x] Serialize every runnable transition with the exact Node-UID Lease;
   terminal `Ready` and `Failed` release that Lease.
 - [x] Apply the fail-closed workload-safety policy from explicit namespace and
   exact self-Pod allowances before any host operation.
@@ -227,24 +227,24 @@ Completion: `orangepi-5-plus-16g / mobilenet-v2-050 / ort-cpu / fixed` is L3.
 - [x] Complete two additional active and idle trials and verify stable
   derivation identities across all six retained objects.
 
-The current intent v1alpha13 retains the optional `actuation` object with the
+The current RunConfig v1alpha14 retains the optional `actuation` object with the
 selected power mode, exact typed actuator target, and configured-policy name,
-freezes the configured power and typed thermal metric identities, and binds
+records the configured power and typed thermal metric identities, and binds
 either the Node-allocatable or explicitly configured whole-core CPU quota.
 Fixed Runs omit the actuation object. The current execution-state-identity v1alpha5
 binds both the exact metric mapping and, for an actuated Run, the whole
 actuation object while leaving measurement-protocol identity unchanged. Older
 schemas are not accepted by the current execution boundary. CPU ORT and
-RKNNLite Go/Python decoders pair only with current v1alpha13. The candidate
+RKNNLite Go/Python decoders pair only with current RunConfig v1alpha14. The candidate
 report carries the exact
 selected target. The Profiler selects a configured policy by exact DeviceClass,
-mode, and actuator kind, binds its name into the intent, and retains its typed
-record and ConfigMap source in the immutable
-record. Its first policy fields bind settling and maximum handoff duration.
+mode, and actuator kind, binds its name into RunConfig, and retains its typed
+record and ConfigMap source in the owned Job. Its first policy fields bind
+settling and maximum actuation duration.
 A non-fixed Run lists successful completed `NodeActuation` objects in its
 namespace for the exact target Node name and UID and selects the greatest
 `status.readyAt`. The transition's class, mode, typed actuator target, and
-target read-back must match frozen intent. The Run records the selected name
+target read-back must match RunConfig. The Run records the selected name
 and UID before creating its measurement Job. If no completed transition exists,
 or the newest successful transition established another mode, the Run ends
 with `RequiredStateNotConfirmed` without creating a Job. Fixed Runs execute
@@ -353,15 +353,15 @@ Entry condition: met by the retained Orange Pi CPU ORT active/idle admissions.
 - [x] Retain core mask, input layout, init/load result, selected batch, and output
   shape; fail closed on batch, ABI, device, and initialization mismatch.
 
-Execution-facts v1alpha6 and candidate-report v1alpha9 keep image-owned
+Execution-facts v1alpha6 and candidate-report v1alpha10 keep image-owned
 packages separate from the expected host library, driver, platform-compatible
 token, four exact device paths, and Kubernetes allocation/exclusivity claim.
 Privileged mode and supplemental groups are a separate runtime-access contract,
 and the report also retains target platform, declared batch sizes, and the explicit
 non-batch runtime tensor contract. Their decoders accept the current schemas
 only.
-Intent v1alpha13 retains the normalized physical host contract and optional
-typed actuation binding, freezes configured power and typed thermal metric
+RunConfig v1alpha14 retains the normalized physical host contract and optional
+typed actuation binding, records configured power and typed thermal metric
 identities, and supports either the Node-allocatable CPU quota or an explicitly
 selected whole-core Run quota. RKNNLite shares that CPU limit but omits ORT-only
 thread settings.
@@ -384,16 +384,16 @@ The current active and idle runtime results discriminate the common backend
 from CPU ORT provider vocabulary and carry an optional RKNN observation
 containing package, host-library path, driver, platform token,
 exact character devices, core mask, input layout, initialization/load outcome,
-and selected batch. Active raw v1alpha5 and idle raw v1alpha3 require those
+and selected batch. Active raw v1alpha7 and idle raw v1alpha5 require those
 current nested results. The RKNNLite Python producer strictly decodes the current
-intent and verified candidate projection, verifies the artifact and mutable
+RunConfig, verifies the artifact and mutable
 host contract, runs only `NPU_CORE_0`, and emits active or inference-free
 model-loaded-idle results under the same bounded handoff protocol. The image
-recipe publishes a direct arm64 manifest so the frozen runtime OCI reference
+recipe publishes a direct arm64 manifest so the recorded runtime OCI reference
 and Kubernetes `imageID` describe the same runnable image.
 
-Preparation and the frozen execution-policy selector accept only the
-explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current intent
+Preparation and the selected execution-policy record accept only the
+explicit `rknnlite` / `rknnlite` / `not-applicable` tuple on the current RunConfig
 schema. They retain the same bounded worker envelope without fabricating ORT
 thread settings. Job materialization, the Go adapter, the Python producer, and
 the arm64-only worker were exercised by three retained active and three
@@ -452,7 +452,7 @@ Entry condition: the owning execution path reaches L3 for
   `CurvePlanName`, a Loader-verified `VerifiedCurvePlan`, and idle
   baselines keyed by the historical artifact states. ADR 0016 governs current
   declared-batch-size artifact capability; Plans 5 and 5a own its consumers.
-- [x] Reconvert batch one with the current repository recipe, freeze batch one
+- [x] Reconvert batch one with the current repository recipe, record batch one
   and batch two under one catalog/image generation, and admit three active plus
   three model-loaded-idle Runs for each historical artifact state.
 - [x] Implement Plan 5a discovery over the verified curve plan and use Plan 5 only
@@ -470,7 +470,7 @@ campaigns use one declared-batch-size artifact, one state key, and one idle base
 Every L3 vertical slice must prove all applicable items:
 
 - exact artifact, runtime, MetricObserver, and WorkloadObserver child-image
-  OCI references are frozen in the intent;
+  OCI references are recorded in RunConfig;
 - the selected Node matches the exact DeviceClass snapshot;
 - desired and observed power mode match and remain stable;
 - execution validates artifact identity and runtime/backend facts;
@@ -479,7 +479,7 @@ Every L3 vertical slice must prove all applicable items:
 - architecture, backend, mode, artifact, and host-ABI negative tests exist;
 - the exact execution-state and external-environment identities, plus the
   mode-specific measurement-protocol identity, admit three sequential trials
-  per mode; full intent-only audit fields may differ only when the delta is
+  per mode; full RunConfig-only audit fields may differ only when the delta is
   recorded and deliberately excluded from all three derivation identities;
 - the required Node state is independently read back before measurement; and
 - package/kind evidence and testbed live evidence are reported separately.

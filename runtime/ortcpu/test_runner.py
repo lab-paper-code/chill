@@ -128,7 +128,7 @@ class FakeORT:
             sess_options.intra_op_num_threads != 4
             or sess_options.inter_op_num_threads != 1
         ):
-            raise AssertionError("ORT thread options were not frozen")
+            raise AssertionError("ORT thread options do not match RunConfig")
         if providers != ["CPUExecutionProvider"]:
             raise AssertionError(f"unexpected providers {providers}")
         cls.last_session = FakeSession()
@@ -497,6 +497,8 @@ class RunnerTest(unittest.TestCase):
                 + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
             )
             self.assertEqual(FakeORT.last_session.calls, 3)
+            self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
+            self.assertNotIn("bSat", result)
             self.assertEqual(result["status"], "Succeeded")
             self.assertEqual(result["experimentId"], "pod-uid")
             self.assertEqual(result["nodeName"], request["scheduledNodeName"])

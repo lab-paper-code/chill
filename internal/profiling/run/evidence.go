@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha4"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha5"
 
 	RKNNLiteCoreMask    = "NPU_CORE_0"
 	RKNNLiteInputLayout = "NHWC"
@@ -51,7 +51,6 @@ type RuntimeResult struct {
 	ThroughputItemsPerSecond  float64              `json:"throughputItemsPerSecond"`
 	Power                     json.RawMessage      `json:"power"`
 	EnergyPerRequest          json.RawMessage      `json:"energyPerRequest"`
-	BSat                      json.RawMessage      `json:"bSat"`
 }
 
 type OutputValidation struct {
@@ -165,7 +164,7 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 		}
 	}
 	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(config.TargetNode.Architecture) {
-		return errors.New("runtime architecture does not match the frozen Node")
+		return errors.New("runtime architecture does not match the RunConfig Node")
 	}
 	if result.BatchSize != config.Measurement.Batch || result.WarmupIterations != config.Measurement.WarmupIterations {
 		return errors.New("measurement protocol mismatch")
@@ -309,7 +308,7 @@ func normalizeArchitecture(value string) string {
 func validateCPUQuota(limit, cpuMax string) error {
 	cores, err := strconv.ParseInt(limit, 10, 64)
 	if err != nil || cores < 1 {
-		return errors.New("frozen CPU limit is not a positive integer core count")
+		return errors.New("RunConfig CPU limit is not a positive integer core count")
 	}
 	fields := strings.Fields(cpuMax)
 	if len(fields) != 2 || fields[0] == "max" {
@@ -319,7 +318,7 @@ func validateCPUQuota(limit, cpuMax string) error {
 	period, periodErr := strconv.ParseInt(fields[1], 10, 64)
 	if quotaErr != nil || periodErr != nil || quota < 1 || period < 1 ||
 		quota/period != cores || quota%period != 0 {
-		return errors.New("runtime cgroup CPU quota does not match the frozen limit")
+		return errors.New("runtime cgroup CPU quota does not match the RunConfig limit")
 	}
 	return nil
 }

@@ -96,7 +96,7 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	}
 }
 
-func TestExecuteRejectsPodOutsideFrozenNodeBeforeReady(t *testing.T) {
+func TestExecuteRejectsPodOutsideRunConfigNodeBeforeReady(t *testing.T) {
 	directory := t.TempDir()
 	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)

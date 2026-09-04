@@ -27,7 +27,7 @@ through static metric-source configuration before creating the measurement
 Job. The selected filtered power endpoint, exact power-series labels, required
 power metric name, local thermal endpoint, six typed thermal metric names,
 polling interval, timeout, duration, and digest-pinned MetricObserver image are
-frozen in the Run intent. The adapter interprets those frozen values and records
+recorded in RunConfig. The adapter interprets those values and records
 the same identities in its result.
 
 Each polling tick uses one bounded request context to read the exact central
@@ -40,7 +40,7 @@ throttling threshold.
 
 The first adapter supports one required wall-power slot and six fixed-semantic
 thermal slots. Static metric-source configuration owns their concrete metric
-names, and the selected mapping is frozen into the Run intent.
+names, and the selected mapping is recorded in RunConfig.
 
 The first profiling path requires a valid wall-power value for a successful
 sample. Thermal fields remain typed and optional because platforms expose
@@ -49,7 +49,7 @@ as missing and later yields an insufficient admission verdict.
 
 MetricObserver reports only factual observation. Profiler admission determines
 window coverage and classifies unknown thermal state, observed throttling, or a
-counter reset. Profile derivation owns energy integration and `b_sat`. The
+counter reset. Profile derivation owns energy integration and batch-energy optimization. The
 scheduler consumes only admitted profile results and does not interpret thermal
 signals.
 

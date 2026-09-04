@@ -112,7 +112,7 @@ type PreparedRun struct {
 	ActuationPolicy *FrozenActuationPolicy
 }
 
-// ValidateActuationBinding checks the configured policy against the frozen
+// ValidateActuationBinding checks the selected policy against the RunConfig
 // material selection. Downstream execution consumes the selected policy
 // without reselecting it from mutable configuration.
 func (r PreparedRun) ValidateActuationBinding() error {
@@ -123,7 +123,7 @@ func (r PreparedRun) ValidateActuationBinding() error {
 		return nil
 	}
 	if r.ActuationPolicy == nil {
-		return errors.New("actuated prepared Run requires a frozen actuation policy")
+		return errors.New("actuated prepared Run requires a selected actuation policy")
 	}
 	if err := r.ActuationPolicy.Validate(); err != nil {
 		return err
@@ -220,7 +220,7 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 		ActuationPolicy: policy,
 	}
 	if err := prepared.ValidateActuationBinding(); err != nil {
-		return PreparedRun{}, fmt.Errorf("validate frozen actuation binding: %w", err)
+		return PreparedRun{}, fmt.Errorf("validate selected actuation binding: %w", err)
 	}
 	return prepared, nil
 }

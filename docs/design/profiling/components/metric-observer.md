@@ -129,7 +129,7 @@ transport only.
 - Kubernetes Node-to-endpoint discovery;
 - Prometheus or edge-metrics configuration mutation;
 - temperature-threshold inference;
-- admission, retry, energy integration, or `b_sat` derivation;
+- admission, retry, energy integration, or batch-energy optimization;
 - co-resident workload observation;
 - long-term monitoring; and
 - scheduler state or control.
@@ -147,7 +147,7 @@ transport only.
 - the power-only path accepts exactly one configured metric-and-label match and
   rejects zero matches, multiple matches, and label-set drift, while preserving
   the resolved hostname-filtered endpoint in its request;
-- raw evidence validation binds the exact source and immutable Run intent;
+- raw evidence validation binds the exact source and RunConfig;
 - admission tests distinguish unknown, throttled, counter-reset, and known
   non-throttled windows; and
 - architecture, Go, generated API, and Helm checks pass.

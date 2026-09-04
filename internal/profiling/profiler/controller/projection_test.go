@@ -91,7 +91,7 @@ func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 }
 
 func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
-	intent := testFrozenIntent(t)
+	config := testRunConfig(t)
 	tests := []struct {
 		name      string
 		configure func(*edgev1alpha1.ProfilingRun) *batchv1.Job
@@ -107,7 +107,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "wait for active Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				return ownedJob(run, nil)
 			},
 			want: profiler.ActionWaitForJob,
@@ -115,7 +115,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "finalize successful Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				return ownedJob(run, &batchv1.JobStatus{
 					Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
 				})
@@ -125,7 +125,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "complete after terminal evidence invalidity",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				run.Status.Conditions = []metav1.Condition{{
 					Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
 					Status: metav1.ConditionFalse, Reason: evidenceReasonInvalid,
@@ -142,7 +142,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "do not recreate missing recorded Job",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				return nil
 			},
 			want: profiler.ActionReportExecutionLost,
@@ -150,7 +150,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "admit retained evidence after Job disappears",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				run.Status.Evidence = testEvidenceReference()
 				return nil
 			},
@@ -159,7 +159,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		{
 			name: "complete after admission is recorded",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				recordIntentAndJob(run)
+				recordRunConfigAndJob(run)
 				run.Status.Evidence = testEvidenceReference()
 				run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 					Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
@@ -174,7 +174,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()
 			job := test.configure(run)
-			snapshot, err := ProjectSnapshot(run, &intent, job)
+			snapshot, err := ProjectSnapshot(run, &config, job)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +190,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 }
 
 func TestProjectSnapshotRejectsIdentityAndOutcomeContradictions(t *testing.T) {
-	intent := testFrozenIntent(t)
+	config := testRunConfig(t)
 	tests := []struct {
 		name   string
 		mutate func(*edgev1alpha1.ProfilingRun, *batchv1.Job)
@@ -226,10 +226,10 @@ func TestProjectSnapshotRejectsIdentityAndOutcomeContradictions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()
-			recordIntentAndJob(run)
+			recordRunConfigAndJob(run)
 			job := ownedJob(run, nil)
 			test.mutate(run, job)
-			_, err := ProjectSnapshot(run, &intent, job)
+			_, err := ProjectSnapshot(run, &config, job)
 			if err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("expected error containing %q, got %v", test.match, err)
 			}
@@ -278,20 +278,20 @@ func testRun() *edgev1alpha1.ProfilingRun {
 	}
 }
 
-func testFrozenIntent(t *testing.T) profilingrun.RunConfig {
+func testRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
-func recordIntentAndJob(run *edgev1alpha1.ProfilingRun) {
+func recordRunConfigAndJob(run *edgev1alpha1.ProfilingRun) {
 	run.Status.Job = &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"}
 }
 

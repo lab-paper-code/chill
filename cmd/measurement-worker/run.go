@@ -153,7 +153,7 @@ func buildRuntimeAdapter(
 		}
 		return runtimeAdapter, nil
 	}
-	return nil, errors.New("construct runtime adapter: frozen execution path is unsupported")
+	return nil, errors.New("construct runtime adapter: RunConfig execution path is unsupported")
 }
 
 func writeReceipt(path string, receipt evidencestore.Receipt) error {

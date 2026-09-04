@@ -6,30 +6,35 @@ import (
 )
 
 func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
-	intent := validIntent()
-	valid := validRuntimeResult(intent)
-	if err := ValidateRuntime(intent, "pod-uid", valid); err != nil {
+	config := validRunConfig()
+	valid := validRuntimeResult(config)
+	if err := ValidateRuntime(config, "pod-uid", valid); err != nil {
 		t.Fatal(err)
 	}
 	invalid := valid
 	invalid.OutputValidation.Passed = false
-	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected output drift rejection")
 	}
 	invalid = valid
 	invalid.NodeName = "other-node"
-	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected Node drift rejection")
 	}
 	invalid = valid
 	invalid.MeasurementEndedAt = invalid.MeasurementStartedAt
-	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected empty measurement window rejection")
 	}
 	invalid = valid
 	invalid.MeasurementEndedAt = "not-a-time"
-	if err := ValidateRuntime(intent, "pod-uid", invalid); err == nil {
+	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected invalid measurement end rejection")
+	}
+	invalid = valid
+	invalid.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha4"
+	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
+		t.Fatal("expected retired runtime-result schema rejection")
 	}
 
 	started, ended, err := valid.MeasurementWindow()
@@ -43,8 +48,8 @@ func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 }
 
 func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
-	intent := validIntent()
-	base := validRuntimeResult(intent)
+	config := validRunConfig()
+	base := validRuntimeResult(config)
 
 	for _, test := range []struct {
 		name   string
@@ -71,35 +76,35 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 				[]float64(nil), base.RepetitionResults[0].LatencyMilliseconds...,
 			)
 			test.mutate(&candidate)
-			if err := ValidateRuntime(intent, "pod-uid", candidate); err == nil {
+			if err := ValidateRuntime(config, "pod-uid", candidate); err == nil {
 				t.Fatal("expected invalid repetition evidence rejection")
 			}
 		})
 	}
 }
 
-func validRuntimeResult(intent RunConfig) RuntimeResult {
-	targetDuration := float64(intent.Measurement.DurationSeconds)
+func validRuntimeResult(config RunConfig) RuntimeResult {
+	targetDuration := float64(config.Measurement.DurationSeconds)
 	return RuntimeResult{
 		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded",
-		ExperimentID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-		Runtime:      intent.State.RuntimeFamily,
-		Architecture: "x86_64", RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
-		AvailableProviders: []string{intent.State.Backend},
+		ExperimentID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
+		Runtime:      config.State.RuntimeFamily,
+		Architecture: "x86_64", RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
+		AvailableProviders: []string{config.State.Backend},
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
 		InferenceCount: 1, MeasurementMode: "duration",
 		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
 		OutputValidation: OutputValidation{
-			Method: intent.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}},
+			Method: config.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}},
 		},
 		CPUContract: RuntimeCPU{
 			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1,
 			AffinityCPUCount: 4, CPUSetEffective: "0-3",
 		},
 		DerivedContract: DerivedContract{
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			NodeSnapshot: intent.TargetNode,
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			NodeSnapshot: config.TargetNode,
 		},
 		RepetitionResults: []Repetition{{
 			Repetition: 1, MeasurementStartedAt: "2026-01-01T00:00:01Z",
@@ -109,8 +114,8 @@ func validRuntimeResult(intent RunConfig) RuntimeResult {
 }
 
 func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
-	intent := validIntent()
-	base := validRuntimeResult(intent)
+	config := validRunConfig()
+	base := validRuntimeResult(config)
 	for _, test := range []struct {
 		name   string
 		mutate func(*RuntimeResult)
@@ -129,7 +134,7 @@ func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := base
 			test.mutate(&candidate)
-			if err := ValidateRuntime(intent, "pod-uid", candidate); err == nil {
+			if err := ValidateRuntime(config, "pod-uid", candidate); err == nil {
 				t.Fatal("expected CPU execution drift rejection")
 			}
 		})
@@ -137,16 +142,16 @@ func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
 }
 
 func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
-	intent := validRKNNIntent(false)
-	result := validRuntimeResult(intent)
+	config := validRKNNRunConfig(false)
+	result := validRuntimeResult(config)
 	result.Architecture = "aarch64"
 	result.Provider = ""
 	result.AvailableProviders = nil
 	result.CPUContract.ORTIntraOpThreads = 0
 	result.CPUContract.ORTInterOpThreads = 0
 	result.DerivedContract.Provider = ""
-	result.RKNN = validRKNNRuntimeEvidence(intent.Measurement.Batch)
-	if err := ValidateRuntime(intent, "pod-uid", result); err != nil {
+	result.RKNN = validRKNNRuntimeEvidence(config.Measurement.Batch)
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*RuntimeResult){
@@ -161,7 +166,7 @@ func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
 		evidence.Devices = append([]RKNNDeviceObservation(nil), result.RKNN.Devices...)
 		candidate.RKNN = &evidence
 		mutate(&candidate)
-		if err := ValidateRuntime(intent, "pod-uid", candidate); err == nil {
+		if err := ValidateRuntime(config, "pod-uid", candidate); err == nil {
 			t.Fatal("invalid RKNNLite runtime evidence was accepted")
 		}
 	}
@@ -176,18 +181,18 @@ func TestNormalizeRuntimeArchitecture(t *testing.T) {
 }
 
 func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
-	intent := validIntent()
-	intent.Measurement = MeasurementContract{
+	config := validRunConfig()
+	config.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
 	result := IdleRuntimeResult{
 		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		PodUID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "x86_64",
-		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "1", Backend: intent.State.Backend, Provider: intent.State.Backend,
-		AvailableProviders:   []string{intent.State.Backend},
+		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
+		AvailableProviders:   []string{config.State.Backend},
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
 		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
@@ -195,11 +200,11 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		CPUContract: RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4,
 			ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"},
 		DerivedContract: DerivedContract{
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			NodeSnapshot: intent.TargetNode,
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			NodeSnapshot: config.TargetNode,
 		},
 	}
-	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
+	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*IdleRuntimeResult){
@@ -210,19 +215,19 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 	} {
 		candidate := result
 		mutate(&candidate)
-		if err := ValidateIdleRuntime(intent, "pod-uid", candidate); err == nil {
+		if err := ValidateIdleRuntime(config, "pod-uid", candidate); err == nil {
 			t.Fatal("invalid idle runtime evidence was accepted")
 		}
 	}
 }
 
 func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
-	intent := validRKNNIntent(true)
+	config := validRKNNRunConfig(true)
 	result := IdleRuntimeResult{
 		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-		PodUID: "pod-uid", NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		PodUID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "aarch64",
-		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: intent.State.Backend,
+		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: config.State.Backend,
 		RKNN:                 validRKNNRuntimeEvidence(1),
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
@@ -230,38 +235,38 @@ func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 		ModelResidentAtEnd: true,
 		CPUContract:        RuntimeCPU{CgroupCPUMax: "400000 100000", AffinityCPUCount: 4, CPUSetEffective: "0-3"},
 		DerivedContract: DerivedContract{
-			Backend: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+			Backend: config.State.Backend, NodeSnapshot: config.TargetNode,
 		},
 	}
-	if err := ValidateIdleRuntime(intent, "pod-uid", result); err != nil {
+	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
 	result.RKNN.LoadSucceeded = false
-	if err := ValidateIdleRuntime(intent, "pod-uid", result); err == nil {
+	if err := ValidateIdleRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("idle RKNNLite result without a loaded model was accepted")
 	}
 }
 
-func validRKNNIntent(idle bool) RunConfig {
-	intent := validIntent()
-	intent.Candidate.ExecutionPath = RKNNLiteExecutionPath
-	intent.State.Artifact = "model-rk3588-bs1"
-	intent.State.ArtifactPath = "/artifact/model.rknn"
-	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
-	intent.State.Backend = RKNNLiteBackend
+func validRKNNRunConfig(idle bool) RunConfig {
+	config := validRunConfig()
+	config.Candidate.ExecutionPath = RKNNLiteExecutionPath
+	config.State.Artifact = "model-rk3588-bs1"
+	config.State.ArtifactPath = "/artifact/model.rknn"
+	config.State.RuntimeFamily = RKNNLiteRuntimeFamily
+	config.State.Backend = RKNNLiteBackend
 	contract := rknnHostContractForTest()
-	intent.State.HostContract = &contract
-	intent.TargetNode.Architecture = testARM64Architecture
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
+	config.State.HostContract = &contract
+	config.TargetNode.Architecture = testARM64Architecture
+	config.CPU.ORTIntraOpThreads = 0
+	config.CPU.ORTInterOpThreads = 0
 	if idle {
-		intent.Measurement = MeasurementContract{
+		config.Measurement = MeasurementContract{
 			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 			WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 			OutputValidation: NoOutputValidation,
 		}
 	}
-	return intent
+	return config
 }
 
 func validRKNNRuntimeEvidence(batch int) *RKNNRuntimeEvidence {

@@ -22,7 +22,7 @@ type RetainedStoreFactory func(
 	storekube.Credentials,
 ) (evidencestore.LocationReader, error)
 
-// RetainedLoader reconstructs the Evidence Store connection frozen into one
+// RetainedLoader reconstructs the Evidence Store connection recorded in one
 // Run's owned Job, then independently verifies the referenced immutable
 // evidence. It never resolves the current store configuration as a substitute.
 type RetainedLoader struct {

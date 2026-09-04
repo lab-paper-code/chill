@@ -13,15 +13,15 @@ const (
 	testFactsUID        = "facts-uid"
 )
 
-func currentIntent(t *testing.T) profilingrun.RunConfig {
+func currentRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }

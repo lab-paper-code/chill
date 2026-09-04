@@ -21,15 +21,15 @@ func TestCandidateReportMatchesMaterialSelectionSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent, err := decodeTestIntent(intentPayload)
+	config, err := decodeTestRunConfig(intentPayload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCandidateReport(payload, intent); err != nil {
+	if err := ValidateCandidateReport(payload, config); err != nil {
 		t.Fatal(err)
 	}
-	intent.Candidate.ExecutionPath = "other"
-	if err := ValidateCandidateReport(payload, intent); err == nil {
+	config.Candidate.ExecutionPath = "other"
+	if err := ValidateCandidateReport(payload, config); err == nil {
 		t.Fatal("expected pre-run selection mismatch rejection")
 	}
 }
@@ -106,13 +106,13 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 }
 
 func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
-	intent := validIntent()
-	intent.State.DeviceClass = "jetson-xavier-nx-8g"
-	intent.Candidate.Inputs.DeviceClass.Name = intent.State.DeviceClass
-	intent.State.PowerMode = testActuatedNVPMode
-	intent.TargetNode.Architecture = testARM64Architecture
-	intent.Actuation = &ActuationContract{
-		PowerMode:  intent.State.PowerMode,
+	config := validRunConfig()
+	config.State.DeviceClass = "jetson-xavier-nx-8g"
+	config.Candidate.Inputs.DeviceClass.Name = config.State.DeviceClass
+	config.State.PowerMode = testActuatedNVPMode
+	config.TargetNode.Architecture = testARM64Architecture
+	config.Actuation = &ActuationContract{
+		PowerMode:  config.State.PowerMode,
 		PolicyName: "jetson-15w",
 		Actuator: ActuatorTarget{
 			Kind:           ActuatorKindJetsonNVPModel,
@@ -122,30 +122,30 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	report := CandidateReport{
 		SchemaVersion: CandidateReportSchemaVersion,
 		Scope:         "StaticCompatibility",
-		Inputs:        intent.Candidate.Inputs,
+		Inputs:        config.Candidate.Inputs,
 		Selection: CandidateReportSelection{
-			ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
-			PowerMode: intent.State.PowerMode,
-			Actuator:  &intent.Actuation.Actuator,
+			ExecutionPath: config.Candidate.ExecutionPath, Artifact: config.State.Artifact,
+			PowerMode: config.State.PowerMode,
+			Actuator:  &config.Actuation.Actuator,
 		},
 		DeviceClassFacts: CandidateReportDeviceClassFacts{
-			Architecture: intent.TargetNode.Architecture,
-			NodeSelector: map[string]string{"edge.dacs.io/device-class": intent.State.DeviceClass},
-			PowerModes:   []string{"MAXN", intent.State.PowerMode},
+			Architecture: config.TargetNode.Architecture,
+			NodeSelector: map[string]string{"edge.dacs.io/device-class": config.State.DeviceClass},
+			PowerModes:   []string{"MAXN", config.State.PowerMode},
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
-			Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
-			Path: intent.State.ArtifactPath,
+			Image: config.Images.Artifact, Architecture: config.TargetNode.Architecture,
+			Path: config.State.ArtifactPath,
 		},
-		MetricObserverImage: intent.Images.MetricObserver,
-		Verdict:             intent.Candidate.Verdict,
+		MetricObserverImage: config.Images.MetricObserver,
+		Verdict:             config.Candidate.Verdict,
 		Reasons:             []CandidateReportReason{},
 	}
 	payload, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCandidateReport(payload, intent); err != nil {
+	if err := ValidateCandidateReport(payload, config); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCandidateReport(driftedPayload, intent); err == nil ||
+	if err := ValidateCandidateReport(driftedPayload, config); err == nil ||
 		!strings.Contains(err.Error(), "actuator target") {
 		t.Fatalf("candidate actuator drift was accepted: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := RunConfig{
+	config := RunConfig{
 		Candidate: CandidateIdentity{
 			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
 		},
@@ -272,7 +272,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
 		Measurement: MeasurementContract{Batch: 1},
 	}
-	verified, err := VerifyCandidateReport(payload, intent)
+	verified, err := VerifyCandidateReport(payload, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyCandidateReport(withoutShapePayload, intent); err == nil ||
+	if _, err := VerifyCandidateReport(withoutShapePayload, config); err == nil ||
 		err.Error() != "candidate report artifact input shape is required" {
 		t.Fatalf("RKNN candidate without an input shape returned %v", err)
 	}
@@ -306,15 +306,15 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutPlatformIntent := intent
-	withoutPlatformIntent.State.HostContract = cloneCandidateHostContract(withoutPlatform.HostContract)
-	if _, err := VerifyCandidateReport(withoutPlatformPayload, withoutPlatformIntent); err == nil ||
+	withoutPlatformRunConfig := config
+	withoutPlatformRunConfig.State.HostContract = cloneCandidateHostContract(withoutPlatform.HostContract)
+	if _, err := VerifyCandidateReport(withoutPlatformPayload, withoutPlatformRunConfig); err == nil ||
 		!strings.Contains(err.Error(), "host platform") {
 		t.Fatalf("RKNN candidate without host platform was accepted: %v", err)
 	}
 
-	intent.Measurement.Batch = 2
-	if err := ValidateCandidateReport(payload, intent); err == nil {
+	config.Measurement.Batch = 2
+	if err := ValidateCandidateReport(payload, config); err == nil {
 		t.Fatal("expected unsupported declared batch size rejection")
 	}
 }
@@ -351,7 +351,7 @@ func verifyRKNNCandidateAtBatch(
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := RunConfig{
+	config := RunConfig{
 		Candidate: CandidateIdentity{
 			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
 		},
@@ -368,7 +368,7 @@ func verifyRKNNCandidateAtBatch(
 		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
 		Measurement: MeasurementContract{Batch: batch},
 	}
-	return VerifyCandidateReport(payload, intent)
+	return VerifyCandidateReport(payload, config)
 }
 
 func rknnHostContractForTest() CandidateReportHostContract {
@@ -434,7 +434,7 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent, err := decodeTestIntent(intentPayload)
+	config, err := decodeTestRunConfig(intentPayload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			candidate := intent
+			candidate := config
 			if err := ValidateCandidateReport(changed, candidate); err == nil {
 				t.Fatal("expected candidate report identity rejection")
 			}

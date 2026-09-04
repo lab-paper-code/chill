@@ -8,7 +8,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-// ExecutionPlan is the bounded delivery policy for one already-frozen Run.
+// ExecutionPlan is the bounded delivery policy for one resolved Run.
 // It contains no Kubernetes objects; the controller adapter projects it into
 // one native Job without inventing independent resource or timeout values.
 type ExecutionPlan struct {
@@ -45,7 +45,7 @@ type ExecutionPlan struct {
 	WorkspaceBytes                     int64
 }
 
-// DeriveExecutionPlan combines a frozen worker envelope with Run-derived
+// DeriveExecutionPlan combines a selected worker envelope with Run-derived
 // durations. CPU request and limit remain Node-specific RunConfig facts.
 func DeriveExecutionPlan(
 	config profilingrun.RunConfig,

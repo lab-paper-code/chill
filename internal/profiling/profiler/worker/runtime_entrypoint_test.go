@@ -78,7 +78,7 @@ func TestRuntimeAdaptersPreserveEntrypointCancellation(t *testing.T) {
 			name: "CPU ORT",
 			measure: func(t *testing.T, ctx context.Context) error {
 				runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "result.json"))
-				_, err := runtime.Measure(ctx, runtimeRequest(testIntent(t)))
+				_, err := runtime.Measure(ctx, runtimeRequest(testRunConfig(t)))
 				return err
 			},
 		},
@@ -86,7 +86,7 @@ func TestRuntimeAdaptersPreserveEntrypointCancellation(t *testing.T) {
 			name: "RKNNLite",
 			measure: func(t *testing.T, ctx context.Context) error {
 				runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "result.json"), testRKNNDelivery())
-				_, err := runtime.Measure(ctx, runtimeRequest(testRKNNIntent(t, false)))
+				_, err := runtime.Measure(ctx, runtimeRequest(testRKNNRunConfig(t, false)))
 				return err
 			},
 		},

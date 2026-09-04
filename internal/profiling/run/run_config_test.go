@@ -6,88 +6,88 @@ import (
 	"testing"
 )
 
-func decodeTestIntent(payload []byte) (RunConfig, error) {
-	var intent RunConfig
-	err := json.Unmarshal(payload, &intent)
-	return intent, err
+func decodeTestRunConfig(payload []byte) (RunConfig, error) {
+	var config RunConfig
+	err := json.Unmarshal(payload, &config)
+	return config, err
 }
 
-func TestIntentDecoderRejectsExplicitNullActuation(t *testing.T) {
-	payload, err := json.Marshal(validIntent())
+func TestRunConfigDecoderRejectsExplicitNullActuation(t *testing.T) {
+	payload, err := json.Marshal(validRunConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload = []byte(strings.TrimSuffix(string(payload), "}") + `,"actuation":null}`)
-	if _, err := decodeTestIntent(payload); err == nil || !strings.Contains(err.Error(), "must be an object") {
+	if _, err := decodeTestRunConfig(payload); err == nil || !strings.Contains(err.Error(), "must be an object") {
 		t.Fatalf("explicit null actuation was not rejected: %v", err)
 	}
 }
 
-func TestCurrentIntentBindsOptionalHostContract(t *testing.T) {
-	intent := validIntent()
+func TestCurrentRunConfigBindsOptionalHostContract(t *testing.T) {
+	config := validRunConfig()
 	contract := rknnHostContractForTest()
-	intent.State.HostContract = &contract
-	if err := intent.Validate(); err != nil {
+	config.State.HostContract = &contract
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCurrentRKNNLiteIntentOmitsORTThreadSettings(t *testing.T) {
-	intent := validIntent()
-	intent.Candidate.ExecutionPath = "rknnlite-bs2"
-	intent.State.RuntimeFamily = RKNNLiteRuntimeFamily
-	intent.State.Backend = RKNNLiteBackend
+func TestCurrentRKNNLiteRunConfigOmitsORTThreadSettings(t *testing.T) {
+	config := validRunConfig()
+	config.Candidate.ExecutionPath = "rknnlite-bs2"
+	config.State.RuntimeFamily = RKNNLiteRuntimeFamily
+	config.State.Backend = RKNNLiteBackend
 	contract := rknnHostContractForTest()
-	intent.State.HostContract = &contract
-	intent.Delivery = rknnDeliveryForTest(1, &contract)
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
-	if err := intent.Validate(); err != nil {
+	config.State.HostContract = &contract
+	config.Delivery = rknnDeliveryForTest(1, &contract)
+	config.CPU.ORTIntraOpThreads = 0
+	config.CPU.ORTInterOpThreads = 0
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := intent.CanonicalJSON()
+	payload, err := config.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(payload), "ortIntraOpThreads") || strings.Contains(string(payload), "ortInterOpThreads") {
-		t.Fatalf("RKNNLite intent retained ORT-only CPU settings: %s", payload)
+		t.Fatalf("RKNNLite config retained ORT-only CPU settings: %s", payload)
 	}
-	if IsSupportedCPUORTRunConfig(intent) {
-		t.Fatal("RKNNLite intent was classified as CPU ORT")
+	if IsSupportedCPUORTRunConfig(config) {
+		t.Fatal("RKNNLite config was classified as CPU ORT")
 	}
-	if !IsSupportedRKNNLiteRunConfig(intent) {
-		t.Fatal("current host-bound RKNNLite intent was not classified as supported")
+	if !IsSupportedRKNNLiteRunConfig(config) {
+		t.Fatal("current host-bound RKNNLite config was not classified as supported")
 	}
 
-	withORTSettings := intent
+	withORTSettings := config
 	withORTSettings.CPU.ORTIntraOpThreads = 4
 	withORTSettings.CPU.ORTInterOpThreads = 1
 	if err := withORTSettings.Validate(); err == nil || !strings.Contains(err.Error(), "ONNX Runtime thread") {
-		t.Fatalf("RKNNLite intent accepted ORT-only settings: %v", err)
+		t.Fatalf("RKNNLite config accepted ORT-only settings: %v", err)
 	}
 }
 
-func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
+func TestCurrentRunConfigValidatesTypedActuation(t *testing.T) {
 	policyName := "node-power-default"
-	intent := validIntent()
-	intent.State.PowerMode = testActuatedNVPMode
-	intent.Actuation = &ActuationContract{
-		PowerMode: intent.State.PowerMode, PolicyName: policyName,
+	config := validRunConfig()
+	config.State.PowerMode = testActuatedNVPMode
+	config.Actuation = &ActuationContract{
+		PowerMode: config.State.PowerMode, PolicyName: policyName,
 		Actuator: ActuatorTarget{
 			Kind:           ActuatorKindJetsonNVPModel,
 			JetsonNVPModel: &JetsonNVPModelTarget{ID: 2},
 		},
 	}
-	if err := intent.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := intent.CanonicalJSON()
+	payload, err := config.CanonicalJSON()
 	if err != nil || !strings.Contains(string(payload), `"actuation":{"powerMode":"`+testActuatedNVPMode+`"`) {
 		t.Fatalf("canonical actuation = %s, error = %v", payload, err)
 	}
 
 	clockMode := int32(1)
-	clock := validIntent()
+	clock := validRunConfig()
 	clock.State.PowerMode = "gpu-1200"
 	clock.Actuation = &ActuationContract{
 		PowerMode: clock.State.PowerMode, PolicyName: policyName,
@@ -117,10 +117,10 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 		{name: "unsupported schema", mutate: func(candidate *RunConfig) { candidate.SchemaVersion = "foreign" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			candidate := intent
-			actuation := *intent.Actuation
+			candidate := config
+			actuation := *config.Actuation
 			candidate.Actuation = &actuation
-			actuator := intent.Actuation.Actuator
+			actuator := config.Actuation.Actuator
 			candidate.Actuation.Actuator = actuator
 			if actuator.JetsonNVPModel != nil {
 				target := *actuator.JetsonNVPModel
@@ -133,41 +133,41 @@ func TestCurrentIntentValidatesTypedActuation(t *testing.T) {
 		})
 	}
 
-	fixed := validIntent()
-	fixed.Actuation = intent.Actuation
+	fixed := validRunConfig()
+	fixed.Actuation = config.Actuation
 	if err := fixed.Validate(); err == nil || !strings.Contains(err.Error(), "fixed power mode") {
 		t.Fatalf("fixed RunConfig accepted actuation: %v", err)
 	}
 }
 
-func TestSupportedCPUORTIntentUsesRuntimeContractNotCatalogPathName(t *testing.T) {
-	intent := validIntent()
-	intent.Candidate.ExecutionPath = "ort-cpu-derived"
-	if err := intent.Validate(); err != nil {
+func TestSupportedCPUORTRunConfigUsesRuntimeContractNotCatalogPathName(t *testing.T) {
+	config := validRunConfig()
+	config.Candidate.ExecutionPath = "ort-cpu-derived"
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if !IsSupportedCPUORTRunConfig(intent) || IsSupportedRKNNLiteRunConfig(intent) {
-		t.Fatal("CPU ORT adapter selection did not follow the frozen runtime contract")
+	if !IsSupportedCPUORTRunConfig(config) || IsSupportedRKNNLiteRunConfig(config) {
+		t.Fatal("CPU ORT adapter selection did not follow the RunConfig runtime contract")
 	}
 }
 
-func TestIntentAcceptsConfiguredImageReference(t *testing.T) {
-	intent := validIntent()
-	intent.Images.Runtime = "registry/runtime:latest"
-	if err := intent.Validate(); err != nil {
+func TestRunConfigAcceptsConfiguredImageReference(t *testing.T) {
+	config := validRunConfig()
+	config.Images.Runtime = "registry/runtime:latest"
+	if err := config.Validate(); err != nil {
 		t.Fatalf("configured image reference rejected: %v", err)
 	}
 }
 
-func TestCurrentIntentFreezesGenericWorkloadObservationContract(t *testing.T) {
-	intent := validIntent()
-	keys, err := intent.Workload.LabelKeys()
+func TestCurrentRunConfigFreezesGenericWorkloadObservationContract(t *testing.T) {
+	config := validRunConfig()
+	keys, err := config.Workload.LabelKeys()
 	if err != nil || strings.Join(keys, ",") !=
 		"app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role" {
 		t.Fatalf("contract label keys = %#v, error = %v", keys, err)
 	}
-	intent.Workload.SchemaVersion = "unknown"
-	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "current workload") {
+	config.Workload.SchemaVersion = "unknown"
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "current workload") {
 		t.Fatalf("invalid workload contract error = %v", err)
 	}
 }
@@ -180,8 +180,8 @@ func TestMeasurementWorkloadRequiresCHILLRoleAndJobOwner(t *testing.T) {
 	}
 }
 
-func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
-	idle := validIntent()
+func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
+	idle := validRunConfig()
 	idle.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
@@ -205,8 +205,8 @@ func TestCurrentIntentValidatesModelLoadedIdleProtocol(t *testing.T) {
 	}
 }
 
-func TestCurrentRKNNLiteIntentAllowsArtifactBatchForIdle(t *testing.T) {
-	idle := validIntent()
+func TestCurrentRKNNLiteRunConfigAllowsArtifactBatchForIdle(t *testing.T) {
+	idle := validRunConfig()
 	idle.Candidate.ExecutionPath = "rknnlite-bs2"
 	idle.State.RuntimeFamily = RKNNLiteRuntimeFamily
 	idle.State.Backend = RKNNLiteBackend
@@ -236,46 +236,46 @@ func rknnDeliveryForTest(batch int32, host *CandidateReportHostContract) Candida
 	}
 }
 
-func TestCurrentIntentRequiresCleanArtifactPath(t *testing.T) {
+func TestCurrentRunConfigRequiresCleanArtifactPath(t *testing.T) {
 	for _, artifactPath := range []string{"", "/", "artifact/model.onnx", "/artifact/../model.onnx"} {
-		intent := validIntent()
-		intent.State.ArtifactPath = artifactPath
-		if err := intent.Validate(); err == nil {
+		config := validRunConfig()
+		config.State.ArtifactPath = artifactPath
+		if err := config.Validate(); err == nil {
 			t.Fatalf("expected artifact path %q rejection", artifactPath)
 		}
 	}
 }
 
-func TestIntentRejectsUnknownImageField(t *testing.T) {
-	payload, err := validIntent().CanonicalJSON()
+func TestRunConfigRejectsUnknownImageField(t *testing.T) {
+	payload, err := validRunConfig().CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload = []byte(strings.Replace(string(payload), `"metricObserver":`, `"unknown":true,"metricObserver":`, 1))
-	if _, err := decodeTestIntent(payload); err == nil {
+	if _, err := decodeTestRunConfig(payload); err == nil {
 		t.Fatal("expected unknown image field rejection")
 	}
 }
 
-func TestIntentRejectsCPURequestAboveFrozenLimit(t *testing.T) {
-	intent := validIntent()
-	intent.CPU.Request = "5"
-	if err := intent.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
+func TestRunConfigRejectsCPURequestAboveSelectedLimit(t *testing.T) {
+	config := validRunConfig()
+	config.CPU.Request = "5"
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
 		t.Fatalf("expected CPU request/limit rejection, got %v", err)
 	}
 }
 
-func TestIntentAcceptsConfiguredCPUQuotaBelowAllocatable(t *testing.T) {
-	intent := validIntent()
-	intent.TargetNode.AllocatableCPU = "12"
-	intent.CPU.Policy = ConfiguredCPUQuotaPolicy
-	intent.CPU.Limit = "4"
-	if err := intent.Validate(); err != nil {
+func TestRunConfigAcceptsConfiguredCPUQuotaBelowAllocatable(t *testing.T) {
+	config := validRunConfig()
+	config.TargetNode.AllocatableCPU = "12"
+	config.CPU.Policy = ConfiguredCPUQuotaPolicy
+	config.CPU.Limit = "4"
+	if err := config.Validate(); err != nil {
 		t.Fatalf("configured CPU quota was rejected: %v", err)
 	}
 }
 
-func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
+func TestRunConfigRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*RunConfig){
 		func(i *RunConfig) { i.Candidate.Verdict = "Unknown" },
 		func(i *RunConfig) { i.TargetNode.ResourceVersion = "" },
@@ -288,46 +288,46 @@ func TestIntentRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 		func(i *RunConfig) { i.Metrics.NodeName = "other" },
 	}
 	for _, mutate := range tests {
-		intent := validIntent()
-		mutate(&intent)
-		if err := intent.Validate(); err == nil {
+		config := validRunConfig()
+		mutate(&config)
+		if err := config.Validate(); err == nil {
 			t.Fatal("expected validation failure")
 		}
 	}
 }
 
-func TestCurrentIntentRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
+func TestCurrentRunConfigRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*RunConfig)
 	}{
-		{name: "missing thermal mapping", mutate: func(intent *RunConfig) {
-			intent.Metrics.ThermalMetrics = ThermalMetricContract{}
+		{name: "missing thermal mapping", mutate: func(config *RunConfig) {
+			config.Metrics.ThermalMetrics = ThermalMetricContract{}
 		}},
-		{name: "invalid metric name", mutate: func(intent *RunConfig) {
-			intent.Metrics.ThermalMetrics.Active = "not-valid"
+		{name: "invalid metric name", mutate: func(config *RunConfig) {
+			config.Metrics.ThermalMetrics.Active = "not-valid"
 		}},
-		{name: "duplicate metric name", mutate: func(intent *RunConfig) {
-			intent.Metrics.ThermalMetrics.Active = intent.Metrics.PowerMetric
+		{name: "duplicate metric name", mutate: func(config *RunConfig) {
+			config.Metrics.ThermalMetrics.Active = config.Metrics.PowerMetric
 		}},
-		{name: "missing metric labels", mutate: func(intent *RunConfig) {
-			intent.Metrics.MetricLabels = nil
+		{name: "missing metric labels", mutate: func(config *RunConfig) {
+			config.Metrics.MetricLabels = nil
 		}},
-		{name: "invalid metric label name", mutate: func(intent *RunConfig) {
-			intent.Metrics.MetricLabels = map[string]string{"not-valid": "value"}
+		{name: "invalid metric label name", mutate: func(config *RunConfig) {
+			config.Metrics.MetricLabels = map[string]string{"not-valid": "value"}
 		}},
-		{name: "empty metric label value", mutate: func(intent *RunConfig) {
-			intent.Metrics.MetricLabels = map[string]string{"hostname": ""}
+		{name: "empty metric label value", mutate: func(config *RunConfig) {
+			config.Metrics.MetricLabels = map[string]string{"hostname": ""}
 		}},
-		{name: "unclean thermal endpoint", mutate: func(intent *RunConfig) {
-			intent.Metrics.ThermalEndpoint = " http://thermal.test/metrics "
+		{name: "unclean thermal endpoint", mutate: func(config *RunConfig) {
+			config.Metrics.ThermalEndpoint = " http://thermal.test/metrics "
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			intent := validIntent()
-			test.mutate(&intent)
-			if err := intent.Validate(); err == nil {
+			config := validRunConfig()
+			test.mutate(&config)
+			if err := config.Validate(); err == nil {
 				t.Fatal("invalid metric identities were accepted")
 			}
 		})
@@ -335,18 +335,18 @@ func TestCurrentIntentRequiresDistinctPrometheusMetricIdentities(t *testing.T) {
 }
 
 func TestVerifiedRunConfigOwnsMetricLabels(t *testing.T) {
-	intent := validIntent()
-	verified, err := ValidateRunConfig(intent)
+	config := validRunConfig()
+	verified, err := ValidateRunConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.Metrics.MetricLabels["hostname"] = "caller-mutation"
+	config.Metrics.MetricLabels["hostname"] = "caller-mutation"
 	first, err := verified.Record()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.Metrics.MetricLabels["hostname"] != "lattepanda" {
-		t.Fatalf("verified intent retained caller labels: %#v", first.Metrics.MetricLabels)
+		t.Fatalf("verified config retained caller labels: %#v", first.Metrics.MetricLabels)
 	}
 	first.Metrics.MetricLabels["hostname"] = "record-mutation"
 	second, err := verified.Record()
@@ -354,11 +354,11 @@ func TestVerifiedRunConfigOwnsMetricLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if second.Metrics.MetricLabels["hostname"] != "lattepanda" {
-		t.Fatalf("verified intent retained returned labels: %#v", second.Metrics.MetricLabels)
+		t.Fatalf("verified config retained returned labels: %#v", second.Metrics.MetricLabels)
 	}
 }
 
-func validIntent() RunConfig {
+func validRunConfig() RunConfig {
 	d := "sha256:" + strings.Repeat("a", 64)
 	image := "registry.local/chill/image@" + d
 	return RunConfig{

@@ -21,7 +21,7 @@ const (
 	EnergySearchSpaceExhausted EnergySearchCompletionReason = "SearchSpaceExhausted"
 )
 
-// EnergyObjectivePolicy is frozen before the first campaign Run. The objective
+// EnergyObjectivePolicy is recorded before the first campaign Run. The objective
 // and search algorithm are versioned constants; only the repeated measurement
 // count is configurable.
 type EnergyObjectivePolicy struct {
@@ -85,7 +85,7 @@ func DeriveMinimumEnergyBatch(
 			point.MeanIncrementalWorkJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalWorkJoulesPerItem) ||
 			math.IsInf(point.MeanIncrementalWorkJoulesPerItem, 0) {
-			return EnergyOptimizationResult{}, errors.New("search points do not match the frozen energy-objective policy")
+			return EnergyOptimizationResult{}, errors.New("search points do not match the recorded energy-objective policy")
 		}
 		result.MeasuredBatchSizes = append(result.MeasuredBatchSizes, point.Batch)
 		result.IncrementalWorkByBatch = append(result.IncrementalWorkByBatch, BatchEnergyMean{

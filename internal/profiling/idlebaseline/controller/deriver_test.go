@@ -49,7 +49,7 @@ func (l deriverEvidenceLoader) LoadIdle(
 }
 
 func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
-	intent := deriverIdleIntent(t)
+	config := deriverIdleRunConfig(t)
 	policy := deriverIdlePolicy(t)
 	runs := make([]edgev1alpha1.ProfilingRun, 3)
 	evidence := deriverEvidenceLoader{byRun: map[string]profilerevidence.VerifiedIdleEvidence{}}
@@ -66,7 +66,7 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 			},
 		}
 		runs[index].Name = name
-		evidence.byRun[name] = deriverIdleEvidence(t, intent, name+"-pod", float64(10+index))
+		evidence.byRun[name] = deriverIdleEvidence(t, config, name+"-pod", float64(10+index))
 	}
 	deriver, err := NewDeriver(deriverRunRecordLoader{resolved: profilercontroller.ResolvedRun{
 		AdmissionPolicy: policy,
@@ -89,31 +89,31 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 	}
 }
 
-func deriverIdleIntent(t *testing.T) profilingrun.RunConfig {
+func deriverIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	intent.Measurement.Batch = 1
-	intent.Measurement.WarmupIterations = 0
-	intent.Measurement.SettlingDurationSeconds = 60
-	intent.Measurement.DurationSeconds = 30
-	intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	intent.Measurement.InputGenerator = "none"
-	intent.Measurement.OutputValidation = "none"
-	if err := intent.Validate(); err != nil {
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	config.Measurement.Batch = 1
+	config.Measurement.WarmupIterations = 0
+	config.Measurement.SettlingDurationSeconds = 60
+	config.Measurement.DurationSeconds = 30
+	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	config.Measurement.InputGenerator = "none"
+	config.Measurement.OutputValidation = "none"
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
 func deriverIdlePolicy(t *testing.T) profileradmission.FrozenPolicy {
@@ -143,7 +143,7 @@ policies:
 
 func deriverIdleEvidence(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedIdleEvidence {
@@ -160,34 +160,34 @@ func deriverIdleEvidence(
 	}
 	workloadPod := workloadobserver.Pod{
 		Namespace: "default", Name: "profiling-run-pod", UID: podUID,
-		Phase: "Running", Images: []string{intent.Images.Runtime},
+		Phase: "Running", Images: []string{config.Images.Runtime},
 	}
 	raw := profilerevidence.IdleRawMeasurement{
 		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion,
-		RunConfig:     intent,
+		RunConfig:     config,
 		PodUID:        podUID,
 		Runtime: profilingrun.IdleRuntimeResult{
 			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-			PodUID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			AvailableProviders:        []string{intent.State.Backend},
+			PodUID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
+			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			AvailableProviders:        []string{config.State.Backend},
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.Format(time.RFC3339Nano),
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
-			CPUContract: deriverRuntimeCPU(intent),
+			CPUContract: deriverRuntimeCPU(config),
 			DerivedContract: profilingrun.DerivedContract{
-				Backend: intent.State.Backend, Provider: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
-				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
-				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
-				MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
+				Kind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
+				Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric,
+				MetricLabels: config.Metrics.MetricLabels, ThermalEndpoint: config.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 					ObservationAvailable: "device_thermal_throttle_observation_available",
 					Active:               "device_thermal_throttle_active", CPUCoreThrottleEvents: "device_thermal_cpu_core_throttle_event_count",
@@ -203,7 +203,7 @@ func deriverIdleEvidence(
 		},
 		Workload: &workloadobserver.Result{
 			SchemaVersion: workloadobserver.ResultSchemaVersion,
-			Target:        workloadobserver.TargetIdentity{NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID},
+			Target:        workloadobserver.TargetIdentity{NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID},
 			Run: workloadobserver.RunIdentity{
 				Namespace: "default", JobUID: "job-" + podUID, PodName: "profiling-run-pod", PodUID: podUID,
 			},
@@ -217,7 +217,7 @@ func deriverIdleEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := deriverExecution(t, intent, podUID, rawBytes)
+	execution := deriverExecution(t, config, podUID, rawBytes)
 	executionBytes, err := execution.CanonicalIdleJSON(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func deriverIdleEvidence(
 
 func deriverExecution(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	rawBytes []byte,
 ) profilerevidence.ExecutionEvidence {
@@ -253,7 +253,7 @@ func deriverExecution(
 		}
 	}
 	return profilerevidence.ExecutionEvidence{
-		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: intent,
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: config,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "evidence", Key: "raw-" + podUID + ".json", Size: int64(len(rawBytes)),
 		},
@@ -263,17 +263,17 @@ func deriverExecution(
 			},
 			Pod: profilerevidence.PodTerminalFacts{
 				Namespace: "default", Name: "profiling-run-pod", UID: podUID,
-				ControllerOwnerUID: "job-" + podUID, NodeName: intent.TargetNode.Name, Phase: "Succeeded",
+				ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
-			Node: profilerevidence.NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
+			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
 			Containers: []profilerevidence.ContainerTerminal{
-				container("metric-observer", intent.Images.MetricObserver), container("workload-observer", intent.Images.WorkloadObserver),
-				container("runtime", intent.Images.Runtime), container("artifact", intent.Images.Artifact),
+				container("metric-observer", config.Images.MetricObserver), container("workload-observer", config.Images.WorkloadObserver),
+				container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
 			},
 			NodeWorkload: profilerevidence.NodeWorkload{
 				ObservedAt: completed.Add(time.Second), Pods: []profilerevidence.WorkloadPod{{
 					Namespace: "default", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{intent.Images.Runtime},
+					Phase: "Succeeded", Images: []string{config.Images.Runtime},
 				}},
 			},
 		},
@@ -281,10 +281,10 @@ func deriverExecution(
 	}
 }
 
-func deriverRuntimeCPU(intent profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func deriverRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
 		CPUSetEffective: "0-3", CgroupCPUStatDelta: map[string]int{"user_usec": 1, "system_usec": 2},
 	}
 }

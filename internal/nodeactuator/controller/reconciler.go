@@ -61,8 +61,8 @@ func (o TransitionReconcilerOptions) Validate() error {
 }
 
 // TransitionReconciler is the only controller allowed to drive the host actuator
-// port. The Profiler owns immutable transition intent; this reconciler owns
-// observed status.
+// port. NodeActuation spec records the requested transition; this reconciler
+// owns observed status.
 type TransitionReconciler struct {
 	client.Client
 	lease    LeaseController

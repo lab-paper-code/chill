@@ -9,7 +9,7 @@ const (
 )
 
 // ExecutionPolicyCatalog is installation-time worker-delivery configuration.
-// Selection is by frozen DeviceClass, execution path, and workload mode, never
+// Selection is by RunConfig DeviceClass, execution path, and workload mode, never
 // by a caller-supplied resource or timeout override.
 type ExecutionPolicyCatalog struct {
 	SchemaVersion string                `json:"schemaVersion"`

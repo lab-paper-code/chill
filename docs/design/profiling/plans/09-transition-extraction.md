@@ -11,7 +11,7 @@
 
 Implemented. `NodeActuation` is a one-way transition with a single terminal
 outcome and no Run owner. A `BatchEnergyOptimization` creates and owns the transition
-that establishes its declared state. A non-fixed Run confirms its frozen state
+that establishes its declared state. A non-fixed Run confirms its declared state
 from the newest successful transition on its target Node, records that
 transition, and only then creates its Job. ADR 0018 owns the boundary.
 
@@ -43,7 +43,7 @@ For a Run with a configured actuation policy, confirmation lists
 `NodeActuation` objects in the Run namespace, filters successful terminal
 `Ready` objects by exact target Node name and UID, and selects the greatest
 `status.readyAt`. The selected transition's declared class, mode, and actuator
-target and its target read-back must match frozen intent. The Run records its
+target and its target read-back must match RunConfig. The Run records its
 name and UID before creating the Job. No completed transition, or a newest
 successful transition for another mode, produces terminal
 `RequiredStateNotConfirmed` without a Job. A Run without an actuation policy

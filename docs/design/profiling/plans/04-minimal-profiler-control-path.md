@@ -22,12 +22,12 @@ The internal RunConfig is `v1alpha14`, and the Go and Python execution boundarie
 accept that current schema only. It carries semantic source-object identities,
 the configured power and typed thermal metric identities, the typed host
 contract, and an optional typed actuation binding. Its common worker CPU
-contract freezes either the Node-allocatable quota or an explicitly configured
+contract records either the Node-allocatable quota or an explicitly configured
 whole-core Run quota; RKNNLite omits ORT-only thread settings. Each
 owned Job contains the executable RunConfig and the exact selected admission,
 execution, and optional actuation policy snapshots. The candidate report is
 verified during resolution and is not copied into the Job or final evidence.
-The public request schema, request-to-intent projection, bounded Job envelope,
+The public request schema, request-to-RunConfig resolution, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
 idle admission dispatch are implemented and live-verified. The accepted idle
 Run retains distinct runtime/raw completeness while reusing the active control
@@ -190,7 +190,7 @@ manager's uncached API reader so they do not implicitly require informer
 
 The controller is a time-bounded, idempotent control loop. Each reconciliation
 reconstructs the Run from Kubernetes objects and durable evidence. It may make
-compatibility, intent, Job, and admission decisions, but it does not poll power,
+compatibility, RunConfig, Job, and admission decisions, but it does not poll power,
 execute inference, hold a measurement window open, or retain authoritative Run
 state in process memory.
 
@@ -332,7 +332,7 @@ catalog, an unconfigured selected name, or a selected policy whose workload
 mode does not match the immutable Run is terminal for that Run. The controller
 records `ExecutionComplete=False` with `AdmissionPolicyInvalid` instead of
 returning a stateless reconcile error. A retry uses a new `ProfilingRun`; the
-failed Run never starts a Job under policy semantics that were not frozen.
+failed Run never starts a Job under policy semantics that were not recorded.
 
 Worker timeout, capacity, and resource values are installation inputs, not Run
 inputs. The Profiler strict-decodes the execution-policy catalog and selects
@@ -376,7 +376,7 @@ discriminator. `idle-model-loaded` requires zero warm-up, a positive settling
 duration, and `none` input/output protocols; CPU ORT keeps `batch=1`, while a
 declared-batch-size artifact binds the first batch in its declared batch size set. Idle
 is accepted only with `idle-wall-power-v1`. Active fields and
-`wall-power-v2` remain unchanged. The controller projects these frozen facts
+`wall-power-v2` remain unchanged. The controller projects these recorded facts
 but does not implement runtime or raw-schema behavior itself.
 
 Status remains compact and reconstructable:
@@ -483,8 +483,8 @@ the Job UID rather than by introducing a second controller owner.
 ### Checkpoint 1: request and immutability boundary
 
 Decide the minimum `ChillSystem.spec.profiler` configuration, the minimum
-`ProfilingRun.spec` references, and which resolved facts are frozen into the
-intent. The APIs must avoid embedding Deployment details or adapter fixture
+`ProfilingRun.spec` references, and which resolved facts are recorded in the
+RunConfig. The APIs must avoid embedding Deployment details or adapter fixture
 structure while preserving every identity required by current validation.
 
 Recommended decision: one enabled Profiler operand per `ChillSystem` and one
@@ -604,13 +604,13 @@ transient observation errors, and duplicate events re-observe the same Run,
 Job/Pod, receipt, raw object, and finalized record without launching measurement
 again.
 
-Intent freezing distinguishes retryable infrastructure failures from terminal
+RunConfig resolution distinguishes retryable infrastructure failures from terminal
 input and installation-policy failures. Kubernetes API reads and writes,
 including a fact-source ConfigMap lookup failure, remain retryable. A concurrent
 fact-source revision observed between admission- and execution-policy reads also
 remains retryable so the next attempt can select one coherent snapshot. Once a
 catalog has been read successfully, malformed catalog data, an absent selected
-entry, or a policy-to-intent mismatch is terminal and is published on
+entry, or a policy-to-RunConfig mismatch is terminal and is published on
 `ExecutionComplete=False` with `InvalidRunSpec`, `AdmissionPolicyInvalid`, or
 `ExecutionPolicyInvalid`. The Condition and top-level `observedGeneration`
 identify the processed immutable Run generation; no Job is created.
@@ -674,7 +674,7 @@ sentinel values accepted by the active result validator.
     finalization and admission, plus the completed-admission no-op, are also
     covered. Recorded-Job replacement with a different UID is rejected without
     status mutation, as is controller-owner drift on the retained Job UID. The
-    focused intent, evidence, and retained-loader drift gates remain green.
+    focused RunConfig, evidence, and retained-loader drift gates remain green.
     Operator reconciler reconstruction over the retained Deployment is covered.
     The Run deletion fence and Job owner binding are covered in envtest, and
     native owner garbage collection is verified in the guarded Kubernetes 1.31
@@ -717,7 +717,7 @@ The first Profiler is complete only when:
 - the Run uses exact candidate, Node, artifact, image, CPU, and power identities;
 - the selected power mode is explicit and belongs to the selected DeviceClass;
 - new Runs resolve only installation-time trusted execution declarations,
-  while frozen Runs remain bound to the exact ConfigMap identity, declaration,
+  while existing Runs remain bound to the exact recorded ConfigMap identity, declaration,
   and source-entry source object identities;
 - Node-to-edge-metrics resolution is explicit and captured in the RunConfig;
 - exactly one native Job/Pod attempt is attributable to the Run;
@@ -727,14 +727,14 @@ The first Profiler is complete only when:
   into status;
 - execution failure, evidence failure, and admission rejection remain distinct;
 - a real live Run produces an observable terminal `ProfilingRun` status; and
-- no `DeviceProfile`, batch curve, `b_sat`, SLO, serving, or scheduler claim is
+- no `DeviceProfile`, batch curve, batch-optimum, SLO, serving, or scheduler claim is
   produced by this first path.
 
 ## Explicit non-goals
 
 - adaptive coarse/binary batch search
 - idle-baseline campaign orchestration
-- repeated-trial aggregation or `b_sat` acceptance
+- repeated-trial aggregation or batch-energy optimization
 - GPU, TensorRT, RKNN, or generic runtime plugin architecture
 - selectable power-mode observation or actuation
 - caller-supplied runtime images, artifact images, or power endpoints
@@ -747,7 +747,7 @@ The first Profiler is complete only when:
 
 ## Follow-on boundary
 
-Only after this single-Run control path is operationally proven should a later
-campaign plan compose multiple `ProfilingRun` objects, admitted idle trials,
-batch-point aggregation, and `b_sat` derivation. Only admitted campaign output
-may then justify defining and publishing a real `DeviceProfile` contract.
+Plan 7 now composes this operationally proven single-Run path into multiple
+`ProfilingRun` objects, admitted idle trials, batch-point aggregation, and
+batch-energy optimization. Only admitted campaign output may justify defining
+and publishing a real `DeviceProfile` contract.

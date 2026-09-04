@@ -12,7 +12,7 @@ import (
 )
 
 // BatchEnergyOptimizationPreflightSnapshot pairs one campaign a caller intends to
-// apply with the outcome of resolving the plan it selects. An intent that does
+// apply with the outcome of resolving the plan it selects. A request that does
 // not resolve is the answer rather than a failed read, so the reason travels
 // beside the plan instead of replacing it.
 type BatchEnergyOptimizationPreflightSnapshot struct {
@@ -26,7 +26,7 @@ const BatchEnergyOptimizationPreflightAPIVersion = "console.chill.dacs.io/v1alph
 
 // BatchEnergyOptimizationPreflight is the bounded read model for one campaign that has
 // not been applied. The plan is republished as the canonical JSON the campaign
-// would have recorded, so what a preflight shows and what a run would freeze
+// would have recorded, so what a preflight shows and what a campaign records
 // cannot drift apart.
 type BatchEnergyOptimizationPreflight struct {
 	APIVersion string                                   `json:"apiVersion"`

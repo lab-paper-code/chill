@@ -18,8 +18,8 @@ func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {
 	}
 }
 
-func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
-	active := curvePlanIntent()
+func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) {
+	active := curvePlanRunConfig()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -48,10 +48,10 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 		t.Fatalf("construct curve plan: %v", err)
 	}
 	recorded := plan.Shared()
-	if err := validateCurvePlanIntent(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
 		t.Fatalf("validate active RunConfig against projected plan: %v", err)
 	}
-	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
+	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
 		t.Fatalf("validate idle RunConfig against projected plan: %v", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			active := curvePlanIntent()
+			active := curvePlanRunConfig()
 			idle := active
 			idle.Measurement = profilingrun.MeasurementContract{
 				Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -107,8 +107,8 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 	}
 }
 
-func TestVerifiedCurvePlanIntentProjectionBindsObservableFacts(t *testing.T) {
-	active := curvePlanIntent()
+func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) {
+	active := curvePlanRunConfig()
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -158,7 +158,7 @@ func TestVerifiedCurvePlanIntentProjectionBindsObservableFacts(t *testing.T) {
 }
 
 func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
-	active := curvePlanIntent()
+	active := curvePlanRunConfig()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
 	active.State.ArtifactPath = "/artifact/model.onnx"
@@ -225,9 +225,9 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 	}
 }
 
-func curvePlanIntent() profilingrun.RunConfig {
-	intent := admissionIntentWithWorkloadContract()
-	intent.Candidate = profilingrun.CandidateIdentity{
+func curvePlanRunConfig() profilingrun.RunConfig {
+	config := admissionRunConfigWithWorkloadContract()
+	config.Candidate = profilingrun.CandidateIdentity{
 		Inputs: profilingrun.CandidateReportInputs{
 			ModelSpec:   profilingrun.CandidateReportObjectInput{Name: "mobilenet", UID: "model-uid", ResourceVersion: "1"},
 			DeviceClass: profilingrun.CandidateReportObjectInput{Name: "lattepanda", UID: "class-uid", ResourceVersion: "1"},
@@ -238,13 +238,13 @@ func curvePlanIntent() profilingrun.RunConfig {
 		},
 		ExecutionPath: "rknnlite", Verdict: "Compatible",
 	}
-	intent.State.Artifact = "model-bs1"
-	intent.State.ArtifactPath = "/artifact/model.rknn"
-	intent.State.HostContract = &profilingrun.CandidateReportHostContract{}
-	intent.Images = profilingrun.Images{
+	config.State.Artifact = "model-bs1"
+	config.State.ArtifactPath = "/artifact/model.rknn"
+	config.State.HostContract = &profilingrun.CandidateReportHostContract{}
+	config.Images = profilingrun.Images{
 		Runtime: "runtime", Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",
 	}
-	intent.CPU.Request = "3"
-	intent.Measurement.Batch = 1
-	return intent
+	config.CPU.Request = "3"
+	config.Measurement.Batch = 1
+	return config
 }

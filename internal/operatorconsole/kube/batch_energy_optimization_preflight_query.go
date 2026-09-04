@@ -19,7 +19,7 @@ type CurvePlanProjector interface {
 }
 
 // KubernetesBatchEnergyOptimizationPreflightQuery answers whether one submitted
-// campaign's intent resolves. The campaign it reads need not exist in the
+// campaign request resolves. The campaign it reads need not exist in the
 // cluster: the projection is what is being asked about, so the object travels
 // in rather than being fetched by name.
 type KubernetesBatchEnergyOptimizationPreflightQuery struct {
@@ -36,8 +36,8 @@ func NewKubernetesBatchEnergyOptimizationPreflightQuery(
 	return &KubernetesBatchEnergyOptimizationPreflightQuery{projector: projector, now: time.Now}, nil
 }
 
-// Read records projection failures as reasons because an intent that cannot be
-// frozen is the answer the caller requested, rather than a failed query.
+// Read records projection failures as reasons because an unresolved request is
+// the answer the caller requested, rather than a failed query.
 func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 	ctx context.Context,
 	campaign *edgev1alpha1.BatchEnergyOptimization,

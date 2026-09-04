@@ -79,9 +79,9 @@ func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
 			name: "active",
 			mutate: func(fixture *curveDeriverFixture) string {
 				runName := fixture.activeRuns[0].Name
-				frozen := fixture.records.byRun[runName]
-				frozen.AdmissionPolicy = fixture.insufficientActivePolicy
-				fixture.records.byRun[runName] = frozen
+				recorded := fixture.records.byRun[runName]
+				recorded.AdmissionPolicy = fixture.insufficientActivePolicy
+				fixture.records.byRun[runName] = recorded
 				return runName
 			},
 		},
@@ -89,9 +89,9 @@ func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
 			name: "idle",
 			mutate: func(fixture *curveDeriverFixture) string {
 				runName := fixture.idleRuns[0].Name
-				frozen := fixture.records.byRun[runName]
-				frozen.AdmissionPolicy = fixture.insufficientIdlePolicy
-				fixture.records.byRun[runName] = frozen
+				recorded := fixture.records.byRun[runName]
+				recorded.AdmissionPolicy = fixture.insufficientIdlePolicy
+				fixture.records.byRun[runName] = recorded
 				return runName
 			},
 		},
@@ -124,7 +124,7 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 		t.Fatalf("Derive() error = %v, want recorded-prefix rejection", err)
 	}
 	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
-		t.Fatalf("invalid prefix loaded evidence: intent calls=%d evidence calls=%d",
+		t.Fatalf("invalid prefix loaded evidence: config calls=%d evidence calls=%d",
 			fixture.records.calls, fixture.evidence.calls)
 	}
 }
@@ -197,7 +197,7 @@ func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
 	}
 	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
 		t.Fatalf(
-			"out-of-prefix Run loaded evidence: intent calls=%d evidence calls=%d",
+			"out-of-prefix Run loaded evidence: config calls=%d evidence calls=%d",
 			fixture.records.calls, fixture.evidence.calls,
 		)
 	}
@@ -206,7 +206,7 @@ func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
 func TestCurveDeriverPreservesCollectorLoadErrorIdentity(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 	run := fixture.activeRuns[0]
-	loadErr := errors.New("intent load failed")
+	loadErr := errors.New("config load failed")
 	fixture.records.errors = map[string]error{run.Name: loadErr}
 
 	_, err := fixture.deriver.Derive(
@@ -219,7 +219,7 @@ func TestCurveDeriverPreservesCollectorLoadErrorIdentity(t *testing.T) {
 	}
 	if fixture.records.calls != 1 || fixture.evidence.calls != 0 {
 		t.Fatalf(
-			"load failure calls: intent=%d evidence=%d", fixture.records.calls, fixture.evidence.calls,
+			"load failure calls: config=%d evidence=%d", fixture.records.calls, fixture.evidence.calls,
 		)
 	}
 }
@@ -296,14 +296,14 @@ type curveDeriverFixture struct {
 
 func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	t.Helper()
-	base := curveFixtureIntent(t)
-	idleIntent := base
-	idleIntent.Measurement = profilingrun.MeasurementContract{
+	base := curveFixtureRunConfig(t)
+	idleRunConfig := base
+	idleRunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
-	if err := idleIntent.Validate(); err != nil {
+	if err := idleRunConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	capability := profilingrun.CandidateArtifactCapability{
@@ -311,7 +311,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		InputSampleShape: []int32{3, 224, 224},
 	}
 	spec, err := profileradmission.ProjectCurvePlanSpec(
-		"test-curve", base, idleIntent, capability,
+		"test-curve", base, idleRunConfig, capability,
 		profilederivation.CurveConversionContract{}, []int{1, 2},
 	)
 	if err != nil {
@@ -343,18 +343,18 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		watts := float64(4 + 2*batch)
 		for trial := 1; trial <= fixture.policy.TrialsPerBatch; trial++ {
 			name := fmt.Sprintf("active-b%d-t%d", batch, trial)
-			intent := base
-			intent.Measurement.Batch = batch
-			verified := curveFixtureActiveEvidence(t, intent, name+"-pod", watts)
-			fixture.activeRuns = append(fixture.activeRuns, curveFixtureRun(name, intent.Measurement))
+			config := base
+			config.Measurement.Batch = batch
+			verified := curveFixtureActiveEvidence(t, config, name+"-pod", watts)
+			fixture.activeRuns = append(fixture.activeRuns, curveFixtureRun(name, config.Measurement))
 			records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: activePolicy}
 			evidence.active[name] = verified
 		}
 	}
 	for trial := 1; trial <= fixture.policy.TrialsPerBatch; trial++ {
 		name := fmt.Sprintf("idle-t%d", trial)
-		verified := curveFixtureIdleEvidence(t, idleIntent, name+"-pod", 4)
-		fixture.idleRuns = append(fixture.idleRuns, curveFixtureRun(name, idleIntent.Measurement))
+		verified := curveFixtureIdleEvidence(t, idleRunConfig, name+"-pod", 4)
+		fixture.idleRuns = append(fixture.idleRuns, curveFixtureRun(name, idleRunConfig.Measurement))
 		records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: idlePolicy}
 		evidence.idle[name] = verified
 	}
@@ -388,11 +388,11 @@ func (l *fakeCurveRunRecordLoader) Load(
 	if err := l.errors[run.Name]; err != nil {
 		return profilercontroller.ResolvedRun{}, err
 	}
-	frozen, exists := l.byRun[run.Name]
+	recorded, exists := l.byRun[run.Name]
 	if !exists {
 		return profilercontroller.ResolvedRun{}, fmt.Errorf("unexpected Run %q", run.Name)
 	}
-	return frozen, nil
+	return recorded, nil
 }
 
 type fakeCurveEvidenceLoader struct {
@@ -508,39 +508,39 @@ func (s curveFixtureStore) OpenLocation(
 	return io.NopCloser(bytes.NewReader(payload)), nil
 }
 
-func curveFixtureIntent(t *testing.T) profilingrun.RunConfig {
+func curveFixtureRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	if err := intent.Validate(); err != nil {
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
 func curveFixtureActiveEvidence(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedEvidence {
 	t.Helper()
-	raw := curveFixtureActiveRaw(intent, podUID, watts)
+	raw := curveFixtureActiveRaw(config, podUID, watts)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := curveFixtureExecution(t, intent, podUID, rawBytes)
+	execution := curveFixtureExecution(t, config, podUID, rawBytes)
 	executionBytes, err := execution.CanonicalJSON(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -555,32 +555,32 @@ func curveFixtureActiveEvidence(
 
 func curveFixtureIdleEvidence(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedIdleEvidence {
 	t.Helper()
-	activeShape := curveFixtureActiveRaw(intent, podUID, watts)
+	activeShape := curveFixtureActiveRaw(config, podUID, watts)
 	started := activeShape.Metrics.StartedAt
 	raw := profilerevidence.IdleRawMeasurement{
 		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion,
-		RunConfig:     intent,
+		RunConfig:     config,
 		PodUID:        podUID,
 		Runtime: profilingrun.IdleRuntimeResult{
 			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-			PodUID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			AvailableProviders:        []string{intent.State.Backend},
+			PodUID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
+			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			AvailableProviders:        []string{config.State.Backend},
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.Format(time.RFC3339Nano),
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
-			CPUContract: curveFixtureRuntimeCPU(intent),
+			CPUContract: curveFixtureRuntimeCPU(config),
 			DerivedContract: profilingrun.DerivedContract{
-				Backend: intent.State.Backend, Provider: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
 		},
 		Metrics: activeShape.Metrics, Workload: activeShape.Workload,
@@ -589,7 +589,7 @@ func curveFixtureIdleEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := curveFixtureExecution(t, intent, podUID, rawBytes)
+	execution := curveFixtureExecution(t, config, podUID, rawBytes)
 	executionBytes, err := execution.CanonicalIdleJSON(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -603,12 +603,12 @@ func curveFixtureIdleEvidence(
 }
 
 func curveFixtureActiveRaw(
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.RawMeasurement {
 	started := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
-	targetDuration := float64(intent.Measurement.DurationSeconds)
+	targetDuration := float64(config.Measurement.DurationSeconds)
 	samples := make([]metricobserver.Sample, 30)
 	for index := range samples {
 		samples[index] = metricobserver.Sample{
@@ -621,31 +621,31 @@ func curveFixtureActiveRaw(
 	}
 	workloadPod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-		Phase: "Running", Images: []string{intent.Images.Runtime},
+		Phase: "Running", Images: []string{config.Images.Runtime},
 	}
 	return profilerevidence.RawMeasurement{
 		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
-		RunConfig:     intent,
+		RunConfig:     config,
 		PodUID:        podUID,
 		Runtime: profilingrun.RuntimeResult{
 			SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
-			ExperimentID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
-			Architecture: "x86_64", Runtime: intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
-			WarmupIterations:  intent.Measurement.WarmupIterations,
+			ExperimentID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
+			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			AvailableProviders: []string{config.State.Backend}, BatchSize: config.Measurement.Batch,
+			WarmupIterations:  config.Measurement.WarmupIterations,
 			WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 			InferenceCount:    2, MeasurementMode: "duration",
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
 			OutputValidation: profilingrun.OutputValidation{
-				Method: intent.Measurement.OutputValidation, Passed: true,
-				OutputShapes: [][]int{{intent.Measurement.Batch, 1000}},
+				Method: config.Measurement.OutputValidation, Passed: true,
+				OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
 			},
-			CPUContract: curveFixtureRuntimeCPU(intent),
+			CPUContract: curveFixtureRuntimeCPU(config),
 			DerivedContract: profilingrun.DerivedContract{
-				Backend: intent.State.Backend, Provider: intent.State.Backend, NodeSnapshot: intent.TargetNode,
+				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
 			RepetitionResults: []profilingrun.Repetition{{
 				Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
@@ -656,9 +656,9 @@ func curveFixtureActiveRaw(
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
-				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
-				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
-				MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
+				Kind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
+				Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric,
+				MetricLabels: config.Metrics.MetricLabels, ThermalEndpoint: config.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
 					ObservationAvailable:      "device_thermal_throttle_observation_available",
 					Active:                    "device_thermal_throttle_active",
@@ -677,7 +677,7 @@ func curveFixtureActiveRaw(
 		Workload: &workloadobserver.Result{
 			SchemaVersion: workloadobserver.ResultSchemaVersion,
 			Target: workloadobserver.TargetIdentity{
-				NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID,
+				NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID,
 			},
 			Run: workloadobserver.RunIdentity{
 				Namespace: "chill-system", JobUID: "job-" + podUID,
@@ -691,17 +691,17 @@ func curveFixtureActiveRaw(
 	}
 }
 
-func curveFixtureRuntimeCPU(intent profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func curveFixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
 		CPUSetEffective: "0-3", CgroupCPUStatDelta: map[string]int{"user_usec": 1, "system_usec": 2},
 	}
 }
 
 func curveFixtureExecution(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	podUID string,
 	rawBytes []byte,
 ) profilerevidence.ExecutionEvidence {
@@ -715,7 +715,7 @@ func curveFixtureExecution(
 	}
 	return profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		RunConfig:     intent,
+		RunConfig:     config,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "evidence", Key: "raw-" + podUID + ".json", Size: int64(len(rawBytes)),
 		},
@@ -726,19 +726,19 @@ func curveFixtureExecution(
 			},
 			Pod: profilerevidence.PodTerminalFacts{
 				Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-				ControllerOwnerUID: "job-" + podUID, NodeName: intent.TargetNode.Name, Phase: "Succeeded",
+				ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
-			Node: profilerevidence.NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
+			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
 			Containers: []profilerevidence.ContainerTerminal{
-				container("metric-observer", intent.Images.MetricObserver),
-				container("workload-observer", intent.Images.WorkloadObserver),
-				container("runtime", intent.Images.Runtime), container("artifact", intent.Images.Artifact),
+				container("metric-observer", config.Images.MetricObserver),
+				container("workload-observer", config.Images.WorkloadObserver),
+				container("runtime", config.Images.Runtime), container("artifact", config.Images.Artifact),
 			},
 			NodeWorkload: profilerevidence.NodeWorkload{
 				ObservedAt: completed.Add(time.Second),
 				Pods: []profilerevidence.WorkloadPod{{
 					Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{intent.Images.Runtime},
+					Phase: "Succeeded", Images: []string{config.Images.Runtime},
 				}},
 			},
 		},

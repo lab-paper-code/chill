@@ -24,7 +24,7 @@ func TestRecordedConfirmingTransitionLostIsPermanent(t *testing.T) {
 			},
 		},
 	}
-	intent := profilingrun.RunConfig{
+	config := profilingrun.RunConfig{
 		TargetNode: profilingrun.NodeSnapshot{Name: "jetsono", UID: "node-uid-1"},
 		Actuation:  &profilingrun.ActuationContract{PowerMode: "MAXN"},
 	}
@@ -51,7 +51,7 @@ func TestRecordedConfirmingTransitionLostIsPermanent(t *testing.T) {
 			reconciler := &RunReconciler{Client: builder.Build()}
 
 			transition, unconfirmed, err := reconciler.findConfirmingTransition(
-				context.Background(), run, intent,
+				context.Background(), run, config,
 			)
 			if err != nil {
 				t.Fatalf("permanent loss returned a retryable error: %v", err)

@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha10"
 RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha14"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha5"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -1090,7 +1090,6 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             ),
             "power": None,
             "energyPerRequest": None,
-            "bSat": None,
         }
         log(
             "result",

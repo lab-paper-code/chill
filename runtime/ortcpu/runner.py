@@ -19,7 +19,7 @@ from typing import Any, BinaryIO
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha14"
 RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha14"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha5"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
@@ -911,7 +911,6 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         ),
         "power": None,
         "energyPerRequest": None,
-        "bSat": None,
     }
     log(
         "result",

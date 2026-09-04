@@ -43,10 +43,10 @@ func (f *recordingRunConfigResolver) Resolve(
 }
 
 type recordingExecutionJobs struct {
-	calls  int
-	frozen ResolvedRun
-	job    *batchv1.Job
-	err    error
+	calls    int
+	resolved ResolvedRun
+	job      *batchv1.Job
+	err      error
 }
 
 func (j *recordingExecutionJobs) Find(
@@ -115,10 +115,10 @@ func (f *recordingRunEvidenceFinalizer) Finalize(
 func (j *recordingExecutionJobs) Ensure(
 	_ context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	frozen ResolvedRun,
+	resolved ResolvedRun,
 ) (*batchv1.Job, bool, error) {
 	j.calls++
-	j.frozen = frozen
+	j.resolved = resolved
 	if j.err != nil {
 		return nil, false, j.err
 	}
@@ -156,7 +156,7 @@ func TestRunReconcilerResolvesThenRecordsOneMeasurementJob(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if resolver.calls != 1 || jobs.calls != 1 || !reflect.DeepEqual(jobs.frozen.Prepared.RunConfig, prepared.RunConfig) {
+	if resolver.calls != 1 || jobs.calls != 1 || !reflect.DeepEqual(jobs.resolved.Prepared.RunConfig, prepared.RunConfig) {
 		t.Fatalf("unexpected transition calls: resolver=%d jobs=%d", resolver.calls, jobs.calls)
 	}
 	actual := &edgev1alpha1.ProfilingRun{}
@@ -171,12 +171,12 @@ func TestRunReconcilerResolvesThenRecordsOneMeasurementJob(t *testing.T) {
 func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
+	run, resolved := testActuatedRunAndResolved(t)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingRunConfigResolver{result: frozen},
+		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -212,16 +212,16 @@ func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T)
 func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
+	run, resolved := testActuatedRunAndResolved(t)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	matching := completedTransitionForRun(run, frozen, "matching", frozen.Prepared.RunConfig.Actuation.PowerMode, base)
-	different := completedTransitionForRun(run, frozen, "different", "MAXN", base.Add(time.Minute))
+	matching := completedTransitionForRun(run, resolved, "matching", resolved.Prepared.RunConfig.Actuation.PowerMode, base)
+	different := completedTransitionForRun(run, resolved, "different", "MAXN", base.Add(time.Minute))
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
 		WithObjects(run, matching, different).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingRunConfigResolver{result: frozen},
+		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -250,18 +250,18 @@ func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
+	run, resolved := testActuatedRunAndResolved(t)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	older := completedTransitionForRun(run, frozen, "older", "MAXN", base)
+	older := completedTransitionForRun(run, resolved, "older", "MAXN", base)
 	confirming := completedTransitionForRun(
-		run, frozen, "confirming", frozen.Prepared.RunConfig.Actuation.PowerMode, base.Add(time.Minute),
+		run, resolved, "confirming", resolved.Prepared.RunConfig.Actuation.PowerMode, base.Add(time.Minute),
 	)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).
 		WithObjects(run, older, confirming).Build()
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingRunConfigResolver{result: frozen},
+		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
 		&recordingRunEvidenceAdmitter{},
@@ -297,10 +297,10 @@ func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T)
 func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
-	recordIntentAndJob(run)
+	run, resolved := testActuatedRunAndResolved(t)
+	recordRunConfigAndJob(run)
 	completedAt := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC))
-	job := recordedJob(t, run, frozen, &batchv1.JobStatus{
+	job := recordedJob(t, run, resolved, &batchv1.JobStatus{
 		Succeeded:      1,
 		CompletionTime: &completedAt,
 		Conditions: []batchv1.JobCondition{{
@@ -308,7 +308,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 		}},
 	})
 	handoff := completedTransitionForRun(
-		run, frozen, "node-actuation", frozen.Prepared.RunConfig.Actuation.PowerMode,
+		run, resolved, "node-actuation", resolved.Prepared.RunConfig.Actuation.PowerMode,
 		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
 	)
 	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
@@ -325,7 +325,7 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 	finalizer := &recordingRunEvidenceFinalizer{result: finalized}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingRunConfigResolver{result: frozen},
+		&recordingRunConfigResolver{result: resolved},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -353,10 +353,10 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 	t.Parallel()
 	scheme := runReconcilerTestScheme(t)
-	run, frozen := testActuatedRunAndFrozen(t)
-	recordIntentAndJob(run)
+	run, resolved := testActuatedRunAndResolved(t)
+	recordRunConfigAndJob(run)
 	completedAt := metav1.NewTime(time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC))
-	job := recordedJob(t, run, frozen, &batchv1.JobStatus{
+	job := recordedJob(t, run, resolved, &batchv1.JobStatus{
 		Succeeded:      1,
 		CompletionTime: &completedAt,
 		Conditions: []batchv1.JobCondition{{
@@ -364,7 +364,7 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 		}},
 	})
 	handoff := completedTransitionForRun(
-		run, frozen, "node-actuation", frozen.Prepared.RunConfig.Actuation.PowerMode,
+		run, resolved, "node-actuation", resolved.Prepared.RunConfig.Actuation.PowerMode,
 		time.Date(2026, 8, 6, 11, 59, 0, 0, time.UTC),
 	)
 	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{Name: handoff.Name, UID: string(handoff.UID)}
@@ -376,7 +376,7 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 	finalizer := &recordingRunEvidenceFinalizer{err: finalizeErr}
 	reconciler, err := NewRunReconciler(
 		kubeClient,
-		&recordingRunConfigResolver{result: frozen},
+		&recordingRunConfigResolver{result: resolved},
 		&recordingExecutionJobs{},
 		finalizer,
 		&recordingRunEvidenceAdmitter{},
@@ -418,7 +418,7 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
 	prepared := currentPreparedRun(t)
-	recordIntentAndJob(run)
+	recordRunConfigAndJob(run)
 	job := recordedJob(t, run, resolvedRunForPrepared(t, prepared), &batchv1.JobStatus{
 		Succeeded:  1,
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
@@ -488,7 +488,7 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	scheme := runReconcilerTestScheme(t)
 	run := testRun()
 	prepared := currentPreparedRun(t)
-	recordIntentAndJob(run)
+	recordRunConfigAndJob(run)
 	job := recordedJob(t, run, resolvedRunForPrepared(t, prepared), &batchv1.JobStatus{
 		Succeeded:  1,
 		Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
@@ -666,7 +666,7 @@ func TestRunReconcilerJoinsAdmissionAndStatusPublicationFailures(t *testing.T) {
 func admissionReadyRun(t *testing.T) (*edgev1alpha1.ProfilingRun, *batchv1.Job) {
 	t.Helper()
 	run := testRun()
-	recordIntentAndJob(run)
+	recordRunConfigAndJob(run)
 	run.Status.Evidence = testEvidenceReference()
 	run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
@@ -850,14 +850,14 @@ func resolvedRunForPrepared(t *testing.T, prepared profiler.PreparedRun) Resolve
 
 func completedTransitionForRun(
 	run *edgev1alpha1.ProfilingRun,
-	frozen ResolvedRun,
+	resolved ResolvedRun,
 	name string,
 	powerMode string,
 	readyAt time.Time,
 ) *edgev1alpha1.NodeActuation {
-	intent := frozen.Prepared.RunConfig
-	actuator := projectActuatorTarget(intent.Actuation.Actuator)
-	if powerMode != intent.Actuation.PowerMode && actuator.JetsonNVPModel != nil {
+	config := resolved.Prepared.RunConfig
+	actuator := projectActuatorTarget(config.Actuation.Actuator)
+	if powerMode != config.Actuation.PowerMode && actuator.JetsonNVPModel != nil {
 		actuator.JetsonNVPModel.ID++
 	}
 	requestedAt := readyAt.Add(-2 * time.Minute)
@@ -869,11 +869,11 @@ func completedTransitionForRun(
 			Namespace: run.Namespace, Name: name, UID: types.UID(name + "-uid"), Generation: 1,
 		},
 		Spec: edgev1alpha1.NodeActuationSpec{
-			Node:                        edgev1alpha1.ProfilingRunObjectReference{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
-			DeviceClass:                 intent.State.DeviceClass,
+			Node:                        edgev1alpha1.ProfilingRunObjectReference{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
+			DeviceClass:                 config.State.DeviceClass,
 			PowerMode:                   powerMode,
 			Actuator:                    actuator,
-			PolicyName:                  intent.Actuation.PolicyName,
+			PolicyName:                  config.Actuation.PolicyName,
 			SettlingDurationSeconds:     30,
 			MaxActuationDurationSeconds: 300,
 			StageRequestedAt:            metav1.NewTime(requestedAt),

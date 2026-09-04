@@ -170,8 +170,8 @@ func (c CurvePlan) requireInitialized() error {
 	return nil
 }
 
-// VerifiedCurveState is the plain projection made only after active and
-// idle frozen evidence have crossed their Loader boundaries. One artifact means
+// VerifiedCurveState is the plain projection made only after active and idle
+// evidence have crossed their Loader boundaries. One artifact means
 // one state, so there is one projection per plan.
 type VerifiedCurveState struct {
 	Shared                 CurvePlanSpec `json:"shared"`

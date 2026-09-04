@@ -118,7 +118,7 @@ resolve selected artifact
                      use ModelSpec.DeclaredBatchSizes
   canonical artifact require campaign BatchSizes present
                      use campaign BatchSizes
-prepare active and idle intents at the first selected batch
+prepare active and idle RunConfigs at the first selected batch
 record curve-plan.json with PlannedBatchSizes
 ```
 

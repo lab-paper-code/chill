@@ -91,7 +91,7 @@ type CandidateReportRuntimePackage struct {
 	Version string `json:"version"`
 }
 
-// CandidateReportHostContract freezes the expected mutable host ABI, device
+// CandidateReportHostContract records the expected mutable host ABI, device
 // visibility, and Kubernetes allocation claims separately from image-owned
 // runtime facts. It is not a Run-time observation.
 type CandidateReportHostContract struct {
@@ -131,7 +131,7 @@ type CandidateReportNPUAllocation struct {
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
 }
 
-// CandidateReportRuntimeAccess freezes Kubernetes delivery requirements
+// CandidateReportRuntimeAccess records Kubernetes delivery requirements
 // separately from the physical host contract.
 type CandidateReportRuntimeAccess struct {
 	Privileged         bool    `json:"privileged"`

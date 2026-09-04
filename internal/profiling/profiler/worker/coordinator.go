@@ -1,4 +1,4 @@
-// Package worker coordinates one already-frozen profiling measurement inside
+// Package worker coordinates one resolved profiling measurement inside
 // a Job. It is independent of Kubernetes and concrete runtime, file, and
 // object-store adapters.
 package worker
@@ -16,7 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-// Runtime performs the frozen warm-up and measurement protocol. Concrete
+// Runtime performs the RunConfig warm-up and measurement protocol. Concrete
 // runtime verification and measurement signaling belong to its adapter.
 type Runtime interface {
 	Measure(context.Context, RuntimeRequest) (RuntimeMeasurement, error)
@@ -93,7 +93,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	}
 	if request.ScheduledNodeName != config.TargetNode.Name {
 		return evidencestore.Receipt{}, fmt.Errorf(
-			"%w: scheduled Node does not match the frozen target Node", ErrExecutionContract,
+			"%w: scheduled Node does not match the RunConfig target Node", ErrExecutionContract,
 		)
 	}
 	if err := request.RawLocation.Validate(); err != nil {

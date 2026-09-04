@@ -17,8 +17,8 @@ API or status write is authorized by this plan.
 
 ## Question
 
-> Is exact Run evidence scientifically usable, and what batch-energy
-> curve and `b_sat` conclusion follow without overstating the evidence?
+> Is exact Run evidence scientifically usable, and what incremental-energy
+> observations follow without overstating the evidence?
 
 ## Checkpoint 1: quantity and estimator contract
 
@@ -43,7 +43,7 @@ incremental definition; the total-wall form would count idle twice.
 
 `P_idle(state)` must come from separately admitted idle evidence with the same
 material execution-state and environment identity. Missing or unstable idle
-baseline makes incremental energy and `b_sat` unavailable. Mean power times
+baseline makes incremental energy and batch comparison unavailable. Mean power times
 mean call latency remains a diagnostic cross-check, never the accepted
 estimator.
 
@@ -54,7 +54,7 @@ the separate `inactive`/standby state.
 
 The idle window is runtime-declared and observer-independent. The runtime loads
 the exact artifact, retains the session, waits the positive settling duration
-frozen in the current intent, and then opens a fixed-duration window using its
+recorded in RunConfig, and then opens a fixed-duration window using its
 monotonic clock. It issues no inference during settling or measurement and
 records that the model remained resident through the end. Metric and workload
 observers only establish coverage and contamination facts for those immutable
@@ -153,30 +153,26 @@ latency samples are not pooled to erase between-trial variance. A batch point
 retains p99 latency, mean incremental joules per item, and a trial-level
 confidence interval.
 
-## Checkpoint 4: curve and `b_sat`
+## Checkpoint 4: curve and batch-energy optimization
 
-The measured batch domain remains explicit. Candidate search and scientific
-acceptance are separate:
+The measured batch domain remains explicit. Plan 7 consumes admitted point
+aggregates in planned order and minimizes mean
+`incrementalWorkJoulesPerItem`:
 
-- Plan 5 requires a consecutive planned batch size span from its candidate through
-  `KMax`;
-- Plan 5a advances through the batch sizes recorded in the curve plan in strictly
-  increasing batch order;
-- exhausting that set is the capability boundary;
-- a failed Run for a declared batch size follows the ordinary trial-failure path;
-- a measured range without a plateau yields `Censored`;
-- a mean-only plateau with overlapping uncertainty is `CandidateOnly`;
-- accepted saturation requires the declared equivalence tolerance to hold at
-  trial-level confidence and no later measured contradiction; and
-- a non-unimodal contradiction is `Ambiguous`.
+- each batch requires the configured `trialsPerBatch`, with at least three;
+- every strictly lower mean advances the measured prefix;
+- the first non-improving neighbor completes with `LocalMinimum`;
+- exhausting a continuously improving declared set completes with
+  `SearchSpaceExhausted`; and
+- a failed Run for a declared batch follows the ordinary retry/failure path.
 
-The output status is `Accepted`, `CandidateOnly`, `Censored`, `Ambiguous`, or
-`Unavailable` and remains bound to exact input and rule identities.
+This direct objective makes no saturation, equivalence, global-optimum, or
+unmeasured-batch claim.
 
 ## Code boundary
 
 ```text
-internal/profiling/derivation/       pure admission, integration, aggregation, b_sat
+internal/profiling/derivation/       pure admission, integration, aggregation, energy objective
 internal/profiling/profiler/admission/      verified evidence-to-trial projection
 ```
 
@@ -198,8 +194,8 @@ MetricObserver transport, or scheduler package.
 Plan 3 is complete when synthetic golden curves close accepted, candidate,
 censored, and ambiguous cases; malformed or insufficient real evidence fails
 closed with precise reasons; estimator units and identity binding are tested;
-and the retained Plan 2 Run produces no accepted energy curve or `b_sat` without
-idle and repeated-trial evidence. An `IdleTrial` must carry the verified object
+and the retained Plan 2 Run produces no accepted energy curve or optimization
+result without idle and repeated-trial evidence. An `IdleTrial` must carry the verified object
 identity of the raw evidence that produced its mean wall power.
 
 ## Implementation result
@@ -207,10 +203,10 @@ identity of the raw evidence that produced its mean wall power.
 The pure implementation now distinguishes execution-state, owner-bound
 environment, measurement-protocol, and unique trial identities. It rejects
 duplicate trials, binds every result to admission, estimator, point, confidence,
-and `b_sat` policy versions, and uses a 95% Student-t interval with at least
-three independent trials. It validates the complete measured batch domain from
-batch one before searching for the first adjacent plateau. Missing lower or
-intermediate batches cannot yield an accepted result.
+and energy-objective policy versions, and uses a 95% Student-t interval with at
+least three independent trials. It validates the measured prefix against the
+recorded plan before deriving the minimum-energy decision. Missing lower or
+intermediate batches cannot yield a result.
 
 Active and idle admission now share one power-window quality core for sample
 count, failures, receipt-timestamp policy, boundaries, gaps, coverage, thermal
@@ -224,9 +220,9 @@ references.
 
 Power-window thresholds are installation-time configured policy data rather
 than Go constants or caller-supplied Run fields. A Run selects a policy name;
-the control path freezes that policy's semantic fields and ConfigMap source
+the control path records that policy's semantic fields and ConfigMap source
 identity before execution. Admission verifies that the selected policy workload
-mode matches the frozen intent and uses the source object identity as its
+mode matches RunConfig and uses the source object identity as its
 version. This preserves replay and aggregation identity while allowing an
 operator to add a meter-specific policy without a CRD or binary release.
 
@@ -236,7 +232,7 @@ finalization are shared with active execution; only runtime completeness, raw
 projection, verified loading, and final admission dispatch are mode-specific.
 A controller never infers idle from metric values.
 
-The adapter strict-decodes and validates the Plan 2 bundle, including intent,
+The adapter strict-decodes and validates the Plan 2 bundle, including RunConfig,
 Job/Pod/Node ownership, runtime output, warm-up ordering, exact inference-to-
 latency count, and immutable content filename. Thermal state is not silently
 assumed healthy when no producer exists.
@@ -262,7 +258,7 @@ agreed exactly on:
 - `EnvironmentIdentity`: `chill.dacs.io/external-environment-identity.v1alpha1@sha256:4e7f69c7ab9450af5bc06f11e5e76c930ca3431dc8f0e5f9dd6097af38ba2d58`; and
 - idle `MeasurementProtocolIdentity`: `chill.dacs.io/measurement-protocol-identity.v1alpha1@sha256:c7a36290499e36e445d709e61509c3d5112c07bfd61149a6407998facefe0d7d`.
 
-The three semantic intent projections differed only in the third Run's
+The three semantic RunConfig projections differed only in the third Run's
 `targetNode.resourceVersion`, confirming on the live path that this causal
 execution snapshot can change without changing any of the three aggregation
 identities.
@@ -303,7 +299,7 @@ the exact `active-regression-live-ad7b84f` spec were then executed sequentially:
 | `active-epsilon-live-69a83ad-b` | 492.160 J | 5,255 | 0.065637 J | 8.945 ms |
 | `active-epsilon-live-69a83ad-c` | 485.927 J | 5,178 | 0.065410 J | 9.295 ms |
 
-All three passed `wall-power-v2`, carried the same material intent, and
+All three passed `wall-power-v2`, carried the same material RunConfig, and
 matched the idle baseline's state and environment identities. Their active
 measurement-protocol identity also matched one another and intentionally
 differed from the idle protocol identity. Re-loading the immutable evidence and
@@ -331,7 +327,6 @@ is 543.686 J over 30.010 seconds and 5,541
 items. Admission is insufficient because thermal state was not captured and a
 post-run Pod snapshot cannot prove continuous workload membership across the
 earlier measurement window. Incremental
-energy is
-`Unavailable: MissingIdleBaseline`; `b_sat` is
-`Unavailable: MissingIdleBaselineAndRepeatedCurve`. No `DeviceProfile` is
+energy is `Unavailable: MissingIdleBaseline`, so no batch-energy optimization
+result can be derived. No `DeviceProfile` is
 created or updated.

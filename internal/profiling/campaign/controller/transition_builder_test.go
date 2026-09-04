@@ -20,7 +20,7 @@ func TestProjectTransitionMaterialKeepsTheFixedPathDirect(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionOwnsOneFrozenCampaignOperation(t *testing.T) {
+func TestBuildTransitionOwnsOneRecordedCampaignOperation(t *testing.T) {
 	parent := testParent()
 	prepared := actuatedPreparedRun(parent)
 	material, err := projectTransitionMaterial(prepared)

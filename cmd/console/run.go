@@ -201,7 +201,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 
 // campaignResultObjectReader opens one stored object using the Evidence Store
 // binding the owning ChillSystem currently declares. A campaign result is not
-// frozen into a measurement Job the way Run evidence is, so the binding is
+// recorded in a measurement Job the way Run evidence is, so the binding is
 // resolved per read rather than recovered from a Job.
 type campaignResultObjectReader struct {
 	reader    client.Reader

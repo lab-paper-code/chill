@@ -14,7 +14,7 @@ const (
 )
 
 func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
+	config := currentExecutionPolicyTestRunConfig(t)
 	raw := executionPolicyCatalogFixture(t)
 	source := ExecutionPolicySource{
 		Kind:            ConfigMapExecutionPolicySourceKind,
@@ -25,7 +25,7 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 		Key:             "execution-policies.yaml",
 	}
 
-	frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, source)
+	frozen, err := FreezeConfiguredExecutionPolicy(raw, config, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,11 +46,11 @@ func TestFreezeConfiguredExecutionPolicySelectsAndBindsCatalogSnapshot(t *testin
 }
 
 func TestExecutionPolicyRetainsSourceRevisionOutsideSelectedPolicy(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
+	config := currentExecutionPolicyTestRunConfig(t)
 	raw := executionPolicyCatalogFixture(t)
 	freeze := func(resourceVersion string) FrozenExecutionPolicy {
 		t.Helper()
-		frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, ExecutionPolicySource{
+		frozen, err := FreezeConfiguredExecutionPolicy(raw, config, ExecutionPolicySource{
 			Kind:            ConfigMapExecutionPolicySourceKind,
 			Namespace:       "chill-system",
 			Name:            "facts",
@@ -74,10 +74,10 @@ func TestExecutionPolicyRetainsSourceRevisionOutsideSelectedPolicy(t *testing.T)
 }
 
 func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
-	exact := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
+	config := currentExecutionPolicyTestRunConfig(t)
+	exact := testExecutionPolicySpec(config.Measurement.WorkloadMode)
 	exact.Name = "exact-device"
-	exact.DeviceClass = intent.State.DeviceClass
+	exact.DeviceClass = config.State.DeviceClass
 	fallback := exact
 	fallback.Name = "fallback"
 	fallback.DeviceClass = "*"
@@ -88,7 +88,7 @@ func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, validExecutionPolicySource())
+	frozen, err := FreezeConfiguredExecutionPolicy(raw, config, validExecutionPolicySource())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +98,8 @@ func TestFreezeConfiguredExecutionPolicyPrefersExactDeviceClass(t *testing.T) {
 }
 
 func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
-	first := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
+	config := currentExecutionPolicyTestRunConfig(t)
+	first := testExecutionPolicySpec(config.Measurement.WorkloadMode)
 	first.Name = "first"
 	second := first
 	second.Name = "second"
@@ -110,22 +110,22 @@ func TestFreezeConfiguredExecutionPolicyRejectsAmbiguousOrUnknownCatalog(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := FreezeConfiguredExecutionPolicy(ambiguous, intent, validExecutionPolicySource()); err == nil ||
+	if _, err := FreezeConfiguredExecutionPolicy(ambiguous, config, validExecutionPolicySource()); err == nil ||
 		!strings.Contains(err.Error(), "duplicate selector") {
 		t.Fatalf("ambiguous catalog error = %v", err)
 	}
 
 	unknown := append(executionPolicyCatalogFixture(t), []byte("unknownField: true\n")...)
-	if _, err := FreezeConfiguredExecutionPolicy(unknown, intent, validExecutionPolicySource()); err == nil {
+	if _, err := FreezeConfiguredExecutionPolicy(unknown, config, validExecutionPolicySource()); err == nil {
 		t.Fatal("strict decoder accepted an unknown catalog field")
 	}
 }
 
 func TestExecutionPolicyRejectsIncoherentResourceEnvelope(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
+	config := currentExecutionPolicyTestRunConfig(t)
 	policy := ExecutionPolicy{
 		SchemaVersion:       ExecutionPolicySchemaVersion,
-		ExecutionPolicySpec: testExecutionPolicySpec(intent.Measurement.WorkloadMode),
+		ExecutionPolicySpec: testExecutionPolicySpec(config.Measurement.WorkloadMode),
 	}
 	policy.RuntimeMemoryRequestBytes = 1
 	policy.RuntimeMemoryLimitBytes = policy.MaxInputBytes + policy.MaxRuntimeResultBytes
@@ -134,13 +134,13 @@ func TestExecutionPolicyRejectsIncoherentResourceEnvelope(t *testing.T) {
 	}
 }
 
-func currentExecutionPolicyTestIntent(t *testing.T) profilingrun.RunConfig {
+func currentExecutionPolicyTestRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
-	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = testArtifactPath
-	addWorkloadObservation(&intent)
-	return intent
+	config := testRunConfig(t)
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&config)
+	return config
 }
 
 func executionPolicyCatalogFixture(t *testing.T) []byte {

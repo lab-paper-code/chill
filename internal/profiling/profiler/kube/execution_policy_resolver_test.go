@@ -19,7 +19,7 @@ const (
 )
 
 func TestKubernetesExecutionPolicyResolverFreezesSelectedConfigMapPolicy(t *testing.T) {
-	intent := currentIntent(t)
+	config := currentRunConfig(t)
 	raw := controllerExecutionPolicyCatalog(t)
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -41,7 +41,7 @@ func TestKubernetesExecutionPolicyResolverFreezesSelectedConfigMapPolicy(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen, err := resolver.Resolve(context.Background(), intent)
+	frozen, err := resolver.Resolve(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolver.Resolve(context.Background(), currentIntent(t))
+	_, err = resolver.Resolve(context.Background(), currentRunConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary execution policy error = %v", err)
 	}
@@ -92,7 +92,7 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := malformed.Resolve(context.Background(), currentIntent(t)); err == nil {
+	if _, err := malformed.Resolve(context.Background(), currentRunConfig(t)); err == nil {
 		t.Fatal("malformed execution-policy catalog was accepted")
 	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid {
 		t.Fatalf("malformed execution-policy classification = %q, terminal=%t", reason, terminal)

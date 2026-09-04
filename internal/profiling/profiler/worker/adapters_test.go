@@ -27,9 +27,9 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	directory := t.TempDir()
 	resultPath := filepath.Join(directory, "runtime-result.json")
 	runtime := newTestORTCPURuntime(t, resultPath)
-	intent := testIntent(t)
+	config := testRunConfig(t)
 
-	result, err := runtime.Measure(context.Background(), runtimeRequest(intent))
+	result, err := runtime.Measure(context.Background(), runtimeRequest(config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.mode != runtimeMeasurementActive || active.Provider != intent.State.Backend || active.ExperimentID != testPodUID {
+	if result.mode != runtimeMeasurementActive || active.Provider != config.State.Backend || active.ExperimentID != testPodUID {
 		t.Fatalf("unexpected runtime result: %#v", result)
 	}
 	active.NodeName = mutatedCopyName
@@ -53,18 +53,18 @@ func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sealed.NodeName != intent.TargetNode.Name {
+	if sealed.NodeName != config.TargetNode.Name {
 		t.Fatalf("sealed runtime result was changed through a detached record: %#v", sealed)
 	}
 }
 
-func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
+func TestORTCPURuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
 	t.Setenv("CHILL_ORT_CPU_HELPER", "idle-success")
 	directory := t.TempDir()
 	runtime := newTestORTCPURuntime(t, filepath.Join(directory, "runtime-result.json"))
-	intent := testIdleIntent(t)
+	config := testIdleRunConfig(t)
 
-	result, err := runtime.Measure(context.Background(), runtimeRequest(intent))
+	result, err := runtime.Measure(context.Background(), runtimeRequest(config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +85,14 @@ func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
 func TestORTCPURequestMatchesPythonContract(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		intent profilingrun.RunConfig
+		config profilingrun.RunConfig
 	}{
-		{name: "active", intent: testIntent(t)},
-		{name: "idle", intent: testIdleIntent(t)},
+		{name: "active", config: testRunConfig(t)},
+		{name: "idle", config: testIdleRunConfig(t)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
-			payload, err := runtime.encodeRequest(runtimeRequest(test.intent))
+			payload, err := runtime.encodeRequest(runtimeRequest(test.config))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +124,7 @@ runner.validate_request(request)
 }
 
 func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 
 	t.Run("stale result", func(t *testing.T) {
 		resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
@@ -132,7 +132,7 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 			t.Fatal(err)
 		}
 		runtime := newTestORTCPURuntime(t, resultPath)
-		if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
+		if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 			!strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("expected stale result rejection, got %v", err)
 		}
@@ -141,7 +141,7 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 	t.Run("unknown result field", func(t *testing.T) {
 		t.Setenv("CHILL_ORT_CPU_HELPER", "unknown-field")
 		runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
-		if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
+		if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 			!strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("expected strict result rejection, got %v", err)
 		}
@@ -151,9 +151,9 @@ func TestORTCPURuntimeFailsClosedOnStaleOrInvalidResult(t *testing.T) {
 func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 	resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
 	runtime := newTestORTCPURuntime(t, resultPath)
-	intent := testIntent(t)
-	intent.State.Backend = "CUDAExecutionProvider"
-	if _, err := runtime.Measure(context.Background(), runtimeRequest(intent)); err == nil ||
+	config := testRunConfig(t)
+	config.State.Backend = "CUDAExecutionProvider"
+	if _, err := runtime.Measure(context.Background(), runtimeRequest(config)); err == nil ||
 		!strings.Contains(err.Error(), "unsupported runtime path") {
 		t.Fatalf("expected unsupported path rejection, got %v", err)
 	}
@@ -198,8 +198,8 @@ func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
 }
 
 func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
-	intent := testIntent(t)
-	result := testMetricResult(intent)
+	config := testRunConfig(t)
+	result := testMetricResult(config)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "metric-result.json")
 	reader := newTestMetricResultFile(t, path, time.Second)
@@ -245,7 +245,7 @@ func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
 			t.Setenv("CHILL_RKNN_LITE_HELPER", mode)
 			resultPath := filepath.Join(t.TempDir(), "runtime-result.json")
 			runtime := newTestRKNNLiteRuntime(t, resultPath, testRKNNDelivery())
-			result, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNIntent(t, idle)))
+			result, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNRunConfig(t, idle)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,7 +279,7 @@ func TestRKNNLiteRequestMatchesPythonContract(t *testing.T) {
 				filepath.Join(t.TempDir(), "runtime-result.json"),
 				testRKNNDelivery(),
 			)
-			payload, err := runtime.encodeRequest(runtimeRequest(testRKNNIntent(t, idle)))
+			payload, err := runtime.encodeRequest(runtimeRequest(testRKNNRunConfig(t, idle)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -313,7 +313,7 @@ runner.validate_request(request)
 func TestRKNNLiteRuntimeRejectsObservedHostDrift(t *testing.T) {
 	t.Setenv("CHILL_RKNN_LITE_HELPER", "host-drift")
 	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())
-	if _, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNIntent(t, false))); err == nil ||
+	if _, err := runtime.Measure(context.Background(), runtimeRequest(testRKNNRunConfig(t, false))); err == nil ||
 		!strings.Contains(err.Error(), "host libraries") {
 		t.Fatalf("expected observed host-contract rejection, got %v", err)
 	}
@@ -339,7 +339,7 @@ func TestRKNNLiteRuntimeRequiresCompleteVerifiedDelivery(t *testing.T) {
 
 func TestPublishMetricResultDoesNotReplaceExistingHandoff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metric-result.json")
-	result := testMetricResult(testIntent(t))
+	result := testMetricResult(testRunConfig(t))
 	if err := PublishMetricResult(path, 1<<20, result); err != nil {
 		t.Fatal(err)
 	}
@@ -578,31 +578,31 @@ func newTestRKNNLiteRuntime(
 	return runtime
 }
 
-func testRKNNIntent(t *testing.T, idle bool) profilingrun.RunConfig {
+func testRKNNRunConfig(t *testing.T, idle bool) profilingrun.RunConfig {
 	t.Helper()
-	intent := testIntent(t)
-	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
-	intent.State.Artifact = "model-rk3588-bs1"
-	intent.State.ArtifactPath = "/artifact/model.rknn"
-	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	intent.State.Backend = profilingrun.RKNNLiteBackend
+	config := testRunConfig(t)
+	config.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	config.State.Artifact = "model-rk3588-bs1"
+	config.State.ArtifactPath = "/artifact/model.rknn"
+	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	config.State.Backend = profilingrun.RKNNLiteBackend
 	delivery := testRKNNDelivery()
-	intent.State.HostContract = delivery.HostContract
-	intent.Delivery = delivery
-	intent.TargetNode.Architecture = "arm64"
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
+	config.State.HostContract = delivery.HostContract
+	config.Delivery = delivery
+	config.TargetNode.Architecture = "arm64"
+	config.CPU.ORTIntraOpThreads = 0
+	config.CPU.ORTInterOpThreads = 0
 	if idle {
-		intent.Measurement.WarmupIterations = 0
-		intent.Measurement.SettlingDurationSeconds = 30
-		intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-		intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
-		intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
+		config.Measurement.WarmupIterations = 0
+		config.Measurement.SettlingDurationSeconds = 30
+		config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+		config.Measurement.InputGenerator = profilingrun.NoInputGenerator
+		config.Measurement.OutputValidation = profilingrun.NoOutputValidation
 	}
-	if err := intent.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
 func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
@@ -650,12 +650,12 @@ func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
 	}
 }
 
-func runtimeRequest(intent profilingrun.RunConfig) RuntimeRequest {
-	verified, err := profilingrun.ValidateRunConfig(intent)
+func runtimeRequest(config profilingrun.RunConfig) RuntimeRequest {
+	verified, err := profilingrun.ValidateRunConfig(config)
 	if err != nil {
 		panic(err)
 	}
-	return RuntimeRequest{RunConfig: verified, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
+	return RuntimeRequest{RunConfig: verified, PodUID: testPodUID, ScheduledNodeName: config.TargetNode.Name}
 }
 
 func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {

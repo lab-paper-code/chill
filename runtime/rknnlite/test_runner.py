@@ -495,6 +495,8 @@ class RunnerTest(unittest.TestCase):
             self.assertIsNotNone(instance)
             self.assertEqual(instance.inference_calls, 3)
             self.assertTrue(instance.released)
+            self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
+            self.assertNotIn("bSat", result)
             self.assertEqual(result["runtime"], "rknnlite")
             self.assertEqual(result["provider"] if "provider" in result else "", "")
             self.assertEqual(result["rknn"]["coreMask"], "NPU_CORE_0")

@@ -16,10 +16,10 @@ const (
 
 func testPreparedRun(t *testing.T) profiler.PreparedRun {
 	t.Helper()
-	return profiler.PreparedRun{RunConfig: testFrozenIntent(t)}
+	return profiler.PreparedRun{RunConfig: testRunConfig(t)}
 }
 
-func testActuatedRunAndFrozen(t *testing.T) (*edgev1alpha1.ProfilingRun, ResolvedRun) {
+func testActuatedRunAndResolved(t *testing.T) (*edgev1alpha1.ProfilingRun, ResolvedRun) {
 	t.Helper()
 	run := testRun()
 	run.Spec.Candidate.PowerMode = testSelectablePowerMode

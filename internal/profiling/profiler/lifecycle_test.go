@@ -12,7 +12,7 @@ import (
 )
 
 func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 	evidenceReference := testEvidenceReference()
 	tests := []struct {
 		name     string
@@ -20,25 +20,25 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 		want     Action
 	}{
 		{name: "deletion stops new work", snapshot: Snapshot{Deleting: true}, want: ActionStop},
-		{name: "create first Job", snapshot: Snapshot{RunConfig: &intent}, want: ActionCreateJob},
+		{name: "create first Job", snapshot: Snapshot{RunConfig: &config}, want: ActionCreateJob},
 		{
 			name: "wait for active Job",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobActive,
+				RunConfig: &config, JobReference: "job-uid", Job: JobActive,
 			},
 			want: ActionWaitForJob,
 		},
 		{
 			name: "finalize successful execution",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
 			},
 			want: ActionFinalizeEvidence,
 		},
 		{
 			name: "complete after evidence is terminally invalid",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
 				EvidenceInvalid: true,
 			},
 			want: ActionComplete,
@@ -46,21 +46,21 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 		{
 			name: "report failed execution without retry",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobFailed,
+				RunConfig: &config, JobReference: "job-uid", Job: JobFailed,
 			},
 			want: ActionReportExecutionFailure,
 		},
 		{
 			name: "report lost recorded execution without recreation",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobMissing,
+				RunConfig: &config, JobReference: "job-uid", Job: JobMissing,
 			},
 			want: ActionReportExecutionLost,
 		},
 		{
 			name: "admit verified evidence after Job deletion",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobMissing,
+				RunConfig: &config, JobReference: "job-uid", Job: JobMissing,
 				EvidenceReference: &evidenceReference,
 			},
 			want: ActionAdmitEvidence,
@@ -68,7 +68,7 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 		{
 			name: "complete after admission verdict is recorded",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
 				EvidenceReference: &evidenceReference, AdmissionRecorded: true,
 			},
 			want: ActionComplete,
@@ -89,7 +89,7 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 }
 
 func TestDecideRejectsContradictoryFacts(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 	evidenceReference := testEvidenceReference()
 	tests := []struct {
 		name     string
@@ -103,18 +103,18 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 		},
 		{
 			name:     "observation without reference",
-			snapshot: Snapshot{RunConfig: &intent, Job: JobActive},
+			snapshot: Snapshot{RunConfig: &config, Job: JobActive},
 			match:    "without a recorded Job reference",
 		},
 		{
 			name:     "reference without observation",
-			snapshot: Snapshot{RunConfig: &intent, JobReference: "job-uid"},
+			snapshot: Snapshot{RunConfig: &config, JobReference: "job-uid"},
 			match:    "requires a supported observation",
 		},
 		{
 			name: "admission without evidence",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
 				AdmissionRecorded: true,
 			},
 			match: "without verified evidence",
@@ -122,14 +122,14 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 		{
 			name: "evidence before Job",
 			snapshot: Snapshot{
-				RunConfig: &intent, EvidenceReference: &evidenceReference,
+				RunConfig: &config, EvidenceReference: &evidenceReference,
 			},
 			match: "without a recorded Job reference",
 		},
 		{
 			name: "evidence contradicts active Job",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobActive,
+				RunConfig: &config, JobReference: "job-uid", Job: JobActive,
 				EvidenceReference: &evidenceReference,
 			},
 			match: "contradicts",
@@ -137,7 +137,7 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 		{
 			name: "invalid evidence identity",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobSucceeded,
+				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
 				EvidenceReference: &evidencestore.ObjectIdentity{Store: "store"},
 			},
 			match: "validate evidence reference",
@@ -145,7 +145,7 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 		{
 			name: "terminal evidence invalidity contradicts active Job",
 			snapshot: Snapshot{
-				RunConfig: &intent, JobReference: "job-uid", Job: JobActive,
+				RunConfig: &config, JobReference: "job-uid", Job: JobActive,
 				EvidenceInvalid: true,
 			},
 			match: "contradicts observed Job outcome",
@@ -163,9 +163,9 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 }
 
 func TestDecideIsDeterministicAndDoesNotRetainCallerPointers(t *testing.T) {
-	intent := testIntent(t)
-	snapshot := Snapshot{RunConfig: &intent}
-	before := intent
+	config := testRunConfig(t)
+	snapshot := Snapshot{RunConfig: &config}
+	before := config
 	first, err := Decide(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -174,29 +174,29 @@ func TestDecideIsDeterministicAndDoesNotRetainCallerPointers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(first, second) || !reflect.DeepEqual(intent, before) {
+	if !reflect.DeepEqual(first, second) || !reflect.DeepEqual(config, before) {
 		t.Fatal("decision is non-deterministic or mutated the input")
 	}
-	intent.State.Model = "changed-after-decision"
-	if first.RunConfig == nil || first.RunConfig.State.Model == intent.State.Model {
-		t.Fatal("decision retained the caller's intent pointer")
+	config.State.Model = "changed-after-decision"
+	if first.RunConfig == nil || first.RunConfig.State.Model == config.State.Model {
+		t.Fatal("decision retained the caller's config pointer")
 	}
 }
 
-func testIntent(t *testing.T) profilingrun.RunConfig {
+func testRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	if err := intent.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
 func testEvidenceReference() evidencestore.ObjectIdentity {

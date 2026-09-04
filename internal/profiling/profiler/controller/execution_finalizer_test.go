@@ -97,7 +97,7 @@ func TestKubernetesExecutionFinalizerLoadsOnlyRequiredCredentials(t *testing.T) 
 
 func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t *testing.T) {
 	t.Parallel()
-	run, frozen := testActuatedRunAndFrozen(t)
+	run, resolved := testActuatedRunAndResolved(t)
 	scheme := runtime.NewScheme()
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t 
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	readyAt := metav1.NewTime(base.Add(30 * time.Second))
 	handoff := completedTransitionForRun(
-		run, frozen, "actuation", frozen.Prepared.RunConfig.Actuation.PowerMode, readyAt.Time,
+		run, resolved, "actuation", resolved.Prepared.RunConfig.Actuation.PowerMode, readyAt.Time,
 	)
 	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{
 		Name: handoff.Name, UID: string(handoff.UID),
@@ -115,7 +115,7 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	facts, err := finalizer.observeActuation(context.Background(), run, frozen.Prepared)
+	facts, err := finalizer.observeActuation(context.Background(), run, resolved.Prepared)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := driftFinalizer.observeActuation(context.Background(), run, frozen.Prepared); err == nil {
+	if _, err := driftFinalizer.observeActuation(context.Background(), run, resolved.Prepared); err == nil {
 		t.Fatal("non-ready handoff was accepted for finalization")
 	}
 }

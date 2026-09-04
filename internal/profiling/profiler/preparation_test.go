@@ -12,7 +12,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
+func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
 	preparer := newFixturePreparer(t, resolvers)
@@ -22,7 +22,7 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(prepared.RunConfig, expected) {
-		t.Fatalf("prepared intent drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
+		t.Fatalf("prepared config drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
 	if resolvers.metrics.nodeName != expected.TargetNode.Name {
 		t.Fatal("metric source was not resolved from the selected Node")
@@ -61,7 +61,7 @@ func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(prepared.RunConfig, expected) {
-				t.Fatalf("configured CPU quota intent drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
+				t.Fatalf("configured CPU quota config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 			}
 		})
 	}
@@ -77,7 +77,7 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(prepared.RunConfig, expected) {
-		t.Fatalf("prepared RKNNLite intent drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
+		t.Fatalf("prepared RKNNLite config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
 	if prepared.RunConfig.CPU.ORTIntraOpThreads != 0 || prepared.RunConfig.CPU.ORTInterOpThreads != 0 ||
 		!profilingrun.IsSupportedRKNNLiteRunConfig(prepared.RunConfig) {
@@ -162,7 +162,7 @@ func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(first, second) {
-		t.Fatal("identical resolved facts produced different frozen Runs")
+		t.Fatal("identical resolved facts produced different RunConfigs")
 	}
 	resolvers.candidate.result.ReportBytes[0] = 'x'
 	resolvers.workloads.result.Image = mutation
@@ -490,21 +490,21 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 	return preparer
 }
 
-func fixtureRequest(intent profilingrun.RunConfig) PreparationRequest {
+func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 	return PreparationRequest{
 		Candidate: CandidateSelection{
-			ModelSpec:     intent.State.Model,
-			DeviceClass:   intent.State.DeviceClass,
-			ExecutionPath: intent.Candidate.ExecutionPath,
-			PowerMode:     intent.State.PowerMode,
+			ModelSpec:     config.State.Model,
+			DeviceClass:   config.State.DeviceClass,
+			ExecutionPath: config.Candidate.ExecutionPath,
+			PowerMode:     config.State.PowerMode,
 		},
-		TargetNode:  intent.TargetNode.Name,
-		CPURequest:  intent.CPU.Request,
-		Measurement: intent.Measurement,
+		TargetNode:  config.TargetNode.Name,
+		CPURequest:  config.CPU.Request,
+		Measurement: config.Measurement,
 		Metrics: MetricObservationPolicy{
-			IntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
-			TimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
-			DurationSeconds:      intent.Metrics.DurationSeconds,
+			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
+			DurationSeconds:      config.Metrics.DurationSeconds,
 		},
 	}
 }
@@ -515,43 +515,43 @@ func preparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(intentBytes, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(intentBytes, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return intent, candidateBytes
+	return config, candidateBytes
 }
 
 func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	t.Helper()
-	intent, candidateBytes := preparationFixture(t)
+	config, candidateBytes := preparationFixture(t)
 	report, err := profilingrun.DecodeCandidateReport(candidateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	intent.Candidate.ExecutionPath = "rknnlite-bs2"
-	intent.State.DeviceClass = "orangepi-5-plus-16g"
-	intent.State.Artifact = "mobilenet-v2-050-rk3588-bs2"
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs2.rknn"
-	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	intent.State.Backend = profilingrun.RKNNLiteBackend
-	intent.TargetNode.Name = "orangepi5plus"
-	intent.TargetNode.Architecture = "arm64"
-	intent.TargetNode.AllocatableCPU = "8"
-	intent.CPU.Limit = "8"
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
-	intent.Metrics.NodeName = intent.TargetNode.Name
-	intent.Measurement.Batch = 2
+	config.Candidate.ExecutionPath = "rknnlite-bs2"
+	config.State.DeviceClass = "orangepi-5-plus-16g"
+	config.State.Artifact = "mobilenet-v2-050-rk3588-bs2"
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs2.rknn"
+	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	config.State.Backend = profilingrun.RKNNLiteBackend
+	config.TargetNode.Name = "orangepi5plus"
+	config.TargetNode.Architecture = "arm64"
+	config.TargetNode.AllocatableCPU = "8"
+	config.CPU.Limit = "8"
+	config.CPU.ORTIntraOpThreads = 0
+	config.CPU.ORTInterOpThreads = 0
+	config.Metrics.NodeName = config.TargetNode.Name
+	config.Measurement.Batch = 2
 
 	host := profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{
@@ -568,23 +568,23 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 			CompatiblePath: "/proc/device-tree/compatible", CompatibleToken: "rockchip,rk3588",
 		},
 	}
-	intent.State.HostContract = &host
+	config.State.HostContract = &host
 	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
-	report.Inputs.ModelSpec.Name = intent.State.Model
-	report.Inputs.DeviceClass.Name = intent.State.DeviceClass
-	report.Inputs.RuntimeDeclaration.Image = intent.Images.Runtime
+	report.Inputs.ModelSpec.Name = config.State.Model
+	report.Inputs.DeviceClass.Name = config.State.DeviceClass
+	report.Inputs.RuntimeDeclaration.Image = config.Images.Runtime
 	report.Selection = profilingrun.CandidateReportSelection{
-		ExecutionPath: intent.Candidate.ExecutionPath, Artifact: intent.State.Artifact,
-		PowerMode: intent.State.PowerMode,
+		ExecutionPath: config.Candidate.ExecutionPath, Artifact: config.State.Artifact,
+		PowerMode: config.State.PowerMode,
 	}
 	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
-		Architecture: intent.TargetNode.Architecture,
-		NodeSelector: map[string]string{"edge.dacs.io/device-class": intent.State.DeviceClass},
-		PowerModes:   []string{intent.State.PowerMode},
+		Architecture: config.TargetNode.Architecture,
+		NodeSelector: map[string]string{"edge.dacs.io/device-class": config.State.DeviceClass},
+		PowerModes:   []string{config.State.PowerMode},
 	}
 	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
-		Image: intent.Images.Artifact, Architecture: intent.TargetNode.Architecture,
-		Path: intent.State.ArtifactPath,
+		Image: config.Images.Artifact, Architecture: config.TargetNode.Architecture,
+		Path: config.State.ArtifactPath,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{2}, InputSampleShape: []int32{224, 224, 3},
@@ -594,17 +594,17 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	report.RuntimeAccess = &profilingrun.CandidateReportRuntimeAccess{
 		Privileged: true, SupplementalGroups: []int64{44, 110},
 	}
-	report.MetricObserverImage = intent.Images.MetricObserver
+	report.MetricObserverImage = config.Images.MetricObserver
 	candidateBytes, err = json.Marshal(report)
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent.Candidate.Inputs = report.Inputs
-	intent.Delivery = report.RuntimeDelivery()
-	if err := intent.Validate(); err != nil {
+	config.Candidate.Inputs = report.Inputs
+	config.Delivery = report.RuntimeDelivery()
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent, candidateBytes
+	return config, candidateBytes
 }
 
 type fakePreparationResolvers struct {
@@ -615,32 +615,32 @@ type fakePreparationResolvers struct {
 	actuation *fakeActuationPolicyResolver
 }
 
-func fixtureResolvers(intent profilingrun.RunConfig, report []byte) *fakePreparationResolvers {
+func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePreparationResolvers {
 	return &fakePreparationResolvers{
 		candidate: &fakeCandidateResolver{result: ResolvedCandidate{
 			ReportBytes:        append([]byte(nil), report...),
-			Inputs:             intent.Candidate.Inputs,
-			Verdict:            intent.Candidate.Verdict,
-			State:              intent.State,
-			DeviceArchitecture: intent.TargetNode.Architecture,
+			Inputs:             config.Candidate.Inputs,
+			Verdict:            config.Candidate.Verdict,
+			State:              config.State,
+			DeviceArchitecture: config.TargetNode.Architecture,
 			DeviceNodeSelector: map[string]string{
-				"edge.dacs.io/device-class": intent.State.DeviceClass,
+				"edge.dacs.io/device-class": config.State.DeviceClass,
 			},
-			DevicePowerModes:     []string{intent.State.PowerMode},
-			RuntimeImage:         intent.Images.Runtime,
-			ArtifactImage:        intent.Images.Artifact,
-			ArtifactArchitecture: intent.TargetNode.Architecture,
-			ArtifactPath:         intent.State.ArtifactPath,
-			MetricObserverImage:  intent.Images.MetricObserver,
+			DevicePowerModes:     []string{config.State.PowerMode},
+			RuntimeImage:         config.Images.Runtime,
+			ArtifactImage:        config.Images.Artifact,
+			ArtifactArchitecture: config.TargetNode.Architecture,
+			ArtifactPath:         config.State.ArtifactPath,
+			MetricObserverImage:  config.Images.MetricObserver,
 		}},
-		node: &fakeNodeResolver{result: intent.TargetNode},
+		node: &fakeNodeResolver{result: config.TargetNode},
 		metrics: &fakeMetricResolver{result: ResolvedMetricSource{
-			Kind: intent.Metrics.SourceKind, Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
-			MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
-			ThermalMetrics: intent.Metrics.ThermalMetrics,
+			Kind: config.Metrics.SourceKind, Endpoint: config.Metrics.Endpoint, PowerMetric: config.Metrics.PowerMetric,
+			MetricLabels: config.Metrics.MetricLabels, ThermalEndpoint: config.Metrics.ThermalEndpoint,
+			ThermalMetrics: config.Metrics.ThermalMetrics,
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
-			Image: intent.Images.WorkloadObserver,
+			Image: config.Images.WorkloadObserver,
 		}},
 		actuation: &fakeActuationPolicyResolver{},
 	}

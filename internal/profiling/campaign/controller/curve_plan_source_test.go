@@ -455,7 +455,7 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	if p.preparedArtifact != "" {
 		artifact = p.preparedArtifact
 	}
-	intent := profilingrun.RunConfig{
+	config := profilingrun.RunConfig{
 		SchemaVersion: profilingrun.RunConfigSchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
 			Inputs: p.report.Inputs, ExecutionPath: request.Candidate.ExecutionPath, Verdict: p.report.Verdict,
@@ -494,10 +494,10 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		},
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
-	if err := intent.Validate(); err != nil {
-		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared intent fixture: %w", err)
+	if err := config.Validate(); err != nil {
+		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared config fixture: %w", err)
 	}
-	return profiler.PreparedRun{RunConfig: intent}, nil
+	return profiler.PreparedRun{RunConfig: config}, nil
 }
 
 type fakeCurvePlanStore struct {

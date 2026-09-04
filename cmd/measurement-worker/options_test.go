@@ -28,7 +28,7 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 		"--store-endpoint=http://chill-evidence-store.chill-system.svc:9000",
 		"--store-bucket=chill-profiling-evidence",
 		"--store-region=us-east-1",
-		"--raw-object-key=profiling-runs/run/raw/intent.json",
+		"--raw-object-key=profiling-runs/run/raw/result.json",
 	}); err != nil {
 		t.Fatal(err)
 	}

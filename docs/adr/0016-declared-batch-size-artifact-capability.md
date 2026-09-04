@@ -49,7 +49,7 @@ contract is populated for the artifact-declared source and all-empty for the
 campaign-declared canonical source, so the immutable plan records whether its
 boundary is an artifact constraint or a measurement choice.
 
-The capability boundary is resolved when measurement intent is frozen. The
+The capability boundary is resolved when the campaign records its curve plan. The
 sweep advances through the recorded set in ascending order, steps over omitted
 sizes, and reaches the capability boundary when the set is exhausted. `KMax` is
 compared with the largest planned batch size.
@@ -67,11 +67,10 @@ evidence.
 A derived-artifact catalog entry may declare a batch size that the selected
 artifact was built without. A canonical-artifact campaign may likewise select
 a batch that its runtime cannot execute. A Run created for either selected size
-follows the ordinary trial failure and retry path. The frozen capability
+follows the ordinary trial failure and retry path. The recorded capability
 boundary remains exhaustion of the recorded set.
 
-Plan 5's confirmatory estimand ranges over every batch above its candidate
-through `KMax`. Its confirmatory sizing boundary therefore accepts only a
-consecutive planned batch-size span from the candidate through `KMax` and
-returns an explicit error for a gap. Plan 5a follows sparse planned batch-size
-sets directly.
+Plan 7's Quick search follows the recorded batch-size set directly. It stops at
+the first non-improving neighbor or completes with `SearchSpaceExhausted`; it
+does not require a consecutive integer span or a confirmatory range through
+`KMax`.

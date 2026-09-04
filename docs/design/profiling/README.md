@@ -22,7 +22,7 @@ saturation outcome is not the contract of the current optimizer.
 Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the
-newest successful transition on its target Node confirms its frozen state.
+newest successful transition on its target Node confirms its declared state.
 Plan 10 is implemented and live-verified for the exact `jetsono` /
 `mobilenet-v2-050` / `MAXN` and `MODE_15W` state pair. Two independent current
 idle-baseline results provide the target-state `P_idle` values. A bounded Gate
@@ -83,7 +83,7 @@ one immutable profiling Run on Kubernetes
 runtime evidence + metric evidence
     |
     v
-profile admission and b_sat derivation
+profile admission and batch-energy optimization
     |
     v
 future enumerator / scheduler
@@ -140,7 +140,7 @@ Run-record ConfigMap and exposes no intermediate resolution status phase.
 Answers only:
 
 > Are the execution and metric observations sufficient to admit a profile, and
-> what energy curve and `b_sat` follow from that evidence?
+> what incremental-energy observations follow from that evidence?
 
 Its first pure read-only plan is approved against the retained real Run
 evidence. Persistence remains deferred until the output contract survives
@@ -328,7 +328,7 @@ configuration supplies the unique actuation policy for each selected mode and
 the logical Evidence Store used for raw, finalized, and aggregate objects.
 Each baseline request also selects a required whole-core CPU quota. Its child
 Run transports that selection to preparation, which freezes it in the existing
-CPU intent as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol
+CPU quota selection as `ConfiguredCPUQuota/v1`; the quota is an execution-protocol
 condition retained by Run evidence, not another baseline-state or transition-
 cost compatibility dimension.
 
@@ -374,7 +374,7 @@ plans or competing architecture authorities:
   The one-shot profiling Job is the execution plane that runs inference,
   receives typed metric observations, and persists raw evidence.
 - `internal/metricobserver` remains a bounded raw-observation library. It does
-  not own profiling policy or `b_sat`.
+  not own profiling policy or batch-energy optimization.
 - SLO classification consumes an admitted profile; it does not decide whether
   Layer-0 measurement evidence is scientifically valid.
 

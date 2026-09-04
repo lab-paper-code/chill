@@ -66,9 +66,9 @@ admission verdict를 다시 계산하지 않는다. 안정적으로 존재한 �
 | CHILL 설치 | `ChillSystem`의 구성요소 availability Conditions | 서비스 SLO, 에너지 제어와 Scheduler 정상성 |
 | 디바이스 인벤토리 | `DeviceClass.spec`과 selector에 일치하는 현재 Kubernetes Nodes | `DeviceClass.status`의 멤버 목록·Ready 집계, CHILL 실행 eligibility |
 | 모델 카탈로그 | `ModelSpec`의 artifact digest와 execution path 요구사항 | 운영 승격 profile, 물질화된 compatible-class index |
-| 프로파일 요청 | immutable `ProfilingRun.spec`과 frozen intent record | Dashboard·CLI의 공통 생성 요청 표면 |
-| 실행 결과 | owned Job, 실제 Pod·Node identity, 측정창 co-resident, 검증된 evidence reference와 single-Run admission | campaign 조정, `b_sat` 파생과 운영 profile 승격 |
-| 상위 제어 | 빈 `DeviceProfile`·`ClusterEnergyModel` API scaffold | 전력 곡선, `b_sat`, current/optimal/target 구성, decision과 transition 상태 |
+| 프로파일 요청 | immutable `ProfilingRun.spec`과 Job-recorded RunConfig | Dashboard·CLI의 공통 생성 요청 표면 |
+| 실행 결과 | owned Job, 실제 Pod·Node identity, 측정창 co-resident, 검증된 evidence reference와 single-Run admission | batch-energy campaign 조정과 운영 profile 승격 |
+| 상위 제어 | 빈 `DeviceProfile`·`ClusterEnergyModel` API scaffold | 전력 곡선, 선택 batch, current/optimal/target 구성, decision과 transition 상태 |
 
 `ChillSystem.Ready`는 필요한 CHILL 운영 구성요소의 availability다. Console은 이를
 전체 serving 정상이나 개입 불필요로 번역하지 않는다.
@@ -104,7 +104,7 @@ Pod, Evidence Store endpoint 또는 런타임 내부 명령을 지정하지 않�
 - 제출되는 immutable spec
 - Kubernetes schema가 즉시 검증할 항목과 이후 Profiler가 사실을 해석할 항목의 구분
 
-요청 접수는 실행 완료가 아니다. API create 성공, intent 동결, Job 실행, evidence
+요청 접수는 실행 완료가 아니다. API create 성공, RunConfig 해석, Job 실행, evidence
 verification과 admission은 서로 다른 단계로 표현한다.
 
 ### 3. 진행 상태와 계보를 관찰한다
@@ -113,7 +113,7 @@ verification과 admission은 서로 다른 단계로 표현한다.
 
 ```text
 Requested
-  -> Intent Frozen
+  -> RunConfig Resolved
   -> Execution
   -> Evidence Verified
   -> Single-Run Admission
@@ -170,8 +170,8 @@ Scheduler 판단을 새로 계산하지 않는다.
 |---|---|---|
 | System | 설치된 CHILL 구성요소가 available한가 | 없음 |
 | Inventory | 어떤 class·Node·artifact·execution path가 존재하는가 | 없음 |
-| Profiling Runs | 어떤 측정 의도가 요청됐고 어디까지 진행됐는가 | 새 Run 요청 |
-| Evidence Passport | 한 Run의 intent·실제 실행·증거·admission 계보가 무엇인가 | 없음 |
+| Profiling Runs | 어떤 측정이 요청됐고 어디까지 진행됐는가 | 새 Run 요청 |
+| Evidence Passport | 한 Run의 RunConfig·실제 실행·증거·admission 계보가 무엇인가 | 없음 |
 
 빈 `DeviceProfile`과 `ClusterEnergyModel`은 리소스 목록을 채우기 위해 노출하지 않는다.
 실제 생산자와 소비자 계약이 생길 때 Scientific Readiness Matrix와 Decision Microscope의
@@ -183,7 +183,7 @@ Scheduler 판단을 새로 계산하지 않는다.
 
 1. **조회 의미와 read-only 경로**: System, Inventory, Run 목록과 Evidence Passport의
    권위 있는 원본, projection 및 RBAC 경계를 유지한다.
-2. **ProfilingRun 실행 경로**: frozen intent에서 owned Job, 실제 실행 identity, immutable
+2. **ProfilingRun 실행 경로**: resolved RunConfig에서 owned Job, 실제 실행 identity, immutable
    evidence verification과 single-Run admission까지 연결한다.
 3. **공통 요청 계약**: Dashboard와 CLI가 동일한 `ProfilingRun.spec`, Kubernetes validation,
    권한과 비동기 종료 의미로 Run을 생성하게 한다.
@@ -200,7 +200,7 @@ API 접수와 실행 완료를 구분하고, Console read API는 조회 편의�
 
 - current/optimal/target 구성과 Scheduler recommendation
 - SLO·에너지 전체 정상 판정 또는 단일 health score
-- profile campaign orchestration과 `b_sat` derivation
+- batch-energy campaign orchestration과 selected-batch derivation
 - 저수준 Job·Pod·batch·routing weight·power mode 직접 편집
 - UI에서 계산한 compatibility, eligibility 또는 admission
 - Console 전용 decision·inventory truth database
@@ -215,6 +215,6 @@ Transition Flight Recorder를 순서대로 확장한다.
 - 운영자가 controller 로그 없이 현재 지원되는 profiling 단계를 구분한다.
 - class별 Node 조회가 `DeviceClass.status` 복제 없이 재현된다.
 - Dashboard와 CLI의 Run 요청이 동일한 `ProfilingRun.spec`과 validation 의미를 사용한다.
-- API 접수, intent 동결, 실행, evidence와 admission을 서로 다른 상태로 표현한다.
+- API 접수, RunConfig 해석, 실행, evidence와 admission을 서로 다른 상태로 표현한다.
 - 모든 결합 조회가 권위 있는 원본과 관측 시각으로 추적된다.
 - 미구현 capability와 `Unknown`을 정상·실패·무기한 진행 상태로 오해시키지 않는다.

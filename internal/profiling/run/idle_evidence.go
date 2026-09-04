@@ -78,7 +78,7 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 		}
 	}
 	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(config.TargetNode.Architecture) {
-		return errors.New("idle runtime architecture does not match the frozen Node")
+		return errors.New("idle runtime architecture does not match the RunConfig Node")
 	}
 	if strings.TrimSpace(result.RuntimeVersion) == "" {
 		return errors.New("idle runtime identity is incomplete")
@@ -94,12 +94,12 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	}
 	minimumSettling := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	if settlingCompleted.Sub(settlingStarted) < minimumSettling {
-		return errors.New("idle settling duration is shorter than the frozen contract")
+		return errors.New("idle settling duration is shorter than the RunConfig contract")
 	}
 	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementElapsedSeconds < minimumElapsed ||
 		measurementEnded.Sub(measurementStarted) < time.Duration(minimumElapsed*float64(time.Second)) {
-		return errors.New("idle measurement duration is shorter than the frozen contract")
+		return errors.New("idle measurement duration is shorter than the RunConfig contract")
 	}
 	if result.InferenceCountAfterModelLoad != 0 {
 		return errors.New("idle runtime issued inference after model load")

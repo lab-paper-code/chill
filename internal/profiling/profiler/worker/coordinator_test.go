@@ -18,9 +18,9 @@ import (
 )
 
 func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
-	intent := testIntent(t)
-	runtimeResult := testRuntimeResult(t, intent)
-	metricResult := testMetricResult(intent)
+	config := testRunConfig(t)
+	runtimeResult := testRuntimeResult(t, config)
+	metricResult := testMetricResult(config)
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		calls = append(calls, "store")
@@ -32,8 +32,8 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		if raw.PodUID != testPodUID || raw.Runtime.Status != "Succeeded" ||
-			raw.Metrics.Source.NodeName != intent.TargetNode.Name || raw.Workload == nil ||
-			raw.Workload.Target.NodeUID != intent.TargetNode.UID {
+			raw.Metrics.Source.NodeName != config.TargetNode.Name || raw.Workload == nil ||
+			raw.Workload.Target.NodeUID != config.TargetNode.UID {
 			t.Fatalf("unexpected raw measurement: %#v", raw)
 		}
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
@@ -41,7 +41,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(_ context.Context, request RuntimeRequest) (profilingrun.RuntimeResult, error) {
 			calls = append(calls, "runtime")
-			if request.PodUID != testPodUID || request.ScheduledNodeName != intent.TargetNode.Name {
+			if request.PodUID != testPodUID || request.ScheduledNodeName != config.TargetNode.Name {
 				t.Fatalf("unexpected runtime request: %#v", request)
 			}
 			return runtimeResult, nil
@@ -52,14 +52,14 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 		}),
 		workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
 			calls = append(calls, "workload")
-			return testWorkloadResult(t, intent, runtimeResult), nil
+			return testWorkloadResult(t, config, runtimeResult), nil
 		}),
 		store,
 	)
 
 	got, err := coordinator.Execute(context.Background(), Request{
-		RunConfig: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
-		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/intent.json"},
+		RunConfig: testVerifiedRunConfig(t, config), PodUID: testPodUID, ScheduledNodeName: config.TargetNode.Name,
+		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "profiling-runs/run/raw/result.json"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +70,8 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 }
 
 func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
-	intent := testIdleIntent(t)
-	idle := idleRuntimeResult(intent, testPodUID)
+	config := testIdleRunConfig(t)
+	idle := idleRuntimeResult(config, testPodUID)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
 		var raw evidence.IdleRawMeasurement
 		if err := json.Unmarshal(payload, &raw); err != nil {
@@ -93,22 +93,22 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 			}
 			return idleRuntimeMeasurement(verified), nil
 		}),
-		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(config), nil }),
 		workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
-			return testIdleWorkloadResult(t, intent, idle), nil
+			return testIdleWorkloadResult(t, config, idle), nil
 		}),
 		store,
 	)
 	if _, err := coordinator.Execute(context.Background(), Request{
-		RunConfig: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		RunConfig: testVerifiedRunConfig(t, config), PodUID: testPodUID, ScheduledNodeName: config.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "idle/raw.json"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCoordinatorRejectsEmptyVerifiedIntentBeforeExternalWork(t *testing.T) {
-	intent := testIntent(t)
+func TestCoordinatorRejectsEmptyVerifiedRunConfigBeforeExternalWork(t *testing.T) {
+	config := testRunConfig(t)
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -119,13 +119,13 @@ func TestCoordinatorRejectsEmptyVerifiedIntentBeforeExternalWork(t *testing.T) {
 			t.Fatal("metric reader must not be called")
 			return metricobserver.Result{}, nil
 		}),
-		testWorkloadReader(t, intent),
+		testWorkloadReader(t, config),
 		&fakeStore{},
 	)
 
 	_, err := coordinator.Execute(context.Background(), Request{
 		RunConfig: profilingrun.VerifiedRunConfig{}, PodUID: testPodUID,
-		ScheduledNodeName: intent.TargetNode.Name,
+		ScheduledNodeName: config.TargetNode.Name,
 		RawLocation:       evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || runtimeCalls != 0 {
@@ -134,7 +134,7 @@ func TestCoordinatorRejectsEmptyVerifiedIntentBeforeExternalWork(t *testing.T) {
 }
 
 func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 	runtimeCalls := 0
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -145,12 +145,12 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 			t.Fatal("metric reader must not be called")
 			return metricobserver.Result{}, nil
 		}),
-		testWorkloadReader(t, intent),
+		testWorkloadReader(t, config),
 		&fakeStore{},
 	)
 
 	_, err := coordinator.Execute(context.Background(), Request{
-		RunConfig: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: "other-node",
+		RunConfig: testVerifiedRunConfig(t, config), PodUID: testPodUID, ScheduledNodeName: "other-node",
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrExecutionContract) || !strings.Contains(err.Error(), "scheduled Node") || runtimeCalls != 0 {
@@ -159,14 +159,14 @@ func TestCoordinatorRejectsScheduledNodeDriftBeforeExternalWork(t *testing.T) {
 }
 
 func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 	request := Request{
-		RunConfig: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		RunConfig: testVerifiedRunConfig(t, config), PodUID: testPodUID, ScheduledNodeName: config.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	}
 
 	t.Run("runtime", func(t *testing.T) {
-		runtimeResult := testRuntimeResult(t, intent)
+		runtimeResult := testRuntimeResult(t, config)
 		runtimeResult.NodeName = "other"
 		metricCalls := 0
 		coordinator := mustCoordinator(t,
@@ -177,7 +177,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 				metricCalls++
 				return metricobserver.Result{}, nil
 			}),
-			testWorkloadReader(t, intent),
+			testWorkloadReader(t, config),
 			&fakeStore{},
 		)
 		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrRuntimeMeasurement) || metricCalls != 0 {
@@ -186,15 +186,15 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 	})
 
 	t.Run("metrics", func(t *testing.T) {
-		metricResult := testMetricResult(intent)
+		metricResult := testMetricResult(config)
 		metricResult.Source.NodeName = "other"
 		store := &fakeStore{}
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
-				return testRuntimeResult(t, intent), nil
+				return testRuntimeResult(t, config), nil
 			}),
 			metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return metricResult, nil }),
-			testWorkloadReader(t, intent),
+			testWorkloadReader(t, config),
 			store,
 		)
 		if _, err := coordinator.Execute(context.Background(), request); !errors.Is(err, ErrMetricObservation) || store.calls != 0 {
@@ -206,10 +206,10 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 		store := &fakeStore{}
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
-				return testRuntimeResult(t, intent), nil
+				return testRuntimeResult(t, config), nil
 			}),
 			metricReaderFunc(func(context.Context) (metricobserver.Result, error) {
-				return testMetricResult(intent), nil
+				return testMetricResult(config), nil
 			}),
 			workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
 				return workloadobserver.Result{}, errors.New("handoff failed")
@@ -223,21 +223,21 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 }
 
 func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
-	intent := testIntent(t)
+	config := testRunConfig(t)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, _ []byte) (evidencestore.Receipt, error) {
 		identity.Size++
 		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
-			return testRuntimeResult(t, intent), nil
+			return testRuntimeResult(t, config), nil
 		}),
-		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(intent), nil }),
-		testWorkloadReader(t, intent),
+		metricReaderFunc(func(context.Context) (metricobserver.Result, error) { return testMetricResult(config), nil }),
+		testWorkloadReader(t, config),
 		store,
 	)
 	_, err := coordinator.Execute(context.Background(), Request{
-		RunConfig: testVerifiedIntent(t, intent), PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name,
+		RunConfig: testVerifiedRunConfig(t, config), PodUID: testPodUID, ScheduledNodeName: config.TargetNode.Name,
 		RawLocation: evidencestore.ObjectLocation{Store: "chill-evidence", Key: "raw.json"},
 	})
 	if !errors.Is(err, ErrEvidenceCommit) || !strings.Contains(err.Error(), "invalid receipt") {
@@ -337,119 +337,119 @@ func receipt(identity evidencestore.ObjectIdentity, outcome evidencestore.Create
 	}
 }
 
-func testIntent(t *testing.T) profilingrun.RunConfig {
+func testRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	if err := intent.Validate(); err != nil {
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
-func testVerifiedIntent(t *testing.T, intent profilingrun.RunConfig) profilingrun.VerifiedRunConfig {
+func testVerifiedRunConfig(t *testing.T, config profilingrun.RunConfig) profilingrun.VerifiedRunConfig {
 	t.Helper()
-	verified, err := profilingrun.ValidateRunConfig(intent)
+	verified, err := profilingrun.ValidateRunConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return verified
 }
 
-func testRuntimeResult(t *testing.T, intent profilingrun.RunConfig) profilingrun.RuntimeResult {
+func testRuntimeResult(t *testing.T, config profilingrun.RunConfig) profilingrun.RuntimeResult {
 	t.Helper()
-	return runtimeResult(intent, testPodUID)
+	return runtimeResult(config, testPodUID)
 }
 
-func testIdleIntent(t *testing.T) profilingrun.RunConfig {
+func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
-	intent := testIntent(t)
-	intent.Measurement.WarmupIterations = 0
-	intent.Measurement.SettlingDurationSeconds = 30
-	intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
-	if err := intent.Validate(); err != nil {
+	config := testRunConfig(t)
+	config.Measurement.WarmupIterations = 0
+	config.Measurement.SettlingDurationSeconds = 30
+	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	config.Measurement.InputGenerator = profilingrun.NoInputGenerator
+	config.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
-func idleRuntimeResult(intent profilingrun.RunConfig, podUID string) profilingrun.IdleRuntimeResult {
+func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingrun.IdleRuntimeResult {
 	modelLoaded := time.Date(2026, time.July, 16, 2, 59, 0, 0, time.UTC)
 	settlingStarted := modelLoaded.Add(time.Second)
-	settlingCompleted := settlingStarted.Add(time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second)
-	measurementEnded := settlingCompleted.Add(time.Duration(intent.Measurement.DurationSeconds) * time.Second)
+	settlingCompleted := settlingStarted.Add(time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second)
+	measurementEnded := settlingCompleted.Add(time.Duration(config.Measurement.DurationSeconds) * time.Second)
 	return profilingrun.IdleRuntimeResult{
 		SchemaVersion:                profilingrun.IdleRuntimeResultSchemaVersion,
 		Status:                       "Succeeded",
 		PodUID:                       podUID,
-		NodeName:                     intent.TargetNode.Name,
-		Model:                        intent.State.Model,
+		NodeName:                     config.TargetNode.Name,
+		Model:                        config.State.Model,
 		Architecture:                 "x86_64",
-		Runtime:                      intent.State.RuntimeFamily,
+		Runtime:                      config.State.RuntimeFamily,
 		RuntimeVersion:               "1.16.0",
-		Backend:                      intent.State.Backend,
-		Provider:                     intent.State.Backend,
-		AvailableProviders:           []string{intent.State.Backend},
+		Backend:                      config.State.Backend,
+		Provider:                     config.State.Backend,
+		AvailableProviders:           []string{config.State.Backend},
 		ModelLoadCompletedAt:         modelLoaded.Format(time.RFC3339Nano),
 		SettlingStartedAt:            settlingStarted.Format(time.RFC3339Nano),
 		SettlingCompletedAt:          settlingCompleted.Format(time.RFC3339Nano),
 		MeasurementStartedAt:         settlingCompleted.Format(time.RFC3339Nano),
 		MeasurementEndedAt:           measurementEnded.Format(time.RFC3339Nano),
-		MeasurementElapsedSeconds:    float64(intent.Measurement.DurationSeconds),
+		MeasurementElapsedSeconds:    float64(config.Measurement.DurationSeconds),
 		InferenceCountAfterModelLoad: 0,
 		ModelResidentAtEnd:           true,
 		CPUContract: profilingrun.RuntimeCPU{
-			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
-			ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
+			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+			ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
 			CPUSetEffective: "0-3",
 		},
 		DerivedContract: profilingrun.DerivedContract{
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			NodeSnapshot: intent.TargetNode,
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			NodeSnapshot: config.TargetNode,
 		},
 	}
 }
 
-func runtimeResult(intent profilingrun.RunConfig, podUID string) profilingrun.RuntimeResult {
+func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.RuntimeResult {
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
-	targetDuration := float64(intent.Measurement.DurationSeconds)
+	targetDuration := float64(config.Measurement.DurationSeconds)
 	return profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
-		ExperimentID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
+		ExperimentID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "x86_64",
-		Runtime:      intent.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-		Backend: intent.State.Backend, Provider: intent.State.Backend,
-		AvailableProviders: []string{intent.State.Backend}, BatchSize: intent.Measurement.Batch,
-		WarmupIterations:  intent.Measurement.WarmupIterations,
+		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
+		Backend: config.State.Backend, Provider: config.State.Backend,
+		AvailableProviders: []string{config.State.Backend}, BatchSize: config.Measurement.Batch,
+		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 		InferenceCount:    2, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
 		OutputValidation: profilingrun.OutputValidation{
-			Method: intent.Measurement.OutputValidation, Passed: true,
-			OutputShapes: [][]int{{intent.Measurement.Batch, 1000}},
+			Method: config.Measurement.OutputValidation, Passed: true,
+			OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
 		},
 		CPUContract: profilingrun.RuntimeCPU{
-			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
-			ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
+			CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+			ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
 			CPUSetEffective: "0-3",
 		},
 		DerivedContract: profilingrun.DerivedContract{
-			Backend: intent.State.Backend, Provider: intent.State.Backend,
-			NodeSnapshot: intent.TargetNode,
+			Backend: config.State.Backend, Provider: config.State.Backend,
+			NodeSnapshot: config.TargetNode,
 		},
 		RepetitionResults: []profilingrun.Repetition{{
 			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
@@ -459,20 +459,20 @@ func runtimeResult(intent profilingrun.RunConfig, podUID string) profilingrun.Ru
 	}
 }
 
-func testMetricResult(intent profilingrun.RunConfig) metricobserver.Result {
+func testMetricResult(config profilingrun.RunConfig) metricobserver.Result {
 	started := time.Date(2026, time.July, 16, 2, 59, 59, 0, time.UTC)
 	return metricobserver.Result{
 		Source: metricobserver.SourceIdentity{
-			Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
-			Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
-			MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
+			Kind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
+			Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric,
+			MetricLabels: config.Metrics.MetricLabels, ThermalEndpoint: config.Metrics.ThermalEndpoint,
 			ThermalMetrics: &metricobserver.ThermalMetricIdentity{
-				ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
-				Active:                    intent.Metrics.ThermalMetrics.Active,
-				CPUCoreThrottleEvents:     intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
-				CPUPackageThrottleEvents:  intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
-				Latched:                   intent.Metrics.ThermalMetrics.Latched,
-				MaximumTemperatureCelsius: intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
+				ObservationAvailable:      config.Metrics.ThermalMetrics.ObservationAvailable,
+				Active:                    config.Metrics.ThermalMetrics.Active,
+				CPUCoreThrottleEvents:     config.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
+				CPUPackageThrottleEvents:  config.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
+				Latched:                   config.Metrics.ThermalMetrics.Latched,
+				MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 			},
 		},
 		StartedAt: started, EndedAt: started.Add(31 * time.Second),
@@ -484,17 +484,17 @@ func testMetricResult(intent profilingrun.RunConfig) metricobserver.Result {
 	}
 }
 
-func testWorkloadReader(t *testing.T, intent profilingrun.RunConfig) WorkloadResultReader {
+func testWorkloadReader(t *testing.T, config profilingrun.RunConfig) WorkloadResultReader {
 	t.Helper()
-	runtime := testRuntimeResult(t, intent)
+	runtime := testRuntimeResult(t, config)
 	return workloadReaderFunc(func(context.Context) (workloadobserver.Result, error) {
-		return testWorkloadResult(t, intent, runtime), nil
+		return testWorkloadResult(t, config, runtime), nil
 	})
 }
 
 func testWorkloadResult(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	runtime profilingrun.RuntimeResult,
 ) workloadobserver.Result {
 	t.Helper()
@@ -504,12 +504,12 @@ func testWorkloadResult(
 	}
 	pod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "run", UID: runtime.ExperimentID, Phase: "Running",
-		Images: []string{intent.Images.Runtime},
+		Images: []string{config.Images.Runtime},
 	}
 	return workloadobserver.Result{
 		SchemaVersion: workloadobserver.ResultSchemaVersion,
 		Target: workloadobserver.TargetIdentity{
-			NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID,
+			NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID,
 		},
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: runtime.ExperimentID,
@@ -523,7 +523,7 @@ func testWorkloadResult(
 
 func testIdleWorkloadResult(
 	t *testing.T,
-	intent profilingrun.RunConfig,
+	config profilingrun.RunConfig,
 	runtime profilingrun.IdleRuntimeResult,
 ) workloadobserver.Result {
 	t.Helper()
@@ -533,12 +533,12 @@ func testIdleWorkloadResult(
 	}
 	pod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "run", UID: runtime.PodUID, Phase: "Running",
-		Images: []string{intent.Images.Runtime},
+		Images: []string{config.Images.Runtime},
 	}
 	return workloadobserver.Result{
 		SchemaVersion: workloadobserver.ResultSchemaVersion,
 		Target: workloadobserver.TargetIdentity{
-			NodeName: intent.TargetNode.Name, NodeUID: intent.TargetNode.UID,
+			NodeName: config.TargetNode.Name, NodeUID: config.TargetNode.UID,
 		},
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system", JobUID: "job-uid", PodName: "run", PodUID: runtime.PodUID,

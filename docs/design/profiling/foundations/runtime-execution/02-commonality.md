@@ -135,7 +135,7 @@ make placement and allocation part of one runtime compatibility contract.
 | RKNN | privileged Pod, `/dev/dri` and host library mounts | host device/library exposure; no extended-resource allocation |
 | Jetson | `nvidia.com/gpu: 1` request and limit | device-plugin allocation of one GPU; no node-wide exclusivity |
 
-Native Pod resource requirements and placement can be retained as Run intent.
+Native Pod resource requirements and placement can be retained in RunConfig.
 They must not be flattened into `deviceKind`, `deviceCount`, or
 `exclusive=true`, because those values would imply equivalent guarantees that
 do not exist.

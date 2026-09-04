@@ -26,15 +26,15 @@ func (s loaderStore) OpenLocation(
 
 func TestLoaderLoadsFinalAndRawObjects(t *testing.T) {
 	t.Parallel()
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
+	config := loadRunConfig(t)
+	raw := validRaw(t, config)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	rawLocation := evidencestore.ObjectLocation{Store: "evidence", Key: "raw.json"}
 	rawIdentity := identityFor(rawLocation, rawBytes)
-	execution := validExecutionEvidence(t, intent, raw)
+	execution := validExecutionEvidence(t, config, raw)
 	execution.RawMeasurement = rawIdentity
 	executionBytes, err := execution.CanonicalJSON(raw)
 	if err != nil {

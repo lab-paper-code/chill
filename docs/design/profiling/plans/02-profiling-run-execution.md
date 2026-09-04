@@ -6,7 +6,7 @@
 
 Implemented and live-verified for the first CPU ONNX Runtime active path and
 for the same Job's model-loaded-idle producer branch. This plan does not
-authorize profile admission, energy derivation, `b_sat`, or `DeviceProfile`
+authorize profile admission, energy derivation, batch optimization, or `DeviceProfile`
 status writes.
 
 ## Question
@@ -40,10 +40,10 @@ facts, and duplicating them would create two validation and finalization paths.
 The current RunConfig schema retains the measurement-protocol
 `settlingDurationSeconds` field and an optional semantic physical host contract.
 CPU ORT omits that state field.
-The common CPU quota remains frozen for all workers. A Run without an explicit
+The common CPU quota is recorded for all workers. A Run without an explicit
 measurement quota retains `AllocatableCPUQuota/v1`; an explicit positive
 whole-core quota selects `ConfiguredCPUQuota/v1` and must be at least the CPU
-request and no greater than the frozen Node allocatable value. CPU ORT derives
+request and no greater than the recorded Node allocatable value. CPU ORT derives
 its intra-op thread count from that quota and keeps one inter-op thread, while
 RKNNLite omits the ORT-only settings. No worker detects, clamps, or substitutes
 a runtime value. The optional `actuation` object binds a
@@ -56,25 +56,25 @@ only the runtime delivery contract needed by execution crosses that boundary.
 The Job annotations retain the exact selected admission, execution, and optional
 actuation policy snapshots. This fixes inputs only: Plan 6 still withholds the Job until a durable handoff has
 converged and settled the Node. The handoff is a separate owned
-`NodeActuation`: its frozen identity/target/policy/deadline stay in `spec`, the
+`NodeActuation`: its requested identity/target/policy/deadline stay in `spec`, the
 dedicated actuator owns the observed phase and independent previous/target
 observations in `status`, and terminal `Ready` leaves the target state in place.
 
-Intent validation is mode-aware. The active mode retains a positive batch,
+RunConfig validation is mode-aware. The active mode retains a positive batch,
 declared warm-up, input generation, output validation, and measured inference
 calls. Model-loaded idle uses `warmupIterations=0`,
 `workloadMode=idle-model-loaded`, `inputGenerator=none`, and
 `outputValidation=none`, plus a positive settling duration. CPU ORT retains the
 canonical `batch=1`; a declared-batch-size artifact freezes its first declared batch
 for the model-loaded-idle Run even though the idle window issues no inference.
-These are frozen protocol facts, not delivery defaults.
+These are recorded protocol facts, not delivery defaults.
 
 The first CPU policy is deliberately concrete: under the existing one-serving-
 Pod-per-Node profiling assumption, integer allocatable CPU becomes the runtime
 limit and ORT intra-op thread count; inter-op is one. CPU scheduling request is
 a separate explicit Run input because existing system Pods prevent full-node
 reservation; it does not imply exclusivity. The policy name, version, input
-snapshot, and result are all frozen so this is not a hidden magic number.
+snapshot, and result are all recorded so this is not a hidden magic number.
 
 ## Checkpoint 2: Kubernetes materialization
 
@@ -84,12 +84,12 @@ A one-shot CPU ORT adapter translates the RunConfig into native objects. The Job
 - disables service-account token mounting;
 - uses immutable OCI image references and `IfNotPresent` pull policy;
 - expresses placement as a hostname selector and records actual binding later;
-- requests and limits the frozen CPU amount for the runtime container;
+- requests and limits the RunConfig CPU amount for the runtime container;
 - copies the declared artifact from its immutable carrier image into an `emptyDir`;
 - runs the runtime and MetricObserver in separate containers; and
 - passes the same inline RunConfig to every worker container.
 
-Plan 2 does not claim that selection intent guarantees scheduling. It records
+Plan 2 does not claim that a requested selection guarantees scheduling. It records
 Kubernetes admission, placement, image, and container outcomes as evidence.
 
 The public `ProfilingRun` CRD and controller that expose this execution mode
@@ -120,7 +120,7 @@ terminal Pod or Job state.
 
 Power samples are raw Run evidence only. Receipt timestamps are not device
 timestamps. Coverage, gaps, integration, repetitions, uncertainty, energy, and
-`b_sat` belong to Plan 3.
+batch-energy derivation belongs to Plans 3 and 7.
 
 For either active or idle execution, the runtime declares the scientific
 measurement window from its own monotonic clock and retains the corresponding

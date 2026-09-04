@@ -256,7 +256,7 @@ neither `PowerModeTransitionCost` nor its observer owns, deploys, reconfigures,
 or restarts it. The existing per-Node exporter DaemonSet is not part of this
 meter path.
 
-The `PowerModeTransitionCost` controller freezes intent, sequences one
+The `PowerModeTransitionCost` controller records its resolved preparation, sequences one
 `NodeActuation` at a time, verifies its evidence, and publishes compact status.
 It does not poll the meter in `Reconcile` or keep authoritative samples only in
 process memory. A plain Plan 9 `NodeActuation` remains usable without a
@@ -444,8 +444,8 @@ The target-idle terms are two independent current immutable results:
   schema `chill.dacs.io/model-loaded-idle-baseline-result.v1alpha1`, size 3,841
   bytes, 3/3 Accepted Runs, and mean `8.518397697661637 W`.
 
-Each baseline freezes its own configured whole-core CPU quota in child Run
-intent and evidence. CPU quota remains an execution-protocol condition, not a
+Each baseline records its own configured whole-core CPU quota in child RunConfig
+and evidence. CPU quota remains an execution-protocol condition, not a
 `PowerModeTransitionCost` measurement-state axis or a cross-mode equality
 requirement.
 

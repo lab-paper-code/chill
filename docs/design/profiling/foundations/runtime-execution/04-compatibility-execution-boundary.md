@@ -225,7 +225,7 @@ This stage owns:
 - repetitions and uncertainty
 - latency, throughput, power, and energy derivation
 - SLO feasibility
-- candidate versus accepted `b_sat`
+- measured batch-energy objective and selected batch
 - DeviceProfile admission/status
 
 A loadable valid Run can still yield an inadmissible profile. Insufficient

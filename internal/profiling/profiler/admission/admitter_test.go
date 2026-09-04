@@ -103,9 +103,9 @@ func TestEvaluateTrialAdmissionRetainsTheAdmissionThatAuthorizedTheTrial(t *test
 func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapshot(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	intent := admissionIntent()
+	config := admissionRunConfig()
 	execution := profilerevidence.ExecutionEvidence{
-		RunConfig: intent,
+		RunConfig: config,
 		Terminal: profilerevidence.TerminalFacts{
 			Pod:  profilerevidence.PodTerminalFacts{UID: "run-pod"},
 			Node: profilerevidence.NodeTerminalFacts{UID: "node-uid"},
@@ -117,7 +117,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		},
 	}
 	raw := profilerevidence.RawMeasurement{
-		RunConfig: intent,
+		RunConfig: config,
 		Runtime: profilingrun.RuntimeResult{
 			MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
@@ -154,10 +154,10 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	intent := admissionIntent()
-	intent.Measurement.SettlingDurationSeconds = 60
+	config := admissionRunConfig()
+	config.Measurement.SettlingDurationSeconds = 60
 	execution := profilerevidence.ExecutionEvidence{
-		RunConfig: intent,
+		RunConfig: config,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "chill-evidence", Key: "runs/idle/raw.json",
 			Size: 1024,
@@ -168,7 +168,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 		},
 	}
 	raw := profilerevidence.IdleRawMeasurement{
-		RunConfig: intent,
+		RunConfig: config,
 		Runtime: profilingrun.IdleRuntimeResult{
 			ModelLoadCompletedAt: started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:    started.Add(-60 * time.Second).Format(time.RFC3339Nano),
@@ -248,13 +248,13 @@ func admissionUint(value uint64) *uint64 { return &value }
 
 func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T) {
 	t.Parallel()
-	intent := admissionIntentWithWorkloadContract()
-	base, err := ProjectRunIdentities(intent, "node-a")
+	config := admissionRunConfigWithWorkloadContract()
+	base, err := ProjectRunIdentities(config, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	batch := intent
+	batch := config
 	batch.Measurement.Batch = 8
 	batchIdentities, err := ProjectRunIdentities(batch, "node-a")
 	if err != nil {
@@ -264,7 +264,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatalf("batch changed identity family: %#v != %#v", batchIdentities, base)
 	}
 
-	idle := intent
+	idle := config
 	idle.Measurement.WorkloadMode = "idle-model-loaded"
 	idle.Measurement.InputGenerator = "none"
 	idle.Measurement.OutputValidation = "none"
@@ -280,7 +280,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatalf("idle split = %#v, active = %#v", idleIdentities, base)
 	}
 
-	observer := intent
+	observer := config
 	observer.Images.MetricObserver = "registry.example/metric-observer@sha256:" + strings.Repeat("b", 64)
 	observerIdentities, err := ProjectRunIdentities(observer, "node-a")
 	if err != nil {
@@ -291,7 +291,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatalf("observer split = %#v, base = %#v", observerIdentities, base)
 	}
 
-	runtime := intent
+	runtime := config
 	runtime.Images.Runtime = "registry.example/runtime@sha256:" + strings.Repeat("c", 64)
 	runtimeIdentities, err := ProjectRunIdentities(runtime, "node-a")
 	if err != nil {
@@ -301,7 +301,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatal("runtime image must change execution-state identity")
 	}
 
-	metricSource := intent
+	metricSource := config
 	metricSource.Metrics.Endpoint = "http://other-meter"
 	metricSourceIdentities, err := ProjectRunIdentities(metricSource, "node-a")
 	if err != nil {
@@ -310,7 +310,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	if metricSourceIdentities.StateIdentity == base.StateIdentity {
 		t.Fatal("wall-meter source must change execution-state identity")
 	}
-	thermalMetricSource := intent
+	thermalMetricSource := config
 	thermalMetricSource.Metrics.ThermalMetrics.Active = "other_thermal_active"
 	thermalMetricSourceIdentities, err := ProjectRunIdentities(thermalMetricSource, "node-a")
 	if err != nil {
@@ -320,14 +320,14 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		t.Fatal("thermal metric mapping must change execution-state identity")
 	}
 
-	nodeIdentities, err := ProjectRunIdentities(intent, "node-b")
+	nodeIdentities, err := ProjectRunIdentities(config, "node-b")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if nodeIdentities.StateIdentity == base.StateIdentity {
 		t.Fatal("actual Node UID must change execution-state identity")
 	}
-	hostBound := intent
+	hostBound := config
 	hostBound.State.HostContract = &profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{Name: "runtime", HostPath: "/host/runtime", ContainerPath: "/runtime"}},
 	}
@@ -339,7 +339,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 		!strings.HasPrefix(hostBoundIdentities.StateIdentity, stateIdentitySchemaVersion+"@sha256:") {
 		t.Fatalf("host contract was not bound to physical state identity: %#v", hostBoundIdentities)
 	}
-	actuated := intent
+	actuated := config
 	actuated.State.PowerMode = "MODE_15W_6CORE"
 	actuated.Actuation = &profilingrun.ActuationContract{
 		PowerMode:  actuated.State.PowerMode,
@@ -364,7 +364,7 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	}
 }
 
-func admissionIntent() profilingrun.RunConfig {
+func admissionRunConfig() profilingrun.RunConfig {
 	return profilingrun.RunConfig{
 		State: profilingrun.ExecutionState{
 			DeviceClass: "lattepanda", Model: "mobilenet",
@@ -411,21 +411,21 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.RunConfig
-	if err := json.Unmarshal(intentBytes, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(intentBytes, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	if err := intent.Validate(); err != nil {
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
 
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	podUID := "run-pod"
-	targetDuration := float64(intent.Measurement.DurationSeconds)
+	targetDuration := float64(config.Measurement.DurationSeconds)
 	samples := make([]metricobserver.Sample, 30)
 	for index := range samples {
 		samples[index] = metricobserver.Sample{
@@ -440,8 +440,8 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	workload := workloadobserver.Result{
 		SchemaVersion: workloadobserver.ResultSchemaVersion,
 		Target: workloadobserver.TargetIdentity{
-			NodeName: intent.TargetNode.Name,
-			NodeUID:  intent.TargetNode.UID,
+			NodeName: config.TargetNode.Name,
+			NodeUID:  config.TargetNode.UID,
 		},
 		Run: workloadobserver.RunIdentity{
 			Namespace: "chill-system",
@@ -456,32 +456,32 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 		EventLimit:             10,
 		InitialActivePods: []workloadobserver.Pod{{
 			Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-			Phase: "Running", Images: []string{intent.Images.Runtime},
+			Phase: "Running", Images: []string{config.Images.Runtime},
 		}},
 		FinalActivePods: []workloadobserver.Pod{{
 			Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-			Phase: "Running", Images: []string{intent.Images.Runtime},
+			Phase: "Running", Images: []string{config.Images.Runtime},
 		}},
 		Continuous: true,
 	}
 	raw := profilerevidence.RawMeasurement{
 		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
-		RunConfig:     intent,
+		RunConfig:     config,
 		PodUID:        podUID,
 		Runtime: profilingrun.RuntimeResult{
 			SchemaVersion:             profilingrun.RuntimeResultSchemaVersion,
 			Status:                    "Succeeded",
 			ExperimentID:              podUID,
-			NodeName:                  intent.TargetNode.Name,
-			Model:                     intent.State.Model,
+			NodeName:                  config.TargetNode.Name,
+			Model:                     config.State.Model,
 			Architecture:              "x86_64",
-			Runtime:                   intent.State.RuntimeFamily,
+			Runtime:                   config.State.RuntimeFamily,
 			RuntimeVersion:            "1.16.0",
-			Backend:                   intent.State.Backend,
-			Provider:                  intent.State.Backend,
-			AvailableProviders:        []string{intent.State.Backend},
-			BatchSize:                 intent.Measurement.Batch,
-			WarmupIterations:          intent.Measurement.WarmupIterations,
+			Backend:                   config.State.Backend,
+			Provider:                  config.State.Backend,
+			AvailableProviders:        []string{config.State.Backend},
+			BatchSize:                 config.Measurement.Batch,
+			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).Format(time.RFC3339Nano),
 			InferenceCount:            2,
 			MeasurementMode:           "duration",
@@ -490,21 +490,21 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 			MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds:     &targetDuration,
 			OutputValidation: profilingrun.OutputValidation{
-				Method: intent.Measurement.OutputValidation, Passed: true,
-				OutputShapes: [][]int{{intent.Measurement.Batch, 1000}},
+				Method: config.Measurement.OutputValidation, Passed: true,
+				OutputShapes: [][]int{{config.Measurement.Batch, 1000}},
 			},
 			CPUContract: profilingrun.RuntimeCPU{
-				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
-				ORTInterOpThreads: intent.CPU.ORTInterOpThreads,
-				AffinityCPUCount:  intent.CPU.ORTIntraOpThreads,
+				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
+				ORTInterOpThreads: config.CPU.ORTInterOpThreads,
+				AffinityCPUCount:  config.CPU.ORTIntraOpThreads,
 				CPUSetEffective:   "0-3",
 				CgroupCPUStatDelta: map[string]int{
 					"user_usec": 1, "system_usec": 2,
 				},
 			},
 			DerivedContract: profilingrun.DerivedContract{
-				Backend: intent.State.Backend, Provider: intent.State.Backend,
-				NodeSnapshot: intent.TargetNode,
+				Backend: config.State.Backend, Provider: config.State.Backend,
+				NodeSnapshot: config.TargetNode,
 			},
 			RepetitionResults: []profilingrun.Repetition{{
 				Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
@@ -515,16 +515,16 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
-				Kind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
-				Endpoint: intent.Metrics.Endpoint, Metric: intent.Metrics.PowerMetric,
-				MetricLabels: intent.Metrics.MetricLabels, ThermalEndpoint: intent.Metrics.ThermalEndpoint,
+				Kind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
+				Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric,
+				MetricLabels: config.Metrics.MetricLabels, ThermalEndpoint: config.Metrics.ThermalEndpoint,
 				ThermalMetrics: &metricobserver.ThermalMetricIdentity{
-					ObservationAvailable:      intent.Metrics.ThermalMetrics.ObservationAvailable,
-					Active:                    intent.Metrics.ThermalMetrics.Active,
-					CPUCoreThrottleEvents:     intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
-					CPUPackageThrottleEvents:  intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
-					Latched:                   intent.Metrics.ThermalMetrics.Latched,
-					MaximumTemperatureCelsius: intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
+					ObservationAvailable:      config.Metrics.ThermalMetrics.ObservationAvailable,
+					Active:                    config.Metrics.ThermalMetrics.Active,
+					CPUCoreThrottleEvents:     config.Metrics.ThermalMetrics.CPUCoreThrottleEvents,
+					CPUPackageThrottleEvents:  config.Metrics.ThermalMetrics.CPUPackageThrottleEvents,
+					Latched:                   config.Metrics.ThermalMetrics.Latched,
+					MaximumTemperatureCelsius: config.Metrics.ThermalMetrics.MaximumTemperatureCelsius,
 				},
 			},
 			StartedAt: started, EndedAt: started.Add(31 * time.Second), Samples: samples,
@@ -553,7 +553,7 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		RunConfig:     intent, RawMeasurement: rawIdentity,
+		RunConfig:     config, RawMeasurement: rawIdentity,
 		Terminal: profilerevidence.TerminalFacts{
 			Job: profilerevidence.JobTerminalFacts{
 				Namespace: "chill-system", Name: "profiling-run", UID: "job-uid",
@@ -561,20 +561,20 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 			},
 			Pod: profilerevidence.PodTerminalFacts{
 				Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-				ControllerOwnerUID: "job-uid", NodeName: intent.TargetNode.Name, Phase: "Succeeded",
+				ControllerOwnerUID: "job-uid", NodeName: config.TargetNode.Name, Phase: "Succeeded",
 			},
-			Node: profilerevidence.NodeTerminalFacts{Name: intent.TargetNode.Name, UID: intent.TargetNode.UID},
+			Node: profilerevidence.NodeTerminalFacts{Name: config.TargetNode.Name, UID: config.TargetNode.UID},
 			Containers: []profilerevidence.ContainerTerminal{
-				container("metric-observer", intent.Images.MetricObserver),
-				container("workload-observer", intent.Images.WorkloadObserver),
-				container("runtime", intent.Images.Runtime),
-				container("artifact", intent.Images.Artifact),
+				container("metric-observer", config.Images.MetricObserver),
+				container("workload-observer", config.Images.WorkloadObserver),
+				container("runtime", config.Images.Runtime),
+				container("artifact", config.Images.Artifact),
 			},
 			NodeWorkload: profilerevidence.NodeWorkload{
 				ObservedAt: completed.Add(time.Second),
 				Pods: []profilerevidence.WorkloadPod{{
 					Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
-					Phase: "Succeeded", Images: []string{intent.Images.Runtime},
+					Phase: "Succeeded", Images: []string{config.Images.Runtime},
 				}},
 			},
 		},

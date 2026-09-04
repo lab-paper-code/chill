@@ -237,7 +237,7 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 
 func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
-	intent := profilingrun.RunConfig{
+	config := profilingrun.RunConfig{
 		Candidate: profilingrun.CandidateIdentity{
 			Inputs: resolved.Inputs, ExecutionPath: selection.ExecutionPath, Verdict: resolved.Verdict,
 		},
@@ -248,7 +248,7 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 		},
 		TargetNode: profilingrun.NodeSnapshot{Architecture: resolved.DeviceArchitecture},
 	}
-	if err := profilingrun.ValidateCandidateReport(resolved.ReportBytes, intent); err != nil {
+	if err := profilingrun.ValidateCandidateReport(resolved.ReportBytes, config); err != nil {
 		t.Fatalf("generated report is not consumable by RunConfig: %v", err)
 	}
 

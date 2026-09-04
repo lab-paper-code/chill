@@ -11,12 +11,12 @@ import (
 const testArtifactPath = "/artifact/model.onnx"
 
 func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
-	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = testArtifactPath
-	addWorkloadObservation(&intent)
+	config := testRunConfig(t)
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&config)
 
-	plan, err := deriveConfiguredExecutionPlan(t, intent)
+	plan, err := deriveConfiguredExecutionPlan(t, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,20 +41,20 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 }
 
 func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
-	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = testArtifactPath
-	addWorkloadObservation(&intent)
-	intent.Candidate.ExecutionPath = "tensorrt"
-	if _, err := deriveConfiguredExecutionPlan(t, intent); err == nil {
+	config := testRunConfig(t)
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&config)
+	config.Candidate.ExecutionPath = "tensorrt"
+	if _, err := deriveConfiguredExecutionPlan(t, config); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want unsupported path rejection")
 	}
 }
 
 func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
-	intent, _ := rknnPreparationFixture(t)
-	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
-	policy := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
+	config, _ := rknnPreparationFixture(t)
+	config.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	policy := testExecutionPolicySpec(config.Measurement.WorkloadMode)
 	policy.ExecutionPath = profilingrun.RKNNLiteExecutionPath
 	raw, err := yaml.Marshal(ExecutionPolicyCatalog{
 		SchemaVersion: ExecutionPolicyCatalogSchemaVersion,
@@ -63,11 +63,11 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen, err := FreezeConfiguredExecutionPolicy(raw, intent, validExecutionPolicySource())
+	frozen, err := FreezeConfiguredExecutionPolicy(raw, config, validExecutionPolicySource())
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := DeriveExecutionPlan(intent, frozen)
+	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,17 +77,17 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 }
 
 func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
-	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = testArtifactPath
-	addWorkloadObservation(&intent)
-	intent.Measurement.WarmupIterations = 0
-	intent.Measurement.SettlingDurationSeconds = 60
-	intent.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	intent.Measurement.InputGenerator = profilingrun.NoInputGenerator
-	intent.Measurement.OutputValidation = profilingrun.NoOutputValidation
+	config := testRunConfig(t)
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&config)
+	config.Measurement.WarmupIterations = 0
+	config.Measurement.SettlingDurationSeconds = 60
+	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	config.Measurement.InputGenerator = profilingrun.NoInputGenerator
+	config.Measurement.OutputValidation = profilingrun.NoOutputValidation
 
-	plan, err := deriveConfiguredExecutionPlan(t, intent)
+	plan, err := deriveConfiguredExecutionPlan(t, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,22 +101,22 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 }
 
 func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testing.T) {
-	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
-	intent.State.ArtifactPath = testArtifactPath
-	addWorkloadObservation(&intent)
-	intent.Metrics.DurationSeconds = 60_000
-	intent.Metrics.IntervalMilliseconds = 1000
-	if _, err := deriveConfiguredExecutionPlan(t, intent); err == nil {
+	config := testRunConfig(t)
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = testArtifactPath
+	addWorkloadObservation(&config)
+	config.Metrics.DurationSeconds = 60_000
+	config.Metrics.IntervalMilliseconds = 1000
+	if _, err := deriveConfiguredExecutionPlan(t, config); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want bounded event-capacity rejection")
 	}
 }
 
 func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
+	config := currentExecutionPolicyTestRunConfig(t)
 	frozen, err := FreezeConfiguredExecutionPolicy(
 		executionPolicyCatalogFixture(t),
-		intent,
+		config,
 		validExecutionPolicySource(),
 	)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
 	frozen.Policy.MaxLatencySamples = 2048
 	frozen.Policy.ObserverCPURequest = "10m"
 	frozen.Policy.ObserverCPULimit = "200m"
-	plan, err := DeriveExecutionPlan(intent, frozen)
+	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,21 +137,21 @@ func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
 	}
 }
 
-func deriveConfiguredExecutionPlan(t *testing.T, intent profilingrun.RunConfig) (ExecutionPlan, error) {
+func deriveConfiguredExecutionPlan(t *testing.T, config profilingrun.RunConfig) (ExecutionPlan, error) {
 	t.Helper()
 	policy, err := FreezeConfiguredExecutionPolicy(
 		executionPolicyCatalogFixture(t),
-		intent,
+		config,
 		validExecutionPolicySource(),
 	)
 	if err != nil {
 		return ExecutionPlan{}, err
 	}
-	return DeriveExecutionPlan(intent, policy)
+	return DeriveExecutionPlan(config, policy)
 }
 
-func addWorkloadObservation(intent *profilingrun.RunConfig) {
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
+func addWorkloadObservation(config *profilingrun.RunConfig) {
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	intent.Workload = profilingrun.CurrentWorkloadContract()
+	config.Workload = profilingrun.CurrentWorkloadContract()
 }

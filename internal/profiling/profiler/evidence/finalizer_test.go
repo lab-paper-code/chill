@@ -14,9 +14,9 @@ import (
 )
 
 func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	record := validExecutionEvidence(t, intent, raw)
+	config := loadRunConfig(t)
+	raw := validRaw(t, config)
+	record := validExecutionEvidence(t, config, raw)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -69,9 +69,9 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 }
 
 func TestFinalizerReportsConcurrentImmutableWinnerAsReused(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	record := validExecutionEvidence(t, intent, raw)
+	config := loadRunConfig(t)
+	raw := validRaw(t, config)
+	record := validExecutionEvidence(t, config, raw)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -101,9 +101,9 @@ func TestFinalizerReportsConcurrentImmutableWinnerAsReused(t *testing.T) {
 }
 
 func TestFinalizerPreservesReadAfterCreateError(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	record := validExecutionEvidence(t, intent, raw)
+	config := loadRunConfig(t)
+	raw := validRaw(t, config)
+	record := validExecutionEvidence(t, config, raw)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -132,9 +132,9 @@ func TestFinalizerPreservesReadAfterCreateError(t *testing.T) {
 }
 
 func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
-	intent := idleIntent(t)
-	raw := validIdleRaw(t, intent)
-	record := validIdleExecutionEvidence(t, intent, raw)
+	config := idleRunConfig(t)
+	raw := validIdleRaw(t, config)
+	record := validIdleExecutionEvidence(t, config, raw)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -208,9 +208,9 @@ func TestFinalizerAndLoaderPreserveActuatedEvidenceSchema(t *testing.T) {
 }
 
 func TestFinalizerFailsClosed(t *testing.T) {
-	intent := loadIntent(t)
-	raw := validRaw(t, intent)
-	record := validExecutionEvidence(t, intent, raw)
+	config := loadRunConfig(t)
+	raw := validRaw(t, config)
+	record := validExecutionEvidence(t, config, raw)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

@@ -112,7 +112,7 @@ does not compare them. No CRD, registry controller, signing, attestation, or
 generic provenance schema is introduced.
 
 Configured runtime declarations now live in the trusted Profiler fact source
-and are bound by exact source and content identity when a Run is frozen. They
+and are bound by exact source and content identity when a RunConfig is resolved. They
 are reusable across models because the artifact carrier belongs to
 `ModelSpec`. A consumer treats a missing or untrusted declaration as an input
 failure and never rebinds an older declaration to a new image.
@@ -123,10 +123,10 @@ execution-facts v1alpha6 separately retains an expected host-library, driver,
 platform-compatible token, device-path, and Kubernetes allocation contract.
 It also keeps privileged mode and supplemental groups in a distinct runtime-
 access contract because those are delivery requirements, not physical state.
-Candidate-report v1alpha10 freezes these groups plus the selected derived
+Candidate-report v1alpha10 carries these groups plus the selected derived
 artifact's target platform, declared batch sizes, runtime input shape, and
-the exact typed actuator target for a non-fixed selection into the immutable
-Run input. Intent v1alpha9 retains the order-normalized physical
+the exact typed actuator target for a non-fixed selection into RunConfig
+resolution. RunConfig v1alpha14 retains the order-normalized physical
 host contract in state and defines the optional typed actuation binding
 consumed by Plan 6. The execution-facts decoder accepts only v1alpha6 and
 rejects the retired model-specific v1alpha5 document.
@@ -256,7 +256,7 @@ generic adapter framework is introduced.
 - Kubernetes Job or Pod generation
 - runtime execution validation
 - MetricObserver synchronization
-- profile admission, energy, `b_sat`, or SLO
+- profile admission, energy, batch optimization, or SLO
 - generic planner/evaluator interfaces, registries, factories, or plugin maps
 
 ## Implementation sequence

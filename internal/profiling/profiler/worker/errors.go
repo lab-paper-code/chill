@@ -3,7 +3,7 @@ package worker
 import "errors"
 
 var (
-	// ErrExecutionContract classifies invalid or drifted frozen and delivery inputs.
+	// ErrExecutionContract classifies invalid or drifted RunConfig and delivery inputs.
 	ErrExecutionContract = errors.New("invalid worker execution contract")
 	// ErrRuntimeMeasurement classifies runtime, provider, inference, and output failures.
 	ErrRuntimeMeasurement = errors.New("runtime measurement failed")

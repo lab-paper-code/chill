@@ -5,7 +5,7 @@
 ## Status
 
 Implemented. The causal Pod-status end-fence success path was live-verified
-with three sequential, same-intent Runs admitted by `wall-power-v2`. The
+with three sequential, same-RunConfig Runs admitted by `wall-power-v2`. The
 read-only identity and raw-evidence schema remain unchanged, while admission
 fails closed on material events with ambiguous end-drain timestamps.
 
@@ -27,7 +27,7 @@ network, or application activity from Pod presence.
 
 WorkloadObserver owns:
 
-- establishing an initial Pod list for the frozen target Node;
+- establishing an initial Pod list for the RunConfig target Node;
 - continuing from that list's Kubernetes `resourceVersion` with a Pod watch;
 - aligning its coverage with the runtime measurement start and end signals;
 - retaining bounded membership changes and the active set at both boundaries;
@@ -35,7 +35,7 @@ WorkloadObserver owns:
   and
 - writing one atomic Job-local result for the Measurement Worker.
 
-The Measurement Worker validates the result against the frozen intent and
+The Measurement Worker validates the result against RunConfig and
 includes it in raw evidence. Profiler admission decides whether coverage is
 sufficient, another CHILL measurement overlapped the Run, or external Pod
 membership changed during the window. Kubernetes remains authoritative for
@@ -131,7 +131,7 @@ Admission can set the window-known fact only when:
 
 - list-to-watch continuity is established;
 - observer coverage surrounds the runtime measurement window;
-- target Node, Run Pod, Job, and intent identities match;
+- target Node, Run Pod, Job, and RunConfig identities match;
 - no watch gap, expired history, overflow, or observer failure exists;
 - no material event has an ambiguous post-runtime drain timestamp; and
 - the workload result passes strict evidence validation.
@@ -218,5 +218,5 @@ or pauses those external workloads.
 - process-level activity attribution;
 - node isolation, workload eviction, or scheduling control;
 - idle-baseline or repeated-trial orchestration;
-- `b_sat`, SLO, `DeviceProfile`, or scheduler publication; and
+- batch-energy optimization, SLO, `DeviceProfile`, or scheduler publication; and
 - long-term workload monitoring.

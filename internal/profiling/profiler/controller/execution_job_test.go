@@ -56,9 +56,9 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
-	frozen := resolvedRunForPrepared(t, prepared)
+	resolved := resolvedRunForPrepared(t, prepared)
 
-	job, err := buildExecutionJob(run, frozen, binding, testExecutionJobOptions(), scheme)
+	job, err := buildExecutionJob(run, resolved, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	if artifact.Image != prepared.RunConfig.Images.Artifact ||
 		len(artifact.Args) != 4 || artifact.Args[2] != prepared.RunConfig.State.ArtifactPath ||
 		artifact.Args[3] != cpuORTModelDestination {
-		t.Fatalf("artifact supply was not frozen into the Job: %#v", artifact)
+		t.Fatalf("artifact supply was not resolved into the Job: %#v", artifact)
 	}
 	runtimeContainer := findContainer(t, pod.Containers, "runtime")
 	if _, err := argumentValue(runtimeContainer.Args, runConfigArgumentPrefix); err != nil {
@@ -244,10 +244,10 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 		WorkloadMode:    profilingrun.IdleModelLoadedWorkloadMode,
 		InputGenerator:  profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
 	}
-	frozen := resolvedRunForPrepared(t, prepared)
+	resolved := resolvedRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(
 		run,
-		frozen,
+		resolved,
 		testEvidenceStoreBinding(),
 		testExecutionJobOptions(),
 		executionJobTestScheme(t),
@@ -259,7 +259,7 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recordedPolicy.Policy.Name != frozen.ExecutionPolicy.Policy.Name || job.Spec.ActiveDeadlineSeconds == nil ||
+	if recordedPolicy.Policy.Name != resolved.ExecutionPolicy.Policy.Name || job.Spec.ActiveDeadlineSeconds == nil ||
 		*job.Spec.ActiveDeadlineSeconds != 271 {
 		t.Fatalf("idle Job policy drifted: %#v", job)
 	}
@@ -272,7 +272,7 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 func TestBuildExecutionJobUsesConfiguredExecutionPolicyIdentity(t *testing.T) {
 	run := testRun()
 	prepared := currentPreparedRun(t)
-	frozen := resolvedRunForPrepared(t, prepared)
+	resolved := resolvedRunForPrepared(t, prepared)
 	policy, err := profiler.FreezeConfiguredExecutionPolicy(
 		controllerExecutionPolicyCatalog(t),
 		prepared.RunConfig,
@@ -288,10 +288,10 @@ func TestBuildExecutionJobUsesConfiguredExecutionPolicyIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frozen.ExecutionPolicy = policy
+	resolved.ExecutionPolicy = policy
 	job, err := buildExecutionJob(
 		run,
-		frozen,
+		resolved,
 		testEvidenceStoreBinding(),
 		testExecutionJobOptions(),
 		executionJobTestScheme(t),
@@ -341,8 +341,8 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	binding := testEvidenceStoreBinding()
 	scheme := executionJobTestScheme(t)
-	frozen := resolvedRunForPrepared(t, prepared)
-	desired, err := buildExecutionJob(run, frozen, binding, testExecutionJobOptions(), scheme)
+	resolved := resolvedRunForPrepared(t, prepared)
+	desired, err := buildExecutionJob(run, resolved, binding, testExecutionJobOptions(), scheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, created, err := jobs.Ensure(ctx, run, frozen)
+	recovered, created, err := jobs.Ensure(ctx, run, resolved)
 	if err != nil || created || recovered.UID != testJobUID {
 		t.Fatalf("expected exact Job recovery, got created=%v job=%#v err=%v", created, recovered, err)
 	}
@@ -380,7 +380,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err := kubeClient.Update(ctx, retained); err != nil {
 		t.Fatal(err)
 	}
-	if recovered, created, err = jobs.Ensure(ctx, run, frozen); err != nil || created || recovered.UID != testJobUID {
+	if recovered, created, err = jobs.Ensure(ctx, run, resolved); err != nil || created || recovered.UID != testJobUID {
 		t.Fatalf("semantically equal Job recovery failed: created=%v job=%#v err=%v", created, recovered, err)
 	}
 	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}, retained); err != nil {
@@ -390,7 +390,7 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err := kubeClient.Update(ctx, retained); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := jobs.Ensure(ctx, run, frozen); err == nil || !strings.Contains(err.Error(), "recorded execution contract") {
+	if _, _, err := jobs.Ensure(ctx, run, resolved); err == nil || !strings.Contains(err.Error(), "recorded execution contract") {
 		t.Fatalf("conflicting retained Job accepted: %v", err)
 	}
 }
@@ -426,10 +426,10 @@ func TestExecutionJobsRecoverConcurrentlyCreatedJobAndRejectConflict(t *testing.
 			run := testRun()
 			prepared := currentPreparedRun(t)
 			scheme := executionJobTestScheme(t)
-			frozen := resolvedRunForPrepared(t, prepared)
+			resolved := resolvedRunForPrepared(t, prepared)
 			retainedBinding := testEvidenceStoreBinding()
 			concurrent, err := buildExecutionJob(
-				run, frozen, retainedBinding, testExecutionJobOptions(), scheme,
+				run, resolved, retainedBinding, testExecutionJobOptions(), scheme,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -452,7 +452,7 @@ func TestExecutionJobsRecoverConcurrentlyCreatedJobAndRejectConflict(t *testing.
 				t.Fatal(err)
 			}
 
-			recovered, created, ensureErr := jobs.Ensure(ctx, run, frozen)
+			recovered, created, ensureErr := jobs.Ensure(ctx, run, resolved)
 			if test.wantError != "" {
 				if ensureErr == nil || !strings.Contains(ensureErr.Error(), test.wantError) || recovered != nil || created {
 					t.Fatalf("conflicting concurrent Job result: created=%v job=%#v err=%v", created, recovered, ensureErr)
@@ -487,20 +487,20 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.PreparedRun {
 	t.Helper()
 	prepared := currentPreparedRun(t)
-	intent := &prepared.RunConfig
-	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
-	intent.State.DeviceClass = "orangepi-5-plus-16g"
-	intent.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
-	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	intent.State.Backend = profilingrun.RKNNLiteBackend
-	intent.TargetNode.Name = "orangepi5plus"
-	intent.TargetNode.Architecture = testARM64Architecture
-	intent.TargetNode.AllocatableCPU = "8"
-	intent.CPU.Limit = "8"
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
-	intent.Metrics.NodeName = intent.TargetNode.Name
+	config := &prepared.RunConfig
+	config.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+	config.State.DeviceClass = "orangepi-5-plus-16g"
+	config.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
+	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
+	config.State.Backend = profilingrun.RKNNLiteBackend
+	config.TargetNode.Name = "orangepi5plus"
+	config.TargetNode.Architecture = testARM64Architecture
+	config.TargetNode.AllocatableCPU = "8"
+	config.CPU.Limit = "8"
+	config.CPU.ORTIntraOpThreads = 0
+	config.CPU.ORTInterOpThreads = 0
+	config.Metrics.NodeName = config.TargetNode.Name
 
 	host := profilingrun.CandidateReportHostContract{
 		Libraries: []profilingrun.CandidateReportHostLibrary{{
@@ -520,8 +520,8 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 			ResourceName: resourceName, ExclusivityClaimed: resourceName != "",
 		},
 	}
-	intent.State.HostContract = &host
-	intent.Delivery = profilingrun.CandidateRuntimeDelivery{
+	config.State.HostContract = &host
+	config.Delivery = profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
 		},
