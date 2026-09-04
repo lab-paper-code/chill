@@ -25,7 +25,7 @@ The NodeActuator transition path is implemented under
 `NodeActuation` records one state change toward a declared target, independently
 reads that target back, settles it, releases the Node Lease at terminal `Ready`,
 and leaves the established state in place. Execution evidence uses
-`chill.dacs.io/profiling-execution-evidence.v1alpha13`, retains the confirming
+`chill.dacs.io/profiling-execution-evidence.v1alpha14`, retains the confirming
 transition identity, target observation, and completion time, and validates
 the target against frozen intent. A permanent semantic contradiction produces
 terminal `EvidenceVerified=False` with reason `EvidenceInvalid` instead of an

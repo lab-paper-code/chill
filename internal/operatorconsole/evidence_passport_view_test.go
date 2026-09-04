@@ -24,7 +24,7 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 	execution.RawMeasurement.Store = "chill-evidence"
 	execution.RawMeasurement.Key = rawObjectKey
 	execution.RawMeasurement.Size = 512
-	execution.Intent = profilingrun.Intent{Workload: profilingrun.CurrentWorkloadContract()}
+	execution.RunConfig = profilingrun.RunConfig{Workload: profilingrun.CurrentWorkloadContract()}
 	workload := passportWorkloadResult(t, started)
 	measurement := profilerevidence.RawMeasurement{
 		Runtime: profilingrun.RuntimeResult{
@@ -179,8 +179,8 @@ func passportFixture() (*edgev1alpha1.ProfilingRun, profilerevidence.ExecutionEv
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			ObservedGeneration: 1,
+			Job:                &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},

@@ -8,19 +8,18 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha13"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha14"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather
 // than duplicates the immutable raw measurement object.
 type ExecutionEvidence struct {
-	SchemaVersion   string                       `json:"schemaVersion"`
-	Intent          profilingrun.Intent          `json:"intent"`
-	CandidateReport profilingrun.CandidateReport `json:"candidateReport"`
-	RawMeasurement  evidencestore.ObjectIdentity `json:"rawMeasurement"`
-	Terminal        TerminalFacts                `json:"terminal"`
-	Actuation       *ActuationFacts              `json:"actuation,omitempty"`
-	FinalizedAt     time.Time                    `json:"finalizedAt"`
+	SchemaVersion  string                       `json:"schemaVersion"`
+	RunConfig      profilingrun.RunConfig       `json:"runConfig"`
+	RawMeasurement evidencestore.ObjectIdentity `json:"rawMeasurement"`
+	Terminal       TerminalFacts                `json:"terminal"`
+	Actuation      *ActuationFacts              `json:"actuation,omitempty"`
+	FinalizedAt    time.Time                    `json:"finalizedAt"`
 }
 
 // ActuationFacts are Profiler-observed Kubernetes facts from the one-way

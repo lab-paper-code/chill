@@ -78,7 +78,7 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 	}
 }
 
-func validRuntimeResult(intent Intent) RuntimeResult {
+func validRuntimeResult(intent RunConfig) RuntimeResult {
 	targetDuration := float64(intent.Measurement.DurationSeconds)
 	return RuntimeResult{
 		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded",
@@ -242,7 +242,7 @@ func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 	}
 }
 
-func validRKNNIntent(idle bool) Intent {
+func validRKNNIntent(idle bool) RunConfig {
 	intent := validIntent()
 	intent.Candidate.ExecutionPath = RKNNLiteExecutionPath
 	intent.State.Artifact = "model-rk3588-bs1"

@@ -12,7 +12,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha9"
+const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha10"
 
 type RKNNLiteRuntimeConfig struct {
 	Command                 []string
@@ -33,7 +33,7 @@ type RKNNLiteRuntimeConfig struct {
 }
 
 // RKNNLiteRuntime invokes the trusted RKNNLite entrypoint. The generic result
-// validator checks the frozen intent; this adapter additionally compares the
+// validator checks the RunConfig; this adapter additionally compares the
 // observed mutable host/runtime facts with the verified candidate delivery.
 type RKNNLiteRuntime struct {
 	config RKNNLiteRuntimeConfig
@@ -42,21 +42,20 @@ type RKNNLiteRuntime struct {
 var _ Runtime = (*RKNNLiteRuntime)(nil)
 
 type rknnLiteRequest struct {
-	SchemaVersion                    string                                `json:"schemaVersion"`
-	Intent                           profilingrun.Intent                   `json:"intent"`
-	PodUID                           string                                `json:"podUID"`
-	ScheduledNodeName                string                                `json:"scheduledNodeName"`
-	ModelPath                        string                                `json:"modelPath"`
-	Candidate                        profilingrun.CandidateRuntimeDelivery `json:"candidate"`
-	ObserverReadyPaths               []string                              `json:"observerReadyPaths"`
-	WorkloadWindowStartPath          string                                `json:"workloadWindowStartPath"`
-	MeasurementStartPath             string                                `json:"measurementStartPath"`
-	WorkloadWindowReadyPath          string                                `json:"workloadWindowReadyPath"`
-	MeasurementEndPath               string                                `json:"measurementEndPath"`
-	ObserverReadyTimeoutMilliseconds int64                                 `json:"observerReadyTimeoutMilliseconds"`
-	MaxLatencySamples                int                                   `json:"maxLatencySamples"`
-	MaxInputBytes                    int64                                 `json:"maxInputBytes"`
-	MaxResultBytes                   int64                                 `json:"maxResultBytes"`
+	SchemaVersion                    string                 `json:"schemaVersion"`
+	RunConfig                        profilingrun.RunConfig `json:"runConfig"`
+	PodUID                           string                 `json:"podUID"`
+	ScheduledNodeName                string                 `json:"scheduledNodeName"`
+	ModelPath                        string                 `json:"modelPath"`
+	ObserverReadyPaths               []string               `json:"observerReadyPaths"`
+	WorkloadWindowStartPath          string                 `json:"workloadWindowStartPath"`
+	MeasurementStartPath             string                 `json:"measurementStartPath"`
+	WorkloadWindowReadyPath          string                 `json:"workloadWindowReadyPath"`
+	MeasurementEndPath               string                 `json:"measurementEndPath"`
+	ObserverReadyTimeoutMilliseconds int64                  `json:"observerReadyTimeoutMilliseconds"`
+	MaxLatencySamples                int                    `json:"maxLatencySamples"`
+	MaxInputBytes                    int64                  `json:"maxInputBytes"`
+	MaxResultBytes                   int64                  `json:"maxResultBytes"`
 }
 
 func NewRKNNLiteRuntime(config RKNNLiteRuntimeConfig) (*RKNNLiteRuntime, error) {
@@ -115,11 +114,11 @@ func (r *RKNNLiteRuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
-	intent, err := request.Intent.Record()
+	runConfig, err := request.RunConfig.Record()
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if !profilingrun.IsSupportedRKNNLiteIntent(intent) {
+	if !profilingrun.IsSupportedRKNNLiteRunConfig(runConfig) {
 		return RuntimeMeasurement{}, errors.New("RKNNLite adapter received an unsupported runtime path")
 	}
 	payload, err := r.encodeRequest(request)
@@ -131,16 +130,16 @@ func (r *RKNNLiteRuntime) Measure(
 	); err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+	if runConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		var result profilingrun.IdleRuntimeResult
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite idle result: %w", err)
 		}
-		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent, request.PodUID, result)
+		verified, err := profilingrun.VerifyIdleRuntimeResult(request.RunConfig, request.PodUID, result)
 		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite idle result: %w", err)
 		}
-		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, nil, intent.Measurement.Batch); err != nil {
+		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, nil, runConfig.Measurement.Batch); err != nil {
 			return RuntimeMeasurement{}, err
 		}
 		return idleRuntimeMeasurement(verified), nil
@@ -149,25 +148,25 @@ func (r *RKNNLiteRuntime) Measure(
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("read RKNNLite result: %w", err)
 	}
-	verified, err := profilingrun.VerifyRuntimeResult(request.Intent, request.PodUID, result)
+	verified, err := profilingrun.VerifyRuntimeResult(request.RunConfig, request.PodUID, result)
 	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite result: %w", err)
 	}
-	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.InputShape, intent.Measurement.Batch); err != nil {
+	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.InputShape, runConfig.Measurement.Batch); err != nil {
 		return RuntimeMeasurement{}, err
 	}
 	return activeRuntimeMeasurement(verified), nil
 }
 
 func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
-	intent, err := runtimeRequest.Intent.Record()
+	runConfig, err := runtimeRequest.RunConfig.Record()
 	if err != nil {
-		return nil, fmt.Errorf("read RKNNLite intent: %w", err)
+		return nil, fmt.Errorf("read RKNNLite RunConfig: %w", err)
 	}
 	request := rknnLiteRequest{
-		SchemaVersion: rknnLiteRequestSchemaVersion, Intent: intent,
+		SchemaVersion: rknnLiteRequestSchemaVersion, RunConfig: runConfig,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
-		ModelPath: r.config.ModelPath, Candidate: copyRuntimeDelivery(r.config.Delivery),
+		ModelPath:                        r.config.ModelPath,
 		ObserverReadyPaths:               r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,
 		MeasurementStartPath:             r.config.MeasurementStartPath,

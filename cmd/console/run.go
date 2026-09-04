@@ -44,7 +44,7 @@ type consoleCurvePlanProjector struct {
 
 func (p consoleCurvePlanProjector) Project(
 	ctx context.Context,
-	campaign *edgev1alpha1.BatchSaturation,
+	campaign *edgev1alpha1.BatchEnergyOptimization,
 ) (profilederivation.CurvePlan, error) {
 	plan, _, err := p.projector.Project(ctx, campaign)
 	return plan, err
@@ -86,7 +86,7 @@ func newEvidencePassportQuery(
 func newCampaignResultQuery(
 	reader client.Reader,
 	opts options,
-) (*consolekube.KubernetesBatchSaturationResultQuery, error) {
+) (*consolekube.KubernetesBatchEnergyOptimizationResultQuery, error) {
 	resolver, err := profilerkube.NewKubernetesEvidenceStoreResolver(
 		reader,
 		profilerkube.EvidenceStoreResolverOptions{
@@ -96,7 +96,7 @@ func newCampaignResultQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Store resolver: %w", err)
 	}
-	results, err := consolekube.NewKubernetesBatchSaturationResultQuery(
+	results, err := consolekube.NewKubernetesBatchEnergyOptimizationResultQuery(
 		reader,
 		campaignResultObjectReader{
 			reader: reader, resolver: resolver,
@@ -104,7 +104,7 @@ func newCampaignResultQuery(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("construct batch-saturation result query: %w", err)
+		return nil, fmt.Errorf("construct batch-energy-optimization result query: %w", err)
 	}
 	return results, nil
 }
@@ -113,7 +113,7 @@ func newCampaignResultQuery(
 func newCampaignPreflightQuery(
 	reader client.Reader,
 	opts options,
-) (*consolekube.KubernetesBatchSaturationPreflightQuery, error) {
+) (*consolekube.KubernetesBatchEnergyOptimizationPreflightQuery, error) {
 	candidates, err := profilerkube.NewKubernetesCandidateResolver(
 		reader,
 		profilerkube.CandidateResolverOptions{
@@ -170,11 +170,11 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct curve-plan projector: %w", err)
 	}
-	preflights, err := consolekube.NewKubernetesBatchSaturationPreflightQuery(
+	preflights, err := consolekube.NewKubernetesBatchEnergyOptimizationPreflightQuery(
 		consoleCurvePlanProjector{projector: projector},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("construct batch-saturation preflight query: %w", err)
+		return nil, fmt.Errorf("construct batch-energy-optimization preflight query: %w", err)
 	}
 	return preflights, nil
 }

@@ -17,7 +17,7 @@ type RunEvidenceAdmitter interface {
 	Admit(
 		context.Context,
 		*edgev1alpha1.ProfilingRun,
-		FrozenRun,
+		ResolvedRun,
 		*batchv1.Job,
 		evidencestore.ObjectIdentity,
 	) (profileradmission.Result, error)
@@ -43,32 +43,32 @@ func NewKubernetesEvidenceAdmitterWithRetainedLoader(
 func (a *KubernetesEvidenceAdmitter) Admit(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
+	resolved ResolvedRun,
 	job *batchv1.Job,
 	reference evidencestore.ObjectIdentity,
 ) (profileradmission.Result, error) {
 	if run == nil || job == nil {
 		return profileradmission.Result{}, errors.New("ProfilingRun and measurement Job are required")
 	}
-	if _, err := validateFrozenRunForRun(run, frozen); err != nil {
+	if err := validateResolvedRunForRun(run, resolved); err != nil {
 		return profileradmission.Result{}, err
 	}
-	prepared := frozen.Prepared
+	prepared := resolved.Prepared
 	if run.Status.Job == nil || run.Status.Job.Name != job.Name || run.Status.Job.UID != string(job.UID) ||
 		!metav1.IsControlledBy(job, run) {
 		return profileradmission.Result{}, errors.New("measurement Job does not match the recorded Run execution")
 	}
-	if prepared.Intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+	if prepared.RunConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		verified, err := a.loader.LoadIdle(ctx, run, reference)
 		if err != nil {
 			return profileradmission.Result{}, err
 		}
-		result, _, err := profileradmission.EvaluateIdle(verified.ForAdmission(), frozen.AdmissionPolicy)
+		result, _, err := profileradmission.EvaluateIdle(verified.ForAdmission(), resolved.AdmissionPolicy)
 		return result, err
 	}
 	verified, err := a.loader.Load(ctx, run, reference)
 	if err != nil {
 		return profileradmission.Result{}, err
 	}
-	return profileradmission.Evaluate(verified.ForAdmission(), frozen.AdmissionPolicy)
+	return profileradmission.Evaluate(verified.ForAdmission(), resolved.AdmissionPolicy)
 }

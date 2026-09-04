@@ -62,7 +62,7 @@ func TestKubernetesActuationPolicyResolverFailsClosed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary actuation policy error = %v", err)
 	}
-	if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonActuationPolicyInvalid {
+	if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonActuationPolicyInvalid {
 		t.Fatalf("binary actuation policy classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -80,7 +80,7 @@ func TestKubernetesActuationPolicyResolverFailsClosed(t *testing.T) {
 	}
 	if _, err := resolver.ResolveActuationPolicy(context.Background(), controllerActuationSelection()); err == nil {
 		t.Fatal("malformed actuation-policy catalog was accepted")
-	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonActuationPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonActuationPolicyInvalid {
 		t.Fatalf("malformed actuation-policy classification = %q, terminal=%t", reason, terminal)
 	}
 }

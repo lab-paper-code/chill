@@ -82,7 +82,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	if _, err := resolver.Resolve(context.Background(), "operator-meter-policy"); err == nil ||
 		!strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary policy source error = %v", err)
-	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonAdmissionPolicyInvalid {
 		t.Fatalf("binary policy source classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -97,7 +97,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	)
 	if _, err := malformed.Resolve(context.Background(), "operator-meter-policy"); err == nil {
 		t.Fatal("malformed admission-policy catalog was accepted")
-	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonAdmissionPolicyInvalid {
 		t.Fatalf("malformed policy classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -107,7 +107,7 @@ func TestKubernetesAdmissionPolicyResolverFailsClosed(t *testing.T) {
 	})
 	if _, err := missing.Resolve(context.Background(), "operator-meter-policy"); err == nil {
 		t.Fatal("missing admission-policy ConfigMap was accepted")
-	} else if reason, terminal := profiler.TerminalFreezeReason(err); terminal {
+	} else if reason, terminal := profiler.TerminalResolutionReason(err); terminal {
 		t.Fatalf("missing ConfigMap must remain retryable, got terminal reason %q", reason)
 	}
 }
@@ -133,8 +133,8 @@ func TestKubernetesAdmissionPolicyResolverClassifiesUnknownPolicyAsTerminal(t *t
 		t.Fatal(err)
 	}
 	_, err = resolver.Resolve(context.Background(), "typo-v9")
-	reason, terminal := profiler.TerminalFreezeReason(err)
-	if err == nil || !terminal || reason != profiler.FreezeReasonAdmissionPolicyInvalid ||
+	reason, terminal := profiler.TerminalResolutionReason(err)
+	if err == nil || !terminal || reason != profiler.ResolutionReasonAdmissionPolicyInvalid ||
 		!strings.Contains(err.Error(), "is not configured") {
 		t.Fatalf("unknown policy error = %v, reason=%q terminal=%t", err, reason, terminal)
 	}

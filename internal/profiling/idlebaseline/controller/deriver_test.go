@@ -21,15 +21,15 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-type deriverIntentLoader struct {
-	frozen profilercontroller.FrozenRun
+type deriverRunRecordLoader struct {
+	resolved profilercontroller.ResolvedRun
 }
 
-func (l deriverIntentLoader) Load(
+func (l deriverRunRecordLoader) Load(
 	context.Context,
 	*edgev1alpha1.ProfilingRun,
-) (profilercontroller.FrozenRun, error) {
-	return l.frozen, nil
+) (profilercontroller.ResolvedRun, error) {
+	return l.resolved, nil
 }
 
 type deriverEvidenceLoader struct {
@@ -68,7 +68,7 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 		runs[index].Name = name
 		evidence.byRun[name] = deriverIdleEvidence(t, intent, name+"-pod", float64(10+index))
 	}
-	deriver, err := NewDeriver(deriverIntentLoader{frozen: profilercontroller.FrozenRun{
+	deriver, err := NewDeriver(deriverRunRecordLoader{resolved: profilercontroller.ResolvedRun{
 		AdmissionPolicy: policy,
 	}}, evidence)
 	if err != nil {
@@ -89,17 +89,17 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 	}
 }
 
-func deriverIdleIntent(t *testing.T) profilingrun.Intent {
+func deriverIdleIntent(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
+	var intent profilingrun.RunConfig
 	if err := json.Unmarshal(payload, &intent); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
@@ -143,7 +143,7 @@ policies:
 
 func deriverIdleEvidence(
 	t *testing.T,
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedIdleEvidence {
@@ -163,7 +163,9 @@ func deriverIdleEvidence(
 		Phase: "Running", Images: []string{intent.Images.Runtime},
 	}
 	raw := profilerevidence.IdleRawMeasurement{
-		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, PodUID: podUID,
+		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion,
+		RunConfig:     intent,
+		PodUID:        podUID,
 		Runtime: profilingrun.IdleRuntimeResult{
 			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
 			PodUID: podUID, NodeName: intent.TargetNode.Name, Model: intent.State.Model,
@@ -211,7 +213,7 @@ func deriverIdleEvidence(
 			Continuous: true,
 		},
 	}
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,19 +240,11 @@ func deriverIdleEvidence(
 
 func deriverExecution(
 	t *testing.T,
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	rawBytes []byte,
 ) profilerevidence.ExecutionEvidence {
 	t.Helper()
-	candidateBytes, err := os.ReadFile("../../profiler/evidence/testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate, err := profilingrun.DecodeCandidateReport(candidateBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
 	completed := time.Date(2026, 8, 21, 1, 3, 3, 0, time.UTC)
 	container := func(name, image string) profilerevidence.ContainerTerminal {
 		return profilerevidence.ContainerTerminal{
@@ -259,7 +253,7 @@ func deriverExecution(
 		}
 	}
 	return profilerevidence.ExecutionEvidence{
-		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Intent: intent, CandidateReport: candidate,
+		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: intent,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "evidence", Key: "raw-" + podUID + ".json", Size: int64(len(rawBytes)),
 		},
@@ -287,7 +281,7 @@ func deriverExecution(
 	}
 }
 
-func deriverRuntimeCPU(intent profilingrun.Intent) profilingrun.RuntimeCPU {
+func deriverRuntimeCPU(intent profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
 		ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,

@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestRunNameIsDeterministic(t *testing.T) {
-	name := RunName("jetsono-ortcpu-m50", batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	name := RunName("jetsono-ortcpu-m50", batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1)
 	if name != "jetsono-ortcpu-m50-active-b2-a1" {
 		t.Fatalf("name = %q", name)
@@ -20,8 +20,8 @@ func TestRunNameIsDeterministic(t *testing.T) {
 
 func TestBuildRunFillsTheIdleUnionFields(t *testing.T) {
 	parent := testParent()
-	run, err := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
+	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
 	}, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -44,8 +44,8 @@ func TestBuildRunFillsTheIdleUnionFields(t *testing.T) {
 
 func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 	parent := testParent()
-	run, err := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -63,14 +63,14 @@ func TestBuildRunUsesTheWorkloadModeAdmissionPolicy(t *testing.T) {
 	if parent.Spec.ActiveProtocol.AdmissionPolicy == parent.Spec.IdleProtocol.AdmissionPolicy {
 		t.Fatal("active and idle policy fixtures must differ")
 	}
-	active, err := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	active, err := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1)
 	if err != nil {
 		t.Fatalf("build active Run: %v", err)
 	}
-	idle, err := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
+	idle, err := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
 	}, 1)
 	if err != nil {
 		t.Fatalf("build idle Run: %v", err)
@@ -83,12 +83,12 @@ func TestBuildRunUsesTheWorkloadModeAdmissionPolicy(t *testing.T) {
 	}
 }
 
-func testParent() *edgev1alpha1.BatchSaturation {
-	return &edgev1alpha1.BatchSaturation{
+func testParent() *edgev1alpha1.BatchEnergyOptimization {
+	return &edgev1alpha1.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "jetsono-ortcpu-m50", Namespace: "chill-system", UID: "parent-uid",
 		},
-		Spec: edgev1alpha1.BatchSaturationSpec{
+		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "jetson-agx-orin-64g",
@@ -112,13 +112,8 @@ func testParent() *edgev1alpha1.BatchSaturation {
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,
 				},
 			},
-			Method: edgev1alpha1.MeasurementMethodSpec{
-				Name: edgev1alpha1.MethodSequentialEarlyStop,
-				SequentialEarlyStop: &edgev1alpha1.SequentialEarlyStopSpec{
-					MinDelta: "0.05", Patience: 1, TrialsPerBatch: 3, DivergenceFactor: "1.10",
-				},
-			},
-			RetryLimit: 2,
+			TrialsPerBatch: 3,
+			RetryLimit:     2,
 		},
 	}
 }

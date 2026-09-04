@@ -20,8 +20,7 @@ type ExecutionPolicyResolverOptions struct {
 }
 
 // KubernetesExecutionPolicyResolver reads installation-time worker envelopes.
-// IntentFreezer copies the selected envelope and source identity into the
-// immutable Run record before execution is materialized.
+// RunConfigResolver selects the envelope before the Job records and executes it.
 type KubernetesExecutionPolicyResolver struct {
 	reader  client.Reader
 	options ExecutionPolicyResolverOptions
@@ -48,7 +47,7 @@ func NewKubernetesExecutionPolicyResolver(
 
 func (r *KubernetesExecutionPolicyResolver) Resolve(
 	ctx context.Context,
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 ) (profiler.FrozenExecutionPolicy, error) {
 	configMap := &corev1.ConfigMap{}
 	key := types.NamespacedName{Namespace: r.options.Namespace, Name: r.options.ConfigMapName}
@@ -73,12 +72,12 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 			r.options.ConfigMapKey,
 		)
 	}
-	frozen, err := profiler.FreezeConfiguredExecutionPolicy([]byte(raw), intent, profiler.ExecutionPolicySource{
+	frozen, err := profiler.FreezeConfiguredExecutionPolicy([]byte(raw), config, profiler.ExecutionPolicySource{
 		Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: configMap.Namespace, Name: configMap.Name,
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
-		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonExecutionPolicyInvalid, err)
+		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonExecutionPolicyInvalid, err)
 	}
 	return frozen, nil
 }

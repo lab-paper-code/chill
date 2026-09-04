@@ -20,13 +20,11 @@ import (
 )
 
 const (
-	intentVolumeName                = "intent"
 	modelVolumeName                 = "model"
 	coordinationVolumeName          = "coordination"
 	workspaceVolumeName             = "workspace"
 	workloadObserverTokenVolumeName = "workload-observer-kube-api"
 
-	intentMountPath                = "/etc/chill/run"
 	modelMountPath                 = "/model"
 	coordinationMountPath          = "/coordination"
 	workspaceMountPath             = "/workspace"
@@ -37,7 +35,7 @@ const (
 
 func buildExecutionJob(
 	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
+	resolved ResolvedRun,
 	binding EvidenceStoreBinding,
 	options ExecutionJobOptions,
 	scheme *runtime.Scheme,
@@ -54,22 +52,30 @@ func buildExecutionJob(
 	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" {
 		return nil, errors.New("WorkloadObserver ServiceAccount name is required")
 	}
-	validated, err := validateFrozenRunForRun(run, frozen)
-	if err != nil {
+	if err := validateResolvedRunForRun(run, resolved); err != nil {
 		return nil, err
 	}
-	prepared := frozen.Prepared
-	plan, err := profiler.DeriveExecutionPlan(prepared.Intent, frozen.ExecutionPolicy)
+	prepared := resolved.Prepared
+	plan, err := profiler.DeriveExecutionPlan(prepared.RunConfig, resolved.ExecutionPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("derive measurement Job policy: %w", err)
 	}
-	runtimeProjection, err := projectRuntimeJob(prepared.Intent, validated.CandidateReport)
+	runtimeProjection, err := projectRuntimeJob(prepared.RunConfig)
 	if err != nil {
 		return nil, fmt.Errorf("project runtime Job contract: %w", err)
 	}
-	intentName, err := intentRecordName(run)
+	runConfigBytes, err := prepared.RunConfig.CanonicalJSON()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode RunConfig for measurement Job: %w", err)
+	}
+	runConfig := string(runConfigBytes)
+	admissionPolicyBytes, err := resolved.AdmissionPolicy.CanonicalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("encode selected admission policy: %w", err)
+	}
+	executionPolicyBytes, err := resolved.ExecutionPolicy.CanonicalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("encode selected execution policy: %w", err)
 	}
 	jobName, err := executionJobName(run)
 	if err != nil {
@@ -82,10 +88,18 @@ func buildExecutionJob(
 		profilingrun.MeasurementWorkloadLabelKey: profilingrun.MeasurementWorkloadLabelValue,
 	}
 	annotations := map[string]string{
-		executionPolicyAnnotation: frozen.ExecutionPolicy.Policy.Name,
+		admissionPolicyAnnotation: string(admissionPolicyBytes),
+		executionPolicyAnnotation: string(executionPolicyBytes),
+	}
+	if prepared.ActuationPolicy != nil {
+		actuationPolicyBytes, err := prepared.ActuationPolicy.CanonicalJSON()
+		if err != nil {
+			return nil, fmt.Errorf("encode selected actuation policy: %w", err)
+		}
+		annotations[actuationPolicyAnnotation] = string(actuationPolicyBytes)
 	}
 	deadlineSeconds := int64(plan.ActiveDeadline.Seconds())
-	selectorLabelKeys, err := prepared.Intent.Workload.LabelKeys()
+	selectorLabelKeys, err := prepared.RunConfig.Workload.LabelKeys()
 	if err != nil {
 		return nil, fmt.Errorf("resolve workload observation label keys: %w", err)
 	}
@@ -98,27 +112,27 @@ func buildExecutionJob(
 			Parallelism: ptr.To[int32](1), Completions: ptr.To[int32](1), BackoffLimit: ptr.To[int32](0),
 			ActiveDeadlineSeconds: ptr.To(deadlineSeconds),
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken: ptr.To(false),
 					ServiceAccountName:           options.WorkloadObserverServiceAccountName,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					NodeSelector: map[string]string{
-						corev1.LabelHostname: prepared.Intent.TargetNode.Name,
+						corev1.LabelHostname: prepared.RunConfig.TargetNode.Name,
 					},
 					Tolerations: []corev1.Toleration{{
 						Key: "node-role.kubernetes.io/edge", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
 					}},
 					SecurityContext: runtimePodSecurityContext(runtimeProjection.SupplementalGroups),
 					InitContainers: []corev1.Container{
-						artifactContainer(prepared.Intent, runtimeProjection.ArtifactDestination),
+						artifactContainer(prepared.RunConfig, runtimeProjection.ArtifactDestination),
 					},
 					Containers: []corev1.Container{
-						runtimeContainer(prepared, binding, rawKey, plan, runtimeProjection),
-						metricObserverContainer(prepared, plan),
-						workloadObserverContainer(prepared, selectorLabelKeys, options, plan),
+						runtimeContainer(prepared, runConfig, binding, rawKey, plan, runtimeProjection),
+						metricObserverContainer(prepared, runConfig, plan),
+						workloadObserverContainer(prepared, runConfig, selectorLabelKeys, options, plan),
 					},
-					Volumes: append(executionVolumes(intentName, plan), runtimeProjection.Volumes...),
+					Volumes: append(executionVolumes(plan), runtimeProjection.Volumes...),
 				},
 			},
 		},
@@ -129,13 +143,13 @@ func buildExecutionJob(
 	return job, nil
 }
 
-func artifactContainer(intent profilingrun.Intent, destination string) corev1.Container {
+func artifactContainer(config profilingrun.RunConfig, destination string) corev1.Container {
 	return corev1.Container{
-		Name: "artifact", Image: intent.Images.Artifact, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "artifact", Image: config.Images.Artifact, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: []string{"sh", "-ec"},
 		Args: []string{
 			`cp "$1" "$2"`,
-			"artifact-copy", intent.State.ArtifactPath, destination,
+			"artifact-copy", config.State.ArtifactPath, destination,
 		},
 		SecurityContext: restrictedContainerSecurityContext(),
 		VolumeMounts:    []corev1.VolumeMount{{Name: modelVolumeName, MountPath: modelMountPath}},
@@ -144,19 +158,20 @@ func artifactContainer(intent profilingrun.Intent, destination string) corev1.Co
 
 func runtimeContainer(
 	prepared profiler.PreparedRun,
+	runConfig string,
 	binding EvidenceStoreBinding,
 	rawKey string,
 	plan profiler.ExecutionPlan,
 	projection runtimeJobProjection,
 ) corev1.Container {
-	intent := prepared.Intent
+	config := prepared.RunConfig
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse(intent.CPU.Request),
+			corev1.ResourceCPU:    resource.MustParse(config.CPU.Request),
 			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse(intent.CPU.Limit),
+			corev1.ResourceCPU:    resource.MustParse(config.CPU.Limit),
 			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI),
 		},
 	}
@@ -165,15 +180,15 @@ func runtimeContainer(
 		resources.Limits[projection.AcceleratorResource] = resource.MustParse("1")
 	}
 	volumeMounts := []corev1.VolumeMount{
-		{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
 		{Name: modelVolumeName, MountPath: modelMountPath, ReadOnly: true},
 		{Name: coordinationVolumeName, MountPath: coordinationMountPath},
 		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
 	}
 	volumeMounts = append(volumeMounts, projection.VolumeMounts...)
 	return corev1.Container{
-		Name: "runtime", Image: intent.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "runtime", Image: config.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
+			"--run-config=" + runConfig,
 			"--attempt-timeout=" + plan.AttemptTimeout.String(),
 			"--observer-ready-timeout=" + plan.ObserverReadyTimeout.String(),
 			"--metric-result-timeout=" + plan.MetricResultTimeout.String(),
@@ -201,10 +216,15 @@ func runtimeContainer(
 	}
 }
 
-func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.ExecutionPlan) corev1.Container {
+func metricObserverContainer(
+	prepared profiler.PreparedRun,
+	runConfig string,
+	plan profiler.ExecutionPlan,
+) corev1.Container {
 	return corev1.Container{
-		Name: "metric-observer", Image: prepared.Intent.Images.MetricObserver, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "metric-observer", Image: prepared.RunConfig.Images.MetricObserver, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
+			"--run-config=" + runConfig,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
 			"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
@@ -221,7 +241,6 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 		},
 		SecurityContext: restrictedContainerSecurityContext(),
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
 			{Name: coordinationVolumeName, MountPath: coordinationMountPath},
 		},
 	}
@@ -229,11 +248,13 @@ func metricObserverContainer(prepared profiler.PreparedRun, plan profiler.Execut
 
 func workloadObserverContainer(
 	prepared profiler.PreparedRun,
+	runConfig string,
 	selectorLabelKeys []string,
 	options ExecutionJobOptions,
 	plan profiler.ExecutionPlan,
 ) corev1.Container {
 	arguments := []string{
+		"--run-config=" + runConfig,
 		"--selector-label-keys=" + strings.Join(selectorLabelKeys, ","),
 		"--end-wait-timeout=" + plan.AttemptTimeout.String(),
 		"--end-fence-timeout=" + plan.WorkloadEndFenceTimeout.String(),
@@ -246,7 +267,7 @@ func workloadObserverContainer(
 		arguments = append(arguments, "--kube-api-server="+options.WorkloadObserverKubeAPIServer)
 	}
 	return corev1.Container{
-		Name: "workload-observer", Image: prepared.Intent.Images.WorkloadObserver, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "workload-observer", Image: prepared.RunConfig.Images.WorkloadObserver, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: arguments,
 		Env: []corev1.EnvVar{
 			fieldEnv("POD_NAMESPACE", "metadata.namespace"),
@@ -265,25 +286,14 @@ func workloadObserverContainer(
 		},
 		SecurityContext: restrictedContainerSecurityContext(),
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: intentVolumeName, MountPath: intentMountPath, ReadOnly: true},
 			{Name: coordinationVolumeName, MountPath: coordinationMountPath},
 			{Name: workloadObserverTokenVolumeName, MountPath: workloadObserverTokenMountPath, ReadOnly: true},
 		},
 	}
 }
 
-func executionVolumes(intentName string, plan profiler.ExecutionPlan) []corev1.Volume {
+func executionVolumes(plan profiler.ExecutionPlan) []corev1.Volume {
 	return []corev1.Volume{
-		{
-			Name: intentVolumeName,
-			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: intentName},
-				Items: []corev1.KeyToPath{
-					{Key: intentRecordIntentKey, Path: "intent.json"},
-					{Key: intentRecordCandidateKey, Path: "candidate-report.json"},
-				},
-			}},
-		},
 		{Name: modelVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: coordinationVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			SizeLimit: resource.NewQuantity(plan.CoordinationBytes, resource.BinarySI),

@@ -18,14 +18,15 @@ policy, and records `Accepted`, `Rejected`, or `Insufficient` with typed reason
 codes. Request, evidence-ownership, status/retry, and measurement-worker
 checkpoints are fixed.
 
-The internal intent is `v1alpha13`, and the Go and Python execution boundaries
+The internal RunConfig is `v1alpha14`, and the Go and Python execution boundaries
 accept that current schema only. It carries semantic source-object identities,
 the configured power and typed thermal metric identities, the typed host
 contract, and an optional typed actuation binding. Its common worker CPU
 contract freezes either the Node-allocatable quota or an explicitly configured
 whole-core Run quota; RKNNLite omits ORT-only thread settings. Each
-immutable intent record contains the structured intent, candidate report,
-admission policy, and execution policy.
+owned Job contains the executable RunConfig and the exact selected admission,
+execution, and optional actuation policy snapshots. The candidate report is
+verified during resolution and is not copied into the Job or final evidence.
 The public request schema, request-to-intent projection, bounded Job envelope,
 idle CPU ORT execution, raw commit, mode-aware finalization/loading, and named
 idle admission dispatch are implemented and live-verified. The accepted idle
@@ -41,7 +42,7 @@ Profiler restart proceeds to admission without repeating finalization, and that
 a completed admission is a stable no-op. A third envtest proves that recreating
 the recorded Job name with a different UID is rejected without
 rematerialization or Run-status mutation; the same fail-closed result now covers
-an unchanged Job UID whose controller owner drifts. Retained-frozen intent record,
+an unchanged Job UID whose controller owner drifts. Job-carried RunConfig,
 immutable Run-spec, evidence-store binding, raw-object identity, and executed
 container-image drift remain covered by their focused unit gates. The Operator
 envtest also reconstructs its Profiler reconciler over the retained
@@ -79,7 +80,7 @@ ChillSystem desired state
 
 ProfilingRun desired state
   -> CHILL Profiler controller
-  -> exact intent frozen
+  -> exact RunConfig resolved
   -> fixed: owned Kubernetes Job
   -> non-fixed: owned NodeActuation handoff; Job withheld until convergence
   -> measurement Job executes runtime worker + MetricObserver helper
@@ -115,8 +116,8 @@ observe and enforce their current mode; a manually asserted Jetson mode is not
 accepted as Run evidence.
 
 The follow-on model-loaded-idle path is another measurement mode of the same
-CPU ORT Run, not another runtime and not a separate frozen request type. It uses
-the same `profilingrun.Intent` family, so the existing preparation, one-Job ownership,
+CPU ORT Run, not another runtime and not a separate request type. It uses
+the same `profilingrun.RunConfig` family, so the existing preparation, one-Job ownership,
 terminal finalization, and immutable evidence chain remain common. The runtime
 result and raw-measurement schemas are mode-specific because active inference
 and zero-inference idle have different completeness facts.
@@ -165,8 +166,8 @@ manager's uncached API reader so they do not implicitly require informer
 
 - coordinating one Run from accepted request through terminal admission;
 - using static compatibility before execution;
-- freezing the selected candidate, Node snapshot, runtime images, measurement
-  contract, and resolved metric-source identity into one immutable intent;
+- resolving the selected candidate, Node snapshot, runtime images, measurement
+  contract, and metric-source identity into one exact RunConfig;
 - driving the Run state machine idempotently;
 - preserving typed failure reasons without converting them into profile facts;
 - invoking existing Run validation and admission packages; and
@@ -196,17 +197,17 @@ state in process memory.
 ### Runtime measurement worker owns
 
 - running inside the one-shot `ProfilingRun` Job;
-- executing the frozen runtime and artifact contract;
+- executing the Job-carried runtime and artifact contract;
 - coordinating the measurement window with the MetricObserver helper;
 - validating and assembling only runtime and typed metric facts observable
-  during execution without changing the frozen intent;
+  during execution without changing the RunConfig;
 - writing one immutable raw-measurement object to the configured durable
   evidence sink;
 - emitting a bounded receipt that identifies the committed object; and
 - exiting with an execution result that Kubernetes records on the Job and Pod.
 
 For model-loaded idle, the worker also owns the only authoritative window
-declaration: after exact model load it completes the intent-bound settling
+declaration: after exact model load it completes the RunConfig-bound settling
 duration, opens a monotonic fixed-duration window without issuing inference,
 and closes it while the model remains resident. Observer results never feed
 back into start/end selection.
@@ -226,7 +227,7 @@ measurement path.
 
 - `internal/modelcompat`: static artifact/runtime/DeviceClass compatibility;
 - `internal/metricobserver`: bounded typed metric observation;
-- `internal/profiling/run`: immutable intent and execution-evidence validation;
+- `internal/profiling/run`: RunConfig and execution-evidence validation;
 - `internal/profiling/derivation`: scientific admission and later derivation.
 
 None of these packages imports the Profiler, Kubernetes APIs, controller-runtime,
@@ -274,8 +275,8 @@ its Job there. Read-only access to referenced cluster-scoped Nodes,
 DeviceClasses, ModelSpecs, and the owning ChillSystem does not broaden the Run
 watch scope. A Run is a request for one measurement, not a campaign or profile.
 
-Its desired state should contain references and policy inputs sufficient to
-derive one immutable intent:
+Its desired state contains references and policy inputs sufficient to resolve
+one exact RunConfig:
 
 - exact model artifact and execution-path identity;
 - exact trusted runtime declaration and immutable OCI image references;
@@ -286,8 +287,8 @@ derive one immutable intent:
 - admission-policy identity.
 
 The Profiler resolves the selected Node to an edge-metrics source before it
-freezes the Run intent. The resolved endpoint and source identity belong to the
-intent and evidence, not to the stable DeviceClass or ModelSpec.
+creates the Job. The resolved endpoint and source identity belong to the
+RunConfig and evidence, not to the stable DeviceClass or ModelSpec.
 
 ## Execution fact sources
 
@@ -295,7 +296,7 @@ The first path uses existing Kubernetes objects and one installation-time
 Profiler fact-source ConfigMap. It does not introduce a runtime-declaration CRD
 or put mutable runtime state in `DeviceClass` or `ModelSpec`.
 
-| Fact | Authority | Frozen Run value |
+| Fact | Authority | Job-carried RunConfig value |
 |---|---|---|
 | logical artifact and required execution path | referenced `ModelSpec` | object identity, artifact name, path, and immutable carrier image, format, runtime family, and backend |
 | stable hardware class and declared power modes | referenced `DeviceClass` | object identity, architecture, and selected power-mode identity |
@@ -311,24 +312,22 @@ but does not parse execution declarations or source entries. Helm installs the
 default ConfigMap; an administrator may replace it only through installation
 configuration, never through a Run request.
 
-Changing fact-source content may affect new Runs but never rewrites an already
-frozen Run. The Profiler retains the selected entries, ConfigMap namespace,
-name, UID, resourceVersion, key, and all selected immutable image references in
-the intent record.
+Changing fact-source content may affect new Runs but never rewrites an existing
+Job. The Job retains the selected entries, ConfigMap namespace, name, UID,
+resourceVersion, key, and all selected immutable image references.
 
 Admission policy names are Run inputs, but thresholds are not. An administrator
 defines the named policies in the installation-time fact-source ConfigMap. The
 Profiler strict-decodes the catalog, selects the requested entry, verifies its
-workload mode, and retains the selected policy plus exact source provenance in
-the immutable intent record before creating a Job. ConfigMap changes therefore
-affect only new Runs. Restart recovery reads the retained policy and never
+workload mode, and retains the selected policy plus exact source provenance on
+the Job. ConfigMap changes therefore affect only new Runs. Restart recovery reads the Job and never
 re-resolves mutable policy configuration.
 
 The admission-policy catalog selector and retained-record decoder return a
 sealed policy value. Downstream admission and controller code receive detached
 source/policy projections; they do not re-validate the same retained policy.
 
-Before an intent record exists, a successfully read but malformed policy
+Before a Job exists, a successfully read but malformed policy
 catalog, an unconfigured selected name, or a selected policy whose workload
 mode does not match the immutable Run is terminal for that Run. The controller
 records `ExecutionComplete=False` with `AdmissionPolicyInvalid` instead of
@@ -337,13 +336,13 @@ failed Run never starts a Job under policy semantics that were not frozen.
 
 Worker timeout, capacity, and resource values are installation inputs, not Run
 inputs. The Profiler strict-decodes the execution-policy catalog and selects
-one entry by the already frozen DeviceClass, execution path, and workload mode.
+one entry by the resolved DeviceClass, execution path, and workload mode.
 An exact DeviceClass selector takes precedence over the explicit `*` fallback,
 so device-specific envelopes do not require a new binary or a Run-level resource
 override. The Profiler validates the envelope's resource and capacity
 relationships, then retains its
-selected policy and exact source provenance beside the intent before creating
-a Job. Admission, execution, and optional actuation selections must come from
+selected policy and exact source provenance on the Job. Admission, execution,
+and optional actuation selections must come from
 the same ConfigMap UID and resourceVersion; a concurrent catalog update
 therefore fails closed instead of producing a mixed snapshot. The Job
 annotation uses the selected policy's semantic identity; ConfigMap-only
@@ -354,7 +353,7 @@ consults mutable execution-policy configuration.
 verifies that it is declared by the selected `DeviceClass` and directly retains
 the exact typed actuator target for a non-fixed mode. The Profiler selects a
 configured actuation policy by DeviceClass, mode, and actuator kind; its
-selected semantics and ConfigMap source enter the immutable intent record.
+selected semantics and ConfigMap source enter the Job record.
 Fixed Runs continue directly. An
 actuated Run records `ActuationHandoffPending` and creates no measurement Job,
 because Lease ownership, read-back, settling, and restoration remain Plan 6
@@ -384,7 +383,6 @@ Status remains compact and reconstructable:
 
 - `observedGeneration`;
 - Kubernetes-style conditions for execution completion and evidence admission;
-- frozen intent record;
 - owned Job reference and actual Node/Pod identities;
 - evidence store/key reference, schema version, and byte size;
   and
@@ -400,7 +398,7 @@ aggregate `message` field is introduced.
 1. Validate request, selected power mode, and referenced facts
 2. Resolve the trusted execution declaration and evaluate exact static compatibility
 3. Resolve the exact Node snapshot and Node -> edge-metrics source
-4. Freeze all source identities, source object identities, and the Run intent
+4. Resolve the exact RunConfig and selected policy snapshots
 5. Create one deterministic, ProfilingRun-owned Job
 6. Let its measurement worker execute and persist raw runtime + power evidence
 7. Observe native Job/Pod completion and verify the raw-measurement receipt
@@ -410,7 +408,7 @@ aggregate `message` field is introduced.
 ```
 
 Every step is idempotent. Once execution starts, mutable upstream objects do
-not silently change the frozen intent. A materially different request creates
+not silently change the Job-carried RunConfig. A materially different request creates
 a new Run rather than rewriting the identity of an existing measurement.
 
 Job failure, evidence-collection failure, and scientific rejection remain
@@ -498,7 +496,7 @@ fields, namespace override, or mutable desired/current phase model.
 Define the narrow resolver contract and the exact Kubernetes facts that bind a
 Node to the existing edge-metrics deployment. Resolution failure must be a
 typed pre-execution outcome. The first implementation supports edge-metrics
-only while keeping its endpoint out of caller-facing Run intent inputs.
+only while keeping its endpoint out of caller-facing Run inputs.
 
 ### Checkpoint 3: durable evidence ownership
 
@@ -634,7 +632,7 @@ distinct immutable object identities. Logs and controller memory are not
 handoff paths.
 
 The idle revision keeps that topology and finalization boundary. It advances
-the frozen intent schema rather than adding a parallel intent type, and uses a
+the RunConfig schema rather than adding a parallel configuration type, and uses a
 separate idle raw/runtime result so zero inference, settling completion, model
 residency, and the runtime-declared window are explicit evidence rather than
 sentinel values accepted by the active result validator.
@@ -652,7 +650,7 @@ sentinel values accepted by the active result validator.
 4. Close the five Run-path checkpoints and record the reviewed API/state
    contracts.
 5. Add `internal/profiling/profiler` ports and a deterministic one-Run orchestrator with
-   fake adapters; do not add Kubernetes dependencies. Implemented for intent
+   fake adapters; do not add Kubernetes dependencies. Implemented for RunConfig
    preparation, lifecycle decisions, and terminal evidence finalization.
 6. Add the namespaced `ProfilingRun` API and schema tests. Implemented with an
    immutable spec, compact status, generated CRD, Helm CRD, and envtest gates.
@@ -721,7 +719,7 @@ The first Profiler is complete only when:
 - new Runs resolve only installation-time trusted execution declarations,
   while frozen Runs remain bound to the exact ConfigMap identity, declaration,
   and source-entry source object identities;
-- Node-to-edge-metrics resolution is explicit and captured in the frozen intent;
+- Node-to-edge-metrics resolution is explicit and captured in the RunConfig;
 - exactly one native Job/Pod attempt is attributable to the Run;
 - strict evidence validation is covered by the current worker, evidence,
   restart, drift, and fail-closed tests;

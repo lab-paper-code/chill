@@ -26,9 +26,9 @@ var _ = Describe("profiling request samples", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, object) })
 	},
 		Entry(
-			"BatchSaturation",
-			"edge_v1alpha1_batchsaturation.yaml",
-			&edgev1alpha1.BatchSaturation{},
+			"BatchEnergyOptimization",
+			"edge_v1alpha1_batchenergyoptimization.yaml",
+			&edgev1alpha1.BatchEnergyOptimization{},
 		),
 		Entry(
 			"ModelLoadedIdleBaseline",

@@ -1,4 +1,4 @@
-package batchsaturation
+package batchenergyoptimization
 
 import (
 	"bytes"
@@ -41,7 +41,7 @@ func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing
 		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
 		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
 	}
-	if decoded.SchemaVersion() != "chill.dacs.io/batch-saturation-result.v1alpha3" {
+	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha3" {
 		t.Fatalf("schema version = %q", decoded.SchemaVersion())
 	}
 }
@@ -56,14 +56,14 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, schema := range []string{
-		"chill.dacs.io/batch-saturation-result.v1alpha2",
-		"chill.dacs.io/batch-saturation-result.v1alpha1",
-		"chill.dacs.io/batch-saturation-result.v1alpha0",
-		"chill.example.io/batch-saturation-result.v1alpha3",
+		"chill.dacs.io/batch-energy-optimization-result.v1alpha2",
+		"chill.dacs.io/batch-energy-optimization-result.v1alpha1",
+		"chill.dacs.io/batch-energy-optimization-result.v1alpha0",
+		"chill.example.io/batch-energy-optimization-result.v1alpha3",
 	} {
 		mutated := bytes.Replace(
 			payload,
-			[]byte("chill.dacs.io/batch-saturation-result.v1alpha3"),
+			[]byte("chill.dacs.io/batch-energy-optimization-result.v1alpha3"),
 			[]byte(schema),
 			1,
 		)
@@ -126,13 +126,13 @@ func TestResultRecordRequiresRunNamespace(t *testing.T) {
 
 func validResultRecordSpec() ResultRecordSpec {
 	return ResultRecordSpec{
-		Outcome: "Stopped/NoFurtherImprovement",
+		Outcome: "MinimumFound/LocalMinimum",
 		MeasurementState: ResultMeasurementState{
 			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
 			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
 		},
 		CurvePlan: StoredObjectReference{
-			Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
+			Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 1024,
 		},
 		AdmittedTrials: []AdmittedTrialReference{{

@@ -1,4 +1,4 @@
-package batchsaturation
+package batchenergyoptimization
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const resultRecordSchemaVersion = "chill.dacs.io/batch-saturation-result.v1alpha3"
+const resultRecordSchemaVersion = "chill.dacs.io/batch-energy-optimization-result.v1alpha3"
 
 // TerminalOutcome is the stable terminal outcome published by a measurement
 // method.
@@ -107,15 +107,15 @@ func DecodeResultRecord(raw []byte) (ResultRecord, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&record); err != nil {
-		return ResultRecord{}, fmt.Errorf("decode batch-saturation result: %w", err)
+		return ResultRecord{}, fmt.Errorf("decode batch-energy-optimization result: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return ResultRecord{}, errors.New("batch-saturation result contains a trailing JSON value")
+		return ResultRecord{}, errors.New("batch-energy-optimization result contains a trailing JSON value")
 	}
 	if record.SchemaVersion != resultRecordSchemaVersion {
 		return ResultRecord{}, fmt.Errorf(
-			"unsupported batch-saturation result schema %q", record.SchemaVersion,
+			"unsupported batch-energy-optimization result schema %q", record.SchemaVersion,
 		)
 	}
 	return NewResultRecord(record.ResultRecordSpec)
@@ -159,7 +159,7 @@ func (r ResultRecord) SemanticallyEqual(other ResultRecord) bool {
 
 func (r ResultRecord) requireInitialized() error {
 	if r.record.SchemaVersion != resultRecordSchemaVersion {
-		return errors.New("batch-saturation result is not initialized")
+		return errors.New("batch-energy-optimization result is not initialized")
 	}
 	return nil
 }
@@ -184,7 +184,7 @@ func normalizeResultRecordSpec(spec *ResultRecordSpec) {
 
 func validateResultRecordSpec(spec ResultRecordSpec) error {
 	if !cleanResultValue(string(spec.Outcome)) {
-		return errors.New("batch-saturation result outcome is required without surrounding whitespace")
+		return errors.New("batch-energy-optimization result outcome is required without surrounding whitespace")
 	}
 	if err := validateResultMeasurementState(spec.MeasurementState); err != nil {
 		return err
@@ -230,7 +230,7 @@ func validateResultRecordSpec(spec ResultRecordSpec) error {
 		}
 	}
 	if !json.Valid(spec.Detail) {
-		return errors.New("batch-saturation result detail must contain exactly one JSON value")
+		return errors.New("batch-energy-optimization result detail must contain exactly one JSON value")
 	}
 	return nil
 }
@@ -242,7 +242,7 @@ func validateResultMeasurementState(state ResultMeasurementState) error {
 		"power mode": state.PowerMode,
 	} {
 		if !cleanResultValue(value) {
-			return fmt.Errorf("batch-saturation result measurement state %s is required without surrounding whitespace", name)
+			return fmt.Errorf("batch-energy-optimization result measurement state %s is required without surrounding whitespace", name)
 		}
 	}
 	return nil

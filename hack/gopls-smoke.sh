@@ -56,13 +56,13 @@ if [[ -n "$diagnostics" ]]; then
   exit 1
 fi
 
-freezer_interface="$(position_of \
-  internal/profiling/profiler/controller/intent_reconciler.go \
-  'type RunIntentFreezer interface' \
-  'RunIntentFreezer')"
-freezer_implementations="$(gopls_command implementation "$freezer_interface")"
-require_contains freezer-implementation "$freezer_implementations" \
-  'internal/profiling/profiler/controller/intent_freezer.go'
+resolver_interface="$(position_of \
+  internal/profiling/profiler/controller/run_reconciler.go \
+  'type RunConfigurationResolver interface' \
+  'RunConfigurationResolver')"
+resolver_implementations="$(gopls_command implementation "$resolver_interface")"
+require_contains resolver-implementation "$resolver_implementations" \
+  'internal/profiling/profiler/controller/run_config_resolver.go'
 
 setup_call="$(position_of \
   cmd/profiler/controller_setup.go \
@@ -70,33 +70,33 @@ setup_call="$(position_of \
   'SetupWithManager')"
 setup_definition="$(gopls_command definition "$setup_call")"
 require_contains setup-definition "$setup_definition" \
-  'internal/profiling/profiler/controller/intent_setup.go'
+  'internal/profiling/profiler/controller/run_setup.go'
 
-intent_frozen="$(position_of \
-  api/v1alpha1/profilingrun_types.go \
-  'IntentFrozen bool' \
-  'IntentFrozen')"
-intent_frozen_references="$(gopls_command references "$intent_frozen")"
-require_contains intent-frozen-freezer-reference "$intent_frozen_references" \
-  'internal/profiling/profiler/controller/intent_freezer.go'
-require_contains intent-frozen-projection-reference "$intent_frozen_references" \
-  'internal/profiling/profiler/controller/projection.go'
-require_contains intent-frozen-integration-reference "$intent_frozen_references" \
-  'test/integration/operator/profilingrun_api_test.go'
+job_recovery="$(position_of \
+  internal/profiling/profiler/controller/run_record.go \
+  'func resolvedRunFromJob' \
+  'resolvedRunFromJob')"
+job_recovery_references="$(gopls_command references "$job_recovery")"
+require_contains job-recovery-reconciler-reference "$job_recovery_references" \
+  'internal/profiling/profiler/controller/run_reconciler.go'
+require_contains job-recovery-loader-reference "$job_recovery_references" \
+  'internal/profiling/profiler/controller/run_record.go'
+require_contains job-recovery-ensure-reference "$job_recovery_references" \
+  'internal/profiling/profiler/controller/execution_job.go'
 
 reconcile="$(position_of \
-  internal/profiling/profiler/controller/intent_reconciler.go \
+  internal/profiling/profiler/controller/run_reconciler.go \
   'func \(r \*RunReconciler\) Reconcile' \
   'Reconcile')"
 reconcile_hierarchy="$(gopls_command call_hierarchy "$reconcile")"
-require_contains reconcile-freeze-callee "$reconcile_hierarchy" \
-  'internal/profiling/profiler/controller/intent_reconciler.go:'
+require_contains reconcile-resolve-callee "$reconcile_hierarchy" \
+  'internal/profiling/profiler/controller/run_reconciler.go:'
 
 printf 'phase1.go_toolchain=%s\n' "$expected_go"
 printf 'phase1.gopls=%s\n' "$expected_gopls"
 printf 'phase1.workspace_diagnostics=0\n'
 printf 'phase1.file_errors=0\n'
-printf 'phase1.freezer_implementation=pass\n'
+printf 'phase1.run_config_resolver_implementation=pass\n'
 printf 'phase1.setup_definition=pass\n'
-printf 'phase1.intent_frozen_references=pass\n'
+printf 'phase1.job_run_config_recovery_references=pass\n'
 printf 'phase1.reconcile_event_edge=framework-derived\n'

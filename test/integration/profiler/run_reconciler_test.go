@@ -32,40 +32,53 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/yaml"
 )
 
 const profilerIntegrationNamespace = "profiler-integration"
 
 const profilerIntegrationDeletionHold = "test.chill.dacs.io/hold-deletion"
 
-type staticIntentFreezer struct {
-	prepared profiler.PreparedRun
+type staticRunConfigResolver struct {
+	resolved profilercontroller.ResolvedRun
 	calls    int
 }
 
-func (f *staticIntentFreezer) Freeze(
+func (r *staticRunConfigResolver) Resolve(
 	_ context.Context,
-	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.FreezeIntentResult, error) {
-	f.calls++
-	if !run.DeletionTimestamp.IsZero() {
-		return profilercontroller.FreezeIntentResult{Stopped: true}, nil
-	}
-	return profilercontroller.FreezeIntentResult{
-		Run: profilercontroller.FrozenRun{Prepared: f.prepared},
-	}, nil
+	_ *edgev1alpha1.ProfilingRun,
+) (profilercontroller.ResolvedRun, error) {
+	r.calls++
+	return r.resolved, nil
 }
 
 type apiExecutionJobs struct {
-	kube    client.Client
-	calls   int
-	creates int
+	kube     client.Client
+	resolved profilercontroller.ResolvedRun
+	calls    int
+	creates  int
+}
+
+func (j *apiExecutionJobs) Find(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+) (*batchv1.Job, *profilercontroller.ResolvedRun, error) {
+	key := client.ObjectKey{Namespace: run.Namespace, Name: run.Name + "-measurement"}
+	job := &batchv1.Job{}
+	if err := j.kube.Get(ctx, key, job); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	resolved := j.resolved
+	return job, &resolved, nil
 }
 
 func (j *apiExecutionJobs) Ensure(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	_ profilercontroller.FrozenRun,
+	_ profilercontroller.ResolvedRun,
 ) (*batchv1.Job, bool, error) {
 	j.calls++
 	key := client.ObjectKey{Namespace: run.Namespace, Name: run.Name + "-measurement"}
@@ -75,13 +88,34 @@ func (j *apiExecutionJobs) Ensure(
 	} else if !apierrors.IsNotFound(err) {
 		return nil, false, err
 	}
+	runConfig, err := json.Marshal(j.resolved.Prepared.RunConfig)
+	if err != nil {
+		return nil, false, err
+	}
+	admissionPolicy, err := j.resolved.AdmissionPolicy.CanonicalJSON()
+	if err != nil {
+		return nil, false, err
+	}
+	executionPolicy, err := j.resolved.ExecutionPolicy.CanonicalJSON()
+	if err != nil {
+		return nil, false, err
+	}
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: key.Namespace, Name: key.Name,
+			Annotations: map[string]string{
+				"edge.dacs.io/profiling-admission-policy": string(admissionPolicy),
+				"edge.dacs.io/profiling-execution-policy": string(executionPolicy),
+			},
+		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: ptr.To(int32(0)),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				RestartPolicy: corev1.RestartPolicyNever,
-				Containers:    []corev1.Container{{Name: "runtime", Image: "example.invalid/chill/runtime:test"}},
+				Containers: []corev1.Container{{
+					Name: "runtime", Image: "example.invalid/chill/runtime:test",
+					Args: []string{"--run-config=" + string(runConfig)},
+				}},
 			}},
 		},
 	}
@@ -120,7 +154,7 @@ type recordingAdmitter struct {
 func (a *recordingAdmitter) Admit(
 	context.Context,
 	*edgev1alpha1.ProfilingRun,
-	profilercontroller.FrozenRun,
+	profilercontroller.ResolvedRun,
 	*batchv1.Job,
 	evidencestore.ObjectIdentity,
 ) (profileradmission.Result, error) {
@@ -130,7 +164,7 @@ func (a *recordingAdmitter) Admit(
 
 type reconcilerHarness struct {
 	reconciler *profilercontroller.RunReconciler
-	freezer    *staticIntentFreezer
+	resolver   *staticRunConfigResolver
 	jobs       *apiExecutionJobs
 	finalizer  *recordingFinalizer
 	admitter   *recordingAdmitter
@@ -138,10 +172,10 @@ type reconcilerHarness struct {
 
 func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 
-	initial := newReconcilerHarness(t, kube, prepared)
+	initial := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, initial.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
@@ -151,7 +185,7 @@ func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testi
 	requireMaterializationCount(t, initial.jobs, 1, 1, "duplicate reconcile")
 	assertSingleOwnedJob(t, ctx, kube, afterCreate.UID, recordedJob)
 
-	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, restarted.reconciler, request)
 	requireMaterializationCount(t, restarted.jobs, 0, 0, "restarted reconciler")
 	assertSingleOwnedJob(t, ctx, kube, afterCreate.UID, recordedJob)
@@ -177,10 +211,10 @@ func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testi
 
 func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 
-	finalizing := newReconcilerHarness(t, kube, prepared)
+	finalizing := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, finalizing.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
@@ -207,7 +241,7 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 		)
 	}
 
-	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted := newReconcilerHarness(t, kube, resolved)
 	restarted.admitter.err = nil
 	restarted.admitter.result = profileradmission.Result{
 		Verdict: profileradmission.VerdictAccepted, PolicyVersion: "wall-power-v2",
@@ -244,10 +278,10 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 
 func TestRunReconcilerRejectsReplacementJobIdentityDrift(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 
-	initial := newReconcilerHarness(t, kube, prepared)
+	initial := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, initial.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
@@ -258,7 +292,7 @@ func TestRunReconcilerRejectsReplacementJobIdentityDrift(t *testing.T) {
 		t.Fatalf("replacement Job unexpectedly retained recorded UID %s", recordedJob.UID)
 	}
 
-	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted := newReconcilerHarness(t, kube, resolved)
 	_, err := restarted.reconciler.Reconcile(ctx, request)
 	if err == nil || !strings.Contains(err.Error(), "observed Job identity does not match recorded reference") {
 		t.Fatalf("replacement Job reconcile error = %v, want recorded identity mismatch", err)
@@ -270,16 +304,16 @@ func TestRunReconcilerRejectsReplacementJobIdentityDrift(t *testing.T) {
 
 func TestRunReconcilerRejectsRecordedJobOwnerDrift(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 
-	initial := newReconcilerHarness(t, kube, prepared)
+	initial := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, initial.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
 	changeJobControllerUID(t, ctx, kube, run.Namespace, recordedJob.Name, "foreign-run-uid")
 
-	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted := newReconcilerHarness(t, kube, resolved)
 	_, err := restarted.reconciler.Reconcile(ctx, request)
 	if err == nil || !strings.Contains(err.Error(), "observed Job is not controlled by ProfilingRun") {
 		t.Fatalf("owner-drift reconcile error = %v, want controller-owner mismatch", err)
@@ -291,16 +325,16 @@ func TestRunReconcilerRejectsRecordedJobOwnerDrift(t *testing.T) {
 
 func TestRunReconcilerStopsAtDeletionFence(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	run, prepared := createRunWithFrozenIntent(t, ctx, kube)
+	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
 
-	initial := newReconcilerHarness(t, kube, prepared)
+	initial := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, initial.reconciler, request)
 	afterCreate := getRun(t, ctx, kube, request.NamespacedName)
 	recordedJob := requireRecordedJob(t, afterCreate)
 	deleting := markRunDeleting(t, ctx, kube, afterCreate)
 
-	restarted := newReconcilerHarness(t, kube, prepared)
+	restarted := newReconcilerHarness(t, kube, resolved)
 	reconcile(t, ctx, restarted.reconciler, request)
 	afterStop := getRun(t, ctx, kube, request.NamespacedName)
 	if afterStop.ResourceVersion != deleting.ResourceVersion {
@@ -310,8 +344,8 @@ func TestRunReconcilerStopsAtDeletionFence(t *testing.T) {
 			afterStop.ResourceVersion,
 		)
 	}
-	if restarted.freezer.calls != 1 {
-		t.Fatalf("deletion fence freezer calls = %d, want 1", restarted.freezer.calls)
+	if restarted.resolver.calls != 0 {
+		t.Fatalf("deletion fence resolver calls = %d, want 0", restarted.resolver.calls)
 	}
 	assertNoExecutionCalls(t, restarted)
 	assertSingleOwnedJob(t, ctx, kube, afterStop.UID, recordedJob)
@@ -352,13 +386,13 @@ func startProfilerEnvtest(t *testing.T) (context.Context, client.Client) {
 	return ctx, kube
 }
 
-func createRunWithFrozenIntent(
+func createRunWithResolvedConfig(
 	t *testing.T,
 	ctx context.Context,
 	kube client.Client,
-) (*edgev1alpha1.ProfilingRun, profiler.PreparedRun) {
+) (*edgev1alpha1.ProfilingRun, profilercontroller.ResolvedRun) {
 	t.Helper()
-	intent := loadRetainedIntent(t)
+	runConfig := loadRunConfig(t)
 	run := validRun()
 	if err := kube.Create(ctx, run); err != nil {
 		t.Fatal(err)
@@ -366,27 +400,22 @@ func createRunWithFrozenIntent(
 	if err := kube.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
 		t.Fatal(err)
 	}
-	run.Status.IntentFrozen = true
-	run.Status.ObservedGeneration = run.Generation
-	if err := kube.Status().Update(ctx, run); err != nil {
-		t.Fatal(err)
-	}
-	return run, profiler.PreparedRun{Intent: intent}
+	return run, resolvedRun(t, profiler.PreparedRun{RunConfig: runConfig})
 }
 
 func newReconcilerHarness(
 	t *testing.T,
 	kube client.Client,
-	prepared profiler.PreparedRun,
+	resolved profilercontroller.ResolvedRun,
 ) *reconcilerHarness {
 	t.Helper()
-	freezer := &staticIntentFreezer{prepared: prepared}
-	jobs := &apiExecutionJobs{kube: kube}
+	resolver := &staticRunConfigResolver{resolved: resolved}
+	jobs := &apiExecutionJobs{kube: kube, resolved: resolved}
 	finalizer := &recordingFinalizer{err: errors.New("unexpected finalization")}
 	admitter := &recordingAdmitter{err: errors.New("unexpected admission")}
-	reconciler := newRunReconciler(t, kube, freezer, jobs, finalizer, admitter)
+	reconciler := newRunReconciler(t, kube, resolver, jobs, finalizer, admitter)
 	return &reconcilerHarness{
-		reconciler: reconciler, freezer: freezer, jobs: jobs,
+		reconciler: reconciler, resolver: resolver, jobs: jobs,
 		finalizer: finalizer, admitter: admitter,
 	}
 }
@@ -588,14 +617,14 @@ func assertNoExecutionCalls(t *testing.T, harness *reconcilerHarness) {
 func newRunReconciler(
 	t *testing.T,
 	kube client.Client,
-	freezer *staticIntentFreezer,
+	resolver *staticRunConfigResolver,
 	jobs *apiExecutionJobs,
 	finalizer *recordingFinalizer,
 	admitter *recordingAdmitter,
 ) *profilercontroller.RunReconciler {
 	t.Helper()
 	reconciler, err := profilercontroller.NewRunReconciler(
-		kube, freezer, jobs, finalizer, admitter,
+		kube, resolver, jobs, finalizer, admitter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -653,7 +682,7 @@ func assertAcceptedAdmission(t *testing.T, run *edgev1alpha1.ProfilingRun, polic
 	}
 }
 
-func loadRetainedIntent(t *testing.T) profilingrun.Intent {
+func loadRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile(filepath.Join(
 		"..", "..", "..", "internal", "profiling", "profiler", "controller", "testdata", "lattepanda-ort-cpu-bs1.json",
@@ -661,14 +690,88 @@ func loadRetainedIntent(t *testing.T) profilingrun.Intent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	if err := intent.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
+}
+
+func resolvedRun(
+	t *testing.T,
+	prepared profiler.PreparedRun,
+) profilercontroller.ResolvedRun {
+	t.Helper()
+	source := profileradmission.PolicySource{
+		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: "chill-system",
+		Name: "chill-profiler-facts", UID: "facts-uid", ResourceVersion: "42",
+		Key: "admission-policies.yaml",
+	}
+	admissionCatalog, err := yaml.Marshal(profileradmission.PolicyCatalog{
+		SchemaVersion: profileradmission.PolicyCatalogSchemaVersion,
+		Policies: []profileradmission.PolicySpec{{
+			Name: "wall-power-v2", WorkloadMode: prepared.RunConfig.Measurement.WorkloadMode,
+			MinimumSamples: 20, MaximumGapSeconds: 1.5,
+			MaximumBoundaryDistanceSeconds: 1, MinimumCoverage: 0.95,
+			AllowReceiptTimestamps: true, RejectConcurrentCHILLWorkloads: true,
+			RejectExternalWorkloadChanges: true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admissionPolicy, err := profileradmission.FreezeConfiguredPolicy(
+		admissionCatalog, "wall-power-v2", source,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const mebibyte = int64(1024 * 1024)
+	executionCatalog, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
+		SchemaVersion: profiler.ExecutionPolicyCatalogSchemaVersion,
+		Policies: []profiler.ExecutionPolicySpec{{
+			Name: "integration-active", DeviceClass: "*",
+			ExecutionPath:                 prepared.RunConfig.Candidate.ExecutionPath,
+			WorkloadMode:                  prepared.RunConfig.Measurement.WorkloadMode,
+			ActiveDeadlineOverheadSeconds: 180, AttemptTimeoutOverheadSeconds: 150,
+			ObserverReadyTimeoutSeconds: 30, ObserverStartOverheadSeconds: 120,
+			MetricResultOverheadSeconds: 30, WorkloadEndFenceTimeoutSeconds: 15,
+			WorkloadResultTimeoutSeconds: 30, MaxLatencySamples: 1_000_000,
+			MaxInputBytes: 64 * mebibyte, MaxRuntimeResultBytes: 32 * mebibyte,
+			MaxMetricResultBytes: 8 * mebibyte, MaxMetricEvents: 50_000,
+			MaxWorkloadEvents: 10_000, MaxWorkloadResultBytes: 8 * mebibyte,
+			RuntimeMemoryRequestBytes: 128 * mebibyte,
+			RuntimeMemoryLimitBytes:   1024 * mebibyte,
+			ObserverCPURequest:        "5m", ObserverCPULimit: "100m",
+			ObserverMemoryRequestBytes: 16 * mebibyte,
+			ObserverMemoryLimitBytes:   64 * mebibyte,
+			WorkloadObserverCPURequest: "5m", WorkloadObserverCPULimit: "100m",
+			WorkloadObserverMemoryRequestBytes: 32 * mebibyte,
+			WorkloadObserverMemoryLimitBytes:   128 * mebibyte,
+			CoordinationReserveBytes:           mebibyte, WorkspaceBytes: 128 * mebibyte,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionPolicy, err := profiler.FreezeConfiguredExecutionPolicy(
+		executionCatalog,
+		prepared.RunConfig,
+		profiler.ExecutionPolicySource{
+			Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: source.Namespace,
+			Name: source.Name, UID: source.UID, ResourceVersion: source.ResourceVersion,
+			Key: "execution-policies.yaml",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profilercontroller.ResolvedRun{
+		Prepared: prepared, AdmissionPolicy: admissionPolicy, ExecutionPolicy: executionPolicy,
+	}
 }
 
 func validRun() *edgev1alpha1.ProfilingRun {

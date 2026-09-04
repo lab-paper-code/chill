@@ -10,12 +10,12 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 // ResultStore provides immutable creation and restart recovery for one
-// terminal batch-saturation result.
+// terminal batch-energy-optimization result.
 type ResultStore interface {
 	evidencestore.ImmutableWriter
 	evidencestore.LocationReader
@@ -35,7 +35,7 @@ type ResultWriter struct {
 
 func NewResultWriter(store ResultStore, options ResultWriterOptions) (*ResultWriter, error) {
 	if store == nil {
-		return nil, errors.New("batch-saturation result store is required")
+		return nil, errors.New("batch-energy-optimization result store is required")
 	}
 	if strings.TrimSpace(options.Store) == "" || strings.TrimSpace(options.Store) != options.Store {
 		return nil, errors.New("result logical store is required without surrounding whitespace")
@@ -50,29 +50,29 @@ func NewResultWriter(store ResultStore, options ResultWriterOptions) (*ResultWri
 // and is returned only after semantic agreement with the recomputed record.
 func (w *ResultWriter) Write(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
-	curvePlan batchsaturation.StoredObjectReference,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	curvePlan batchenergyoptimization.StoredObjectReference,
 	runs []edgev1alpha1.ProfilingRun,
-	result batchsaturation.Result,
-) (batchsaturation.StoredObjectReference, error) {
+	result batchenergyoptimization.Result,
+) (batchenergyoptimization.StoredObjectReference, error) {
 	if parent == nil {
-		return batchsaturation.StoredObjectReference{}, errors.New("a parent BatchSaturation is required")
+		return batchenergyoptimization.StoredObjectReference{}, errors.New("a parent BatchEnergyOptimization is required")
 	}
 	if parent.UID == "" {
-		return batchsaturation.StoredObjectReference{}, errors.New("BatchSaturation UID is required")
+		return batchenergyoptimization.StoredObjectReference{}, errors.New("BatchEnergyOptimization UID is required")
 	}
 
 	detail, err := json.Marshal(result.Detail)
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("encode result detail: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode result detail: %w", err)
 	}
 	admitted, excluded, err := projectResultTrials(parent, runs)
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, err
+		return batchenergyoptimization.StoredObjectReference{}, err
 	}
-	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
-		Outcome: batchsaturation.TerminalOutcome(result.Outcome),
-		MeasurementState: batchsaturation.ResultMeasurementState{
+	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
+		Outcome: batchenergyoptimization.TerminalOutcome(result.Outcome),
+		MeasurementState: batchenergyoptimization.ResultMeasurementState{
 			TargetNode:    parent.Spec.State.TargetNode,
 			ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
 			DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
@@ -83,38 +83,38 @@ func (w *ResultWriter) Write(
 		ExcludedTrials: excluded, Detail: detail,
 	})
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("construct result record: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("construct result record: %w", err)
 	}
 	return w.record(ctx, parent.UID, record)
 }
 
 func projectResultTrials(
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 	runs []edgev1alpha1.ProfilingRun,
-) ([]batchsaturation.AdmittedTrialReference, []batchsaturation.ExcludedTrialReference, error) {
-	admitted := make([]batchsaturation.AdmittedTrialReference, 0, len(runs))
-	excluded := make([]batchsaturation.ExcludedTrialReference, 0, len(runs))
+) ([]batchenergyoptimization.AdmittedTrialReference, []batchenergyoptimization.ExcludedTrialReference, error) {
+	admitted := make([]batchenergyoptimization.AdmittedTrialReference, 0, len(runs))
+	excluded := make([]batchenergyoptimization.ExcludedTrialReference, 0, len(runs))
 	for index := range runs {
 		run := &runs[index]
 		trial, err := projectOwnedTrial(parent, run)
 		if err != nil {
 			return nil, nil, fmt.Errorf("project ProfilingRun %q: %w", run.Name, err)
 		}
-		if trial.Verdict == batchsaturation.VerdictPending {
+		if trial.Verdict == batchenergyoptimization.VerdictPending {
 			return nil, nil, fmt.Errorf("ProfilingRun %q is still pending", run.Name)
 		}
-		reference := batchsaturation.RunReference{
+		reference := batchenergyoptimization.RunReference{
 			Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
 		}
-		measurement := batchsaturation.ResultMeasurement{
+		measurement := batchenergyoptimization.ResultMeasurement{
 			WorkloadMode: trial.Measurement.WorkloadMode,
 			Batch:        trial.Measurement.Batch,
 		}
-		if trial.Verdict == batchsaturation.VerdictAccepted {
+		if trial.Verdict == batchenergyoptimization.VerdictAccepted {
 			if run.Status.Evidence == nil {
 				return nil, nil, fmt.Errorf("admitted ProfilingRun %q has no evidence reference", run.Name)
 			}
-			admitted = append(admitted, batchsaturation.AdmittedTrialReference{
+			admitted = append(admitted, batchenergyoptimization.AdmittedTrialReference{
 				Run:         reference,
 				Measurement: measurement,
 				Evidence:    projectStoredObjectReference(*run.Status.Evidence),
@@ -125,7 +125,7 @@ func projectResultTrials(
 		if err != nil {
 			return nil, nil, err
 		}
-		excluded = append(excluded, batchsaturation.ExcludedTrialReference{
+		excluded = append(excluded, batchenergyoptimization.ExcludedTrialReference{
 			Run: reference, Measurement: measurement, Attempt: trial.Attempt, Reasons: reasons,
 		})
 	}
@@ -154,8 +154,8 @@ func exclusionReasons(run *edgev1alpha1.ProfilingRun) ([]string, error) {
 
 func projectStoredObjectReference(
 	reference edgev1alpha1.ProfilingRunEvidenceReference,
-) batchsaturation.StoredObjectReference {
-	return batchsaturation.StoredObjectReference{
+) batchenergyoptimization.StoredObjectReference {
+	return batchenergyoptimization.StoredObjectReference{
 		Store: reference.Store, Key: reference.Key,
 		SchemaVersion: reference.SchemaVersion, Size: reference.Size,
 	}
@@ -164,48 +164,48 @@ func projectStoredObjectReference(
 func (w *ResultWriter) record(
 	ctx context.Context,
 	parentUID types.UID,
-	record batchsaturation.ResultRecord,
-) (batchsaturation.StoredObjectReference, error) {
+	record batchenergyoptimization.ResultRecord,
+) (batchenergyoptimization.StoredObjectReference, error) {
 	payload, err := record.CanonicalJSON()
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("encode batch-saturation result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode batch-energy-optimization result: %w", err)
 	}
 	identity := evidencestore.ObjectIdentity{
 		Store: w.options.Store,
-		Key:   fmt.Sprintf("batch-saturations/%s/result.json", parentUID),
+		Key:   fmt.Sprintf("batch-energy-optimizations/%s/result.json", parentUID),
 		Size:  int64(len(payload)),
 	}
-	reference := batchsaturation.StoredObjectReference{
+	reference := batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
 		SchemaVersion: record.SchemaVersion(), Size: identity.Size,
 	}
 	receipt, err := w.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("record batch-saturation result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("record batch-energy-optimization result: %w", err)
 	}
 	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return batchsaturation.StoredObjectReference{}, errors.New("result writer returned an invalid receipt")
+		return batchenergyoptimization.StoredObjectReference{}, errors.New("result writer returned an invalid receipt")
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeCreated {
 		return reference, nil
 	}
 
 	storedBytes, err := readStoredObject(
-		ctx, w.store, identity.Location(), w.options.MaxObjectBytes, "batch-saturation result object",
+		ctx, w.store, identity.Location(), w.options.MaxObjectBytes, "batch-energy-optimization result object",
 	)
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("read existing batch-saturation result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("read existing batch-energy-optimization result: %w", err)
 	}
-	stored, err := batchsaturation.DecodeResultRecord(storedBytes)
+	stored, err := batchenergyoptimization.DecodeResultRecord(storedBytes)
 	if err != nil {
-		return batchsaturation.StoredObjectReference{}, fmt.Errorf("decode existing batch-saturation result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing batch-energy-optimization result: %w", err)
 	}
 	if !stored.SemanticallyEqual(record) {
-		return batchsaturation.StoredObjectReference{}, errors.New(
-			"stored batch-saturation result disagrees with the recomputed result",
+		return batchenergyoptimization.StoredObjectReference{}, errors.New(
+			"stored batch-energy-optimization result disagrees with the recomputed result",
 		)
 	}
-	return batchsaturation.StoredObjectReference{
+	return batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
 		SchemaVersion: stored.SchemaVersion(), Size: int64(len(storedBytes)),
 	}, nil

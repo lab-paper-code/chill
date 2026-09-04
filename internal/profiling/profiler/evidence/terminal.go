@@ -8,7 +8,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func (f TerminalFacts) validate(intent profilingrun.Intent, rawPodUID string) error {
+func (f TerminalFacts) validate(config profilingrun.RunConfig, rawPodUID string) error {
 	if blank(f.Job.Namespace, f.Job.Name, f.Job.UID) || f.Job.Succeeded != 1 || f.Job.Failed != 0 ||
 		f.Job.CompletionTime.IsZero() {
 		return errors.New("Job terminal facts are incomplete")
@@ -19,10 +19,10 @@ func (f TerminalFacts) validate(intent profilingrun.Intent, rawPodUID string) er
 		return errors.New("Pod terminal facts or Job ownership are invalid")
 	}
 	if blank(f.Node.Name, f.Node.UID) || f.Node.Name != f.Pod.NodeName ||
-		f.Node.Name != intent.TargetNode.Name || f.Node.UID != intent.TargetNode.UID {
+		f.Node.Name != config.TargetNode.Name || f.Node.UID != config.TargetNode.UID {
 		return errors.New("terminal Node identity mismatch")
 	}
-	if err := validateContainers(intent, f.Containers); err != nil {
+	if err := validateContainers(config, f.Containers); err != nil {
 		return err
 	}
 	if f.NodeWorkload.ObservedAt.IsZero() || f.NodeWorkload.ObservedAt.Before(f.Job.CompletionTime) {
@@ -46,14 +46,14 @@ func (f TerminalFacts) validate(intent profilingrun.Intent, rawPodUID string) er
 	return nil
 }
 
-func validateContainers(intent profilingrun.Intent, containers []ContainerTerminal) error {
+func validateContainers(config profilingrun.RunConfig, containers []ContainerTerminal) error {
 	expected := map[string]string{
-		"artifact":        intent.Images.Artifact,
-		"runtime":         intent.Images.Runtime,
-		"metric-observer": intent.Images.MetricObserver,
+		"artifact":        config.Images.Artifact,
+		"runtime":         config.Images.Runtime,
+		"metric-observer": config.Images.MetricObserver,
 	}
-	if intent.Images.WorkloadObserver != "" {
-		expected["workload-observer"] = intent.Images.WorkloadObserver
+	if config.Images.WorkloadObserver != "" {
+		expected["workload-observer"] = config.Images.WorkloadObserver
 	}
 	if len(containers) != len(expected) {
 		return fmt.Errorf("expected %d terminal containers, found %d", len(expected), len(containers))

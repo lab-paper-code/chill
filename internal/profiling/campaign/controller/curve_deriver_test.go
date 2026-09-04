@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestCurveDeriverMapsTheSequentialDecision(t *testing.T) {
+func TestCurveDeriverMapsTheEnergyObjectiveDecision(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 
 	result, err := fixture.deriver.Derive(
@@ -35,27 +35,25 @@ func TestCurveDeriverMapsTheSequentialDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Derive() error = %v", err)
 	}
-	detail, ok := result.Detail.(profilederivation.SequentialResult)
+	detail, ok := result.Detail.(profilederivation.EnergyOptimizationResult)
 	if !ok {
-		t.Fatalf("Detail type = %T, want profilederivation.SequentialResult", result.Detail)
+		t.Fatalf("Detail type = %T, want profilederivation.EnergyOptimizationResult", result.Detail)
 	}
-	wantContinue := detail.Status == profilederivation.SequentialContinue
+	wantContinue := detail.Status == profilederivation.EnergySearchContinue
 	if result.Continue != wantContinue {
 		t.Fatalf("Continue = %t, want %t from status %q", result.Continue, wantContinue, detail.Status)
 	}
-	if detail.SelectedBatch == nil || result.SelectedBatch != *detail.SelectedBatch {
-		t.Fatalf("SelectedBatch = %d, detail = %+v", result.SelectedBatch, detail.SelectedBatch)
-	}
-	if detail.Status != profilederivation.SequentialStopped ||
-		detail.StopReason != profilederivation.StopNoFurtherImprovement ||
-		result.Outcome != "Stopped/NoFurtherImprovement" {
+	if detail.BestBatch == nil || *detail.BestBatch != 1 ||
+		detail.Status != profilederivation.EnergySearchComplete ||
+		detail.CompletionReason != profilederivation.EnergySearchLocalMinimum ||
+		result.Outcome != "MinimumFound/LocalMinimum" {
 		t.Fatalf("terminal mapping = continue=%t outcome=%q detail=%+v", result.Continue, result.Outcome, detail)
 	}
 	baseline, exists := detail.IdleBaselinesByState[fixture.stateIdentity]
-	if !exists || baseline.PolicyVersion != sequentialPointPolicyVersion ||
-		baseline.ConfidenceLevel != sequentialPointConfidenceLevel ||
+	if !exists || baseline.PolicyVersion != energyObjectivePointPolicyVersion ||
+		baseline.ConfidenceLevel != energyObjectivePointConfidenceLevel ||
 		len(baseline.Trials) != fixture.policy.TrialsPerBatch {
-		t.Fatalf("point policy was not bound to the sequential trial count: %+v", baseline)
+		t.Fatalf("point policy was not bound to the energy-objective trial count: %+v", baseline)
 	}
 }
 
@@ -81,9 +79,9 @@ func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
 			name: "active",
 			mutate: func(fixture *curveDeriverFixture) string {
 				runName := fixture.activeRuns[0].Name
-				frozen := fixture.intents.byRun[runName]
+				frozen := fixture.records.byRun[runName]
 				frozen.AdmissionPolicy = fixture.insufficientActivePolicy
-				fixture.intents.byRun[runName] = frozen
+				fixture.records.byRun[runName] = frozen
 				return runName
 			},
 		},
@@ -91,9 +89,9 @@ func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
 			name: "idle",
 			mutate: func(fixture *curveDeriverFixture) string {
 				runName := fixture.idleRuns[0].Name
-				frozen := fixture.intents.byRun[runName]
+				frozen := fixture.records.byRun[runName]
 				frozen.AdmissionPolicy = fixture.insufficientIdlePolicy
-				fixture.intents.byRun[runName] = frozen
+				fixture.records.byRun[runName] = frozen
 				return runName
 			},
 		},
@@ -125,9 +123,9 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "contiguous prefix") {
 		t.Fatalf("Derive() error = %v, want recorded-prefix rejection", err)
 	}
-	if fixture.intents.calls != 0 || fixture.evidence.calls != 0 {
+	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
 		t.Fatalf("invalid prefix loaded evidence: intent calls=%d evidence calls=%d",
-			fixture.intents.calls, fixture.evidence.calls)
+			fixture.records.calls, fixture.evidence.calls)
 	}
 }
 
@@ -197,10 +195,10 @@ func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
 	if err == nil || err.Error() != wantError {
 		t.Fatalf("Derive() error = %v, want %q", err, wantError)
 	}
-	if fixture.intents.calls != 0 || fixture.evidence.calls != 0 {
+	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
 		t.Fatalf(
 			"out-of-prefix Run loaded evidence: intent calls=%d evidence calls=%d",
-			fixture.intents.calls, fixture.evidence.calls,
+			fixture.records.calls, fixture.evidence.calls,
 		)
 	}
 }
@@ -209,19 +207,19 @@ func TestCurveDeriverPreservesCollectorLoadErrorIdentity(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 	run := fixture.activeRuns[0]
 	loadErr := errors.New("intent load failed")
-	fixture.intents.errors = map[string]error{run.Name: loadErr}
+	fixture.records.errors = map[string]error{run.Name: loadErr}
 
 	_, err := fixture.deriver.Derive(
 		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
 		[]int{1, 2}, fixture.policy,
 	)
-	wantError := fmt.Sprintf("load ProfilingRun %q frozen intent: %s", run.Name, loadErr)
+	wantError := fmt.Sprintf("load ProfilingRun %q Job RunConfig: %s", run.Name, loadErr)
 	if !errors.Is(err, loadErr) || err.Error() != wantError {
 		t.Fatalf("Derive() error = %v, want %q wrapping %q", err, wantError, loadErr)
 	}
-	if fixture.intents.calls != 1 || fixture.evidence.calls != 0 {
+	if fixture.records.calls != 1 || fixture.evidence.calls != 0 {
 		t.Fatalf(
-			"load failure calls: intent=%d evidence=%d", fixture.intents.calls, fixture.evidence.calls,
+			"load failure calls: intent=%d evidence=%d", fixture.records.calls, fixture.evidence.calls,
 		)
 	}
 }
@@ -232,65 +230,65 @@ func TestValidateCurvePrefixRejectsEmptyBatches(t *testing.T) {
 	}
 }
 
-func TestProjectSequentialCurveResultMapsEveryReachableOutcome(t *testing.T) {
+func TestProjectEnergyOptimizationResultMapsEveryReachableOutcome(t *testing.T) {
 	selected := 2
 	tests := []struct {
 		name         string
-		status       profilederivation.SequentialStatus
-		reason       profilederivation.SequentialStopReason
+		status       profilederivation.EnergySearchStatus
+		reason       profilederivation.EnergySearchCompletionReason
 		wantContinue bool
 		wantOutcome  string
 	}{
 		{
-			name: "continue", status: profilederivation.SequentialContinue,
+			name: "continue", status: profilederivation.EnergySearchContinue,
 			wantContinue: true, wantOutcome: "",
 		},
 		{
-			name: "no further improvement", status: profilederivation.SequentialStopped,
-			reason: profilederivation.StopNoFurtherImprovement, wantOutcome: "Stopped/NoFurtherImprovement",
+			name: "local minimum", status: profilederivation.EnergySearchComplete,
+			reason: profilederivation.EnergySearchLocalMinimum, wantOutcome: "MinimumFound/LocalMinimum",
 		},
 		{
-			name: "energy divergence", status: profilederivation.SequentialStopped,
-			reason: profilederivation.StopEnergyDivergence, wantOutcome: "Stopped/EnergyDivergence",
+			name: "search space exhausted", status: profilederivation.EnergySearchComplete,
+			reason: profilederivation.EnergySearchSpaceExhausted, wantOutcome: "MinimumFound/SearchSpaceExhausted",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			input := profilederivation.SequentialResult{
-				Status: test.status, StopReason: test.reason, SelectedBatch: &selected,
+			input := profilederivation.EnergyOptimizationResult{
+				Status: test.status, CompletionReason: test.reason, BestBatch: &selected,
 			}
-			result, err := projectSequentialCurveResult(input)
+			result, err := projectEnergyOptimizationResult(input)
 			if err != nil {
-				t.Fatalf("projectSequentialCurveResult() error = %v", err)
+				t.Fatalf("projectEnergyOptimizationResult() error = %v", err)
 			}
-			if result.Continue != test.wantContinue || result.SelectedBatch != selected ||
+			if result.Continue != test.wantContinue ||
 				result.Outcome != test.wantOutcome || !reflect.DeepEqual(result.Detail, input) {
-				t.Fatalf("projectSequentialCurveResult() = %+v, detail=%+v", result, result.Detail)
+				t.Fatalf("projectEnergyOptimizationResult() = %+v, detail=%+v", result, result.Detail)
 			}
 		})
 	}
 }
 
-func TestProjectSequentialCurveResultRejectsUnreachableCapabilityBoundary(t *testing.T) {
+func TestProjectEnergyOptimizationResultRejectsAnUnknownCompletionReason(t *testing.T) {
 	selected := 2
-	_, err := projectSequentialCurveResult(profilederivation.SequentialResult{
-		Status:        profilederivation.SequentialStopped,
-		StopReason:    profilederivation.StopCapabilityBoundary,
-		SelectedBatch: &selected,
+	_, err := projectEnergyOptimizationResult(profilederivation.EnergyOptimizationResult{
+		Status:           profilederivation.EnergySearchComplete,
+		CompletionReason: "unknown",
+		BestBatch:        &selected,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unreachable capability boundary") {
-		t.Fatalf("projectSequentialCurveResult() error = %v, want unreachable-state rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported completion reason") {
+		t.Fatalf("projectEnergyOptimizationResult() error = %v, want unknown-reason rejection", err)
 	}
 }
 
 type curveDeriverFixture struct {
 	deriver                  *CurveDeriver
-	intents                  *fakeCurveIntentLoader
+	records                  *fakeCurveRunRecordLoader
 	evidence                 *fakeCurveEvidenceLoader
 	plan                     profilederivation.CurvePlan
 	activeRuns               []edgev1alpha1.ProfilingRun
 	idleRuns                 []edgev1alpha1.ProfilingRun
-	policy                   profilederivation.SequentialPolicy
+	policy                   profilederivation.EnergyObjectivePolicy
 	insufficientActivePolicy profileradmission.FrozenPolicy
 	insufficientIdlePolicy   profileradmission.FrozenPolicy
 	stateIdentity            string
@@ -328,18 +326,17 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	idlePolicy := curveFixturePolicy(t, profileradmission.IdleWallPowerPolicyV1)
 	insufficientActivePolicy := curveFixturePolicy(t, "insufficient-active")
 	insufficientIdlePolicy := curveFixturePolicy(t, "insufficient-idle")
-	intents := &fakeCurveIntentLoader{byRun: map[string]profilercontroller.FrozenRun{}}
+	records := &fakeCurveRunRecordLoader{byRun: map[string]profilercontroller.ResolvedRun{}}
 	evidence := &fakeCurveEvidenceLoader{
 		active: make(map[string]profilerevidence.VerifiedEvidence),
 		idle:   make(map[string]profilerevidence.VerifiedIdleEvidence),
 	}
 	fixture := curveDeriverFixture{
-		intents: intents, evidence: evidence, plan: plan,
+		records: records, evidence: evidence, plan: plan,
 		insufficientActivePolicy: insufficientActivePolicy,
 		insufficientIdlePolicy:   insufficientIdlePolicy,
-		policy: profilederivation.SequentialPolicy{
-			Version: "sequential-v1", MinDelta: 0.05, Patience: 1,
-			TrialsPerBatch: 4, DivergenceFactor: 2,
+		policy: profilederivation.EnergyObjectivePolicy{
+			Version: "quick-energy-v1", TrialsPerBatch: 4,
 		},
 	}
 	for _, batch := range []int{1, 2} {
@@ -350,7 +347,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 			intent.Measurement.Batch = batch
 			verified := curveFixtureActiveEvidence(t, intent, name+"-pod", watts)
 			fixture.activeRuns = append(fixture.activeRuns, curveFixtureRun(name, intent.Measurement))
-			intents.byRun[name] = profilercontroller.FrozenRun{AdmissionPolicy: activePolicy}
+			records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: activePolicy}
 			evidence.active[name] = verified
 		}
 	}
@@ -358,42 +355,42 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		name := fmt.Sprintf("idle-t%d", trial)
 		verified := curveFixtureIdleEvidence(t, idleIntent, name+"-pod", 4)
 		fixture.idleRuns = append(fixture.idleRuns, curveFixtureRun(name, idleIntent.Measurement))
-		intents.byRun[name] = profilercontroller.FrozenRun{AdmissionPolicy: idlePolicy}
+		records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: idlePolicy}
 		evidence.idle[name] = verified
 	}
 	firstExecution, _, err := evidence.active[fixture.activeRuns[0].Name].Records()
 	if err != nil {
 		t.Fatal(err)
 	}
-	identities, err := profileradmission.ProjectRunIdentities(firstExecution.Intent, firstExecution.Terminal.Node.UID)
+	identities, err := profileradmission.ProjectRunIdentities(firstExecution.RunConfig, firstExecution.Terminal.Node.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture.stateIdentity = identities.StateIdentity
-	fixture.deriver, err = NewCurveDeriver(intents, evidence)
+	fixture.deriver, err = NewCurveDeriver(records, evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return fixture
 }
 
-type fakeCurveIntentLoader struct {
-	byRun  map[string]profilercontroller.FrozenRun
+type fakeCurveRunRecordLoader struct {
+	byRun  map[string]profilercontroller.ResolvedRun
 	calls  int
 	errors map[string]error
 }
 
-func (l *fakeCurveIntentLoader) Load(
+func (l *fakeCurveRunRecordLoader) Load(
 	_ context.Context,
 	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.FrozenRun, error) {
+) (profilercontroller.ResolvedRun, error) {
 	l.calls++
 	if err := l.errors[run.Name]; err != nil {
-		return profilercontroller.FrozenRun{}, err
+		return profilercontroller.ResolvedRun{}, err
 	}
 	frozen, exists := l.byRun[run.Name]
 	if !exists {
-		return profilercontroller.FrozenRun{}, fmt.Errorf("unexpected Run %q", run.Name)
+		return profilercontroller.ResolvedRun{}, fmt.Errorf("unexpected Run %q", run.Name)
 	}
 	return frozen, nil
 }
@@ -511,17 +508,17 @@ func (s curveFixtureStore) OpenLocation(
 	return io.NopCloser(bytes.NewReader(payload)), nil
 }
 
-func curveFixtureIntent(t *testing.T) profilingrun.Intent {
+func curveFixtureIntent(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
+	var intent profilingrun.RunConfig
 	if err := json.Unmarshal(payload, &intent); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
@@ -533,13 +530,13 @@ func curveFixtureIntent(t *testing.T) profilingrun.Intent {
 
 func curveFixtureActiveEvidence(
 	t *testing.T,
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedEvidence {
 	t.Helper()
 	raw := curveFixtureActiveRaw(intent, podUID, watts)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +555,7 @@ func curveFixtureActiveEvidence(
 
 func curveFixtureIdleEvidence(
 	t *testing.T,
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.VerifiedIdleEvidence {
@@ -567,6 +564,7 @@ func curveFixtureIdleEvidence(
 	started := activeShape.Metrics.StartedAt
 	raw := profilerevidence.IdleRawMeasurement{
 		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion,
+		RunConfig:     intent,
 		PodUID:        podUID,
 		Runtime: profilingrun.IdleRuntimeResult{
 			SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded",
@@ -587,7 +585,7 @@ func curveFixtureIdleEvidence(
 		},
 		Metrics: activeShape.Metrics, Workload: activeShape.Workload,
 	}
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +603,7 @@ func curveFixtureIdleEvidence(
 }
 
 func curveFixtureActiveRaw(
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	watts float64,
 ) profilerevidence.RawMeasurement {
@@ -627,6 +625,7 @@ func curveFixtureActiveRaw(
 	}
 	return profilerevidence.RawMeasurement{
 		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
+		RunConfig:     intent,
 		PodUID:        podUID,
 		Runtime: profilingrun.RuntimeResult{
 			SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
@@ -692,7 +691,7 @@ func curveFixtureActiveRaw(
 	}
 }
 
-func curveFixtureRuntimeCPU(intent profilingrun.Intent) profilingrun.RuntimeCPU {
+func curveFixtureRuntimeCPU(intent profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: intent.CPU.ORTIntraOpThreads,
 		ORTInterOpThreads: intent.CPU.ORTInterOpThreads, AffinityCPUCount: intent.CPU.ORTIntraOpThreads,
@@ -702,19 +701,11 @@ func curveFixtureRuntimeCPU(intent profilingrun.Intent) profilingrun.RuntimeCPU 
 
 func curveFixtureExecution(
 	t *testing.T,
-	intent profilingrun.Intent,
+	intent profilingrun.RunConfig,
 	podUID string,
 	rawBytes []byte,
 ) profilerevidence.ExecutionEvidence {
 	t.Helper()
-	candidateBytes, err := os.ReadFile("../../profiler/evidence/testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate, err := profilingrun.DecodeCandidateReport(candidateBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
 	completed := time.Date(2026, 8, 11, 1, 3, 3, 0, time.UTC)
 	container := func(name, image string) profilerevidence.ContainerTerminal {
 		return profilerevidence.ContainerTerminal{
@@ -724,7 +715,7 @@ func curveFixtureExecution(
 	}
 	return profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		Intent:        intent, CandidateReport: candidate,
+		RunConfig:     intent,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "evidence", Key: "raw-" + podUID + ".json", Size: int64(len(rawBytes)),
 		},

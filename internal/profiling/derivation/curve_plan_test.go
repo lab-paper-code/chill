@@ -233,7 +233,6 @@ func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	pass := testPass(t, plan, []float64{1, .8, .7}, "sparse")
-	pass.Batches = append(pass.Batches, PassBatch{Batch: 9, CapabilityBoundary: true})
 	curve, err := DeriveCurve(
 		[]Pass{pass}, plan, testCurveBaselines(t, plan), pointPolicy("sparse-point"),
 	)
@@ -244,13 +243,9 @@ func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 	if len(points) != 3 || points[0].Batch != 2 || points[1].Batch != 4 || points[2].Batch != 8 {
 		t.Fatalf("sparse points = %+v, want batches [2 4 8]", points)
 	}
-	discovery, _ := curve.pass(PassDiscovery)
-	if discovery.capabilityBoundary == nil || *discovery.capabilityBoundary != 9 {
-		t.Fatalf("boundary = %+v, want exhausted-set boundary 9", discovery.capabilityBoundary)
-	}
 }
 
-func TestDeriveCurveRejectsSkippedPlannedBatchSizeAndEarlyBoundary(t *testing.T) {
+func TestDeriveCurveRejectsSkippedPlannedBatchSize(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
 	contract, err := NewCurvePlan(shared)
@@ -269,27 +264,19 @@ func TestDeriveCurveRejectsSkippedPlannedBatchSizeAndEarlyBoundary(t *testing.T)
 		t.Fatal("expected a skipped planned batch size to be rejected")
 	}
 
-	earlyBoundary := testPass(t, plan, []float64{1}, "boundary")
-	earlyBoundary.Batches = append(earlyBoundary.Batches, PassBatch{Batch: 5, CapabilityBoundary: true})
-	if _, err := DeriveCurve(
-		[]Pass{earlyBoundary}, plan, baselines, pointPolicy("sparse-point"),
-	); err == nil {
-		t.Fatal("expected a gap inside the planned batch size set not to count as exhaustion")
-	}
-
 	wrongStart := testPass(t, plan, []float64{1, .8}, "start")
 	wrongStart.Batches = wrongStart.Batches[1:]
 	if _, err := DeriveCurve(
 		[]Pass{wrongStart}, plan, baselines, pointPolicy("sparse-point"),
 	); err == nil {
-		t.Fatal("expected discovery not starting at the first planned batch size to be rejected")
+		t.Fatal("expected search not starting at the first planned batch size to be rejected")
 	}
 }
 
 func TestCurveRequiresExactStateBaselinesAndIndependentEvidence(t *testing.T) {
 	_, plan := testVerifiedCurvePlan(t, 2)
 	baselines := testCurveBaselines(t, plan)
-	pass := testPass(t, plan, []float64{1, .8}, "discovery")
+	pass := testPass(t, plan, []float64{1, .8}, "search")
 	curve, err := DeriveCurve([]Pass{pass}, plan, baselines, pointPolicy("curve-point-v1"))
 	if err != nil {
 		t.Fatal(err)
@@ -326,82 +313,61 @@ func TestCurveRequiresExactStateBaselinesAndIndependentEvidence(t *testing.T) {
 		t.Fatal("expected baseline environment mismatch rejection")
 	}
 	duplicate := testPass(t, plan, []float64{1}, "same")
-	confirmatory := duplicate
-	confirmatory.Role = PassConfirmatory
 	if _, err := DeriveCurve(
-		[]Pass{duplicate, confirmatory}, plan, baselines, pointPolicy("curve-point-v1"),
+		[]Pass{duplicate, duplicate}, plan, baselines, pointPolicy("curve-point-v1"),
 	); err == nil {
-		t.Fatal("expected active TrialID reuse across passes rejection")
+		t.Fatal("expected more than one search pass to be rejected")
 	}
 }
 
-func TestSequentialGoldenStops(t *testing.T) {
-	basePolicy := SequentialPolicy{
-		Version: "sequential-v1", MinDelta: .05, Patience: 2,
-		TrialsPerBatch: 3, DivergenceFactor: 1.5,
-	}
+func TestEnergyOptimizationFollowsEveryStrictImprovement(t *testing.T) {
+	policy := EnergyObjectivePolicy{Version: "energy-objective-v1", TrialsPerBatch: 3}
 	tests := []struct {
-		name         string
-		means        []float64
-		boundary     bool
-		policy       SequentialPolicy
-		wantStatus   SequentialStatus
-		wantReason   SequentialStopReason
-		wantSelected int
-		wantBoundary int
+		name       string
+		means      []float64
+		planSize   int
+		wantStatus EnergySearchStatus
+		wantReason EnergySearchCompletionReason
+		wantBest   int
 	}{
 		{
-			name: "no further improvement reports best not last", means: []float64{1, .8, .79, .78},
-			policy: basePolicy, wantStatus: SequentialStopped,
-			wantReason: StopNoFurtherImprovement, wantSelected: 2,
+			name:  "tiny improvements remain objective improvements",
+			means: []float64{1, .8, .799, .7989}, planSize: 5,
+			wantStatus: EnergySearchContinue, wantBest: 4,
 		},
 		{
-			name: "capability boundary", means: []float64{1, .8}, boundary: true,
-			policy: basePolicy, wantStatus: SequentialStopped,
-			wantReason: StopCapabilityBoundary, wantSelected: 2, wantBoundary: 3,
+			name:  "first non-improving neighbor closes the local search",
+			means: []float64{1, .8, .81}, planSize: 5,
+			wantStatus: EnergySearchComplete, wantReason: EnergySearchLocalMinimum, wantBest: 2,
 		},
 		{
-			name: "energy divergence", means: []float64{1, 1.6},
-			policy: basePolicy, wantStatus: SequentialStopped,
-			wantReason: StopEnergyDivergence, wantSelected: 1,
-		},
-		{
-			name: "one worse batch can recover", means: []float64{1, 1.1, .8},
-			policy: basePolicy, wantStatus: SequentialContinue, wantSelected: 3,
-		},
-		{
-			name: "sub-margin gains accumulate against fixed reference", means: []float64{1, .97, .94},
-			policy: basePolicy, wantStatus: SequentialContinue, wantSelected: 3,
+			name:  "search-space exhaustion is successful completion",
+			means: []float64{1, .8, .79}, planSize: 3,
+			wantStatus: EnergySearchComplete, wantReason: EnergySearchSpaceExhausted, wantBest: 3,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			curve := testSequentialCurve(t, test.means, test.boundary)
-			got, err := DeriveSequentialBatchDecision(curve, test.policy)
+			curve := testEnergyOptimizationCurve(t, test.means, test.planSize)
+			got, err := DeriveMinimumEnergyBatch(curve, policy)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != test.wantStatus || got.StopReason != test.wantReason ||
-				got.SelectedBatch == nil || *got.SelectedBatch != test.wantSelected ||
+			if got.Status != test.wantStatus || got.CompletionReason != test.wantReason ||
+				got.BestBatch == nil || *got.BestBatch != test.wantBest ||
 				len(got.IncrementalWorkByBatch) != len(test.means) ||
 				len(got.MeasuredBatchSizes) != len(test.means) {
-				t.Fatalf("unexpected sequential result: %+v", got)
+				t.Fatalf("unexpected energy-optimization result: %+v", got)
 			}
-			if test.wantBoundary == 0 && got.BoundaryBatch != nil {
-				t.Fatalf("unexpected boundary: %+v", got.BoundaryBatch)
-			}
-			if test.wantBoundary > 0 && (got.BoundaryBatch == nil || *got.BoundaryBatch != test.wantBoundary) {
-				t.Fatalf("boundary = %+v, want %d", got.BoundaryBatch, test.wantBoundary)
-			}
-			if got.CurvePlanName == "" ||
+			if got.Objective != EnergyObjectiveMinIncrementalWork || got.CurvePlanName == "" ||
 				len(got.IdleBaselinesByState) != 1 {
-				t.Fatalf("sequential provenance is incomplete: %+v", got)
+				t.Fatalf("energy-optimization provenance is incomplete: %+v", got)
 			}
 		})
 	}
 }
 
-func TestSequentialFollowsSparsePlannedBatchSizes(t *testing.T) {
+func TestEnergyOptimizationFollowsSparsePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
 	contract, err := NewCurvePlan(shared)
@@ -412,54 +378,44 @@ func TestSequentialFollowsSparsePlannedBatchSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pass := testPass(t, plan, []float64{1, .8, .79}, "sparse-sequential")
-	pass.Batches = append(pass.Batches, PassBatch{Batch: 9, CapabilityBoundary: true})
+	pass := testPass(t, plan, []float64{1, .8, .79}, "sparse-energy-search")
 	curve, err := DeriveCurve(
 		[]Pass{pass}, plan, testCurveBaselines(t, plan), pointPolicy("sparse-point"),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := DeriveSequentialBatchDecision(curve, SequentialPolicy{
-		Version: "sequential-v1", MinDelta: .05, Patience: 3,
-		TrialsPerBatch: 3, DivergenceFactor: 2,
+	result, err := DeriveMinimumEnergyBatch(curve, EnergyObjectivePolicy{
+		Version: "energy-objective-v1", TrialsPerBatch: 3,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != SequentialStopped || result.StopReason != StopCapabilityBoundary ||
-		result.SelectedBatch == nil || *result.SelectedBatch != 4 ||
-		result.BoundaryBatch == nil || *result.BoundaryBatch != 9 ||
+	if result.Status != EnergySearchComplete || result.CompletionReason != EnergySearchSpaceExhausted ||
+		result.BestBatch == nil || *result.BestBatch != 8 ||
 		!reflect.DeepEqual(result.MeasuredBatchSizes, []int{2, 4, 8}) {
-		t.Fatalf("unexpected sparse sequential result: %+v", result)
+		t.Fatalf("unexpected sparse energy-optimization result: %+v", result)
 	}
 }
 
-func TestSequentialRejectsPostStopAndPolicyDrift(t *testing.T) {
-	curve := testSequentialCurve(t, []float64{1, .99, .98, .97}, false)
-	policy := SequentialPolicy{
-		Version: "sequential-v1", MinDelta: .05, Patience: 2,
-		TrialsPerBatch: 3, DivergenceFactor: 2,
+func TestEnergyOptimizationRejectsPostMinimumAndPolicyDrift(t *testing.T) {
+	curve := testEnergyOptimizationCurve(t, []float64{1, 1.01, .9}, 4)
+	policy := EnergyObjectivePolicy{Version: "energy-objective-v1", TrialsPerBatch: 3}
+	if _, err := DeriveMinimumEnergyBatch(curve, policy); err == nil {
+		t.Fatal("expected points after the local minimum to be rejected")
 	}
-	if _, err := DeriveSequentialBatchDecision(curve, policy); err == nil {
-		t.Fatal("expected points after the stop condition to be rejected")
-	}
-	curve = testSequentialCurve(t, []float64{1, .8}, false)
+	curve = testEnergyOptimizationCurve(t, []float64{1, .8}, 3)
 	policy.TrialsPerBatch = 4
-	if _, err := DeriveSequentialBatchDecision(curve, policy); err == nil {
+	if _, err := DeriveMinimumEnergyBatch(curve, policy); err == nil {
 		t.Fatal("expected trials-per-batch policy mismatch rejection")
 	}
 }
 
-func testSequentialCurve(t *testing.T, means []float64, boundary bool) Curve {
+func testEnergyOptimizationCurve(t *testing.T, means []float64, planSize int) Curve {
 	t.Helper()
-	batchCount := len(means)
-	_, plan := testVerifiedCurvePlan(t, batchCount)
+	_, plan := testVerifiedCurvePlan(t, planSize)
 	baselines := testCurveBaselines(t, plan)
-	pass := testPass(t, plan, means, "sequential")
-	if boundary {
-		pass.Batches = append(pass.Batches, PassBatch{Batch: batchCount + 1, CapabilityBoundary: true})
-	}
+	pass := testPass(t, plan, means, "energy-optimization")
 	curve, err := DeriveCurve([]Pass{pass}, plan, baselines, pointPolicy("curve-point-v1"))
 	if err != nil {
 		t.Fatal(err)
@@ -568,7 +524,7 @@ func testPass(t *testing.T, plan VerifiedCurvePlan, means []float64, idPrefix st
 	if len(means) > len(plannedBatchSizes) {
 		t.Fatalf("means = %d, planned batch sizes = %d", len(means), len(plannedBatchSizes))
 	}
-	pass := Pass{Role: PassDiscovery}
+	pass := Pass{Role: PassSearch}
 	for index, mean := range means {
 		plannedBatchSize := plannedBatchSizes[index]
 		batchInput := PassBatch{Batch: plannedBatchSize}

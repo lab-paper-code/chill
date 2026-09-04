@@ -21,11 +21,8 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(prepared.Intent, expected) {
-		t.Fatalf("prepared intent drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.Intent)
-	}
-	if err := profilingrun.ValidateCandidateReport(prepared.CandidateReportBytes, prepared.Intent); err != nil {
-		t.Fatalf("prepared Run lost candidate-report semantics: %v", err)
+	if !reflect.DeepEqual(prepared.RunConfig, expected) {
+		t.Fatalf("prepared intent drifted from proven first path\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
 	if resolvers.metrics.nodeName != expected.TargetNode.Name {
 		t.Fatal("metric source was not resolved from the selected Node")
@@ -40,7 +37,7 @@ func TestPreparerUpgradesProvenFirstPathIntent(t *testing.T) {
 func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
 	for _, runtimePath := range []string{"ort", "rknn"} {
 		t.Run(runtimePath, func(t *testing.T) {
-			var expected profilingrun.Intent
+			var expected profilingrun.RunConfig
 			var candidateBytes []byte
 			if runtimePath == "ort" {
 				expected, candidateBytes = preparationFixture(t)
@@ -63,8 +60,8 @@ func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(prepared.Intent, expected) {
-				t.Fatalf("configured CPU quota intent drifted\nwant: %#v\n got: %#v", expected, prepared.Intent)
+			if !reflect.DeepEqual(prepared.RunConfig, expected) {
+				t.Fatalf("configured CPU quota intent drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 			}
 		})
 	}
@@ -79,15 +76,15 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(prepared.Intent, expected) {
-		t.Fatalf("prepared RKNNLite intent drifted\nwant: %#v\n got: %#v", expected, prepared.Intent)
+	if !reflect.DeepEqual(prepared.RunConfig, expected) {
+		t.Fatalf("prepared RKNNLite intent drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
-	if prepared.Intent.CPU.ORTIntraOpThreads != 0 || prepared.Intent.CPU.ORTInterOpThreads != 0 ||
-		!profilingrun.IsSupportedRKNNLiteIntent(prepared.Intent) {
-		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.Intent.CPU)
+	if prepared.RunConfig.CPU.ORTIntraOpThreads != 0 || prepared.RunConfig.CPU.ORTInterOpThreads != 0 ||
+		!profilingrun.IsSupportedRKNNLiteRunConfig(prepared.RunConfig) {
+		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.RunConfig.CPU)
 	}
-	if prepared.Intent.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.Intent.Measurement.Batch != 2 {
-		t.Fatalf("artifact-specific path or batch drifted: %#v", prepared.Intent)
+	if prepared.RunConfig.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.RunConfig.Measurement.Batch != 2 {
+		t.Fatalf("artifact-specific path or batch drifted: %#v", prepared.RunConfig)
 	}
 }
 
@@ -137,11 +134,11 @@ func TestPreparerFreezesSelectedActuatorAndConfiguredPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Intent.Actuation == nil || prepared.ActuationPolicy == nil ||
-		prepared.Intent.Actuation.PolicyName != resolvers.actuation.result.Policy.Name ||
-		prepared.Intent.Actuation.Actuator.JetsonNVPModel.ID != 1 ||
+	if prepared.RunConfig.Actuation == nil || prepared.ActuationPolicy == nil ||
+		prepared.RunConfig.Actuation.PolicyName != resolvers.actuation.result.Policy.Name ||
+		prepared.RunConfig.Actuation.Actuator.JetsonNVPModel.ID != 1 ||
 		resolvers.actuation.calls != 1 || !reflect.DeepEqual(resolvers.actuation.selection, selection) {
-		t.Fatalf("prepared actuation binding = %#v policy=%#v", prepared.Intent.Actuation, prepared.ActuationPolicy)
+		t.Fatalf("prepared actuation binding = %#v policy=%#v", prepared.RunConfig.Actuation, prepared.ActuationPolicy)
 	}
 	if err := prepared.ValidateActuationBinding(); err != nil {
 		t.Fatal(err)
@@ -168,15 +165,12 @@ func TestPreparerIsDeterministicAndOwnsResolvedBytes(t *testing.T) {
 		t.Fatal("identical resolved facts produced different frozen Runs")
 	}
 	resolvers.candidate.result.ReportBytes[0] = 'x'
-	if first.CandidateReportBytes[0] == 'x' {
-		t.Fatal("prepared Run retained resolver-owned candidate bytes")
-	}
 	resolvers.workloads.result.Image = mutation
-	if first.Intent.Images.WorkloadObserver == mutation {
+	if first.RunConfig.Images.WorkloadObserver == mutation {
 		t.Fatal("prepared Run retained resolver-owned workload facts")
 	}
 	resolvers.metrics.result.MetricLabels["hostname"] = mutation
-	if first.Intent.Metrics.MetricLabels["hostname"] == mutation {
+	if first.RunConfig.Metrics.MetricLabels["hostname"] == mutation {
 		t.Fatal("prepared Run retained resolver-owned metric labels")
 	}
 }
@@ -496,7 +490,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 	return preparer
 }
 
-func fixtureRequest(intent profilingrun.Intent) PreparationRequest {
+func fixtureRequest(intent profilingrun.RunConfig) PreparationRequest {
 	return PreparationRequest{
 		Candidate: CandidateSelection{
 			ModelSpec:     intent.State.Model,
@@ -515,17 +509,17 @@ func fixtureRequest(intent profilingrun.Intent) PreparationRequest {
 	}
 }
 
-func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
+func preparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	t.Helper()
 	intentBytes, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
+	var intent profilingrun.RunConfig
 	if err := json.Unmarshal(intentBytes, &intent); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
@@ -536,7 +530,7 @@ func preparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 	return intent, candidateBytes
 }
 
-func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
+func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	t.Helper()
 	intent, candidateBytes := preparationFixture(t)
 	report, err := profilingrun.DecodeCandidateReport(candidateBytes)
@@ -606,6 +600,7 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.Intent, []byte) {
 		t.Fatal(err)
 	}
 	intent.Candidate.Inputs = report.Inputs
+	intent.Delivery = report.RuntimeDelivery()
 	if err := intent.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +615,7 @@ type fakePreparationResolvers struct {
 	actuation *fakeActuationPolicyResolver
 }
 
-func fixtureResolvers(intent profilingrun.Intent, report []byte) *fakePreparationResolvers {
+func fixtureResolvers(intent profilingrun.RunConfig, report []byte) *fakePreparationResolvers {
 	return &fakePreparationResolvers{
 		candidate: &fakeCandidateResolver{result: ResolvedCandidate{
 			ReportBytes:        append([]byte(nil), report...),

@@ -37,10 +37,6 @@ func TestCoordinatorProjectsReceiptAndTerminalFacts(t *testing.T) {
 		finalizer.request.Terminal.Node.UID != "node-uid" {
 		t.Fatalf("coordinator lost receipt or Kubernetes identity: %#v", finalizer.request)
 	}
-	request.CandidateReportBytes[0] = 'x'
-	if finalizer.request.CandidateReportBytes[0] == 'x' {
-		t.Fatal("coordinator retained caller-owned candidate report bytes")
-	}
 }
 
 func TestCoordinatorFailsBeforeFinalizerOnInvalidHandoff(t *testing.T) {
@@ -132,7 +128,6 @@ func validFinalizeObservationRequest(t *testing.T) FinalizeObservationRequest {
 	setTerminationMessage(observation.Pod, validReceiptJSON(t))
 	return FinalizeObservationRequest{
 		Observation:          observation,
-		CandidateReportBytes: []byte(`{"schemaVersion":"candidate"}`),
 		ReceiptContainerName: "runtime",
 		FinalLocation: evidencestore.ObjectLocation{
 			Store: "chill-evidence",

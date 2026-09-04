@@ -1,5 +1,5 @@
 // Package controller adapts owned ProfilingRun objects to the pure
-// batch-saturation progress rules. It performs no derivation of its own.
+// batch-energy-optimization progress rules. It performs no derivation of its own.
 package controller
 
 import (
@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -19,23 +19,23 @@ const (
 	idleInputGenerator   = "none"
 	idleOutputValidation = "none"
 
-	labelBatchSaturation = "edge.dacs.io/batch-saturation"
-	labelWorkloadMode    = "edge.dacs.io/workload-mode"
-	labelBatch           = "edge.dacs.io/batch"
-	labelAttempt         = "edge.dacs.io/attempt"
+	labelBatchEnergyOptimization = "edge.dacs.io/batch-energy-optimization"
+	labelWorkloadMode            = "edge.dacs.io/workload-mode"
+	labelBatch                   = "edge.dacs.io/batch"
+	labelAttempt                 = "edge.dacs.io/attempt"
 )
 
 // RunName is deterministic so re-executing one decision collides instead of
 // creating a duplicate trial.
-func RunName(parent string, measurement batchsaturation.Measurement, attempt int) string {
+func RunName(parent string, measurement batchenergyoptimization.Measurement, attempt int) string {
 	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
 }
 
-func attemptFromRunName(parent string, measurement batchsaturation.Measurement, name string) (int, error) {
+func attemptFromRunName(parent string, measurement batchenergyoptimization.Measurement, name string) (int, error) {
 	prefix := strings.TrimSuffix(RunName(parent, measurement, 0), "0")
 	encoded, found := strings.CutPrefix(name, prefix)
 	if !found {
-		return 0, errors.New("Run name does not match its BatchSaturation measurement")
+		return 0, errors.New("Run name does not match its BatchEnergyOptimization measurement")
 	}
 	attempt, err := strconv.Atoi(encoded)
 	if err != nil || attempt < 1 || RunName(parent, measurement, attempt) != name {
@@ -45,12 +45,12 @@ func attemptFromRunName(parent string, measurement batchsaturation.Measurement, 
 }
 
 func BuildRun(
-	parent *edgev1alpha1.BatchSaturation,
-	measurement batchsaturation.Measurement,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	measurement batchenergyoptimization.Measurement,
 	attempt int,
 ) (*edgev1alpha1.ProfilingRun, error) {
 	if parent == nil {
-		return nil, errors.New("a parent BatchSaturation is required")
+		return nil, errors.New("a parent BatchEnergyOptimization is required")
 	}
 	if err := measurement.Validate(); err != nil {
 		return nil, fmt.Errorf("validate measurement: %w", err)
@@ -60,7 +60,7 @@ func BuildRun(
 	}
 	spec := edgev1alpha1.ProfilingRunSpec{MeasurementStateSpec: parent.Spec.State}
 	switch measurement.WorkloadMode {
-	case batchsaturation.WorkloadModeActive:
+	case batchenergyoptimization.WorkloadModeActive:
 		protocol := parent.Spec.ActiveProtocol
 		spec.AdmissionPolicy = protocol.AdmissionPolicy
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
@@ -72,7 +72,7 @@ func BuildRun(
 			OutputValidation: protocol.OutputValidation,
 		}
 		spec.MetricObservation = protocol.MetricObservation
-	case batchsaturation.WorkloadModeIdle:
+	case batchenergyoptimization.WorkloadModeIdle:
 		protocol := parent.Spec.IdleProtocol
 		spec.AdmissionPolicy = protocol.AdmissionPolicy
 		settling := protocol.SettlingDurationSeconds
@@ -92,13 +92,13 @@ func BuildRun(
 			Name:      RunName(parent.Name, measurement, attempt),
 			Namespace: parent.Namespace,
 			Labels: map[string]string{
-				labelBatchSaturation: parent.Name,
-				labelWorkloadMode:    string(measurement.WorkloadMode),
-				labelBatch:           fmt.Sprintf("%d", measurement.Batch),
-				labelAttempt:         fmt.Sprintf("%d", attempt),
+				labelBatchEnergyOptimization: parent.Name,
+				labelWorkloadMode:            string(measurement.WorkloadMode),
+				labelBatch:                   fmt.Sprintf("%d", measurement.Batch),
+				labelAttempt:                 fmt.Sprintf("%d", attempt),
 			},
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(
-				parent, edgev1alpha1.GroupVersion.WithKind("BatchSaturation"),
+				parent, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"),
 			)},
 		},
 		Spec: spec,

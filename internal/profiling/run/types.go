@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	SchemaVersion = "chill.dacs.io/profiling-run-intent.v1alpha13"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha14"
 
 	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
 	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
@@ -27,22 +27,25 @@ const (
 	ActuatorKindNvidiaLockedGPUClock      = "NvidiaLockedGPUClock"
 )
 
-type Intent struct {
-	SchemaVersion string              `json:"schemaVersion"`
-	Candidate     CandidateIdentity   `json:"candidate"`
-	State         ExecutionState      `json:"state"`
-	Images        Images              `json:"images"`
-	TargetNode    NodeSnapshot        `json:"targetNode"`
-	CPU           CPUContract         `json:"cpu"`
-	Measurement   MeasurementContract `json:"measurement"`
-	Metrics       MetricContract      `json:"metrics"`
-	Workload      WorkloadContract    `json:"workload"`
-	Actuation     *ActuationContract  `json:"actuation,omitempty"`
+// RunConfig is the exact model, runtime, Node, workload, and observation
+// configuration used by one profiling execution.
+type RunConfig struct {
+	SchemaVersion string                   `json:"schemaVersion"`
+	Candidate     CandidateIdentity        `json:"candidate"`
+	State         ExecutionState           `json:"state"`
+	Images        Images                   `json:"images"`
+	Delivery      CandidateRuntimeDelivery `json:"delivery"`
+	TargetNode    NodeSnapshot             `json:"targetNode"`
+	CPU           CPUContract              `json:"cpu"`
+	Measurement   MeasurementContract      `json:"measurement"`
+	Metrics       MetricContract           `json:"metrics"`
+	Workload      WorkloadContract         `json:"workload"`
+	Actuation     *ActuationContract       `json:"actuation,omitempty"`
 }
 
 // UnmarshalJSON strictly decodes the current wire fields.
-func (i *Intent) UnmarshalJSON(payload []byte) error {
-	type wire Intent
+func (c *RunConfig) UnmarshalJSON(payload []byte) error {
+	type wire RunConfig
 	var decoded wire
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -52,7 +55,7 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("intent contains multiple JSON values")
+			return errors.New("RunConfig contains multiple JSON values")
 		}
 		return err
 	}
@@ -66,10 +69,10 @@ func (i *Intent) UnmarshalJSON(payload []byte) error {
 			return err
 		}
 		if actuation == nil {
-			return errors.New("intent.actuation must be an object when present")
+			return errors.New("runConfig.actuation must be an object when present")
 		}
 	}
-	*i = Intent(decoded)
+	*c = RunConfig(decoded)
 	return nil
 }
 
@@ -117,7 +120,7 @@ type CPUContract struct {
 
 // ActuationContract binds a non-fixed selected power mode to the typed target
 // and configured policy entry that must converge before execution.
-// Mutable observations remain outside the intent.
+// Mutable observations remain outside the RunConfig.
 type ActuationContract struct {
 	PowerMode  string         `json:"powerMode"`
 	Actuator   ActuatorTarget `json:"actuator"`

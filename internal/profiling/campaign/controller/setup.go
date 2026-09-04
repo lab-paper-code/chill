@@ -5,12 +5,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// SetupWithManager registers direct BatchSaturation events and
+// SetupWithManager registers direct BatchEnergyOptimization events and
 // framework-derived wakeups from its owned transitions and ProfilingRuns.
-func (r *BatchSaturationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *BatchEnergyOptimizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		Named("batchsaturation").
-		For(&edgev1alpha1.BatchSaturation{}).
+		Named("batchenergyoptimization").
+		For(&edgev1alpha1.BatchEnergyOptimization{}).
 		Owns(&edgev1alpha1.NodeActuation{}).
 		Owns(&edgev1alpha1.ProfilingRun{}).
 		Complete(r)

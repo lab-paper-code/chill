@@ -153,8 +153,8 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "maxLatencySamples": 100_000,
         "maxInputBytes": 1 << 20,
         "maxResultBytes": 8 << 20,
-        "intent": {
-            "schemaVersion": runner.INTENT_SCHEMA,
+        "runConfig": {
+            "schemaVersion": runner.RUN_CONFIG_SCHEMA,
             "candidate": {},
             "state": {
                 "deviceClass": "lattepanda-3-delta-8g",
@@ -166,6 +166,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "powerMode": "fixed",
             },
             "images": {},
+            "delivery": {},
             "targetNode": {
                 "name": "lattepanda",
                 "uid": "node-uid",
@@ -198,7 +199,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
 
 def valid_idle_request(model_path: Path) -> dict[str, object]:
     request = valid_request(model_path)
-    request["intent"]["measurement"] = {
+    request["runConfig"]["measurement"] = {
         "batch": 1,
         "warmupIterations": 0,
         "settlingDurationSeconds": 60,
@@ -228,7 +229,7 @@ class RunnerTest(unittest.TestCase):
             ):
                 runner.validate_request(request)
 
-    def test_validate_request_accepts_current_cpu_intent(self) -> None:
+    def test_validate_request_accepts_current_cpu_run_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
@@ -239,8 +240,8 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["targetNode"]["allocatableCPU"] = "12"
-            request["intent"]["cpu"].update(
+            request["runConfig"]["targetNode"]["allocatableCPU"] = "12"
+            request["runConfig"]["cpu"].update(
                 {
                     "policy": "ConfiguredCPUQuota",
                     "limit": "4",
@@ -250,7 +251,7 @@ class RunnerTest(unittest.TestCase):
 
             runner.validate_request(request)
             self.assertEqual(
-                runner.derived_contract(request["intent"])["cpu"]["budgetSource"],
+                runner.derived_contract(request["runConfig"])["cpu"]["budgetSource"],
                 "ProfilingRunMeasurementCPUQuota",
             )
 
@@ -259,15 +260,15 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
-            request["intent"]["actuation"] = {
+            request["runConfig"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["runConfig"]["actuation"] = {
                 "powerMode": "MODE_15W_6CORE",
                 "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
                 "policyName": "jetson-mode-15w",
             }
             runner.validate_request(request)
 
-            request["intent"]["actuation"]["actuator"]["jetsonNVPModel"]["id"] = -1
+            request["runConfig"]["actuation"]["actuator"]["jetsonNVPModel"]["id"] = -1
             with self.assertRaisesRegex(runner.ContractError, "jetsonNVPModel.id"):
                 runner.validate_request(request)
 
@@ -276,8 +277,8 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
-            request["intent"]["actuation"] = None
+            request["runConfig"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["runConfig"]["actuation"] = None
             with self.assertRaisesRegex(
                 runner.ContractError, "actuation must be an object"
             ):
@@ -288,9 +289,9 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha12"
+            request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha13"
             with self.assertRaisesRegex(
-                runner.ContractError, "supported CPU intent schema"
+                runner.ContractError, "supported CPU RunConfig schema"
             ):
                 runner.validate_request(request)
 
@@ -339,14 +340,14 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             active = valid_request(model)
-            active["intent"]["measurement"]["settlingDurationSeconds"] = 60
+            active["runConfig"]["measurement"]["settlingDurationSeconds"] = 60
             with self.assertRaisesRegex(
                 runner.ContractError, "unknown=\\['settlingDurationSeconds'\\]"
             ):
                 runner.validate_request(active)
 
             idle = valid_idle_request(model)
-            del idle["intent"]["measurement"]["settlingDurationSeconds"]
+            del idle["runConfig"]["measurement"]["settlingDurationSeconds"]
             with self.assertRaisesRegex(
                 runner.ContractError, "missing=\\['settlingDurationSeconds'\\]"
             ):
@@ -367,11 +368,11 @@ class RunnerTest(unittest.TestCase):
             (root / "cpu.max").write_text("400000 100000\n", encoding="utf-8")
             (root / "cpu.stat").write_text("usage_usec 20\n", encoding="utf-8")
             (root / "cpuset.cpus.effective").write_text("0-3\n", encoding="utf-8")
-            intent = {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}
+            run_config = {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}
             with mock.patch.object(
                 runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}
             ):
-                cpu_max, affinity, cpuset = runner.validate_cpu_contract(intent, root)
+                cpu_max, affinity, cpuset = runner.validate_cpu_contract(run_config, root)
 
             self.assertEqual(cpu_max, "400000 100000")
             self.assertEqual(affinity, [0, 1, 2, 3])
@@ -391,12 +392,12 @@ class RunnerTest(unittest.TestCase):
                 "nr_periods 7\nnr_throttled 2\nthrottled_time 30\n", encoding="utf-8"
             )
             (cpuset / "cpuset.cpus").write_text("0-11\n", encoding="utf-8")
-            intent = {"cpu": {"limit": "12", "ortIntraOpThreads": 12}}
+            run_config = {"cpu": {"limit": "12", "ortIntraOpThreads": 12}}
             with mock.patch.object(
                 runner.os, "sched_getaffinity", return_value=set(range(12))
             ):
                 cpu_max, affinity, cpuset_value = runner.validate_cpu_contract(
-                    intent, root
+                    run_config, root
                 )
 
             self.assertEqual(cpu_max, "1200000 100000")

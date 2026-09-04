@@ -14,17 +14,17 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const maximumBatchSaturationPreflightBytes int64 = 4 << 20
+const maximumBatchEnergyOptimizationPreflightBytes int64 = 4 << 20
 
-type serviceProxyBatchSaturationPreflightQuery struct {
+type serviceProxyBatchEnergyOptimizationPreflightQuery struct {
 	restClient rest.Interface
 	namespace  string
 	service    string
 	manifest   []byte
 }
 
-func newBatchSaturationPreflightQuery(opts preflightOptions) (batchSaturationPreflightQuery, error) {
-	manifest, manifestNamespace, err := readBatchSaturationManifest(opts.file)
+func newBatchEnergyOptimizationPreflightQuery(opts preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+	manifest, manifestNamespace, err := readBatchEnergyOptimizationManifest(opts.file)
 	if err != nil {
 		return nil, err
 	}
@@ -43,13 +43,13 @@ func newBatchSaturationPreflightQuery(opts preflightOptions) (batchSaturationPre
 	if err != nil {
 		return nil, fmt.Errorf("construct Kubernetes Service proxy client: %w", err)
 	}
-	return &serviceProxyBatchSaturationPreflightQuery{
+	return &serviceProxyBatchEnergyOptimizationPreflightQuery{
 		restClient: clientset.CoreV1().RESTClient(), namespace: namespace,
 		service: opts.consoleService, manifest: manifest,
 	}, nil
 }
 
-func readBatchSaturationManifest(path string) ([]byte, string, error) {
+func readBatchEnergyOptimizationManifest(path string) ([]byte, string, error) {
 	var (
 		raw []byte
 		err error
@@ -60,11 +60,11 @@ func readBatchSaturationManifest(path string) ([]byte, string, error) {
 		raw, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("read BatchSaturation manifest %q: %w", path, err)
+		return nil, "", fmt.Errorf("read BatchEnergyOptimization manifest %q: %w", path, err)
 	}
 	manifest, err := yaml.YAMLToJSON(raw)
 	if err != nil {
-		return nil, "", fmt.Errorf("decode BatchSaturation manifest %q: %w", path, err)
+		return nil, "", fmt.Errorf("decode BatchEnergyOptimization manifest %q: %w", path, err)
 	}
 	var identity struct {
 		Metadata struct {
@@ -72,48 +72,50 @@ func readBatchSaturationManifest(path string) ([]byte, string, error) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal(manifest, &identity); err != nil {
-		return nil, "", fmt.Errorf("decode BatchSaturation manifest %q: %w", path, err)
+		return nil, "", fmt.Errorf("decode BatchEnergyOptimization manifest %q: %w", path, err)
 	}
 	return manifest, identity.Metadata.Namespace, nil
 }
 
-func (q *serviceProxyBatchSaturationPreflightQuery) Read(
+func (q *serviceProxyBatchEnergyOptimizationPreflightQuery) Read(
 	ctx context.Context,
-) (operatorconsole.BatchSaturationPreflight, error) {
+) (operatorconsole.BatchEnergyOptimizationPreflight, error) {
 	stream, err := q.restClient.Post().
 		Namespace(q.namespace).
 		Resource("services").
 		Name(q.service+":http").
 		SubResource("proxy").
-		Suffix("api", "v1", "namespaces", q.namespace, "batch-saturations", "preflight").
+		Suffix("api", "v1", "namespaces", q.namespace, "batch-energy-optimizations", "preflight").
 		SetHeader("Content-Type", "application/json").
 		Body(q.manifest).
 		Stream(ctx)
 	if err != nil {
-		return operatorconsole.BatchSaturationPreflight{}, fmt.Errorf(
-			"read BatchSaturation preflight through Console Service: %w", err,
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf(
+			"read BatchEnergyOptimization preflight through Console Service: %w", err,
 		)
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, maximumBatchSaturationPreflightBytes+1))
+	payload, readErr := io.ReadAll(io.LimitReader(stream, maximumBatchEnergyOptimizationPreflightBytes+1))
 	closeErr := stream.Close()
 	if readErr != nil {
-		return operatorconsole.BatchSaturationPreflight{}, fmt.Errorf("read Console response: %w", readErr)
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf("read Console response: %w", readErr)
 	}
 	if closeErr != nil {
-		return operatorconsole.BatchSaturationPreflight{}, fmt.Errorf("close Console response: %w", closeErr)
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf("close Console response: %w", closeErr)
 	}
-	if int64(len(payload)) > maximumBatchSaturationPreflightBytes {
-		return operatorconsole.BatchSaturationPreflight{}, errors.New(
-			"Console response exceeds the BatchSaturation preflight size limit",
+	if int64(len(payload)) > maximumBatchEnergyOptimizationPreflightBytes {
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, errors.New(
+			"Console response exceeds the BatchEnergyOptimization preflight size limit",
 		)
 	}
-	var preflight operatorconsole.BatchSaturationPreflight
+	var preflight operatorconsole.BatchEnergyOptimizationPreflight
 	if err := json.Unmarshal(payload, &preflight); err != nil {
-		return operatorconsole.BatchSaturationPreflight{}, fmt.Errorf("decode Console BatchSaturation preflight: %w", err)
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf(
+			"decode Console BatchEnergyOptimization preflight: %w", err,
+		)
 	}
-	if preflight.APIVersion != operatorconsole.BatchSaturationPreflightAPIVersion ||
-		preflight.Kind != "BatchSaturationPreflight" || preflight.Campaign.Namespace != q.namespace {
-		return operatorconsole.BatchSaturationPreflight{}, errors.New(
+	if preflight.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
+		preflight.Kind != "BatchEnergyOptimizationPreflight" || preflight.Campaign.Namespace != q.namespace {
+		return operatorconsole.BatchEnergyOptimizationPreflight{}, errors.New(
 			"Console returned an unexpected preflight identity",
 		)
 	}

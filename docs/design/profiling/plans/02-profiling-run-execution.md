@@ -17,9 +17,9 @@ status writes.
 One Run is one selected batch, one Job, and exactly one Pod attempt. A campaign
 is a collection of Runs and is not introduced as an API by this plan.
 
-## Checkpoint 1: immutable Run intent
+## Checkpoint 1: resolved RunConfig
 
-The first Run intent freezes:
+Before creating a Job, the Profiler resolves one exact `RunConfig` containing:
 
 - the static candidate report input identities and selected model path;
 - logical model, artifact carrier reference, runtime family, and backend;
@@ -29,14 +29,15 @@ The first Run intent freezes:
 - the CPU derivation policy and its material inputs and outputs; and
 - the resolved metric source and bounded observation request.
 
-The immutable ConfigMap owned by one Run is its frozen intent record. A changed
-snapshot or decision requires a different Run rather than a recomputed token.
+The RunConfig is embedded in the owned Job and passed directly to each worker.
+There is no separate ConfigMap record or intermediate resolution phase. A
+changed request or selected fact requires a different Run.
 
-The model-loaded-idle extension remains one `profilingrun.Intent`; it does not
-introduce a second frozen-intent type. Candidate, execution state, images, Node,
+The model-loaded-idle extension remains one `profilingrun.RunConfig`; it does not
+introduce a second configuration type. Candidate, execution state, images, Node,
 CPU, metric source, and workload-observation provenance are common execution
 facts, and duplicating them would create two validation and finalization paths.
-The current intent schema retains the measurement-protocol
+The current RunConfig schema retains the measurement-protocol
 `settlingDurationSeconds` field and an optional semantic physical host contract.
 CPU ORT omits that state field.
 The common CPU quota remains frozen for all workers. A Run without an explicit
@@ -50,12 +51,10 @@ non-fixed mode to its exact typed target and configured policy name; fixed
 Runs omit it. The Go and Python runtime boundaries accept only the matching
 current schema.
 
-The current candidate report is the upstream authority for an exact selected
-actuator target. For an actuated Run, the immutable record additionally stores
-the selected actuation policy and its ConfigMap source; the intent binds the
-configured policy name. Fixed records retain the existing
-four payloads, while actuated records require the fifth policy payload. This
-freezes inputs only: Plan 6 still withholds the Job until a durable handoff has
+The current candidate report is verified once while resolving the RunConfig;
+only the runtime delivery contract needed by execution crosses that boundary.
+The Job annotations retain the exact selected admission, execution, and optional
+actuation policy snapshots. This fixes inputs only: Plan 6 still withholds the Job until a durable handoff has
 converged and settled the Node. The handoff is a separate owned
 `NodeActuation`: its frozen identity/target/policy/deadline stay in `spec`, the
 dedicated actuator owns the observed phase and independent previous/target
@@ -79,7 +78,7 @@ snapshot, and result are all frozen so this is not a hidden magic number.
 
 ## Checkpoint 2: Kubernetes materialization
 
-A one-shot CPU ORT adapter translates the intent into native objects. The Job:
+A one-shot CPU ORT adapter translates the RunConfig into native objects. The Job:
 
 - has `parallelism=1`, `completions=1`, `backoffLimit=0`, and `restartPolicy=Never`;
 - disables service-account token mounting;
@@ -88,7 +87,7 @@ A one-shot CPU ORT adapter translates the intent into native objects. The Job:
 - requests and limits the frozen CPU amount for the runtime container;
 - copies the declared artifact from its immutable carrier image into an `emptyDir`;
 - runs the runtime and MetricObserver in separate containers; and
-- mounts the same immutable intent record read-only into every worker container.
+- passes the same inline RunConfig to every worker container.
 
 Plan 2 does not claim that selection intent guarantees scheduling. It records
 Kubernetes admission, placement, image, and container outcomes as evidence.
@@ -102,7 +101,7 @@ registry or `DeviceProfile` write.
 The collector waits for the bounded Job, requires exactly one owned Pod, and
 preserves:
 
-- the frozen Run intent record;
+- the exact RunConfig that produced the measurement;
 - raw Job, Pod, and actual Node snapshots, including UIDs;
 - container statuses and pulled image identities;
 - the strict runtime result for the selected batch;
@@ -133,7 +132,7 @@ move its boundaries from observed power or workload values.
 
 ```text
 api/v1alpha1/                   public active/idle Run request schema
-internal/profiling/run/          plain intent and runtime-result validation
+internal/profiling/run/          plain RunConfig and runtime-result validation
 internal/profiling/profiler/worker/       Job-local orchestration and raw projection
 runtime/ortcpu/                 explicit active/idle CPU ORT execution adapter
 internal/profiling/profiler/evidence/     raw/final record verification and loading
@@ -145,7 +144,7 @@ the runtime adapter and worker remain Kubernetes-free.
 
 ## Acceptance boundary
 
-Plan 2 is complete when the same exact intent produces deterministic native
+Plan 2 is complete when the same exact RunConfig produces deterministic native
 objects, one real Kubernetes execution yields a strict immutable evidence
 bundle, intentional identity drift is rejected, and repository tests, race,
 lint, import, and manifest audits pass.
@@ -155,8 +154,8 @@ scientifically admissible and does not authorize a profile.
 
 ## Implementation result
 
-One exact Lattepanda Run was materialized and collected under a frozen intent
-record.
+One exact Lattepanda Run was materialized and collected under one exact
+RunConfig.
 The single Pod completed without retry or restart. Runtime evidence matched the
 immutable OCI image reference, Node UID, artifact identity, ORT CPU backend, four-CPU quota,
 four/one ORT threads, effective cpuset and affinity, selected batch, and output

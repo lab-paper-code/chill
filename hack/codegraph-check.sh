@@ -33,12 +33,12 @@ contains_path() {
   jq -e --arg file "$file" 'any(.[]; .node.filePath == $file)' >/dev/null
 }
 
-q1_symbols="$(query_json IntentReconciler)"
-q1_callers="$($codegraph callers --path "$repo_root" --limit 50 --json NewIntentReconciler)"
+q1_symbols="$(query_json RunReconciler)"
+q1_callers="$($codegraph callers --path "$repo_root" --limit 50 --json NewRunReconciler)"
 q1=pass
 for file in \
-  internal/profiling/profiler/controller/intent_setup.go \
-  internal/profiling/profiler/controller/intent_reconciler.go; do
+  internal/profiling/profiler/controller/run_setup.go \
+  internal/profiling/profiler/controller/run_reconciler.go; do
   if ! contains_path "$file" <<<"$q1_symbols"; then q1=fail; fi
 done
 if ! jq -e 'any(.callers[]; .filePath == "cmd/profiler/controller_setup.go")' \
@@ -46,13 +46,13 @@ if ! jq -e 'any(.callers[]; .filePath == "cmd/profiler/controller_setup.go")' \
   q1=fail
 fi
 
-q2_interface="$(query_json RunIntentFreezer)"
-q2_production="$(query_json IntentFreezer)"
-q2_fake="$(query_json recordingIntentFreezer)"
+q2_interface="$(query_json RunConfigurationResolver)"
+q2_production="$(query_json RunConfigResolver)"
+q2_fake="$(query_json recordingRunConfigResolver)"
 q2=pass
-if ! contains_path internal/profiling/profiler/controller/intent_reconciler.go <<<"$q2_interface"; then q2=fail; fi
-if ! contains_path internal/profiling/profiler/controller/intent_freezer.go <<<"$q2_production"; then q2=fail; fi
-if ! contains_path internal/profiling/profiler/controller/intent_reconciler_test.go <<<"$q2_fake"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/run_reconciler.go <<<"$q2_interface"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/run_config_resolver.go <<<"$q2_production"; then q2=fail; fi
+if ! contains_path internal/profiling/profiler/controller/run_reconciler_test.go <<<"$q2_fake"; then q2=fail; fi
 
 codegraph_imports="$temp_root/codegraph-imports"
 go_imports="$temp_root/go-imports"
@@ -83,19 +83,18 @@ if ! diff -u "$go_imports" "$codegraph_imports" >/dev/null; then
   exit 1
 fi
 
-q5_candidates="$(query_json IntentFrozen)"
-if contains_path api/v1alpha1/profilingrun_types.go <<<"$q5_candidates"; then
+q5_candidates="$(query_json resolvedRunFromJob)"
+if contains_path internal/profiling/profiler/controller/run_record.go <<<"$q5_candidates"; then
   q5=pass
 else
   q5=known-miss
 fi
 for file in \
-  api/v1alpha1/profilingrun_types.go \
-  internal/profiling/profiler/controller/intent_freezer.go \
-  internal/profiling/profiler/controller/projection.go \
-  test/integration/operator/profilingrun_api_test.go; do
-  if ! rg -q 'IntentFrozen' "$repo_root/$file"; then
-    echo "codegraph check: authoritative IntentFrozen source missing in $file" >&2
+  internal/profiling/profiler/controller/run_record.go \
+  internal/profiling/profiler/controller/run_reconciler.go \
+  internal/profiling/profiler/controller/execution_job.go; do
+  if ! rg -q 'resolvedRunFromJob' "$repo_root/$file"; then
+    echo "codegraph check: authoritative Job RunConfig recovery source missing in $file" >&2
     exit 1
   fi
 done
@@ -125,7 +124,7 @@ printf 'codegraph.check.q1_event_edge=framework-derived-source-required\n'
 printf 'codegraph.check.q2_candidates=%s\n' "$q2"
 printf 'codegraph.check.q2_implementation_authority=gopls-required\n'
 printf 'codegraph.check.q3_q4_package_edges=pass:%s\n' "$(wc -l <"$go_imports")"
-printf 'codegraph.check.q5_intent_frozen=%s\n' "$q5"
+printf 'codegraph.check.q5_job_run_config_recovery=%s\n' "$q5"
 printf 'codegraph.check.q5_source_verification=pass\n'
 printf 'codegraph.check.q6_helm_resources=%s\n' "$q6"
 printf 'codegraph.check.q6_helm_verification=pass:23->30\n'

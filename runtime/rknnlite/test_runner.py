@@ -180,12 +180,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
             "image": "registry.local/chill/rknnlite-worker:current",
         },
     }
-    return {
-        "schemaVersion": runner.REQUEST_SCHEMA,
-        "podUID": "pod-uid",
-        "scheduledNodeName": "orangepi",
-        "modelPath": str(model_path),
-        "candidate": {
+    delivery = {
             "artifactCapability": {
                 "targetPlatform": "rk3588",
                 "declaredBatchSizes": [1, 2, 4],
@@ -194,7 +189,12 @@ def valid_request(model_path: Path) -> dict[str, object]:
             "runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
             "hostContract": host_contract,
             "runtimeAccess": {"privileged": True, "supplementalGroups": [44, 110]},
-        },
+    }
+    return {
+        "schemaVersion": runner.REQUEST_SCHEMA,
+        "podUID": "pod-uid",
+        "scheduledNodeName": "orangepi",
+        "modelPath": str(model_path),
         "observerReadyPaths": [
             str(model_path.parent / "observer-ready"),
             str(model_path.parent / "workload-observer-ready"),
@@ -207,8 +207,8 @@ def valid_request(model_path: Path) -> dict[str, object]:
         "maxLatencySamples": 100_000,
         "maxInputBytes": 1 << 20,
         "maxResultBytes": 8 << 20,
-        "intent": {
-            "schemaVersion": runner.INTENT_SCHEMA,
+        "runConfig": {
+            "schemaVersion": runner.RUN_CONFIG_SCHEMA,
             "candidate": {
                 "inputs": candidate_inputs,
                 "executionPath": "rknnlite",
@@ -225,6 +225,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "hostContract": host_contract,
             },
             "images": {},
+            "delivery": delivery,
             "targetNode": {
                 "name": "orangepi",
                 "uid": "node-uid",
@@ -255,7 +256,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
 
 def valid_idle_request(model_path: Path) -> dict[str, object]:
     request = valid_request(model_path)
-    request["intent"]["measurement"] = {
+    request["runConfig"]["measurement"] = {
         "batch": 1,
         "warmupIterations": 0,
         "settlingDurationSeconds": 60,
@@ -309,14 +310,14 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["targetNode"]["allocatableCPU"] = "12"
-            request["intent"]["cpu"].update(
+            request["runConfig"]["targetNode"]["allocatableCPU"] = "12"
+            request["runConfig"]["cpu"].update(
                 {"policy": "ConfiguredCPUQuota", "limit": "4"}
             )
 
             runner.validate_request(request)
             self.assertEqual(
-                runner.derived_contract(request["intent"])["cpu"]["budgetSource"],
+                runner.derived_contract(request["runConfig"])["cpu"]["budgetSource"],
                 "ProfilingRunMeasurementCPUQuota",
             )
 
@@ -325,15 +326,15 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
-            request["intent"]["actuation"] = {
+            request["runConfig"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["runConfig"]["actuation"] = {
                 "powerMode": "MODE_15W_6CORE",
                 "actuator": {"kind": "JetsonNVPModel", "jetsonNVPModel": {"id": 2}},
                 "policyName": "jetson-mode-15w",
             }
             runner.validate_request(request)
 
-            request["intent"]["actuation"]["policyName"] = ""
+            request["runConfig"]["actuation"]["policyName"] = ""
             with self.assertRaisesRegex(runner.ContractError, "policyName"):
                 runner.validate_request(request)
 
@@ -342,8 +343,8 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["state"]["powerMode"] = "MODE_15W_6CORE"
-            request["intent"]["actuation"] = None
+            request["runConfig"]["state"]["powerMode"] = "MODE_15W_6CORE"
+            request["runConfig"]["actuation"] = None
             with self.assertRaisesRegex(
                 runner.ContractError, "actuation must be an object"
             ):
@@ -354,8 +355,8 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["intent"]["schemaVersion"] = "chill.dacs.io/profiling-run-intent.v1alpha12"
-            with self.assertRaisesRegex(runner.ContractError, "current intent schema"):
+            request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha13"
+            with self.assertRaisesRegex(runner.ContractError, "current RunConfig schema"):
                 runner.validate_request(request)
 
             request = valid_request(model)
@@ -376,7 +377,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["declaredBatchSizes"] = []
+            request["runConfig"]["delivery"]["artifactCapability"]["declaredBatchSizes"] = []
             with self.assertRaisesRegex(
                 runner.ContractError,
                 "^candidate declaredBatchSizes must be a non-empty array$",
@@ -388,7 +389,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["declaredBatchSizes"] = [1, 0, 4]
+            request["runConfig"]["delivery"]["artifactCapability"]["declaredBatchSizes"] = [1, 0, 4]
             with self.assertRaisesRegex(
                 runner.ContractError,
                 "^candidate declaredBatchSizes item must be an integer >= 1$",
@@ -400,7 +401,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["inputDataType"] = "float32"
+            request["runConfig"]["delivery"]["artifactCapability"]["inputDataType"] = "float32"
             with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
                 runner.validate_request(request)
 
@@ -409,7 +410,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["candidate"]["artifactCapability"]["inputLayout"] = "NHWC"
+            request["runConfig"]["delivery"]["artifactCapability"]["inputLayout"] = "NHWC"
             with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
                 runner.validate_request(request)
 
@@ -418,7 +419,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             active = valid_request(model)
-            active["intent"]["measurement"]["settlingDurationSeconds"] = 30
+            active["runConfig"]["measurement"]["settlingDurationSeconds"] = 30
             with self.assertRaisesRegex(
                 runner.ContractError, "settlingDurationSeconds"
             ):
@@ -430,7 +431,7 @@ class RunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
-            candidate = valid_request(model)["candidate"]
+            candidate = valid_request(model)["runConfig"]["delivery"]
             with mock.patch.object(
                 runner.importlib.metadata, "version", return_value="2.3.1"
             ):

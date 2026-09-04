@@ -84,7 +84,7 @@ func (r *KubernetesActuationPolicyResolver) ResolveActuationPolicy(
 		},
 	)
 	if err != nil {
-		return profiler.FrozenActuationPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonActuationPolicyInvalid, err)
+		return profiler.FrozenActuationPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonActuationPolicyInvalid, err)
 	}
 	return frozen, nil
 }

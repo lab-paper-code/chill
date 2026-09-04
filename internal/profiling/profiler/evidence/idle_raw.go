@@ -13,13 +13,14 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha4"
+const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha5"
 
 // IdleRawMeasurement retains only worker-visible facts. Its runtime result is
 // distinct from active inference evidence, while metric/workload provenance is
 // shared.
 type IdleRawMeasurement struct {
 	SchemaVersion string                         `json:"schemaVersion"`
+	RunConfig     profilingrun.RunConfig         `json:"runConfig"`
 	PodUID        string                         `json:"podUID"`
 	Runtime       profilingrun.IdleRuntimeResult `json:"runtime"`
 	Metrics       metricobserver.Result          `json:"metrics"`
@@ -45,11 +46,15 @@ func (m *IdleRawMeasurement) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-func (m IdleRawMeasurement) Validate(intent profilingrun.Intent) error {
-	return m.validate(intent)
+func (m IdleRawMeasurement) Validate() error {
+	return m.validate()
 }
 
-func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
+func (m IdleRawMeasurement) validate() error {
+	runConfig := m.RunConfig
+	if err := runConfig.Validate(); err != nil {
+		return fmt.Errorf("validate RunConfig: %w", err)
+	}
 	if m.SchemaVersion != IdleRawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported idle raw measurement schemaVersion %q", m.SchemaVersion)
 	}
@@ -59,10 +64,10 @@ func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
 		return errors.New("idle raw measurement Pod UID is required")
 	}
-	if err := profilingrun.ValidateIdleRuntime(intent, m.PodUID, m.Runtime); err != nil {
+	if err := profilingrun.ValidateIdleRuntime(runConfig, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate idle runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics); err != nil {
+	if err := validateMetricObservation(runConfig, m.Metrics); err != nil {
 		return err
 	}
 	windowStart, windowEnd, err := m.Runtime.MeasurementWindow()
@@ -75,14 +80,14 @@ func (m IdleRawMeasurement) validate(intent profilingrun.Intent) error {
 	if m.Workload == nil {
 		return errors.New("idle raw measurement workload observation is required")
 	}
-	if err := validateWorkloadObservation(intent, m.PodUID, windowStart, windowEnd, *m.Workload); err != nil {
+	if err := validateWorkloadObservation(runConfig, m.PodUID, windowStart, windowEnd, *m.Workload); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m IdleRawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error) {
-	if err := m.Validate(intent); err != nil {
+func (m IdleRawMeasurement) CanonicalJSON() ([]byte, error) {
+	if err := m.Validate(); err != nil {
 		return nil, err
 	}
 	return m.canonicalJSON()

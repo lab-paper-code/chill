@@ -105,7 +105,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
 	intent := admissionIntent()
 	execution := profilerevidence.ExecutionEvidence{
-		Intent: intent,
+		RunConfig: intent,
 		Terminal: profilerevidence.TerminalFacts{
 			Pod:  profilerevidence.PodTerminalFacts{UID: "run-pod"},
 			Node: profilerevidence.NodeTerminalFacts{UID: "node-uid"},
@@ -117,6 +117,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		},
 	}
 	raw := profilerevidence.RawMeasurement{
+		RunConfig: intent,
 		Runtime: profilingrun.RuntimeResult{
 			MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
@@ -156,7 +157,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 	intent := admissionIntent()
 	intent.Measurement.SettlingDurationSeconds = 60
 	execution := profilerevidence.ExecutionEvidence{
-		Intent: intent,
+		RunConfig: intent,
 		RawMeasurement: evidencestore.ObjectIdentity{
 			Store: "chill-evidence", Key: "runs/idle/raw.json",
 			Size: 1024,
@@ -167,6 +168,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 		},
 	}
 	raw := profilerevidence.IdleRawMeasurement{
+		RunConfig: intent,
 		Runtime: profilingrun.IdleRuntimeResult{
 			ModelLoadCompletedAt: started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:    started.Add(-60 * time.Second).Format(time.RFC3339Nano),
@@ -362,8 +364,8 @@ func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T
 	}
 }
 
-func admissionIntent() profilingrun.Intent {
-	return profilingrun.Intent{
+func admissionIntent() profilingrun.RunConfig {
+	return profilingrun.RunConfig{
 		State: profilingrun.ExecutionState{
 			DeviceClass: "lattepanda", Model: "mobilenet",
 			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
@@ -409,24 +411,15 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
+	var intent profilingrun.RunConfig
 	if err := json.Unmarshal(intentBytes, &intent); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	intent.Workload = profilingrun.CurrentWorkloadContract()
 	if err := intent.Validate(); err != nil {
-		t.Fatal(err)
-	}
-
-	candidateBytes, err := os.ReadFile("../evidence/testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate, err := profilingrun.DecodeCandidateReport(candidateBytes)
-	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -473,6 +466,7 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	}
 	raw := profilerevidence.RawMeasurement{
 		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
+		RunConfig:     intent,
 		PodUID:        podUID,
 		Runtime: profilingrun.RuntimeResult{
 			SchemaVersion:             profilingrun.RuntimeResultSchemaVersion,
@@ -541,7 +535,7 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 		},
 		Workload: &workload,
 	}
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +553,7 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		Intent:        intent, CandidateReport: candidate, RawMeasurement: rawIdentity,
+		RunConfig:     intent, RawMeasurement: rawIdentity,
 		Terminal: profilerevidence.TerminalFacts{
 			Job: profilerevidence.JobTerminalFacts{
 				Namespace: "chill-system", Name: "profiling-run", UID: "job-uid",

@@ -32,15 +32,15 @@ func writeProfilingRunsTable(writer io.Writer, view operatorconsole.ProfilingRun
 		return err
 	}
 	const runHeader = "NAMESPACE\tRUN\tMODEL\tEXECUTION_PATH\tDEVICE_CLASS\tTARGET_NODE\t" +
-		"BATCH\tGENERATION\tOBSERVED\tINTENT_FROZEN"
+		"BATCH\tGENERATION\tOBSERVED"
 	if _, err := fmt.Fprintln(table, runHeader); err != nil {
 		return err
 	}
 	for _, run := range view.Runs {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%t\n",
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",
 			run.Namespace, run.Name, run.Spec.Candidate.ModelSpec, run.Spec.Candidate.ExecutionPath,
 			run.Spec.Candidate.DeviceClass, run.Spec.TargetNode, run.Spec.Measurement.Batch,
-			run.Generation, run.Status.ObservedGeneration, run.Status.IntentFrozen); err != nil {
+			run.Generation, run.Status.ObservedGeneration); err != nil {
 			return err
 		}
 	}

@@ -4,10 +4,10 @@
 
 ## Status
 
-Approved implementation plan. The reusable recorded-plan, verified-state, and
-opaque exact-state curve boundaries are implemented under Plan 5a, and its live
-sequential result supplies one discovery candidate. They do not implement Plan
-5's joint estimator or statistical claim. The derivation path now retains each
+Research-only derivation, not a current production control path. Plan 7 now
+optimizes the measured energy objective directly and makes no saturation claim.
+No current API or controller consumes this plan's `BSat` result types. The
+derivation path retains each
 active trial's wall-energy-per-item and `T_i / N_i`, plus each exact-state idle
 baseline's mean variance and degrees of freedom. `Aggregate` now emits the
 versioned Welch--Satterthwaite point interval and retains the previous interval
@@ -900,8 +900,8 @@ Plan 5 is complete when:
 7. Before any new campaign Run, fix `Kmax`, `tau`, `n_disc`, both caps, the
    campaign record, planned batch size set, and `CurvePlanName` in the
    discovery policy version. The `VerifiedCurvePlan` follows Loader
-   verification. [Plan 7](07-batch-saturation-control-path.md) carries these in
-   the immutable `BatchSaturation` spec instead of a committed record.
+   verification. The retired production path carried these in an immutable
+   `BatchSaturation` spec instead of a committed record.
 8. Fix the confirmatory policy version recording the realized `n_conf` and Run
    allocation inside the caps set at item 7, before any confirmatory Run.
    Implemented for the first campaign: sizing was budget-insufficient, so the

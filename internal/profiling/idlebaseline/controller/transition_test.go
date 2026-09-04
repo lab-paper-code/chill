@@ -233,7 +233,7 @@ func testActuatedPreparedRun(parent *edgev1alpha1.ModelLoadedIdleBaseline) profi
 		},
 	}
 	return profiler.PreparedRun{
-		Intent: profilingrun.Intent{
+		RunConfig: profilingrun.RunConfig{
 			State: profilingrun.ExecutionState{
 				DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 				PowerMode:   parent.Spec.State.Candidate.PowerMode,

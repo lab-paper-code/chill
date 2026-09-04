@@ -4,21 +4,11 @@
 
 ## Status
 
-Completed derivation plan. The pure curve-plan construction, verified-state
-projection, exact-state curve, and sequential-stop constructors are implemented in
-`internal/profiling/derivation`, with golden tests for every stop reason and the
-recovery/accumulation cases. This plan answers the same question as
-[Plan 5](05-batch-saturation-campaign.md) at a lower evidence strength and a
-much lower measurement cost. It produces a decision, not a statistical claim.
-
-This plan owns the stopping rule only. The control path that produces and
-composes the Runs it consumes belongs to
-[Plan 7](07-batch-saturation-control-path.md), which selects this rule by name
-as one measurement method. This plan authorizes no API, intent schema, or
-policy-catalog change of its own.
-
-The two plans compose rather than compete. This one is the default path, and its
-output is exactly the candidate Plan 5 would confirm.
+Superseded research design. Its `minDelta`, `patience`, divergence threshold,
+and production constructors were removed when
+[Plan 7](07-batch-energy-optimization-control-path.md) adopted direct minimum
+energy as the objective. The remainder of this document preserves the rationale
+for the retired rule; it is not a current API or implementation contract.
 
 [ADR 0016](../../../adr/0016-declared-batch-size-artifact-capability.md) defines one
 immutable artifact with a declared batch size set, one execution-state key, and one

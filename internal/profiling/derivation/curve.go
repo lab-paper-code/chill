@@ -9,8 +9,7 @@ import (
 type PassRole string
 
 const (
-	PassDiscovery    PassRole = "discovery"
-	PassConfirmatory PassRole = "confirmatory"
+	PassSearch PassRole = "search"
 )
 
 // TrialAdmission keeps an exact projected trial beside the admission result that
@@ -20,12 +19,9 @@ type TrialAdmission struct {
 	Admission AdmissionResult `json:"admission"`
 }
 
-// PassBatch either carries the trial admissions needed for one point or an
-// explicit capability boundary. An empty slice alone is not a boundary.
 type PassBatch struct {
-	Batch              int              `json:"batch"`
-	Admissions         []TrialAdmission `json:"runs,omitempty"`
-	CapabilityBoundary bool             `json:"capabilityBoundary,omitempty"`
+	Batch      int              `json:"batch"`
+	Admissions []TrialAdmission `json:"runs,omitempty"`
 }
 
 type Pass struct {
@@ -34,9 +30,8 @@ type Pass struct {
 }
 
 type curvePass struct {
-	role               PassRole
-	points             []Point
-	capabilityBoundary *int
+	role   PassRole
+	points []Point
 }
 
 // Curve is opaque so only points matching one verified plan and its exact
@@ -59,8 +54,8 @@ func DeriveCurve(
 	if err := validatePointPolicy(policy); err != nil {
 		return Curve{}, err
 	}
-	if len(passes) == 0 {
-		return Curve{}, errors.New("curve requires at least one pass")
+	if len(passes) != 1 || passes[0].Role != PassSearch {
+		return Curve{}, errors.New("curve requires exactly one search pass")
 	}
 	baselines, err := validateCurveBaselines(plan, baselinesByState)
 	if err != nil {
@@ -68,22 +63,14 @@ func DeriveCurve(
 	}
 
 	curve := Curve{plan: plan, baselines: baselines}
-	seenRoles := make(map[PassRole]struct{}, len(passes))
 	seenTrials := make(map[string]struct{})
 	for _, inputPass := range passes {
-		if _, exists := seenRoles[inputPass.Role]; exists {
-			return Curve{}, fmt.Errorf("duplicate curve pass role %q", inputPass.Role)
-		}
-		seenRoles[inputPass.Role] = struct{}{}
 		derivedPass, err := deriveCurvePass(inputPass, plan, baselines, policy, seenTrials)
 		if err != nil {
 			return Curve{}, err
 		}
 		curve.passes = append(curve.passes, derivedPass)
 	}
-	sort.Slice(curve.passes, func(i, j int) bool {
-		return curvePassOrder(curve.passes[i].role) < curvePassOrder(curve.passes[j].role)
-	})
 	return curve, nil
 }
 
@@ -94,7 +81,7 @@ func deriveCurvePass(
 	policy PointPolicy,
 	seenTrials map[string]struct{},
 ) (curvePass, error) {
-	if input.Role != PassDiscovery && input.Role != PassConfirmatory {
+	if input.Role != PassSearch {
 		return curvePass{}, fmt.Errorf("unsupported curve pass role %q", input.Role)
 	}
 	if len(input.Batches) == 0 {
@@ -103,22 +90,12 @@ func deriveCurvePass(
 	batches := append([]PassBatch(nil), input.Batches...)
 	sort.Slice(batches, func(i, j int) bool { return batches[i].Batch < batches[j].Batch })
 	plannedBatchSizes := plan.recorded.record.Shared.PlannedBatchSizes
-	if input.Role == PassDiscovery && batches[0].Batch != plannedBatchSizes[0] {
-		return curvePass{}, errors.New("discovery pass must start at the first planned batch size")
+	if batches[0].Batch != plannedBatchSizes[0] {
+		return curvePass{}, errors.New("search pass must start at the first planned batch size")
 	}
 	result := curvePass{role: input.Role}
 	plannedBatchIndex := sort.SearchInts(plannedBatchSizes, batches[0].Batch)
-	exhaustedBoundary := plannedBatchSizes[len(plannedBatchSizes)-1] + 1
-	for index, batchInput := range batches {
-		if batchInput.CapabilityBoundary {
-			if len(batchInput.Admissions) != 0 || index != len(batches)-1 ||
-				plannedBatchIndex != len(plannedBatchSizes) || batchInput.Batch != exhaustedBoundary {
-				return curvePass{}, errors.New("capability boundary must follow exhaustion of the planned batch size set")
-			}
-			boundary := batchInput.Batch
-			result.capabilityBoundary = &boundary
-			continue
-		}
+	for _, batchInput := range batches {
 		if plannedBatchIndex >= len(plannedBatchSizes) || batchInput.Batch != plannedBatchSizes[plannedBatchIndex] {
 			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the batch sizes recorded in the curve plan", input.Role)
 		}
@@ -140,7 +117,7 @@ func deriveCurvePoint(
 	seenTrials map[string]struct{},
 ) (Point, error) {
 	if len(input.Admissions) == 0 {
-		return Point{}, fmt.Errorf("batch %d has neither admitted trials nor an explicit capability boundary", input.Batch)
+		return Point{}, fmt.Errorf("batch %d has no admitted trials", input.Batch)
 	}
 	baseline, exists := baselines[state.StateIdentity]
 	if !exists {
@@ -200,26 +177,10 @@ func (c Curve) pass(role PassRole) (curvePass, bool) {
 			for index, point := range pass.points {
 				result.points[index] = clonePoint(point)
 			}
-			if pass.capabilityBoundary != nil {
-				boundary := *pass.capabilityBoundary
-				result.capabilityBoundary = &boundary
-			}
 			return result, true
 		}
 	}
 	return curvePass{}, false
-}
-
-func (c Curve) discoveryOnly() (Curve, error) {
-	discovery, exists := c.pass(PassDiscovery)
-	if !exists {
-		return Curve{}, errors.New("curve has no discovery pass")
-	}
-	baselines := make(map[string]IdleBaseline, len(c.baselines))
-	for state, baseline := range c.baselines {
-		baselines[state] = cloneIdleBaseline(baseline)
-	}
-	return Curve{plan: c.plan, passes: []curvePass{discovery}, baselines: baselines}, nil
 }
 
 func (p VerifiedCurvePlan) requireVerified() error {
@@ -244,13 +205,6 @@ func validateCurveBaselines(
 		result[key] = cloneIdleBaseline(baseline)
 	}
 	return result, nil
-}
-
-func curvePassOrder(role PassRole) int {
-	if role == PassDiscovery {
-		return 0
-	}
-	return 1
 }
 
 func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {

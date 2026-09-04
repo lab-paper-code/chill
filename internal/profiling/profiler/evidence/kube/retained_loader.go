@@ -168,7 +168,7 @@ func validateRunEvidenceBinding(
 		execution.Terminal.Node.UID != run.Status.ObservedExecution.Node.UID {
 		return errors.New("retained evidence contradicts recorded execution identities")
 	}
-	if execution.Intent.Actuation == nil {
+	if execution.RunConfig.Actuation == nil {
 		if run.Status.Actuation != nil || execution.Actuation != nil {
 			return errors.New("fixed retained evidence has unexpected actuation identity")
 		}

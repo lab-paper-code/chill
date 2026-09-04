@@ -4,23 +4,23 @@
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and single-Run admission. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha13`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha14`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
-completion time, and checks the target against frozen intent. Permanently
+completion time, and checks the target against the RunConfig. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
-Repeated active and idle trials, exact-state curve derivation, and the pure Plan
-5 and 5a decision paths are implemented. The recorded Orange Pi RKNN campaign
+Repeated active and idle trials, exact-state curve derivation, and the
+`BatchEnergyOptimization` Quick-search control path are implemented. The
+recorded Orange Pi RKNN campaign
 used one artifact at batches one, two, and four, completed 12 accepted trials,
 and produced `Stopped/NoFurtherImprovement`; production reconstruction matched
 the retained incremental-work values exactly. Its execution evidence uses
 v1alpha4, and the campaign and Run objects are archived outside the testbed
 Evidence Store and cannot be reloaded by the current readers. The L4 result is
 an archival scientific record, not current live or re-verifiable evidence, and
-does not establish a universal `b_sat=1` or statistical confirmation. The first
-recorded Plan 5 campaign closed with a typed budget-insufficient result; an
-accepted statistical confirmation and profile publication remain incomplete.
+does not establish a universal `b_sat=1` or statistical confirmation. Its old
+saturation outcome is not the contract of the current optimizer.
 Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
-every Run, a `BatchSaturation` creates and owns the one transition that
+every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its frozen state.
 Plan 10 is implemented and live-verified for the exact `jetsono` /
@@ -122,6 +122,17 @@ one native Job attempt, raw evidence persistence, and finalized execution
 evidence. Active and model-loaded idle are live-verified through the same
 lifecycle.
 
+```text
+ProfilingRun.spec
+  -> resolve exact RunConfig and selected policies
+  -> owned Job records and executes them
+  -> raw measurement {RunConfig, measurements}
+  -> final evidence {RunConfig, raw reference, terminal facts}
+```
+
+The Job is the single recoverable execution record. CHILL creates no separate
+Run-record ConfigMap and exposes no intermediate resolution status phase.
+
 ### 3. Profile admission and derivation — implemented first read-only path
 
 [plans/03-profile-admission-derivation.md](plans/03-profile-admission-derivation.md)
@@ -145,52 +156,22 @@ Answers only:
 > compatible request through durable evidence and single-Run admission?
 
 The Operator manages a separately deployed Profiler operand and reports its
-component availability. The Profiler resolves trusted facts, freezes one Run,
+component availability. The Profiler resolves trusted facts into one RunConfig,
 creates one owned Job, verifies the worker's durable raw object, finalizes
 terminal Kubernetes evidence, independently reloads it, applies the named
 single-Run admission policy, and publishes compact execution, evidence, and
 admission status. Model-loaded-idle request, evidence, and admission dispatch
 are live-verified. The scope does not orchestrate a batch
-campaign, derive `b_sat`, publish a `DeviceProfile`, or connect to the
+campaign, optimize batch energy, publish a `DeviceProfile`, or connect to the
 scheduler.
 
-### 5a. Sequential batch sweep with early stopping — derivation implemented
+### 5 and 5a. Saturation designs — superseded by the energy objective
 
-[plans/05a-sequential-batch-stop.md](plans/05a-sequential-batch-stop.md)
-
-Answers only:
-
-> Walking batch sizes upward, when has energy per item stopped improving enough
-> to keep going?
-
-The pure curve-plan, Loader-verified execution-state, exact-state curve, and
-sequential-stop boundaries are implemented in `internal/profiling/derivation`. The
-rule produces a decision without a confidence statement; its selected batch is
-the candidate Plan 5's confirmation pass takes as input. Plan 7 owns the control
-path that produces and composes the Runs this rule consumes.
-
-### 5. Batch-saturation campaign — pure derivation implemented
-
-[plans/05-batch-saturation-campaign.md](plans/05-batch-saturation-campaign.md)
-
-Answers only:
-
-> Under what predeclared rule does a set of Runs establish batch saturation for
-> one recorded curve plan?
-
-Approved scope with pure derivation implemented. Plan 5a supplies the recorded
-curve plan, verified execution state, and exact-state curve container. The Plan 5 point
-estimator and retained previous interval are implemented, and the global
-post-selection error allocation is derived and regression-tested. The
-deterministic domain-wide discovery screen is also implemented, as is the
-global-`H` confirmatory sizing rule. The final joint contrast/covariance
-estimator and typed confirmatory result are implemented. The discovery and
-confirmatory policies have strict semantic decoders and configured names, and
-the second artifact is checked against the repeated discovery fields and
-realized sizing allocation. No statistical `b_sat` has been accepted. Plan 7
-owns the control path that produces and composes the Runs this derivation
-consumes; this plan does not authorize a `DeviceProfile` API, an intent schema
-change, or scheduler consumption.
+[Plan 5a](plans/05a-sequential-batch-stop.md) and
+[Plan 5](plans/05-batch-saturation-campaign.md) preserve the former saturation
+research design. They do not describe the current API or production control
+path. Plan 7 now minimizes the measured energy objective directly and makes no
+`b_sat` claim.
 
 ### 6. Execution-support expansion — active
 
@@ -240,28 +221,21 @@ not establish another Node, model, execution path, batch size, RKNN path, GPU
 path, or L4 campaign result. Catalog presence and standalone smoke are not
 production execution evidence.
 
-### 7. Batch-saturation control path — `sequential-early-stop` implemented
+### 7. Batch-energy optimization control path — implemented
 
-[plans/07-batch-saturation-control-path.md](plans/07-batch-saturation-control-path.md)
+[plans/07-batch-energy-optimization-control-path.md](plans/07-batch-energy-optimization-control-path.md)
 
 Answers only:
 
-> Can one declared `BatchSaturation` object drive a whole `b_sat` measurement
-> without a human step between Runs?
+> Can one declared `BatchEnergyOptimization` find the measured batch with the
+> lowest incremental energy per item without a human step between Runs?
 
-The `sequential-early-stop` control path is implemented. A `BatchSaturation`
-resource owns the one `NodeActuation` that establishes its declared state and
-the `ProfilingRun` objects in its sweep, reconstructs progress from those owned
-objects, decides one next action from current evidence, and publishes one typed
-outcome. A fixed selection creates no transition. The recorded Orange Pi RKNN
-campaign exercised this direct path with one artifact at batches one, two, and
-four and produced
-`Stopped/NoFurtherImprovement`. The `two-pass-confirmatory` method remains
-design work. Plan 5a and Plan 5 keep the estimand, acceptance rule, and sizing
-method; this plan owns only the control path that executes them, and supersedes
-their procedural sections. `ProfilingRun` remains independently submittable.
-The plan does not add an estimator, a `DeviceProfile` API, or scheduler
-consumption.
+The one-dimensional Quick search advances on every strictly lower mean
+`incrementalWorkJoulesPerItem`, however small the gain. The first non-improving
+neighbor closes a local minimum; exhausting the declared search space is a
+separate successful completion. The API exposes only `trialsPerBatch`, not a
+method selector or saturation thresholds. `ProfilingRun` remains independently
+submittable, and the plan adds no serving or scheduler behavior.
 
 ### 8. Declared-batch-size artifacts — implemented
 
@@ -279,12 +253,11 @@ non-batch input shape. Data type is owned by the runtime implementation and
 checked against the loaded artifact instead of copied from model registration.
 A derived artifact additionally supplies the finite set fixed by its conversion
 as an artifact constraint. A canonical ONNX artifact with a symbolic
-batch axis leaves the sweep set to `BatchSaturation.spec.batchSizes` because
+batch axis leaves the search set to `BatchEnergyOptimization.spec.batchSizes` because
 ONNX Runtime takes batch as a call argument. Exactly one source supplies the
-recorded plan, whose exhaustion is `CapabilityBoundary` for either source. One
-artifact defines one state key and one model-loaded-idle baseline. ADR 0016
-records this decision. Plans 5 and 5a keep the estimand, acceptance rule, and
-sizing method.
+recorded plan. Its exhaustion is a successful `SearchSpaceExhausted` optimizer
+result. One artifact defines one state key and one model-loaded-idle baseline.
+ADR 0016 records this decision.
 
 ### 9. Transition extraction — implemented
 
@@ -298,8 +271,8 @@ Answers only:
 `NodeActuation` is a one-way operation toward a declared target, with an
 immutable deadline bounding the transition through verified settling. `Ready`
 is terminal and releases the Node Lease while leaving the established state in
-place. One `BatchSaturation` owns one `NodeActuation` and emits its creation as
-one step of the campaign decision before creating any Run. A non-fixed Run
+place. One `BatchEnergyOptimization` owns one `NodeActuation` and emits its
+creation as one optimizer step before creating any Run. A non-fixed Run
 selects the most recent successfully completed
 `NodeActuation` on its exact target Node and records that transition before it
 creates a Job. If no completed transition exists, or the newest one established

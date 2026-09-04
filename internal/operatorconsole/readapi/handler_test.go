@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -26,7 +26,7 @@ import (
 
 const (
 	testNamespace     = "chill-system"
-	testPreflightPath = "/api/v1/namespaces/" + testNamespace + "/batch-saturations/preflight"
+	testPreflightPath = "/api/v1/namespaces/" + testNamespace + "/batch-energy-optimizations/preflight"
 	testNoStore       = "no-store"
 )
 
@@ -70,7 +70,7 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(
-		http.MethodGet, "/api/v1/namespaces/"+testNamespace+"/batch-saturations/campaign/result", nil,
+		http.MethodGet, "/api/v1/namespaces/"+testNamespace+"/batch-energy-optimizations/campaign/result", nil,
 	))
 
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != testNoStore {
@@ -79,11 +79,11 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	if reader.namespace != testNamespace || reader.name != "campaign" || reader.calls != 1 {
 		t.Fatalf("query = %q/%q calls=%d", reader.namespace, reader.name, reader.calls)
 	}
-	var result operatorconsole.BatchSaturationResult
+	var result operatorconsole.BatchEnergyOptimizationResult
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Kind != "BatchSaturationResult" || result.Campaign.Name != "campaign" ||
+	if result.Kind != "BatchEnergyOptimizationResult" || result.Campaign.Name != "campaign" ||
 		len(result.Result.AdmittedTrials) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
@@ -92,7 +92,7 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	}
 }
 
-func TestHandlerServesResolvingBatchSaturationPreflight(t *testing.T) {
+func TestHandlerServesResolvingBatchEnergyOptimizationPreflight(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}
 	handler, err := NewHandler(
@@ -109,7 +109,7 @@ func TestHandlerServesResolvingBatchSaturationPreflight(t *testing.T) {
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != testNoStore {
 		t.Fatalf("response = %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
-	var preflight operatorconsole.BatchSaturationPreflight
+	var preflight operatorconsole.BatchEnergyOptimizationPreflight
 	if err := json.Unmarshal(response.Body.Bytes(), &preflight); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestHandlerServesUnresolvedPreflightAsASuccessfulRead(t *testing.T) {
 	t.Parallel()
 	const reason = "referenced DeviceClass does not exist"
 	reader := &recordingPreflightReader{
-		snapshot: operatorconsole.BatchSaturationPreflightSnapshot{
+		snapshot: operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
 			ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Reason: reason,
 		},
 	}
@@ -143,7 +143,7 @@ func TestHandlerServesUnresolvedPreflightAsASuccessfulRead(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	var preflight operatorconsole.BatchSaturationPreflight
+	var preflight operatorconsole.BatchEnergyOptimizationPreflight
 	if err := json.Unmarshal(response.Body.Bytes(), &preflight); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestHandlerServesUnresolvedPreflightAsASuccessfulRead(t *testing.T) {
 	}
 }
 
-func TestHandlerRejectsInvalidBatchSaturationPreflightRequests(t *testing.T) {
+func TestHandlerRejectsInvalidBatchEnergyOptimizationPreflightRequests(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPreflightReader{}
 	handler, err := NewHandler(
@@ -184,7 +184,7 @@ func TestHandlerRejectsInvalidBatchSaturationPreflightRequests(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
 				t.Fatal(err)
 			}
-			if failure.Code != "BatchSaturationPreflightRequestInvalid" {
+			if failure.Code != "BatchEnergyOptimizationPreflightRequestInvalid" {
 				t.Fatalf("error code = %q", failure.Code)
 			}
 		})
@@ -194,10 +194,10 @@ func TestHandlerRejectsInvalidBatchSaturationPreflightRequests(t *testing.T) {
 	}
 }
 
-func TestHandlerUsesPathNamespaceForBatchSaturationPreflight(t *testing.T) {
+func TestHandlerUsesPathNamespaceForBatchEnergyOptimizationPreflight(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPreflightReader{
-		snapshot: operatorconsole.BatchSaturationPreflightSnapshot{
+		snapshot: operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
 			ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Reason: "unresolved",
 		},
 	}
@@ -260,7 +260,7 @@ func TestHandlerMapsPreflightReadFailuresWithoutLeakingDetails(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
 				t.Fatal(err)
 			}
-			if failure.Code != "BatchSaturationPreflightUnavailable" {
+			if failure.Code != "BatchEnergyOptimizationPreflightUnavailable" {
 				t.Fatalf("error code = %q", failure.Code)
 			}
 		})
@@ -270,7 +270,7 @@ func TestHandlerMapsPreflightReadFailuresWithoutLeakingDetails(t *testing.T) {
 func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 	t.Parallel()
 	notFound := apierrors.NewNotFound(
-		schema.GroupResource{Group: "edge.dacs.io", Resource: "batchsaturations"}, "missing",
+		schema.GroupResource{Group: "edge.dacs.io", Resource: "batchenergyoptimizations"}, "missing",
 	)
 	tests := map[string]struct {
 		err  error
@@ -278,7 +278,7 @@ func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 	}{
 		// Nothing is broken when a campaign has not published a result yet, so
 		// it must not report the Bad Gateway a failing store earns.
-		"no result published": {err: operatorconsole.ErrBatchSaturationResultUnavailable, want: http.StatusNotFound},
+		"no result published": {err: operatorconsole.ErrBatchEnergyOptimizationResultUnavailable, want: http.StatusNotFound},
 		"object missing":      {err: notFound, want: http.StatusNotFound},
 		"forbidden":           {err: apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied")), want: http.StatusForbidden},
 		"store unreachable":   {err: errors.New("dial evidence store: connection refused"), want: http.StatusBadGateway},
@@ -296,7 +296,7 @@ func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 			}
 			for _, path := range []string{
 				"/api/v1/namespaces/" + testNamespace + "/profiling-runs/run/evidence-passport",
-				"/api/v1/namespaces/" + testNamespace + "/batch-saturations/campaign/result",
+				"/api/v1/namespaces/" + testNamespace + "/batch-energy-optimizations/campaign/result",
 			} {
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -327,7 +327,7 @@ func TestHandlerHealthAndMethodBoundary(t *testing.T) {
 	}{
 		{method: http.MethodGet, path: "/healthz", want: http.StatusOK},
 		{method: http.MethodPost, path: "/api/v1/namespaces/" + testNamespace + "/profiling-runs/run/evidence-passport", want: http.StatusMethodNotAllowed},
-		{method: http.MethodPost, path: "/api/v1/namespaces/" + testNamespace + "/batch-saturations/campaign/result", want: http.StatusMethodNotAllowed},
+		{method: http.MethodPost, path: "/api/v1/namespaces/" + testNamespace + "/batch-energy-optimizations/campaign/result", want: http.StatusMethodNotAllowed},
 		{method: http.MethodGet, path: testPreflightPath, want: http.StatusMethodNotAllowed},
 		{method: http.MethodGet, path: "/unknown", want: http.StatusNotFound},
 	} {
@@ -345,10 +345,10 @@ func TestNewHandlerRequiresAllReaders(t *testing.T) {
 		t.Fatal("nil Evidence Passport reader was accepted")
 	}
 	if _, err := NewHandler(&recordingPassportReader{}, nil, &recordingPreflightReader{}); err == nil {
-		t.Fatal("nil batch-saturation result reader was accepted")
+		t.Fatal("nil batch-energy-optimization result reader was accepted")
 	}
 	if _, err := NewHandler(&recordingPassportReader{}, &recordingCampaignResultReader{}, nil); err == nil {
-		t.Fatal("nil batch-saturation preflight reader was accepted")
+		t.Fatal("nil batch-energy-optimization preflight reader was accepted")
 	}
 }
 
@@ -370,7 +370,7 @@ func (r *recordingPassportReader) Read(
 }
 
 type recordingCampaignResultReader struct {
-	snapshot  operatorconsole.BatchSaturationResultSnapshot
+	snapshot  operatorconsole.BatchEnergyOptimizationResultSnapshot
 	err       error
 	namespace string
 	name      string
@@ -380,35 +380,35 @@ type recordingCampaignResultReader struct {
 func (r *recordingCampaignResultReader) Read(
 	_ context.Context,
 	namespace, name string,
-) (operatorconsole.BatchSaturationResultSnapshot, error) {
+) (operatorconsole.BatchEnergyOptimizationResultSnapshot, error) {
 	r.calls++
 	r.namespace, r.name = namespace, name
 	return r.snapshot, r.err
 }
 
 type recordingPreflightReader struct {
-	snapshot operatorconsole.BatchSaturationPreflightSnapshot
+	snapshot operatorconsole.BatchEnergyOptimizationPreflightSnapshot
 	err      error
-	campaign *edgev1alpha1.BatchSaturation
+	campaign *edgev1alpha1.BatchEnergyOptimization
 	calls    int
 }
 
 func (r *recordingPreflightReader) Read(
 	_ context.Context,
-	campaign *edgev1alpha1.BatchSaturation,
-) (operatorconsole.BatchSaturationPreflightSnapshot, error) {
+	campaign *edgev1alpha1.BatchEnergyOptimization,
+) (operatorconsole.BatchEnergyOptimizationPreflightSnapshot, error) {
 	r.calls++
 	r.campaign = campaign
 	return r.snapshot, r.err
 }
 
-func preflightCampaign(namespace string) edgev1alpha1.BatchSaturation {
-	return edgev1alpha1.BatchSaturation{
+func preflightCampaign(namespace string) edgev1alpha1.BatchEnergyOptimization {
+	return edgev1alpha1.BatchEnergyOptimization{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "BatchSaturation",
+			APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "BatchEnergyOptimization",
 		},
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "campaign"},
-		Spec: edgev1alpha1.BatchSaturationSpec{
+		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"}, BatchSizes: []int32{1, 2, 4},
 		},
 	}
@@ -423,9 +423,9 @@ func preflightCampaignBody(t *testing.T, namespace string) *bytes.Reader {
 	return bytes.NewReader(encoded)
 }
 
-func resolvingPreflightSnapshot(t *testing.T) operatorconsole.BatchSaturationPreflightSnapshot {
+func resolvingPreflightSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizationPreflightSnapshot {
 	t.Helper()
-	return operatorconsole.BatchSaturationPreflightSnapshot{
+	return operatorconsole.BatchEnergyOptimizationPreflightSnapshot{
 		ReadAt: time.Now(), Campaign: preflightCampaign(testNamespace), Plan: preflightPlan(t),
 	}
 }
@@ -478,8 +478,8 @@ func passportSnapshot() operatorconsole.EvidencePassportSnapshot {
 	run := edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			ObservedGeneration: 1,
+			Job:                &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: identity.Store, Key: identity.Key, Size: identity.Size,
 				SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
@@ -523,28 +523,28 @@ func passportSnapshot() operatorconsole.EvidencePassportSnapshot {
 	}
 }
 
-func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultSnapshot {
+func campaignResultSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizationResultSnapshot {
 	t.Helper()
-	record, err := batchsaturation.NewResultRecord(batchsaturation.ResultRecordSpec{
-		Outcome: "Stopped/NoFurtherImprovement",
-		MeasurementState: batchsaturation.ResultMeasurementState{
+	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
+		Outcome: "MinimumFound/LocalMinimum",
+		MeasurementState: batchenergyoptimization.ResultMeasurementState{
 			TargetNode: "jetsono", ModelSpec: "mobilenet-v2-050",
 			DeviceClass: "jetson-agx-orin-64g", ExecutionPath: "ort-cpu", PowerMode: "MODE_50W",
 		},
-		CurvePlan: batchsaturation.StoredObjectReference{
-			Store: "chill-evidence-store", Key: "batch-saturations/campaign/curve-plan.json",
+		CurvePlan: batchenergyoptimization.StoredObjectReference{
+			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
 		},
-		AdmittedTrials: []batchsaturation.AdmittedTrialReference{{
-			Run: batchsaturation.RunReference{
+		AdmittedTrials: []batchenergyoptimization.AdmittedTrialReference{{
+			Run: batchenergyoptimization.RunReference{
 				Namespace: testNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
 			},
-			Measurement: batchsaturation.ResultMeasurement{
-				WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
+			Measurement: batchenergyoptimization.ResultMeasurement{
+				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
 			},
-			Evidence: batchsaturation.StoredObjectReference{
+			Evidence: batchenergyoptimization.StoredObjectReference{
 				Store: "chill-evidence-store", Key: "profiling-runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha13", Size: 23188,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha14", Size: 23188,
 			},
 		}},
 		Detail: json.RawMessage(`{"selectedBatch":1}`),
@@ -552,14 +552,14 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchSaturationResultS
 	if err != nil {
 		t.Fatalf("build result record: %v", err)
 	}
-	return operatorconsole.BatchSaturationResultSnapshot{
+	return operatorconsole.BatchEnergyOptimizationResultSnapshot{
 		ReadAt: time.Unix(0, 0).UTC(),
-		Campaign: edgev1alpha1.BatchSaturation{
+		Campaign: edgev1alpha1.BatchEnergyOptimization{
 			ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "campaign", UID: "campaign-uid"},
-			Status: edgev1alpha1.BatchSaturationStatus{
-				Phase: "Complete", Outcome: "Stopped/NoFurtherImprovement", AcceptedTrials: 3,
+			Status: edgev1alpha1.BatchEnergyOptimizationStatus{
+				Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", AcceptedTrials: 3,
 				Result: &edgev1alpha1.ProfilingRunEvidenceReference{
-					Store: "chill-evidence-store", Key: "batch-saturations/campaign/result.json",
+					Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/result.json",
 					Size: 1024, SchemaVersion: record.SchemaVersion(),
 				},
 			},

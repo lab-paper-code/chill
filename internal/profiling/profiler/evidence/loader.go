@@ -73,11 +73,11 @@ func (l *Loader) load(
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read raw measurement: %w", err)
 	}
-	raw, err := decodeRawRecord(rawBytes, execution.Intent)
+	raw, err := decodeRawRecord(rawBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, err
 	}
-	if err := raw.validate(execution.Intent); err != nil {
+	if err := raw.validate(); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
 	if err := raw.validateExecution(execution); err != nil {

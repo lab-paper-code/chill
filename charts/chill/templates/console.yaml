@@ -22,7 +22,7 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["profilingruns", "batchsaturations"]
+    resources: ["profilingruns", "batchenergyoptimizations"]
     verbs: ["get"]
   - apiGroups: ["batch"]
     resources: ["jobs"]

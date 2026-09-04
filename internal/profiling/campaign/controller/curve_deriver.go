@@ -7,29 +7,26 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 
-// The point-policy version and confidence level stay paired so the version
-// identifies the complete numeric rule. Changing the level requires changing
-// the version in the same edit.
 const (
-	sequentialPointPolicyVersion   = "sequential-point-v1"
-	sequentialPointConfidenceLevel = 0.95
+	energyObjectivePointPolicyVersion   = "energy-objective-point-v1"
+	energyObjectivePointConfidenceLevel = 0.95
 )
 
 const (
-	sequentialNoFurtherImprovementOutcome = "Stopped/" + string(profilederivation.StopNoFurtherImprovement)
-	sequentialEnergyDivergenceOutcome     = "Stopped/" + string(profilederivation.StopEnergyDivergence)
+	energyLocalMinimumOutcome    = "MinimumFound/" + string(profilederivation.EnergySearchLocalMinimum)
+	energySearchExhaustedOutcome = "MinimumFound/" + string(profilederivation.EnergySearchSpaceExhausted)
 )
 
-// CurveIntentLoader retrieves the immutable inputs frozen for one Run.
-type CurveIntentLoader interface {
-	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.FrozenRun, error)
+// CurveRunRecordLoader retrieves the RunConfig and policies carried by one Job.
+type CurveRunRecordLoader interface {
+	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.ResolvedRun, error)
 }
 
 // CurveEvidenceLoader retrieves evidence whose immutable objects have crossed
@@ -49,18 +46,18 @@ type CurveEvidenceLoader interface {
 	) (profilerevidence.VerifiedIdleEvidence, error)
 }
 
-// CurveDeriver assembles retained Accepted Run evidence into the existing
-// sequential curve decision. It retains no evidence between calls.
+// CurveDeriver assembles retained Accepted Run evidence into the minimum-energy
+// objective decision. It retains no evidence between calls.
 type CurveDeriver struct {
-	intents  CurveIntentLoader
+	records  CurveRunRecordLoader
 	evidence CurveEvidenceLoader
 }
 
-func NewCurveDeriver(intents CurveIntentLoader, evidence CurveEvidenceLoader) (*CurveDeriver, error) {
-	if intents == nil || evidence == nil {
-		return nil, errors.New("curve intent and evidence loaders are required")
+func NewCurveDeriver(records CurveRunRecordLoader, evidence CurveEvidenceLoader) (*CurveDeriver, error) {
+	if records == nil || evidence == nil {
+		return nil, errors.New("curve Run-record and evidence loaders are required")
 	}
-	return &CurveDeriver{intents: intents, evidence: evidence}, nil
+	return &CurveDeriver{records: records, evidence: evidence}, nil
 }
 
 // Derive evaluates the accepted Runs bound by a caller's per-reconcile
@@ -70,52 +67,52 @@ func (d *CurveDeriver) Derive(
 	plan profilederivation.CurvePlan,
 	activeRuns, idleRuns []edgev1alpha1.ProfilingRun,
 	batches []int,
-	sequentialPolicy profilederivation.SequentialPolicy,
-) (batchsaturation.CurveResult, error) {
+	policy profilederivation.EnergyObjectivePolicy,
+) (batchenergyoptimization.CurveResult, error) {
 	if err := validateCurvePrefix(plan.PlannedBatchSizes(), batches); err != nil {
-		return batchsaturation.CurveResult{}, err
+		return batchenergyoptimization.CurveResult{}, err
 	}
 	pointPolicy := profilederivation.PointPolicy{
-		Version:         sequentialPointPolicyVersion,
-		MinimumTrials:   sequentialPolicy.TrialsPerBatch,
-		ConfidenceLevel: sequentialPointConfidenceLevel,
+		Version:         energyObjectivePointPolicyVersion,
+		MinimumTrials:   policy.TrialsPerBatch,
+		ConfidenceLevel: energyObjectivePointConfidenceLevel,
 	}
 
 	passBatches, activeWitness, err := d.collectActiveAdmissions(ctx, activeRuns, batches)
 	if err != nil {
-		return batchsaturation.CurveResult{}, err
+		return batchenergyoptimization.CurveResult{}, err
 	}
 	idleTrials, idleWitness, err := d.collectIdleTrials(ctx, idleRuns)
 	if err != nil {
-		return batchsaturation.CurveResult{}, err
+		return batchenergyoptimization.CurveResult{}, err
 	}
 
 	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, pointPolicy)
 	if err != nil {
-		return batchsaturation.CurveResult{}, fmt.Errorf("derive idle baseline: %w", err)
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive idle baseline: %w", err)
 	}
 	state, err := profileradmission.ProjectVerifiedCurveState(plan, activeWitness, idleWitness)
 	if err != nil {
-		return batchsaturation.CurveResult{}, fmt.Errorf("project verified curve state: %w", err)
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf("project verified curve state: %w", err)
 	}
 	verifiedPlan, err := profilederivation.VerifyCurvePlan(plan, state)
 	if err != nil {
-		return batchsaturation.CurveResult{}, fmt.Errorf("verify curve plan: %w", err)
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf("verify curve plan: %w", err)
 	}
 	curve, err := profilederivation.DeriveCurve(
-		[]profilederivation.Pass{{Role: profilederivation.PassDiscovery, Batches: passBatches}},
+		[]profilederivation.Pass{{Role: profilederivation.PassSearch, Batches: passBatches}},
 		verifiedPlan,
 		map[string]profilederivation.IdleBaseline{baseline.StateIdentity: baseline},
 		pointPolicy,
 	)
 	if err != nil {
-		return batchsaturation.CurveResult{}, fmt.Errorf("derive discovery curve: %w", err)
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive energy-search curve: %w", err)
 	}
-	result, err := profilederivation.DeriveSequentialBatchDecision(curve, sequentialPolicy)
+	result, err := profilederivation.DeriveMinimumEnergyBatch(curve, policy)
 	if err != nil {
-		return batchsaturation.CurveResult{}, fmt.Errorf("derive sequential batch decision: %w", err)
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive minimum-energy batch: %w", err)
 	}
-	return projectSequentialCurveResult(result)
+	return projectEnergyOptimizationResult(result)
 }
 
 func (d *CurveDeriver) collectActiveAdmissions(
@@ -140,11 +137,11 @@ func (d *CurveDeriver) collectActiveAdmissions(
 				run.Name, run.Spec.Measurement.Batch,
 			)
 		}
-		frozen, verified, err := d.loadActive(ctx, run)
+		resolved, verified, err := d.loadActive(ctx, run)
 		if err != nil {
 			return nil, profilerevidence.VerifiedEvidence{}, err
 		}
-		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, frozen.AdmissionPolicy)
+		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, resolved.AdmissionPolicy)
 		if err != nil {
 			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
@@ -169,11 +166,11 @@ func (d *CurveDeriver) collectIdleTrials(
 	var witness profilerevidence.VerifiedIdleEvidence
 	for index := range runs {
 		run := &runs[index]
-		frozen, verified, err := d.loadIdle(ctx, run)
+		resolved, verified, err := d.loadIdle(ctx, run)
 		if err != nil {
 			return nil, profilerevidence.VerifiedIdleEvidence{}, err
 		}
-		result, trial, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
+		result, trial, err := profileradmission.EvaluateIdle(verified, resolved.AdmissionPolicy)
 		if err != nil {
 			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
@@ -193,47 +190,47 @@ func (d *CurveDeriver) collectIdleTrials(
 func (d *CurveDeriver) loadActive(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.FrozenRun, profilerevidence.VerifiedEvidence, error) {
-	frozen, err := d.intents.Load(ctx, run)
+) (profilercontroller.ResolvedRun, profilerevidence.VerifiedEvidence, error) {
+	resolved, err := d.records.Load(ctx, run)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
-			"load ProfilingRun %q frozen intent: %w", run.Name, err,
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+			"load ProfilingRun %q Job RunConfig: %w", run.Name, err,
 		)
 	}
 	reference, err := curveEvidenceIdentity(run)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedEvidence{}, err
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, err
 	}
 	verified, err := d.evidence.Load(ctx, run, reference)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
 			"load ProfilingRun %q retained evidence: %w", run.Name, err,
 		)
 	}
-	return frozen, verified, nil
+	return resolved, verified, nil
 }
 
 func (d *CurveDeriver) loadIdle(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.FrozenRun, profilerevidence.VerifiedIdleEvidence, error) {
-	frozen, err := d.intents.Load(ctx, run)
+) (profilercontroller.ResolvedRun, profilerevidence.VerifiedIdleEvidence, error) {
+	resolved, err := d.records.Load(ctx, run)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
-			"load ProfilingRun %q frozen intent: %w", run.Name, err,
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
+			"load ProfilingRun %q Job RunConfig: %w", run.Name, err,
 		)
 	}
 	reference, err := curveEvidenceIdentity(run)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedIdleEvidence{}, err
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, err
 	}
 	verified, err := d.evidence.LoadIdle(ctx, run, reference)
 	if err != nil {
-		return profilercontroller.FrozenRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
+		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
 			"load ProfilingRun %q retained idle evidence: %w", run.Name, err,
 		)
 	}
-	return frozen, verified, nil
+	return resolved, verified, nil
 }
 
 func validateCurvePrefix(planned, batches []int) error {
@@ -263,37 +260,33 @@ func curveEvidenceIdentity(run *edgev1alpha1.ProfilingRun) (evidencestore.Object
 	return reference, nil
 }
 
-func projectSequentialCurveResult(
-	result profilederivation.SequentialResult,
-) (batchsaturation.CurveResult, error) {
-	if result.SelectedBatch == nil {
-		return batchsaturation.CurveResult{}, errors.New("sequential result omitted its selected batch")
+func projectEnergyOptimizationResult(
+	result profilederivation.EnergyOptimizationResult,
+) (batchenergyoptimization.CurveResult, error) {
+	if result.BestBatch == nil {
+		return batchenergyoptimization.CurveResult{}, errors.New("energy-optimization result omitted its best batch")
 	}
-	projected := batchsaturation.CurveResult{
-		SelectedBatch: *result.SelectedBatch,
-		Detail:        result,
+	projected := batchenergyoptimization.CurveResult{
+		Detail: result,
 	}
 	switch result.Status {
-	case profilederivation.SequentialContinue:
+	case profilederivation.EnergySearchContinue:
 		projected.Continue = true
-	case profilederivation.SequentialStopped:
-		switch result.StopReason {
-		case profilederivation.StopNoFurtherImprovement:
-			projected.Outcome = sequentialNoFurtherImprovementOutcome
-		case profilederivation.StopCapabilityBoundary:
-			return batchsaturation.CurveResult{}, errors.New(
-				"sequential derivation returned an unreachable capability boundary",
-			)
-		case profilederivation.StopEnergyDivergence:
-			projected.Outcome = sequentialEnergyDivergenceOutcome
+	case profilederivation.EnergySearchComplete:
+		switch result.CompletionReason {
+		case profilederivation.EnergySearchLocalMinimum:
+			projected.Outcome = energyLocalMinimumOutcome
+		case profilederivation.EnergySearchSpaceExhausted:
+			projected.Outcome = energySearchExhaustedOutcome
 		default:
-			return batchsaturation.CurveResult{}, fmt.Errorf(
-				"sequential result has unsupported stop reason %q", result.StopReason,
+			return batchenergyoptimization.CurveResult{}, fmt.Errorf(
+				"energy-optimization result has unsupported completion reason %q",
+				result.CompletionReason,
 			)
 		}
 	default:
-		return batchsaturation.CurveResult{}, fmt.Errorf(
-			"sequential result has unsupported status %q", result.Status,
+		return batchenergyoptimization.CurveResult{}, fmt.Errorf(
+			"energy-optimization result has unsupported status %q", result.Status,
 		)
 	}
 	return projected, nil

@@ -12,7 +12,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha13"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha14"
 
 type ORTCPURuntimeConfig struct {
 	Command                 []string
@@ -40,20 +40,20 @@ type ORTCPURuntime struct {
 var _ Runtime = (*ORTCPURuntime)(nil)
 
 type ortCPURequest struct {
-	SchemaVersion                    string              `json:"schemaVersion"`
-	Intent                           profilingrun.Intent `json:"intent"`
-	PodUID                           string              `json:"podUID"`
-	ScheduledNodeName                string              `json:"scheduledNodeName"`
-	ModelPath                        string              `json:"modelPath"`
-	ObserverReadyPaths               []string            `json:"observerReadyPaths"`
-	WorkloadWindowStartPath          string              `json:"workloadWindowStartPath"`
-	MeasurementStartPath             string              `json:"measurementStartPath"`
-	WorkloadWindowReadyPath          string              `json:"workloadWindowReadyPath"`
-	MeasurementEndPath               string              `json:"measurementEndPath"`
-	ObserverReadyTimeoutMilliseconds int64               `json:"observerReadyTimeoutMilliseconds"`
-	MaxLatencySamples                int                 `json:"maxLatencySamples"`
-	MaxInputBytes                    int64               `json:"maxInputBytes"`
-	MaxResultBytes                   int64               `json:"maxResultBytes"`
+	SchemaVersion                    string                 `json:"schemaVersion"`
+	RunConfig                        profilingrun.RunConfig `json:"runConfig"`
+	PodUID                           string                 `json:"podUID"`
+	ScheduledNodeName                string                 `json:"scheduledNodeName"`
+	ModelPath                        string                 `json:"modelPath"`
+	ObserverReadyPaths               []string               `json:"observerReadyPaths"`
+	WorkloadWindowStartPath          string                 `json:"workloadWindowStartPath"`
+	MeasurementStartPath             string                 `json:"measurementStartPath"`
+	WorkloadWindowReadyPath          string                 `json:"workloadWindowReadyPath"`
+	MeasurementEndPath               string                 `json:"measurementEndPath"`
+	ObserverReadyTimeoutMilliseconds int64                  `json:"observerReadyTimeoutMilliseconds"`
+	MaxLatencySamples                int                    `json:"maxLatencySamples"`
+	MaxInputBytes                    int64                  `json:"maxInputBytes"`
+	MaxResultBytes                   int64                  `json:"maxResultBytes"`
 }
 
 func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
@@ -110,11 +110,11 @@ func (r *ORTCPURuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
-	intent, err := request.Intent.Record()
+	runConfig, err := request.RunConfig.Record()
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if intent.State.RuntimeFamily != "onnxruntime" || intent.State.Backend != "CPUExecutionProvider" {
+	if runConfig.State.RuntimeFamily != "onnxruntime" || runConfig.State.Backend != "CPUExecutionProvider" {
 		return RuntimeMeasurement{}, errors.New("CPU ORT adapter received an unsupported runtime path")
 	}
 	payload, err := r.encodeRequest(request)
@@ -126,12 +126,12 @@ func (r *ORTCPURuntime) Measure(
 	); err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if intent.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+	if runConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		var result profilingrun.IdleRuntimeResult
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT idle result: %w", err)
 		}
-		verified, err := profilingrun.VerifyIdleRuntimeResult(request.Intent, request.PodUID, result)
+		verified, err := profilingrun.VerifyIdleRuntimeResult(request.RunConfig, request.PodUID, result)
 		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT idle result: %w", err)
 		}
@@ -141,7 +141,7 @@ func (r *ORTCPURuntime) Measure(
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT result: %w", err)
 	}
-	verified, err := profilingrun.VerifyRuntimeResult(request.Intent, request.PodUID, result)
+	verified, err := profilingrun.VerifyRuntimeResult(request.RunConfig, request.PodUID, result)
 	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT result: %w", err)
 	}
@@ -149,13 +149,13 @@ func (r *ORTCPURuntime) Measure(
 }
 
 func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
-	intent, err := runtimeRequest.Intent.Record()
+	runConfig, err := runtimeRequest.RunConfig.Record()
 	if err != nil {
-		return nil, fmt.Errorf("read CPU ORT intent: %w", err)
+		return nil, fmt.Errorf("read CPU ORT RunConfig: %w", err)
 	}
 
 	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, Intent: intent,
+		SchemaVersion: ortCPURequestSchemaVersion, RunConfig: runConfig,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,

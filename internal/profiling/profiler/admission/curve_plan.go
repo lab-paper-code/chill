@@ -10,10 +10,10 @@ import (
 )
 
 // ProjectCurvePlanSpec builds the plan the checker in this package later
-// validates frozen intents against.
+// validates RunConfigs against.
 func ProjectCurvePlanSpec(
 	name string,
-	active, idle profilingrun.Intent,
+	active, idle profilingrun.RunConfig,
 	capability profilingrun.CandidateArtifactCapability,
 	conversion profilederivation.CurveConversionContract,
 	plannedBatchSizes []int,
@@ -57,10 +57,10 @@ func ProjectCurvePlanSpec(
 		},
 	}
 	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve intents disagree: %w", err)
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve intents disagree: %w", err)
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	return spec, nil
 }
@@ -90,8 +90,8 @@ func ProjectVerifiedCurveState(
 		return profilederivation.VerifiedCurveState{}, fmt.Errorf("project verified idle observation: %w", err)
 	}
 	spec := plan.Shared()
-	if err := validateCurvePlanIntents(
-		activeExecution.Intent, idleExecution.Intent,
+	if err := validateCurvePlanRunConfigs(
+		activeExecution.RunConfig, idleExecution.RunConfig,
 		activeExecution.Terminal.Node.UID, idleExecution.Terminal.Node.UID,
 		spec,
 	); err != nil {
@@ -110,8 +110,8 @@ func ProjectVerifiedCurveState(
 	}, nil
 }
 
-func validateCurvePlanIntents(
-	active, idle profilingrun.Intent,
+func validateCurvePlanRunConfigs(
+	active, idle profilingrun.RunConfig,
 	activeNodeUID, idleNodeUID string,
 	spec profilederivation.CurvePlanSpec,
 ) error {
@@ -147,7 +147,7 @@ func validateCurvePlanIntents(
 	return nil
 }
 
-func validateCurvePlanNodeFacts(active, idle profilingrun.Intent) error {
+func validateCurvePlanNodeFacts(active, idle profilingrun.RunConfig) error {
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle frozen candidate or Node snapshots disagree")
@@ -156,30 +156,30 @@ func validateCurvePlanNodeFacts(active, idle profilingrun.Intent) error {
 }
 
 func validateCurvePlanIntent(
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	actualNodeUID string,
 	spec profilederivation.CurvePlanSpec,
 	protocol profilederivation.CurveProtocolContract,
 ) error {
-	if intent.Candidate.ExecutionPath != spec.Artifact.ExecutionPath ||
-		intent.State.DeviceClass != spec.DeviceClass || intent.State.Model != spec.LogicalModel ||
-		intent.State.Artifact != spec.Artifact.Name ||
-		intent.State.ArtifactPath != spec.Artifact.Path || intent.State.RuntimeFamily != spec.RuntimeFamily ||
-		intent.State.Backend != spec.Backend || intent.State.PowerMode != spec.PowerMode ||
-		intent.Images.Runtime != spec.RuntimeImage ||
-		intent.Images.Artifact != spec.Artifact.Image || intent.TargetNode.UID != spec.NodeUID ||
+	if config.Candidate.ExecutionPath != spec.Artifact.ExecutionPath ||
+		config.State.DeviceClass != spec.DeviceClass || config.State.Model != spec.LogicalModel ||
+		config.State.Artifact != spec.Artifact.Name ||
+		config.State.ArtifactPath != spec.Artifact.Path || config.State.RuntimeFamily != spec.RuntimeFamily ||
+		config.State.Backend != spec.Backend || config.State.PowerMode != spec.PowerMode ||
+		config.Images.Runtime != spec.RuntimeImage ||
+		config.Images.Artifact != spec.Artifact.Image || config.TargetNode.UID != spec.NodeUID ||
 		actualNodeUID != spec.NodeUID {
-		return errors.New("frozen intent contradicts curve-plan state or artifact facts")
+		return errors.New("RunConfig contradicts curve-plan state or artifact facts")
 	}
-	if projectCurveCPU(intent.CPU) != spec.CPU || projectCurveMetricSource(intent.Metrics) != spec.MetricSource {
-		return errors.New("frozen intent contradicts curve-plan CPU or metric-source facts")
+	if projectCurveCPU(config.CPU) != spec.CPU || projectCurveMetricSource(config.Metrics) != spec.MetricSource {
+		return errors.New("RunConfig contradicts curve-plan CPU or metric-source facts")
 	}
-	projectedProtocol, err := projectCurveProtocol(intent)
+	projectedProtocol, err := projectCurveProtocol(config)
 	if err != nil {
 		return err
 	}
 	if projectedProtocol != protocol {
-		return errors.New("frozen intent contradicts curve-plan measurement-protocol facts")
+		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
 	}
 	return nil
 }
@@ -199,22 +199,22 @@ func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederiva
 	}
 }
 
-func projectCurveProtocol(intent profilingrun.Intent) (profilederivation.CurveProtocolContract, error) {
-	if err := intent.Workload.Validate(); err != nil {
+func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.CurveProtocolContract, error) {
+	if err := config.Workload.Validate(); err != nil {
 		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate frozen workload contract: %w", err)
 	}
 	return profilederivation.CurveProtocolContract{
-		WorkloadMode:               intent.Measurement.WorkloadMode,
-		InputGenerator:             intent.Measurement.InputGenerator,
-		OutputValidation:           intent.Measurement.OutputValidation,
-		WarmupIterations:           intent.Measurement.WarmupIterations,
-		SettlingDurationSeconds:    intent.Measurement.SettlingDurationSeconds,
-		DurationSeconds:            intent.Measurement.DurationSeconds,
-		MetricIntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
-		MetricTimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
-		MetricDurationSeconds:      intent.Metrics.DurationSeconds,
-		MetricObserverImage:        intent.Images.MetricObserver,
-		WorkloadObserverImage:      intent.Images.WorkloadObserver,
-		WorkloadSchemaVersion:      intent.Workload.SchemaVersion,
+		WorkloadMode:               config.Measurement.WorkloadMode,
+		InputGenerator:             config.Measurement.InputGenerator,
+		OutputValidation:           config.Measurement.OutputValidation,
+		WarmupIterations:           config.Measurement.WarmupIterations,
+		SettlingDurationSeconds:    config.Measurement.SettlingDurationSeconds,
+		DurationSeconds:            config.Measurement.DurationSeconds,
+		MetricIntervalMilliseconds: config.Metrics.IntervalMilliseconds,
+		MetricTimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
+		MetricDurationSeconds:      config.Metrics.DurationSeconds,
+		MetricObserverImage:        config.Images.MetricObserver,
+		WorkloadObserverImage:      config.Images.WorkloadObserver,
+		WorkloadSchemaVersion:      config.Workload.SchemaVersion,
 	}, nil
 }

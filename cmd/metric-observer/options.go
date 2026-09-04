@@ -3,21 +3,20 @@ package main
 import (
 	"errors"
 	"flag"
+	"strings"
 	"time"
 )
 
 const (
-	defaultIntentPath             = "/etc/chill/run/intent.json"
 	defaultReadyPath              = "/coordination/observer-ready"
 	defaultStartSignalPath        = "/coordination/measurement-start"
 	defaultEndSignalPath          = "/coordination/measurement-end"
 	defaultMetricResultPath       = "/coordination/metric-result.json"
-	maximumIntentBytes      int64 = 1 << 20
 	maximumResultBytes      int64 = 8 << 20
 )
 
 type options struct {
-	intentPath       string
+	runConfig        string
 	readyPath        string
 	startPath        string
 	endPath          string
@@ -28,7 +27,7 @@ type options struct {
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
-	set.StringVar(&o.intentPath, "intent-file", defaultIntentPath, "read-only frozen Run intent JSON")
+	set.StringVar(&o.runConfig, "run-config", "", "exact RunConfig generated for this Job")
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "observer-ready signal path")
 	set.StringVar(&o.startPath, "start-signal-file", defaultStartSignalPath, "measurement-start signal path")
 	set.StringVar(&o.endPath, "end-signal-file", defaultEndSignalPath, "measurement-end signal path")
@@ -39,6 +38,9 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if strings.TrimSpace(o.runConfig) == "" {
+		return errors.New("RunConfig is required")
+	}
 	if o.startWaitTimeout <= 0 {
 		return errors.New("start wait timeout must be supplied by the Job execution contract")
 	}

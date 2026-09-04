@@ -16,7 +16,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestExecutePublishesFrozenCompositeMetricObservation(t *testing.T) {
+func TestExecutePublishesConfiguredCompositeMetricObservation(t *testing.T) {
 	powerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Query().Get("hostname") != "lattepanda" {
 			t.Errorf("power query = %q", request.URL.RawQuery)
@@ -40,7 +40,7 @@ func TestExecutePublishesFrozenCompositeMetricObservation(t *testing.T) {
 	defer thermalServer.Close()
 
 	directory := t.TempDir()
-	intent := writeTestIntent(
+	runConfig := writeTestRunConfig(
 		t, directory, powerServer.URL+"/prometheus?hostname=lattepanda", thermalServer.URL+"/metrics",
 	)
 	options := testOptions(directory)
@@ -67,23 +67,24 @@ func TestExecutePublishesFrozenCompositeMetricObservation(t *testing.T) {
 	if err := result.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	assertCompositeObservation(t, intent, result)
+	assertCompositeObservation(t, runConfig, result)
 }
 
-func assertCompositeObservation(t *testing.T, intent profilingrun.Intent, result metricobserver.Result) {
+func assertCompositeObservation(t *testing.T, runConfig profilingrun.RunConfig, result metricobserver.Result) {
 	t.Helper()
-	if result.Source.Kind != intent.Metrics.SourceKind || result.Source.NodeName != intent.TargetNode.Name ||
-		result.Source.Endpoint != intent.Metrics.Endpoint || result.Source.Metric != intent.Metrics.PowerMetric ||
-		result.Source.ThermalEndpoint != intent.Metrics.ThermalEndpoint ||
+	if result.Source.Kind != runConfig.Metrics.SourceKind || result.Source.NodeName != runConfig.TargetNode.Name ||
+		result.Source.Endpoint != runConfig.Metrics.Endpoint || result.Source.Metric != runConfig.Metrics.PowerMetric ||
+		result.Source.ThermalEndpoint != runConfig.Metrics.ThermalEndpoint ||
 		len(result.Source.MetricLabels) != 2 || result.Source.MetricLabels["hostname"] != "lattepanda" ||
 		result.Source.MetricLabels["device_type"] != "test_device" ||
 		result.Source.ThermalMetrics == nil ||
-		result.Source.ThermalMetrics.ObservationAvailable != intent.Metrics.ThermalMetrics.ObservationAvailable ||
-		result.Source.ThermalMetrics.Active != intent.Metrics.ThermalMetrics.Active ||
-		result.Source.ThermalMetrics.CPUCoreThrottleEvents != intent.Metrics.ThermalMetrics.CPUCoreThrottleEvents ||
-		result.Source.ThermalMetrics.CPUPackageThrottleEvents != intent.Metrics.ThermalMetrics.CPUPackageThrottleEvents ||
-		result.Source.ThermalMetrics.Latched != intent.Metrics.ThermalMetrics.Latched ||
-		result.Source.ThermalMetrics.MaximumTemperatureCelsius != intent.Metrics.ThermalMetrics.MaximumTemperatureCelsius ||
+		result.Source.ThermalMetrics.ObservationAvailable != runConfig.Metrics.ThermalMetrics.ObservationAvailable ||
+		result.Source.ThermalMetrics.Active != runConfig.Metrics.ThermalMetrics.Active ||
+		result.Source.ThermalMetrics.CPUCoreThrottleEvents != runConfig.Metrics.ThermalMetrics.CPUCoreThrottleEvents ||
+		result.Source.ThermalMetrics.CPUPackageThrottleEvents != runConfig.Metrics.ThermalMetrics.CPUPackageThrottleEvents ||
+		result.Source.ThermalMetrics.Latched != runConfig.Metrics.ThermalMetrics.Latched ||
+		result.Source.ThermalMetrics.MaximumTemperatureCelsius !=
+			runConfig.Metrics.ThermalMetrics.MaximumTemperatureCelsius ||
 		result.Summary.SuccessfulSamples < 1 || result.Summary.Failures != 0 {
 		t.Fatalf("unexpected observation result: %#v", result)
 	}
@@ -101,7 +102,7 @@ func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	defer server.Close()
 
 	directory := t.TempDir()
-	writeTestIntent(t, directory, server.URL)
+	writeTestRunConfig(t, directory, server.URL)
 	options := testOptions(directory)
 	options.endWaitTimeout = 20 * time.Millisecond
 	if err := worker.PublishSignal(options.startPath); err != nil {
@@ -137,24 +138,22 @@ func TestSummarizeThermalReportsOnlyRetainedFacts(t *testing.T) {
 	}
 }
 
-func TestExecuteRejectsInvalidIntentBeforePublishingReady(t *testing.T) {
+func TestExecuteRejectsInvalidRunConfigBeforePublishingReady(t *testing.T) {
 	directory := t.TempDir()
-	writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
+	writeTestRunConfig(t, directory, "http://127.0.0.1:1/metrics")
 	options := testOptions(directory)
-	if err := os.WriteFile(options.intentPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	options.runConfig = `{}`
 	if err := execute(context.Background(), options, &http.Client{}, time.Second, time.Millisecond); err == nil {
-		t.Fatal("invalid intent was accepted")
+		t.Fatal("invalid RunConfig was accepted")
 	}
 	if _, err := os.Stat(options.readyPath); !os.IsNotExist(err) {
-		t.Fatalf("invalid intent published observer-ready: %v", err)
+		t.Fatalf("invalid RunConfig published observer-ready: %v", err)
 	}
 }
 
 func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	directory := t.TempDir()
-	writeTestIntent(t, directory, "http://127.0.0.1:1/metrics")
+	writeTestRunConfig(t, directory, "http://127.0.0.1:1/metrics")
 	options := testOptions(directory)
 	err := execute(context.Background(), options, &http.Client{}, 20*time.Millisecond, time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
@@ -168,28 +167,28 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	}
 }
 
-func writeTestIntent(t *testing.T, directory, endpoint string, thermalEndpoints ...string) profilingrun.Intent {
+func writeTestRunConfig(t *testing.T, directory, endpoint string, thermalEndpoints ...string) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var runConfig profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &runConfig); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	intent.Metrics.Endpoint = endpoint
-	intent.Metrics.PowerMetric = "frozen_wall_power_watts"
-	intent.Metrics.MetricLabels = map[string]string{"hostname": "lattepanda", "device_type": "test_device"}
-	intent.Metrics.ThermalEndpoint = endpoint
+	runConfig.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	runConfig.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	runConfig.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	runConfig.Workload = profilingrun.CurrentWorkloadContract()
+	runConfig.Metrics.Endpoint = endpoint
+	runConfig.Metrics.PowerMetric = "frozen_wall_power_watts"
+	runConfig.Metrics.MetricLabels = map[string]string{"hostname": "lattepanda", "device_type": "test_device"}
+	runConfig.Metrics.ThermalEndpoint = endpoint
 	if len(thermalEndpoints) != 0 {
-		intent.Metrics.ThermalEndpoint = thermalEndpoints[0]
+		runConfig.Metrics.ThermalEndpoint = thermalEndpoints[0]
 	}
-	intent.Metrics.ThermalMetrics = profilingrun.ThermalMetricContract{
+	runConfig.Metrics.ThermalMetrics = profilingrun.ThermalMetricContract{
 		ObservationAvailable:      "frozen_thermal_observation_available",
 		Active:                    "frozen_thermal_active",
 		CPUCoreThrottleEvents:     "frozen_thermal_cpu_core_events_total",
@@ -197,24 +196,25 @@ func writeTestIntent(t *testing.T, directory, endpoint string, thermalEndpoints 
 		Latched:                   "frozen_thermal_latched",
 		MaximumTemperatureCelsius: "frozen_thermal_max_celsius",
 	}
-	intent.Measurement.DurationSeconds = 1
-	intent.Metrics.DurationSeconds = 1
-	intent.Metrics.IntervalMilliseconds = 20
-	intent.Metrics.TimeoutMilliseconds = 10
-	canonical, err := intent.CanonicalJSON()
+	runConfig.Measurement.DurationSeconds = 1
+	runConfig.Metrics.DurationSeconds = 1
+	runConfig.Metrics.IntervalMilliseconds = 20
+	runConfig.Metrics.TimeoutMilliseconds = 10
+	canonical, err := runConfig.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "intent.json"), canonical, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "run-config.json"), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return runConfig
 }
 
 func testOptions(directory string) options {
+	payload, _ := os.ReadFile(filepath.Join(directory, "run-config.json"))
 	return options{
-		intentPath: filepath.Join(directory, "intent.json"),
-		readyPath:  filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
+		runConfig: string(payload),
+		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
 		endWaitTimeout: time.Second, maxEvents: 100,

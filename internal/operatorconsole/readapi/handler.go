@@ -16,34 +16,34 @@ import (
 )
 
 const (
-	evidencePassportPath                             = "GET /api/v1/namespaces/{namespace}/profiling-runs/{name}/evidence-passport"
-	batchSaturationResultPath                        = "GET /api/v1/namespaces/{namespace}/batch-saturations/{name}/result"
-	batchSaturationPreflightPath                     = "POST /api/v1/namespaces/{namespace}/batch-saturations/preflight"
-	maximumPreflightRequestBytes               int64 = 1 << 20
-	batchSaturationPreflightRequestInvalidCode       = "BatchSaturationPreflightRequestInvalid"
+	evidencePassportPath                                     = "GET /api/v1/namespaces/{namespace}/profiling-runs/{name}/evidence-passport"
+	batchEnergyOptimizationResultPath                        = "GET /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}/result"
+	batchEnergyOptimizationPreflightPath                     = "POST /api/v1/namespaces/{namespace}/batch-energy-optimizations/preflight"
+	maximumPreflightRequestBytes                       int64 = 1 << 20
+	batchEnergyOptimizationPreflightRequestInvalidCode       = "BatchEnergyOptimizationPreflightRequestInvalid"
 )
 
 type EvidencePassportReader interface {
 	Read(context.Context, string, string) (operatorconsole.EvidencePassportSnapshot, error)
 }
 
-type BatchSaturationResultReader interface {
-	Read(context.Context, string, string) (operatorconsole.BatchSaturationResultSnapshot, error)
+type BatchEnergyOptimizationResultReader interface {
+	Read(context.Context, string, string) (operatorconsole.BatchEnergyOptimizationResultSnapshot, error)
 }
 
-type BatchSaturationPreflightReader interface {
-	Read(context.Context, *edgev1alpha1.BatchSaturation) (operatorconsole.BatchSaturationPreflightSnapshot, error)
+type BatchEnergyOptimizationPreflightReader interface {
+	Read(context.Context, *edgev1alpha1.BatchEnergyOptimization) (operatorconsole.BatchEnergyOptimizationPreflightSnapshot, error)
 }
 
 // NewHandler exposes a read-only Console API. Authentication and routing
 // belong to the deployment boundary in front of this handler.
 func NewHandler(
 	passports EvidencePassportReader,
-	results BatchSaturationResultReader,
-	preflights BatchSaturationPreflightReader,
+	results BatchEnergyOptimizationResultReader,
+	preflights BatchEnergyOptimizationPreflightReader,
 ) (http.Handler, error) {
 	if passports == nil || results == nil || preflights == nil {
-		return nil, errors.New("Evidence Passport, batch-saturation result, and batch-saturation preflight readers are required")
+		return nil, errors.New("Evidence Passport, batch-energy-optimization result, and batch-energy-optimization preflight readers are required")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -66,50 +66,50 @@ func NewHandler(
 		}
 		writeJSON(writer, passport)
 	})
-	mux.HandleFunc(batchSaturationResultPath, func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc(batchEnergyOptimizationResultPath, func(writer http.ResponseWriter, request *http.Request) {
 		snapshot, err := results.Read(
 			request.Context(), request.PathValue("namespace"), request.PathValue("name"),
 		)
 		if err != nil {
-			writeError(writer, queryStatus(err), "BatchSaturationResultUnavailable")
+			writeError(writer, queryStatus(err), "BatchEnergyOptimizationResultUnavailable")
 			return
 		}
-		result, err := operatorconsole.BuildBatchSaturationResult(snapshot)
+		result, err := operatorconsole.BuildBatchEnergyOptimizationResult(snapshot)
 		if err != nil {
-			writeError(writer, http.StatusInternalServerError, "BatchSaturationResultProjectionFailed")
+			writeError(writer, http.StatusInternalServerError, "BatchEnergyOptimizationResultProjectionFailed")
 			return
 		}
 		writeJSON(writer, result)
 	})
-	mux.HandleFunc(batchSaturationPreflightPath, func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc(batchEnergyOptimizationPreflightPath, func(writer http.ResponseWriter, request *http.Request) {
 		request.Body = http.MaxBytesReader(writer, request.Body, maximumPreflightRequestBytes)
 		decoder := json.NewDecoder(request.Body)
 		decoder.DisallowUnknownFields()
-		var campaign edgev1alpha1.BatchSaturation
+		var campaign edgev1alpha1.BatchEnergyOptimization
 		if err := decoder.Decode(&campaign); err != nil {
-			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
 			return
 		}
-		if campaign.Kind != "" && campaign.Kind != "BatchSaturation" ||
+		if campaign.Kind != "" && campaign.Kind != "BatchEnergyOptimization" ||
 			campaign.APIVersion != "" && campaign.APIVersion != edgev1alpha1.GroupVersion.String() {
-			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
 			return
 		}
 		namespace := request.PathValue("namespace")
 		if campaign.Namespace == "" {
 			campaign.Namespace = namespace
 		} else if campaign.Namespace != namespace {
-			writeError(writer, http.StatusBadRequest, batchSaturationPreflightRequestInvalidCode)
+			writeError(writer, http.StatusBadRequest, batchEnergyOptimizationPreflightRequestInvalidCode)
 			return
 		}
 		snapshot, err := preflights.Read(request.Context(), &campaign)
 		if err != nil {
-			writeError(writer, queryStatus(err), "BatchSaturationPreflightUnavailable")
+			writeError(writer, queryStatus(err), "BatchEnergyOptimizationPreflightUnavailable")
 			return
 		}
-		preflight, err := operatorconsole.BuildBatchSaturationPreflight(snapshot)
+		preflight, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
 		if err != nil {
-			writeError(writer, http.StatusInternalServerError, "BatchSaturationPreflightProjectionFailed")
+			writeError(writer, http.StatusInternalServerError, "BatchEnergyOptimizationPreflightProjectionFailed")
 			return
 		}
 		writeJSON(writer, preflight)
@@ -122,7 +122,7 @@ func NewHandler(
 // answers Not Found rather than the Bad Gateway a store failure earns.
 func queryStatus(err error) int {
 	switch {
-	case apierrors.IsNotFound(err), errors.Is(err, operatorconsole.ErrBatchSaturationResultUnavailable):
+	case apierrors.IsNotFound(err), errors.Is(err, operatorconsole.ErrBatchEnergyOptimizationResultUnavailable):
 		return http.StatusNotFound
 	case apierrors.IsForbidden(err):
 		return http.StatusForbidden

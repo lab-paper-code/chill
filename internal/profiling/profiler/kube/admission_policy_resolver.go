@@ -20,8 +20,8 @@ type AdmissionPolicyResolverOptions struct {
 }
 
 // KubernetesAdmissionPolicyResolver reads only installation-time trusted
-// policy configuration. IntentFreezer copies its selected output into the
-// immutable Run record before any Job is created.
+// policy configuration. RunConfigResolver selects one entry before the Job
+// records and executes the RunConfig.
 type KubernetesAdmissionPolicyResolver struct {
 	reader  client.Reader
 	options AdmissionPolicyResolverOptions
@@ -81,7 +81,7 @@ func (r *KubernetesAdmissionPolicyResolver) Resolve(
 		UID: string(configMap.UID), ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey,
 	})
 	if err != nil {
-		return profileradmission.FrozenPolicy{}, profiler.NewTerminalFreezeError(profiler.FreezeReasonAdmissionPolicyInvalid, err)
+		return profileradmission.FrozenPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonAdmissionPolicyInvalid, err)
 	}
 	return frozen, nil
 }

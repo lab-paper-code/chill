@@ -8,6 +8,7 @@ import (
 
 func TestOptionsValidateRequiredBindings(t *testing.T) {
 	valid := options{
+		runConfig:        `{}`,
 		startWaitTimeout: time.Minute, endWaitTimeout: time.Minute, maxEvents: 100,
 	}
 	if err := valid.validate(); err != nil {

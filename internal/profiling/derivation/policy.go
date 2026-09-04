@@ -6,10 +6,8 @@ import (
 )
 
 const (
-	PointEstimatorVersion            = "incremental-point-welch-satterthwaite-v2"
-	PointConfidenceMethod            = "student-t-welch-satterthwaite"
-	BSatConfirmatorySizingMethod     = "bonferroni-welch-relative-precision-v1"
-	BSatConfirmatoryEstimatorVersion = "bonferroni-welch-domain-v1"
+	PointEstimatorVersion = "incremental-point-welch-satterthwaite-v2"
+	PointConfidenceMethod = "student-t-welch-satterthwaite"
 )
 
 func validAdmissionPolicy(policy AdmissionPolicy) bool {
@@ -33,22 +31,6 @@ func verdictFromReasons(reasons []Reason) Verdict {
 func validatePointPolicy(policy PointPolicy) error {
 	if policy.Version == "" || policy.MinimumTrials < 3 || !validProbability(policy.ConfidenceLevel) {
 		return errors.New("point policy must use a valid confidence level with at least three trials")
-	}
-	return nil
-}
-
-func validateBSatPolicy(policy BSatPolicy) error {
-	if policy.Version == "" || policy.KMax < 2 ||
-		policy.RelativeImprovementTolerance < 0 || policy.RelativeImprovementTolerance >= 1 ||
-		math.IsNaN(policy.RelativeImprovementTolerance) ||
-		math.IsInf(policy.RelativeImprovementTolerance, 0) ||
-		policy.MinimumPointTrials < 3 || policy.DiscoveryTrials < policy.MinimumPointTrials ||
-		policy.MaximumConfirmatoryTrials < policy.MinimumPointTrials ||
-		policy.FamilyWiseAlpha <= 0 || policy.FamilyWiseAlpha >= 0.5 ||
-		math.IsNaN(policy.FamilyWiseAlpha) || math.IsInf(policy.FamilyWiseAlpha, 0) ||
-		policy.KMax > math.MaxInt/policy.DiscoveryTrials ||
-		policy.MaximumActiveRunBudget < policy.KMax*policy.DiscoveryTrials {
-		return errors.New("batch-saturation policy is invalid")
 	}
 	return nil
 }

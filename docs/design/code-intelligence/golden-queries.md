@@ -8,10 +8,10 @@ change when the underlying implementation intentionally changes.
 
 `cmd/profiler/controller_setup.go` constructs the shared dependencies and calls
 `RunReconciler.SetupWithManager`. Registration in
-`internal/profiling/profiler/controller/intent_setup.go` uses:
+`internal/profiling/profiler/controller/run_setup.go` uses:
 
 ```text
-For(ProfilingRun) + Owns(ConfigMap, Job)
+For(ProfilingRun) + Owns(Job)
   -> controller-runtime event delivery
   -> RunReconciler.Reconcile
 ```
@@ -19,13 +19,13 @@ For(ProfilingRun) + Owns(ConfigMap, Job)
 Required evidence: setup source and focused reconciler tests. The event edge is
 `framework-derived`, not a direct Go call.
 
-## Q2. Which implementation freezes a Run intent?
+## Q2. Which implementation resolves a RunConfig?
 
-`RunIntentFreezer` is declared in
-`internal/profiling/profiler/controller/intent_reconciler.go`. Production uses
-`IntentFreezer` from `intent_freezer.go`; `intent_reconciler_test.go` contains a
-recording fake. `cmd/profiler/controller_setup.go` constructs and injects the
-production implementation.
+`RunConfigurationResolver` is declared in
+`internal/profiling/profiler/controller/run_reconciler.go`. Production uses
+`RunConfigResolver` from `run_config_resolver.go`; `run_reconciler_test.go`
+contains a recording fake. `cmd/profiler/controller_setup.go` constructs and
+injects the production implementation.
 
 Required evidence: `gopls implementation` must find production and test
 implementations; the composition root determines which one production uses.
@@ -50,16 +50,17 @@ result types.
 Required evidence: `go list` for actual imports and the MetricObserver ADR for
 allowed direction. Package edges do not prove runtime sampling behavior.
 
-## Q5. What changes if ProfilingRunStatus.IntentFrozen changes?
+## Q5. Where is the exact RunConfig recovered after controller restart?
 
-The field is declared in `api/v1alpha1/profilingrun_types.go`. Current semantic
-references include intent recovery and publication in `intent_freezer.go`,
-frozen-intent projection in `projection.go`, controller tests, and the
-ProfilingRun API integration test.
+`resolvedRunFromJob` in
+`internal/profiling/profiler/controller/run_record.go` decodes and validates the
+RunConfig and selected policy snapshots carried by the owned Job. It is used by
+the reconciler, the Job recovery path, and the Run record loader. There is no
+separate ConfigMap execution record or intermediate resolution status phase.
 
-Required evidence: `gopls references`, direct source and tests, plus generated
-deepcopy, CRD, and Helm CRD checks for type or JSON-shape changes. CodeGraph
-impact and affected-test results are explicitly insufficient.
+Required evidence: `gopls references`, direct source, focused controller tests,
+and the generated ProfilingRun CRD. CodeGraph impact and affected-test results
+are explicitly insufficient.
 
 ## Q6. What does enabling the Profiler add to the Helm render?
 
@@ -90,17 +91,17 @@ namespace, followed by a resource-set comparison. The optional
 `make deployment-graph-check` command verifies the review view without
 replacing that evidence.
 
-## Q7. How does a BatchSaturation campaign advance?
+## Q7. How does a BatchEnergyOptimization search advance?
 
 `cmd/profiler/controller_setup.go` reuses the Profiler's candidate, preparation,
-intent-record, Evidence Store, and retained-evidence dependencies and calls the
-batch-saturation reconciler's `SetupWithManager`. Registration in
+Job-backed Run record, Evidence Store, and retained-evidence dependencies and calls the
+batch-energy optimization reconciler's `SetupWithManager`. Registration in
 `internal/profiling/campaign/controller/setup.go` uses:
 
 ```text
-For(BatchSaturation) + Owns(ProfilingRun)
+For(BatchEnergyOptimization) + Owns(NodeActuation) + Owns(ProfilingRun)
   -> controller-runtime event delivery
-  -> BatchSaturationReconciler.Reconcile
+  -> BatchEnergyOptimizationReconciler.Reconcile
 ```
 
 The reconciler lists labeled child Runs and the projection verifies the exact

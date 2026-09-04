@@ -12,17 +12,15 @@ import (
 )
 
 const (
-	defaultIntentPath                  = "/etc/chill/run/intent.json"
-	defaultReadyPath                   = "/coordination/workload-observer-ready"
-	defaultWindowStartSignalPath       = "/coordination/workload-window-start"
-	defaultWindowReadyPath             = "/coordination/workload-window-ready"
-	defaultEndSignalPath               = "/coordination/measurement-end"
-	defaultWorkloadResultPath          = "/coordination/workload-result.json"
-	maximumIntentBytes           int64 = 1 << 20
+	defaultReadyPath             = "/coordination/workload-observer-ready"
+	defaultWindowStartSignalPath = "/coordination/workload-window-start"
+	defaultWindowReadyPath       = "/coordination/workload-window-ready"
+	defaultEndSignalPath         = "/coordination/measurement-end"
+	defaultWorkloadResultPath    = "/coordination/workload-result.json"
 )
 
 type options struct {
-	intentPath       string
+	runConfig        string
 	readyPath        string
 	windowStartPath  string
 	windowReadyPath  string
@@ -42,7 +40,7 @@ type options struct {
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
-	set.StringVar(&o.intentPath, "intent-file", defaultIntentPath, "read-only frozen Run intent JSON")
+	set.StringVar(&o.runConfig, "run-config", "", "exact RunConfig generated for this Job")
 	set.StringVar(&o.readyPath, "ready-file", defaultReadyPath, "workload-observer-ready signal path")
 	set.StringVar(
 		&o.windowStartPath, "window-start-signal-file", defaultWindowStartSignalPath,
@@ -75,6 +73,9 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if strings.TrimSpace(o.runConfig) == "" {
+		return errors.New("RunConfig is required")
+	}
 	for name, value := range map[string]string{
 		"Pod namespace": o.podNamespace,
 		"Pod name":      o.podName,

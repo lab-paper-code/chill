@@ -23,7 +23,7 @@ type Runtime interface {
 }
 
 type RuntimeRequest struct {
-	Intent            profilingrun.VerifiedIntent
+	RunConfig         profilingrun.VerifiedRunConfig
 	PodUID            string
 	ScheduledNodeName string
 }
@@ -39,7 +39,7 @@ type WorkloadResultReader interface {
 }
 
 type Request struct {
-	Intent            profilingrun.VerifiedIntent
+	RunConfig         profilingrun.VerifiedRunConfig
 	PodUID            string
 	ScheduledNodeName string
 	RawLocation       evidencestore.ObjectLocation
@@ -76,9 +76,9 @@ func NewCoordinator(
 }
 
 func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencestore.Receipt, error) {
-	intent, err := request.Intent.Record()
+	config, err := request.RunConfig.Record()
 	if err != nil {
-		return evidencestore.Receipt{}, fmt.Errorf("%w: read frozen intent: %w", ErrExecutionContract, err)
+		return evidencestore.Receipt{}, fmt.Errorf("%w: read RunConfig: %w", ErrExecutionContract, err)
 	}
 	if strings.TrimSpace(request.PodUID) == "" || strings.TrimSpace(request.PodUID) != request.PodUID {
 		return evidencestore.Receipt{}, fmt.Errorf(
@@ -91,7 +91,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 			"%w: scheduled Node name is required without surrounding whitespace", ErrExecutionContract,
 		)
 	}
-	if request.ScheduledNodeName != intent.TargetNode.Name {
+	if request.ScheduledNodeName != config.TargetNode.Name {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: scheduled Node does not match the frozen target Node", ErrExecutionContract,
 		)
@@ -103,7 +103,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	}
 
 	runtimeMeasurement, err := c.runtime.Measure(ctx, RuntimeRequest{
-		Intent:            request.Intent,
+		RunConfig:         request.RunConfig,
 		PodUID:            request.PodUID,
 		ScheduledNodeName: request.ScheduledNodeName,
 	})
@@ -119,7 +119,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		return evidencestore.Receipt{}, fmt.Errorf("%w: read workload observation result: %w", ErrWorkloadObservation, err)
 	}
 	payload, err := canonicalRawMeasurement(
-		request.Intent,
+		request.RunConfig,
 		request.PodUID,
 		runtimeMeasurement,
 		metricResult,

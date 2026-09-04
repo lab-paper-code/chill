@@ -237,7 +237,7 @@ func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
 			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
-			newPreflightQuery: func(preflightOptions) (batchSaturationPreflightQuery, error) {
+			newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
 				calls++
 				return nil, nil
 			},
@@ -258,7 +258,7 @@ func TestExecuteHelpDoesNotConstructQuery(t *testing.T) {
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
 			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
-			newPreflightQuery: func(preflightOptions) (batchSaturationPreflightQuery, error) {
+			newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
 				calls++
 				return nil, nil
 			},
@@ -440,7 +440,7 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 				},
 			},
 			Status: edgev1alpha1.ProfilingRunStatus{
-				ObservedGeneration: 1, IntentFrozen: true,
+				ObservedGeneration: 1,
 				Conditions: []metav1.Condition{{
 					Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
 					ObservedGeneration: 1, Reason: "ExecutionPending", Message: "execution is not implemented",

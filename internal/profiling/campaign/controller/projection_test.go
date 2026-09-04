@@ -5,14 +5,14 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T) {
 	parent := testParent()
-	run, err := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -30,15 +30,15 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 		snapshot.Trials[0].Attempt != 1 {
 		t.Fatalf("projection trusted the label instead of the spec: %+v", snapshot.Trials)
 	}
-	if snapshot.Trials[0].Verdict != batchsaturation.VerdictAccepted {
+	if snapshot.Trials[0].Verdict != batchenergyoptimization.VerdictAccepted {
 		t.Fatalf("verdict = %q", snapshot.Trials[0].Verdict)
 	}
 }
 
 func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 	parent := testParent()
-	run, _ := BuildRun(parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
+	run, _ := BuildRun(parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
 	}, 1)
 	run.OwnerReferences[0].UID = "someone-else"
 	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false); err == nil {
@@ -49,8 +49,8 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	parent := testParent()
 	parent.Spec.RetryLimit = 1
-	measurement := batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 1,
+	measurement := batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
 	}
 	runs := make([]edgev1alpha1.ProfilingRun, 0, 2)
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -69,15 +69,15 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision, err := batchsaturation.Decide(snapshot, terminalTrialMethod{})
+	decision, err := batchenergyoptimization.Decide(snapshot, terminalTrialMethod{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != batchsaturation.ActionFail || decision.Reason != "RetryLimitExhausted" {
+	if decision.Action != batchenergyoptimization.ActionFail || decision.Reason != "RetryLimitExhausted" {
 		t.Fatalf("decision = %#v, want Fail/RetryLimitExhausted", decision)
 	}
 	status := deriveStatus(parent.Generation, snapshot, decision, nil, nil)
-	if status.Phase != batchSaturationPhaseFailed || status.Outcome != "RetryLimitExhausted" {
+	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != "RetryLimitExhausted" {
 		t.Fatalf("campaign status = %#v, want Failed/RetryLimitExhausted", status)
 	}
 }
@@ -113,13 +113,13 @@ func TestProjectSnapshotProjectsEstablishedStateFromTheOwnedTransition(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := batchsaturation.State{
+	want := batchenergyoptimization.State{
 		TargetNode:  parent.Spec.State.TargetNode,
 		DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 		PowerMode:   parent.Spec.State.Candidate.PowerMode,
 	}
 	if snapshot.RequiredState != want || snapshot.Transition == nil ||
-		snapshot.Transition.Outcome != batchsaturation.TransitionEstablished ||
+		snapshot.Transition.Outcome != batchenergyoptimization.TransitionEstablished ||
 		snapshot.Transition.EstablishedState == nil || *snapshot.Transition.EstablishedState != want {
 		t.Fatalf("projected campaign state = %#v", snapshot)
 	}
@@ -133,6 +133,6 @@ func TestRequiredStateNotConfirmedIsTerminal(t *testing.T) {
 
 type terminalTrialMethod struct{}
 
-func (terminalTrialMethod) Plan(batchsaturation.Observed) (batchsaturation.Plan, error) {
-	return batchsaturation.Plan{Result: &batchsaturation.Result{Outcome: "unused"}}, nil
+func (terminalTrialMethod) Plan(batchenergyoptimization.Observed) (batchenergyoptimization.Plan, error) {
+	return batchenergyoptimization.Plan{Result: &batchenergyoptimization.Result{Outcome: "unused"}}, nil
 }

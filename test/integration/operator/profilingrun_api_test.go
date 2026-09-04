@@ -139,7 +139,6 @@ var _ = Describe("ProfilingRun API", func() {
 
 		run.Status = edgev1alpha1.ProfilingRunStatus{
 			ObservedGeneration: run.Generation,
-			IntentFrozen:       true,
 			Conditions: []metav1.Condition{{
 				Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionTrue,
 				Reason: "JobSucceeded", LastTransitionTime: metav1.Now(),
@@ -151,7 +150,7 @@ var _ = Describe("ProfilingRun API", func() {
 			},
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: "chill-evidence", Key: "runs/run-uid/execution.json",
-				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha13", Size: 1024,
+				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha14", Size: 1024,
 			},
 			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
 				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",

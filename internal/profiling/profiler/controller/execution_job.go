@@ -17,10 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	executionPolicyAnnotation  = "edge.dacs.io/profiling-worker-policy"
-	executionJobHashCharacters = 32
-)
+const executionJobHashCharacters = 32
 
 type ExecutionJobOptions struct {
 	WorkloadObserverServiceAccountName string
@@ -64,7 +61,7 @@ func NewExecutionJobs(
 func (j *ExecutionJobs) Ensure(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
+	resolved ResolvedRun,
 ) (*batchv1.Job, bool, error) {
 	jobName, err := executionJobName(run)
 	if err != nil {
@@ -73,7 +70,7 @@ func (j *ExecutionJobs) Ensure(
 	key := types.NamespacedName{Namespace: run.Namespace, Name: jobName}
 	existing := &batchv1.Job{}
 	if err := j.client.Get(ctx, key, existing); err == nil {
-		retained, err := j.verifyRetainedExecutionJob(run, frozen, existing)
+		retained, err := j.verifyRetainedExecutionJob(run, resolved, existing)
 		return retained, false, err
 	} else if !apierrors.IsNotFound(err) {
 		return nil, false, fmt.Errorf("get measurement Job %s: %w", key, err)
@@ -83,7 +80,7 @@ func (j *ExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve Evidence Store delivery binding: %w", err)
 	}
-	desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
+	desired, err := buildExecutionJob(run, resolved, binding, j.options, j.scheme)
 	if err != nil {
 		return nil, false, err
 	}
@@ -95,24 +92,41 @@ func (j *ExecutionJobs) Ensure(
 	if err := j.client.Get(ctx, key, existing); err != nil {
 		return nil, false, fmt.Errorf("get concurrently created measurement Job %s: %w", key, err)
 	}
-	retained, err := j.verifyRetainedExecutionJob(run, frozen, existing)
+	retained, err := j.verifyRetainedExecutionJob(run, resolved, existing)
 	return retained, false, err
+}
+
+// Find returns a previously created Job and the exact configuration recorded
+// in it. It is the restart path for a create/status-patch interruption.
+func (j *ExecutionJobs) Find(
+	ctx context.Context,
+	run *edgev1alpha1.ProfilingRun,
+) (*batchv1.Job, *ResolvedRun, error) {
+	job, err := findRunJob(ctx, j.client, run)
+	if err != nil || job == nil {
+		return job, nil, err
+	}
+	resolved, err := resolvedRunFromJob(run, job)
+	if err != nil {
+		return nil, nil, err
+	}
+	return job, &resolved, nil
 }
 
 func (j *ExecutionJobs) verifyRetainedExecutionJob(
 	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
+	resolved ResolvedRun,
 	retained *batchv1.Job,
 ) (*batchv1.Job, error) {
 	binding, err := executionJobEvidenceStoreBinding(retained)
 	if err != nil {
 		return nil, err
 	}
-	desired, err := buildExecutionJob(run, frozen, binding, j.options, j.scheme)
+	desired, err := buildExecutionJob(run, resolved, binding, j.options, j.scheme)
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyExecutionJob(run, retained, desired); err != nil {
+	if err := verifyExecutionJob(run, resolved, retained, desired); err != nil {
 		return nil, err
 	}
 	return retained, nil

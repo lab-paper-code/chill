@@ -53,7 +53,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		shared.Conversion.TargetPlatform != "cpu" {
 		t.Fatalf("recorded curve plan = %+v", shared)
 	}
-	wantKey := "batch-saturations/parent-uid/curve-plan.json"
+	wantKey := "batch-energy-optimizations/parent-uid/curve-plan.json"
 	if store.puts != 1 || store.opens != 0 || store.lastIdentity.Key != wantKey {
 		t.Fatalf("first record calls = puts %d, opens %d, identity %+v", store.puts, store.opens, store.lastIdentity)
 	}
@@ -247,7 +247,7 @@ func TestCurvePlanProjectorPreservesPhaseOrderAndErrorIdentity(t *testing.T) {
 
 	calls = nil
 	_, _, err = projector.Project(context.Background(), nil)
-	if err == nil || err.Error() != "a parent BatchSaturation is required" {
+	if err == nil || err.Error() != "a parent BatchEnergyOptimization is required" {
 		t.Fatalf("Project(nil) error = %v", err)
 	}
 	if len(calls) != 0 {
@@ -266,7 +266,7 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 		{
 			name:             "prepared artifact disagrees with report",
 			preparedArtifact: "different-artifact",
-			want:             "prepared active intent artifact disagrees",
+			want:             "prepared active RunConfig artifact disagrees",
 		},
 	}
 	for _, test := range tests {
@@ -309,7 +309,7 @@ func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
 
 func curvePlanCandidateReport(
 	t *testing.T,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 ) ([]byte, profilingrun.CandidateReport) {
 	t.Helper()
 	report := profilingrun.CandidateReport{
@@ -455,8 +455,8 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	if p.preparedArtifact != "" {
 		artifact = p.preparedArtifact
 	}
-	intent := profilingrun.Intent{
-		SchemaVersion: profilingrun.SchemaVersion,
+	intent := profilingrun.RunConfig{
+		SchemaVersion: profilingrun.RunConfigSchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
 			Inputs: p.report.Inputs, ExecutionPath: request.Candidate.ExecutionPath, Verdict: p.report.Verdict,
 		},
@@ -497,9 +497,7 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	if err := intent.Validate(); err != nil {
 		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared intent fixture: %w", err)
 	}
-	return profiler.PreparedRun{
-		Intent: intent, CandidateReportBytes: append([]byte(nil), p.reportBytes...),
-	}, nil
+	return profiler.PreparedRun{RunConfig: intent}, nil
 }
 
 type fakeCurvePlanStore struct {

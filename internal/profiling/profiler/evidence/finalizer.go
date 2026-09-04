@@ -17,13 +17,11 @@ type ObjectStore interface {
 }
 
 type FinalizeRequest struct {
-	Intent               profilingrun.Intent
-	CandidateReportBytes []byte
-	RawReceipt           evidencestore.Receipt
-	FinalLocation        evidencestore.ObjectLocation
-	Terminal             TerminalFacts
-	Actuation            *ActuationFacts
-	FinalizedAt          time.Time
+	RawReceipt    evidencestore.Receipt
+	FinalLocation evidencestore.ObjectLocation
+	Terminal      TerminalFacts
+	Actuation     *ActuationFacts
+	FinalizedAt   time.Time
 }
 
 type FinalizeResult struct {
@@ -82,11 +80,11 @@ func (f *Finalizer) validateAndRestoreRawEvidence(
 	if int64(len(rawBytes)) != request.RawReceipt.Object.Size {
 		return nil, fmt.Errorf("%w: raw measurement size does not match its receipt", evidencestore.ErrContentMismatch)
 	}
-	raw, err := decodeRawRecord(rawBytes, request.Intent)
+	raw, err := decodeRawRecord(rawBytes)
 	if err != nil {
 		return nil, err
 	}
-	if err := raw.validate(request.Intent); err != nil {
+	if err := raw.validate(); err != nil {
 		return nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
 	return raw, nil
@@ -96,18 +94,13 @@ func constructVerifiedExecutionEvidence(
 	request FinalizeRequest,
 	raw rawRecord,
 ) (ExecutionEvidence, []byte, error) {
-	verifiedCandidate, err := profilingrun.VerifyCandidateReport(request.CandidateReportBytes, request.Intent)
-	if err != nil {
-		return ExecutionEvidence{}, nil, fmt.Errorf("validate candidate report: %w", err)
-	}
 	candidate := ExecutionEvidence{
-		SchemaVersion:   ExecutionEvidenceSchemaVersion,
-		Intent:          request.Intent,
-		CandidateReport: verifiedCandidate.Record(),
-		RawMeasurement:  request.RawReceipt.Object,
-		Terminal:        request.Terminal,
-		Actuation:       cloneActuationFacts(request.Actuation),
-		FinalizedAt:     request.FinalizedAt,
+		SchemaVersion:  ExecutionEvidenceSchemaVersion,
+		RunConfig:      raw.runConfig(),
+		RawMeasurement: request.RawReceipt.Object,
+		Terminal:       request.Terminal,
+		Actuation:      cloneActuationFacts(request.Actuation),
+		FinalizedAt:    request.FinalizedAt,
 	}
 	if err := raw.validateExecution(candidate); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate execution evidence: %w", err)

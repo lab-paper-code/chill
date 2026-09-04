@@ -110,9 +110,8 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
+			Job:       &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			Actuation: &edgev1alpha1.ProfilingRunObjectReference{Name: "handoff", UID: "handoff-uid"},
 			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
@@ -124,7 +123,7 @@ func TestValidateRunEvidenceBindingBindsActuationHandoff(t *testing.T) {
 	}
 	execution := profilerevidence.ExecutionEvidence{
 		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		Intent: profilingrun.Intent{
+		RunConfig: profilingrun.RunConfig{
 			Actuation: &profilingrun.ActuationContract{},
 		},
 		Terminal: profilerevidence.TerminalFacts{
@@ -158,9 +157,8 @@ func TestValidateRunEvidenceBindingRejectsActuationOnFixedRun(t *testing.T) {
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			Actuation:    &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
+			Job:       &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			Actuation: &edgev1alpha1.ProfilingRunObjectReference{Name: "unexpected", UID: "unexpected-uid"},
 			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
@@ -194,8 +192,7 @@ func retainedLoaderFixture() (
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"},
+			Job: &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"},
 		},
 	}
 	secretEnv := func(name, key string) corev1.EnvVar {

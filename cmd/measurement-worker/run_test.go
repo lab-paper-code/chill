@@ -16,13 +16,12 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
-	opts := validOptions()
-	verifiedIntent := validVerifiedCPUIntent(t)
+func TestExecuteCoordinatesOneRunConfigAndWritesReceipt(t *testing.T) {
+	opts := validOptions(t)
+	verified := validVerifiedCPUConfig(t)
 	wantReceipt := validReceipt()
 	coordinator := &fakeCoordinator{execute: func(request worker.Request) (evidencestore.Receipt, error) {
-		if request.PodUID != opts.podUID ||
-			request.ScheduledNodeName != opts.scheduledNodeName ||
+		if request.PodUID != opts.podUID || request.ScheduledNodeName != opts.scheduledNodeName ||
 			request.RawLocation.Store != opts.storeName || request.RawLocation.Key != opts.rawObjectKey {
 			t.Fatalf("request = %#v", request)
 		}
@@ -30,26 +29,15 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 	}}
 	written := false
 	deps := dependencies{
-		loadIntent: func(path string, maximum int64) (profilingrun.VerifiedIntent, error) {
-			if path != opts.intentPath || maximum != maximumIntentBytes {
-				t.Fatalf("intent load = %q %d", path, maximum)
+		parseRunConfig: func(raw string) (profilingrun.VerifiedRunConfig, error) {
+			if raw != opts.runConfig {
+				t.Fatalf("RunConfig parse = %q", raw)
 			}
-			return verifiedIntent, nil
-		},
-		loadCandidateReport: func(
-			path string,
-			maximum int64,
-			_ profilingrun.VerifiedIntent,
-		) (profilingrun.VerifiedCandidateReport, error) {
-			if path != opts.candidateReportPath || maximum != maximumCandidateReportBytes {
-				t.Fatalf("candidate report load = %q %d", path, maximum)
-			}
-			return profilingrun.VerifiedCandidateReport{}, nil
+			return verified, nil
 		},
 		buildCoordinator: func(
 			got options,
-			_ profilingrun.VerifiedIntent,
-			_ profilingrun.VerifiedCandidateReport,
+			_ profilingrun.VerifiedRunConfig,
 			stdout, stderr io.Writer,
 		) (measurementCoordinator, error) {
 			if got.storeBucket != opts.storeBucket || stdout == nil || stderr == nil {
@@ -74,58 +62,38 @@ func TestExecuteCoordinatesOneRequestAndWritesReceipt(t *testing.T) {
 }
 
 func TestExecutePreservesStableFailureClass(t *testing.T) {
-	opts := validOptions()
-	for name, test := range map[string]struct {
-		failure error
-		want    error
-	}{
-		"intent":    {failure: errors.New("load failed"), want: worker.ErrExecutionContract},
-		"candidate": {failure: errors.New("candidate failed"), want: worker.ErrExecutionContract},
-		"runtime":   {failure: worker.ErrRuntimeMeasurement, want: worker.ErrRuntimeMeasurement},
-	} {
-		t.Run(name, func(t *testing.T) {
-			deps := successfulDependencies(validReceipt())
-			if name == "intent" {
-				deps.loadIntent = func(string, int64) (profilingrun.VerifiedIntent, error) {
-					return profilingrun.VerifiedIntent{}, test.failure
-				}
-			} else if name == "candidate" {
-				deps.loadCandidateReport = func(
-					string,
-					int64,
-					profilingrun.VerifiedIntent,
-				) (profilingrun.VerifiedCandidateReport, error) {
-					return profilingrun.VerifiedCandidateReport{}, test.failure
-				}
-			} else {
-				deps.buildCoordinator = func(
-					options,
-					profilingrun.VerifiedIntent,
-					profilingrun.VerifiedCandidateReport,
-					io.Writer,
-					io.Writer,
-				) (measurementCoordinator, error) {
-					return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
-						return evidencestore.Receipt{}, test.failure
-					}}, nil
-				}
-			}
-			err := execute(context.Background(), opts, io.Discard, io.Discard, deps)
-			if !errors.Is(err, test.want) {
-				t.Fatalf("execute() error = %v, want %v", err, test.want)
-			}
-		})
-	}
+	opts := validOptions(t)
+	t.Run("RunConfig", func(t *testing.T) {
+		deps := successfulDependencies(validReceipt())
+		deps.parseRunConfig = func(string) (profilingrun.VerifiedRunConfig, error) {
+			return profilingrun.VerifiedRunConfig{}, errors.New("invalid")
+		}
+		err := execute(context.Background(), opts, io.Discard, io.Discard, deps)
+		if !errors.Is(err, worker.ErrExecutionContract) {
+			t.Fatalf("execute() error = %v", err)
+		}
+	})
+	t.Run("runtime", func(t *testing.T) {
+		deps := successfulDependencies(validReceipt())
+		deps.buildCoordinator = func(
+			options,
+			profilingrun.VerifiedRunConfig,
+			io.Writer,
+			io.Writer,
+		) (measurementCoordinator, error) {
+			return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
+				return evidencestore.Receipt{}, worker.ErrRuntimeMeasurement
+			}}, nil
+		}
+		err := execute(context.Background(), opts, io.Discard, io.Discard, deps)
+		if !errors.Is(err, worker.ErrRuntimeMeasurement) {
+			t.Fatalf("execute() error = %v", err)
+		}
+	})
 }
 
 func TestBuildCoordinatorAcceptsCompleteOptionsWithoutExternalIO(t *testing.T) {
-	if _, err := buildCoordinator(
-		validOptions(),
-		validVerifiedCPUIntent(t),
-		profilingrun.VerifiedCandidateReport{},
-		io.Discard,
-		io.Discard,
-	); err != nil {
+	if _, err := buildCoordinator(validOptions(t), validVerifiedCPUConfig(t), io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -139,53 +107,39 @@ func TestWriteReceiptWritesOnlyBoundedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(payload), `{"schemaVersion":"chill.dacs.io/evidence-store-receipt.v1alpha1"`) ||
-		strings.HasSuffix(string(payload), "\n") {
+	prefix := `{"schemaVersion":"chill.dacs.io/evidence-store-receipt.v1alpha1"`
+	if !strings.HasPrefix(string(payload), prefix) || strings.HasSuffix(string(payload), "\n") {
 		t.Fatalf("termination message = %q", payload)
 	}
 }
 
 func TestExitCodeMapsWorkerFailureClasses(t *testing.T) {
-	tests := []struct {
+	for _, test := range []struct {
 		want    int
 		failure error
 	}{
-		{2, worker.ErrExecutionContract},
-		{3, worker.ErrRuntimeMeasurement},
-		{4, worker.ErrMetricObservation},
-		{4, worker.ErrWorkloadObservation},
-		{5, worker.ErrEvidenceCommit},
-	}
-	for _, test := range tests {
+		{2, worker.ErrExecutionContract}, {3, worker.ErrRuntimeMeasurement},
+		{4, worker.ErrMetricObservation}, {4, worker.ErrWorkloadObservation}, {5, worker.ErrEvidenceCommit},
+	} {
 		if got := exitCode(test.failure); got != test.want {
 			t.Fatalf("exitCode(%v) = %d, want %d", test.failure, got, test.want)
 		}
 	}
 }
 
-func TestDiagnosticDoesNotExposeEvidenceTransportDetails(t *testing.T) {
-	failure := errors.Join(
-		worker.ErrEvidenceCommit,
-		evidencestore.ErrTransport,
-		errors.New("request http://internal-store:9000 failed"),
-	)
-	if got := diagnostic(failure); got != worker.ErrEvidenceCommit.Error()+": "+evidencestore.ErrTransport.Error() {
-		t.Fatalf("diagnostic = %q", got)
+func validOptions(t *testing.T) options {
+	t.Helper()
+	config, err := validCPUConfig(t).CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func validOptions() options {
 	return options{
-		intentPath: defaultIntentPath, candidateReportPath: defaultCandidateReportPath,
-		podUID:            "pod-uid",
-		scheduledNodeName: "lattepanda",
-		modelPath:         defaultModelPath, workspacePath: defaultWorkspacePath,
+		runConfig: string(config), podUID: "pod-uid", scheduledNodeName: "lattepanda",
+		modelPath: defaultModelPath, workspacePath: defaultWorkspacePath,
 		observerReadyPaths:      []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath},
-		workloadWindowStartPath: defaultWorkloadWindowStartPath,
-		measurementStartPath:    defaultMeasurementStartPath,
-		workloadWindowReadyPath: defaultWorkloadWindowReadyPath,
-		measurementEndPath:      defaultMeasurementEndPath,
-		metricResultPath:        defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
+		workloadWindowStartPath: defaultWorkloadWindowStartPath, measurementStartPath: defaultMeasurementStartPath,
+		workloadWindowReadyPath: defaultWorkloadWindowReadyPath, measurementEndPath: defaultMeasurementEndPath,
+		metricResultPath: defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
 		terminationMessagePath: defaultTerminationMessagePath,
 		runtimeCommand:         []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"},
 		attemptTimeout:         10 * time.Minute, observerReadyTimeout: time.Minute,
@@ -194,55 +148,44 @@ func validOptions() options {
 		maxRuntimeResultBytes: 1 << 20, maxMetricResultBytes: 1 << 20, maxWorkloadResultBytes: 1 << 20,
 		storeName: "chill-evidence-store", storeEndpoint: "http://chill-evidence-store.chill-system.svc:9000",
 		storeBucket: "chill-profiling-evidence", storeRegion: "us-east-1",
-		rawObjectKey: "profiling-runs/run/raw/intent.json",
-		accessKeyID:  "access-key", secretAccessKey: "secret-key",
+		rawObjectKey: "profiling-runs/run/raw/result.json", accessKeyID: "access-key", secretAccessKey: "secret-key",
 	}
 }
 
-func validCPUIntent(t *testing.T) profilingrun.Intent {
+func validCPUConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("../../internal/profiling/profiler/worker/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var config profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
-	intent.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	if err := intent.Validate(); err != nil {
+	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
+	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	config.Workload = profilingrun.CurrentWorkloadContract()
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return intent
+	return config
 }
 
-func validVerifiedCPUIntent(t *testing.T) profilingrun.VerifiedIntent {
+func validVerifiedCPUConfig(t *testing.T) profilingrun.VerifiedRunConfig {
 	t.Helper()
-	intent := validCPUIntent(t)
-	payload, err := intent.CanonicalJSON()
+	verified, err := profilingrun.ValidateRunConfig(validCPUConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "intent.json")
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := worker.LoadVerifiedIntent(path, int64(len(payload)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return loaded
+	return verified
 }
 
 func validReceipt() evidencestore.Receipt {
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
 		Object: evidencestore.ObjectIdentity{
-			Store: "chill-evidence-store", Key: "profiling-runs/run/raw/intent.json",
-			Size: 100,
+			Store: "chill-evidence-store", Key: "profiling-runs/run/raw/result.json", Size: 100,
 		},
 		Outcome: evidencestore.CreateOutcomeCreated,
 	}
@@ -250,22 +193,16 @@ func validReceipt() evidencestore.Receipt {
 
 func successfulDependencies(receipt evidencestore.Receipt) dependencies {
 	return dependencies{
-		loadIntent: func(string, int64) (profilingrun.VerifiedIntent, error) {
-			return profilingrun.VerifiedIntent{}, nil
-		},
-		loadCandidateReport: func(string, int64, profilingrun.VerifiedIntent) (profilingrun.VerifiedCandidateReport, error) {
-			return profilingrun.VerifiedCandidateReport{}, nil
+		parseRunConfig: func(string) (profilingrun.VerifiedRunConfig, error) {
+			return profilingrun.VerifiedRunConfig{}, nil
 		},
 		buildCoordinator: func(
 			options,
-			profilingrun.VerifiedIntent,
-			profilingrun.VerifiedCandidateReport,
+			profilingrun.VerifiedRunConfig,
 			io.Writer,
 			io.Writer,
 		) (measurementCoordinator, error) {
-			return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) {
-				return receipt, nil
-			}}, nil
+			return &fakeCoordinator{execute: func(worker.Request) (evidencestore.Receipt, error) { return receipt, nil }}, nil
 		},
 		writeReceipt: func(string, evidencestore.Receipt) error { return nil },
 	}

@@ -1,6 +1,6 @@
-// Package batchsaturation contains the Kubernetes-independent progress rules
-// that drive one batch-saturation measurement from its admitted trials.
-package batchsaturation
+// Package batchenergyoptimization contains the Kubernetes-independent progress rules
+// that drive one batch-energy-optimization measurement from its admitted trials.
+package batchenergyoptimization
 
 import (
 	"errors"

@@ -23,8 +23,8 @@ excludeFiles:
 # component. Keep this mapping synchronized with architecture-coverage.sh.
 components:
   api: { in: api/v1alpha1 }
-  batch-saturation-core: { in: internal/profiling/campaign }
-  batch-saturation-controller: { in: internal/profiling/campaign/controller }
+  batch-energy-optimization-core: { in: internal/profiling/campaign }
+  batch-energy-optimization-controller: { in: internal/profiling/campaign/controller }
   idle-baseline-core: { in: internal/profiling/idlebaseline }
   idle-baseline-controller: { in: internal/profiling/idlebaseline/controller }
   entrypoints: { in: [cmd, cmd/**] }
@@ -76,13 +76,13 @@ deps:
   api:
     anyVendorDeps: true
 
-  batch-saturation-core:
+  batch-energy-optimization-core:
     anyVendorDeps: true
 
-  batch-saturation-controller:
+  batch-energy-optimization-controller:
     mayDependOn:
       - api
-      - batch-saturation-core
+      - batch-energy-optimization-core
       - evidence-core
       - profile-derivation
       - profiler-app
@@ -120,7 +120,7 @@ deps:
   operator-console-kube:
     mayDependOn:
       - api
-      - batch-saturation-core
+      - batch-energy-optimization-core
       - device-class
       - evidence-core
       - operator-console
@@ -135,7 +135,7 @@ deps:
   operator-console:
     mayDependOn:
       - api
-      - batch-saturation-core
+      - batch-energy-optimization-core
       - device-class
       - evidence-core
       - metric-core

@@ -27,7 +27,7 @@ type workloadObservationFacts struct {
 }
 
 // KubernetesWorkloadObservationResolver reads the installation-owned helper
-// image that the Preparer freezes into each new Run intent.
+// image that the Preparer freezes into each new RunConfig.
 type KubernetesWorkloadObservationResolver struct {
 	reader  client.Reader
 	options WorkloadObservationResolverOptions

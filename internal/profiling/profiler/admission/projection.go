@@ -36,7 +36,7 @@ func projectIdleObservation(
 	if err != nil {
 		return profilederivation.IdleObservation{}, err
 	}
-	identities, err := ProjectRunIdentities(execution.Intent, execution.Terminal.Node.UID)
+	identities, err := ProjectRunIdentities(execution.RunConfig, execution.Terminal.Node.UID)
 	if err != nil {
 		return profilederivation.IdleObservation{}, err
 	}
@@ -51,7 +51,7 @@ func projectIdleObservation(
 		WindowStart: windowStart, WindowEnd: windowEnd,
 		ModelLoadedBeforeSettling: !modelLoaded.After(settlingStarted),
 		SettlingWindowVerified: !settlingCompleted.After(windowStart) &&
-			settlingCompleted.Sub(settlingStarted) >= time.Duration(execution.Intent.Measurement.SettlingDurationSeconds)*time.Second,
+			settlingCompleted.Sub(settlingStarted) >= time.Duration(execution.RunConfig.Measurement.SettlingDurationSeconds)*time.Second,
 		InferenceCountAfterModelLoad: raw.Runtime.InferenceCountAfterModelLoad,
 		ModelResidentAtEnd:           raw.Runtime.ModelResidentAtEnd,
 		Samples:                      samples, Failures: len(raw.Metrics.Failures),
@@ -84,7 +84,7 @@ func projectTrial(
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
-	identities, err := ProjectRunIdentities(execution.Intent, execution.Terminal.Node.UID)
+	identities, err := ProjectRunIdentities(execution.RunConfig, execution.Terminal.Node.UID)
 	if err != nil {
 		return profilederivation.Trial{}, err
 	}
@@ -93,11 +93,11 @@ func projectTrial(
 		EnvironmentIdentity:         workload.EnvironmentIdentity,
 		MeasurementProtocolIdentity: identities.MeasurementProtocolIdentity,
 		TrialID:                     execution.Terminal.Pod.UID,
-		Batch:                       execution.Intent.Measurement.Batch,
+		Batch:                       execution.RunConfig.Measurement.Batch,
 		WindowStart:                 windowStart,
 		WindowEnd:                   windowEnd,
 		CompletedCalls:              raw.Runtime.InferenceCount,
-		CompletedItems:              raw.Runtime.InferenceCount * execution.Intent.Measurement.Batch,
+		CompletedItems:              raw.Runtime.InferenceCount * execution.RunConfig.Measurement.Batch,
 		LatencyMilliseconds:         latencies,
 		Samples:                     samples,
 		Failures:                    len(raw.Metrics.Failures),

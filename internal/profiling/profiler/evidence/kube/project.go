@@ -26,7 +26,7 @@ type Observation struct {
 
 // ProjectTerminalFacts validates the structural Kubernetes relationships and
 // copies only facts used by the evidence domain. Scientific admission and
-// intent-specific validation remain outside this adapter.
+// RunConfig-specific validation remain outside this adapter.
 func ProjectTerminalFacts(observation Observation) (evidence.TerminalFacts, error) {
 	if observation.Job == nil || observation.Pod == nil || observation.Node == nil {
 		return evidence.TerminalFacts{}, errors.New("Job, Pod, and Node observations are required")

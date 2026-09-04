@@ -14,6 +14,7 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 	options := options{}
 	options.bindFlags(set)
 	if err := set.Parse([]string{
+		"--run-config={}",
 		"--attempt-timeout=10m",
 		"--observer-ready-timeout=1m",
 		"--metric-result-timeout=1m",
@@ -41,7 +42,7 @@ func TestOptionsBindAndValidateJobDeliveryContract(t *testing.T) {
 }
 
 func TestOptionsRejectInvalidDeliveryContract(t *testing.T) {
-	valid := validOptions()
+	valid := validOptions(t)
 	tests := []func(*options){
 		func(options *options) { options.podUID = "" },
 		func(options *options) { options.scheduledNodeName = "" },

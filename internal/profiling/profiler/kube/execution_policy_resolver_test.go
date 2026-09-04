@@ -76,7 +76,7 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), "text data") {
 		t.Fatalf("binary execution policy error = %v", err)
 	}
-	if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonExecutionPolicyInvalid {
+	if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid {
 		t.Fatalf("binary execution policy classification = %q, terminal=%t", reason, terminal)
 	}
 
@@ -94,7 +94,7 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	}
 	if _, err := malformed.Resolve(context.Background(), currentIntent(t)); err == nil {
 		t.Fatal("malformed execution-policy catalog was accepted")
-	} else if reason, terminal := profiler.TerminalFreezeReason(err); !terminal || reason != profiler.FreezeReasonExecutionPolicyInvalid {
+	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid {
 		t.Fatalf("malformed execution-policy classification = %q, terminal=%t", reason, terminal)
 	}
 }

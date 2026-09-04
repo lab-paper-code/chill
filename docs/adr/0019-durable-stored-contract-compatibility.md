@@ -32,7 +32,7 @@ written before it, so a bump that no reader needs is pure cost.
 A reader that meets a form it cannot decode reaches one operator-visible
 terminal outcome rather than returning an ordinary error that reconciles
 without bound. The `ProfilingRun` evidence path is the implemented shape: its
-[reconciler](../../internal/profiling/profiler/controller/intent_reconciler.go) publishes
+[reconciler](../../internal/profiling/profiler/controller/run_reconciler.go) publishes
 `EvidenceVerified=False` with reason `EvidenceInvalid`, and its
 [lifecycle](../../internal/profiling/profiler/lifecycle.go) then selects the terminal
 `ActionComplete`.

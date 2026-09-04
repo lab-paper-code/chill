@@ -134,10 +134,10 @@ func TestExecutionPolicyRejectsIncoherentResourceEnvelope(t *testing.T) {
 	}
 }
 
-func currentExecutionPolicyTestIntent(t *testing.T) profilingrun.Intent {
+func currentExecutionPolicyTestIntent(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 	return intent

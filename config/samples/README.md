@@ -45,7 +45,7 @@ an experiment and may actuate a device:
 
 | Kind | Purpose |
 |---|---|
-| `BatchSaturation` | Measure a batch-size curve. |
+| `BatchEnergyOptimization` | Find the measured batch with minimum incremental energy per item. |
 | `ModelLoadedIdleBaseline` | Measure model-loaded idle power for one state. |
 | `PowerModeTransitionCost` | Measure directed cost between two power modes. |
 
@@ -53,7 +53,7 @@ Replace the `example-*` names with catalog and cluster resources visible to the
 Profiler. Run each request separately:
 
 ```sh
-kubectl apply -f config/samples/profiling/edge_v1alpha1_batchsaturation.yaml
+kubectl apply -f config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml
 kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.yaml
 kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```

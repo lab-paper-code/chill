@@ -1,4 +1,4 @@
-package batchsaturation
+package batchenergyoptimization
 
 import (
 	"errors"

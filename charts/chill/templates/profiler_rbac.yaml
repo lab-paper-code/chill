@@ -27,7 +27,7 @@ rules:
   - apiGroups:
       - edge.dacs.io
     resources:
-      - batchsaturations
+      - batchenergyoptimizations
     verbs:
       - get
       - list
@@ -35,7 +35,7 @@ rules:
   - apiGroups:
       - edge.dacs.io
     resources:
-      - batchsaturations/status
+      - batchenergyoptimizations/status
     verbs:
       - get
       - patch
@@ -83,7 +83,6 @@ rules:
     resources:
       - configmaps
     verbs:
-      - create
       - get
       - list
       - watch

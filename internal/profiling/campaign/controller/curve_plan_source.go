@@ -12,7 +12,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
@@ -22,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// CurvePlanPreparer freezes the active and idle Run intents used to project a
+// CurvePlanPreparer freezes the active and idle RunConfigs used to project a
 // curve plan. The production Profiler preparer satisfies this port.
 type CurvePlanPreparer interface {
 	Prepare(context.Context, profiler.PreparationRequest) (profiler.PreparedRun, error)
@@ -51,9 +51,9 @@ func (e *ArtifactInputContractMissingError) Error() string {
 	return fmt.Sprintf("artifact %q declares no input tensor contract", e.Artifact)
 }
 
-// CurvePlanProjector resolves the immutable plan one BatchSaturation selects.
+// CurvePlanProjector resolves the immutable plan one BatchEnergyOptimization selects.
 // It reads the facts that plan freezes and writes nothing, so a caller that
-// only asks whether an intent resolves needs no Evidence Store authority.
+// only asks whether a RunConfig resolves needs no Evidence Store authority.
 type CurvePlanProjector struct {
 	reader   client.Reader
 	resolver profiler.CandidateResolver
@@ -71,9 +71,9 @@ func NewCurvePlanProjector(
 	return &CurvePlanProjector{reader: reader, resolver: resolver, preparer: preparer}, nil
 }
 
-// CurvePlanSource resolves one BatchSaturation's immutable curve plan without
+// CurvePlanSource resolves one BatchEnergyOptimization's immutable curve plan without
 // creating either of the Run objects used to project its active and idle
-// intents.
+// RunConfigs.
 type CurvePlanSource struct {
 	projector *CurvePlanProjector
 	store     CurvePlanStore
@@ -106,21 +106,21 @@ func NewCurvePlanSource(
 }
 
 // Project resolves the plan a campaign selects without recording it, so a
-// caller that only needs to know whether the intent resolves does not write to
+// caller that only needs to know whether the RunConfig resolves does not write to
 // the Evidence Store.
 func (p *CurvePlanProjector) Project(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 ) (profilederivation.CurvePlan, *TransitionMaterial, error) {
 	if parent == nil {
-		return profilederivation.CurvePlan{}, nil, errors.New("a parent BatchSaturation is required")
+		return profilederivation.CurvePlan{}, nil, errors.New("a parent BatchEnergyOptimization is required")
 	}
 
 	report, plannedBatchSizes, err := p.resolveCandidateReportAndBatches(ctx, parent)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
-	active, idle, transition, err := p.prepareCurveIntentsAndTransition(ctx, parent, report, plannedBatchSizes)
+	active, idle, transition, err := p.prepareCurveRunConfigsAndTransition(ctx, parent, report, plannedBatchSizes)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
@@ -133,8 +133,8 @@ func (p *CurvePlanProjector) Project(
 
 	spec, err := admission.ProjectCurvePlanSpec(
 		parent.Name,
-		active.Intent,
-		idle.Intent,
+		active.RunConfig,
+		idle.RunConfig,
 		capability,
 		conversion,
 		plannedBatchSizes,
@@ -151,7 +151,7 @@ func (p *CurvePlanProjector) Project(
 
 func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 ) (profilingrun.CandidateReport, []int, error) {
 	selection := profiler.CandidateSelection{
 		ModelSpec:     parent.Spec.State.Candidate.ModelSpec,
@@ -174,33 +174,33 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	return report, plannedBatchSizes, nil
 }
 
-func (p *CurvePlanProjector) prepareCurveIntentsAndTransition(
+func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 	report profilingrun.CandidateReport,
 	plannedBatchSizes []int,
 ) (profiler.PreparedRun, profiler.PreparedRun, *TransitionMaterial, error) {
-	active, err := p.prepare(ctx, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive,
+	active, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan intent: %w", err)
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
-	if active.Intent.State.Artifact != report.Selection.Artifact {
+	if active.RunConfig.State.Artifact != report.Selection.Artifact {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil,
-			errors.New("prepared active intent artifact disagrees with the resolved candidate report")
+			errors.New("prepared active RunConfig artifact disagrees with the resolved candidate report")
 	}
 	transition, err := projectTransitionMaterial(active)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("project campaign transition: %w", err)
 	}
-	idle, err := p.prepare(ctx, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle,
+	idle, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
 	})
 	if err != nil {
-		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan intent: %w", err)
+		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan RunConfig: %w", err)
 	}
 	return active, idle, transition, nil
 }
@@ -240,17 +240,17 @@ func (p *CurvePlanProjector) resolveCurveArtifactContracts(
 // recomputed plan.
 func (s *CurvePlanSource) Resolve(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
-) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, *TransitionMaterial, error) {
+	parent *edgev1alpha1.BatchEnergyOptimization,
+) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error) {
 	if parent == nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("a parent BatchSaturation is required")
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, errors.New("a parent BatchEnergyOptimization is required")
 	}
 	if parent.UID == "" {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, errors.New("BatchSaturation UID is required")
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, errors.New("BatchEnergyOptimization UID is required")
 	}
 	plan, transition, err := s.projector.Project(ctx, parent)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, nil, err
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
 	}
 	recorded, reference, err := s.record(ctx, parent.UID, plan)
 	return recorded, reference, transition, err
@@ -262,7 +262,7 @@ func resolvePlannedBatchSizes(
 ) ([]int, error) {
 	if capability != nil {
 		if len(campaign) != 0 {
-			return nil, errors.New("BatchSaturation batchSizes must be absent when the selected artifact declares batch sizes")
+			return nil, errors.New("BatchEnergyOptimization batchSizes must be absent when the selected artifact declares batch sizes")
 		}
 		planned := make([]int, len(capability.DeclaredBatchSizes))
 		for index, batchSize := range capability.DeclaredBatchSizes {
@@ -272,15 +272,15 @@ func resolvePlannedBatchSizes(
 		return planned, nil
 	}
 	if len(campaign) == 0 {
-		return nil, errors.New("BatchSaturation batchSizes are required when the selected artifact declares no batch sizes")
+		return nil, errors.New("BatchEnergyOptimization batchSizes are required when the selected artifact declares no batch sizes")
 	}
 	planned := make([]int, len(campaign))
 	for index, batchSize := range campaign {
 		if batchSize < 1 {
-			return nil, errors.New("BatchSaturation batchSizes must be positive")
+			return nil, errors.New("BatchEnergyOptimization batchSizes must be positive")
 		}
 		if index > 0 && batchSize <= campaign[index-1] {
-			return nil, errors.New("BatchSaturation batchSizes must be strictly increasing")
+			return nil, errors.New("BatchEnergyOptimization batchSizes must be strictly increasing")
 		}
 		planned[index] = int(batchSize)
 	}
@@ -289,8 +289,8 @@ func resolvePlannedBatchSizes(
 
 func (p *CurvePlanProjector) prepare(
 	ctx context.Context,
-	parent *edgev1alpha1.BatchSaturation,
-	measurement batchsaturation.Measurement,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	measurement batchenergyoptimization.Measurement,
 ) (profiler.PreparedRun, error) {
 	run, err := BuildRun(parent, measurement, 1)
 	if err != nil {
@@ -365,26 +365,26 @@ func (s *CurvePlanSource) record(
 	ctx context.Context,
 	parentUID types.UID,
 	plan profilederivation.CurvePlan,
-) (profilederivation.CurvePlan, batchsaturation.StoredObjectReference, error) {
+) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, error) {
 	payload, err := plan.CanonicalJSON()
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("encode curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode curve plan: %w", err)
 	}
 	identity := evidencestore.ObjectIdentity{
 		Store: s.options.Store,
-		Key:   fmt.Sprintf("batch-saturations/%s/curve-plan.json", parentUID),
+		Key:   fmt.Sprintf("batch-energy-optimizations/%s/curve-plan.json", parentUID),
 		Size:  int64(len(payload)),
 	}
-	reference := batchsaturation.StoredObjectReference{
+	reference := batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
 		SchemaVersion: plan.SchemaVersion(), Size: identity.Size,
 	}
 	receipt, err := s.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("record curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("record curve plan: %w", err)
 	}
 	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New("curve-plan writer returned an invalid receipt")
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, errors.New("curve-plan writer returned an invalid receipt")
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeCreated {
 		return plan, reference, nil
@@ -394,16 +394,16 @@ func (s *CurvePlanSource) record(
 		ctx, s.store, identity.Location(), s.options.MaxObjectBytes, "curve-plan object",
 	)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("read existing curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("read existing curve plan: %w", err)
 	}
 	stored, err := profilederivation.DecodeCurvePlan(storedBytes)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, fmt.Errorf("decode existing curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing curve plan: %w", err)
 	}
 	if !reflect.DeepEqual(stored.Shared(), plan.Shared()) {
-		return profilederivation.CurvePlan{}, batchsaturation.StoredObjectReference{}, errors.New("stored curve plan disagrees with the recomputed plan")
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, errors.New("stored curve plan disagrees with the recomputed plan")
 	}
-	return stored, batchsaturation.StoredObjectReference{
+	return stored, batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
 		SchemaVersion: stored.SchemaVersion(), Size: int64(len(storedBytes)),
 	}, nil

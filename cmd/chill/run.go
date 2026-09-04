@@ -23,8 +23,8 @@ type profilingRunsQuery interface {
 	Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error)
 }
 
-type batchSaturationPreflightQuery interface {
-	Read(context.Context) (operatorconsole.BatchSaturationPreflight, error)
+type batchEnergyOptimizationPreflightQuery interface {
+	Read(context.Context) (operatorconsole.BatchEnergyOptimizationPreflight, error)
 }
 
 type dependencies struct {
@@ -32,7 +32,7 @@ type dependencies struct {
 	newSystemQuery    func(systemOptions) (systemQuery, error)
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
 	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
-	newPreflightQuery func(preflightOptions) (batchSaturationPreflightQuery, error)
+	newPreflightQuery func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error)
 }
 
 func productionDependencies() dependencies {
@@ -41,7 +41,7 @@ func productionDependencies() dependencies {
 		newSystemQuery:    newSystemQuery,
 		newRunsQuery:      newProfilingRunsQuery,
 		newRunShowQuery:   newEvidencePassportQuery,
-		newPreflightQuery: newBatchSaturationPreflightQuery,
+		newPreflightQuery: newBatchEnergyOptimizationPreflightQuery,
 	}
 }
 
@@ -167,14 +167,14 @@ func executePreflight(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	query, err := deps.newPreflightQuery(opts)
 	if err != nil {
-		return fmt.Errorf("construct BatchSaturation preflight query: %w", err)
+		return fmt.Errorf("construct BatchEnergyOptimization preflight query: %w", err)
 	}
 	preflight, err := query.Read(ctx)
 	if err != nil {
-		return fmt.Errorf("read BatchSaturation preflight: %w", err)
+		return fmt.Errorf("read BatchEnergyOptimization preflight: %w", err)
 	}
-	if err := writeBatchSaturationPreflight(stdout, opts.output, preflight); err != nil {
-		return fmt.Errorf("write BatchSaturation preflight: %w", err)
+	if err := writeBatchEnergyOptimizationPreflight(stdout, opts.output, preflight); err != nil {
+		return fmt.Errorf("write BatchEnergyOptimization preflight: %w", err)
 	}
 	return nil
 }

@@ -86,7 +86,7 @@ spec:
                   powerMode:
                     description: |-
                       PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
-                      directly; a non-fixed selection requires a frozen configured actuation
+                      directly; a non-fixed selection requires a selected configured actuation
                       policy and a completed transition that confirms the required state.
                     maxLength: 128
                     minLength: 1
@@ -397,10 +397,6 @@ spec:
                 - size
                 - store
                 type: object
-              intentFrozen:
-                description: IntentFrozen reports that the immutable intent record
-                  exists for this generation.
-                type: boolean
               job:
                 description: Job identifies the one owned native Job after creation.
                 properties:

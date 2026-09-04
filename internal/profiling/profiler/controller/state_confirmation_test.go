@@ -24,7 +24,7 @@ func TestRecordedConfirmingTransitionLostIsPermanent(t *testing.T) {
 			},
 		},
 	}
-	intent := profilingrun.Intent{
+	intent := profilingrun.RunConfig{
 		TargetNode: profilingrun.NodeSnapshot{Name: "jetsono", UID: "node-uid-1"},
 		Actuation:  &profilingrun.ActuationContract{PowerMode: "MAXN"},
 	}

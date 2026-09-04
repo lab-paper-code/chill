@@ -19,7 +19,7 @@ const preflightTestNamespace = "chill-system"
 
 func TestExecutePreflightRequiresFile(t *testing.T) {
 	calls := 0
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchSaturationPreflightQuery, error) {
+	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		calls++
 		return nil, nil
 	}}
@@ -39,12 +39,15 @@ func TestExecutePreflightRejectsUnreadableAndUndecodableManifests(t *testing.T) 
 		path  string
 		match string
 	}{
-		{name: "unreadable", path: filepath.Join(t.TempDir(), "missing.yaml"), match: "read BatchSaturation manifest"},
-		{name: "undecodable", path: malformed, match: "decode BatchSaturation manifest"},
+		{
+			name: "unreadable", path: filepath.Join(t.TempDir(), "missing.yaml"),
+			match: "read BatchEnergyOptimization manifest",
+		},
+		{name: "undecodable", path: malformed, match: "decode BatchEnergyOptimization manifest"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			deps := dependencies{newPreflightQuery: newBatchSaturationPreflightQuery}
+			deps := dependencies{newPreflightQuery: newBatchEnergyOptimizationPreflightQuery}
 			err := execute(context.Background(), []string{"preflight", "-f", test.path}, io.Discard, io.Discard, deps)
 			if err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("execute() error = %v, want %q", err, test.match)
@@ -54,8 +57,8 @@ func TestExecutePreflightRejectsUnreadableAndUndecodableManifests(t *testing.T) 
 }
 
 func TestExecutePreflightWritesResolvingTable(t *testing.T) {
-	query := &fakeBatchSaturationPreflightQuery{preflight: testBatchSaturationPreflight(true)}
-	deps := dependencies{newPreflightQuery: func(opts preflightOptions) (batchSaturationPreflightQuery, error) {
+	query := &fakeBatchEnergyOptimizationPreflightQuery{preflight: testBatchEnergyOptimizationPreflight(true)}
+	deps := dependencies{newPreflightQuery: func(opts preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		if opts.file != "campaign.yaml" || opts.namespace != preflightTestNamespace ||
 			opts.consoleService != "console" || opts.output != outputFormatTable {
 			t.Fatalf("options = %#v", opts)
@@ -84,9 +87,9 @@ func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 }
 
 func TestExecutePreflightWritesNonResolvingReason(t *testing.T) {
-	preflight := testBatchSaturationPreflight(false)
-	query := &fakeBatchSaturationPreflightQuery{preflight: preflight}
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchSaturationPreflightQuery, error) {
+	preflight := testBatchEnergyOptimizationPreflight(false)
+	query := &fakeBatchEnergyOptimizationPreflightQuery{preflight: preflight}
+	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		return query, nil
 	}}
 	var stdout strings.Builder
@@ -102,9 +105,9 @@ func TestExecutePreflightWritesNonResolvingReason(t *testing.T) {
 }
 
 func TestExecutePreflightWritesJSONRoundTrip(t *testing.T) {
-	want := testBatchSaturationPreflight(true)
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchSaturationPreflightQuery, error) {
-		return &fakeBatchSaturationPreflightQuery{preflight: want}, nil
+	want := testBatchEnergyOptimizationPreflight(true)
+	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+		return &fakeBatchEnergyOptimizationPreflightQuery{preflight: want}, nil
 	}}
 	var stdout strings.Builder
 	if err := execute(context.Background(), []string{
@@ -128,25 +131,25 @@ func TestExecutePreflightWritesJSONRoundTrip(t *testing.T) {
 	}
 }
 
-type fakeBatchSaturationPreflightQuery struct {
-	preflight operatorconsole.BatchSaturationPreflight
+type fakeBatchEnergyOptimizationPreflightQuery struct {
+	preflight operatorconsole.BatchEnergyOptimizationPreflight
 	err       error
 	calls     int
 }
 
-func (q *fakeBatchSaturationPreflightQuery) Read(
+func (q *fakeBatchEnergyOptimizationPreflightQuery) Read(
 	context.Context,
-) (operatorconsole.BatchSaturationPreflight, error) {
+) (operatorconsole.BatchEnergyOptimizationPreflight, error) {
 	q.calls++
 	return q.preflight, q.err
 }
 
-func testBatchSaturationPreflight(resolves bool) operatorconsole.BatchSaturationPreflight {
-	preflight := operatorconsole.BatchSaturationPreflight{
-		APIVersion: operatorconsole.BatchSaturationPreflightAPIVersion,
-		Kind:       "BatchSaturationPreflight",
+func testBatchEnergyOptimizationPreflight(resolves bool) operatorconsole.BatchEnergyOptimizationPreflight {
+	preflight := operatorconsole.BatchEnergyOptimizationPreflight{
+		APIVersion: operatorconsole.BatchEnergyOptimizationPreflightAPIVersion,
+		Kind:       "BatchEnergyOptimizationPreflight",
 		ReadAt:     time.Date(2026, 8, 19, 1, 2, 3, 4, time.UTC),
-		Campaign: operatorconsole.BatchSaturationPreflightCampaign{
+		Campaign: operatorconsole.BatchEnergyOptimizationPreflightCampaign{
 			Namespace: preflightTestNamespace,
 			Name:      "hourly-curve",
 		},

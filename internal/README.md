@@ -26,7 +26,7 @@ configuration, and `nodeprobe` owns bounded host discovery.
 
 ```text
 profiling/
-├── campaign/              BatchSaturation state machine
+├── campaign/              BatchEnergyOptimization state machine
 │   └── controller/        campaign reconciliation and owned child resources
 ├── run/                   immutable Run and execution-evidence contracts
 ├── derivation/            pure curve, stopping, and statistical derivation

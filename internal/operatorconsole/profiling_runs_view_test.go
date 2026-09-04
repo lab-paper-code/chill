@@ -24,7 +24,7 @@ func TestBuildProfilingRunsProjectsIdentitySpecAndStatus(t *testing.T) {
 				Namespace: consoleTestNamespace, Name: "listed-run", UID: "run-uid",
 				ResourceVersion: "9", Generation: 1, CreationTimestamp: created,
 			},
-			Status: edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 1, IntentFrozen: true},
+			Status: edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 1},
 		}},
 	})
 
@@ -35,7 +35,7 @@ func TestBuildProfilingRunsProjectsIdentitySpecAndStatus(t *testing.T) {
 	run := view.Runs[0]
 	if run.Namespace != consoleTestNamespace || run.Name != "listed-run" || run.UID != "run-uid" ||
 		run.ResourceVersion != "9" || run.CreationTimestamp != "2026-08-14T03:00:00Z" ||
-		!run.Status.IntentFrozen {
+		run.Status.ObservedGeneration != 1 {
 		t.Fatalf("run = %#v", run)
 	}
 }

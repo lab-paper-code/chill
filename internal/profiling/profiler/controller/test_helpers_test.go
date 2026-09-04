@@ -16,20 +16,6 @@ const (
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
-const controllerPolicyCatalog = `
-schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
-policies:
-  - name: operator-meter-policy
-    workloadMode: saturated-serial-fixed-batch
-    minimumSamples: 7
-    maximumGapSeconds: 2.5
-    maximumBoundaryDistanceSeconds: 1.25
-    minimumCoverage: 0.97
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-`
-
 func controllerExecutionPolicyCatalog(t *testing.T) []byte {
 	t.Helper()
 	active := controllerExecutionPolicySpec(profilingrun.SaturatedSerialFixedBatchWorkloadMode)

@@ -9,7 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	batchsaturation "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -21,8 +21,8 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 	writer := newResultWriter(t, store, 1<<20)
 	curvePlan := resultWriterCurvePlanReference()
 	detail := json.RawMessage(`{"selectedBatch":2,"method":{"z":1,"a":[3,2,1]}}`)
-	result := batchsaturation.Result{
-		Outcome: "Stopped/NoFurtherImprovement",
+	result := batchenergyoptimization.Result{
+		Outcome: "MinimumFound/LocalMinimum",
 		Detail:  detail,
 	}
 
@@ -51,8 +51,8 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 
 	driftedSpec := stored.Spec()
-	driftedSpec.Outcome = "Stopped/EnergyDivergence"
-	drifted, err := batchsaturation.NewResultRecord(driftedSpec)
+	driftedSpec.Outcome = "MinimumFound/SearchSpaceExhausted"
+	drifted, err := batchenergyoptimization.NewResultRecord(driftedSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,15 +62,15 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 	store.objects[store.lastIdentity.Location()] = driftedPayload
 	if _, err := writer.Write(context.Background(), parent, curvePlan, reorderedRuns, result); err == nil ||
-		!strings.Contains(err.Error(), "stored batch-saturation result disagrees") {
+		!strings.Contains(err.Error(), "stored batch-energy-optimization result disagrees") {
 		t.Fatalf("recomputed result drift error = %v", err)
 	}
 }
 
 func TestResultWriterRejectsPendingRun(t *testing.T) {
 	parent := testParent()
-	run := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	run := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1, "pending-uid")
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
@@ -89,8 +89,8 @@ func TestResultWriterRejectsPendingRun(t *testing.T) {
 
 func TestResultWriterRejectsEmptyAdmissionVerdict(t *testing.T) {
 	parent := testParent()
-	run := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	run := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1, "empty-verdict-uid")
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{}
 	store := newFakeCurvePlanStore()
@@ -110,8 +110,8 @@ func TestResultWriterRejectsEmptyAdmissionVerdict(t *testing.T) {
 
 func TestResultWriterRejectsAdmittedRunWithoutEvidence(t *testing.T) {
 	parent := testParent()
-	run := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	run := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1, "missing-evidence-uid")
 	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
@@ -133,8 +133,8 @@ func TestResultWriterRejectsAdmittedRunWithoutEvidence(t *testing.T) {
 
 func TestResultWriterRecordsTerminalConditionReason(t *testing.T) {
 	parent := testParent()
-	run := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 4,
+	run := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 4,
 	}, 2, "terminal-condition-uid")
 	run.Status.Conditions = []metav1.Condition{{
 		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed",
@@ -148,7 +148,7 @@ func TestResultWriterRecordsTerminalConditionReason(t *testing.T) {
 	); err != nil {
 		t.Fatalf("record terminal-condition exclusion: %v", err)
 	}
-	stored, err := batchsaturation.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
+	stored, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,21 +203,21 @@ func TestResultWriterBoundsRecoveryRead(t *testing.T) {
 	_, err := boundedWriter.Write(
 		context.Background(), parent, resultWriterCurvePlanReference(), runs, resultWriterResult(),
 	)
-	if err == nil || !strings.Contains(err.Error(), "batch-saturation result object exceeds") {
+	if err == nil || !strings.Contains(err.Error(), "batch-energy-optimization result object exceeds") {
 		t.Fatalf("oversized recovery error = %v", err)
 	}
 }
 
 func assertCreatedResultReference(
 	t *testing.T,
-	reference batchsaturation.StoredObjectReference,
+	reference batchenergyoptimization.StoredObjectReference,
 	store *fakeCurvePlanStore,
 ) {
 	t.Helper()
-	wantKey := "batch-saturations/parent-uid/result.json"
+	wantKey := "batch-energy-optimizations/parent-uid/result.json"
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if reference.Store != "evidence" || reference.Key != wantKey ||
-		reference.SchemaVersion != "chill.dacs.io/batch-saturation-result.v1alpha3" ||
+		reference.SchemaVersion != "chill.dacs.io/batch-energy-optimization-result.v1alpha3" ||
 		reference.Size != int64(len(storedPayload)) || reference.Size != store.lastIdentity.Size {
 		t.Fatalf("created reference = %+v, identity = %+v, payload bytes = %d", reference, store.lastIdentity, len(storedPayload))
 	}
@@ -228,18 +228,18 @@ func assertCreatedResultReference(
 
 func assertStoredResult(
 	t *testing.T,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 	payload []byte,
 	detail json.RawMessage,
-	curvePlan batchsaturation.StoredObjectReference,
-) batchsaturation.ResultRecord {
+	curvePlan batchenergyoptimization.StoredObjectReference,
+) batchenergyoptimization.ResultRecord {
 	t.Helper()
-	stored, err := batchsaturation.DecodeResultRecord(payload)
+	stored, err := batchenergyoptimization.DecodeResultRecord(payload)
 	if err != nil {
 		t.Fatalf("decode stored result: %v", err)
 	}
 	spec := stored.Spec()
-	wantState := batchsaturation.ResultMeasurementState{
+	wantState := batchenergyoptimization.ResultMeasurementState{
 		TargetNode: parent.Spec.State.TargetNode, ModelSpec: parent.Spec.State.Candidate.ModelSpec,
 		DeviceClass:   parent.Spec.State.Candidate.DeviceClass,
 		ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
@@ -256,11 +256,11 @@ func assertStoredResult(
 	}
 	failed := spec.ExcludedTrials[0]
 	acceptedRetry := spec.AdmittedTrials[0]
-	active := batchsaturation.Measurement{WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2}
+	active := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}
 	if failed.Run.Namespace != "chill-system" || failed.Run.Name != RunName(parent.Name, active, 2) ||
 		failed.Run.UID != "failed-uid" || failed.Attempt != 2 ||
-		failed.Measurement != (batchsaturation.ResultMeasurement{
-			WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+		failed.Measurement != (batchenergyoptimization.ResultMeasurement{
+			WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 		}) || len(failed.Reasons) != 1 || failed.Reasons[0] != "QualityGateFailed" {
 		t.Fatalf("failed attempt projection = %+v", failed)
 	}
@@ -285,27 +285,27 @@ func assertStoredResult(
 
 func resultWriterRuns(
 	t *testing.T,
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 ) []edgev1alpha1.ProfilingRun {
 	t.Helper()
-	failed := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	failed := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 2, "failed-uid")
 	failed.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Rejected", PolicyVersion: "wall-power-v1", ReasonCodes: []string{"QualityGateFailed"},
 	}
 	failed.Status.Evidence = resultWriterEvidence("failed-uid", 1001)
 
-	accepted := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeActive, Batch: 2,
+	accepted := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 3, "accepted-uid")
 	accepted.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
 	}
 	accepted.Status.Evidence = resultWriterEvidence("accepted-uid", 1002)
 
-	idle := resultWriterRun(t, parent, batchsaturation.Measurement{
-		WorkloadMode: batchsaturation.WorkloadModeIdle, Batch: 1,
+	idle := resultWriterRun(t, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
 	}, 1, "idle-uid")
 	idle.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
 		Verdict: "Accepted", PolicyVersion: "wall-power-v1",
@@ -316,8 +316,8 @@ func resultWriterRuns(
 
 func resultWriterRun(
 	t *testing.T,
-	parent *edgev1alpha1.BatchSaturation,
-	measurement batchsaturation.Measurement,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	measurement batchenergyoptimization.Measurement,
 	attempt int,
 	uid types.UID,
 ) *edgev1alpha1.ProfilingRun {
@@ -348,16 +348,16 @@ func newResultWriter(t *testing.T, store ResultStore, maximumBytes int64) *Resul
 	return writer
 }
 
-func resultWriterCurvePlanReference() batchsaturation.StoredObjectReference {
-	return batchsaturation.StoredObjectReference{
-		Store: "evidence", Key: "batch-saturations/parent-uid/curve-plan.json",
+func resultWriterCurvePlanReference() batchenergyoptimization.StoredObjectReference {
+	return batchenergyoptimization.StoredObjectReference{
+		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
 		SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 4096,
 	}
 }
 
-func resultWriterResult() batchsaturation.Result {
-	return batchsaturation.Result{
-		Outcome: "Stopped/NoFurtherImprovement",
+func resultWriterResult() batchenergyoptimization.Result {
+	return batchenergyoptimization.Result{
+		Outcome: "MinimumFound/LocalMinimum",
 		Detail:  json.RawMessage(`{"selectedBatch":2}`),
 	}
 }

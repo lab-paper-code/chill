@@ -10,7 +10,7 @@ import (
 )
 
 func (e ExecutionEvidence) validateActuation() error {
-	if e.Intent.Actuation == nil {
+	if e.RunConfig.Actuation == nil {
 		if e.Actuation != nil {
 			return permanentValidationError(errors.New("fixed Run cannot contain actuation facts"))
 		}
@@ -19,11 +19,11 @@ func (e ExecutionEvidence) validateActuation() error {
 	if e.Actuation == nil {
 		return permanentValidationError(errors.New("actuated Run requires finalized actuation facts"))
 	}
-	return e.Actuation.validate(e.Intent, e.Terminal)
+	return e.Actuation.validate(e.RunConfig, e.Terminal)
 }
 
 func (a ActuationFacts) validate(
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	terminal TerminalFacts,
 ) error {
 	if err := validateNamespacedObject(a.Run, "Run"); err != nil {
@@ -38,9 +38,9 @@ func (a ActuationFacts) validate(
 	if err := a.Target.validate("target"); err != nil {
 		return permanentValidationError(err)
 	}
-	if intent.Actuation == nil || a.Target.PowerMode != intent.Actuation.PowerMode ||
-		!reflect.DeepEqual(a.Target.Actuator, intent.Actuation.Actuator) {
-		return permanentValidationError(errors.New("actuation target observation does not match frozen intent"))
+	if config.Actuation == nil || a.Target.PowerMode != config.Actuation.PowerMode ||
+		!reflect.DeepEqual(a.Target.Actuator, config.Actuation.Actuator) {
+		return permanentValidationError(errors.New("actuation target observation does not match RunConfig"))
 	}
 	if a.ReadyAt.IsZero() {
 		return permanentValidationError(errors.New("actuation transition completion time is required"))

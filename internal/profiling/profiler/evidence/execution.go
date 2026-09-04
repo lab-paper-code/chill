@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"sort"
 
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
 func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
-	if err := raw.validate(e.Intent); err != nil {
+	if err := raw.validate(); err != nil {
 		return fmt.Errorf("validate raw measurement: %w", err)
 	}
 	if err := e.RawMeasurement.Validate(); err != nil {
@@ -24,7 +23,7 @@ func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
 }
 
 func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
-	if err := raw.validate(e.Intent); err != nil {
+	if err := raw.validate(); err != nil {
 		return fmt.Errorf("validate idle raw measurement: %w", err)
 	}
 	if err := e.RawMeasurement.Validate(); err != nil {
@@ -43,10 +42,10 @@ func (e ExecutionEvidence) validateLinkedRaw(
 	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
 	}
-	if _, err := profilingrun.VerifyCandidateReportRecord(e.CandidateReport, e.Intent); err != nil {
-		return fmt.Errorf("validate candidate report: %w", err)
+	if err := e.RunConfig.Validate(); err != nil {
+		return fmt.Errorf("validate RunConfig: %w", err)
 	}
-	if err := e.Terminal.validate(e.Intent, rawPodUID); err != nil {
+	if err := e.Terminal.validate(e.RunConfig, rawPodUID); err != nil {
 		return err
 	}
 	if err := e.validateActuation(); err != nil {

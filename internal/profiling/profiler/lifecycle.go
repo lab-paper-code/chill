@@ -29,7 +29,6 @@ type Action string
 
 const (
 	ActionStop                   Action = "Stop"
-	ActionFreezeIntent           Action = "FreezeIntent"
 	ActionCreateJob              Action = "CreateJob"
 	ActionWaitForJob             Action = "WaitForJob"
 	ActionFinalizeEvidence       Action = "FinalizeEvidence"
@@ -44,7 +43,7 @@ const (
 // its concrete name and UID semantics.
 type Snapshot struct {
 	Deleting          bool
-	Intent            *profilingrun.Intent
+	RunConfig         *profilingrun.RunConfig
 	JobReference      string
 	Job               JobObservation
 	EvidenceReference *evidencestore.ObjectIdentity
@@ -56,7 +55,7 @@ type Snapshot struct {
 // not infer success from an action before that adapter completes.
 type Decision struct {
 	Action            Action
-	Intent            *profilingrun.Intent
+	RunConfig         *profilingrun.RunConfig
 	EvidenceReference *evidencestore.ObjectIdentity
 }
 
@@ -69,9 +68,6 @@ func Decide(snapshot Snapshot) (Decision, error) {
 	if err := snapshot.Validate(); err != nil {
 		return Decision{}, err
 	}
-	if snapshot.Intent == nil {
-		return Decision{Action: ActionFreezeIntent}, nil
-	}
 	if snapshot.EvidenceInvalid {
 		return Decision{Action: ActionComplete}, nil
 	}
@@ -83,8 +79,8 @@ func Decide(snapshot Snapshot) (Decision, error) {
 		return Decision{Action: ActionAdmitEvidence, EvidenceReference: &reference}, nil
 	}
 	if snapshot.JobReference == "" {
-		intent := *snapshot.Intent
-		return Decision{Action: ActionCreateJob, Intent: &intent}, nil
+		config := *snapshot.RunConfig
+		return Decision{Action: ActionCreateJob, RunConfig: &config}, nil
 	}
 
 	switch snapshot.Job {
@@ -102,15 +98,11 @@ func Decide(snapshot Snapshot) (Decision, error) {
 }
 
 func (s Snapshot) Validate() error {
-	if s.Intent == nil {
-		if s.JobReference != "" || s.Job != JobNotObserved || s.EvidenceReference != nil ||
-			s.EvidenceInvalid || s.AdmissionRecorded {
-			return errors.New("Run facts exist before intent is frozen")
-		}
-		return nil
+	if s.RunConfig == nil {
+		return errors.New("RunConfig is required")
 	}
-	if err := s.Intent.Validate(); err != nil {
-		return fmt.Errorf("validate frozen Run intent: %w", err)
+	if err := s.RunConfig.Validate(); err != nil {
+		return fmt.Errorf("validate RunConfig: %w", err)
 	}
 	if strings.TrimSpace(s.JobReference) != s.JobReference {
 		return errors.New("Job reference must not contain surrounding whitespace")

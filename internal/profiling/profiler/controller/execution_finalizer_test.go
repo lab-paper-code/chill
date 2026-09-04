@@ -105,7 +105,7 @@ func TestKubernetesExecutionFinalizerProjectsOnlyRecordedConfirmingTransition(t 
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	readyAt := metav1.NewTime(base.Add(30 * time.Second))
 	handoff := completedTransitionForRun(
-		run, frozen, "actuation", frozen.Prepared.Intent.Actuation.PowerMode, readyAt.Time,
+		run, frozen, "actuation", frozen.Prepared.RunConfig.Actuation.PowerMode, readyAt.Time,
 	)
 	run.Status.Actuation = &edgev1alpha1.ProfilingRunObjectReference{
 		Name: handoff.Name, UID: string(handoff.UID),

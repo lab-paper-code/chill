@@ -74,7 +74,7 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 // Job reference, a nil job means the API lookup returned NotFound.
 func ProjectSnapshot(
 	run *edgev1alpha1.ProfilingRun,
-	frozenIntent *profilingrun.Intent,
+	frozenIntent *profilingrun.RunConfig,
 	job *batchv1.Job,
 ) (profiler.Snapshot, error) {
 	if run == nil {
@@ -84,10 +84,11 @@ func ProjectSnapshot(
 		return profiler.Snapshot{Deleting: true}, nil
 	}
 
-	snapshot := profiler.Snapshot{}
-	if err := projectIntent(run.Status.IntentFrozen, frozenIntent, &snapshot); err != nil {
-		return profiler.Snapshot{}, err
+	if frozenIntent == nil {
+		return profiler.Snapshot{}, errors.New("RunConfig is required to project lifecycle state")
 	}
+	config := *frozenIntent
+	snapshot := profiler.Snapshot{RunConfig: &config}
 	if err := projectJob(run, job, &snapshot); err != nil {
 		return profiler.Snapshot{}, err
 	}
@@ -110,18 +111,6 @@ func evidenceIsTerminallyInvalid(conditions []metav1.Condition) bool {
 		}
 	}
 	return false
-}
-
-func projectIntent(frozenStatus bool, frozen *profilingrun.Intent, snapshot *profiler.Snapshot) error {
-	if !frozenStatus && frozen == nil {
-		return nil
-	}
-	if !frozenStatus || frozen == nil {
-		return errors.New("intent status and frozen intent must be observed together")
-	}
-	copy := *frozen
-	snapshot.Intent = &copy
-	return nil
 }
 
 func projectJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job, snapshot *profiler.Snapshot) error {

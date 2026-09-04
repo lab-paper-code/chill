@@ -26,18 +26,18 @@ func projectTransitionMaterial(prepared profiler.PreparedRun) (*TransitionMateri
 	if err := prepared.ValidateActuationBinding(); err != nil {
 		return nil, err
 	}
-	if prepared.Intent.Actuation == nil {
+	if prepared.RunConfig.Actuation == nil {
 		return nil, nil
 	}
 	policy := prepared.ActuationPolicy.Policy
 	return &TransitionMaterial{
 		Node: edgev1alpha1.ProfilingRunObjectReference{
-			Name: prepared.Intent.TargetNode.Name, UID: prepared.Intent.TargetNode.UID,
+			Name: prepared.RunConfig.TargetNode.Name, UID: prepared.RunConfig.TargetNode.UID,
 		},
-		DeviceClass:                 prepared.Intent.State.DeviceClass,
-		PowerMode:                   prepared.Intent.Actuation.PowerMode,
-		Actuator:                    projectTransitionActuator(prepared.Intent.Actuation.Actuator),
-		PolicyName:                  prepared.Intent.Actuation.PolicyName,
+		DeviceClass:                 prepared.RunConfig.State.DeviceClass,
+		PowerMode:                   prepared.RunConfig.Actuation.PowerMode,
+		Actuator:                    projectTransitionActuator(prepared.RunConfig.Actuation.Actuator),
+		PolicyName:                  prepared.RunConfig.Actuation.PolicyName,
 		SettlingDurationSeconds:     int32(policy.SettlingDurationSeconds),
 		MaxActuationDurationSeconds: int32(policy.MaxActuationDurationSeconds),
 	}, nil
@@ -65,12 +65,12 @@ func TransitionName(parentName string) string {
 
 // BuildTransition assembles one immutable operation owned by its campaign.
 func BuildTransition(
-	parent *edgev1alpha1.BatchSaturation,
+	parent *edgev1alpha1.BatchEnergyOptimization,
 	material *TransitionMaterial,
 	now time.Time,
 ) (*edgev1alpha1.NodeActuation, error) {
 	if parent == nil || parent.UID == "" {
-		return nil, errors.New("a BatchSaturation with a UID is required")
+		return nil, errors.New("a BatchEnergyOptimization with a UID is required")
 	}
 	if material == nil {
 		return nil, errors.New("transition material is required")
@@ -84,9 +84,9 @@ func BuildTransition(
 	transition := &edgev1alpha1.NodeActuation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: TransitionName(parent.Name), Namespace: parent.Namespace,
-			Labels: map[string]string{labelBatchSaturation: parent.Name},
+			Labels: map[string]string{labelBatchEnergyOptimization: parent.Name},
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(
-				parent, edgev1alpha1.GroupVersion.WithKind("BatchSaturation"),
+				parent, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"),
 			)},
 		},
 		Spec: edgev1alpha1.NodeActuationSpec{

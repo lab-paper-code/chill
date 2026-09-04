@@ -76,7 +76,7 @@ type frozenPolicyRecord struct {
 }
 
 // FrozenPolicy retains the validated policy and source snapshot beside the
-// immutable execution intent. A populated value can only be constructed by the
+// Job execution record. A populated value can only be constructed by the
 // catalog-freeze or retained-JSON decode boundaries in this package.
 type FrozenPolicy struct {
 	record   frozenPolicyRecord

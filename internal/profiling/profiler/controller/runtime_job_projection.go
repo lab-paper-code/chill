@@ -24,20 +24,19 @@ type runtimeJobProjection struct {
 }
 
 func projectRuntimeJob(
-	intent profilingrun.Intent,
-	verified profilingrun.VerifiedCandidateReport,
+	config profilingrun.RunConfig,
 ) (runtimeJobProjection, error) {
-	if profilingrun.IsSupportedCPUORTIntent(intent) {
+	if profilingrun.IsSupportedCPUORTRunConfig(config) {
 		return runtimeJobProjection{
 			ArtifactDestination: cpuORTModelDestination,
 			SecurityContext:     restrictedContainerSecurityContext(),
 		}, nil
 	}
-	if !profilingrun.IsSupportedRKNNLiteIntent(intent) {
-		return runtimeJobProjection{}, errors.New("no Job projection exists for the frozen runtime intent")
+	if !profilingrun.IsSupportedRKNNLiteRunConfig(config) {
+		return runtimeJobProjection{}, errors.New("no Job projection exists for the resolved RunConfig")
 	}
 
-	delivery := verified.RuntimeDelivery()
+	delivery := config.Delivery
 	if delivery.ArtifactCapability == nil || delivery.HostContract == nil ||
 		delivery.HostContract.Platform == nil || delivery.RuntimeAccess == nil {
 		return runtimeJobProjection{}, errors.New("verified RKNNLite delivery contract is incomplete")

@@ -1,4 +1,4 @@
-package batchsaturation
+package batchenergyoptimization
 
 import (
 	"reflect"
@@ -88,7 +88,7 @@ func TestDecide(t *testing.T) {
 				}
 				return s
 			}(),
-			plan: Plan{Result: &Result{Outcome: "Stopped/NoFurtherImprovement"}},
+			plan: Plan{Result: &Result{Outcome: "MinimumFound/LocalMinimum"}},
 			want: ActionFinish,
 		},
 	} {

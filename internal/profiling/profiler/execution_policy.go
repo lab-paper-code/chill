@@ -46,30 +46,30 @@ type ExecutionPlan struct {
 }
 
 // DeriveExecutionPlan combines a frozen worker envelope with Run-derived
-// durations. CPU request and limit remain Node-specific frozen intent facts.
+// durations. CPU request and limit remain Node-specific RunConfig facts.
 func DeriveExecutionPlan(
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	frozen FrozenExecutionPolicy,
 ) (ExecutionPlan, error) {
-	if err := intent.Validate(); err != nil {
-		return ExecutionPlan{}, fmt.Errorf("validate frozen Run intent: %w", err)
+	if err := config.Validate(); err != nil {
+		return ExecutionPlan{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
 	if err := frozen.Validate(); err != nil {
 		return ExecutionPlan{}, err
 	}
-	if !profilingrun.IsSupportedCPUORTIntent(intent) && !profilingrun.IsSupportedRKNNLiteIntent(intent) {
-		return ExecutionPlan{}, errors.New("measurement worker requires a supported explicit runtime intent")
+	if !profilingrun.IsSupportedCPUORTRunConfig(config) && !profilingrun.IsSupportedRKNNLiteRunConfig(config) {
+		return ExecutionPlan{}, errors.New("measurement worker requires a supported explicit RunConfig")
 	}
 	policy := frozen.Policy
-	if (policy.DeviceClass != "*" && policy.DeviceClass != intent.State.DeviceClass) ||
-		policy.ExecutionPath != intent.Candidate.ExecutionPath ||
-		policy.WorkloadMode != intent.Measurement.WorkloadMode {
-		return ExecutionPlan{}, errors.New("frozen execution policy does not match the Run intent")
+	if (policy.DeviceClass != "*" && policy.DeviceClass != config.State.DeviceClass) ||
+		policy.ExecutionPath != config.Candidate.ExecutionPath ||
+		policy.WorkloadMode != config.Measurement.WorkloadMode {
+		return ExecutionPlan{}, errors.New("selected execution policy does not match the RunConfig")
 	}
 
-	metricDuration := time.Duration(intent.Metrics.DurationSeconds) * time.Second
-	settlingDuration := time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second
-	interval := time.Duration(intent.Metrics.IntervalMilliseconds) * time.Millisecond
+	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
+	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
+	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
 	maxEvents64 := int64(metricDuration/interval) + 2
 	if maxEvents64 < 1 || maxEvents64 > int64(policy.MaxMetricEvents) || maxEvents64 > int64(^uint(0)>>1) {
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
@@ -86,7 +86,7 @@ func DeriveExecutionPlan(
 		ObserverReadyTimeout: time.Duration(policy.ObserverReadyTimeoutSeconds) * time.Second,
 		ObserverStartTimeout: settlingDuration +
 			time.Duration(policy.ObserverStartOverheadSeconds)*time.Second,
-		MetricResultTimeout: metricDuration - time.Duration(intent.Measurement.DurationSeconds)*time.Second +
+		MetricResultTimeout: metricDuration - time.Duration(config.Measurement.DurationSeconds)*time.Second +
 			time.Duration(policy.MetricResultOverheadSeconds)*time.Second,
 		WorkloadEndFenceTimeout: time.Duration(policy.WorkloadEndFenceTimeoutSeconds) * time.Second,
 		WorkloadResultTimeout:   time.Duration(policy.WorkloadResultTimeoutSeconds) * time.Second,

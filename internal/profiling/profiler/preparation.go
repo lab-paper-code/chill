@@ -108,16 +108,15 @@ type ActuationPolicyResolver interface {
 }
 
 type PreparedRun struct {
-	Intent               profilingrun.Intent
-	CandidateReportBytes []byte
-	ActuationPolicy      *FrozenActuationPolicy
+	RunConfig       profilingrun.RunConfig
+	ActuationPolicy *FrozenActuationPolicy
 }
 
 // ValidateActuationBinding checks the configured policy against the frozen
 // material selection. Downstream execution consumes the selected policy
 // without reselecting it from mutable configuration.
 func (r PreparedRun) ValidateActuationBinding() error {
-	if r.Intent.Actuation == nil {
+	if r.RunConfig.Actuation == nil {
 		if r.ActuationPolicy != nil {
 			return errors.New("fixed prepared Run cannot contain an actuation policy")
 		}
@@ -130,14 +129,14 @@ func (r PreparedRun) ValidateActuationBinding() error {
 		return err
 	}
 	return validateActuationPolicySelection(r.ActuationPolicy.Policy, ActuationSelection{
-		DeviceClass: r.Intent.State.DeviceClass,
-		PowerMode:   r.Intent.State.PowerMode,
-		Actuator:    r.Intent.Actuation.Actuator,
+		DeviceClass: r.RunConfig.State.DeviceClass,
+		PowerMode:   r.RunConfig.State.PowerMode,
+		Actuator:    r.RunConfig.Actuation.Actuator,
 	})
 }
 
-// Preparer resolves current facts through narrow ports and freezes one Run
-// intent. It performs no Kubernetes or storage operation.
+// Preparer resolves current facts through narrow ports into one executable
+// RunConfig. It performs no Kubernetes or storage operation.
 type Preparer struct {
 	candidates CandidateResolver
 	nodes      NodeResolver
@@ -203,17 +202,22 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err != nil {
 		return PreparedRun{}, err
 	}
-	intent, err := p.freeze(request, candidate, node, metrics, workload, actuation, cpuContract)
+	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
+	if err != nil {
+		return PreparedRun{}, fmt.Errorf("decode resolved candidate report: %w", err)
+	}
+	runConfig, err := p.freeze(
+		request, candidate, report.RuntimeDelivery(), node, metrics, workload, actuation, cpuContract,
+	)
 	if err != nil {
 		return PreparedRun{}, err
 	}
-	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, intent); err != nil {
+	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, runConfig); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate resolved candidate report: %w", err)
 	}
 	prepared := PreparedRun{
-		Intent:               intent,
-		CandidateReportBytes: append([]byte(nil), candidate.ReportBytes...),
-		ActuationPolicy:      policy,
+		RunConfig:       runConfig,
+		ActuationPolicy: policy,
 	}
 	if err := prepared.ValidateActuationBinding(); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate frozen actuation binding: %w", err)
@@ -328,17 +332,18 @@ func freezeCPUContract(
 func (p *Preparer) freeze(
 	request PreparationRequest,
 	candidate ResolvedCandidate,
+	delivery profilingrun.CandidateRuntimeDelivery,
 	node profilingrun.NodeSnapshot,
 	metrics ResolvedMetricSource,
 	workload ResolvedWorkloadObservation,
 	actuation *profilingrun.ActuationContract,
 	cpuContract profilingrun.CPUContract,
-) (profilingrun.Intent, error) {
+) (profilingrun.RunConfig, error) {
 	if node.Name != request.TargetNode {
-		return profilingrun.Intent{}, errors.New("resolved Node identity does not match requested target")
+		return profilingrun.RunConfig{}, errors.New("resolved Node identity does not match requested target")
 	}
-	intent := profilingrun.Intent{
-		SchemaVersion: profilingrun.SchemaVersion,
+	config := profilingrun.RunConfig{
+		SchemaVersion: profilingrun.RunConfigSchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{
 			Inputs: candidate.Inputs, ExecutionPath: request.Candidate.ExecutionPath, Verdict: candidate.Verdict,
 		},
@@ -349,6 +354,7 @@ func (p *Preparer) freeze(
 			MetricObserver:   candidate.MetricObserverImage,
 			WorkloadObserver: workload.Image,
 		},
+		Delivery:    delivery,
 		TargetNode:  node,
 		CPU:         cpuContract,
 		Measurement: request.Measurement,
@@ -363,10 +369,10 @@ func (p *Preparer) freeze(
 		Workload:  profilingrun.CurrentWorkloadContract(),
 		Actuation: actuation,
 	}
-	if err := intent.Validate(); err != nil {
-		return profilingrun.Intent{}, fmt.Errorf("validate frozen Run intent: %w", err)
+	if err := config.Validate(); err != nil {
+		return profilingrun.RunConfig{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
-	return intent, nil
+	return config, nil
 }
 
 func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCandidate) error {

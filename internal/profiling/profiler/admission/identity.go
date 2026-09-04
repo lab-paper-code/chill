@@ -36,9 +36,9 @@ type metricSamplingProtocol struct {
 	DurationSeconds      int `json:"durationSeconds"`
 }
 
-// ProjectRunIdentities derives versioned identities from one frozen intent
+// ProjectRunIdentities derives versioned identities from one RunConfig
 // and the actual Node UID recorded in finalized evidence.
-func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdentities, error) {
+func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIdentities, error) {
 	state, err := digestIdentity(stateIdentitySchemaVersion, struct {
 		State        profilingrun.ExecutionState     `json:"state"`
 		RuntimeImage string                          `json:"runtimeImage"`
@@ -47,19 +47,19 @@ func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdenti
 		MetricSource metricSourceIdentity            `json:"metricSource"`
 		Actuation    *profilingrun.ActuationContract `json:"actuation,omitempty"`
 	}{
-		State: intent.State, RuntimeImage: intent.Images.Runtime, NodeUID: nodeUID, CPU: intent.CPU,
-		Actuation: intent.Actuation,
+		State: config.State, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID, CPU: config.CPU,
+		Actuation: config.Actuation,
 		MetricSource: metricSourceIdentity{
-			SourceKind: intent.Metrics.SourceKind, NodeName: intent.Metrics.NodeName,
-			Endpoint: intent.Metrics.Endpoint, PowerMetric: intent.Metrics.PowerMetric,
-			ThermalMetrics: intent.Metrics.ThermalMetrics,
+			SourceKind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
+			Endpoint: config.Metrics.Endpoint, PowerMetric: config.Metrics.PowerMetric,
+			ThermalMetrics: config.Metrics.ThermalMetrics,
 		},
 	})
 	if err != nil {
 		return RunIdentities{}, fmt.Errorf("derive execution-state identity: %w", err)
 	}
 
-	measurement := intent.Measurement
+	measurement := config.Measurement
 	measurement.Batch = 0
 	protocol, err := digestIdentity(measurementProtocolIdentitySchemaVersion, struct {
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
@@ -73,19 +73,19 @@ func ProjectRunIdentities(intent profilingrun.Intent, nodeUID string) (RunIdenti
 	}{
 		Measurement: measurement,
 		Sampling: metricSamplingProtocol{
-			IntervalMilliseconds: intent.Metrics.IntervalMilliseconds,
-			TimeoutMilliseconds:  intent.Metrics.TimeoutMilliseconds,
-			DurationSeconds:      intent.Metrics.DurationSeconds,
+			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
+			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
+			DurationSeconds:      config.Metrics.DurationSeconds,
 		},
 		Images: struct {
 			Artifact         string `json:"artifact"`
 			MetricObserver   string `json:"metricObserver"`
 			WorkloadObserver string `json:"workloadObserver,omitempty"`
 		}{
-			Artifact: intent.Images.Artifact, MetricObserver: intent.Images.MetricObserver,
-			WorkloadObserver: intent.Images.WorkloadObserver,
+			Artifact: config.Images.Artifact, MetricObserver: config.Images.MetricObserver,
+			WorkloadObserver: config.Images.WorkloadObserver,
 		},
-		Workload: intent.Workload,
+		Workload: config.Workload,
 	})
 	if err != nil {
 		return RunIdentities{}, fmt.Errorf("derive measurement-protocol identity: %w", err)

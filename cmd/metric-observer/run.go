@@ -27,15 +27,15 @@ func execute(
 	if client == nil {
 		return errors.New("HTTP client is required")
 	}
-	intent, err := worker.LoadVerifiedIntent(opts.intentPath, maximumIntentBytes)
+	runConfig, err := worker.ParseVerifiedRunConfig(opts.runConfig)
 	if err != nil {
 		return err
 	}
-	intentRecord, err := intent.Record()
+	runConfigRecord, err := runConfig.Record()
 	if err != nil {
 		return err
 	}
-	metrics := intentRecord.Metrics
+	metrics := runConfigRecord.Metrics
 	thermalMetrics := metricobserver.ThermalMetricIdentity{
 		ObservationAvailable:      metrics.ThermalMetrics.ObservationAvailable,
 		Active:                    metrics.ThermalMetrics.Active,
@@ -54,7 +54,7 @@ func execute(
 		ThermalMetrics:  &thermalMetrics,
 	}, client)
 	if err != nil {
-		return fmt.Errorf("construct frozen metric source: %w", err)
+		return fmt.Errorf("construct metric source from RunConfig: %w", err)
 	}
 	observer, err := metricobserver.New(source)
 	if err != nil {

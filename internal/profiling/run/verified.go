@@ -7,44 +7,44 @@ import (
 	"maps"
 )
 
-// VerifiedIntent is populated only after one intent has passed structural and
-// semantic validation.
-type VerifiedIntent struct {
-	intent   Intent
-	verified bool
+// VerifiedRunConfig is populated only after one RunConfig has passed
+// structural and semantic validation.
+type VerifiedRunConfig struct {
+	runConfig RunConfig
+	verified  bool
 }
 
-func ValidateIntent(intent Intent) (VerifiedIntent, error) {
-	if err := intent.Validate(); err != nil {
-		return VerifiedIntent{}, err
+func ValidateRunConfig(runConfig RunConfig) (VerifiedRunConfig, error) {
+	if err := runConfig.Validate(); err != nil {
+		return VerifiedRunConfig{}, err
 	}
-	return VerifiedIntent{intent: cloneIntent(intent), verified: true}, nil
+	return VerifiedRunConfig{runConfig: cloneRunConfig(runConfig), verified: true}, nil
 }
 
-func (i VerifiedIntent) Record() (Intent, error) {
-	if !i.verified {
-		return Intent{}, errors.New("verified Run intent is empty")
+func (c VerifiedRunConfig) Record() (RunConfig, error) {
+	if !c.verified {
+		return RunConfig{}, errors.New("verified RunConfig is empty")
 	}
-	return cloneIntent(i.intent), nil
+	return cloneRunConfig(c.runConfig), nil
 }
 
 // VerifiedRuntimeResult is an active process result bound to one verified
-// intent and Pod identity.
+// RunConfig and Pod identity.
 type VerifiedRuntimeResult struct {
 	payload  []byte
 	verified bool
 }
 
 func VerifyRuntimeResult(
-	intent VerifiedIntent,
+	runConfig VerifiedRunConfig,
 	podUID string,
 	result RuntimeResult,
 ) (VerifiedRuntimeResult, error) {
-	intentRecord, err := intent.Record()
+	runConfigRecord, err := runConfig.Record()
 	if err != nil {
 		return VerifiedRuntimeResult{}, err
 	}
-	if err := ValidateRuntime(intentRecord, podUID, result); err != nil {
+	if err := ValidateRuntime(runConfigRecord, podUID, result); err != nil {
 		return VerifiedRuntimeResult{}, err
 	}
 	payload, err := json.Marshal(result)
@@ -66,22 +66,22 @@ func (r VerifiedRuntimeResult) Record() (RuntimeResult, error) {
 }
 
 // VerifiedIdleRuntimeResult is a model-loaded-idle process result bound to one
-// verified intent and Pod identity.
+// verified RunConfig and Pod identity.
 type VerifiedIdleRuntimeResult struct {
 	payload  []byte
 	verified bool
 }
 
 func VerifyIdleRuntimeResult(
-	intent VerifiedIntent,
+	runConfig VerifiedRunConfig,
 	podUID string,
 	result IdleRuntimeResult,
 ) (VerifiedIdleRuntimeResult, error) {
-	intentRecord, err := intent.Record()
+	runConfigRecord, err := runConfig.Record()
 	if err != nil {
 		return VerifiedIdleRuntimeResult{}, err
 	}
-	if err := ValidateIdleRuntime(intentRecord, podUID, result); err != nil {
+	if err := ValidateIdleRuntime(runConfigRecord, podUID, result); err != nil {
 		return VerifiedIdleRuntimeResult{}, err
 	}
 	payload, err := json.Marshal(result)
@@ -102,9 +102,10 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 	return result, nil
 }
 
-func cloneIntent(source Intent) Intent {
+func cloneRunConfig(source RunConfig) RunConfig {
 	result := source
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
+	result.Delivery = cloneRuntimeDelivery(source.Delivery)
 	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
 	if source.Actuation != nil {
 		actuation := *source.Actuation
@@ -121,6 +122,24 @@ func cloneIntent(source Intent) Intent {
 			actuation.Actuator.NvidiaLockedGPUClock = &target
 		}
 		result.Actuation = &actuation
+	}
+	return result
+}
+
+func cloneRuntimeDelivery(source CandidateRuntimeDelivery) CandidateRuntimeDelivery {
+	result := source
+	if source.ArtifactCapability != nil {
+		capability := *source.ArtifactCapability
+		capability.DeclaredBatchSizes = append([]int32(nil), source.ArtifactCapability.DeclaredBatchSizes...)
+		capability.InputSampleShape = append([]int32(nil), source.ArtifactCapability.InputSampleShape...)
+		result.ArtifactCapability = &capability
+	}
+	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), source.RuntimePackages...)
+	result.HostContract = cloneCandidateHostContract(source.HostContract)
+	if source.RuntimeAccess != nil {
+		access := *source.RuntimeAccess
+		access.SupplementalGroups = append([]int64(nil), source.RuntimeAccess.SupplementalGroups...)
+		result.RuntimeAccess = &access
 	}
 	return result
 }

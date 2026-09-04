@@ -7,7 +7,7 @@ import (
 
 const (
 	// ProfilingRunConditionExecutionComplete reports whether the requested execution completed.
-	// It is False when intent freezing rejects the Run or the native Job fails or is lost.
+	// It is False when RunConfig resolution rejects the Run or the native Job fails or is lost.
 	ProfilingRunConditionExecutionComplete = "ExecutionComplete"
 	// ProfilingRunConditionEvidenceVerified reports independent durable evidence verification.
 	ProfilingRunConditionEvidenceVerified = "EvidenceVerified"
@@ -69,7 +69,7 @@ type ProfilingRunCandidateSpec struct {
 	ExecutionPath string `json:"executionPath"`
 
 	// PowerMode selects one mode declared by DeviceClass. Fixed Runs may execute
-	// directly; a non-fixed selection requires a frozen configured actuation
+	// directly; a non-fixed selection requires a selected configured actuation
 	// policy and a completed transition that confirms the required state.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
@@ -136,10 +136,6 @@ type ProfilingRunStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// IntentFrozen reports that the immutable intent record exists for this generation.
-	// +optional
-	IntentFrozen bool `json:"intentFrozen,omitempty"`
 
 	// Job identifies the one owned native Job after creation.
 	// +optional

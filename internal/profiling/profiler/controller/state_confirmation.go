@@ -10,7 +10,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -18,11 +17,10 @@ const requiredStateNotConfirmedReason = "RequiredStateNotConfirmed"
 
 func (r *RunReconciler) reconcileRequiredState(
 	ctx context.Context,
-	request ctrl.Request,
 	run *edgev1alpha1.ProfilingRun,
-	frozen FrozenRun,
+	resolved ResolvedRun,
 ) (bool, error) {
-	transition, unconfirmed, err := r.findConfirmingTransition(ctx, run, frozen.Prepared.Intent)
+	transition, unconfirmed, err := r.findConfirmingTransition(ctx, run, resolved.Prepared.RunConfig)
 	if err != nil {
 		return true, err
 	}
@@ -34,13 +32,10 @@ func (r *RunReconciler) reconcileRequiredState(
 	if err := r.publishActuationReference(ctx, run, transition); err != nil {
 		return true, fmt.Errorf("publish confirming NodeActuation reference: %w", err)
 	}
-	if run.Status.Job == nil {
-		return true, r.ensureMeasurementJob(ctx, request, run, frozen)
-	}
 	return false, nil
 }
 
-// findConfirmingTransition returns the transition that confirms the frozen
+// findConfirmingTransition returns the transition that confirms the selected
 // required state. A nil transition with a non-empty reason is permanent: the
 // recorded reference and a terminal NodeActuation are both immutable, so no
 // retry can turn one into a confirmation. Only a transient API failure returns
@@ -48,7 +43,7 @@ func (r *RunReconciler) reconcileRequiredState(
 func (r *RunReconciler) findConfirmingTransition(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 ) (*edgev1alpha1.NodeActuation, string, error) {
 	if run.Status.Actuation != nil {
 		transition := &edgev1alpha1.NodeActuation{}
@@ -62,7 +57,7 @@ func (r *RunReconciler) findConfirmingTransition(
 		if string(transition.UID) != run.Status.Actuation.UID {
 			return nil, "the recorded confirming Node transition was replaced by a different object", nil
 		}
-		if err := validateConfirmingTransition(intent, transition); err != nil {
+		if err := validateConfirmingTransition(config, transition); err != nil {
 			return nil, "the recorded Node transition does not confirm the Run's required state", nil
 		}
 		return transition, "", nil
@@ -75,7 +70,7 @@ func (r *RunReconciler) findConfirmingTransition(
 	var latest *edgev1alpha1.NodeActuation
 	for index := range transitions.Items {
 		candidate := &transitions.Items[index]
-		if !successfullyCompletedOnNode(candidate, intent.TargetNode) {
+		if !successfullyCompletedOnNode(candidate, config.TargetNode) {
 			continue
 		}
 		if latest == nil || candidate.Status.ReadyAt.After(latest.Status.ReadyAt.Time) ||
@@ -83,7 +78,7 @@ func (r *RunReconciler) findConfirmingTransition(
 			latest = candidate
 		}
 	}
-	if latest == nil || validateConfirmingTransition(intent, latest) != nil {
+	if latest == nil || validateConfirmingTransition(config, latest) != nil {
 		return nil, "the most recent successful Node transition does not confirm the Run's required state", nil
 	}
 	return latest.DeepCopy(), "", nil
@@ -103,21 +98,21 @@ func successfullyCompletedOnNode(
 }
 
 func validateConfirmingTransition(
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	transition *edgev1alpha1.NodeActuation,
 ) error {
-	if intent.Actuation == nil || transition == nil {
-		return errors.New("actuated intent and NodeActuation are required")
+	if config.Actuation == nil || transition == nil {
+		return errors.New("actuated config and NodeActuation are required")
 	}
-	if !successfullyCompletedOnNode(transition, intent.TargetNode) {
+	if !successfullyCompletedOnNode(transition, config.TargetNode) {
 		return errors.New("NodeActuation is not a successful transition on the target Node")
 	}
-	if transition.Spec.DeviceClass != intent.State.DeviceClass ||
-		transition.Spec.PowerMode != intent.Actuation.PowerMode ||
-		!reflect.DeepEqual(transition.Spec.Actuator, projectActuatorTarget(intent.Actuation.Actuator)) ||
-		transition.Status.TargetObservation.PowerMode != intent.Actuation.PowerMode ||
-		!reflect.DeepEqual(transition.Status.TargetObservation.Actuator, projectActuatorTarget(intent.Actuation.Actuator)) {
-		return errors.New("NodeActuation does not confirm the frozen required state")
+	if transition.Spec.DeviceClass != config.State.DeviceClass ||
+		transition.Spec.PowerMode != config.Actuation.PowerMode ||
+		!reflect.DeepEqual(transition.Spec.Actuator, projectActuatorTarget(config.Actuation.Actuator)) ||
+		transition.Status.TargetObservation.PowerMode != config.Actuation.PowerMode ||
+		!reflect.DeepEqual(transition.Status.TargetObservation.Actuator, projectActuatorTarget(config.Actuation.Actuator)) {
+		return errors.New("NodeActuation does not confirm the selected required state")
 	}
 	return nil
 }

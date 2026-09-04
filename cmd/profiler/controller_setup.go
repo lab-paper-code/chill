@@ -34,7 +34,7 @@ type profilerControllerShared struct {
 	power             profilerapp.MetricSourceResolver
 	actuationPolicies profilerapp.ActuationPolicyResolver
 	preparer          profilercontroller.RunPreparer
-	records           *profilercontroller.IntentRecords
+	records           *profilercontroller.RunRecords
 	policies          profilercontroller.AdmissionPolicyResolver
 	executionPolicies profilercontroller.ExecutionPolicyResolver
 	stores            profilercontroller.EvidenceStoreBindingResolver
@@ -50,7 +50,7 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupRunController(mgr, opts, shared); err != nil {
 		return err
 	}
-	if err := setupBatchSaturationController(mgr, opts, shared); err != nil {
+	if err := setupBatchEnergyOptimizationController(mgr, opts, shared); err != nil {
 		return err
 	}
 	if err := setupModelLoadedIdleBaselineController(mgr, opts, shared); err != nil {
@@ -62,15 +62,13 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 // setupRunController is the composition root for bounded ProfilingRun
 // transitions. Runtime work remains outside the controller process.
 func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControllerShared) error {
-	freezer, err := profilercontroller.NewIntentFreezer(
-		mgr.GetClient(),
+	resolver, err := profilercontroller.NewRunConfigResolver(
 		shared.preparer,
 		shared.policies,
 		shared.executionPolicies,
-		shared.records,
 	)
 	if err != nil {
-		return fmt.Errorf("construct intent freezer: %w", err)
+		return fmt.Errorf("construct RunConfig resolver: %w", err)
 	}
 	jobs, err := profilercontroller.NewExecutionJobs(
 		mgr.GetClient(),
@@ -96,7 +94,7 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		return fmt.Errorf("construct execution evidence admitter: %w", err)
 	}
 	reconciler, err := profilercontroller.NewRunReconciler(
-		mgr.GetClient(), freezer, jobs, finalizer, admitter,
+		mgr.GetClient(), resolver, jobs, finalizer, admitter,
 	)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
@@ -160,9 +158,9 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
-	records, err := profilercontroller.NewIntentRecords(mgr.GetClient(), mgr.GetScheme())
+	records, err := profilercontroller.NewRunRecords(reader)
 	if err != nil {
-		return nil, fmt.Errorf("construct intent records: %w", err)
+		return nil, fmt.Errorf("construct Run record loader: %w", err)
 	}
 	policies, err := profilerkube.NewKubernetesAdmissionPolicyResolver(
 		reader,
@@ -209,7 +207,7 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	}, nil
 }
 
-func setupBatchSaturationController(
+func setupBatchEnergyOptimizationController(
 	mgr ctrl.Manager,
 	opts options,
 	shared *profilerControllerShared,
@@ -222,14 +220,14 @@ func setupBatchSaturationController(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("construct BatchSaturation curve-plan source: %w", err)
+		return fmt.Errorf("construct BatchEnergyOptimization curve-plan source: %w", err)
 	}
 	curves, err := batchcontroller.NewCurveDeriver(
 		shared.records,
 		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
 	)
 	if err != nil {
-		return fmt.Errorf("construct BatchSaturation curve deriver: %w", err)
+		return fmt.Errorf("construct BatchEnergyOptimization curve deriver: %w", err)
 	}
 	results, err := batchcontroller.NewResultWriter(
 		shared.evidence,
@@ -238,16 +236,16 @@ func setupBatchSaturationController(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("construct BatchSaturation result writer: %w", err)
+		return fmt.Errorf("construct BatchEnergyOptimization result writer: %w", err)
 	}
-	reconciler, err := batchcontroller.NewBatchSaturationReconciler(
+	reconciler, err := batchcontroller.NewBatchEnergyOptimizationReconciler(
 		mgr.GetClient(), curvePlans, curves, results,
 	)
 	if err != nil {
-		return fmt.Errorf("construct BatchSaturation reconciler: %w", err)
+		return fmt.Errorf("construct BatchEnergyOptimization reconciler: %w", err)
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up BatchSaturation reconciler: %w", err)
+		return fmt.Errorf("set up BatchEnergyOptimization reconciler: %w", err)
 	}
 	return nil
 }

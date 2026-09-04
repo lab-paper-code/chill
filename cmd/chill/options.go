@@ -124,8 +124,8 @@ func parsePreflightOptions(args []string, stderr io.Writer) (preflightOptions, e
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
 	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
-	flags.StringVarP(&opts.namespace, "namespace", "n", "", "BatchSaturation and Console Service namespace")
-	flags.StringVarP(&opts.file, "file", "f", "", "BatchSaturation manifest file")
+	flags.StringVarP(&opts.namespace, "namespace", "n", "", "BatchEnergyOptimization and Console Service namespace")
+	flags.StringVarP(&opts.file, "file", "f", "", "BatchEnergyOptimization manifest file")
 	flags.StringVar(&opts.consoleService, "console-service", "chill-console", "CHILL Console ClusterIP Service name")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -140,8 +140,8 @@ func parsePreflightOptions(args []string, stderr io.Writer) (preflightOptions, e
 		return preflightOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
 	}
 	values := map[string]string{
-		"BatchSaturation manifest file": opts.file,
-		"Console Service name":          opts.consoleService,
+		"BatchEnergyOptimization manifest file": opts.file,
+		"Console Service name":                  opts.consoleService,
 	}
 	for label, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {

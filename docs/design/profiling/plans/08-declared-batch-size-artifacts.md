@@ -2,9 +2,7 @@
 
 > Navigation: [Profiling design index](../README.md)
 >
-> Method: [Plan 5a](05a-sequential-batch-stop.md), [Plan 5](05-batch-saturation-campaign.md)
->
-> Control path: [Plan 7](07-batch-saturation-control-path.md)
+> Objective and control path: [Plan 7](07-batch-energy-optimization-control-path.md)
 
 ## Status
 
@@ -13,10 +11,9 @@ batch-invariant input dimensions. Derived RKNN artifacts
 additionally declare the finite batch-size set fixed by conversion. Canonical
 ONNX artifacts
 with a symbolic batch axis leave the finite sweep set to
-`BatchSaturation.spec.batchSizes`. Exactly one source supplies the batch sizes
-in the recorded curve plan, and one execution path serves the selected set.
-Plans 5 and 5a consume the recorded set under their estimand, acceptance rule,
-and sizing method.
+`BatchEnergyOptimization.spec.batchSizes`. Exactly one source supplies the batch
+sizes in the recorded curve plan, and one execution path serves the selected
+set. The Quick energy optimizer consumes that ordered search space.
 
 ## Question
 
@@ -95,7 +92,7 @@ A canonical artifact has no `Derivation`, and therefore no
 `DeclaredBatchSizes`. Its campaign carries the finite measurement choice:
 
 ```go
-type BatchSaturationSpec struct {
+type BatchEnergyOptimizationSpec struct {
     // Positive, unique, and strictly increasing. Optional only because a
     // derived artifact supplies its own set.
     BatchSizes []int32 `json:"batchSizes,omitempty"`
@@ -181,8 +178,8 @@ Records remain separated by responsibility:
 |---|---|---|
 | Conversion record | `model-artifacts/<modelSpec>/<artifact>/conversion.json` | first Run admission |
 | Device probe | `model-artifacts/<modelSpec>/<artifact>/device-probe.json` | first Run admission |
-| Recorded curve plan | `batch-saturations/<uid>/curve-plan.json` | first reconcile |
-| BatchSaturation result | `batch-saturations/<uid>/result.json` | measurement end |
+| Recorded curve plan | `batch-energy-optimizations/<uid>/curve-plan.json` | first reconcile |
+| BatchEnergyOptimization result | `batch-energy-optimizations/<uid>/result.json` | measurement end |
 | Run raw and execution evidence | `<uid>/raw`, `<uid>/execution` | each Run |
 
 The current strict readers accept only their current schema versions. Stored

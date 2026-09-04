@@ -13,8 +13,8 @@ func TestEnergyWireNamesMatchGoFieldNames(t *testing.T) {
 		IdleTrial{},
 		IdleBaseline{},
 		Point{},
-		SequentialBatchMean{},
-		SequentialResult{},
+		BatchEnergyMean{},
+		EnergyOptimizationResult{},
 	}
 	for _, value := range types {
 		typ := reflect.TypeOf(value)

@@ -71,20 +71,20 @@ func buildStateActuation(
 	if err := prepared.ValidateActuationBinding(); err != nil {
 		return nil, fmt.Errorf("validate idle baseline actuation binding: %w", err)
 	}
-	if prepared.Intent.Actuation == nil {
+	if prepared.RunConfig.Actuation == nil {
 		return nil, nil
 	}
 	if parent == nil || parent.UID == "" {
 		return nil, errors.New("a ModelLoadedIdleBaseline with UID is required")
 	}
-	if prepared.Intent.TargetNode.Name != parent.Spec.State.TargetNode ||
-		prepared.Intent.TargetNode.UID == "" ||
-		prepared.Intent.State.DeviceClass != parent.Spec.State.Candidate.DeviceClass ||
-		prepared.Intent.State.PowerMode != parent.Spec.State.Candidate.PowerMode {
+	if prepared.RunConfig.TargetNode.Name != parent.Spec.State.TargetNode ||
+		prepared.RunConfig.TargetNode.UID == "" ||
+		prepared.RunConfig.State.DeviceClass != parent.Spec.State.Candidate.DeviceClass ||
+		prepared.RunConfig.State.PowerMode != parent.Spec.State.Candidate.PowerMode {
 		return nil, errors.New("prepared actuation does not match the idle baseline state")
 	}
 	policy := prepared.ActuationPolicy.Policy
-	target := prepared.Intent.Actuation.Actuator
+	target := prepared.RunConfig.Actuation.Actuator
 	actuator := edgev1alpha1.PowerModeActuator{
 		Kind: edgev1alpha1.PowerModeActuatorKind(target.Kind),
 	}
@@ -111,12 +111,12 @@ func buildStateActuation(
 		},
 		Spec: edgev1alpha1.NodeActuationSpec{
 			Node: edgev1alpha1.ProfilingRunObjectReference{
-				Name: prepared.Intent.TargetNode.Name, UID: prepared.Intent.TargetNode.UID,
+				Name: prepared.RunConfig.TargetNode.Name, UID: prepared.RunConfig.TargetNode.UID,
 			},
-			DeviceClass:                 prepared.Intent.State.DeviceClass,
-			PowerMode:                   prepared.Intent.Actuation.PowerMode,
+			DeviceClass:                 prepared.RunConfig.State.DeviceClass,
+			PowerMode:                   prepared.RunConfig.Actuation.PowerMode,
 			Actuator:                    actuator,
-			PolicyName:                  prepared.Intent.Actuation.PolicyName,
+			PolicyName:                  prepared.RunConfig.Actuation.PolicyName,
 			SettlingDurationSeconds:     int32(policy.SettlingDurationSeconds),
 			MaxActuationDurationSeconds: int32(policy.MaxActuationDurationSeconds),
 			StageRequestedAt:            requestedAt,

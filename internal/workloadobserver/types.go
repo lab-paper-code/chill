@@ -23,7 +23,7 @@ const (
 	FailureReasonEndFenceFailed     FailureReason = "EndFenceFailed"
 )
 
-// TargetIdentity binds observation to the Node frozen in the Run intent.
+// TargetIdentity binds observation to the Node selected in the RunConfig.
 type TargetIdentity struct {
 	NodeName string `json:"nodeName"`
 	NodeUID  string `json:"nodeUID"`

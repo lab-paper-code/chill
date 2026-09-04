@@ -151,7 +151,7 @@ baseline requests in the measurement namespace and accepts exactly one
 current-generation Complete result matching each selected target state. Zero
 or multiple matches stop preparation. The source strictly reads the selected
 immutable result, then freezes its mean and full stored reference. It does not
-read `BatchSaturation` results, select a latest result, or support a
+read `BatchEnergyOptimization` results, select a latest result, or support a
 compatibility reader.
 
 The specification requires `tau`, `eta`, and the target-state idle term for its

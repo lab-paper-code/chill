@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute one frozen CHILL RKNNLite measurement."""
+"""Execute one executable CHILL RKNNLite measurement."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha9"
-INTENT_SCHEMA = "chill.dacs.io/profiling-run-intent.v1alpha13"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha10"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha14"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha4"
 IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha2"
@@ -39,7 +39,7 @@ SIGNAL_POLL_SECONDS = 0.01
 
 
 class ContractError(Exception):
-    """The frozen RKNNLite request cannot be executed faithfully."""
+    """The RKNNLite request cannot be executed faithfully."""
 
 
 def now() -> str:
@@ -137,64 +137,64 @@ def require_absolute_file_path(value: Any, name: str) -> Path:
     return path
 
 
-def validate_actuation(intent: dict[str, Any], state: dict[str, Any]) -> None:
-    power_mode = require_string(state["powerMode"], "intent.state.powerMode")
-    if "actuation" not in intent:
+def validate_actuation(run_config: dict[str, Any], state: dict[str, Any]) -> None:
+    power_mode = require_string(state["powerMode"], "run_config.state.powerMode")
+    if "actuation" not in run_config:
         if power_mode != "fixed":
             raise ContractError("non-fixed power mode requires actuation")
         return
     if power_mode == "fixed":
         raise ContractError("fixed power mode cannot contain actuation")
-    actuation = require_object(intent["actuation"], "intent.actuation")
+    actuation = require_object(run_config["actuation"], "run_config.actuation")
     require_fields(
-        actuation, {"powerMode", "actuator", "policyName"}, "intent.actuation"
+        actuation, {"powerMode", "actuator", "policyName"}, "run_config.actuation"
     )
     if (
-        require_string(actuation["powerMode"], "intent.actuation.powerMode")
+        require_string(actuation["powerMode"], "run_config.actuation.powerMode")
         != power_mode
     ):
         raise ContractError(
-            "intent.actuation.powerMode does not match intent.state.powerMode"
+            "run_config.actuation.powerMode does not match run_config.state.powerMode"
         )
-    require_string(actuation["policyName"], "intent.actuation.policyName")
-    actuator = require_object(actuation["actuator"], "intent.actuation.actuator")
-    kind = require_string(actuator.get("kind"), "intent.actuation.actuator.kind")
+    require_string(actuation["policyName"], "run_config.actuation.policyName")
+    actuator = require_object(actuation["actuator"], "run_config.actuation.actuator")
+    kind = require_string(actuator.get("kind"), "run_config.actuation.actuator.kind")
     if kind == "JetsonNVPModel":
         require_fields(
-            actuator, {"kind", "jetsonNVPModel"}, "intent.actuation.actuator"
+            actuator, {"kind", "jetsonNVPModel"}, "run_config.actuation.actuator"
         )
         target = require_object(
-            actuator["jetsonNVPModel"], "intent.actuation.actuator.jetsonNVPModel"
+            actuator["jetsonNVPModel"], "run_config.actuation.actuator.jetsonNVPModel"
         )
-        require_fields(target, {"id"}, "intent.actuation.actuator.jetsonNVPModel")
-        require_integer(target["id"], "intent.actuation.actuator.jetsonNVPModel.id")
+        require_fields(target, {"id"}, "run_config.actuation.actuator.jetsonNVPModel")
+        require_integer(target["id"], "run_config.actuation.actuator.jetsonNVPModel.id")
         return
     if kind == "NvidiaLockedGPUClock":
         require_fields(
-            actuator, {"kind", "nvidiaLockedGPUClock"}, "intent.actuation.actuator"
+            actuator, {"kind", "nvidiaLockedGPUClock"}, "run_config.actuation.actuator"
         )
         target = require_object(
             actuator["nvidiaLockedGPUClock"],
-            "intent.actuation.actuator.nvidiaLockedGPUClock",
+            "run_config.actuation.actuator.nvidiaLockedGPUClock",
         )
         fields = {"minMHz", "maxMHz"}
         if "mode" in target:
             fields.add("mode")
-        require_fields(target, fields, "intent.actuation.actuator.nvidiaLockedGPUClock")
+        require_fields(target, fields, "run_config.actuation.actuator.nvidiaLockedGPUClock")
         minimum = require_integer(
-            target["minMHz"], "intent.actuation.actuator.nvidiaLockedGPUClock.minMHz", 1
+            target["minMHz"], "run_config.actuation.actuator.nvidiaLockedGPUClock.minMHz", 1
         )
         maximum = require_integer(
-            target["maxMHz"], "intent.actuation.actuator.nvidiaLockedGPUClock.maxMHz", 1
+            target["maxMHz"], "run_config.actuation.actuator.nvidiaLockedGPUClock.maxMHz", 1
         )
         if maximum < minimum:
-            raise ContractError("intent actuation GPU clock range is invalid")
+            raise ContractError("run_config actuation GPU clock range is invalid")
         if "mode" in target and require_integer(
-            target["mode"], "intent.actuation.actuator.nvidiaLockedGPUClock.mode"
+            target["mode"], "run_config.actuation.actuator.nvidiaLockedGPUClock.mode"
         ) not in {0, 1}:
-            raise ContractError("intent actuation GPU clock mode must be 0 or 1")
+            raise ContractError("run_config actuation GPU clock mode must be 0 or 1")
         return
-    raise ContractError("unsupported intent actuation kind")
+    raise ContractError("unsupported run_config actuation kind")
 
 
 def validate_request(request: dict[str, Any]) -> None:
@@ -202,11 +202,10 @@ def validate_request(request: dict[str, Any]) -> None:
         request,
         {
             "schemaVersion",
-            "intent",
+            "runConfig",
             "podUID",
             "scheduledNodeName",
             "modelPath",
-            "candidate",
             "observerReadyPaths",
             "workloadWindowStartPath",
             "measurementStartPath",
@@ -249,36 +248,37 @@ def validate_request(request: dict[str, Any]) -> None:
     require_integer(request["maxInputBytes"], "maxInputBytes", 1)
     require_integer(request["maxResultBytes"], "maxResultBytes", 1)
 
-    intent = require_object(request["intent"], "intent")
-    intent_fields = {
+    run_config = require_object(request["runConfig"], "runConfig")
+    run_config_fields = {
         "schemaVersion",
         "candidate",
         "state",
         "images",
+        "delivery",
         "targetNode",
         "cpu",
         "measurement",
         "metrics",
         "workload",
     }
-    if "actuation" in intent:
-        intent_fields.add("actuation")
-    require_fields(intent, intent_fields, "intent")
-    if intent["schemaVersion"] != INTENT_SCHEMA:
-        raise ContractError("RKNNLite requires the current intent schema")
-    candidate_identity = require_object(intent["candidate"], "intent.candidate")
+    if "actuation" in run_config:
+        run_config_fields.add("actuation")
+    require_fields(run_config, run_config_fields, "runConfig")
+    if run_config["schemaVersion"] != RUN_CONFIG_SCHEMA:
+        raise ContractError("RKNNLite requires the current RunConfig schema")
+    candidate_identity = require_object(run_config["candidate"], "run_config.candidate")
     require_fields(
         candidate_identity,
         {"inputs", "executionPath", "verdict"},
-        "intent.candidate",
+        "run_config.candidate",
     )
     require_string(
-        candidate_identity["executionPath"], "intent.candidate.executionPath"
+        candidate_identity["executionPath"], "run_config.candidate.executionPath"
     )
     if candidate_identity["verdict"] != "Compatible":
-        raise ContractError("intent candidate does not select RKNNLite")
+        raise ContractError("run_config candidate does not select RKNNLite")
 
-    state = require_object(intent["state"], "intent.state")
+    state = require_object(run_config["state"], "run_config.state")
     require_fields(
         state,
         {
@@ -291,33 +291,33 @@ def validate_request(request: dict[str, Any]) -> None:
             "powerMode",
             "hostContract",
         },
-        "intent.state",
+        "run_config.state",
     )
     if state["runtimeFamily"] != "rknnlite" or state["backend"] != "not-applicable":
         raise ContractError("unsupported runtime family or backend")
-    require_string(state["model"], "intent.state.model")
-    validate_actuation(intent, state)
+    require_string(state["model"], "run_config.state.model")
+    validate_actuation(run_config, state)
 
-    target = require_object(intent["targetNode"], "intent.targetNode")
+    target = require_object(run_config["targetNode"], "run_config.targetNode")
     require_fields(
         target,
         {"name", "uid", "resourceVersion", "architecture", "allocatableCPU"},
-        "intent.targetNode",
+        "run_config.targetNode",
     )
     for field in ("name", "uid", "resourceVersion", "architecture", "allocatableCPU"):
-        require_string(target[field], f"intent.targetNode.{field}")
+        require_string(target[field], f"run_config.targetNode.{field}")
     if scheduled_node != target["name"]:
-        raise ContractError("scheduled Node does not match the frozen target Node")
+        raise ContractError("scheduled Node does not match the RunConfig target Node")
 
-    cpu = require_object(intent["cpu"], "intent.cpu")
+    cpu = require_object(run_config["cpu"], "run_config.cpu")
     require_fields(
         cpu,
         {"policy", "policyVersion", "request", "limit", "exclusivityClaimed"},
-        "intent.cpu",
+        "run_config.cpu",
     )
     if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
         raise ContractError("unsupported RKNNLite CPU quota contract")
-    limit = require_string(cpu["limit"], "intent.cpu.limit")
+    limit = require_string(cpu["limit"], "run_config.cpu.limit")
     if cpu["policy"] == "AllocatableCPUQuota":
         if limit != target["allocatableCPU"]:
             raise ContractError("unsupported RKNNLite CPU quota contract")
@@ -334,7 +334,7 @@ def validate_request(request: dict[str, Any]) -> None:
     else:
         raise ContractError("unsupported RKNNLite CPU quota contract")
 
-    measurement = require_object(intent["measurement"], "intent.measurement")
+    measurement = require_object(run_config["measurement"], "run_config.measurement")
     common_fields = {
         "batch",
         "warmupIterations",
@@ -347,23 +347,23 @@ def validate_request(request: dict[str, Any]) -> None:
         require_fields(
             measurement,
             common_fields | {"settlingDurationSeconds"},
-            "intent.measurement",
+            "run_config.measurement",
         )
     else:
-        require_fields(measurement, common_fields, "intent.measurement")
-    require_integer(measurement["batch"], "intent.measurement.batch", 1)
+        require_fields(measurement, common_fields, "run_config.measurement")
+    require_integer(measurement["batch"], "run_config.measurement.batch", 1)
     require_integer(
-        measurement["warmupIterations"], "intent.measurement.warmupIterations"
+        measurement["warmupIterations"], "run_config.measurement.warmupIterations"
     )
     require_integer(
-        measurement["durationSeconds"], "intent.measurement.durationSeconds", 1
+        measurement["durationSeconds"], "run_config.measurement.durationSeconds", 1
     )
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         if (
             measurement["warmupIterations"] != 0
             or require_integer(
                 measurement["settlingDurationSeconds"],
-                "intent.measurement.settlingDurationSeconds",
+                "run_config.measurement.settlingDurationSeconds",
                 1,
             )
             < 1
@@ -378,7 +378,7 @@ def validate_request(request: dict[str, Any]) -> None:
     ):
         raise ContractError("unsupported RKNNLite measurement implementation contract")
 
-    validate_candidate(request["candidate"])
+    validate_candidate(run_config["delivery"])
 
 
 def validate_candidate(value: Any) -> None:
@@ -630,8 +630,8 @@ def cpu_stat() -> dict[str, int]:
     return values
 
 
-def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
-    cpu = intent["cpu"]
+def validate_cpu_contract(run_config: dict[str, Any]) -> tuple[str, list[int], str]:
+    cpu = run_config["cpu"]
     cgroup = current_cgroup_v2_directory()
     cpu_max = read_required_text(cgroup / "cpu.max", "cgroup CPU max")
     fields = cpu_max.split()
@@ -640,9 +640,9 @@ def validate_cpu_contract(intent: dict[str, Any]) -> tuple[str, list[int], str]:
     try:
         quota, period, expected = int(fields[0]), int(fields[1]), int(cpu["limit"])
     except ValueError as error:
-        raise ContractError("cgroup CPU quota or frozen limit is malformed") from error
+        raise ContractError("cgroup CPU quota or RunConfig limit is malformed") from error
     if quota < 1 or period < 1 or quota // period != expected or quota % period != 0:
-        raise ContractError("cgroup CPU quota does not match the frozen limit")
+        raise ContractError("cgroup CPU quota does not match the RunConfig limit")
     if not hasattr(os, "sched_getaffinity"):
         raise ContractError("process CPU affinity is unavailable")
     affinity = sorted(os.sched_getaffinity(0))
@@ -670,7 +670,7 @@ def percentile(samples: list[float], fraction: float) -> float:
 def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     if outputs is None:
         raise ContractError(
-            "runtime supplied no result for the frozen batch; "
+            "runtime supplied no result for the configured batch; "
             "the artifact does not provide this declared batch size"
         )
     if not outputs:
@@ -680,7 +680,7 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
         shape = list(output.shape)
         if output.size < 1 or not shape or shape[0] != batch:
             raise ContractError(
-                "inference output shape does not preserve the frozen batch"
+                "inference output shape does not preserve the configured batch"
             )
         shapes.append(shape)
     return shapes
@@ -799,12 +799,12 @@ def observe_host_contract(
     }
 
 
-def derived_contract(intent: dict[str, Any]) -> dict[str, Any]:
-    cpu = intent["cpu"]
+def derived_contract(run_config: dict[str, Any]) -> dict[str, Any]:
+    cpu = run_config["cpu"]
     return {
         "schemaVersion": DERIVED_CONTRACT_SCHEMA,
-        "backend": intent["state"]["backend"],
-        "nodeSnapshot": intent["targetNode"],
+        "backend": run_config["state"]["backend"],
+        "nodeSnapshot": run_config["targetNode"],
         "cpu": {
             "budgetSource": (
                 "ProfilingRunMeasurementCPUQuota"
@@ -813,7 +813,7 @@ def derived_contract(intent: dict[str, Any]) -> dict[str, Any]:
             ),
             "exclusivityClaimed": cpu["exclusivityClaimed"],
             "limit": cpu["limit"],
-            "observedAllocatable": intent["targetNode"]["allocatableCPU"],
+            "observedAllocatable": run_config["targetNode"]["allocatableCPU"],
             "policy": cpu["policy"],
             "policyVersion": cpu["policyVersion"],
         },
@@ -853,8 +853,8 @@ def execute_idle(
     cpuset: str,
     model_load_completed_at: str,
 ) -> dict[str, Any]:
-    intent = request["intent"]
-    state, measurement = intent["state"], intent["measurement"]
+    run_config = request["runConfig"]
+    state, measurement = run_config["state"], run_config["measurement"]
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
             Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
@@ -915,7 +915,7 @@ def execute_idle(
         "cpuContract": runtime_cpu_evidence(
             cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after
         ),
-        "derivedExecutionContract": derived_contract(intent),
+        "derivedExecutionContract": derived_contract(run_config),
     }
     log(
         "result",
@@ -927,19 +927,19 @@ def execute_idle(
 
 def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, Any]:
     validate_request(request)
-    intent = request["intent"]
-    state, measurement = intent["state"], intent["measurement"]
-    candidate = request["candidate"]
+    run_config = request["runConfig"]
+    state, measurement = run_config["state"], run_config["measurement"]
+    candidate = run_config["delivery"]
     model_path = Path(request["modelPath"])
     validate_regular_file(model_path, "RKNN artifact")
     if state["hostContract"] != candidate["hostContract"]:
-        raise ContractError("candidate host contract does not match the frozen intent")
+        raise ContractError("candidate host contract does not match the RunConfig")
     architecture = platform.machine()
     if normalize_architecture(architecture) != normalize_architecture(
-        intent["targetNode"]["architecture"]
+        run_config["targetNode"]["architecture"]
     ):
-        raise ContractError("runtime architecture does not match the frozen Node")
-    cpu_max, affinity, cpuset = validate_cpu_contract(intent)
+        raise ContractError("runtime architecture does not match the RunConfig Node")
+    cpu_max, affinity, cpuset = validate_cpu_contract(run_config)
     evidence = observe_host_contract(candidate, measurement["batch"])
 
     rknn = rknn_type()
@@ -980,7 +980,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             )
         log(
             "warmup",
-            "starting frozen RKNNLite warm-up",
+            "starting configured RKNNLite warm-up",
             iterations=measurement["warmupIterations"],
             inputShape=shape,
         )
@@ -1066,7 +1066,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
             "cpuContract": runtime_cpu_evidence(
                 cpu_max, affinity, cpuset, process_cpu_seconds, stat_before, stat_after
             ),
-            "derivedExecutionContract": derived_contract(intent),
+            "derivedExecutionContract": derived_contract(run_config),
             "repetitionResults": [
                 {
                     "repetition": 1,
@@ -1094,7 +1094,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         }
         log(
             "result",
-            "completed frozen RKNNLite measurement",
+            "completed RKNNLite measurement",
             inferences=len(samples),
             elapsedSeconds=round(measurement_elapsed, 3),
         )

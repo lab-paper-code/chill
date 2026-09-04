@@ -142,35 +142,35 @@ func (r RuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 }
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
-func ValidateRuntime(intent Intent, podUID string, result RuntimeResult) error {
+func ValidateRuntime(config RunConfig, podUID string, result RuntimeResult) error {
 	if result.SchemaVersion != RuntimeResultSchemaVersion {
 		return fmt.Errorf("unsupported runtime result schemaVersion %q", result.SchemaVersion)
 	}
-	return validateBoundRuntime(intent, podUID, result)
+	return validateBoundRuntime(config, podUID, result)
 }
 
 //nolint:gocyclo // Runtime validation is an explicit ordered checklist over one immutable evidence record.
-func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) error {
+func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult) error {
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
 		{"Pod UID", podUID, result.ExperimentID},
-		{"Node", intent.TargetNode.Name, result.NodeName},
-		{"model", intent.State.Model, result.Model},
-		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
-		{"backend", intent.State.Backend, result.Backend},
+		{"Node", config.TargetNode.Name, result.NodeName},
+		{"model", config.State.Model, result.Model},
+		{"runtime family", config.State.RuntimeFamily, result.Runtime},
+		{"backend", config.State.Backend, result.Backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
 			return fmt.Errorf("%s mismatch: wanted %q, got %q", check.name, check.want, check.got)
 		}
 	}
-	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(intent.TargetNode.Architecture) {
+	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(config.TargetNode.Architecture) {
 		return errors.New("runtime architecture does not match the frozen Node")
 	}
-	if result.BatchSize != intent.Measurement.Batch || result.WarmupIterations != intent.Measurement.WarmupIterations {
+	if result.BatchSize != config.Measurement.Batch || result.WarmupIterations != config.Measurement.WarmupIterations {
 		return errors.New("measurement protocol mismatch")
 	}
-	minimumElapsed := float64(intent.Measurement.DurationSeconds) - 0.5
+	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
 		result.MeasurementElapsedSeconds < minimumElapsed {
 		return errors.New("runtime measurement evidence is incomplete")
@@ -179,28 +179,28 @@ func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) er
 		return errors.New("runtime result must contain at least one repetition result")
 	}
 	if result.TargetDurationSeconds == nil ||
-		*result.TargetDurationSeconds != float64(intent.Measurement.DurationSeconds) {
+		*result.TargetDurationSeconds != float64(config.Measurement.DurationSeconds) {
 		return errors.New("runtime target duration does not match the measurement contract")
 	}
-	if !result.OutputValidation.Passed || result.OutputValidation.Method != intent.Measurement.OutputValidation ||
+	if !result.OutputValidation.Passed || result.OutputValidation.Method != config.Measurement.OutputValidation ||
 		len(result.OutputValidation.OutputShapes) == 0 {
 		return errors.New("output validation evidence mismatch")
 	}
 	for _, shape := range result.OutputValidation.OutputShapes {
-		if len(shape) == 0 || shape[0] != intent.Measurement.Batch {
+		if len(shape) == 0 || shape[0] != config.Measurement.Batch {
 			return errors.New("output shape batch mismatch")
 		}
 	}
-	if err := validateRuntimePathEvidence(intent, result); err != nil {
+	if err := validateRuntimePathEvidence(config, result); err != nil {
 		return err
 	}
-	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
+	if err := validateCPUQuota(config.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
+	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
 		return errors.New("derived contract identity mismatch")
 	}
-	if result.DerivedContract.Backend != intent.State.Backend {
+	if result.DerivedContract.Backend != config.State.Backend {
 		return errors.New("derived contract backend mismatch")
 	}
 	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" {
@@ -227,34 +227,34 @@ func validateBoundRuntime(intent Intent, podUID string, result RuntimeResult) er
 	return nil
 }
 
-func validateRuntimePathEvidence(intent Intent, result RuntimeResult) error {
+func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("effective CPU evidence is incomplete")
 	}
-	if IsSupportedCPUORTIntent(intent) {
-		if result.RKNN != nil || result.Provider != intent.State.Backend ||
-			!contains(result.AvailableProviders, intent.State.Backend) ||
+	if IsSupportedCPUORTRunConfig(config) {
+		if result.RKNN != nil || result.Provider != config.State.Backend ||
+			!contains(result.AvailableProviders, config.State.Backend) ||
 			(result.SchemaVersion == RuntimeResultSchemaVersion &&
-				result.DerivedContract.Provider != intent.State.Backend) {
+				result.DerivedContract.Provider != config.State.Backend) {
 			return errors.New("CPU ONNX Runtime backend evidence mismatch")
 		}
-		if result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads {
+		if result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
+			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
+			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads {
 			return errors.New("ORT thread evidence mismatch")
 		}
 		return nil
 	}
-	if !IsSupportedRKNNLiteIntent(intent) || result.SchemaVersion != RuntimeResultSchemaVersion ||
+	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != RuntimeResultSchemaVersion ||
 		result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
 		return errors.New("runtime result does not match an explicit supported path")
 	}
-	return validateRKNNRuntimeEvidence(intent, result.RKNN)
+	return validateRKNNRuntimeEvidence(config, result.RKNN)
 }
 
-func validateRKNNRuntimeEvidence(intent Intent, evidence *RKNNRuntimeEvidence) error {
+func validateRKNNRuntimeEvidence(config RunConfig, evidence *RKNNRuntimeEvidence) error {
 	if evidence == nil || !evidence.InitSucceeded || !evidence.LoadSucceeded ||
-		evidence.SelectedBatch != intent.Measurement.Batch ||
+		evidence.SelectedBatch != config.Measurement.Batch ||
 		evidence.CoreMask != RKNNLiteCoreMask || evidence.InputLayout != RKNNLiteInputLayout {
 		return errors.New("RKNN initialization, load, batch, core-mask, or input-layout evidence mismatch")
 	}

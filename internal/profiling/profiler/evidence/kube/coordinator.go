@@ -12,7 +12,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -26,13 +25,11 @@ type ExecutionFinalizer interface {
 
 var _ ExecutionFinalizer = (*evidence.Finalizer)(nil)
 
-// FinalizeObservationRequest contains values already frozen or selected by a
-// future ProfilingRun reconciler. The coordinator does not derive Run intent,
-// choose storage, or read Kubernetes objects itself.
+// FinalizeObservationRequest contains terminal Kubernetes facts. The exact
+// RunConfig is loaded from the worker's raw measurement, not supplied again by
+// the controller.
 type FinalizeObservationRequest struct {
 	Observation          Observation
-	Intent               profilingrun.Intent
-	CandidateReportBytes []byte
 	ReceiptContainerName string
 	FinalLocation        evidencestore.ObjectLocation
 	Actuation            *evidence.ActuationFacts
@@ -72,13 +69,11 @@ func (c *Coordinator) Finalize(
 	}
 
 	result, err := c.finalizer.Finalize(ctx, evidence.FinalizeRequest{
-		Intent:               request.Intent,
-		CandidateReportBytes: append([]byte(nil), request.CandidateReportBytes...),
-		RawReceipt:           receipt,
-		FinalLocation:        request.FinalLocation,
-		Terminal:             terminal,
-		Actuation:            request.Actuation,
-		FinalizedAt:          request.FinalizedAt,
+		RawReceipt:    receipt,
+		FinalLocation: request.FinalLocation,
+		Terminal:      terminal,
+		Actuation:     request.Actuation,
+		FinalizedAt:   request.FinalizedAt,
 	})
 	if err != nil {
 		return evidence.FinalizeResult{}, fmt.Errorf("finalize execution evidence: %w", err)

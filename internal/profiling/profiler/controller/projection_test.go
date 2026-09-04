@@ -97,11 +97,9 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		configure func(*edgev1alpha1.ProfilingRun) *batchv1.Job
 		want      profiler.Action
 	}{
-		{name: "freeze intent", configure: func(*edgev1alpha1.ProfilingRun) *batchv1.Job { return nil }, want: profiler.ActionFreezeIntent},
 		{
-			name: "create Job after intent is recorded",
+			name: "create Job from resolved RunConfig",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
-				run.Status.IntentFrozen = true
 				return nil
 			},
 			want: profiler.ActionCreateJob,
@@ -176,11 +174,7 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()
 			job := test.configure(run)
-			var observedIntent *profilingrun.Intent
-			if run.Status.IntentFrozen {
-				observedIntent = &intent
-			}
-			snapshot, err := ProjectSnapshot(run, observedIntent, job)
+			snapshot, err := ProjectSnapshot(run, &intent, job)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -284,13 +278,13 @@ func testRun() *edgev1alpha1.ProfilingRun {
 	}
 }
 
-func testFrozenIntent(t *testing.T) profilingrun.Intent {
+func testFrozenIntent(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
+	var intent profilingrun.RunConfig
 	if err := json.Unmarshal(payload, &intent); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +292,6 @@ func testFrozenIntent(t *testing.T) profilingrun.Intent {
 }
 
 func recordIntentAndJob(run *edgev1alpha1.ProfilingRun) {
-	run.Status.IntentFrozen = true
 	run.Status.Job = &edgev1alpha1.ProfilingRunObjectReference{Name: "run-job", UID: "job-uid"}
 }
 

@@ -49,33 +49,33 @@ func TestProjectCurvePlanSpecRoundTripsThroughIntentValidation(t *testing.T) {
 	}
 	recorded := plan.Shared()
 	if err := validateCurvePlanIntent(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
-		t.Fatalf("validate active intent against projected plan: %v", err)
+		t.Fatalf("validate active RunConfig against projected plan: %v", err)
 	}
 	if err := validateCurvePlanIntent(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
-		t.Fatalf("validate idle intent against projected plan: %v", err)
+		t.Fatalf("validate idle RunConfig against projected plan: %v", err)
 	}
 }
 
 func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*profilingrun.Intent)
+		mutate func(*profilingrun.RunConfig)
 	}{
 		{
 			name: "artifact image",
-			mutate: func(idle *profilingrun.Intent) {
+			mutate: func(idle *profilingrun.RunConfig) {
 				idle.Images.Artifact = "different-artifact-image"
 			},
 		},
 		{
 			name: "Node architecture",
-			mutate: func(idle *profilingrun.Intent) {
+			mutate: func(idle *profilingrun.RunConfig) {
 				idle.TargetNode.Architecture = "different-architecture"
 			},
 		},
 		{
 			name: "Node allocatable CPU",
-			mutate: func(idle *profilingrun.Intent) {
+			mutate: func(idle *profilingrun.RunConfig) {
 				idle.TargetNode.AllocatableCPU = "different-allocatable-cpu"
 			},
 		},
@@ -137,22 +137,22 @@ func TestVerifiedCurvePlanIntentProjectionBindsObservableFacts(t *testing.T) {
 		},
 		PlannedBatchSizes: []int{1},
 	}
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 	drifted := active
 	drifted.Images.Artifact = "different"
-	if err := validateCurvePlanIntents(drifted, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("artifact-supply drift was accepted")
 	}
 	drifted = idle
 	drifted.TargetNode.UID = "other-node"
-	if err := validateCurvePlanIntents(active, drifted, "node-uid", "other-node", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(active, drifted, "node-uid", "other-node", shared); err == nil {
 		t.Fatal("Node drift was accepted")
 	}
 	drifted = idle
 	drifted.Candidate.ExecutionPath = "different-path"
-	if err := validateCurvePlanIntents(active, drifted, "node-uid", "node-uid", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(active, drifted, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("active/idle execution-path disagreement was accepted")
 	}
 }
@@ -199,33 +199,33 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
 		t.Fatalf("construct converter-free ORT plan: %v", err)
 	}
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 
 	idle.Measurement.Batch = 2
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted a non-canonical idle batch")
 	}
 	idle.Measurement.Batch = 1
 	active.Measurement.Batch = 3
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted an unplanned active batch")
 	}
 
 	shared.PlannedBatchSizes = []int{2, 4}
 	active.Measurement.Batch = 4
 	idle.Measurement.Batch = 2
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatalf("first planned batch size was not accepted as the idle witness: %v", err)
 	}
 	idle.Measurement.Batch = 1
-	if err := validateCurvePlanIntents(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted an idle batch before the first planned batch size")
 	}
 }
 
-func curvePlanIntent() profilingrun.Intent {
+func curvePlanIntent() profilingrun.RunConfig {
 	intent := admissionIntentWithWorkloadContract()
 	intent.Candidate = profilingrun.CandidateIdentity{
 		Inputs: profilingrun.CandidateReportInputs{

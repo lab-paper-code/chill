@@ -12,22 +12,22 @@ import (
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 )
 
-func writeBatchSaturationPreflight(
+func writeBatchEnergyOptimizationPreflight(
 	writer io.Writer,
 	output string,
-	preflight operatorconsole.BatchSaturationPreflight,
+	preflight operatorconsole.BatchEnergyOptimizationPreflight,
 ) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(preflight)
 	}
-	return writeBatchSaturationPreflightTable(writer, preflight)
+	return writeBatchEnergyOptimizationPreflightTable(writer, preflight)
 }
 
-func writeBatchSaturationPreflightTable(
+func writeBatchEnergyOptimizationPreflightTable(
 	writer io.Writer,
-	preflight operatorconsole.BatchSaturationPreflight,
+	preflight operatorconsole.BatchEnergyOptimizationPreflight,
 ) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	resolves := "no"
@@ -62,7 +62,7 @@ func writeBatchSaturationPreflightTable(
 	}
 	if len(preflight.Plan) != 0 {
 		if err := json.Unmarshal(preflight.Plan, &plan); err != nil {
-			return fmt.Errorf("decode BatchSaturation preflight plan: %w", err)
+			return fmt.Errorf("decode BatchEnergyOptimization preflight plan: %w", err)
 		}
 	}
 	_, err := fmt.Fprintf(table, "PLANNED_BATCH_SIZES\t%s\nARTIFACT\t%s\nEXECUTION_PATH\t%s\n"+

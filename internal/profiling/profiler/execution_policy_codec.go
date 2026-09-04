@@ -13,14 +13,14 @@ import (
 
 func FreezeConfiguredExecutionPolicy(
 	raw []byte,
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	source ExecutionPolicySource,
 ) (FrozenExecutionPolicy, error) {
 	if len(raw) == 0 {
 		return FrozenExecutionPolicy{}, errors.New("execution-policy catalog is empty")
 	}
-	if err := intent.Validate(); err != nil {
-		return FrozenExecutionPolicy{}, fmt.Errorf("validate frozen Run intent: %w", err)
+	if err := config.Validate(); err != nil {
+		return FrozenExecutionPolicy{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
 	var catalog ExecutionPolicyCatalog
 	if err := yaml.UnmarshalStrict(raw, &catalog); err != nil {
@@ -56,11 +56,11 @@ func FreezeConfiguredExecutionPolicy(
 			)
 		}
 		seenSelectors[selector] = struct{}{}
-		if policy.ExecutionPath != intent.Candidate.ExecutionPath ||
-			policy.WorkloadMode != intent.Measurement.WorkloadMode {
+		if policy.ExecutionPath != config.Candidate.ExecutionPath ||
+			policy.WorkloadMode != config.Measurement.WorkloadMode {
 			continue
 		}
-		if policy.DeviceClass == intent.State.DeviceClass {
+		if policy.DeviceClass == config.State.DeviceClass {
 			copy := policy
 			exact = &copy
 		} else if policy.DeviceClass == "*" {
@@ -75,9 +75,9 @@ func FreezeConfiguredExecutionPolicy(
 	if selected == nil {
 		return FrozenExecutionPolicy{}, fmt.Errorf(
 			"no execution policy is configured for DeviceClass %q, path %q, and workload mode %q",
-			intent.State.DeviceClass,
-			intent.Candidate.ExecutionPath,
-			intent.Measurement.WorkloadMode,
+			config.State.DeviceClass,
+			config.Candidate.ExecutionPath,
+			config.Measurement.WorkloadMode,
 		)
 	}
 

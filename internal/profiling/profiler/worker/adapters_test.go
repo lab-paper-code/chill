@@ -85,7 +85,7 @@ func TestORTCPURuntimeDecodesIdleResultByFrozenMode(t *testing.T) {
 func TestORTCPURequestMatchesPythonContract(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		intent profilingrun.Intent
+		intent profilingrun.RunConfig
 	}{
 		{name: "active", intent: testIntent(t)},
 		{name: "idle", intent: testIdleIntent(t)},
@@ -231,104 +231,6 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	if sealed.Source.NodeName != result.Source.NodeName {
 		t.Fatalf("sealed metric result was changed through a detached record: %#v", sealed)
 	}
-}
-
-func TestLoadVerifiedIntentValidatesStructuredIntent(t *testing.T) {
-	intent := testIntent(t)
-	payload, err := intent.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "intent.json")
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := LoadVerifiedIntent(path, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loadedIntent, err := loaded.Record()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loadedIntent.State != intent.State {
-		t.Fatalf("loaded intent drifted: %#v", loaded)
-	}
-	loadedIntent.TargetNode.Name = mutatedCopyName
-	sealedIntent, err := loaded.Record()
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := sealedIntent.TargetNode
-	if target != intent.TargetNode {
-		t.Fatalf("sealed intent was changed through a detached snapshot: %#v", target)
-	}
-}
-
-func TestLoadVerifiedIntentAcceptsProjectedConfigMapSymlink(t *testing.T) {
-	intent := testIntent(t)
-	payload, err := intent.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	directory := t.TempDir()
-	revision := filepath.Join(directory, "..2026_07_16_00_00_00")
-	if err := os.Mkdir(revision, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(revision, "intent.json"), payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Base(revision), filepath.Join(directory, "..data")); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(directory, "intent.json")
-	if err := os.Symlink(filepath.Join("..data", "intent.json"), path); err != nil {
-		t.Fatal(err)
-	}
-
-	loaded, err := LoadVerifiedIntent(path, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loadedIntent, err := loaded.Record()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loadedIntent.State != intent.State {
-		t.Fatalf("loaded projected intent drifted: %#v", loaded)
-	}
-}
-
-func TestLoadVerifiedCandidateReportBindsProjectedSemantics(t *testing.T) {
-	intent := testIntent(t)
-	payload, err := os.ReadFile("../controller/testdata/candidate-report.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	directory := t.TempDir()
-	revision := filepath.Join(directory, "..2026_08_05_00_00_00")
-	if err := os.Mkdir(revision, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(revision, "candidate-report.json"), payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Base(revision), filepath.Join(directory, "..data")); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(directory, "candidate-report.json")
-	if err := os.Symlink(filepath.Join("..data", "candidate-report.json"), path); err != nil {
-		t.Fatal(err)
-	}
-	verified, err := LoadVerifiedCandidateReport(path, 1<<20, testVerifiedIntent(t, intent))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if delivery := verified.RuntimeDelivery(); delivery.HostContract != nil || delivery.ArtifactCapability != nil {
-		t.Fatalf("CPU candidate exposed accelerator delivery: %#v", delivery)
-	}
-
 }
 
 func TestRKNNLiteRuntimeUsesVerifiedDeliveryForActiveAndIdle(t *testing.T) {
@@ -553,14 +455,14 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if resultPath == "" {
 		os.Exit(12)
 	}
-	if request.ScheduledNodeName != request.Intent.TargetNode.Name {
+	if request.ScheduledNodeName != request.RunConfig.TargetNode.Name {
 		os.Exit(11)
 	}
 	var result any
 	if mode == rknnIdleSuccessTestMode {
-		result = idleRuntimeResult(request.Intent, request.PodUID)
+		result = idleRuntimeResult(request.RunConfig, request.PodUID)
 	} else {
-		result = runtimeResult(request.Intent, request.PodUID)
+		result = runtimeResult(request.RunConfig, request.PodUID)
 	}
 	if mode == "unknown-field" {
 		payload, marshalErr := json.Marshal(result)
@@ -597,7 +499,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 	}
 	var result any
 	if mode == "idle-success" {
-		idle := idleRuntimeResult(request.Intent, request.PodUID)
+		idle := idleRuntimeResult(request.RunConfig, request.PodUID)
 		idle.Architecture = "aarch64"
 		idle.RuntimeVersion = "2.3.2"
 		idle.Provider = ""
@@ -609,7 +511,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 		idle.RKNN = testRKNNEvidence()
 		result = idle
 	} else {
-		active := runtimeResult(request.Intent, request.PodUID)
+		active := runtimeResult(request.RunConfig, request.PodUID)
 		active.Architecture = "aarch64"
 		active.RuntimeVersion = "2.3.2"
 		active.Provider = ""
@@ -676,7 +578,7 @@ func newTestRKNNLiteRuntime(
 	return runtime
 }
 
-func testRKNNIntent(t *testing.T, idle bool) profilingrun.Intent {
+func testRKNNIntent(t *testing.T, idle bool) profilingrun.RunConfig {
 	t.Helper()
 	intent := testIntent(t)
 	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
@@ -686,6 +588,7 @@ func testRKNNIntent(t *testing.T, idle bool) profilingrun.Intent {
 	intent.State.Backend = profilingrun.RKNNLiteBackend
 	delivery := testRKNNDelivery()
 	intent.State.HostContract = delivery.HostContract
+	intent.Delivery = delivery
 	intent.TargetNode.Architecture = "arm64"
 	intent.CPU.ORTIntraOpThreads = 0
 	intent.CPU.ORTInterOpThreads = 0
@@ -747,12 +650,12 @@ func testRKNNEvidence() *profilingrun.RKNNRuntimeEvidence {
 	}
 }
 
-func runtimeRequest(intent profilingrun.Intent) RuntimeRequest {
-	verified, err := profilingrun.ValidateIntent(intent)
+func runtimeRequest(intent profilingrun.RunConfig) RuntimeRequest {
+	verified, err := profilingrun.ValidateRunConfig(intent)
 	if err != nil {
 		panic(err)
 	}
-	return RuntimeRequest{Intent: verified, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
+	return RuntimeRequest{RunConfig: verified, PodUID: testPodUID, ScheduledNodeName: intent.TargetNode.Name}
 }
 
 func newTestMetricResultFile(t *testing.T, path string, timeout time.Duration) *MetricResultFile {

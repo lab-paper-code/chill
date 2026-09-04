@@ -10,7 +10,7 @@
 ## Status
 
 Implemented. `NodeActuation` is a one-way transition with a single terminal
-outcome and no Run owner. A `BatchSaturation` creates and owns the transition
+outcome and no Run owner. A `BatchEnergyOptimization` creates and owns the transition
 that establishes its declared state. A non-fixed Run confirms its frozen state
 from the newest successful transition on its target Node, records that
 transition, and only then creates its Job. ADR 0018 owns the boundary.
@@ -81,9 +81,9 @@ The observed Node state is projected from the owned transition atom, not from
 reported status, so `Snapshot` keeps its property that a decision cannot depend
 on previously reported progress.
 
-One `BatchSaturation` measures one state. A two-state comparison is two objects.
-A campaign therefore emits at most one transition before its sweep and none
-during it, and `sequential-early-stop` has no state input. A failed transition
+One `BatchEnergyOptimization` measures one state. A two-state comparison is two
+objects. An optimizer therefore emits at most one transition before its search
+and none during it; the energy objective has no state-transition input. A failed transition
 produces the terminal campaign outcome `TransitionFailed`; the retry limit
 governs trials, not transitions.
 

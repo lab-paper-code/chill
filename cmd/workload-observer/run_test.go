@@ -26,7 +26,7 @@ import (
 
 func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	directory := t.TempDir()
-	writeWorkloadTestIntent(t, directory)
+	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)
 	pod := workloadTestPod()
 	client := fake.NewSimpleClientset(pod.DeepCopy())
@@ -98,7 +98,7 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 
 func TestExecuteRejectsPodOutsideFrozenNodeBeforeReady(t *testing.T) {
 	directory := t.TempDir()
-	writeWorkloadTestIntent(t, directory)
+	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)
 	pod := workloadTestPod()
 	pod.Spec.NodeName = "other-node"
@@ -160,32 +160,36 @@ func installPodObservationReactors(
 	})
 }
 
-func writeWorkloadTestIntent(t *testing.T, directory string) {
+func writeWorkloadTestRunConfig(t *testing.T, directory string) {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var intent profilingrun.Intent
-	if err := json.Unmarshal(payload, &intent); err != nil {
+	var runConfig profilingrun.RunConfig
+	if err := json.Unmarshal(payload, &runConfig); err != nil {
 		t.Fatal(err)
 	}
-	intent.SchemaVersion = profilingrun.SchemaVersion
-	intent.State.ArtifactPath = "/artifact/model.onnx"
-	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
-	intent.Workload = profilingrun.CurrentWorkloadContract()
-	canonical, err := intent.CanonicalJSON()
+	runConfig.SchemaVersion = profilingrun.RunConfigSchemaVersion
+	runConfig.State.ArtifactPath = "/artifact/model.onnx"
+	runConfig.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
+	runConfig.Workload = profilingrun.CurrentWorkloadContract()
+	canonical, err := runConfig.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "intent.json"), canonical, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "run-config.json"), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func workloadTestOptions(directory string) options {
+	payload, _ := os.ReadFile(filepath.Join(directory, "run-config.json"))
+	if len(payload) == 0 {
+		payload = []byte(`{}`)
+	}
 	return options{
-		intentPath:       filepath.Join(directory, "intent.json"),
+		runConfig:        string(payload),
 		readyPath:        filepath.Join(directory, "workload-ready"),
 		windowStartPath:  filepath.Join(directory, "workload-window-start"),
 		windowReadyPath:  filepath.Join(directory, "workload-window-ready"),

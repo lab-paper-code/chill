@@ -255,7 +255,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := Intent{
+	intent := RunConfig{
 		Candidate: CandidateIdentity{
 			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
 		},
@@ -351,7 +351,7 @@ func verifyRKNNCandidateAtBatch(
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := Intent{
+	intent := RunConfig{
 		Candidate: CandidateIdentity{
 			Inputs: report.Inputs, ExecutionPath: report.Selection.ExecutionPath, Verdict: report.Verdict,
 		},

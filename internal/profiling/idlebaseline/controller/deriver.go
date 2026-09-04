@@ -14,8 +14,8 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 
-type IntentLoader interface {
-	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.FrozenRun, error)
+type RunRecordLoader interface {
+	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.ResolvedRun, error)
 }
 
 type EvidenceLoader interface {
@@ -27,15 +27,15 @@ type EvidenceLoader interface {
 }
 
 type Deriver struct {
-	intents  IntentLoader
+	records  RunRecordLoader
 	evidence EvidenceLoader
 }
 
-func NewDeriver(intents IntentLoader, evidence EvidenceLoader) (*Deriver, error) {
-	if intents == nil || evidence == nil {
-		return nil, errors.New("idle baseline intent and evidence loaders are required")
+func NewDeriver(records RunRecordLoader, evidence EvidenceLoader) (*Deriver, error) {
+	if records == nil || evidence == nil {
+		return nil, errors.New("idle baseline Run-record and evidence loaders are required")
 	}
-	return &Deriver{intents: intents, evidence: evidence}, nil
+	return &Deriver{records: records, evidence: evidence}, nil
 }
 
 func (d *Deriver) Derive(
@@ -52,9 +52,9 @@ func (d *Deriver) Derive(
 			return profilederivation.IdleBaseline{}, nil,
 				fmt.Errorf("ProfilingRun %q is not an Accepted retained idle execution", run.Name)
 		}
-		frozen, err := d.intents.Load(ctx, run)
+		resolved, err := d.records.Load(ctx, run)
 		if err != nil {
-			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("load ProfilingRun %q frozen intent: %w", run.Name, err)
+			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("load ProfilingRun %q Job RunConfig: %w", run.Name, err)
 		}
 		identity := evidencestore.ObjectIdentity{
 			Store: run.Status.Evidence.Store, Key: run.Status.Evidence.Key, Size: run.Status.Evidence.Size,
@@ -63,7 +63,7 @@ func (d *Deriver) Derive(
 		if err != nil {
 			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("load ProfilingRun %q idle evidence: %w", run.Name, err)
 		}
-		result, trial, err := profileradmission.EvaluateIdle(verified, frozen.AdmissionPolicy)
+		result, trial, err := profileradmission.EvaluateIdle(verified, resolved.AdmissionPolicy)
 		if err != nil {
 			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}

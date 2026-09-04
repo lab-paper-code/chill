@@ -12,7 +12,7 @@ const testArtifactPath = "/artifact/model.onnx"
 
 func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 
@@ -42,7 +42,7 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 
 func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 	intent.Candidate.ExecutionPath = "tensorrt"
@@ -52,13 +52,8 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 }
 
 func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
-	intent := currentExecutionPolicyTestIntent(t)
+	intent, _ := rknnPreparationFixture(t)
 	intent.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
-	intent.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	intent.State.Backend = profilingrun.RKNNLiteBackend
-	intent.State.HostContract = &profilingrun.CandidateReportHostContract{}
-	intent.CPU.ORTIntraOpThreads = 0
-	intent.CPU.ORTInterOpThreads = 0
 	policy := testExecutionPolicySpec(intent.Measurement.WorkloadMode)
 	policy.ExecutionPath = profilingrun.RKNNLiteExecutionPath
 	raw, err := yaml.Marshal(ExecutionPolicyCatalog{
@@ -83,7 +78,7 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 
 func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 	intent.Measurement.WarmupIterations = 0
@@ -107,7 +102,7 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 
 func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testing.T) {
 	intent := testIntent(t)
-	intent.SchemaVersion = profilingrun.SchemaVersion
+	intent.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	intent.State.ArtifactPath = testArtifactPath
 	addWorkloadObservation(&intent)
 	intent.Metrics.DurationSeconds = 60_000
@@ -142,7 +137,7 @@ func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
 	}
 }
 
-func deriveConfiguredExecutionPlan(t *testing.T, intent profilingrun.Intent) (ExecutionPlan, error) {
+func deriveConfiguredExecutionPlan(t *testing.T, intent profilingrun.RunConfig) (ExecutionPlan, error) {
 	t.Helper()
 	policy, err := FreezeConfiguredExecutionPolicy(
 		executionPolicyCatalogFixture(t),
@@ -155,7 +150,7 @@ func deriveConfiguredExecutionPlan(t *testing.T, intent profilingrun.Intent) (Ex
 	return DeriveExecutionPlan(intent, policy)
 }
 
-func addWorkloadObservation(intent *profilingrun.Intent) {
+func addWorkloadObservation(intent *profilingrun.RunConfig) {
 	intent.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" +
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	intent.Workload = profilingrun.CurrentWorkloadContract()

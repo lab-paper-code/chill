@@ -34,21 +34,21 @@ func execute(
 	if coreClient == nil {
 		return errors.New("Kubernetes core client is required")
 	}
-	intent, err := worker.LoadVerifiedIntent(opts.intentPath, maximumIntentBytes)
+	runConfig, err := worker.ParseVerifiedRunConfig(opts.runConfig)
 	if err != nil {
 		return err
 	}
-	intentRecord, err := intent.Record()
+	runConfigRecord, err := runConfig.Record()
 	if err != nil {
 		return err
 	}
-	targetNode := intentRecord.TargetNode
+	targetNode := runConfigRecord.TargetNode
 	pod, err := coreClient.Pods(opts.podNamespace).Get(ctx, opts.podName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get workload-observer Pod: %w", err)
 	}
 	if string(pod.UID) != opts.podUID || pod.Spec.NodeName != targetNode.Name {
-		return errors.New("workload-observer Pod identity does not match the frozen Run intent")
+		return errors.New("workload-observer Pod identity does not match RunConfig")
 	}
 	owner := metav1.GetControllerOf(pod)
 	if owner == nil || owner.Kind != "Job" || string(owner.UID) == "" {

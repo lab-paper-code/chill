@@ -48,7 +48,7 @@ func TestBuildTransitionOwnsOneFrozenCampaignOperation(t *testing.T) {
 	}
 }
 
-func actuatedPreparedRun(parent *edgev1alpha1.BatchSaturation) profiler.PreparedRun {
+func actuatedPreparedRun(parent *edgev1alpha1.BatchEnergyOptimization) profiler.PreparedRun {
 	target := profilingrun.ActuatorTarget{
 		Kind:           profilingrun.ActuatorKindJetsonNVPModel,
 		JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 4},
@@ -69,7 +69,7 @@ func actuatedPreparedRun(parent *edgev1alpha1.BatchSaturation) profiler.Prepared
 		},
 	}
 	return profiler.PreparedRun{
-		Intent: profilingrun.Intent{
+		RunConfig: profilingrun.RunConfig{
 			State: profilingrun.ExecutionState{
 				DeviceClass: parent.Spec.State.Candidate.DeviceClass,
 				PowerMode:   parent.Spec.State.Candidate.PowerMode,

@@ -105,7 +105,3 @@ func welchSatterthwaite(components ...varianceComponent) (float64, *float64, err
 	}
 	return totalVariance, &degreesOfFreedom, nil
 }
-
-func equalWithinTolerance(left, right float64) bool {
-	return math.Abs(left-right) <= 1e-12*math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
-}

@@ -11,23 +11,23 @@ import (
 // projector. Runtime execution and immutable-store orchestration stay outside
 // this schema boundary.
 func canonicalRawMeasurement(
-	intent profilingrun.VerifiedIntent,
+	config profilingrun.VerifiedRunConfig,
 	podUID string,
 	runtime RuntimeMeasurement,
 	metrics metricobserver.VerifiedResult,
 	workload workloadobserver.VerifiedResult,
 ) ([]byte, error) {
-	intentRecord, err := intent.Record()
+	runConfig, err := config.Record()
 	if err != nil {
 		return nil, err
 	}
-	if intentRecord.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
+	if runConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		idle, err := runtime.idleResult()
 		if err != nil {
 			return nil, err
 		}
 		return evidence.ComposeIdleRawMeasurement(
-			intent, podUID, idle, metrics, workload,
+			config, podUID, idle, metrics, workload,
 		)
 	}
 	active, err := runtime.activeResult()
@@ -35,6 +35,6 @@ func canonicalRawMeasurement(
 		return nil, err
 	}
 	return evidence.ComposeRawMeasurement(
-		intent, podUID, active, metrics, workload,
+		config, podUID, active, metrics, workload,
 	)
 }

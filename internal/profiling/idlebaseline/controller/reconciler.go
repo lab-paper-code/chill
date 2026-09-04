@@ -205,7 +205,7 @@ func projectRuns(runs []edgev1alpha1.ProfilingRun) (
 func runTerminal(conditions []metav1.Condition) bool {
 	for _, condition := range conditions {
 		if condition.Status != metav1.ConditionFalse ||
-			(condition.Type != "IntentFrozen" && condition.Type != "ExecutionComplete" &&
+			(condition.Type != "ExecutionComplete" &&
 				condition.Type != edgev1alpha1.ProfilingRunConditionEvidenceVerified) {
 			continue
 		}

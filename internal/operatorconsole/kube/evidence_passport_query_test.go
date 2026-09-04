@@ -37,12 +37,12 @@ func TestEvidencePassportQueryFollowsRunReferenceAndPreservesSources(t *testing.
 		t.Fatalf("loader calls/reference = %d, %#v", loader.calls, loader.reference)
 	}
 	if !got.ReadAt.Equal(readAt.UTC()) || got.Run.UID != run.UID ||
-		!got.Run.Status.IntentFrozen || got.Measurement.PodUID != "pod-uid" {
+		got.Run.Status.ObservedGeneration != 1 || got.Measurement.PodUID != "pod-uid" {
 		t.Fatalf("passport = %#v", got)
 	}
 
-	got.Run.Status.IntentFrozen = false
-	if !run.Status.IntentFrozen {
+	got.Run.Status.ObservedGeneration = 2
+	if run.Status.ObservedGeneration != 1 {
 		t.Fatal("query returned a mutable alias of the Kubernetes object")
 	}
 }
@@ -173,8 +173,8 @@ func passportFixture() (
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: consoleTestNamespace, Name: "run", UID: "run-uid"},
 		Status: edgev1alpha1.ProfilingRunStatus{
-			IntentFrozen: true,
-			Job:          &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
+			ObservedGeneration: 1,
+			Job:                &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
 			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
 				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},

@@ -12,29 +12,24 @@ import (
 )
 
 const (
-	defaultIntentPath                      = "/etc/chill/run/intent.json"
-	defaultCandidateReportPath             = "/etc/chill/run/candidate-report.json"
-	defaultModelPath                       = "/model/model.onnx"
-	defaultRKNNLiteModelPath               = "/model/model.rknn"
-	defaultWorkspacePath                   = "/workspace"
-	defaultObserverReadyPath               = "/coordination/observer-ready"
-	defaultWorkloadObserverReadyPath       = "/coordination/workload-observer-ready"
-	defaultWorkloadWindowStartPath         = "/coordination/workload-window-start"
-	defaultMeasurementStartPath            = "/coordination/measurement-start"
-	defaultWorkloadWindowReadyPath         = "/coordination/workload-window-ready"
-	defaultMeasurementEndPath              = "/coordination/measurement-end"
-	defaultMetricResultPath                = "/coordination/metric-result.json"
-	defaultWorkloadResultPath              = "/coordination/workload-result.json"
-	defaultTerminationMessagePath          = "/dev/termination-log"
-	maximumIntentBytes               int64 = 1 << 20
-	maximumCandidateReportBytes            = 1 << 20
-	maximumReceiptBytes                    = 4 << 10
-	handoffPollInterval                    = 100 * time.Millisecond
+	defaultModelPath                 = "/model/model.onnx"
+	defaultRKNNLiteModelPath         = "/model/model.rknn"
+	defaultWorkspacePath             = "/workspace"
+	defaultObserverReadyPath         = "/coordination/observer-ready"
+	defaultWorkloadObserverReadyPath = "/coordination/workload-observer-ready"
+	defaultWorkloadWindowStartPath   = "/coordination/workload-window-start"
+	defaultMeasurementStartPath      = "/coordination/measurement-start"
+	defaultWorkloadWindowReadyPath   = "/coordination/workload-window-ready"
+	defaultMeasurementEndPath        = "/coordination/measurement-end"
+	defaultMetricResultPath          = "/coordination/metric-result.json"
+	defaultWorkloadResultPath        = "/coordination/workload-result.json"
+	defaultTerminationMessagePath    = "/dev/termination-log"
+	maximumReceiptBytes              = 4 << 10
+	handoffPollInterval              = 100 * time.Millisecond
 )
 
 type options struct {
-	intentPath              string
-	candidateReportPath     string
+	runConfig               string
 	podUID                  string
 	scheduledNodeName       string
 	modelPath               string
@@ -68,8 +63,6 @@ type options struct {
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
-	o.intentPath = defaultIntentPath
-	o.candidateReportPath = defaultCandidateReportPath
 	o.modelPath = defaultModelPath
 	o.workspacePath = defaultWorkspacePath
 	o.observerReadyPaths = []string{defaultObserverReadyPath, defaultWorkloadObserverReadyPath}
@@ -87,6 +80,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.secretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	o.sessionToken = os.Getenv("AWS_SESSION_TOKEN")
 
+	set.StringVar(&o.runConfig, "run-config", "", "exact RunConfig generated for this Job")
 	set.DurationVar(&o.attemptTimeout, "attempt-timeout", 0, "Job-derived total worker attempt timeout")
 	set.DurationVar(&o.observerReadyTimeout, "observer-ready-timeout", 0, "Job-derived observer readiness timeout")
 	set.DurationVar(&o.metricResultTimeout, "metric-result-timeout", 0, "Job-derived metric-result handoff timeout")
@@ -105,6 +99,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 
 func (o options) validate() error {
 	for _, field := range []struct{ name, value string }{
+		{name: "RunConfig", value: o.runConfig},
 		{name: "Pod UID", value: o.podUID},
 		{name: "scheduled Node name", value: o.scheduledNodeName},
 		{name: "store name", value: o.storeName},
@@ -123,7 +118,6 @@ func (o options) validate() error {
 		return errors.New("session token must not have surrounding whitespace")
 	}
 	for name, value := range map[string]string{
-		"intent": o.intentPath, "candidate report": o.candidateReportPath,
 		"model": o.modelPath, "workspace": o.workspacePath,
 		"workload-window-start": o.workloadWindowStartPath,
 		"measurement-start":     o.measurementStartPath, "measurement-end": o.measurementEndPath,

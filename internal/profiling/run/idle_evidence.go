@@ -51,33 +51,33 @@ func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
 }
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
-func ValidateIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
+func ValidateIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResult) error {
 	if result.SchemaVersion != IdleRuntimeResultSchemaVersion {
 		return fmt.Errorf("unsupported idle runtime result schemaVersion %q", result.SchemaVersion)
 	}
-	return validateBoundIdleRuntime(intent, podUID, result)
+	return validateBoundIdleRuntime(config, podUID, result)
 }
 
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
-func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeResult) error {
-	if intent.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
-		(!IsSupportedCPUORTIntent(intent) && !IsSupportedRKNNLiteIntent(intent)) {
-		return errors.New("idle runtime requires a supported model-loaded idle intent")
+func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResult) error {
+	if config.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
+		(!IsSupportedCPUORTRunConfig(config) && !IsSupportedRKNNLiteRunConfig(config)) {
+		return errors.New("idle runtime requires a supported model-loaded idle RunConfig")
 	}
 	checks := []struct{ name, want, got string }{
 		{"status", "Succeeded", result.Status},
 		{"Pod UID", podUID, result.PodUID},
-		{"Node", intent.TargetNode.Name, result.NodeName},
-		{"model", intent.State.Model, result.Model},
-		{"runtime family", intent.State.RuntimeFamily, result.Runtime},
-		{"backend", intent.State.Backend, result.Backend},
+		{"Node", config.TargetNode.Name, result.NodeName},
+		{"model", config.State.Model, result.Model},
+		{"runtime family", config.State.RuntimeFamily, result.Runtime},
+		{"backend", config.State.Backend, result.Backend},
 	}
 	for _, check := range checks {
 		if check.want != check.got {
 			return fmt.Errorf("%s mismatch: wanted %q, got %q", check.name, check.want, check.got)
 		}
 	}
-	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(intent.TargetNode.Architecture) {
+	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(config.TargetNode.Architecture) {
 		return errors.New("idle runtime architecture does not match the frozen Node")
 	}
 	if strings.TrimSpace(result.RuntimeVersion) == "" {
@@ -92,11 +92,11 @@ func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeRe
 		settlingCompleted.After(measurementStarted) {
 		return errors.New("idle model-load, settling, or measurement timestamp order is invalid")
 	}
-	minimumSettling := time.Duration(intent.Measurement.SettlingDurationSeconds) * time.Second
+	minimumSettling := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	if settlingCompleted.Sub(settlingStarted) < minimumSettling {
 		return errors.New("idle settling duration is shorter than the frozen contract")
 	}
-	minimumElapsed := float64(intent.Measurement.DurationSeconds) - 0.5
+	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementElapsedSeconds < minimumElapsed ||
 		measurementEnded.Sub(measurementStarted) < time.Duration(minimumElapsed*float64(time.Second)) {
 		return errors.New("idle measurement duration is shorter than the frozen contract")
@@ -107,40 +107,40 @@ func validateBoundIdleRuntime(intent Intent, podUID string, result IdleRuntimeRe
 	if !result.ModelResidentAtEnd {
 		return errors.New("idle runtime did not retain the model through the window")
 	}
-	if err := validateIdleRuntimePathEvidence(intent, result); err != nil {
+	if err := validateIdleRuntimePathEvidence(config, result); err != nil {
 		return err
 	}
-	if err := validateCPUQuota(intent.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
+	if err := validateCPUQuota(config.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.NodeSnapshot.UID != intent.TargetNode.UID {
+	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
 		return errors.New("idle derived contract identity mismatch")
 	}
-	if result.DerivedContract.Backend != intent.State.Backend {
+	if result.DerivedContract.Backend != config.State.Backend {
 		return errors.New("idle derived contract backend mismatch")
 	}
 	return nil
 }
 
-func validateIdleRuntimePathEvidence(intent Intent, result IdleRuntimeResult) error {
+func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("idle runtime CPU evidence is incomplete")
 	}
-	if IsSupportedCPUORTIntent(intent) {
-		if result.RKNN != nil || result.Provider != intent.State.Backend ||
-			!contains(result.AvailableProviders, intent.State.Backend) ||
+	if IsSupportedCPUORTRunConfig(config) {
+		if result.RKNN != nil || result.Provider != config.State.Backend ||
+			!contains(result.AvailableProviders, config.State.Backend) ||
 			(result.SchemaVersion == IdleRuntimeResultSchemaVersion &&
-				result.DerivedContract.Provider != intent.State.Backend) ||
-			result.CPUContract.ORTIntraOpThreads != intent.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != intent.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < intent.CPU.ORTIntraOpThreads {
+				result.DerivedContract.Provider != config.State.Backend) ||
+			result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
+			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
+			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads {
 			return errors.New("idle CPU ONNX Runtime evidence mismatch")
 		}
 		return nil
 	}
-	if !IsSupportedRKNNLiteIntent(intent) || result.SchemaVersion != IdleRuntimeResultSchemaVersion ||
+	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != IdleRuntimeResultSchemaVersion ||
 		result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
 		return errors.New("idle runtime result does not match an explicit supported path")
 	}
-	return validateRKNNRuntimeEvidence(intent, result.RKNN)
+	return validateRKNNRuntimeEvidence(config, result.RKNN)
 }

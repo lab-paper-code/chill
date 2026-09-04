@@ -19,7 +19,7 @@ artifact-declared batch-size set.
 
 The canonical ONNX artifact retains its symbolic batch axis. ONNX Runtime takes
 the batch size as a call argument, so that artifact does not impose a finite
-batch-size set. A batch-saturation campaign must still freeze the finite set it
+batch-size set. A batch-energy-optimization campaign must still freeze the finite set it
 will measure before it creates a Run.
 
 The input tensor contract is a property of each artifact. It is required to
@@ -36,7 +36,7 @@ Every derived artifact additionally declares the finite batch set fixed by its
 conversion as `ModelArtifact.derivation.declaredBatchSizes`. One execution
 path, artifact identity, and runtime path serve every declared batch size. A
 canonical artifact declares no derivation and no finite batch-size set;
-`BatchSaturation.spec.batchSizes` supplies its measurement-selected sweep.
+`BatchEnergyOptimization.spec.batchSizes` supplies its measurement-selected sweep.
 
 Exactly one source applies to a campaign. `spec.batchSizes` must be absent when
 the selected artifact has `DeclaredBatchSizes`, and it is required, positive,

@@ -17,7 +17,7 @@ func (f *KubernetesExecutionFinalizer) observeActuation(
 	run *edgev1alpha1.ProfilingRun,
 	prepared profiler.PreparedRun,
 ) (*profilerevidence.ActuationFacts, error) {
-	if prepared.Intent.Actuation == nil {
+	if prepared.RunConfig.Actuation == nil {
 		if run.Status.Actuation != nil {
 			return nil, errors.New("fixed Run has an unexpected NodeActuation reference")
 		}
@@ -31,7 +31,7 @@ func (f *KubernetesExecutionFinalizer) observeActuation(
 	if err := f.reader.Get(ctx, key, handoff); err != nil {
 		return nil, fmt.Errorf("get recorded NodeActuation %s: %w", key, err)
 	}
-	if err := validateFinalizedActuation(run, prepared.Intent, handoff); err != nil {
+	if err := validateFinalizedActuation(run, prepared.RunConfig, handoff); err != nil {
 		return nil, err
 	}
 	return &profilerevidence.ActuationFacts{
@@ -48,17 +48,17 @@ func (f *KubernetesExecutionFinalizer) observeActuation(
 
 func validateFinalizedActuation(
 	run *edgev1alpha1.ProfilingRun,
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	handoff *edgev1alpha1.NodeActuation,
 ) error {
-	if run == nil || handoff == nil || intent.Actuation == nil {
-		return errors.New("Run, actuated intent, and NodeActuation are required")
+	if run == nil || handoff == nil || config.Actuation == nil {
+		return errors.New("Run, actuated config, and NodeActuation are required")
 	}
 	if handoff.Namespace != run.Namespace || handoff.Name != run.Status.Actuation.Name ||
 		string(handoff.UID) != run.Status.Actuation.UID {
 		return errors.New("NodeActuation does not match the recorded confirming transition")
 	}
-	if err := validateConfirmingTransition(intent, handoff); err != nil {
+	if err := validateConfirmingTransition(config, handoff); err != nil {
 		return err
 	}
 	return nil

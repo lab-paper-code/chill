@@ -1050,7 +1050,7 @@ git commit -m "feat: convert one RKNN artifact for every declared batch size"
 - Modify: `docs/design/profiling/plans/05-batch-saturation-campaign.md`
 - Modify: `docs/design/profiling/plans/05a-sequential-batch-stop.md`
 - Modify: `docs/design/profiling/plans/06-execution-support-expansion.md`
-- Modify: `docs/design/profiling/plans/07-batch-saturation-control-path.md`
+- Modify: `docs/design/profiling/plans/07-batch-energy-optimization-control-path.md`
 
 **Interfaces:**
 - Consumes: the decisions implemented in Tasks 1-5

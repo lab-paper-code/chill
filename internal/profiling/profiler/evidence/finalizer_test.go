@@ -3,7 +3,6 @@ package evidence
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,7 @@ func TestFinalizerCreatesAndReusesExistingEvidence(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	record := validExecutionEvidence(t, intent, raw)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +72,7 @@ func TestFinalizerReportsConcurrentImmutableWinnerAsReused(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	record := validExecutionEvidence(t, intent, raw)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +104,7 @@ func TestFinalizerPreservesReadAfterCreateError(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	record := validExecutionEvidence(t, intent, raw)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +135,7 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 	intent := idleIntent(t)
 	raw := validIdleRaw(t, intent)
 	record := validIdleExecutionEvidence(t, intent, raw)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +161,7 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedExecution.Intent.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode ||
+	if loadedExecution.RunConfig.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode ||
 		loadedRaw.Runtime.InferenceCountAfterModelLoad != 0 || !loadedRaw.Runtime.ModelResidentAtEnd {
 		t.Fatalf("idle evidence schema drifted during finalization: %#v %#v", loadedExecution, loadedRaw)
 	}
@@ -174,7 +173,7 @@ func TestFinalizerAndLoaderPreserveIdleRawSchema(t *testing.T) {
 func TestFinalizerAndLoaderPreserveActuatedEvidenceSchema(t *testing.T) {
 	t.Parallel()
 	_, raw, record := validActuatedExecutionEvidence(t)
-	rawBytes, err := raw.CanonicalJSON(record.Intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +211,7 @@ func TestFinalizerFailsClosed(t *testing.T) {
 	intent := loadIntent(t)
 	raw := validRaw(t, intent)
 	record := validExecutionEvidence(t, intent, raw)
-	rawBytes, err := raw.CanonicalJSON(intent)
+	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,13 +275,7 @@ func TestFinalizerFailsClosed(t *testing.T) {
 }
 
 func requestFrom(record ExecutionEvidence) FinalizeRequest {
-	candidate, err := json.Marshal(record.CandidateReport)
-	if err != nil {
-		panic(err)
-	}
 	return FinalizeRequest{
-		Intent:               record.Intent,
-		CandidateReportBytes: candidate,
 		RawReceipt: evidencestore.Receipt{
 			SchemaVersion: evidencestore.ReceiptSchemaVersion,
 			Object:        record.RawMeasurement,

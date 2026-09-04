@@ -15,12 +15,13 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha6"
+const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha7"
 
 // RawMeasurement contains only facts available to the in-Job worker before it
 // exits. Kubernetes terminal state is deliberately excluded.
 type RawMeasurement struct {
 	SchemaVersion string                     `json:"schemaVersion"`
+	RunConfig     profilingrun.RunConfig     `json:"runConfig"`
 	PodUID        string                     `json:"podUID"`
 	Runtime       profilingrun.RuntimeResult `json:"runtime"`
 	Metrics       metricobserver.Result      `json:"metrics"`
@@ -47,11 +48,15 @@ func (m *RawMeasurement) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-func (m RawMeasurement) Validate(intent profilingrun.Intent) error {
-	return m.validate(intent)
+func (m RawMeasurement) Validate() error {
+	return m.validate()
 }
 
-func (m RawMeasurement) validate(intent profilingrun.Intent) error {
+func (m RawMeasurement) validate() error {
+	runConfig := m.RunConfig
+	if err := runConfig.Validate(); err != nil {
+		return fmt.Errorf("validate RunConfig: %w", err)
+	}
 	if m.SchemaVersion != RawMeasurementSchemaVersion {
 		return fmt.Errorf("unsupported raw measurement schemaVersion %q", m.SchemaVersion)
 	}
@@ -61,10 +66,10 @@ func (m RawMeasurement) validate(intent profilingrun.Intent) error {
 	if strings.TrimSpace(m.PodUID) == "" || strings.TrimSpace(m.PodUID) != m.PodUID {
 		return errors.New("raw measurement Pod UID is required")
 	}
-	if err := profilingrun.ValidateRuntime(intent, m.PodUID, m.Runtime); err != nil {
+	if err := profilingrun.ValidateRuntime(runConfig, m.PodUID, m.Runtime); err != nil {
 		return fmt.Errorf("validate runtime result: %w", err)
 	}
-	if err := validateMetricObservation(intent, m.Metrics); err != nil {
+	if err := validateMetricObservation(runConfig, m.Metrics); err != nil {
 		return err
 	}
 	runtimeStarted, runtimeEnded, err := m.Runtime.MeasurementWindow()
@@ -77,14 +82,14 @@ func (m RawMeasurement) validate(intent profilingrun.Intent) error {
 	if m.Workload == nil {
 		return errors.New("raw measurement workload observation is required")
 	}
-	if err := validateWorkloadObservation(intent, m.PodUID, runtimeStarted, runtimeEnded, *m.Workload); err != nil {
+	if err := validateWorkloadObservation(runConfig, m.PodUID, runtimeStarted, runtimeEnded, *m.Workload); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (m RawMeasurement) CanonicalJSON(intent profilingrun.Intent) ([]byte, error) {
-	if err := m.Validate(intent); err != nil {
+func (m RawMeasurement) CanonicalJSON() ([]byte, error) {
+	if err := m.Validate(); err != nil {
 		return nil, err
 	}
 	return m.canonicalJSON()
@@ -110,7 +115,7 @@ func (m RawMeasurement) canonicalJSON() ([]byte, error) {
 }
 
 func validateWorkloadObservation(
-	intent profilingrun.Intent,
+	config profilingrun.RunConfig,
 	podUID string,
 	runtimeStarted time.Time,
 	runtimeEnded time.Time,
@@ -119,7 +124,7 @@ func validateWorkloadObservation(
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("validate workload observation: %w", err)
 	}
-	if result.Target.NodeName != intent.TargetNode.Name || result.Target.NodeUID != intent.TargetNode.UID ||
+	if result.Target.NodeName != config.TargetNode.Name || result.Target.NodeUID != config.TargetNode.UID ||
 		result.Run.PodUID != podUID {
 		return errors.New("workload observation target or Run Pod identity mismatch")
 	}
@@ -129,14 +134,14 @@ func validateWorkloadObservation(
 	return nil
 }
 
-func validateMetricObservation(intent profilingrun.Intent, result metricobserver.Result) error {
+func validateMetricObservation(config profilingrun.RunConfig, result metricobserver.Result) error {
 	if err := result.Validate(); err != nil {
 		return fmt.Errorf("validate metric observation: %w", err)
 	}
 	if result.Source.ThermalMetrics == nil {
 		return errors.New("metric source thermal identity is required")
 	}
-	if !metricSourceMatches(result.Source, intent.Metrics) {
+	if !metricSourceMatches(result.Source, config.Metrics) {
 		return errors.New("metric source identity mismatch")
 	}
 	return nil

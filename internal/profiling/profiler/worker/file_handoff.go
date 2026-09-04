@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -71,51 +72,19 @@ func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.VerifiedRes
 	}
 }
 
-// LoadVerifiedIntent reads and validates one strict frozen-intent file before
-// any measurement-side effect is allowed.
-func LoadVerifiedIntent(path string, maxBytes int64) (profilingrun.VerifiedIntent, error) {
-	if !validAbsoluteFilePath(path) {
-		return profilingrun.VerifiedIntent{}, errors.New("intent path must be a clean absolute file path")
+// ParseVerifiedRunConfig validates the exact RunConfig embedded in the
+// Kubernetes Job before any measurement-side effect is allowed.
+func ParseVerifiedRunConfig(raw string) (profilingrun.VerifiedRunConfig, error) {
+	if strings.TrimSpace(raw) == "" {
+		return profilingrun.VerifiedRunConfig{}, errors.New("RunConfig is required")
 	}
-	if maxBytes < 1 {
-		return profilingrun.VerifiedIntent{}, errors.New("intent maximum size must be positive")
+	var runConfig profilingrun.RunConfig
+	if err := json.Unmarshal([]byte(raw), &runConfig); err != nil {
+		return profilingrun.VerifiedRunConfig{}, fmt.Errorf("decode RunConfig: %w", err)
 	}
-	var intent profilingrun.Intent
-	if err := decodeProjectedJSONFile(path, maxBytes, &intent); err != nil {
-		return profilingrun.VerifiedIntent{}, fmt.Errorf("read frozen intent file: %w", err)
-	}
-	verified, err := profilingrun.ValidateIntent(intent)
+	verified, err := profilingrun.ValidateRunConfig(runConfig)
 	if err != nil {
-		return profilingrun.VerifiedIntent{}, fmt.Errorf("validate frozen intent file: %w", err)
-	}
-	return verified, nil
-}
-
-// LoadVerifiedCandidateReport reads the exact projected candidate report and
-// verifies it once against the already-frozen intent. Only the sealed result
-// crosses into runtime construction.
-func LoadVerifiedCandidateReport(
-	path string,
-	maxBytes int64,
-	intent profilingrun.VerifiedIntent,
-) (profilingrun.VerifiedCandidateReport, error) {
-	if !validAbsoluteFilePath(path) {
-		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report path must be a clean absolute file path")
-	}
-	if maxBytes < 1 {
-		return profilingrun.VerifiedCandidateReport{}, errors.New("candidate report maximum size must be positive")
-	}
-	intentValue, err := intent.Record()
-	if err != nil {
-		return profilingrun.VerifiedCandidateReport{}, err
-	}
-	payload, err := readProjectedFile(path, maxBytes)
-	if err != nil {
-		return profilingrun.VerifiedCandidateReport{}, fmt.Errorf("read candidate report file: %w", err)
-	}
-	verified, err := profilingrun.VerifyCandidateReport(payload, intentValue)
-	if err != nil {
-		return profilingrun.VerifiedCandidateReport{}, fmt.Errorf("verify candidate report file: %w", err)
+		return profilingrun.VerifiedRunConfig{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
 	return verified, nil
 }
@@ -239,44 +208,6 @@ func decodeJSONFile(path string, maxBytes int64, target any) error {
 		return errors.New("handoff path changed while opening")
 	}
 	return decodeOpenedJSONFile(file, maxBytes, target)
-}
-
-// decodeProjectedJSONFile follows a Kubernetes projected-volume symlink, then
-// verifies and decodes the regular file held by the opened descriptor.
-func decodeProjectedJSONFile(path string, maxBytes int64, target any) error {
-	payload, err := readProjectedFile(path, maxBytes)
-	if err != nil {
-		return err
-	}
-	return decodeJSON(payload, target)
-}
-
-func readProjectedFile(path string, maxBytes int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		_ = file.Close()
-		return nil, errors.New("projected input target is not a regular file")
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(file, maxBytes+1))
-	closeErr := file.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if int64(len(payload)) > maxBytes {
-		return nil, fmt.Errorf("handoff file exceeds %d-byte limit", maxBytes)
-	}
-	return payload, nil
 }
 
 func decodeOpenedJSONFile(file *os.File, maxBytes int64, target any) error {

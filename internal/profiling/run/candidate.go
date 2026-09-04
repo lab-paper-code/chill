@@ -139,7 +139,7 @@ type CandidateReportRuntimeAccess struct {
 }
 
 // VerifiedCandidateReport is constructed only after one decoded report has
-// been matched semantically to a frozen intent. Downstream delivery code
+// been matched semantically to a RunConfig. Downstream delivery code
 // consumes its copied projection instead of decoding or validating it again.
 type VerifiedCandidateReport struct {
 	report CandidateReport
@@ -185,16 +185,23 @@ type CandidateRuntimeDelivery struct {
 }
 
 func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
+	return r.report.RuntimeDelivery()
+}
+
+// RuntimeDelivery returns only the concrete material required to execute the
+// selected model variant. It is copied into RunConfig so execution no longer
+// depends on a retained candidate-report document.
+func (r CandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	delivery := CandidateRuntimeDelivery{}
-	if r.report.ArtifactCapability != nil {
-		capability := *r.report.ArtifactCapability
+	if r.ArtifactCapability != nil {
+		capability := *r.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), capability.DeclaredBatchSizes...)
 		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
 		delivery.ArtifactCapability = &capability
 	}
-	delivery.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
-	if r.report.HostContract != nil {
-		contract := *r.report.HostContract
+	delivery.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.RuntimePackages...)
+	if r.HostContract != nil {
+		contract := *r.HostContract
 		contract.Libraries = append([]CandidateReportHostLibrary(nil), contract.Libraries...)
 		contract.Devices = append([]CandidateReportHostDevice(nil), contract.Devices...)
 		if contract.Platform != nil {
@@ -203,8 +210,8 @@ func (r VerifiedCandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 		}
 		delivery.HostContract = &contract
 	}
-	if r.report.RuntimeAccess != nil {
-		access := *r.report.RuntimeAccess
+	if r.RuntimeAccess != nil {
+		access := *r.RuntimeAccess
 		access.SupplementalGroups = append([]int64(nil), access.SupplementalGroups...)
 		delivery.RuntimeAccess = &access
 	}
@@ -431,29 +438,29 @@ func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error
 	return nil
 }
 
-func VerifyCandidateReport(payload []byte, intent Intent) (VerifiedCandidateReport, error) {
+func VerifyCandidateReport(payload []byte, config RunConfig) (VerifiedCandidateReport, error) {
 	report, err := DecodeCandidateReport(payload)
 	if err != nil {
 		return VerifiedCandidateReport{}, err
 	}
-	return VerifyCandidateReportRecord(report, intent)
+	return VerifyCandidateReportRecord(report, config)
 }
 
-func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (VerifiedCandidateReport, error) {
+func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (VerifiedCandidateReport, error) {
 	if report.SchemaVersion != CandidateReportSchemaVersion {
 		return VerifiedCandidateReport{}, fmt.Errorf("unsupported candidate report schemaVersion %q", report.SchemaVersion)
 	}
 	if err := validateInternalCandidateReport(report); err != nil {
 		return VerifiedCandidateReport{}, err
 	}
-	if intent.State.RuntimeFamily == RKNNLiteRuntimeFamily {
+	if config.State.RuntimeFamily == RKNNLiteRuntimeFamily {
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability is required")
 		}
 		if len(report.ArtifactCapability.InputSampleShape) == 0 {
 			return VerifiedCandidateReport{}, errors.New("candidate report artifact input shape is required")
 		}
-		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(intent.Measurement.Batch)) {
+		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(config.Measurement.Batch)) {
 			return VerifiedCandidateReport{}, errors.New(
 				"candidate RKNN artifact does not declare the measurement batch as a supported batch size",
 			)
@@ -466,39 +473,39 @@ func VerifyCandidateReportRecord(report CandidateReport, intent Intent) (Verifie
 		}
 	}
 	checks := []struct{ name, want, got string }{
-		{"verdict", intent.Candidate.Verdict, report.Verdict},
-		{"ModelSpec name", intent.State.Model, report.Inputs.ModelSpec.Name},
-		{"DeviceClass name", intent.State.DeviceClass, report.Inputs.DeviceClass.Name},
-		{"runtime image", intent.Images.Runtime, report.Inputs.RuntimeDeclaration.Image},
-		{"execution path", intent.Candidate.ExecutionPath, report.Selection.ExecutionPath},
-		{"artifact", intent.State.Artifact, report.Selection.Artifact},
+		{"verdict", config.Candidate.Verdict, report.Verdict},
+		{"ModelSpec name", config.State.Model, report.Inputs.ModelSpec.Name},
+		{"DeviceClass name", config.State.DeviceClass, report.Inputs.DeviceClass.Name},
+		{"runtime image", config.Images.Runtime, report.Inputs.RuntimeDeclaration.Image},
+		{"execution path", config.Candidate.ExecutionPath, report.Selection.ExecutionPath},
+		{"artifact", config.State.Artifact, report.Selection.Artifact},
 	}
 	checks = append(checks,
-		struct{ name, want, got string }{"power mode", intent.State.PowerMode, report.Selection.PowerMode},
-		struct{ name, want, got string }{"artifact image", intent.Images.Artifact, report.ArtifactSupply.Image},
-		struct{ name, want, got string }{"artifact supply path", intent.State.ArtifactPath, report.ArtifactSupply.Path},
-		struct{ name, want, got string }{"DeviceClass architecture", intent.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
-		struct{ name, want, got string }{"artifact architecture", intent.TargetNode.Architecture, report.ArtifactSupply.Architecture},
-		struct{ name, want, got string }{"metric-observer image", intent.Images.MetricObserver, report.MetricObserverImage},
+		struct{ name, want, got string }{"power mode", config.State.PowerMode, report.Selection.PowerMode},
+		struct{ name, want, got string }{"artifact image", config.Images.Artifact, report.ArtifactSupply.Image},
+		struct{ name, want, got string }{"artifact supply path", config.State.ArtifactPath, report.ArtifactSupply.Path},
+		struct{ name, want, got string }{"DeviceClass architecture", config.TargetNode.Architecture, report.DeviceClassFacts.Architecture},
+		struct{ name, want, got string }{"artifact architecture", config.TargetNode.Architecture, report.ArtifactSupply.Architecture},
+		struct{ name, want, got string }{"metric-observer image", config.Images.MetricObserver, report.MetricObserverImage},
 	)
 	for _, check := range checks {
 		if check.want != check.got {
 			return VerifiedCandidateReport{}, fmt.Errorf("candidate %s mismatch", check.name)
 		}
 	}
-	if !reflect.DeepEqual(intent.Candidate.Inputs, report.Inputs) {
-		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match Run intent")
+	if !reflect.DeepEqual(config.Candidate.Inputs, report.Inputs) {
+		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match RunConfig")
 	}
-	if !reflect.DeepEqual(intent.State.HostContract, report.HostContract) {
-		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match Run intent")
+	if !reflect.DeepEqual(config.State.HostContract, report.HostContract) {
+		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match RunConfig")
 	}
-	if intent.Actuation == nil {
+	if config.Actuation == nil {
 		if report.Selection.Actuator != nil {
-			return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match fixed intent")
+			return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match fixed RunConfig")
 		}
 	} else if report.Selection.Actuator == nil ||
-		!actuatorTargetsEqual(*report.Selection.Actuator, intent.Actuation.Actuator) {
-		return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match Run intent")
+		!actuatorTargetsEqual(*report.Selection.Actuator, config.Actuation.Actuator) {
+		return VerifiedCandidateReport{}, errors.New("candidate actuator target does not match RunConfig")
 	}
 	return VerifiedCandidateReport{report: report}, nil
 }
@@ -529,7 +536,7 @@ func actuatorTargetsEqual(left, right ActuatorTarget) bool {
 	}
 }
 
-func ValidateCandidateReport(payload []byte, intent Intent) error {
-	_, err := VerifyCandidateReport(payload, intent)
+func ValidateCandidateReport(payload []byte, config RunConfig) error {
+	_, err := VerifyCandidateReport(payload, config)
 	return err
 }
