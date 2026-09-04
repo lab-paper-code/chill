@@ -26,11 +26,12 @@ def run_schedule(
     requests: Sequence[ScheduledRequest],
     submit: Callable[[ScheduledRequest, bool], None],
     *,
+    start_ns: int,
     delay_tolerance_ns: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Submit each request at its offset from one monotonic start time."""
+    """Submit each request at its offset from the shared monotonic start."""
 
     if delay_tolerance_ns < 0:
         raise ValueError("delay_tolerance_ns must be non-negative")
@@ -41,7 +42,6 @@ def run_schedule(
             raise ValueError("requests must be ordered by scheduled_offset_ns")
         previous_offset_ns = request.scheduled_offset_ns
 
-    start_ns = clock_ns()
     for request in requests:
         scheduled_ns = start_ns + request.scheduled_offset_ns
         remaining_ns = scheduled_ns - clock_ns()

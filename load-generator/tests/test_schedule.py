@@ -39,6 +39,7 @@ class RunScheduleTest(unittest.TestCase):
             lambda request, delayed: submitted.append(
                 (request.request_id, request.item_count, clock.read(), delayed)
             ),
+            start_ns=clock.read(),
             delay_tolerance_ns=1_000_000,
             clock_ns=clock.read,
             sleep=clock.sleep,
@@ -53,20 +54,17 @@ class RunScheduleTest(unittest.TestCase):
             submitted,
         )
 
-    def test_marks_a_request_that_misses_its_schedule(self) -> None:
+    def test_marks_a_request_delayed_against_the_shared_start(self) -> None:
         clock = FakeClock()
         submitted = []
 
-        def oversleep(seconds: float) -> None:
-            clock.sleep(seconds)
-            clock.now_ns += 2_000_000
-
         run_schedule(
-            [ScheduledRequest("request-1", 1_000_000_000, 1)],
+            [ScheduledRequest("request-1", 0, 1)],
             lambda request, delayed: submitted.append(delayed),
+            start_ns=clock.read() - 2_000_000,
             delay_tolerance_ns=1_000_000,
             clock_ns=clock.read,
-            sleep=oversleep,
+            sleep=clock.sleep,
         )
 
         self.assertEqual([True], submitted)
@@ -82,6 +80,7 @@ class RunScheduleTest(unittest.TestCase):
             run_schedule(
                 requests,
                 lambda request, delayed: submitted.append(request),
+                start_ns=0,
                 delay_tolerance_ns=1_000_000,
             )
 
