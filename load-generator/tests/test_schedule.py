@@ -36,21 +36,40 @@ class RunScheduleTest(unittest.TestCase):
 
         run_schedule(
             requests,
-            lambda request: submitted.append(
-                (request.request_id, request.item_count, clock.read())
+            lambda request, delayed: submitted.append(
+                (request.request_id, request.item_count, clock.read(), delayed)
             ),
+            delay_tolerance_ns=1_000_000,
             clock_ns=clock.read,
             sleep=clock.sleep,
         )
 
         self.assertEqual(
             [
-                ("request-1", 1, 1_000_000_000),
-                ("request-2", 8, 3_000_000_000),
-                ("request-3", 4, 3_000_000_000),
+                ("request-1", 1, 1_000_000_000, False),
+                ("request-2", 8, 3_000_000_000, False),
+                ("request-3", 4, 3_000_000_000, False),
             ],
             submitted,
         )
+
+    def test_marks_a_request_that_misses_its_schedule(self) -> None:
+        clock = FakeClock()
+        submitted = []
+
+        def oversleep(seconds: float) -> None:
+            clock.sleep(seconds)
+            clock.now_ns += 2_000_000
+
+        run_schedule(
+            [ScheduledRequest("request-1", 1_000_000_000, 1)],
+            lambda request, delayed: submitted.append(delayed),
+            delay_tolerance_ns=1_000_000,
+            clock_ns=clock.read,
+            sleep=oversleep,
+        )
+
+        self.assertEqual([True], submitted)
 
     def test_rejects_an_unordered_schedule_before_submission(self) -> None:
         submitted = []
@@ -60,7 +79,11 @@ class RunScheduleTest(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, "ordered"):
-            run_schedule(requests, submitted.append)
+            run_schedule(
+                requests,
+                lambda request, delayed: submitted.append(request),
+                delay_tolerance_ns=1_000_000,
+            )
 
         self.assertEqual([], submitted)
 

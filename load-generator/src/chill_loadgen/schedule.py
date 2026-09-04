@@ -24,12 +24,16 @@ class ScheduledRequest:
 
 def run_schedule(
     requests: Sequence[ScheduledRequest],
-    submit: Callable[[ScheduledRequest], None],
+    submit: Callable[[ScheduledRequest, bool], None],
     *,
+    delay_tolerance_ns: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Submit each request at its offset from one monotonic start time."""
+
+    if delay_tolerance_ns < 0:
+        raise ValueError("delay_tolerance_ns must be non-negative")
 
     previous_offset_ns = -1
     for request in requests:
@@ -39,7 +43,9 @@ def run_schedule(
 
     start_ns = clock_ns()
     for request in requests:
-        remaining_ns = start_ns + request.scheduled_offset_ns - clock_ns()
+        scheduled_ns = start_ns + request.scheduled_offset_ns
+        remaining_ns = scheduled_ns - clock_ns()
         if remaining_ns > 0:
             sleep(remaining_ns / 1_000_000_000)
-        submit(request)
+        delayed = clock_ns() - scheduled_ns > delay_tolerance_ns
+        submit(request, delayed)
