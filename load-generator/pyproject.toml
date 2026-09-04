@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chill-load-generator"
+version = "0.1.0"
+description = "Standalone open-loop inference workload generator for CHILL experiments"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+chill-loadgen = "chill_loadgen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
