@@ -5,10 +5,12 @@ A small Python project for generating external open-loop inference workloads.
 ## Workload model
 
 - schedule individual inference requests independently of responses;
-- send one logical inference item per request; and
-- record offered, sent, rejected, and completed requests separately.
+- allow each request to carry one or more inference items; and
+- record offered, sent, rejected, and completed counts at both request and item
+  granularity.
 
-The target cluster handles batching, routing, and power-mode decisions.
+The target cluster handles routing, power-mode decisions, and any additional
+server-side batching.
 
 ## Development
 
