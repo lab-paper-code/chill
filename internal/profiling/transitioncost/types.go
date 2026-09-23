@@ -128,13 +128,6 @@ type PowerReadFailure struct {
 	Message               string    `json:"message"`
 }
 
-// ReadyObservation is one observation of the selected serving workload's
-// existing request-readiness signal.
-type ReadyObservation struct {
-	ObservedAt time.Time `json:"observedAt"`
-	Ready      bool      `json:"ready"`
-}
-
 // ProcessIdentity is the exact serving process/container incarnation.
 type ProcessIdentity struct {
 	ContainerName string    `json:"containerName"`
@@ -143,7 +136,7 @@ type ProcessIdentity struct {
 	RestartCount  int32     `json:"restartCount"`
 }
 
-// ProcessObservation binds one serving-process observation to its timestamp.
+// ProcessObservation records a running process observed in a Ready Pod.
 type ProcessObservation struct {
 	ObservedAt time.Time       `json:"observedAt"`
 	Process    ProcessIdentity `json:"process"`
@@ -164,82 +157,34 @@ type RawObservation struct {
 
 	PowerSamples  []PowerSample      `json:"powerSamples"`
 	PowerFailures []PowerReadFailure `json:"powerFailures"`
-	Readiness     []ReadyObservation `json:"readiness"`
 
+	// PostTransitionProcess is the running process in the fresh Ready Pod whose
+	// receipt time is recorded by MarkerBrackets.ReadyProcessWitness.
 	PreTransitionProcess  *ProcessObservation `json:"preTransitionProcess"`
 	PostTransitionProcess *ProcessIdentity    `json:"postTransitionProcess"`
-}
-
-type acceptedRecord struct {
-	startedAt                  time.Time
-	completedAt                time.Time
-	boundaryMappingUncertainty time.Duration
-	tauMilliseconds            float64
-	transitionWallJoules       float64
-	targetIdleBaseline         IdleBaseline
-	etaJoules                  float64
-	servingSurvived            bool
-}
-
-type resultRecord struct {
-	verdict  Verdict
-	reason   Reason
-	detail   string
-	frozen   FrozenContract
-	raw      RawObservation
-	accepted *acceptedRecord
-}
-
-// Result is an opaque terminal classification. Only Derive can construct a
-// scientifically classified result.
-type Result struct {
-	record resultRecord
-}
-
-// Verdict returns the terminal scientific classification.
-func (r Result) Verdict() Verdict { return r.record.verdict }
-
-// Reason returns the stable terminal reason.
-func (r Result) Reason() Reason { return r.record.reason }
-
-// Detail returns diagnostic detail that is not part of the stable reason.
-func (r Result) Detail() string { return r.record.detail }
-
-// FrozenContract returns the immutable inputs retained with this result.
-func (r Result) FrozenContract() FrozenContract { return r.record.frozen }
-
-// RawObservation returns a copy of the factual evidence retained with this
-// result.
-func (r Result) RawObservation() RawObservation { return cloneRaw(r.record.raw) }
-
-// AcceptedObservation returns the derived values only for VerdictAccepted.
-func (r Result) AcceptedObservation() (Observation, bool) {
-	if r.record.accepted == nil {
-		return Observation{}, false
-	}
-	return Observation{record: *r.record.accepted}, true
 }
 
 // Observation is an opaque accepted observation. Its values always originate
 // from the common transition window verified by Derive.
 type Observation struct {
-	record acceptedRecord
+	record   FinalizedAcceptedObservationRecord
+	baseline IdleBaseline
 }
 
-func (o Observation) StartedAt() time.Time { return o.record.startedAt }
+func (o Observation) StartedAt() time.Time { return o.record.StartedAt }
 
-func (o Observation) CompletedAt() time.Time { return o.record.completedAt }
+func (o Observation) CompletedAt() time.Time { return o.record.CompletedAt }
 
 func (o Observation) BoundaryMappingUncertainty() time.Duration {
-	return o.record.boundaryMappingUncertainty
+	return time.Duration(o.record.BoundaryMappingUncertaintyMilliseconds) * time.Millisecond
 }
 
-func (o Observation) TauMilliseconds() float64 { return o.record.tauMilliseconds }
+func (o Observation) TauMilliseconds() float64 { return o.record.TauMilliseconds }
 
-func (o Observation) TransitionWallJoules() float64 { return o.record.transitionWallJoules }
+func (o Observation) TransitionWallJoules() float64 { return o.record.TransitionWallJoules }
 
-func (o Observation) TargetIdleBaseline() IdleBaseline { return o.record.targetIdleBaseline }
+func (o Observation) TargetIdleBaseline() IdleBaseline { return o.baseline }
 
-func (o Observation) EtaJoules() float64 { return o.record.etaJoules }
+func (o Observation) EtaJoules() float64 { return o.record.EtaJoules }
 
-func (o Observation) ServingSurvived() bool { return o.record.servingSurvived }
+func (o Observation) ServingSurvived() bool { return o.record.ServingSurvived }

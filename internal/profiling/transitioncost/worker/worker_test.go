@@ -281,10 +281,6 @@ func completedRestartFacts(
 				FirstPresentReceivedAt: base.Add(6 * time.Second),
 			},
 		},
-		Readiness: []transitioncost.ReadyObservation{
-			{ObservedAt: base.Add(5 * time.Second), Ready: false},
-			{ObservedAt: base.Add(6 * time.Second), Ready: true},
-		},
 		PreTransitionProcess: &transitioncost.ProcessObservation{
 			ObservedAt: base.Add(1500 * time.Millisecond), Process: pre,
 		},

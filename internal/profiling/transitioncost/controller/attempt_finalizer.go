@@ -112,15 +112,11 @@ func (f *AttemptFinalizer) deriveFinalizedObservationFromTerminalEvidence(
 	if err != nil {
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
-	result, err := transitioncost.Derive(
+	observation, err := transitioncost.Derive(
 		prepared.Directions[selection.directionIndex].FrozenContract,
 		raw,
 		prepared.Policy,
 	)
-	if err != nil {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
-	}
-	observation, err := transitioncost.FinalizeResult(result)
 	if err != nil {
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}

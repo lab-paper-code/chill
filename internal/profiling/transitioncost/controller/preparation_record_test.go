@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,7 +98,7 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 		{name: "old schema", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
 				string(record.BinaryData[preparationRecordDataKey]), preparationRecordSchemaVersion,
-				"chill.dacs.io/power-mode-transition-preparation.v1alpha2", 1,
+				"chill.dacs.io/power-mode-transition-preparation.v1alpha3", 1,
 			))
 		}},
 		{name: "missing Evidence Store", mutate: func(record *corev1.ConfigMap) {
@@ -113,8 +115,24 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 			})
 		}},
 		{name: "duration overflow", mutate: func(record *corev1.ConfigMap) {
+			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
+				string(record.BinaryData[preparationRecordDataKey]), `"factObservationTimeoutNanoseconds":`+strconv.FormatInt(int64(prepared.FactObservationTimeout), 10),
+				`"factObservationTimeoutNanoseconds":9223372036854775808`, 1,
+			))
+		}},
+		{name: "extra direction", mutate: func(record *corev1.ConfigMap) {
 			mutatePreparationWire(t, record, func(wire *preparationRecordWire) {
-				wire.Prepared.FactObservationTimeoutMilliseconds = maximumDurationMilliseconds + 1
+				wire.Prepared.Directions = append(wire.Prepared.Directions, wire.Prepared.Directions[0])
+			})
+		}},
+		{name: "sub-millisecond duration", mutate: func(record *corev1.ConfigMap) {
+			mutatePreparationWire(t, record, func(wire *preparationRecordWire) {
+				wire.Prepared.FactPollInterval = time.Microsecond
+			})
+		}},
+		{name: "negative duration", mutate: func(record *corev1.ConfigMap) {
+			mutatePreparationWire(t, record, func(wire *preparationRecordWire) {
+				wire.Prepared.FactObservationTimeout = -time.Second
 			})
 		}},
 	}

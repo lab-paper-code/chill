@@ -14,23 +14,12 @@ import (
 
 type servingSnapshot struct {
 	receivedAt time.Time
-	readiness  *transitioncost.ReadyObservation
 	process    *transitioncost.ProcessIdentity
 }
 
 func projectServingPod(pod corev1.Pod, containerName string, receivedAt time.Time) servingSnapshot {
-	ready, known := podReady(pod.Status.Conditions)
-	if !known {
-		return servingSnapshot{receivedAt: receivedAt}
-	}
-	snapshot := servingSnapshot{
-		receivedAt: receivedAt,
-		readiness: &transitioncost.ReadyObservation{
-			ObservedAt: receivedAt,
-			Ready:      ready,
-		},
-	}
-	if !ready {
+	snapshot := servingSnapshot{receivedAt: receivedAt}
+	if !podReady(pod.Status.Conditions) {
 		return snapshot
 	}
 	for index := range pod.Status.ContainerStatuses {
@@ -52,44 +41,13 @@ func projectServingPod(pod corev1.Pod, containerName string, receivedAt time.Tim
 	return snapshot
 }
 
-func podReady(conditions []corev1.PodCondition) (bool, bool) {
-	for index := range conditions {
-		if conditions[index].Type != corev1.PodReady {
-			continue
-		}
-		switch conditions[index].Status {
-		case corev1.ConditionTrue:
-			return true, true
-		case corev1.ConditionFalse:
-			return false, true
-		default:
-			return false, false
+func podReady(conditions []corev1.PodCondition) bool {
+	for _, condition := range conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
 		}
 	}
-	return false, false
-}
-
-func appendSnapshotReadiness(
-	raw *transitioncost.RawObservation,
-	snapshot servingSnapshot,
-	last **bool,
-	force bool,
-) {
-	observation := snapshot.readiness
-	if observation == nil {
-		return
-	}
-	// Ready=True closes the measurement only when the same API snapshot also
-	// contains the selected running-process fact.
-	if observation.Ready && snapshot.process == nil {
-		return
-	}
-	if !force && *last != nil && **last == observation.Ready {
-		return
-	}
-	value := observation.Ready
-	*last = &value
-	raw.Readiness = append(raw.Readiness, *observation)
+	return false
 }
 
 func projectActuation(

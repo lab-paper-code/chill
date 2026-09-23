@@ -325,9 +325,6 @@ func deriveAttempt(
 		),
 		ReadyProcessWitness: markerBracket(completedAt, time.Millisecond),
 	}
-	raw.Readiness = []transitioncost.ReadyObservation{{
-		ObservedAt: completedAt, Ready: true,
-	}}
 	raw.PreTransitionProcess.ObservedAt = startedAt.Add(-time.Second)
 	if !servingSurvived {
 		raw.PostTransitionProcess.ContainerID = "replacement-container"
@@ -367,11 +364,7 @@ func deriveAttempt(
 		t.Fatalf("attempt %q verdict = %s/%s (%s), want %s",
 			id, result.Verdict(), result.Reason(), result.Detail(), wantVerdict)
 	}
-	finalized, err := transitioncost.FinalizeResult(result)
-	if err != nil {
-		t.Fatalf("finalize attempt %q: %v", id, err)
-	}
-	return finalized
+	return result
 }
 
 func markerBracket(firstPresent time.Time, width time.Duration) transitioncost.ReceiptTimeBracket {

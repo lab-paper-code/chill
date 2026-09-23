@@ -72,7 +72,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "measure", Name: "transition-cost", UID: types.UID("measurement-uid")},
 		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target"},
 	}
-	directions := [2]transitioncontroller.PreparedDirection{}
+	directions := make([]transitioncontroller.PreparedDirection, 2)
 	directions[1].FrozenContract = transitioncost.FrozenContract{
 		TargetState: transitioncost.StateIdentity{DeviceType: "device", Model: "model", PowerMode: "high"},
 	}

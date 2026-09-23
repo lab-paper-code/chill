@@ -37,27 +37,6 @@ type FinalizedObservation struct {
 	record FinalizedObservationRecord
 }
 
-// FinalizeResult removes raw evidence from one terminal Derive result.
-func FinalizeResult(result Result) (FinalizedObservation, error) {
-	record := FinalizedObservationRecord{
-		FrozenContract: result.record.frozen,
-		Verdict:        result.record.verdict, Reason: result.record.reason, Detail: result.record.detail,
-	}
-	if accepted := result.record.accepted; accepted != nil {
-		if accepted.boundaryMappingUncertainty%time.Millisecond != 0 {
-			return FinalizedObservation{}, errors.New("boundary mapping uncertainty must be an exact millisecond duration")
-		}
-		record.AcceptedObservation = &FinalizedAcceptedObservationRecord{
-			StartedAt: accepted.startedAt, CompletedAt: accepted.completedAt,
-			BoundaryMappingUncertaintyMilliseconds: accepted.boundaryMappingUncertainty.Milliseconds(),
-			TauMilliseconds:                        accepted.tauMilliseconds,
-			TransitionWallJoules:                   accepted.transitionWallJoules,
-			EtaJoules:                              accepted.etaJoules, ServingSurvived: accepted.servingSurvived,
-		}
-	}
-	return FinalizedObservation{record: record}, nil
-}
-
 // RestoreFinalizedObservation verifies one decoded current record without
 // reading or re-deriving its separate raw observation.
 func RestoreFinalizedObservation(record FinalizedObservationRecord) (FinalizedObservation, error) {
@@ -87,13 +66,7 @@ func (o FinalizedObservation) AcceptedObservation() (Observation, bool) {
 	if accepted == nil {
 		return Observation{}, false
 	}
-	return Observation{record: acceptedRecord{
-		startedAt: accepted.StartedAt, completedAt: accepted.CompletedAt,
-		boundaryMappingUncertainty: time.Duration(accepted.BoundaryMappingUncertaintyMilliseconds) * time.Millisecond,
-		tauMilliseconds:            accepted.TauMilliseconds, transitionWallJoules: accepted.TransitionWallJoules,
-		targetIdleBaseline: o.record.FrozenContract.TargetIdleBaseline,
-		etaJoules:          accepted.EtaJoules, servingSurvived: accepted.ServingSurvived,
-	}}, true
+	return Observation{record: *accepted, baseline: o.record.FrozenContract.TargetIdleBaseline}, true
 }
 
 func validateFinalizedObservationRecord(record FinalizedObservationRecord) error {

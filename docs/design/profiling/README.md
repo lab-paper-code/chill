@@ -307,6 +307,12 @@ clock alignment are the first gate; repeated observations produce the directed
 state-pair table, while profile publication and scheduler use remain later
 work.
 
+The transition-cost core derives the finalized observation directly from retained
+raw evidence. Preparation has one stored representation, and readiness evidence
+consists of the pre/post Ready process witnesses and receipt brackets rather than
+an additional event history. Preparation and raw schema `v1alpha4` are local-only
+changes; the recorded live evidence still uses `v1alpha3` (see Plan 10).
+
 The independent `ModelLoadedIdleBaseline` producer is implemented for Plan
 10's `P_idle(s')` input. Before its first model-loaded-idle `ProfilingRun`, it
 owns one `NodeActuation` that establishes a mutable declared state; a fixed

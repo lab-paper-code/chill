@@ -13,17 +13,15 @@ import (
 // Derive validates one frozen contract and one factual raw observation, then
 // produces one terminal scientific result. Malformed frozen inputs are caller
 // errors; terminal properties of retained raw evidence are typed results.
-func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, error) {
-	verifiedFrozen := frozen
-	verifiedRaw := cloneRaw(raw)
-	if err := validateFrozen(verifiedFrozen); err != nil {
-		return Result{}, fmt.Errorf("validate frozen transition contract: %w", err)
+func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (FinalizedObservation, error) {
+	if err := validateFrozen(frozen); err != nil {
+		return FinalizedObservation{}, fmt.Errorf("validate frozen transition contract: %w", err)
 	}
 	if err := validatePolicy(policy); err != nil {
-		return Result{}, fmt.Errorf("validate transition-cost policy: %w", err)
+		return FinalizedObservation{}, fmt.Errorf("validate transition-cost policy: %w", err)
 	}
 
-	verified := verifiedInput{frozen: verifiedFrozen, raw: verifiedRaw, policy: policy}
+	verified := verifiedInput{frozen: frozen, raw: raw, policy: policy}
 	if detail := validateRawStructure(verified.raw); detail != "" {
 		return classified(verified, VerdictInvalid, ReasonObservationMalformed, detail), nil
 	}
@@ -96,19 +94,15 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Result, e
 	}
 
 	tauSeconds := completedAt.Sub(startedAt).Seconds()
-	accepted := &acceptedRecord{
-		startedAt:                  startedAt,
-		completedAt:                completedAt,
-		boundaryMappingUncertainty: boundaryUncertainty,
-		tauMilliseconds:            tauSeconds * 1000,
-		transitionWallJoules:       joules,
-		targetIdleBaseline:         verified.frozen.TargetIdleBaseline,
-		etaJoules:                  joules - verified.frozen.TargetIdleBaseline.MeanWallWatts*tauSeconds,
-		servingSurvived:            servingSurvived,
-	}
-	return Result{record: resultRecord{
-		verdict: VerdictAccepted, reason: ReasonAccepted,
-		frozen: verified.frozen, raw: verified.raw, accepted: accepted,
+	return FinalizedObservation{record: FinalizedObservationRecord{
+		Verdict: VerdictAccepted, Reason: ReasonAccepted, FrozenContract: frozen,
+		AcceptedObservation: &FinalizedAcceptedObservationRecord{
+			StartedAt: startedAt, CompletedAt: completedAt,
+			BoundaryMappingUncertaintyMilliseconds: boundaryUncertainty.Milliseconds(),
+			TauMilliseconds:                        tauSeconds * 1000, TransitionWallJoules: joules,
+			EtaJoules:       joules - frozen.TargetIdleBaseline.MeanWallWatts*tauSeconds,
+			ServingSurvived: servingSurvived,
+		},
 	}}, nil
 }
 
@@ -120,10 +114,9 @@ type verifiedInput struct {
 	policy Policy
 }
 
-func classified(input verifiedInput, verdict Verdict, reason Reason, detail string) Result {
-	return Result{record: resultRecord{
-		verdict: verdict, reason: reason, detail: detail,
-		frozen: input.frozen, raw: input.raw,
+func classified(input verifiedInput, verdict Verdict, reason Reason, detail string) FinalizedObservation {
+	return FinalizedObservation{record: FinalizedObservationRecord{
+		Verdict: verdict, Reason: reason, Detail: detail, FrozenContract: input.frozen,
 	}}
 }
 
@@ -274,12 +267,6 @@ func validateObservedFacts(raw RawObservation) string {
 			return "power failure " + detail
 		}
 	}
-	for _, readiness := range raw.Readiness {
-		if readiness.ObservedAt.IsZero() ||
-			!within(readiness.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) {
-			return "readiness observation is malformed or outside coverage"
-		}
-	}
 	if raw.PreTransitionProcess != nil &&
 		(raw.PreTransitionProcess.ObservedAt.IsZero() ||
 			!within(raw.PreTransitionProcess.ObservedAt, raw.ObservationStartedAt, raw.ObservationEndedAt) ||
@@ -289,20 +276,7 @@ func validateObservedFacts(raw RawObservation) string {
 	if raw.PostTransitionProcess != nil && !validProcess(*raw.PostTransitionProcess) {
 		return "post-transition process observation is malformed"
 	}
-	if raw.PostTransitionProcess != nil && !hasReadyWitness(raw) {
-		return "ready-process bracket has no matching Ready=True observation"
-	}
 	return ""
-}
-
-func hasReadyWitness(raw RawObservation) bool {
-	witnessAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
-	for _, readiness := range raw.Readiness {
-		if readiness.Ready && readiness.ObservedAt.Equal(witnessAt) {
-			return true
-		}
-	}
-	return false
 }
 
 func servingSurvival(raw RawObservation, startedAt time.Time) (bool, bool) {
@@ -392,36 +366,4 @@ func finiteNonNegative(value float64) bool {
 
 func within(value, start, end time.Time) bool {
 	return !value.Before(start) && !value.After(end)
-}
-
-func cloneRaw(raw RawObservation) RawObservation {
-	clone := raw
-	clone.PowerSamples = append([]PowerSample(nil), raw.PowerSamples...)
-	clone.PowerFailures = append([]PowerReadFailure(nil), raw.PowerFailures...)
-	clone.Readiness = append([]ReadyObservation(nil), raw.Readiness...)
-	if raw.TransitionStart != nil {
-		value := *raw.TransitionStart
-		clone.TransitionStart = &value
-	}
-	if raw.ActuationFailure != nil {
-		value := *raw.ActuationFailure
-		clone.ActuationFailure = &value
-	}
-	if raw.TargetReadBack != nil {
-		value := *raw.TargetReadBack
-		clone.TargetReadBack = &value
-	}
-	if raw.TargetReadBackFailure != nil {
-		value := *raw.TargetReadBackFailure
-		clone.TargetReadBackFailure = &value
-	}
-	if raw.PreTransitionProcess != nil {
-		value := *raw.PreTransitionProcess
-		clone.PreTransitionProcess = &value
-	}
-	if raw.PostTransitionProcess != nil {
-		value := *raw.PostTransitionProcess
-		clone.PostTransitionProcess = &value
-	}
-	return clone
 }

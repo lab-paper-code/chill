@@ -51,14 +51,10 @@ func TestObserverCapturesOneInPlaceTransition(t *testing.T) {
 		raw.PreTransitionProcess.Process != *raw.PostTransitionProcess {
 		t.Fatalf("process observations = pre:%+v post:%+v", raw.PreTransitionProcess, raw.PostTransitionProcess)
 	}
-	if len(raw.Readiness) != 2 || !raw.Readiness[0].Ready || !raw.Readiness[1].Ready ||
-		!raw.Readiness[1].ObservedAt.Equal(
-			raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt,
-		) ||
-		!raw.Readiness[1].ObservedAt.After(
-			raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt,
-		) {
-		t.Fatalf("readiness = %+v, target read-back = %+v", raw.Readiness, raw.TargetReadBack)
+	if !raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.After(
+		raw.MarkerBrackets.TargetObservation.FirstPresentReceivedAt,
+	) {
+		t.Fatal("ready process witness must follow target read-back")
 	}
 	for name, bracket := range map[string]transitioncost.ReceiptTimeBracket{
 		"apply":         raw.MarkerBrackets.ApplyStartedAt,
@@ -331,8 +327,34 @@ func TestObserverDoesNotInferReadinessFromMissingOrAmbiguousPods(t *testing.T) {
 			if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("Observe() error = %v, want deadline", err)
 			}
-			if called || len(raw.Readiness) != 0 || raw.PreTransitionProcess != nil {
-				t.Fatalf("callback/readiness/process = %t/%+v/%+v", called, raw.Readiness, raw.PreTransitionProcess)
+			if called || raw.PostTransitionProcess != nil || raw.PreTransitionProcess != nil {
+				t.Fatalf("callback/post/pre = %t/%+v/%+v", called, raw.PostTransitionProcess, raw.PreTransitionProcess)
+			}
+		})
+	}
+}
+
+func TestObserverRequiresReadyPodAndRunningContainer(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		alter func(*corev1.Pod)
+	}{
+		{"not ready", func(pod *corev1.Pod) { pod.Status.Conditions[0].Status = corev1.ConditionFalse }},
+		{"unknown readiness", func(pod *corev1.Pod) { pod.Status.Conditions[0].Status = corev1.ConditionUnknown }},
+		{"missing readiness", func(pod *corev1.Pod) { pod.Status.Conditions = nil }},
+		{"not running", func(pod *corev1.Pod) { pod.Status.ContainerStatuses[0].State.Running = nil }},
+		{"missing identity", func(pod *corev1.Pod) { pod.Status.ContainerStatuses[0].ContainerID = "" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pod := readyPod("serving", "containerd://same", 0)
+			test.alter(pod)
+			request := testRequest()
+			request.ObservationTimeout = 8 * time.Millisecond
+			observer := newObserver(t, newClient(t, service(), pod), request)
+			called := false
+			raw, err := observer.Observe(context.Background(), func() { called = true })
+			if !errors.Is(err, context.DeadlineExceeded) || called || raw.PreTransitionProcess != nil || raw.PostTransitionProcess != nil {
+				t.Fatalf("unready workload became a process witness: callback=%t raw=%+v err=%v", called, raw, err)
 			}
 		})
 	}
@@ -355,13 +377,13 @@ func TestObserverDoesNotCloseOnAmbiguousPostReadBackPods(t *testing.T) {
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Observe() error = %v, want deadline", err)
 	}
-	if raw.TargetReadBack == nil || raw.PostTransitionProcess != nil || len(raw.Readiness) != 1 {
-		t.Fatalf("target/post/readiness = %+v/%+v/%+v",
-			raw.TargetReadBack, raw.PostTransitionProcess, raw.Readiness)
+	if raw.TargetReadBack == nil || raw.PostTransitionProcess != nil || !raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.IsZero() {
+		t.Fatalf("target/post/bracket = %+v/%+v/%+v",
+			raw.TargetReadBack, raw.PostTransitionProcess, raw.MarkerBrackets.ReadyProcessWitness)
 	}
 }
 
-func TestObserverRetainsOneUnchangedReadinessFactPerPhase(t *testing.T) {
+func TestObserverDoesNotCompleteFromPreTransitionReady(t *testing.T) {
 	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
 	request := testRequest()
 	request.ObservationTimeout = 8 * time.Millisecond
@@ -371,8 +393,9 @@ func TestObserverRetainsOneUnchangedReadinessFactPerPhase(t *testing.T) {
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Observe() error = %v, want deadline", err)
 	}
-	if len(raw.Readiness) != 1 || !raw.Readiness[0].Ready {
-		t.Fatalf("readiness = %+v, want one initial Ready=True fact", raw.Readiness)
+	if raw.PreTransitionProcess == nil || raw.PostTransitionProcess != nil ||
+		!raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt.IsZero() {
+		t.Fatalf("pre-transition Ready incorrectly completed measurement: %+v", raw)
 	}
 }
 

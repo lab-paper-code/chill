@@ -73,29 +73,29 @@ func NewPreparer(
 // PreparedMeasurement contains only the selections consumed by downstream
 // attempt and result materialization boundaries.
 type PreparedMeasurement struct {
-	Namespace              string
-	TargetNode             edgev1alpha1.ProfilingRunObjectReference
-	ObserverNodeName       string
-	EvidenceStore          string
-	DeviceClass            string
-	ExecutionPath          string
-	ServingService         string
-	ServingContainer       string
-	PowerSource            metricobserver.SourceIdentity
-	PowerRequest           metricobserver.Request
-	FactPollInterval       time.Duration
-	FactObservationTimeout time.Duration
-	Policy                 transitioncost.Policy
-	Directions             [2]PreparedDirection
+	Namespace              string                                   `json:"namespace"`
+	TargetNode             edgev1alpha1.ProfilingRunObjectReference `json:"targetNode"`
+	ObserverNodeName       string                                   `json:"observerNodeName"`
+	EvidenceStore          string                                   `json:"evidenceStore"`
+	DeviceClass            string                                   `json:"deviceClass"`
+	ExecutionPath          string                                   `json:"executionPath"`
+	ServingService         string                                   `json:"servingService"`
+	ServingContainer       string                                   `json:"servingContainer"`
+	PowerSource            metricobserver.SourceIdentity            `json:"powerSource"`
+	PowerRequest           metricobserver.Request                   `json:"powerRequestNanoseconds"`
+	FactPollInterval       time.Duration                            `json:"factPollIntervalNanoseconds"`
+	FactObservationTimeout time.Duration                            `json:"factObservationTimeoutNanoseconds"`
+	Policy                 transitioncost.Policy                    `json:"policy"`
+	Directions             []PreparedDirection                      `json:"directions"`
 }
 
 // PreparedDirection is one ordered transition with its target-mode baseline,
 // typed actuator target, and frozen configured policy needed to reach it.
 type PreparedDirection struct {
-	FrozenContract           transitioncost.FrozenContract
-	TargetIdleBaselineResult idlebaseline.StoredObjectReference
-	Actuator                 edgev1alpha1.PowerModeActuator
-	ActuationPolicy          profiler.FrozenActuationPolicy
+	FrozenContract           transitioncost.FrozenContract      `json:"frozenContract"`
+	TargetIdleBaselineResult idlebaseline.StoredObjectReference `json:"targetIdleBaselineResult"`
+	Actuator                 edgev1alpha1.PowerModeActuator     `json:"actuator"`
+	ActuationPolicy          profiler.FrozenActuationPolicy     `json:"actuationPolicy"`
 }
 
 type preparedObservation struct {
@@ -229,7 +229,7 @@ func (p *Preparer) Prepare(
 		PowerSource: powerSource, PowerRequest: observation.powerRequest,
 		FactPollInterval: observation.factPollInterval, FactObservationTimeout: observation.factObservationTimeout,
 		Policy:     observation.policy,
-		Directions: [2]PreparedDirection{direction(0, 1), direction(1, 0)},
+		Directions: []PreparedDirection{direction(0, 1), direction(1, 0)},
 	}, nil
 }
 

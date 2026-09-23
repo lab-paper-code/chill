@@ -11,10 +11,6 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
-	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,9 +23,8 @@ import (
 )
 
 const (
-	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha3"
+	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha4"
 	preparationRecordDataKey       = "preparation.json"
-	maximumDurationMilliseconds    = int64((1<<63 - 1) / time.Millisecond)
 )
 
 type MeasurementPreparer interface {
@@ -146,120 +141,14 @@ func decodePreparationConfigMap(measurement *edgev1alpha1.PowerModeTransitionCos
 }
 
 type preparationRecordWire struct {
-	SchemaVersion string                   `json:"schemaVersion"`
-	Prepared      *preparedMeasurementWire `json:"prepared"`
-}
-
-type preparedMeasurementWire struct {
-	Namespace                          string                                   `json:"namespace"`
-	TargetNode                         edgev1alpha1.ProfilingRunObjectReference `json:"targetNode"`
-	ObserverNodeName                   string                                   `json:"observerNodeName"`
-	EvidenceStore                      string                                   `json:"evidenceStore"`
-	DeviceClass                        string                                   `json:"deviceClass"`
-	ExecutionPath                      string                                   `json:"executionPath"`
-	ServingService                     string                                   `json:"servingService"`
-	ServingContainer                   string                                   `json:"servingContainer"`
-	PowerSource                        preparationPowerSourceWire               `json:"powerSource"`
-	PowerRequest                       preparationPowerRequestWire              `json:"powerRequest"`
-	FactPollIntervalMilliseconds       int64                                    `json:"factPollIntervalMilliseconds"`
-	FactObservationTimeoutMilliseconds int64                                    `json:"factObservationTimeoutMilliseconds"`
-	Policy                             preparationPolicyWire                    `json:"policy"`
-	Directions                         []preparationDirectionWire               `json:"directions"`
-}
-
-type preparationPowerSourceWire struct {
-	Kind         string            `json:"kind"`
-	Endpoint     string            `json:"endpoint"`
-	Metric       string            `json:"metric"`
-	MetricLabels map[string]string `json:"metricLabels"`
-}
-
-type preparationPowerRequestWire struct {
-	IntervalMilliseconds       int64 `json:"intervalMilliseconds"`
-	DurationMilliseconds       int64 `json:"durationMilliseconds"`
-	RequestTimeoutMilliseconds int64 `json:"requestTimeoutMilliseconds"`
-	MaxEvents                  int   `json:"maxEvents"`
-}
-
-type preparationPolicyWire struct {
-	MaximumBoundaryDistanceMilliseconds      int64   `json:"maximumBoundaryDistanceMilliseconds"`
-	MinimumCoverage                          float64 `json:"minimumCoverage"`
-	MaximumSampleGapMilliseconds             int64   `json:"maximumSampleGapMilliseconds"`
-	MaximumBoundaryUncertaintyMilliseconds   int64   `json:"maximumBoundaryUncertaintyMilliseconds"`
-	MaximumReadyObservationDelayMilliseconds int64   `json:"maximumReadyObservationDelayMilliseconds"`
-}
-
-type preparationDirectionWire struct {
-	FrozenContract           transitioncost.FrozenContract      `json:"frozenContract"`
-	TargetIdleBaselineResult idlebaseline.StoredObjectReference `json:"targetIdleBaselineResult"`
-	Actuator                 edgev1alpha1.PowerModeActuator     `json:"actuator"`
-	ActuationPolicy          profiler.FrozenActuationPolicy     `json:"actuationPolicy"`
+	SchemaVersion string               `json:"schemaVersion"`
+	Prepared      *PreparedMeasurement `json:"prepared"`
 }
 
 func encodePreparationRecord(prepared PreparedMeasurement) ([]byte, error) {
-	wire, err := projectPreparationWire(prepared)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := json.Marshal(preparationRecordWire{
-		SchemaVersion: preparationRecordSchemaVersion,
-		Prepared:      &wire,
+	return json.Marshal(preparationRecordWire{
+		SchemaVersion: preparationRecordSchemaVersion, Prepared: &prepared,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("encode transition preparation: %w", err)
-	}
-	return payload, nil
-}
-
-func projectPreparationWire(prepared PreparedMeasurement) (preparedMeasurementWire, error) {
-	directions := make([]preparationDirectionWire, len(prepared.Directions))
-	for index := range prepared.Directions {
-		direction := prepared.Directions[index]
-		directions[index] = preparationDirectionWire{
-			FrozenContract: direction.FrozenContract, TargetIdleBaselineResult: direction.TargetIdleBaselineResult,
-			Actuator: *direction.Actuator.DeepCopy(), ActuationPolicy: direction.ActuationPolicy,
-		}
-	}
-	wire := preparedMeasurementWire{
-		Namespace: prepared.Namespace, TargetNode: prepared.TargetNode, ObserverNodeName: prepared.ObserverNodeName,
-		EvidenceStore: prepared.EvidenceStore,
-		DeviceClass:   prepared.DeviceClass, ExecutionPath: prepared.ExecutionPath,
-		ServingService: prepared.ServingService, ServingContainer: prepared.ServingContainer,
-		PowerSource: preparationPowerSourceWire{
-			Kind: prepared.PowerSource.Kind, Endpoint: prepared.PowerSource.Endpoint, Metric: prepared.PowerSource.Metric,
-			MetricLabels: prepared.PowerSource.MetricLabels,
-		},
-		PowerRequest: preparationPowerRequestWire{
-			MaxEvents: prepared.PowerRequest.MaxEvents,
-		},
-		Policy: preparationPolicyWire{MinimumCoverage: prepared.Policy.MinimumCoverage}, Directions: directions,
-	}
-	var durationErr error
-	projectDuration := func(name string, value time.Duration, output *int64) {
-		if durationErr == nil {
-			*output, durationErr = exactMilliseconds(name, value)
-		}
-	}
-	projectDuration("power interval", prepared.PowerRequest.Interval, &wire.PowerRequest.IntervalMilliseconds)
-	projectDuration("power duration", prepared.PowerRequest.Duration, &wire.PowerRequest.DurationMilliseconds)
-	projectDuration("power request timeout", prepared.PowerRequest.RequestTimeout, &wire.PowerRequest.RequestTimeoutMilliseconds)
-	projectDuration("fact poll interval", prepared.FactPollInterval, &wire.FactPollIntervalMilliseconds)
-	projectDuration("fact observation timeout", prepared.FactObservationTimeout, &wire.FactObservationTimeoutMilliseconds)
-	projectDuration("maximum boundary distance", prepared.Policy.MaximumBoundaryDistance, &wire.Policy.MaximumBoundaryDistanceMilliseconds)
-	projectDuration("maximum sample gap", prepared.Policy.MaximumSampleGap, &wire.Policy.MaximumSampleGapMilliseconds)
-	projectDuration("maximum boundary uncertainty", prepared.Policy.MaximumBoundaryUncertainty, &wire.Policy.MaximumBoundaryUncertaintyMilliseconds)
-	projectDuration("maximum ready observation delay", prepared.Policy.MaximumReadyObservationDelay, &wire.Policy.MaximumReadyObservationDelayMilliseconds)
-	if durationErr != nil {
-		return preparedMeasurementWire{}, durationErr
-	}
-	return wire, nil
-}
-
-func exactMilliseconds(name string, duration time.Duration) (int64, error) {
-	if duration%time.Millisecond != 0 {
-		return 0, fmt.Errorf("%s must be an exact millisecond duration", name)
-	}
-	return duration.Milliseconds(), nil
 }
 
 func decodePreparationRecord(payload []byte) (PreparedMeasurement, error) {
@@ -279,121 +168,84 @@ func decodePreparationRecord(payload []byte) (PreparedMeasurement, error) {
 	if record.Prepared == nil {
 		return PreparedMeasurement{}, errors.New("transition preparation is missing prepared material")
 	}
-	return restorePreparedMeasurement(*record.Prepared)
+	if err := validateStoredPreparation(*record.Prepared); err != nil {
+		return PreparedMeasurement{}, err
+	}
+	return *record.Prepared, nil
 }
 
-func restorePreparedMeasurement(wire preparedMeasurementWire) (PreparedMeasurement, error) {
+func validateStoredPreparation(prepared PreparedMeasurement) error {
 	for name, value := range map[string]string{
-		"namespace": wire.Namespace, "target Node name": wire.TargetNode.Name, "target Node UID": wire.TargetNode.UID,
-		"observer Node name": wire.ObserverNodeName, "Evidence Store": wire.EvidenceStore,
-		"DeviceClass":    wire.DeviceClass,
-		"execution path": wire.ExecutionPath, "serving Service": wire.ServingService,
-		"serving container": wire.ServingContainer, "power source kind": wire.PowerSource.Kind,
-		"power source endpoint": wire.PowerSource.Endpoint, "power metric": wire.PowerSource.Metric,
+		"namespace": prepared.Namespace, "target Node name": prepared.TargetNode.Name, "target Node UID": prepared.TargetNode.UID,
+		"observer Node name": prepared.ObserverNodeName, "Evidence Store": prepared.EvidenceStore,
+		"DeviceClass": prepared.DeviceClass, "execution path": prepared.ExecutionPath,
+		"serving Service": prepared.ServingService, "serving container": prepared.ServingContainer,
+		"power source kind": prepared.PowerSource.Kind, "power source endpoint": prepared.PowerSource.Endpoint,
+		"power metric": prepared.PowerSource.Metric,
 	} {
 		if !clean(value) {
-			return PreparedMeasurement{}, fmt.Errorf("transition preparation %s is required without surrounding whitespace", name)
+			return fmt.Errorf("transition preparation %s is required without surrounding whitespace", name)
 		}
 	}
-	for role, name := range map[string]string{"target": wire.TargetNode.Name, "observer": wire.ObserverNodeName} {
+	for role, name := range map[string]string{"target": prepared.TargetNode.Name, "observer": prepared.ObserverNodeName} {
 		if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
-			return PreparedMeasurement{}, fmt.Errorf("transition preparation %s Node name is invalid: %s", role, strings.Join(errs, "; "))
+			return fmt.Errorf("transition preparation %s Node name is invalid: %s", role, strings.Join(errs, "; "))
 		}
 	}
-	if wire.ObserverNodeName == wire.TargetNode.Name {
-		return PreparedMeasurement{}, errors.New("transition preparation observer must run away from the target Node")
+	if prepared.ObserverNodeName == prepared.TargetNode.Name {
+		return errors.New("transition preparation observer must run away from the target Node")
 	}
-	if len(wire.PowerSource.MetricLabels) == 0 {
-		return PreparedMeasurement{}, errors.New("transition preparation power metric labels are required")
+	if len(prepared.PowerSource.MetricLabels) == 0 {
+		return errors.New("transition preparation power metric labels are required")
 	}
-	if len(wire.Directions) != 2 {
-		return PreparedMeasurement{}, errors.New("transition preparation requires exactly two directions")
+	if len(prepared.Directions) != 2 {
+		return errors.New("transition preparation requires exactly two directions")
 	}
-
-	prepared := PreparedMeasurement{
-		Namespace: wire.Namespace, TargetNode: wire.TargetNode, ObserverNodeName: wire.ObserverNodeName,
-		EvidenceStore: wire.EvidenceStore,
-		DeviceClass:   wire.DeviceClass, ExecutionPath: wire.ExecutionPath,
-		ServingService: wire.ServingService, ServingContainer: wire.ServingContainer,
-		PowerSource: metricobserver.SourceIdentity{
-			Kind: wire.PowerSource.Kind, Endpoint: wire.PowerSource.Endpoint, Metric: wire.PowerSource.Metric,
-			MetricLabels: wire.PowerSource.MetricLabels,
-		},
-		PowerRequest: metricobserver.Request{MaxEvents: wire.PowerRequest.MaxEvents},
-		Policy:       transitioncost.Policy{MinimumCoverage: wire.Policy.MinimumCoverage},
-	}
-	var durationErr error
-	restoreDuration := func(name string, value int64, allowZero bool, output *time.Duration) {
-		if durationErr == nil {
-			*output, durationErr = restoreMilliseconds(name, value, allowZero)
+	for name, duration := range map[string]time.Duration{
+		"power interval": prepared.PowerRequest.Interval, "power duration": prepared.PowerRequest.Duration,
+		"power request timeout": prepared.PowerRequest.RequestTimeout,
+		"fact poll interval":    prepared.FactPollInterval, "fact observation timeout": prepared.FactObservationTimeout,
+		"maximum sample gap":              prepared.Policy.MaximumSampleGap,
+		"maximum ready observation delay": prepared.Policy.MaximumReadyObservationDelay,
+	} {
+		if duration <= 0 || duration%time.Millisecond != 0 {
+			return fmt.Errorf("stored %s must be a positive whole-millisecond duration", name)
 		}
 	}
-	restoreDuration("power interval", wire.PowerRequest.IntervalMilliseconds, false, &prepared.PowerRequest.Interval)
-	restoreDuration("power duration", wire.PowerRequest.DurationMilliseconds, false, &prepared.PowerRequest.Duration)
-	restoreDuration("power request timeout", wire.PowerRequest.RequestTimeoutMilliseconds, false, &prepared.PowerRequest.RequestTimeout)
-	restoreDuration("fact poll interval", wire.FactPollIntervalMilliseconds, false, &prepared.FactPollInterval)
-	restoreDuration("fact observation timeout", wire.FactObservationTimeoutMilliseconds, false, &prepared.FactObservationTimeout)
-	restoreDuration("maximum boundary distance", wire.Policy.MaximumBoundaryDistanceMilliseconds, true, &prepared.Policy.MaximumBoundaryDistance)
-	restoreDuration("maximum sample gap", wire.Policy.MaximumSampleGapMilliseconds, false, &prepared.Policy.MaximumSampleGap)
-	restoreDuration("maximum boundary uncertainty", wire.Policy.MaximumBoundaryUncertaintyMilliseconds, true, &prepared.Policy.MaximumBoundaryUncertainty)
-	restoreDuration("maximum ready observation delay", wire.Policy.MaximumReadyObservationDelayMilliseconds, false, &prepared.Policy.MaximumReadyObservationDelay)
-	if durationErr != nil {
-		return PreparedMeasurement{}, durationErr
+	for _, duration := range []time.Duration{prepared.Policy.MaximumBoundaryDistance, prepared.Policy.MaximumBoundaryUncertainty} {
+		if duration < 0 || duration%time.Millisecond != 0 {
+			return errors.New("stored boundary bounds must be non-negative whole-millisecond durations")
+		}
 	}
 	if prepared.Policy.MinimumCoverage <= 0 || prepared.Policy.MinimumCoverage > 1 {
-		return PreparedMeasurement{}, errors.New("stored minimum coverage must be in (0, 1]")
+		return errors.New("stored minimum coverage must be in (0, 1]")
 	}
 	if err := prepared.PowerRequest.Validate(); err != nil {
-		return PreparedMeasurement{}, fmt.Errorf("validate stored power request: %w", err)
+		return fmt.Errorf("validate stored power request: %w", err)
 	}
-
-	var directions [2]PreparedDirection
-	for index := range wire.Directions {
-		direction, err := restorePreparationDirection(wire.Directions[index])
-		if err != nil {
-			return PreparedMeasurement{}, fmt.Errorf("validate stored direction %d: %w", index, err)
+	for _, direction := range prepared.Directions {
+		for name, value := range map[string]string{
+			"source device type": direction.FrozenContract.SourceState.DeviceType,
+			"source model":       direction.FrozenContract.SourceState.Model, "source power mode": direction.FrozenContract.SourceState.PowerMode,
+			"target device type": direction.FrozenContract.TargetState.DeviceType,
+			"target model":       direction.FrozenContract.TargetState.Model, "target power mode": direction.FrozenContract.TargetState.PowerMode,
+			"baseline evidence reference": direction.FrozenContract.TargetIdleBaseline.EvidenceReference,
+			"baseline store":              direction.TargetIdleBaselineResult.Store, "baseline key": direction.TargetIdleBaselineResult.Key,
+			"baseline schema": direction.TargetIdleBaselineResult.SchemaVersion,
+		} {
+			if !clean(value) {
+				return fmt.Errorf("%s is required without surrounding whitespace", name)
+			}
 		}
-		directions[index] = direction
-	}
-	prepared.Directions = directions
-	return prepared, nil
-}
-
-func restorePreparationDirection(wire preparationDirectionWire) (PreparedDirection, error) {
-	for name, value := range map[string]string{
-		"source device type": wire.FrozenContract.SourceState.DeviceType,
-		"source model":       wire.FrozenContract.SourceState.Model, "source power mode": wire.FrozenContract.SourceState.PowerMode,
-		"target device type": wire.FrozenContract.TargetState.DeviceType,
-		"target model":       wire.FrozenContract.TargetState.Model, "target power mode": wire.FrozenContract.TargetState.PowerMode,
-		"baseline evidence reference": wire.FrozenContract.TargetIdleBaseline.EvidenceReference,
-		"baseline store":              wire.TargetIdleBaselineResult.Store, "baseline key": wire.TargetIdleBaselineResult.Key,
-		"baseline schema": wire.TargetIdleBaselineResult.SchemaVersion,
-	} {
-		if !clean(value) {
-			return PreparedDirection{}, fmt.Errorf("%s is required without surrounding whitespace", name)
+		if direction.TargetIdleBaselineResult.Size < 1 {
+			return errors.New("baseline result size must be positive")
+		}
+		if err := projectActuationTarget(direction.Actuator).Validate(); err != nil {
+			return fmt.Errorf("validate actuator target: %w", err)
+		}
+		if err := direction.ActuationPolicy.Validate(); err != nil {
+			return fmt.Errorf("validate frozen actuation policy: %w", err)
 		}
 	}
-	if wire.TargetIdleBaselineResult.Size < 1 {
-		return PreparedDirection{}, errors.New("baseline result size must be positive")
-	}
-	if err := projectActuationTarget(wire.Actuator).Validate(); err != nil {
-		return PreparedDirection{}, fmt.Errorf("validate actuator target: %w", err)
-	}
-	if err := wire.ActuationPolicy.Validate(); err != nil {
-		return PreparedDirection{}, fmt.Errorf("validate frozen actuation policy: %w", err)
-	}
-	return PreparedDirection{
-		FrozenContract: wire.FrozenContract, TargetIdleBaselineResult: wire.TargetIdleBaselineResult,
-		Actuator: *wire.Actuator.DeepCopy(), ActuationPolicy: wire.ActuationPolicy,
-	}, nil
-}
-
-func restoreMilliseconds(name string, value int64, allowZero bool) (time.Duration, error) {
-	if value < 0 || (!allowZero && value == 0) {
-		return 0, fmt.Errorf("stored %s milliseconds are invalid", name)
-	}
-	if value > maximumDurationMilliseconds {
-		return 0, fmt.Errorf("stored %s milliseconds overflow time.Duration", name)
-	}
-	return time.Duration(value) * time.Millisecond, nil
+	return nil
 }

@@ -78,7 +78,7 @@ func TestDecodeRawRecordRejectsUnknownTrailingAndRetiredContracts(t *testing.T) 
 		"trailing value": append(append([]byte(nil), payload...), []byte(` {}`)...),
 		"retired schema": []byte(strings.Replace(
 			string(payload), transitioncost.RawRecordSchemaVersion,
-			"chill.dacs.io/transition-cost-raw-observation.v1alpha2", 1,
+			"chill.dacs.io/transition-cost-raw-observation.v1alpha3", 1,
 		)),
 	}
 	for name, candidate := range tests {

@@ -76,16 +76,14 @@ func (o *Observer) Observe(
 		return finish(err)
 	}
 
-	var lastReady *bool
 	for {
 		snapshot, err := o.servingSnapshot(observeCtx, selector)
 		if err != nil {
 			return finish(err)
 		}
-		appendSnapshotReadiness(&raw, snapshot, &lastReady, false)
-		if snapshot.process != nil && snapshot.readiness != nil && snapshot.readiness.Ready {
+		if snapshot.process != nil {
 			raw.PreTransitionProcess = &transitioncost.ProcessObservation{
-				ObservedAt: snapshot.readiness.ObservedAt,
+				ObservedAt: snapshot.receivedAt,
 				Process:    *snapshot.process,
 			}
 			raw.MarkerBrackets.ReadyProcessWitness.LastAbsentReceivedAt = snapshot.receivedAt
@@ -119,21 +117,18 @@ func (o *Observer) Observe(
 		if err != nil {
 			return finish(err)
 		}
-		if raw.TargetReadBack != nil && snapshot.process != nil &&
-			snapshot.readiness != nil && snapshot.readiness.Ready {
+		if raw.TargetReadBack != nil && snapshot.process != nil {
 			if err := markPresent(
 				&raw.MarkerBrackets.ReadyProcessWitness,
 				snapshot.receivedAt,
 			); err != nil {
 				return finish(err)
 			}
-			appendSnapshotReadiness(&raw, snapshot, &lastReady, true)
 			process := *snapshot.process
 			raw.PostTransitionProcess = &process
 			return finish(nil)
 		}
 		markAbsent(&raw.MarkerBrackets.ReadyProcessWitness, snapshot.receivedAt)
-		appendSnapshotReadiness(&raw, snapshot, &lastReady, false)
 
 		if err := wait(observeCtx, o.request.PollInterval); err != nil {
 			return finish(fmt.Errorf("observe Kubernetes transition facts: %w", err))

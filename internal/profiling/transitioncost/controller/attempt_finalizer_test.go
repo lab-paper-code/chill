@@ -88,13 +88,9 @@ func TestAttemptFinalizerRetainsEveryVerdictFromCompleteOrFailedJob(t *testing.T
 func TestAttemptFinalizerUsesImmutableWinnerWithoutComparison(t *testing.T) {
 	fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
 	winnerRaw := transitionRawObservation(fixture.prepared, invalidAttempt)
-	winnerResult, err := transitioncost.Derive(
+	winner, err := transitioncost.Derive(
 		fixture.prepared.Directions[0].FrozenContract, winnerRaw, fixture.prepared.Policy,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	winner, err := transitioncost.FinalizeResult(winnerResult)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,14 +130,10 @@ func TestAttemptFinalizerPreservesRetentionFailure(t *testing.T) {
 
 func TestFinalizedTransitionCodecRejectsMalformedCurrentRecord(t *testing.T) {
 	fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
-	result, err := transitioncost.Derive(
+	observation, err := transitioncost.Derive(
 		fixture.prepared.Directions[0].FrozenContract,
 		transitionRawObservation(fixture.prepared, acceptedAttempt), fixture.prepared.Policy,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation, err := transitioncost.FinalizeResult(result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +354,6 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 				FirstPresentReceivedAt: base.Add(3 * time.Second),
 			},
 		},
-		Readiness: []transitioncost.ReadyObservation{{ObservedAt: base.Add(3 * time.Second), Ready: true}},
 		PowerSamples: []transitioncost.PowerSample{
 			{ObservedAt: base.Add(1010 * time.Millisecond), Watts: 15},
 			{ObservedAt: base.Add(1500 * time.Millisecond), Watts: 15},

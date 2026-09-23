@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-const RawRecordSchemaVersion = "chill.dacs.io/transition-cost-raw-observation.v1alpha3"
+const RawRecordSchemaVersion = "chill.dacs.io/transition-cost-raw-observation.v1alpha4"
 
 type rawRecord struct {
 	SchemaVersion  string         `json:"schemaVersion"`

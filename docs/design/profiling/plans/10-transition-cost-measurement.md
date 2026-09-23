@@ -35,6 +35,20 @@ resolvers and Evidence Store; Helm supplies its off-target placement, operationa
 bounds, and least-privilege identities. Gate 0 and the live vertical both
 completed with current immutable evidence, as recorded below.
 
+The local simplification uses preparation and raw-observation schema `v1alpha4`.
+Preparation stores `PreparedMeasurement` directly; durations are nanoseconds
+(`powerRequestNanoseconds` contains the native request fields), with existing
+whole-millisecond bounds checked when reading stored preparation. `Derive`
+returns the raw-free `FinalizedObservation` directly, eliminating the intermediate
+raw-owning result and its finalization conversion. Final and aggregate schemas
+are unchanged. Raw evidence retains pre-transition and post-target Ready process
+witnesses and their receipt brackets, without a separate readiness event history.
+Polling, endpoint definitions, power samples/failures, and acceptance policy are
+unchanged. The historical live results below used `v1alpha3`; the simplification
+has not been deployed or measured live. Older preparation/raw objects are not
+read by the current implementation; finish campaigns and clean stranded objects
+before switching versions, as required by ADR 0019.
+
 This plan fills the two directed specification table entries between one
 selected pair of device power modes. Each `NodeActuation` opens one observation
 window and derives both its elapsed time `tau` and its energy overhead `eta`
@@ -353,7 +367,7 @@ observations made under that selection:
 - source and target state read-backs;
 - every bounded power sample and failed read with its observer receipt time and
   request latency;
-- every process/restart fact and readiness event;
+- the pre-transition and fresh post-target Ready process identities, including restart counts;
 - transition-start, target-read-back, and request-readiness boundary facts; and
 - the last-absent and first-present observer receipt times for each apply,
   target, and fresh Ready/process marker.

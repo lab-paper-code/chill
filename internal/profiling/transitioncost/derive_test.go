@@ -52,13 +52,10 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	}
 }
 
-func TestDeriveUsesReadyProcessBracketInsteadOfDiagnosticReadiness(t *testing.T) {
+func TestDeriveUsesObserverReceiptsDespiteTargetClockOffset(t *testing.T) {
 	frozen, raw, policy := validInputs()
-	raw.Readiness = []transitioncost.ReadyObservation{
-		{ObservedAt: testTime(6), Ready: true},
-		{ObservedAt: testTime(3), Ready: true},
-		{ObservedAt: testTime(5), Ready: true},
-	}
+	raw.TransitionStart.OccurredAt = testTime(200)
+	raw.TargetReadBack.Fact.OccurredAt = testTime(400)
 
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
@@ -159,9 +156,6 @@ func TestDeriveRequiresFreshTimelyReadyProcessWitness(t *testing.T) {
 					LastAbsentReceivedAt:   testTimeMillis(7990),
 					FirstPresentReceivedAt: testTime(8),
 				}
-				raw.Readiness = []transitioncost.ReadyObservation{{
-					ObservedAt: testTime(8), Ready: true,
-				}}
 			},
 		},
 	}
@@ -287,9 +281,9 @@ func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T
 		t.Fatal(err)
 	}
 	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
-	if len(result.RawObservation().PowerFailures) != 1 ||
-		result.RawObservation().PowerFailures[0] != wantFailure {
-		t.Fatalf("failed reads not retained: %#v", result.RawObservation().PowerFailures)
+	if len(raw.PowerFailures) != 1 ||
+		raw.PowerFailures[0] != wantFailure {
+		t.Fatalf("failed reads not retained: %#v", raw.PowerFailures)
 	}
 }
 
@@ -440,21 +434,9 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 			},
 		},
 		{
-			name: "missing Ready witness",
+			name: "process without ready receipt",
 			alter: func(raw *transitioncost.RawObservation) {
-				raw.Readiness = nil
-			},
-		},
-		{
-			name: "false-only Ready witness",
-			alter: func(raw *transitioncost.RawObservation) {
-				raw.Readiness[0].Ready = false
-			},
-		},
-		{
-			name: "mismatched Ready witness receipt",
-			alter: func(raw *transitioncost.RawObservation) {
-				raw.Readiness[0].ObservedAt = testTimeMillis(5999)
+				raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 			},
 		},
 		{
@@ -482,28 +464,23 @@ func TestDeriveReturnsMalformedRawAsTypedInvalid(t *testing.T) {
 	}
 }
 
-func TestResultOwnsRawEvidenceCopy(t *testing.T) {
+func TestDerivedResultDoesNotAliasRawEvidence(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	result, err := transitioncost.Derive(frozen, raw, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw.PowerSamples[0].Watts = 999
-	raw.Readiness[0].Ready = false
+	raw.PostTransitionProcess.ContainerID = "changed"
 	raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt = testTime(7)
-
-	retained := result.RawObservation()
-	if retained.PowerSamples[0].Watts != 10 || !retained.Readiness[0].Ready ||
-		!retained.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.Equal(testTime(2)) {
-		t.Fatalf("retained raw observation aliases caller input: %#v", retained)
-	}
-	retained.PowerSamples[0].Watts = 777
-	if result.RawObservation().PowerSamples[0].Watts != 10 {
-		t.Fatal("RawObservation accessor aliases retained evidence")
+	observation, ok := result.AcceptedObservation()
+	if !ok || observation.TauMilliseconds() != 4000 || observation.TransitionWallJoules() != 40 ||
+		!observation.ServingSurvived() || !observation.StartedAt().Equal(testTime(2)) {
+		t.Fatalf("derived values changed with raw input: %+v", result.Record())
 	}
 }
 
-func assertOutcome(t *testing.T, result transitioncost.Result, verdict transitioncost.Verdict, reason transitioncost.Reason) {
+func assertOutcome(t *testing.T, result transitioncost.FinalizedObservation, verdict transitioncost.Verdict, reason transitioncost.Reason) {
 	t.Helper()
 	if result.Verdict() != verdict || result.Reason() != reason {
 		t.Fatalf("outcome = %s/%s (%s), want %s/%s",
@@ -511,7 +488,7 @@ func assertOutcome(t *testing.T, result transitioncost.Result, verdict transitio
 	}
 }
 
-func assertNoAcceptedObservation(t *testing.T, result transitioncost.Result) {
+func assertNoAcceptedObservation(t *testing.T, result transitioncost.FinalizedObservation) {
 	t.Helper()
 	if _, ok := result.AcceptedObservation(); ok {
 		t.Fatalf("%s/%s unexpectedly contains accepted values", result.Verdict(), result.Reason())
@@ -560,9 +537,6 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 			{ObservedAt: testTime(4), RequestLatencySeconds: 0.01, Watts: 10},
 			{ObservedAt: testTimeMillis(4900), RequestLatencySeconds: 0.01, Watts: 10},
 			{ObservedAt: testTimeMillis(5900), RequestLatencySeconds: 0.01, Watts: 10},
-		},
-		Readiness: []transitioncost.ReadyObservation{
-			{ObservedAt: testTime(6), Ready: true},
 		},
 		PreTransitionProcess: &transitioncost.ProcessObservation{
 			ObservedAt: testTime(1), Process: process,

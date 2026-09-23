@@ -164,7 +164,7 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 		ObjectMeta: metav1.ObjectMeta{Namespace: "measure", Name: "cost", UID: types.UID("cost-uid")},
 		Spec:       edgev1alpha1.PowerModeTransitionCostSpec{TargetNode: "target"},
 	}
-	directions := [2]PreparedDirection{}
+	directions := make([]PreparedDirection, 2)
 	directions[0].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-a", Model: "model", PowerMode: "low"}
 	directions[1].FrozenContract.TargetState = transitioncost.StateIdentity{DeviceType: "device-b", Model: "model", PowerMode: "high"}
 	prepared := PreparedMeasurement{
