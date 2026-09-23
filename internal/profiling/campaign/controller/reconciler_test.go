@@ -16,7 +16,7 @@ func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) 
 	}}
 	status := deriveStatus(
 		7,
-		batchenergyoptimization.Snapshot{Trials: []batchenergyoptimization.Trial{{Verdict: batchenergyoptimization.VerdictAccepted}}},
+		batchenergyoptimization.Snapshot{Trials: []batchenergyoptimization.Trial{{Verdict: batchenergyoptimization.VerdictCompleted}}},
 		batchenergyoptimization.Decision{Action: batchenergyoptimization.ActionWait, Reason: "TrialInFlight"},
 		nil,
 		previous,
@@ -24,16 +24,16 @@ func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) 
 	if len(status.Conditions) != 1 || !status.Conditions[0].LastTransitionTime.Equal(&transition) {
 		t.Fatalf("condition transition time = %v, want %v", status.Conditions, transition)
 	}
-	if status.AcceptedTrials != 1 || status.ObservedGeneration != 7 {
+	if status.CompletedTrials != 1 || status.ObservedGeneration != 7 {
 		t.Fatalf("derived status = %#v", status)
 	}
 }
 
-func TestAcceptedRunsRequiresOneRunPerProjectedTrial(t *testing.T) {
-	_, _, err := acceptedRuns("parent", batchenergyoptimization.Snapshot{
-		Trials: []batchenergyoptimization.Trial{{Verdict: batchenergyoptimization.VerdictAccepted}},
+func TestCompletedRunsRequiresOneRunPerProjectedTrial(t *testing.T) {
+	_, _, err := completedRuns("parent", batchenergyoptimization.Snapshot{
+		Trials: []batchenergyoptimization.Trial{{Verdict: batchenergyoptimization.VerdictCompleted}},
 	}, nil)
 	if err == nil {
-		t.Fatal("trial/Run positional invariant mismatch was accepted")
+		t.Fatal("trial/Run positional invariant mismatch was completed")
 	}
 }

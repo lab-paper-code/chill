@@ -106,7 +106,7 @@ func TestReconcilerClosesFailedStateActuationWithoutRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
-		updated.Status.AttemptedRuns != 0 || updated.Status.AcceptedRuns != 0 ||
+		updated.Status.AttemptedRuns != 0 || updated.Status.CompletedRuns != 0 ||
 		updated.Status.Result != nil || preparer.calls != 0 {
 		t.Fatalf("failed state status=%#v prepare calls=%d", updated.Status, preparer.calls)
 	}

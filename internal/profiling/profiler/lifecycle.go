@@ -32,7 +32,6 @@ const (
 	ActionCreateJob              Action = "CreateJob"
 	ActionWaitForJob             Action = "WaitForJob"
 	ActionFinalizeEvidence       Action = "FinalizeEvidence"
-	ActionAdmitEvidence          Action = "AdmitEvidence"
 	ActionComplete               Action = "Complete"
 	ActionReportExecutionLost    Action = "ReportExecutionLost"
 	ActionReportExecutionFailure Action = "ReportExecutionFailure"
@@ -48,7 +47,6 @@ type Snapshot struct {
 	Job               JobObservation
 	EvidenceReference *evidencestore.ObjectIdentity
 	EvidenceInvalid   bool
-	AdmissionRecorded bool
 }
 
 // Decision carries only the data needed by the selected adapter. Callers must
@@ -72,11 +70,7 @@ func Decide(snapshot Snapshot) (Decision, error) {
 		return Decision{Action: ActionComplete}, nil
 	}
 	if snapshot.EvidenceReference != nil {
-		reference := *snapshot.EvidenceReference
-		if snapshot.AdmissionRecorded {
-			return Decision{Action: ActionComplete}, nil
-		}
-		return Decision{Action: ActionAdmitEvidence, EvidenceReference: &reference}, nil
+		return Decision{Action: ActionComplete}, nil
 	}
 	if snapshot.JobReference == "" {
 		config := *snapshot.RunConfig
@@ -112,9 +106,6 @@ func (s Snapshot) Validate() error {
 	}
 	if s.JobReference != "" && !validJobObservation(s.Job) {
 		return errors.New("recorded Job reference requires a supported observation")
-	}
-	if s.AdmissionRecorded && s.EvidenceReference == nil {
-		return errors.New("admission cannot be recorded without verified evidence")
 	}
 	if s.EvidenceInvalid {
 		if s.EvidenceReference != nil {

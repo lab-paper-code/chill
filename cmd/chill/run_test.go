@@ -194,8 +194,8 @@ func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 	}
 	for _, want := range []string{
 		"RUNTIME MEASUREMENT", "LATENCY", "POWER OBSERVATION", "THERMAL OBSERVATION",
-		"WORKLOAD OBSERVATION", "SCIENTIFIC ADMISSION", "EVIDENCE LINEAGE",
-		"188.009 items/s", "5.978 ms", "18.184 W", "Insufficient", "WorkloadWindowUnknown",
+		"WORKLOAD OBSERVATION", "EVIDENCE LINEAGE",
+		"188.009 items/s", "5.978 ms", "18.184 W",
 		"fastdds-test/fastdds@fastdds-uid",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -433,8 +433,7 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 					TargetNode: "lattepanda",
 					CPURequest: resource.MustParse("4"),
 				},
-				AdmissionPolicy: "single-run-v1",
-				Measurement:     edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4},
+				Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 4},
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 200, DurationSeconds: 60,
 				},
@@ -467,9 +466,9 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 				},
 			},
 			Conditions: []metav1.Condition{{
-				Type:   edgev1alpha1.ProfilingRunConditionEvidenceAdmitted,
+				Type:   edgev1alpha1.ProfilingRunConditionEvidenceVerified,
 				Status: metav1.ConditionUnknown,
-				Reason: "EvidenceInsufficient",
+				Reason: "EvidenceVerified",
 			}},
 		},
 		Evidence: operatorconsole.EvidencePassportLineage{
@@ -510,9 +509,6 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 					{Namespace: "fastdds-test", Name: "fastdds", UID: "fastdds-uid", Changed: true},
 				},
 			},
-		},
-		Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
-			Verdict: "Insufficient", PolicyVersion: "wall-power-v2", ReasonCodes: []string{"WorkloadWindowUnknown"},
 		},
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const resultRecordSchemaVersion = "chill.dacs.io/batch-energy-optimization-result.v1alpha3"
+const resultRecordSchemaVersion = "chill.dacs.io/batch-energy-optimization-result.v1alpha4"
 
 // TerminalOutcome is the stable terminal outcome published by a measurement
 // method.
@@ -50,14 +50,14 @@ type ResultMeasurementState struct {
 	PowerMode     string `json:"powerMode"`
 }
 
-// AdmittedTrialReference locates one admitted Run and its retained evidence.
-type AdmittedTrialReference struct {
+// CompletedTrialReference locates one completed Run and its retained evidence.
+type CompletedTrialReference struct {
 	Run         RunReference          `json:"run"`
 	Measurement ResultMeasurement     `json:"measurement"`
 	Evidence    StoredObjectReference `json:"evidence"`
 }
 
-// ExcludedTrialReference identifies one non-admitted attempt and the reasons
+// ExcludedTrialReference identifies one non-completed attempt and the reasons
 // that kept it out of the derived result.
 type ExcludedTrialReference struct {
 	Run         RunReference      `json:"run"`
@@ -68,12 +68,12 @@ type ExcludedTrialReference struct {
 
 // ResultRecordSpec is the validated payload of one terminal result record.
 type ResultRecordSpec struct {
-	Outcome          TerminalOutcome          `json:"outcome"`
-	MeasurementState ResultMeasurementState   `json:"measurementState"`
-	CurvePlan        StoredObjectReference    `json:"curvePlan"`
-	AdmittedTrials   []AdmittedTrialReference `json:"admittedTrials"`
-	ExcludedTrials   []ExcludedTrialReference `json:"excludedTrials"`
-	Detail           json.RawMessage          `json:"detail"`
+	Outcome          TerminalOutcome           `json:"outcome"`
+	MeasurementState ResultMeasurementState    `json:"measurementState"`
+	CurvePlan        StoredObjectReference     `json:"curvePlan"`
+	CompletedTrials  []CompletedTrialReference `json:"completedTrials"`
+	ExcludedTrials   []ExcludedTrialReference  `json:"excludedTrials"`
+	Detail           json.RawMessage           `json:"detail"`
 }
 
 type resultRecord struct {
@@ -165,8 +165,8 @@ func (r ResultRecord) requireInitialized() error {
 }
 
 func normalizeResultRecordSpec(spec *ResultRecordSpec) {
-	if spec.AdmittedTrials == nil {
-		spec.AdmittedTrials = []AdmittedTrialReference{}
+	if spec.CompletedTrials == nil {
+		spec.CompletedTrials = []CompletedTrialReference{}
 	}
 	if spec.ExcludedTrials == nil {
 		spec.ExcludedTrials = []ExcludedTrialReference{}
@@ -174,8 +174,8 @@ func normalizeResultRecordSpec(spec *ResultRecordSpec) {
 	for index := range spec.ExcludedTrials {
 		sort.Strings(spec.ExcludedTrials[index].Reasons)
 	}
-	sort.Slice(spec.AdmittedTrials, func(i, j int) bool {
-		return admittedTrialLess(spec.AdmittedTrials[i], spec.AdmittedTrials[j])
+	sort.Slice(spec.CompletedTrials, func(i, j int) bool {
+		return completedTrialLess(spec.CompletedTrials[i], spec.CompletedTrials[j])
 	})
 	sort.Slice(spec.ExcludedTrials, func(i, j int) bool {
 		return excludedTrialLess(spec.ExcludedTrials[i], spec.ExcludedTrials[j])
@@ -192,16 +192,16 @@ func validateResultRecordSpec(spec ResultRecordSpec) error {
 	if err := validateStoredObjectReference("curve plan", spec.CurvePlan); err != nil {
 		return err
 	}
-	seenRuns := make(map[string]struct{}, len(spec.AdmittedTrials)+len(spec.ExcludedTrials))
-	for _, trial := range spec.AdmittedTrials {
+	seenRuns := make(map[string]struct{}, len(spec.CompletedTrials)+len(spec.ExcludedTrials))
+	for _, trial := range spec.CompletedTrials {
 		if err := validateRunReference(trial.Run); err != nil {
-			return fmt.Errorf("validate admitted Run reference: %w", err)
+			return fmt.Errorf("validate completed Run reference: %w", err)
 		}
 		if err := validateResultMeasurement(trial.Measurement); err != nil {
-			return fmt.Errorf("validate admitted Run %q measurement: %w", trial.Run.Name, err)
+			return fmt.Errorf("validate completed Run %q measurement: %w", trial.Run.Name, err)
 		}
-		if err := validateStoredObjectReference("admitted Run evidence", trial.Evidence); err != nil {
-			return fmt.Errorf("validate admitted Run %q: %w", trial.Run.Name, err)
+		if err := validateStoredObjectReference("completed Run evidence", trial.Evidence); err != nil {
+			return fmt.Errorf("validate completed Run %q: %w", trial.Run.Name, err)
 		}
 		if err := recordRunUID(seenRuns, trial.Run); err != nil {
 			return err
@@ -282,7 +282,7 @@ func recordRunUID(seen map[string]struct{}, reference RunReference) error {
 	return nil
 }
 
-func admittedTrialLess(left, right AdmittedTrialReference) bool {
+func completedTrialLess(left, right CompletedTrialReference) bool {
 	if left.Measurement.WorkloadMode != right.Measurement.WorkloadMode {
 		return left.Measurement.WorkloadMode < right.Measurement.WorkloadMode
 	}
@@ -308,7 +308,7 @@ func excludedTrialLess(left, right ExcludedTrialReference) bool {
 func cloneResultRecordSpec(spec ResultRecordSpec) ResultRecordSpec {
 	copy := spec
 	copy.Detail = bytes.Clone(spec.Detail)
-	copy.AdmittedTrials = append([]AdmittedTrialReference(nil), spec.AdmittedTrials...)
+	copy.CompletedTrials = append([]CompletedTrialReference(nil), spec.CompletedTrials...)
 	copy.ExcludedTrials = append([]ExcludedTrialReference(nil), spec.ExcludedTrials...)
 	for index := range copy.ExcludedTrials {
 		copy.ExcludedTrials[index].Reasons = append([]string(nil), spec.ExcludedTrials[index].Reasons...)

@@ -1,5 +1,5 @@
 // Package batchenergyoptimization contains the Kubernetes-independent progress rules
-// that drive one batch-energy-optimization measurement from its admitted trials.
+// that drive one batch-energy-optimization measurement from its completed trials.
 package batchenergyoptimization
 
 import (
@@ -11,9 +11,9 @@ const (
 	WorkloadModeActive WorkloadMode = "active"
 	WorkloadModeIdle   WorkloadMode = "idle"
 
-	VerdictPending  Verdict = "Pending"
-	VerdictAccepted Verdict = "Accepted"
-	VerdictFailed   Verdict = "Failed"
+	VerdictPending   Verdict = "Pending"
+	VerdictCompleted Verdict = "Completed"
+	VerdictFailed    Verdict = "Failed"
 
 	TransitionInFlight    TransitionOutcome = "InFlight"
 	TransitionEstablished TransitionOutcome = "Established"
@@ -93,7 +93,7 @@ type Observed struct {
 	// exhausting it is the capability boundary. Ascending order is a
 	// precondition of this type.
 	PlannedBatchSizes []int
-	Accepted          []Measurement
+	Completed         []Measurement
 }
 
 type Plan struct {

@@ -29,17 +29,17 @@ func TestResultRoundTripRetainsCompleteAggregateAuthority(t *testing.T) {
 	}
 	if restored.SchemaVersion() != ResultSchemaVersion || restored.MeasurementState() != resultState() ||
 		restored.IdleBaseline().ModelLoadedIdleMeanWallWatts != 11 ||
-		restored.AcceptedFinalEvidence()["trial-0"].Key != "runs/0/final.json" ||
+		restored.FinalEvidence()["trial-0"].Key != "runs/0/final.json" ||
 		restored.IdleBaseline().Trials[0].TrialID != "trial-0" {
 		t.Fatalf("restored result drifted: %#v", restored)
 	}
-	gotEvidence := restored.AcceptedFinalEvidence()
+	gotEvidence := restored.FinalEvidence()
 	gotEvidence["trial-0"] = StoredObjectReference{
 		Store: "evidence", Key: "returned-mutated", SchemaVersion: "final.v1", Size: 20,
 	}
 	gotBaseline := restored.IdleBaseline()
 	gotBaseline.Trials[0].TrialID = "returned-mutated"
-	if restored.AcceptedFinalEvidence()["trial-0"].Key != "runs/0/final.json" ||
+	if restored.FinalEvidence()["trial-0"].Key != "runs/0/final.json" ||
 		restored.IdleBaseline().Trials[0].TrialID != "trial-0" {
 		t.Fatal("Result accessors leaked owned slices")
 	}
@@ -56,14 +56,14 @@ func TestDecodeResultRejectsRetiredOrInvalidStoredResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string][]byte{
-		"retired schema": bytes.Replace(payload, []byte("result.v1alpha1"), []byte("result.v1alpha0"), 1),
+		"retired schema": bytes.Replace(payload, []byte("result.v1alpha2"), []byte("result.v1alpha0"), 1),
 		"unknown field":  append(bytes.TrimSuffix(payload, []byte("}")), []byte(`,"extra":true}`)...),
 		"invalid mean":   bytes.Replace(payload, []byte(`"modelLoadedIdleMeanWallWatts":11`), []byte(`"modelLoadedIdleMeanWallWatts":-1`), 1),
 		"mismatched trial ID": bytes.Replace(
 			payload, []byte(`"trial-2":`), []byte(`"other-trial":`), 1,
 		),
 		"missing evidence": bytes.Replace(
-			payload, []byte(`"acceptedFinalEvidence":{`), []byte(`"acceptedFinalEvidence":null,"removed":{`), 1,
+			payload, []byte(`"finalEvidence":{`), []byte(`"finalEvidence":null,"removed":{`), 1,
 		),
 	}
 	for name, candidate := range tests {
@@ -105,7 +105,7 @@ func resultBaseline(t *testing.T) profilederivation.IdleBaseline {
 			RawEvidence: profilederivation.RawEvidenceIdentity{
 				Store: "evidence", Key: fmt.Sprintf("runs/%d/raw.json", index), Size: 10,
 			},
-			AdmissionPolicyVersion: "idle-admission-v1", ModelLoadedIdleMeanWallWatts: float64(10 + index),
+			ModelLoadedIdleMeanWallWatts: float64(10 + index),
 		}
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(trials, profilederivation.PointPolicy{
@@ -117,8 +117,8 @@ func resultBaseline(t *testing.T) profilederivation.IdleBaseline {
 	return baseline
 }
 
-func resultEvidence(count int) AcceptedFinalEvidence {
-	references := make(AcceptedFinalEvidence, count)
+func resultEvidence(count int) FinalEvidence {
+	references := make(FinalEvidence, count)
 	for index := 0; index < count; index++ {
 		references[fmt.Sprintf("trial-%d", index)] = StoredObjectReference{
 			Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", index),

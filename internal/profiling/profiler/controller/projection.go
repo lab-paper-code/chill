@@ -18,8 +18,7 @@ import (
 )
 
 type RequestedRun struct {
-	Preparation     profiler.PreparationRequest
-	AdmissionPolicy string
+	Preparation profiler.PreparationRequest
 }
 
 // ProjectRequest converts desired API state without resolving any cluster or
@@ -49,7 +48,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				DurationSeconds:      int(spec.MetricObservation.DurationSeconds),
 			},
 		},
-		AdmissionPolicy: spec.AdmissionPolicy,
 	}
 	if spec.Measurement.SettlingDurationSeconds != nil {
 		request.Preparation.Measurement.SettlingDurationSeconds = int(*spec.Measurement.SettlingDurationSeconds)
@@ -59,10 +57,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 	}
 	if spec.CPURequest.Sign() <= 0 {
 		return RequestedRun{}, errors.New("ProfilingRun CPU request must be positive")
-	}
-	if strings.TrimSpace(request.AdmissionPolicy) == "" ||
-		strings.TrimSpace(request.AdmissionPolicy) != request.AdmissionPolicy {
-		return RequestedRun{}, errors.New("ProfilingRun admission policy is required without surrounding whitespace")
 	}
 	if err := request.Preparation.Validate(); err != nil {
 		return RequestedRun{}, fmt.Errorf("validate ProfilingRun preparation request: %w", err)
@@ -96,7 +90,6 @@ func ProjectSnapshot(
 		return profiler.Snapshot{}, err
 	}
 	snapshot.EvidenceInvalid = evidenceIsTerminallyInvalid(run.Status.Conditions)
-	snapshot.AdmissionRecorded = run.Status.Admission != nil
 	if err := snapshot.Validate(); err != nil {
 		return profiler.Snapshot{}, fmt.Errorf("validate projected lifecycle snapshot: %w", err)
 	}

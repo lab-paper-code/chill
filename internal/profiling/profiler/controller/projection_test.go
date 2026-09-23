@@ -18,8 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const testIdleAdmissionPolicy = "idle-wall-power-v1"
-
 func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	run := testRun()
 	request, err := ProjectRequest(run.Spec)
@@ -29,8 +27,7 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	if request.Preparation.Candidate.ModelSpec != run.Spec.Candidate.ModelSpec ||
 		request.Preparation.Candidate.PowerMode != run.Spec.Candidate.PowerMode ||
 		request.Preparation.TargetNode != run.Spec.TargetNode || request.Preparation.CPURequest != "100m" ||
-		request.Preparation.Measurement.Batch != 1 || request.Preparation.Metrics.IntervalMilliseconds != 1000 ||
-		request.AdmissionPolicy != run.Spec.AdmissionPolicy {
+		request.Preparation.Measurement.Batch != 1 || request.Preparation.Metrics.IntervalMilliseconds != 1000 {
 		t.Fatalf("ProfilingRun request projection drifted: %#v", request)
 	}
 }
@@ -43,7 +40,6 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
 	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
-	run.Spec.AdmissionPolicy = testIdleAdmissionPolicy
 
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
@@ -51,8 +47,7 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	}
 	measurement := request.Preparation.Measurement
 	if measurement.SettlingDurationSeconds != 60 ||
-		measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode ||
-		request.AdmissionPolicy != testIdleAdmissionPolicy {
+		measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		t.Fatalf("idle request projection drifted: %#v", request)
 	}
 }
@@ -76,17 +71,6 @@ func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 	run.Spec.CPURequest = resource.MustParse("-1")
 	if _, err := ProjectRequest(run.Spec); err == nil {
 		t.Fatal("expected negative CPU request rejection")
-	}
-	run = testRun()
-	run.Spec.AdmissionPolicy = " policy "
-	if _, err := ProjectRequest(run.Spec); err == nil {
-		t.Fatal("expected admission policy whitespace rejection")
-	}
-	run = testRun()
-	run.Spec.Candidate.PowerMode = testSelectablePowerMode
-	request, err := ProjectRequest(run.Spec)
-	if err != nil || request.Preparation.Candidate.PowerMode != testSelectablePowerMode {
-		t.Fatalf("catalog-selected power mode projection = %#v, %v", request, err)
 	}
 }
 
@@ -154,16 +138,14 @@ func TestProjectSnapshotDrivesLifecycleFromObservedFacts(t *testing.T) {
 				run.Status.Evidence = testEvidenceReference()
 				return nil
 			},
-			want: profiler.ActionAdmitEvidence,
+			want: profiler.ActionComplete,
 		},
 		{
-			name: "complete after admission is recorded",
+			name: "complete with stored evidence",
 			configure: func(run *edgev1alpha1.ProfilingRun) *batchv1.Job {
 				recordRunConfigAndJob(run)
 				run.Status.Evidence = testEvidenceReference()
-				run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
-					Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
-				}
+
 				return nil
 			},
 			want: profiler.ActionComplete,
@@ -265,7 +247,6 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 				CPURequest: resource.MustParse("100m"),
 			},
-			AdmissionPolicy: "wall-power-v2",
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-fp32-v1",

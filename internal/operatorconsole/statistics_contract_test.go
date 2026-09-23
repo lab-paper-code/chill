@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
@@ -31,13 +32,9 @@ func TestLatencyP99MatchesProfileDerivationNearestRank(t *testing.T) {
 				profilederivation.Trial{
 					StateIdentity: "state", EnvironmentIdentity: "environment",
 					MeasurementProtocolIdentity: "active-protocol", TrialID: "trial",
-					Batch: 1, CompletedItems: 1, LatencyMilliseconds: latencies,
-				},
-				profilederivation.AdmissionResult{
-					Verdict: profilederivation.VerdictAccepted, PolicyVersion: "active-admission",
-					StateIdentity: "state", EnvironmentIdentity: "environment",
-					MeasurementProtocolIdentity: "active-protocol", TrialID: "trial",
-					WindowSeconds: 1, CompletedItems: 1, TotalWallJoules: float64Pointer(1),
+					Batch: 1, CompletedItems: len(latencies), CompletedCalls: len(latencies), LatencyMilliseconds: latencies,
+					WindowStart: time.Unix(0, 0), WindowEnd: time.Unix(1, 0),
+					Samples: []profilederivation.Sample{{ObservedAt: time.Unix(0, 100000000), Watts: 1}, {ObservedAt: time.Unix(0, 900000000), Watts: 1}},
 				},
 				baseline,
 			)
@@ -63,7 +60,6 @@ func zeroIdleBaseline(t *testing.T) profilederivation.IdleBaseline {
 				Store: "store", Key: fmt.Sprintf("idle/%d", index),
 				Size: 1,
 			},
-			AdmissionPolicyVersion: "idle-admission",
 		}
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(
@@ -82,8 +78,4 @@ func descendingLatencies(count int) []float64 {
 		values[index] = float64(count - index)
 	}
 	return values
-}
-
-func float64Pointer(value float64) *float64 {
-	return &value
 }

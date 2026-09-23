@@ -153,19 +153,16 @@
 {{- if empty .Values.profiler.factSource.workloadObservationKey -}}
 {{- fail "profiler.factSource.workloadObservationKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.profiler.factSource.admissionPoliciesKey -}}
-{{- fail "profiler.factSource.admissionPoliciesKey must not be empty when profiler.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.profiler.factSource.executionPoliciesKey -}}
 {{- fail "profiler.factSource.executionPoliciesKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
 {{- if empty .Values.profiler.factSource.actuationPoliciesKey -}}
 {{- fail "profiler.factSource.actuationPoliciesKey must not be empty when profiler.enabled=true" -}}
 {{- end -}}
-{{- if or (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.admissionPoliciesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.executionPoliciesKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.admissionPoliciesKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.executionPoliciesKey) (eq .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.admissionPoliciesKey) (eq .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.executionPoliciesKey) (eq .Values.profiler.factSource.admissionPoliciesKey .Values.profiler.factSource.executionPoliciesKey) -}}
+{{- if or (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.executionPoliciesKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey) (eq .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.executionPoliciesKey) (eq .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.executionPoliciesKey) -}}
 {{- fail "profiler.factSource keys must be different" -}}
 {{- end -}}
-{{- if has .Values.profiler.factSource.actuationPoliciesKey (list .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.admissionPoliciesKey .Values.profiler.factSource.executionPoliciesKey) -}}
+{{- if has .Values.profiler.factSource.actuationPoliciesKey (list .Values.profiler.factSource.executionFactsKey .Values.profiler.factSource.metricSourcesKey .Values.profiler.factSource.workloadObservationKey .Values.profiler.factSource.executionPoliciesKey) -}}
 {{- fail "profiler.factSource keys must be different" -}}
 {{- end -}}
 {{- if and (not .Values.profiler.workloadObserver.serviceAccount.create) (empty .Values.profiler.workloadObserver.serviceAccount.name) -}}

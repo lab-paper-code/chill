@@ -17,9 +17,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,49 +70,6 @@ func TestCurveDeriverUsesParentTrialCountForIdleMinimum(t *testing.T) {
 	}
 }
 
-func TestCurveDeriverRejectsANonAcceptedRunByName(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*curveDeriverFixture) string
-	}{
-		{
-			name: "active",
-			mutate: func(fixture *curveDeriverFixture) string {
-				runName := fixture.activeRuns[0].Name
-				recorded := fixture.records.byRun[runName]
-				recorded.AdmissionPolicy = fixture.insufficientActivePolicy
-				fixture.records.byRun[runName] = recorded
-				return runName
-			},
-		},
-		{
-			name: "idle",
-			mutate: func(fixture *curveDeriverFixture) string {
-				runName := fixture.idleRuns[0].Name
-				recorded := fixture.records.byRun[runName]
-				recorded.AdmissionPolicy = fixture.insufficientIdlePolicy
-				fixture.records.byRun[runName] = recorded
-				return runName
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newCurveDeriverFixture(t)
-			runName := test.mutate(&fixture)
-
-			_, err := fixture.deriver.Derive(
-				context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
-				[]int{1, 2}, fixture.policy,
-			)
-			if err == nil || !strings.Contains(err.Error(), runName) ||
-				!strings.Contains(err.Error(), "Insufficient") {
-				t.Fatalf("Derive() error = %v, want named non-Accepted Run", err)
-			}
-		})
-	}
-}
-
 func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 
@@ -123,9 +80,9 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "contiguous prefix") {
 		t.Fatalf("Derive() error = %v, want recorded-prefix rejection", err)
 	}
-	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
-		t.Fatalf("invalid prefix loaded evidence: config calls=%d evidence calls=%d",
-			fixture.records.calls, fixture.evidence.calls)
+	if fixture.evidence.calls != 0 {
+		t.Fatalf("invalid prefix loaded evidence: evidence calls=%d",
+			fixture.evidence.calls)
 	}
 }
 
@@ -134,7 +91,7 @@ func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
 	activeRuns := []edgev1alpha1.ProfilingRun{
 		fixture.activeRuns[1], fixture.activeRuns[0], fixture.activeRuns[5], fixture.activeRuns[4],
 	}
-	passBatches, activeWitness, err := fixture.deriver.collectActiveAdmissions(
+	passBatches, activeWitness, err := fixture.deriver.collectActiveTrials(
 		context.Background(), activeRuns, []int{1, 2},
 	)
 	if err != nil {
@@ -148,9 +105,9 @@ func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
 		{"active-b2-t2-pod", "active-b2-t1-pod"},
 	}
 	for batchIndex := range passBatches {
-		got := make([]string, len(passBatches[batchIndex].Admissions))
-		for index, admission := range passBatches[batchIndex].Admissions {
-			got[index] = admission.Trial.TrialID
+		got := make([]string, len(passBatches[batchIndex].Trials))
+		for index, admission := range passBatches[batchIndex].Trials {
+			got[index] = admission.TrialID
 		}
 		if !reflect.DeepEqual(got, wantActiveTrials[batchIndex]) {
 			t.Fatalf("batch %d trial order = %v, want %v", batchIndex, got, wantActiveTrials[batchIndex])
@@ -195,10 +152,10 @@ func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
 	if err == nil || err.Error() != wantError {
 		t.Fatalf("Derive() error = %v, want %q", err, wantError)
 	}
-	if fixture.records.calls != 0 || fixture.evidence.calls != 0 {
+	if fixture.evidence.calls != 0 {
 		t.Fatalf(
-			"out-of-prefix Run loaded evidence: config calls=%d evidence calls=%d",
-			fixture.records.calls, fixture.evidence.calls,
+			"out-of-prefix Run loaded evidence: evidence calls=%d",
+			fixture.evidence.calls,
 		)
 	}
 }
@@ -206,27 +163,27 @@ func TestCurveDeriverRejectsRunOutsidePrefixBeforeLoading(t *testing.T) {
 func TestCurveDeriverPreservesCollectorLoadErrorIdentity(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 	run := fixture.activeRuns[0]
-	loadErr := errors.New("config load failed")
-	fixture.records.errors = map[string]error{run.Name: loadErr}
+	loadErr := errors.New("evidence load failed")
+	fixture.evidence.err = loadErr
 
 	_, err := fixture.deriver.Derive(
 		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns,
 		[]int{1, 2}, fixture.policy,
 	)
-	wantError := fmt.Sprintf("load ProfilingRun %q Job RunConfig: %s", run.Name, loadErr)
+	wantError := fmt.Sprintf("load ProfilingRun %q retained evidence: %s", run.Name, loadErr)
 	if !errors.Is(err, loadErr) || err.Error() != wantError {
 		t.Fatalf("Derive() error = %v, want %q wrapping %q", err, wantError, loadErr)
 	}
-	if fixture.records.calls != 1 || fixture.evidence.calls != 0 {
+	if fixture.evidence.calls != 1 {
 		t.Fatalf(
-			"load failure calls: config=%d evidence=%d", fixture.records.calls, fixture.evidence.calls,
+			"load failure calls: evidence=%d", fixture.evidence.calls,
 		)
 	}
 }
 
 func TestValidateCurvePrefixRejectsEmptyBatches(t *testing.T) {
 	if err := validateCurvePrefix([]int{1, 2}, nil); err == nil {
-		t.Fatal("validateCurvePrefix() accepted an empty batch set")
+		t.Fatal("validateCurvePrefix() completed an empty batch set")
 	}
 }
 
@@ -282,16 +239,13 @@ func TestProjectEnergyOptimizationResultRejectsAnUnknownCompletionReason(t *test
 }
 
 type curveDeriverFixture struct {
-	deriver                  *CurveDeriver
-	records                  *fakeCurveRunRecordLoader
-	evidence                 *fakeCurveEvidenceLoader
-	plan                     profilederivation.CurvePlan
-	activeRuns               []edgev1alpha1.ProfilingRun
-	idleRuns                 []edgev1alpha1.ProfilingRun
-	policy                   profilederivation.EnergyObjectivePolicy
-	insufficientActivePolicy profileradmission.FrozenPolicy
-	insufficientIdlePolicy   profileradmission.FrozenPolicy
-	stateIdentity            string
+	deriver       *CurveDeriver
+	evidence      *fakeCurveEvidenceLoader
+	plan          profilederivation.CurvePlan
+	activeRuns    []edgev1alpha1.ProfilingRun
+	idleRuns      []edgev1alpha1.ProfilingRun
+	policy        profilederivation.EnergyObjectivePolicy
+	stateIdentity string
 }
 
 func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
@@ -310,7 +264,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		TargetPlatform: "test", DeclaredBatchSizes: []int32{1, 2},
 		InputSampleShape: []int32{3, 224, 224},
 	}
-	spec, err := profileradmission.ProjectCurvePlanSpec(
+	spec, err := profilerprojection.ProjectCurvePlanSpec(
 		"test-curve", base, idleRunConfig, capability,
 		profilederivation.CurveConversionContract{}, []int{1, 2},
 	)
@@ -322,19 +276,12 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		t.Fatal(err)
 	}
 
-	activePolicy := curveFixturePolicy(t, profileradmission.WallPowerPolicyV2)
-	idlePolicy := curveFixturePolicy(t, profileradmission.IdleWallPowerPolicyV1)
-	insufficientActivePolicy := curveFixturePolicy(t, "insufficient-active")
-	insufficientIdlePolicy := curveFixturePolicy(t, "insufficient-idle")
-	records := &fakeCurveRunRecordLoader{byRun: map[string]profilercontroller.ResolvedRun{}}
 	evidence := &fakeCurveEvidenceLoader{
 		active: make(map[string]profilerevidence.VerifiedEvidence),
 		idle:   make(map[string]profilerevidence.VerifiedIdleEvidence),
 	}
 	fixture := curveDeriverFixture{
-		records: records, evidence: evidence, plan: plan,
-		insufficientActivePolicy: insufficientActivePolicy,
-		insufficientIdlePolicy:   insufficientIdlePolicy,
+		evidence: evidence, plan: plan,
 		policy: profilederivation.EnergyObjectivePolicy{
 			Version: "quick-energy-v1", TrialsPerBatch: 4,
 		},
@@ -347,7 +294,6 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 			config.Measurement.Batch = batch
 			verified := curveFixtureActiveEvidence(t, config, name+"-pod", watts)
 			fixture.activeRuns = append(fixture.activeRuns, curveFixtureRun(name, config.Measurement))
-			records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: activePolicy}
 			evidence.active[name] = verified
 		}
 	}
@@ -355,47 +301,26 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 		name := fmt.Sprintf("idle-t%d", trial)
 		verified := curveFixtureIdleEvidence(t, idleRunConfig, name+"-pod", 4)
 		fixture.idleRuns = append(fixture.idleRuns, curveFixtureRun(name, idleRunConfig.Measurement))
-		records.byRun[name] = profilercontroller.ResolvedRun{AdmissionPolicy: idlePolicy}
 		evidence.idle[name] = verified
 	}
 	firstExecution, _, err := evidence.active[fixture.activeRuns[0].Name].Records()
 	if err != nil {
 		t.Fatal(err)
 	}
-	identities, err := profileradmission.ProjectRunIdentities(firstExecution.RunConfig, firstExecution.Terminal.Node.UID)
+	identities, err := profilerprojection.ProjectRunIdentities(firstExecution.RunConfig, firstExecution.Terminal.Node.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture.stateIdentity = identities.StateIdentity
-	fixture.deriver, err = NewCurveDeriver(records, evidence)
+	fixture.deriver, err = NewCurveDeriver(evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return fixture
 }
 
-type fakeCurveRunRecordLoader struct {
-	byRun  map[string]profilercontroller.ResolvedRun
-	calls  int
-	errors map[string]error
-}
-
-func (l *fakeCurveRunRecordLoader) Load(
-	_ context.Context,
-	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.ResolvedRun, error) {
-	l.calls++
-	if err := l.errors[run.Name]; err != nil {
-		return profilercontroller.ResolvedRun{}, err
-	}
-	recorded, exists := l.byRun[run.Name]
-	if !exists {
-		return profilercontroller.ResolvedRun{}, fmt.Errorf("unexpected Run %q", run.Name)
-	}
-	return recorded, nil
-}
-
 type fakeCurveEvidenceLoader struct {
+	err    error
 	active map[string]profilerevidence.VerifiedEvidence
 	idle   map[string]profilerevidence.VerifiedIdleEvidence
 	calls  int
@@ -407,6 +332,9 @@ func (l *fakeCurveEvidenceLoader) Load(
 	_ evidencestore.ObjectIdentity,
 ) (profilerevidence.VerifiedEvidence, error) {
 	l.calls++
+	if l.err != nil {
+		return profilerevidence.VerifiedEvidence{}, l.err
+	}
 	verified, exists := l.active[run.Name]
 	if !exists {
 		return profilerevidence.VerifiedEvidence{}, fmt.Errorf("unexpected active Run %q", run.Name)
@@ -438,61 +366,6 @@ func curveFixtureRun(name string, measurement profilingrun.MeasurementContract) 
 			SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Size: 1,
 		}},
 	}
-}
-
-func curveFixturePolicy(t *testing.T, name string) profileradmission.FrozenPolicy {
-	t.Helper()
-	catalog := `
-schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
-policies:
-  - name: wall-power-v2
-    workloadMode: saturated-serial-fixed-batch
-    minimumSamples: 20
-    maximumGapSeconds: 1.5
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.95
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-  - name: idle-wall-power-v1
-    workloadMode: idle-model-loaded
-    minimumSamples: 20
-    maximumGapSeconds: 1.5
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.95
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-  - name: insufficient-active
-    workloadMode: saturated-serial-fixed-batch
-    minimumSamples: 31
-    maximumGapSeconds: 1.5
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.95
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-  - name: insufficient-idle
-    workloadMode: idle-model-loaded
-    minimumSamples: 31
-    maximumGapSeconds: 1.5
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.95
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-`
-	policy, err := profileradmission.FreezeConfiguredPolicy(
-		[]byte(catalog), name,
-		profileradmission.PolicySource{
-			Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: "chill-system",
-			Name: "policies", UID: "policy-uid", ResourceVersion: "1", Key: "policies.yaml",
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return policy
 }
 
 type curveFixtureStore map[evidencestore.ObjectLocation][]byte

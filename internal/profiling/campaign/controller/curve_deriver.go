@@ -9,9 +9,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 )
 
 const (
@@ -23,11 +23,6 @@ const (
 	energyLocalMinimumOutcome    = "MinimumFound/" + string(profilederivation.EnergySearchLocalMinimum)
 	energySearchExhaustedOutcome = "MinimumFound/" + string(profilederivation.EnergySearchSpaceExhausted)
 )
-
-// CurveRunRecordLoader retrieves the RunConfig and policies carried by one Job.
-type CurveRunRecordLoader interface {
-	Load(context.Context, *edgev1alpha1.ProfilingRun) (profilercontroller.ResolvedRun, error)
-}
 
 // CurveEvidenceLoader retrieves evidence whose immutable objects have crossed
 // the profile-evidence verification boundary. Its return types do not encode a
@@ -46,21 +41,20 @@ type CurveEvidenceLoader interface {
 	) (profilerevidence.VerifiedIdleEvidence, error)
 }
 
-// CurveDeriver assembles retained Accepted Run evidence into the minimum-energy
+// CurveDeriver assembles retained Completed Run evidence into the minimum-energy
 // objective decision. It retains no evidence between calls.
 type CurveDeriver struct {
-	records  CurveRunRecordLoader
 	evidence CurveEvidenceLoader
 }
 
-func NewCurveDeriver(records CurveRunRecordLoader, evidence CurveEvidenceLoader) (*CurveDeriver, error) {
-	if records == nil || evidence == nil {
-		return nil, errors.New("curve Run-record and evidence loaders are required")
+func NewCurveDeriver(evidence CurveEvidenceLoader) (*CurveDeriver, error) {
+	if evidence == nil {
+		return nil, errors.New("curve evidence loader are required")
 	}
-	return &CurveDeriver{records: records, evidence: evidence}, nil
+	return &CurveDeriver{evidence: evidence}, nil
 }
 
-// Derive evaluates the accepted Runs bound by a caller's per-reconcile
+// Derive evaluates the completed Runs bound by a caller's per-reconcile
 // CurveSource closure. The requested batches must be the recorded plan prefix.
 func (d *CurveDeriver) Derive(
 	ctx context.Context,
@@ -78,7 +72,7 @@ func (d *CurveDeriver) Derive(
 		ConfidenceLevel: energyObjectivePointConfidenceLevel,
 	}
 
-	passBatches, activeWitness, err := d.collectActiveAdmissions(ctx, activeRuns, batches)
+	passBatches, activeWitness, err := d.collectActiveTrials(ctx, activeRuns, batches)
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, err
 	}
@@ -91,7 +85,7 @@ func (d *CurveDeriver) Derive(
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive idle baseline: %w", err)
 	}
-	state, err := profileradmission.ProjectVerifiedCurveState(plan, activeWitness, idleWitness)
+	state, err := profilerprojection.ProjectVerifiedCurveState(plan, activeWitness, idleWitness)
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, fmt.Errorf("project verified curve state: %w", err)
 	}
@@ -115,7 +109,7 @@ func (d *CurveDeriver) Derive(
 	return projectEnergyOptimizationResult(result)
 }
 
-func (d *CurveDeriver) collectActiveAdmissions(
+func (d *CurveDeriver) collectActiveTrials(
 	ctx context.Context,
 	runs []edgev1alpha1.ProfilingRun,
 	batches []int,
@@ -137,20 +131,15 @@ func (d *CurveDeriver) collectActiveAdmissions(
 				run.Name, run.Spec.Measurement.Batch,
 			)
 		}
-		resolved, verified, err := d.loadActive(ctx, run)
+		verified, err := d.loadActive(ctx, run)
 		if err != nil {
 			return nil, profilerevidence.VerifiedEvidence{}, err
 		}
-		result, admission, err := profileradmission.EvaluateTrialAdmission(verified, resolved.AdmissionPolicy)
+		trial, err := profilerprojection.Trial(verified)
 		if err != nil {
 			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
-		if admission == nil {
-			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
-				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
-			)
-		}
-		passBatches[batchIndex].Admissions = append(passBatches[batchIndex].Admissions, *admission)
+		passBatches[batchIndex].Trials = append(passBatches[batchIndex].Trials, trial)
 		if index == 0 {
 			witness = verified
 		}
@@ -166,20 +155,15 @@ func (d *CurveDeriver) collectIdleTrials(
 	var witness profilerevidence.VerifiedIdleEvidence
 	for index := range runs {
 		run := &runs[index]
-		resolved, verified, err := d.loadIdle(ctx, run)
+		verified, err := d.loadIdle(ctx, run)
 		if err != nil {
 			return nil, profilerevidence.VerifiedIdleEvidence{}, err
 		}
-		result, trial, err := profileradmission.EvaluateIdle(verified, resolved.AdmissionPolicy)
+		trial, err := profilerprojection.IdleTrial(verified)
 		if err != nil {
 			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
-		if trial == nil {
-			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
-				"ProfilingRun %q was presented as Accepted but evaluated as %q", run.Name, result.Verdict,
-			)
-		}
-		trials = append(trials, *trial)
+		trials = append(trials, trial)
 		if index == 0 {
 			witness = verified
 		}
@@ -190,47 +174,35 @@ func (d *CurveDeriver) collectIdleTrials(
 func (d *CurveDeriver) loadActive(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.ResolvedRun, profilerevidence.VerifiedEvidence, error) {
-	resolved, err := d.records.Load(ctx, run)
-	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
-			"load ProfilingRun %q Job RunConfig: %w", run.Name, err,
-		)
-	}
+) (profilerevidence.VerifiedEvidence, error) {
 	reference, err := curveEvidenceIdentity(run)
 	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, err
+		return profilerevidence.VerifiedEvidence{}, err
 	}
 	verified, err := d.evidence.Load(ctx, run, reference)
 	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+		return profilerevidence.VerifiedEvidence{}, fmt.Errorf(
 			"load ProfilingRun %q retained evidence: %w", run.Name, err,
 		)
 	}
-	return resolved, verified, nil
+	return verified, nil
 }
 
 func (d *CurveDeriver) loadIdle(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
-) (profilercontroller.ResolvedRun, profilerevidence.VerifiedIdleEvidence, error) {
-	resolved, err := d.records.Load(ctx, run)
-	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
-			"load ProfilingRun %q Job RunConfig: %w", run.Name, err,
-		)
-	}
+) (profilerevidence.VerifiedIdleEvidence, error) {
 	reference, err := curveEvidenceIdentity(run)
 	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, err
+		return profilerevidence.VerifiedIdleEvidence{}, err
 	}
 	verified, err := d.evidence.LoadIdle(ctx, run, reference)
 	if err != nil {
-		return profilercontroller.ResolvedRun{}, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
+		return profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf(
 			"load ProfilingRun %q retained idle evidence: %w", run.Name, err,
 		)
 	}
-	return resolved, verified, nil
+	return verified, nil
 }
 
 func validateCurvePrefix(planned, batches []int) error {

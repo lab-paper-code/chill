@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
+
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
 )
@@ -59,42 +59,4 @@ func controllerExecutionPolicySpec(workloadMode string) profiler.ExecutionPolicy
 		WorkloadObserverMemoryLimitBytes:   128 * mebibyte,
 		CoordinationReserveBytes:           1 * mebibyte, WorkspaceBytes: 128 * mebibyte,
 	}
-}
-
-func configuredAdmissionPolicy(
-	t *testing.T,
-	name string,
-	workloadMode string,
-) profileradmission.FrozenPolicy {
-	return configuredAdmissionPolicyWithSource(t, name, workloadMode, profileradmission.PolicySource{
-		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: testSystemNamespace,
-		Name: "chill-profiler-facts", UID: testFactsUID, ResourceVersion: "42",
-		Key: "admission-policies.yaml",
-	})
-}
-
-func configuredAdmissionPolicyWithSource(
-	t *testing.T,
-	name string,
-	workloadMode string,
-	source profileradmission.PolicySource,
-) profileradmission.FrozenPolicy {
-	t.Helper()
-	raw, err := yaml.Marshal(profileradmission.PolicyCatalog{
-		SchemaVersion: profileradmission.PolicyCatalogSchemaVersion,
-		Policies: []profileradmission.PolicySpec{{
-			Name: name, WorkloadMode: workloadMode, MinimumSamples: 20,
-			MaximumGapSeconds: 1.5, MaximumBoundaryDistanceSeconds: 1,
-			MinimumCoverage: 0.95, AllowReceiptTimestamps: true,
-			RejectConcurrentCHILLWorkloads: true, RejectExternalWorkloadChanges: true,
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	frozen, err := profileradmission.FreezeConfiguredPolicy(raw, name, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return frozen
 }

@@ -11,8 +11,6 @@ const (
 	ProfilingRunConditionExecutionComplete = "ExecutionComplete"
 	// ProfilingRunConditionEvidenceVerified reports independent durable evidence verification.
 	ProfilingRunConditionEvidenceVerified = "EvidenceVerified"
-	// ProfilingRunConditionEvidenceAdmitted reports scientific single-Run admission.
-	ProfilingRunConditionEvidenceAdmitted = "EvidenceAdmitted"
 )
 
 // MeasurementStateSpec fixes the execution state every trial of one
@@ -38,12 +36,6 @@ type MeasurementStateSpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.measurement.cpuQuota) || quantity(self.cpuRequest).compareTo(quantity(self.measurement.cpuQuota)) <= 0",message="cpuRequest must not exceed measurement.cpuQuota"
 type ProfilingRunSpec struct {
 	MeasurementStateSpec `json:",inline"`
-
-	// AdmissionPolicy identifies the configured single-Run scientific admission policy.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
-	AdmissionPolicy string `json:"admissionPolicy"`
 
 	// Measurement fixes the single-Run workload and measurement window.
 	Measurement ProfilingRunMeasurementSpec `json:"measurement"`
@@ -131,7 +123,7 @@ type ProfilingRunStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions separately report execution, evidence verification, and admission.
+	// Conditions separately report execution and evidence verification.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -153,10 +145,6 @@ type ProfilingRunStatus struct {
 	// Evidence identifies independently verified immutable execution evidence.
 	// +optional
 	Evidence *ProfilingRunEvidenceReference `json:"evidence,omitempty"`
-
-	// Admission records the evaluated scientific verdict without raw evidence.
-	// +optional
-	Admission *ProfilingRunAdmissionStatus `json:"admission,omitempty"`
 }
 
 // ProfilingRunObjectReference is deliberately smaller than corev1.ObjectReference.
@@ -194,29 +182,11 @@ type ProfilingRunEvidenceReference struct {
 	Size int64 `json:"size"`
 }
 
-type ProfilingRunAdmissionStatus struct {
-	// +kubebuilder:validation:Enum=Accepted;Rejected;Insufficient
-	Verdict string `json:"verdict"`
-
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	PolicyVersion string `json:"policyVersion"`
-
-	// ReasonCodes contains stable typed codes, not raw diagnostic messages.
-	// +optional
-	// +kubebuilder:validation:MaxItems=32
-	// +kubebuilder:validation:items:MinLength=1
-	// +kubebuilder:validation:items:MaxLength=128
-	// +listType=set
-	ReasonCodes []string `json:"reasonCodes,omitempty"`
-}
-
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=prun
 // +kubebuilder:printcolumn:name="Execution",type=string,JSONPath=`.status.conditions[?(@.type=="ExecutionComplete")].status`
 // +kubebuilder:printcolumn:name="Evidence",type=string,JSONPath=`.status.conditions[?(@.type=="EvidenceVerified")].status`
-// +kubebuilder:printcolumn:name="Admitted",type=string,JSONPath=`.status.conditions[?(@.type=="EvidenceAdmitted")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ProfilingRun requests and reports one immutable profiling execution.

@@ -87,7 +87,6 @@ func TestBuildDeployment(t *testing.T) {
 		"--execution-facts-key=execution-facts.yaml",
 		"--metric-sources-key=metric-sources.yaml",
 		"--workload-observation-key=workload-observation.yaml",
-		"--admission-policies-key=admission-policies.yaml",
 		"--execution-policies-key=execution-policies.yaml",
 		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
@@ -276,7 +275,6 @@ func validConfig() Config {
 		FactSource: FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey: "metric-sources.yaml", WorkloadObservationKey: "workload-observation.yaml",
-			AdmissionPoliciesKey: "admission-policies.yaml",
 			ExecutionPoliciesKey: "execution-policies.yaml",
 			ActuationPoliciesKey: "actuation-policies.yaml",
 		},

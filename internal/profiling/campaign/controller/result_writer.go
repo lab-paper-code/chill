@@ -66,7 +66,7 @@ func (w *ResultWriter) Write(
 	if err != nil {
 		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode result detail: %w", err)
 	}
-	admitted, excluded, err := projectResultTrials(parent, runs)
+	completed, excluded, err := projectResultTrials(parent, runs)
 	if err != nil {
 		return batchenergyoptimization.StoredObjectReference{}, err
 	}
@@ -79,7 +79,7 @@ func (w *ResultWriter) Write(
 			ExecutionPath: parent.Spec.State.Candidate.ExecutionPath,
 			PowerMode:     parent.Spec.State.Candidate.PowerMode,
 		},
-		CurvePlan: curvePlan, AdmittedTrials: admitted,
+		CurvePlan: curvePlan, CompletedTrials: completed,
 		ExcludedTrials: excluded, Detail: detail,
 	})
 	if err != nil {
@@ -91,8 +91,8 @@ func (w *ResultWriter) Write(
 func projectResultTrials(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	runs []edgev1alpha1.ProfilingRun,
-) ([]batchenergyoptimization.AdmittedTrialReference, []batchenergyoptimization.ExcludedTrialReference, error) {
-	admitted := make([]batchenergyoptimization.AdmittedTrialReference, 0, len(runs))
+) ([]batchenergyoptimization.CompletedTrialReference, []batchenergyoptimization.ExcludedTrialReference, error) {
+	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, len(runs))
 	excluded := make([]batchenergyoptimization.ExcludedTrialReference, 0, len(runs))
 	for index := range runs {
 		run := &runs[index]
@@ -110,11 +110,11 @@ func projectResultTrials(
 			WorkloadMode: trial.Measurement.WorkloadMode,
 			Batch:        trial.Measurement.Batch,
 		}
-		if trial.Verdict == batchenergyoptimization.VerdictAccepted {
+		if trial.Verdict == batchenergyoptimization.VerdictCompleted {
 			if run.Status.Evidence == nil {
-				return nil, nil, fmt.Errorf("admitted ProfilingRun %q has no evidence reference", run.Name)
+				return nil, nil, fmt.Errorf("completed ProfilingRun %q has no evidence reference", run.Name)
 			}
-			admitted = append(admitted, batchenergyoptimization.AdmittedTrialReference{
+			completed = append(completed, batchenergyoptimization.CompletedTrialReference{
 				Run:         reference,
 				Measurement: measurement,
 				Evidence:    projectStoredObjectReference(*run.Status.Evidence),
@@ -129,20 +129,10 @@ func projectResultTrials(
 			Run: reference, Measurement: measurement, Attempt: trial.Attempt, Reasons: reasons,
 		})
 	}
-	return admitted, excluded, nil
+	return completed, excluded, nil
 }
 
 func exclusionReasons(run *edgev1alpha1.ProfilingRun) ([]string, error) {
-	if run.Status.Admission != nil {
-		if strings.TrimSpace(run.Status.Admission.Verdict) == "" {
-			return nil, fmt.Errorf("excluded ProfilingRun %q has an empty admission verdict", run.Name)
-		}
-		reasons := append([]string(nil), run.Status.Admission.ReasonCodes...)
-		if len(reasons) == 0 {
-			reasons = []string{"Admission" + run.Status.Admission.Verdict}
-		}
-		return reasons, nil
-	}
 	reasons := terminalFailureReasons(run.Status.Conditions)
 	if len(reasons) == 0 {
 		return nil, fmt.Errorf(

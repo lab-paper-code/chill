@@ -139,12 +139,8 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 		Attempt:     attempt,
 		Verdict:     batchenergyoptimization.VerdictPending,
 	}
-	if run.Status.Admission != nil {
-		if run.Status.Admission.Verdict == "Accepted" {
-			trial.Verdict = batchenergyoptimization.VerdictAccepted
-			return trial, nil
-		}
-		trial.Verdict = batchenergyoptimization.VerdictFailed
+	if run.Status.Evidence != nil {
+		trial.Verdict = batchenergyoptimization.VerdictCompleted
 		return trial, nil
 	}
 	if len(terminalFailureReasons(run.Status.Conditions)) > 0 {
@@ -173,7 +169,6 @@ func isTrialProjectionConditionType(conditionType string) bool {
 func isTerminalReason(reason string) bool {
 	switch reason {
 	case "InvalidRunSpec",
-		"AdmissionPolicyInvalid",
 		"ExecutionPolicyInvalid",
 		"ActuationPolicyInvalid",
 		"ExecutionLost",

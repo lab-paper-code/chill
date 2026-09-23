@@ -23,7 +23,6 @@ data:
       executionFactsKey: {{ .Values.profiler.factSource.executionFactsKey | quote }}
       metricSourcesKey: {{ .Values.profiler.factSource.metricSourcesKey | quote }}
       workloadObservationKey: {{ .Values.profiler.factSource.workloadObservationKey | quote }}
-      admissionPoliciesKey: {{ .Values.profiler.factSource.admissionPoliciesKey | quote }}
       executionPoliciesKey: {{ .Values.profiler.factSource.executionPoliciesKey | quote }}
       actuationPoliciesKey: {{ .Values.profiler.factSource.actuationPoliciesKey | quote }}
     workloadObserver:

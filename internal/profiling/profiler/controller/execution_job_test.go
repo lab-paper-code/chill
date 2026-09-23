@@ -70,7 +70,7 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		job.Spec.Template.Spec.ServiceAccountName != "chill-workload-observer" {
 		t.Fatalf("Job retry or identity boundary drifted: %#v", job.Spec)
 	}
-	if !metav1.IsControlledBy(job, run) || job.Annotations[admissionPolicyAnnotation] == "" ||
+	if !metav1.IsControlledBy(job, run) ||
 		job.Annotations[executionPolicyAnnotation] == "" {
 		t.Fatalf("Job ownership or execution identity missing: %#v", job.ObjectMeta)
 	}
@@ -236,7 +236,6 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.InputGenerator = profilingrun.NoInputGenerator
 	run.Spec.Measurement.OutputValidation = profilingrun.NoOutputValidation
-	run.Spec.AdmissionPolicy = testIdleAdmissionPolicy
 	prepared := currentPreparedRun(t)
 	prepared.RunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
@@ -366,7 +365,6 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}, retained); err != nil {
 		t.Fatal(err)
 	}
-	retained.Annotations[admissionPolicyAnnotation] = "\n " + retained.Annotations[admissionPolicyAnnotation]
 	retained.Annotations[executionPolicyAnnotation] = "\n " + retained.Annotations[executionPolicyAnnotation]
 	for containerIndex := range retained.Spec.Template.Spec.Containers {
 		container := &retained.Spec.Template.Spec.Containers[containerIndex]

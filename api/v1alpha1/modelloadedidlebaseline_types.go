@@ -20,15 +20,15 @@ type ModelLoadedIdleBaselinePointPolicySpec struct {
 	Version string `json:"version"`
 
 	// +kubebuilder:validation:Minimum=3
-	MinimumAcceptedRuns int32 `json:"minimumAcceptedRuns"`
+	MinimumRuns int32 `json:"minimumRuns"`
 
 	// ConfidenceLevel is a decimal string in the interval (0, 1).
 	// +kubebuilder:validation:Pattern=`^0\.[0-9]*[1-9][0-9]*$`
 	ConfidenceLevel string `json:"confidenceLevel"`
 }
 
-// ModelLoadedIdleBaselineSpec requests one admitted idle-power aggregate.
-// +kubebuilder:validation:XValidation:rule="self.attemptLimit >= self.pointPolicy.minimumAcceptedRuns",message="attemptLimit must cover minimumAcceptedRuns"
+// ModelLoadedIdleBaselineSpec requests one measured idle-power aggregate.
+// +kubebuilder:validation:XValidation:rule="self.attemptLimit >= self.pointPolicy.minimumRuns",message="attemptLimit must cover minimumRuns"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
 // +kubebuilder:validation:XValidation:rule="quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
 // +kubebuilder:validation:XValidation:rule="quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota)) <= 0",message="state.cpuRequest must not exceed cpuQuota"
@@ -46,7 +46,7 @@ type ModelLoadedIdleBaselineSpec struct {
 
 	PointPolicy ModelLoadedIdleBaselinePointPolicySpec `json:"pointPolicy"`
 
-	// AttemptLimit bounds all terminal child Runs, including admitted Runs.
+	// AttemptLimit bounds all terminal child Runs, including measured Runs.
 	// +kubebuilder:validation:Minimum=3
 	// +kubebuilder:validation:Maximum=100
 	AttemptLimit int32 `json:"attemptLimit"`
@@ -66,7 +66,7 @@ type ModelLoadedIdleBaselineStatus struct {
 	AttemptedRuns int32 `json:"attemptedRuns,omitempty"`
 
 	// +optional
-	AcceptedRuns int32 `json:"acceptedRuns,omitempty"`
+	CompletedRuns int32 `json:"completedRuns,omitempty"`
 
 	// +optional
 	Result *ProfilingRunEvidenceReference `json:"result,omitempty"`
@@ -76,13 +76,13 @@ type ModelLoadedIdleBaselineStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=idlebase
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Accepted",type=integer,JSONPath=`.status.acceptedRuns`
+// +kubebuilder:printcolumn:name="Completed",type=integer,JSONPath=`.status.completedRuns`
 // +kubebuilder:printcolumn:name="Attempts",type=integer,JSONPath=`.status.attemptedRuns`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 243",message="name must be at most 243 characters so the longest generated Run name fits"
 
 // ModelLoadedIdleBaseline owns the idle-only ProfilingRuns contributing to one
-// admitted aggregate.
+// measured aggregate.
 type ModelLoadedIdleBaseline struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

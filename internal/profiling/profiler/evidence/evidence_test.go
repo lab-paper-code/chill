@@ -297,7 +297,7 @@ func TestRawMeasurementRequiresOverlappingRuntimeAndMetricWindows(t *testing.T) 
 		wantError  bool
 	}{
 		{
-			name:       "partial overlap remains an admission decision",
+			name:       "partial overlap retains observed facts",
 			powerStart: runtimeStarted.Add(time.Second), powerEnd: runtimeEnded.Add(time.Second),
 		},
 		{

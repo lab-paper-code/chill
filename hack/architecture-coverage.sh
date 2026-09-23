@@ -41,7 +41,7 @@ components=(
   profiling-run
   profiler-app
   profiler-controller
-  profiler-admission
+  profiler-projection
   profiler-evidence
   profiler-evidence-kube
   profiler-kube
@@ -88,7 +88,7 @@ component_for() {
     internal/profiling/run) echo profiling-run ;;
     internal/profiling/profiler) echo profiler-app ;;
     internal/profiling/profiler/controller) echo profiler-controller ;;
-    internal/profiling/profiler/admission) echo profiler-admission ;;
+    internal/profiling/profiler/projection) echo profiler-projection ;;
     internal/profiling/profiler/evidence) echo profiler-evidence ;;
     internal/profiling/profiler/evidence/kube) echo profiler-evidence-kube ;;
     internal/profiling/profiler/kube) echo profiler-kube ;;

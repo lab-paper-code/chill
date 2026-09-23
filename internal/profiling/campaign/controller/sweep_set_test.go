@@ -44,7 +44,7 @@ func TestResolvePlannedBatchSizesKeepsADeclaredSweep(t *testing.T) {
 func TestResolvePlannedBatchSizesRefusesTwoSources(t *testing.T) {
 	capability := &profilingrun.CandidateArtifactCapability{DeclaredBatchSizes: []int32{1, 2}}
 	if _, err := resolvePlannedBatchSizes([]int32{1, 2, 4}, capability); err == nil {
-		t.Fatal("a campaign-declared sweep was accepted against a declaring artifact")
+		t.Fatal("a campaign-declared sweep was completed against a declaring artifact")
 	}
 	planned, err := resolvePlannedBatchSizes(nil, capability)
 	if err != nil {

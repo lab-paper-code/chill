@@ -13,7 +13,6 @@ func TestBuildRunCreatesOnlyOneModelLoadedIdleExecution(t *testing.T) {
 	}
 	measurement := run.Spec.Measurement
 	if run.Name != "idle-baseline-idle-a2" || run.Spec.MeasurementStateSpec != parent.Spec.State ||
-		run.Spec.AdmissionPolicy != parent.Spec.Protocol.AdmissionPolicy ||
 		measurement.WorkloadMode != idleWorkloadMode || measurement.Batch != parent.Spec.Batch ||
 		measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 		*measurement.SettlingDurationSeconds != parent.Spec.Protocol.SettlingDurationSeconds ||

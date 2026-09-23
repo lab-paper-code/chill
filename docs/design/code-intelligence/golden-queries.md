@@ -54,8 +54,8 @@ allowed direction. Package edges do not prove runtime sampling behavior.
 
 `resolvedRunFromJob` in
 `internal/profiling/profiler/controller/run_record.go` decodes and validates the
-RunConfig and selected policy snapshots carried by the owned Job. It is used by
-the reconciler, the Job recovery path, and the Run record loader. There is no
+RunConfig, execution policy, and optional actuation policy carried by the owned
+Job. It is used by the reconciler, Job recovery, and Job drift validation. There is no
 separate ConfigMap execution record or intermediate resolution status phase.
 
 Required evidence: `gopls references`, direct source, focused controller tests,

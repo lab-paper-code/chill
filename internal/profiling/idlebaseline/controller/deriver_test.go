@@ -14,23 +14,12 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
-	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
-
-type deriverRunRecordLoader struct {
-	resolved profilercontroller.ResolvedRun
-}
-
-func (l deriverRunRecordLoader) Load(
-	context.Context,
-	*edgev1alpha1.ProfilingRun,
-) (profilercontroller.ResolvedRun, error) {
-	return l.resolved, nil
-}
 
 type deriverEvidenceLoader struct {
 	byRun map[string]profilerevidence.VerifiedIdleEvidence
@@ -50,7 +39,6 @@ func (l deriverEvidenceLoader) LoadIdle(
 
 func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 	config := deriverIdleRunConfig(t)
-	policy := deriverIdlePolicy(t)
 	runs := make([]edgev1alpha1.ProfilingRun, 3)
 	evidence := deriverEvidenceLoader{byRun: map[string]profilerevidence.VerifiedIdleEvidence{}}
 	for index := range runs {
@@ -58,7 +46,7 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 		runs[index] = edgev1alpha1.ProfilingRun{
 			ObjectMeta: edgev1alpha1.ModelLoadedIdleBaseline{}.ObjectMeta,
 			Status: edgev1alpha1.ProfilingRunStatus{
-				Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{Verdict: "Accepted"},
+
 				Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{
 					Store: "evidence", Key: name + "/final.json",
 					SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, Size: 10,
@@ -68,9 +56,7 @@ func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
 		runs[index].Name = name
 		evidence.byRun[name] = deriverIdleEvidence(t, config, name+"-pod", float64(10+index))
 	}
-	deriver, err := NewDeriver(deriverRunRecordLoader{resolved: profilercontroller.ResolvedRun{
-		AdmissionPolicy: policy,
-	}}, evidence)
+	deriver, err := NewDeriver(evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,31 +100,6 @@ func deriverIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 		t.Fatal(err)
 	}
 	return config
-}
-
-func deriverIdlePolicy(t *testing.T) profileradmission.FrozenPolicy {
-	t.Helper()
-	payload := []byte(`
-schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
-policies:
-  - name: idle-admission-v1
-    workloadMode: idle-model-loaded
-    minimumSamples: 20
-    maximumGapSeconds: 1.5
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.95
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-`)
-	policy, err := profileradmission.FreezeConfiguredPolicy(payload, "idle-admission-v1", profileradmission.PolicySource{
-		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: "default",
-		Name: "policies", UID: "policy-uid", ResourceVersion: "1", Key: "policies.yaml",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return policy
 }
 
 func deriverIdleEvidence(

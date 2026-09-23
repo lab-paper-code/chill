@@ -13,7 +13,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-const ResultSchemaVersion = "chill.dacs.io/model-loaded-idle-baseline-result.v1alpha1"
+const ResultSchemaVersion = "chill.dacs.io/model-loaded-idle-baseline-result.v1alpha2"
 
 type MeasurementState struct {
 	TargetNode    string `json:"targetNode"`
@@ -31,15 +31,15 @@ type StoredObjectReference struct {
 	Size          int64  `json:"size"`
 }
 
-// AcceptedFinalEvidence binds each admitted scientific TrialID to the final
+// FinalEvidence binds each completed scientific TrialID to the final
 // retained execution evidence from which that trial was evaluated.
-type AcceptedFinalEvidence map[string]StoredObjectReference
+type FinalEvidence map[string]StoredObjectReference
 
 type resultRecord struct {
-	SchemaVersion         string                         `json:"schemaVersion"`
-	MeasurementState      MeasurementState               `json:"measurementState"`
-	IdleBaseline          profilederivation.IdleBaseline `json:"idleBaseline"`
-	AcceptedFinalEvidence AcceptedFinalEvidence          `json:"acceptedFinalEvidence"`
+	SchemaVersion    string                         `json:"schemaVersion"`
+	MeasurementState MeasurementState               `json:"measurementState"`
+	IdleBaseline     profilederivation.IdleBaseline `json:"idleBaseline"`
+	FinalEvidence    FinalEvidence                  `json:"finalEvidence"`
 }
 
 // Result is one initialized Complete aggregate result.
@@ -52,19 +52,19 @@ type Result struct {
 func NewResult(
 	state MeasurementState,
 	baseline profilederivation.IdleBaseline,
-	accepted AcceptedFinalEvidence,
+	accepted FinalEvidence,
 ) (Result, error) {
 	if err := validateMeasurementState(state); err != nil {
 		return Result{}, err
 	}
-	if err := validateAcceptedFinalEvidence(baseline, accepted); err != nil {
+	if err := validateFinalEvidence(baseline, accepted); err != nil {
 		return Result{}, err
 	}
-	accepted = cloneAcceptedFinalEvidence(accepted)
+	accepted = cloneFinalEvidence(accepted)
 	baseline.Trials = append([]profilederivation.IdleTrial(nil), baseline.Trials...)
 	return Result{record: resultRecord{
 		SchemaVersion: ResultSchemaVersion, MeasurementState: state,
-		IdleBaseline: baseline, AcceptedFinalEvidence: accepted,
+		IdleBaseline: baseline, FinalEvidence: accepted,
 	}}, nil
 }
 
@@ -91,11 +91,11 @@ func DecodeResult(payload []byte) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("restore model-loaded idle baseline: %w", err)
 	}
-	if err := validateAcceptedFinalEvidence(baseline, record.AcceptedFinalEvidence); err != nil {
+	if err := validateFinalEvidence(baseline, record.FinalEvidence); err != nil {
 		return Result{}, err
 	}
 	record.IdleBaseline = baseline
-	record.AcceptedFinalEvidence = cloneAcceptedFinalEvidence(record.AcceptedFinalEvidence)
+	record.FinalEvidence = cloneFinalEvidence(record.FinalEvidence)
 	return Result{record: record}, nil
 }
 
@@ -121,13 +121,13 @@ func (r Result) IdleBaseline() profilederivation.IdleBaseline {
 	return baseline
 }
 
-func (r Result) AcceptedFinalEvidence() AcceptedFinalEvidence {
-	return cloneAcceptedFinalEvidence(r.record.AcceptedFinalEvidence)
+func (r Result) FinalEvidence() FinalEvidence {
+	return cloneFinalEvidence(r.record.FinalEvidence)
 }
 
-func validateAcceptedFinalEvidence(
+func validateFinalEvidence(
 	baseline profilederivation.IdleBaseline,
-	accepted AcceptedFinalEvidence,
+	accepted FinalEvidence,
 ) error {
 	if accepted == nil || len(accepted) != len(baseline.Trials) || len(accepted) < 3 {
 		return errors.New("accepted final evidence does not match the idle trial IDs")
@@ -144,11 +144,11 @@ func validateAcceptedFinalEvidence(
 	return nil
 }
 
-func cloneAcceptedFinalEvidence(source AcceptedFinalEvidence) AcceptedFinalEvidence {
+func cloneFinalEvidence(source FinalEvidence) FinalEvidence {
 	if source == nil {
 		return nil
 	}
-	clone := make(AcceptedFinalEvidence, len(source))
+	clone := make(FinalEvidence, len(source))
 	for trialID, reference := range source {
 		clone[trialID] = reference
 	}

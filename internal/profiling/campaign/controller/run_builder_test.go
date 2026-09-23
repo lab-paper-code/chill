@@ -58,31 +58,6 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 	}
 }
 
-func TestBuildRunUsesTheWorkloadModeAdmissionPolicy(t *testing.T) {
-	parent := testParent()
-	if parent.Spec.ActiveProtocol.AdmissionPolicy == parent.Spec.IdleProtocol.AdmissionPolicy {
-		t.Fatal("active and idle policy fixtures must differ")
-	}
-	active, err := BuildRun(parent, batchenergyoptimization.Measurement{
-		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
-	}, 1)
-	if err != nil {
-		t.Fatalf("build active Run: %v", err)
-	}
-	idle, err := BuildRun(parent, batchenergyoptimization.Measurement{
-		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
-	}, 1)
-	if err != nil {
-		t.Fatalf("build idle Run: %v", err)
-	}
-	if active.Spec.AdmissionPolicy != parent.Spec.ActiveProtocol.AdmissionPolicy {
-		t.Fatalf("active admission policy = %q, want %q", active.Spec.AdmissionPolicy, parent.Spec.ActiveProtocol.AdmissionPolicy)
-	}
-	if idle.Spec.AdmissionPolicy != parent.Spec.IdleProtocol.AdmissionPolicy {
-		t.Fatalf("idle admission policy = %q, want %q", idle.Spec.AdmissionPolicy, parent.Spec.IdleProtocol.AdmissionPolicy)
-	}
-}
-
 func testParent() *edgev1alpha1.BatchEnergyOptimization {
 	return &edgev1alpha1.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{
@@ -97,7 +72,6 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 				TargetNode: "jetsono", CPURequest: resource.MustParse("100m"),
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
-				AdmissionPolicy:  "wall-power-v2",
 				WarmupIterations: 20, DurationSeconds: 75,
 				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
@@ -106,7 +80,6 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
-				AdmissionPolicy:         "idle-wall-power-v1",
 				SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,

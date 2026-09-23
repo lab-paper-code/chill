@@ -9,7 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
+
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,38 +21,9 @@ import (
 
 const (
 	runConfigArgumentPrefix   = "--run-config="
-	admissionPolicyAnnotation = "edge.dacs.io/profiling-admission-policy"
 	executionPolicyAnnotation = "edge.dacs.io/profiling-execution-policy"
 	actuationPolicyAnnotation = "edge.dacs.io/profiling-actuation-policy"
 )
-
-// RunRecords reconstructs a completed or running configuration from its Job.
-// There is deliberately no separate ConfigMap record.
-type RunRecords struct {
-	reader client.Reader
-}
-
-func NewRunRecords(reader client.Reader) (*RunRecords, error) {
-	if reader == nil {
-		return nil, errors.New("Kubernetes API reader is required")
-	}
-	return &RunRecords{reader: reader}, nil
-}
-
-func (r *RunRecords) Load(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ResolvedRun, error) {
-	if run == nil || run.Status.Job == nil || run.Status.Job.Name == "" || run.Status.Job.UID == "" {
-		return ResolvedRun{}, errors.New("ProfilingRun has no complete measurement Job reference")
-	}
-	job := &batchv1.Job{}
-	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.Job.Name}
-	if err := r.reader.Get(ctx, key, job); err != nil {
-		return ResolvedRun{}, fmt.Errorf("get measurement Job %s: %w", key, err)
-	}
-	if string(job.UID) != run.Status.Job.UID {
-		return ResolvedRun{}, errors.New("measurement Job UID does not match ProfilingRun status")
-	}
-	return resolvedRunFromJob(run, job)
-}
 
 func findRunJob(
 	ctx context.Context,
@@ -97,12 +68,6 @@ func resolvedRunFromJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job) (Resol
 		return ResolvedRun{}, fmt.Errorf("validate measurement Job RunConfig: %w", err)
 	}
 
-	admissionPolicy, err := profileradmission.DecodeFrozenPolicy(
-		[]byte(job.Annotations[admissionPolicyAnnotation]),
-	)
-	if err != nil {
-		return ResolvedRun{}, fmt.Errorf("decode measurement Job admission policy: %w", err)
-	}
 	executionPolicy, err := profiler.DecodeFrozenExecutionPolicy(
 		[]byte(job.Annotations[executionPolicyAnnotation]),
 	)
@@ -118,7 +83,7 @@ func resolvedRunFromJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job) (Resol
 		prepared.ActuationPolicy = &policy
 	}
 	resolved := ResolvedRun{
-		Prepared: prepared, AdmissionPolicy: admissionPolicy, ExecutionPolicy: executionPolicy,
+		Prepared: prepared, ExecutionPolicy: executionPolicy,
 	}
 	if err := validateResolvedRunForRun(run, resolved); err != nil {
 		return ResolvedRun{}, fmt.Errorf("validate measurement Job RunConfig: %w", err)

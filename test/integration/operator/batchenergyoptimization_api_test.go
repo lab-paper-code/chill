@@ -23,33 +23,6 @@ var _ = Describe("BatchEnergyOptimization API", func() {
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, campaign) })
 	})
 
-	DescribeTable("rejects invalid admission policy selection",
-		func(mutate func(*edgev1alpha1.BatchEnergyOptimization)) {
-			ctx := context.Background()
-			campaign := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("invalid"))
-			mutate(campaign)
-
-			err := k8sClient.Create(ctx, campaign)
-			Expect(err).To(HaveOccurred())
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-		},
-		Entry("empty active policy", func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-			campaign.Spec.ActiveProtocol.AdmissionPolicy = ""
-		}),
-		Entry("malformed active policy name", func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-			campaign.Spec.ActiveProtocol.AdmissionPolicy = invalidAdmissionPolicy
-		}),
-		Entry("empty idle policy", func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-			campaign.Spec.IdleProtocol.AdmissionPolicy = ""
-		}),
-		Entry("malformed idle policy name", func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-			campaign.Spec.IdleProtocol.AdmissionPolicy = invalidAdmissionPolicy
-		}),
-		Entry("one policy cannot serve both workload modes", func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-			campaign.Spec.IdleProtocol.AdmissionPolicy = campaign.Spec.ActiveProtocol.AdmissionPolicy
-		}),
-	)
-
 	It("rejects changing an existing campaign spec", func() {
 		ctx := context.Background()
 		campaign := validBatchEnergyOptimization(uniqueBatchEnergyOptimizationName("immutable"))
@@ -82,7 +55,6 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 				CPURequest: resource.MustParse("100m"),
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
-				AdmissionPolicy:  "wall-power-v2",
 				WarmupIterations: 20,
 				DurationSeconds:  30,
 				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
@@ -94,7 +66,6 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
-				AdmissionPolicy:         idleAdmissionPolicy,
 				SettlingDurationSeconds: 60,
 				DurationSeconds:         30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

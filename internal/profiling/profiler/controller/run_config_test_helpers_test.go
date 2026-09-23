@@ -69,8 +69,3 @@ func actuationPolicyCatalogForSpecs(t *testing.T, specs ...profiler.ActuationPol
 	}
 	return raw
 }
-
-func testResolvedRun(t *testing.T) ResolvedRun {
-	t.Helper()
-	return resolvedRunForPrepared(t, testPreparedRun(t))
-}

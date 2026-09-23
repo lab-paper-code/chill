@@ -1,4 +1,4 @@
-package admission
+package projection
 
 import (
 	"slices"
@@ -226,7 +226,7 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 }
 
 func curvePlanRunConfig() profilingrun.RunConfig {
-	config := admissionRunConfigWithWorkloadContract()
+	config := projectionRunConfigWithWorkloadContract()
 	config.Candidate = profilingrun.CandidateIdentity{
 		Inputs: profilingrun.CandidateReportInputs{
 			ModelSpec:   profilingrun.CandidateReportObjectInput{Name: "mobilenet", UID: "model-uid", ResourceVersion: "1"},

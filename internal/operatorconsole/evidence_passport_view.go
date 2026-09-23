@@ -29,13 +29,12 @@ const EvidencePassportAPIVersion = "console.chill.dacs.io/v1alpha1"
 // EvidencePassport is the bounded, evidence-backed read model shared by the
 // CLI and Dashboard. Raw latency and power arrays remain in Evidence Store.
 type EvidencePassport struct {
-	APIVersion  string                                    `json:"apiVersion"`
-	Kind        string                                    `json:"kind"`
-	ReadAt      time.Time                                 `json:"readAt"`
-	Run         EvidencePassportRun                       `json:"run"`
-	Evidence    EvidencePassportLineage                   `json:"evidence"`
-	Measurement EvidencePassportMeasurement               `json:"measurement"`
-	Admission   *edgev1alpha1.ProfilingRunAdmissionStatus `json:"admission,omitempty"`
+	APIVersion  string                      `json:"apiVersion"`
+	Kind        string                      `json:"kind"`
+	ReadAt      time.Time                   `json:"readAt"`
+	Run         EvidencePassportRun         `json:"run"`
+	Evidence    EvidencePassportLineage     `json:"evidence"`
+	Measurement EvidencePassportMeasurement `json:"measurement"`
 }
 
 type EvidencePassportRun struct {
@@ -124,7 +123,7 @@ type EvidencePassportWatts struct {
 }
 
 // EvidencePassportThermal is a factual summary of retained typed samples.
-// Scientific interpretation remains in the admission result.
+// These are observations for the experimenter, not scientific verdicts.
 type EvidencePassportThermal struct {
 	Metrics                     *EvidencePassportThermalMetrics `json:"metrics,omitempty"`
 	Samples                     int                             `json:"samples"`
@@ -240,7 +239,6 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 			Thermal:  thermal,
 			Workload: workload,
 		},
-		Admission: run.Status.Admission,
 	}, nil
 }
 

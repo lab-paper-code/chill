@@ -44,7 +44,6 @@ func buildRun(parent *edgev1alpha1.ModelLoadedIdleBaseline, attempt int32) (*edg
 		},
 		Spec: edgev1alpha1.ProfilingRunSpec{
 			MeasurementStateSpec: parent.Spec.State,
-			AdmissionPolicy:      parent.Spec.Protocol.AdmissionPolicy,
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: parent.Spec.Batch, WarmupIterations: 0,
 				CPUQuota:                &cpuQuota,

@@ -20,8 +20,8 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.acceptedRuns
-      name: Accepted
+    - jsonPath: .status.completedRuns
+      name: Completed
       type: integer
     - jsonPath: .status.attemptedRuns
       name: Attempts
@@ -34,7 +34,7 @@ spec:
       openAPIV3Schema:
         description: |-
           ModelLoadedIdleBaseline owns the idle-only ProfilingRuns contributing to one
-          admitted aggregate.
+          measured aggregate.
         properties:
           apiVersion:
             description: |-
@@ -54,12 +54,12 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelLoadedIdleBaselineSpec requests one admitted idle-power
+            description: ModelLoadedIdleBaselineSpec requests one measured idle-power
               aggregate.
             properties:
               attemptLimit:
                 description: AttemptLimit bounds all terminal child Runs, including
-                  admitted Runs.
+                  measured Runs.
                 format: int32
                 maximum: 100
                 minimum: 3
@@ -85,7 +85,7 @@ spec:
                       (0, 1).
                     pattern: ^0\.[0-9]*[1-9][0-9]*$
                     type: string
-                  minimumAcceptedRuns:
+                  minimumRuns:
                     format: int32
                     minimum: 3
                     type: integer
@@ -98,18 +98,11 @@ spec:
                     type: string
                 required:
                 - confidenceLevel
-                - minimumAcceptedRuns
+                - minimumRuns
                 - version
                 type: object
               protocol:
                 properties:
-                  admissionPolicy:
-                    description: AdmissionPolicy identifies the configured admission
-                      policy for idle Runs.
-                    maxLength: 63
-                    minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -143,7 +136,6 @@ spec:
                     minimum: 1
                     type: integer
                 required:
-                - admissionPolicy
                 - durationSeconds
                 - metricObservation
                 - settlingDurationSeconds
@@ -216,8 +208,8 @@ spec:
             - state
             type: object
             x-kubernetes-validations:
-            - message: attemptLimit must cover minimumAcceptedRuns
-              rule: self.attemptLimit >= self.pointPolicy.minimumAcceptedRuns
+            - message: attemptLimit must cover minimumRuns
+              rule: self.attemptLimit >= self.pointPolicy.minimumRuns
             - message: cpuQuota must be positive
               rule: quantity(self.cpuQuota).compareTo(quantity('0')) > 0
             - message: cpuQuota must be a whole number of CPU cores
@@ -232,10 +224,10 @@ spec:
               ModelLoadedIdleBaselineStatus is a compact projection of owned Runs and the
               retained aggregate result.
             properties:
-              acceptedRuns:
+              attemptedRuns:
                 format: int32
                 type: integer
-              attemptedRuns:
+              completedRuns:
                 format: int32
                 type: integer
               observedGeneration:

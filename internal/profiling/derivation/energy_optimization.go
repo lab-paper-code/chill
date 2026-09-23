@@ -82,7 +82,6 @@ func DeriveMinimumEnergyBatch(
 	for index, point := range search.points {
 		expectedBatch := plannedBatchSizes[index]
 		if point.Batch != expectedBatch || len(point.Trials) != policy.TrialsPerBatch ||
-			point.MeanIncrementalWorkJoulesPerItem <= 0 ||
 			math.IsNaN(point.MeanIncrementalWorkJoulesPerItem) ||
 			math.IsInf(point.MeanIncrementalWorkJoulesPerItem, 0) {
 			return EnergyOptimizationResult{}, errors.New("search points do not match the recorded energy-objective policy")

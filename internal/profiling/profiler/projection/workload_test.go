@@ -1,4 +1,4 @@
-package admission
+package projection
 
 import (
 	"sort"
@@ -11,7 +11,7 @@ import (
 )
 
 func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 
 	window, err := projectDefaultWorkloadWindow(&result)
 	if err != nil {
@@ -25,8 +25,8 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 }
 
 func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
-	first := admissionWorkloadResult(t)
-	second := admissionWorkloadResult(t)
+	first := projectionWorkloadResult(t)
+	second := projectionWorkloadResult(t)
 	extra := workloadobserver.Pod{
 		Namespace: "system", Name: "stable-agent", UID: "stable-agent-uid", Phase: "Running",
 		Owner:  &workloadobserver.OwnerIdentity{Kind: "DaemonSet", Name: "stable-agent", UID: "stable-owner-uid"},
@@ -127,7 +127,7 @@ func TestWorkloadEnvironmentIdentityKeepsUnownedPodsUIDBound(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 	transient := workloadobserver.Pod{
 		Namespace: "default", Name: "foreign", UID: "foreign-uid", Phase: "Running",
 		Owner:  &workloadobserver.OwnerIdentity{Kind: "ReplicaSet", Name: "foreign-abc", UID: "owner-uid"},
@@ -151,7 +151,7 @@ func TestProjectWorkloadWindowReportsExternalMembershipChange(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 	other := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "other-run", UID: "other-run-uid", Phase: "Running",
 		Owner: &workloadobserver.OwnerIdentity{Kind: "Job", Name: "profilingrun-other", UID: "other-job-uid"},
@@ -180,7 +180,7 @@ func TestProjectWorkloadWindowReportsConcurrentCHILLMeasurement(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 	result.Continuous = false
 	result.Failure = &workloadobserver.Failure{
 		ObservedAt: result.CoverageEndedAt,
@@ -197,7 +197,7 @@ func TestProjectWorkloadWindowPreservesIncompleteCoverage(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 	runtimeStarted := result.CoverageStartedAt.Add(10 * time.Second)
 	runtimeEnded := result.CoverageStartedAt.Add(20 * time.Second)
 	before := workloadobserver.Pod{
@@ -239,7 +239,7 @@ func TestProjectWorkloadWindowMarksEndDrainChangesUnknown(t *testing.T) {
 }
 
 func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *testing.T) {
-	result := admissionWorkloadResult(t)
+	result := projectionWorkloadResult(t)
 	other := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "earlier-run", UID: "earlier-run-uid", Phase: "Running",
 		Owner: &workloadobserver.OwnerIdentity{Kind: "Job", Name: "profilingrun-earlier", UID: "earlier-job-uid"},
@@ -269,8 +269,8 @@ func TestProjectWorkloadWindowIgnoresCHILLWorkloadThatExitedBeforeRuntime(t *tes
 	}
 }
 
-func admissionRunConfigWithWorkloadContract() profilingrun.RunConfig {
-	config := admissionRunConfig()
+func projectionRunConfigWithWorkloadContract() profilingrun.RunConfig {
+	config := projectionRunConfig()
 	config.Workload = profilingrun.CurrentWorkloadContract()
 	return config
 }
@@ -285,7 +285,7 @@ func projectDefaultWorkloadWindow(
 	)
 }
 
-func admissionWorkloadResult(t *testing.T) workloadobserver.Result {
+func projectionWorkloadResult(t *testing.T) workloadobserver.Result {
 	t.Helper()
 	started := time.Date(2026, 7, 20, 1, 2, 2, 0, time.UTC)
 	run := workloadobserver.Pod{

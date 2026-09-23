@@ -28,7 +28,7 @@ type BaselineDeriver interface {
 		context.Context,
 		[]edgev1alpha1.ProfilingRun,
 		profilederivation.PointPolicy,
-	) (profilederivation.IdleBaseline, idlebaseline.AcceptedFinalEvidence, error)
+	) (profilederivation.IdleBaseline, idlebaseline.FinalEvidence, error)
 }
 
 type BaselineResultWriter interface {
@@ -91,7 +91,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		ObservedGeneration: parent.Generation,
 		Phase:              edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring,
 		AttemptedRuns:      int32(len(runs)),
-		AcceptedRuns:       int32(len(accepted)),
+		CompletedRuns:      int32(len(accepted)),
 	}
 	if len(runs) == 0 {
 		established, failed, stateErr := r.ensureRequiredState(ctx, parent)
@@ -189,10 +189,8 @@ func projectRuns(runs []edgev1alpha1.ProfilingRun) (
 ) {
 	for index := range runs {
 		run := runs[index]
-		if run.Status.Admission != nil {
-			if run.Status.Admission.Verdict == "Accepted" {
-				accepted = append(accepted, run)
-			}
+		if run.Status.Evidence != nil {
+			accepted = append(accepted, run)
 			continue
 		}
 		if !runTerminal(run.Status.Conditions) {
@@ -210,7 +208,7 @@ func runTerminal(conditions []metav1.Condition) bool {
 			continue
 		}
 		switch condition.Reason {
-		case "InvalidRunSpec", "AdmissionPolicyInvalid", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
+		case "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
 			"ExecutionLost", "JobFailed", "RequiredStateNotConfirmed", "EvidenceInvalid":
 			return true
 		}
@@ -265,7 +263,7 @@ func pointPolicy(spec edgev1alpha1.ModelLoadedIdleBaselinePointPolicySpec) (prof
 		return profilederivation.PointPolicy{}, errors.New("idle baseline confidence level must be a clean decimal in (0, 1)")
 	}
 	return profilederivation.PointPolicy{
-		Version: spec.Version, MinimumTrials: int(spec.MinimumAcceptedRuns), ConfidenceLevel: confidence,
+		Version: spec.Version, MinimumTrials: int(spec.MinimumRuns), ConfidenceLevel: confidence,
 	}, nil
 }
 

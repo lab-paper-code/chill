@@ -31,12 +31,12 @@ func TestQuickEnergyStartsAtTheFirstPlannedBatchSize(t *testing.T) {
 	})
 
 	t.Run("first active point", func(t *testing.T) {
-		accepted := []Measurement{
+		completed := []Measurement{
 			{WorkloadMode: WorkloadModeIdle, Batch: 2},
 			{WorkloadMode: WorkloadModeIdle, Batch: 2},
 			{WorkloadMode: WorkloadModeIdle, Batch: 2},
 		}
-		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}, Accepted: accepted})
+		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}, Completed: completed})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -49,7 +49,7 @@ func TestQuickEnergyStartsAtTheFirstPlannedBatchSize(t *testing.T) {
 
 func TestQuickEnergyFillsEachBatchBeforeAdvancing(t *testing.T) {
 	method := newTestQuickEnergyMethod(t, nil)
-	observed := Observed{PlannedBatchSizes: []int{1}, Accepted: []Measurement{
+	observed := Observed{PlannedBatchSizes: []int{1}, Completed: []Measurement{
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
 		{WorkloadMode: WorkloadModeIdle, Batch: 1},
@@ -71,7 +71,7 @@ func TestQuickEnergyStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 
 	plan, err := method.Plan(Observed{
 		PlannedBatchSizes: []int{1, 2, 4},
-		Accepted:          acceptedThrough(2, 3),
+		Completed:         completedThrough(2, 3),
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -91,7 +91,7 @@ func TestQuickEnergyPassesTheMeasuredPrefixToTheObjective(t *testing.T) {
 
 	plan, err := method.Plan(Observed{
 		PlannedBatchSizes: []int{1, 2, 4},
-		Accepted:          acceptedForBatches([]int{1, 2, 4}, 3),
+		Completed:         completedForBatches([]int{1, 2, 4}, 3),
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -119,7 +119,7 @@ func TestQuickEnergyRequiresTheDerivationToCloseAnExhaustedSearchSpace(t *testin
 	})
 	_, err := method.Plan(Observed{
 		PlannedBatchSizes: []int{1, 2},
-		Accepted:          acceptedThrough(2, 3),
+		Completed:         completedThrough(2, 3),
 	})
 	if err == nil || err.Error() != "energy derivation continued after exhausting the planned search space" {
 		t.Fatalf("error = %v, want exhausted-search invariant rejection", err)
@@ -135,23 +135,23 @@ func newTestQuickEnergyMethod(t *testing.T, curve CurveSource) Method {
 	return method
 }
 
-func acceptedThrough(maxBatch, trials int) []Measurement {
+func completedThrough(maxBatch, trials int) []Measurement {
 	batches := make([]int, maxBatch)
 	for index := range batches {
 		batches[index] = index + 1
 	}
-	return acceptedForBatches(batches, trials)
+	return completedForBatches(batches, trials)
 }
 
-func acceptedForBatches(batches []int, trials int) []Measurement {
-	accepted := make([]Measurement, 0, (len(batches)+1)*trials)
+func completedForBatches(batches []int, trials int) []Measurement {
+	completed := make([]Measurement, 0, (len(batches)+1)*trials)
 	for count := 0; count < trials; count++ {
-		accepted = append(accepted, Measurement{WorkloadMode: WorkloadModeIdle, Batch: batches[0]})
+		completed = append(completed, Measurement{WorkloadMode: WorkloadModeIdle, Batch: batches[0]})
 	}
 	for _, batch := range batches {
 		for count := 0; count < trials; count++ {
-			accepted = append(accepted, Measurement{WorkloadMode: WorkloadModeActive, Batch: batch})
+			completed = append(completed, Measurement{WorkloadMode: WorkloadModeActive, Batch: batch})
 		}
 	}
-	return accepted
+	return completed
 }

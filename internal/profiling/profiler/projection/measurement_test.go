@@ -1,109 +1,50 @@
-package admission
+package projection
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+
 	"io"
 	"os"
-	"reflect"
+
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-func TestEvaluateRequiresVerifiedEvidence(t *testing.T) {
+func TestProjectionRequiresVerifiedEvidence(t *testing.T) {
 	t.Parallel()
-	if _, err := Evaluate(profilerevidence.VerifiedEvidence{}, FrozenPolicy{}); err == nil {
+	if _, err := Trial(profilerevidence.VerifiedEvidence{}); err == nil {
 		t.Fatal("empty active evidence was accepted")
 	}
-	if _, _, err := EvaluateIdle(profilerevidence.VerifiedIdleEvidence{}, FrozenPolicy{}); err == nil {
+	if _, err := IdleTrial(profilerevidence.VerifiedIdleEvidence{}); err == nil {
 		t.Fatal("empty idle evidence was accepted")
 	}
 }
 
-func TestEvaluateTrialReturnsTheTrialOnlyWhenAccepted(t *testing.T) {
-	evidence, policy := acceptedActiveFixture(t)
-	result, trial, err := EvaluateTrial(evidence, policy)
+func TestTrialProjectsVerifiedEvidence(t *testing.T) {
+	evidence := acceptedActiveFixture(t)
+	trial, err := Trial(evidence)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Verdict != VerdictAccepted {
-		t.Fatalf("verdict = %q, want Accepted", result.Verdict)
-	}
-	if trial == nil || trial.Batch < 1 || trial.TrialID == "" {
+	if trial.Batch < 1 || trial.TrialID == "" {
 		t.Fatalf("accepted evaluation returned no usable trial: %+v", trial)
-	}
-}
-
-func TestEvaluateTrialPreservesNonAcceptedAndErrorReturns(t *testing.T) {
-	t.Run("non-Accepted", func(t *testing.T) {
-		evidence, _ := acceptedActiveFixture(t)
-		policy := activeFixturePolicy(t, "insufficient-active", 31)
-
-		result, trial, err := EvaluateTrial(evidence, policy)
-		if err != nil {
-			t.Fatalf("EvaluateTrial() error = %v", err)
-		}
-		if result.Verdict != VerdictInsufficient || result.PolicyVersion == "" ||
-			len(result.ReasonCodes) == 0 || trial != nil {
-			t.Fatalf("EvaluateTrial() = (%+v, %+v, nil), want populated Insufficient result and nil trial",
-				result, trial)
-		}
-	})
-
-	t.Run("error", func(t *testing.T) {
-		_, policy := acceptedActiveFixture(t)
-
-		result, trial, err := EvaluateTrial(profilerevidence.VerifiedEvidence{}, policy)
-		if err == nil || !reflect.DeepEqual(result, Result{}) || trial != nil {
-			t.Fatalf("EvaluateTrial() = (%+v, %+v, %v), want zero result, nil trial, and error",
-				result, trial, err)
-		}
-	})
-}
-
-func TestEvaluateTrialAdmissionRetainsTheAdmissionThatAuthorizedTheTrial(t *testing.T) {
-	evidence, policy := acceptedActiveFixture(t)
-	compact, admission, err := EvaluateTrialAdmission(evidence, policy)
-	if err != nil {
-		t.Fatalf("EvaluateTrialAdmission() error = %v", err)
-	}
-	trialCompact, trial, err := EvaluateTrial(evidence, policy)
-	if err != nil {
-		t.Fatalf("EvaluateTrial() error = %v", err)
-	}
-	if admission == nil || trial == nil {
-		t.Fatalf("accepted evaluation omitted projections: admission=%+v trial=%+v", admission, trial)
-	}
-	if !reflect.DeepEqual(compact, trialCompact) || !reflect.DeepEqual(admission.Trial, *trial) {
-		t.Fatalf("evaluation projections drifted: curve=(%+v, %+v) trial=(%+v, %+v)",
-			compact, admission.Trial, trialCompact, *trial)
-	}
-	admissionPolicy, err := policy.AdmissionPolicy()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantAdmission := profilederivation.Admit(admission.Trial, admissionPolicy)
-	if wantAdmission.Verdict != profilederivation.VerdictAccepted ||
-		!reflect.DeepEqual(admission.Admission, wantAdmission) {
-		t.Fatalf("retained admission did not authorize the trial: got=%+v want=%+v",
-			admission.Admission, wantAdmission)
 	}
 }
 
 func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapshot(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	config := admissionRunConfig()
+	config := projectionRunConfig()
 	execution := profilerevidence.ExecutionEvidence{
 		RunConfig: config,
 		Terminal: profilerevidence.TerminalFacts{
@@ -138,8 +79,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 		t.Fatal(err)
 	}
 	if trial.CompletedCalls != 2 || trial.CompletedItems != 4 || len(trial.LatencyMilliseconds) != 2 ||
-		len(trial.Samples) != 1 || trial.Failures != 1 || !trial.SourceTimestampAbsent ||
-		!trial.SteadyWindowVerified || trial.ThermalStateKnown || trial.WorkloadWindowKnown {
+		len(trial.Samples) != 1 || trial.Failures != 1 || !trial.SourceTimestampAbsent || trial.WorkloadWindowKnown {
 		t.Fatalf("projected trial = %#v", trial)
 	}
 	if trial.StateIdentity == "" || trial.EnvironmentIdentity == "" ||
@@ -154,7 +94,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing.T) {
 	t.Parallel()
 	started := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	config := admissionRunConfig()
+	config := projectionRunConfig()
 	config.Measurement.SettlingDurationSeconds = 60
 	execution := profilerevidence.ExecutionEvidence{
 		RunConfig: config,
@@ -186,185 +126,15 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 	}
 	if observation.TrialID != "idle-pod" || observation.RawEvidence.Store != "chill-evidence" ||
 		observation.RawEvidence.Key != "runs/idle/raw.json" ||
-		!observation.ModelLoadedBeforeSettling || !observation.SettlingWindowVerified ||
 		!observation.ModelResidentAtEnd || observation.InferenceCountAfterModelLoad != 0 ||
 		!observation.WindowStart.Equal(started) || !observation.WindowEnd.Equal(started.Add(30*time.Second)) {
 		t.Fatalf("projected idle observation = %#v", observation)
 	}
 }
 
-func TestThermalStateProjectsOnlyObservedWindowFacts(t *testing.T) {
-	start := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
-	sample := func(offset time.Duration, thermal *metricobserver.ThermalReading) metricobserver.Sample {
-		return metricobserver.Sample{ObservedAt: start.Add(offset), Watts: 4, Thermal: thermal}
-	}
-	direct := func(active bool) *metricobserver.ThermalReading {
-		return &metricobserver.ThermalReading{
-			ObservationAvailable: admissionBool(true), Active: admissionBool(active),
-		}
-	}
-	counters := func(value uint64) *metricobserver.ThermalReading {
-		return &metricobserver.ThermalReading{
-			ObservationAvailable: admissionBool(true), CPUCoreThrottleEvents: admissionUint(value),
-		}
-	}
-	tests := []struct {
-		name       string
-		samples    []metricobserver.Sample
-		wantKnown  bool
-		wantActive bool
-	}{
-		{name: "direct stable", samples: []metricobserver.Sample{sample(time.Second, direct(false)), sample(2*time.Second, direct(false))}, wantKnown: true},
-		{name: "direct active", samples: []metricobserver.Sample{sample(time.Second, direct(false)), sample(2*time.Second, direct(true))}, wantKnown: true, wantActive: true},
-		{name: "counter stable", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(7))}, wantKnown: true},
-		{name: "counter increase", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(8))}, wantKnown: true, wantActive: true},
-		{name: "counter reset", samples: []metricobserver.Sample{sample(time.Second, counters(7)), sample(2*time.Second, counters(1))}},
-		{
-			name: "diagnostic issue does not override direct evidence",
-			samples: []metricobserver.Sample{
-				sample(time.Second, &metricobserver.ThermalReading{
-					ObservationAvailable: admissionBool(true), Active: admissionBool(false),
-					Issues: []metricobserver.MetricIssue{{Metric: "device_thermal_max_celsius", Reason: metricobserver.FailureReasonInvalidReading}},
-				}),
-				sample(2*time.Second, direct(false)),
-			},
-			wantKnown: true,
-		},
-		{name: "missing thermal", samples: []metricobserver.Sample{sample(time.Second, nil), sample(2*time.Second, nil)}},
-		{name: "outside window ignored", samples: []metricobserver.Sample{sample(-time.Second, direct(true)), sample(time.Second, direct(false))}, wantKnown: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			known, active := thermalState(test.samples, start, start.Add(3*time.Second))
-			if known != test.wantKnown || active != test.wantActive {
-				t.Fatalf("thermalState() = %t, %t; want %t, %t", known, active, test.wantKnown, test.wantActive)
-			}
-		})
-	}
-}
+func projectionBool(value bool) *bool { return &value }
 
-func admissionBool(value bool) *bool     { return &value }
-func admissionUint(value uint64) *uint64 { return &value }
-
-func TestRunIdentitiesSeparateExecutionStateFromMeasurementProtocol(t *testing.T) {
-	t.Parallel()
-	config := admissionRunConfigWithWorkloadContract()
-	base, err := ProjectRunIdentities(config, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	batch := config
-	batch.Measurement.Batch = 8
-	batchIdentities, err := ProjectRunIdentities(batch, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if batchIdentities != base {
-		t.Fatalf("batch changed identity family: %#v != %#v", batchIdentities, base)
-	}
-
-	idle := config
-	idle.Measurement.WorkloadMode = "idle-model-loaded"
-	idle.Measurement.InputGenerator = "none"
-	idle.Measurement.OutputValidation = "none"
-	idle.Measurement.WarmupIterations = 0
-	idle.Measurement.DurationSeconds = 60
-	idle.Metrics.DurationSeconds = 61
-	idleIdentities, err := ProjectRunIdentities(idle, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if idleIdentities.StateIdentity != base.StateIdentity ||
-		idleIdentities.MeasurementProtocolIdentity == base.MeasurementProtocolIdentity {
-		t.Fatalf("idle split = %#v, active = %#v", idleIdentities, base)
-	}
-
-	observer := config
-	observer.Images.MetricObserver = "registry.example/metric-observer@sha256:" + strings.Repeat("b", 64)
-	observerIdentities, err := ProjectRunIdentities(observer, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if observerIdentities.StateIdentity != base.StateIdentity ||
-		observerIdentities.MeasurementProtocolIdentity == base.MeasurementProtocolIdentity {
-		t.Fatalf("observer split = %#v, base = %#v", observerIdentities, base)
-	}
-
-	runtime := config
-	runtime.Images.Runtime = "registry.example/runtime@sha256:" + strings.Repeat("c", 64)
-	runtimeIdentities, err := ProjectRunIdentities(runtime, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtimeIdentities.StateIdentity == base.StateIdentity {
-		t.Fatal("runtime image must change execution-state identity")
-	}
-
-	metricSource := config
-	metricSource.Metrics.Endpoint = "http://other-meter"
-	metricSourceIdentities, err := ProjectRunIdentities(metricSource, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if metricSourceIdentities.StateIdentity == base.StateIdentity {
-		t.Fatal("wall-meter source must change execution-state identity")
-	}
-	thermalMetricSource := config
-	thermalMetricSource.Metrics.ThermalMetrics.Active = "other_thermal_active"
-	thermalMetricSourceIdentities, err := ProjectRunIdentities(thermalMetricSource, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if thermalMetricSourceIdentities.StateIdentity == base.StateIdentity {
-		t.Fatal("thermal metric mapping must change execution-state identity")
-	}
-
-	nodeIdentities, err := ProjectRunIdentities(config, "node-b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nodeIdentities.StateIdentity == base.StateIdentity {
-		t.Fatal("actual Node UID must change execution-state identity")
-	}
-	hostBound := config
-	hostBound.State.HostContract = &profilingrun.CandidateReportHostContract{
-		Libraries: []profilingrun.CandidateReportHostLibrary{{Name: "runtime", HostPath: "/host/runtime", ContainerPath: "/runtime"}},
-	}
-	hostBoundIdentities, err := ProjectRunIdentities(hostBound, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostBoundIdentities.StateIdentity == base.StateIdentity ||
-		!strings.HasPrefix(hostBoundIdentities.StateIdentity, stateIdentitySchemaVersion+"@sha256:") {
-		t.Fatalf("host contract was not bound to physical state identity: %#v", hostBoundIdentities)
-	}
-	actuated := config
-	actuated.State.PowerMode = "MODE_15W_6CORE"
-	actuated.Actuation = &profilingrun.ActuationContract{
-		PowerMode:  actuated.State.PowerMode,
-		PolicyName: "jetson-15w",
-		Actuator: profilingrun.ActuatorTarget{
-			Kind:           profilingrun.ActuatorKindJetsonNVPModel,
-			JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 2},
-		},
-	}
-	actuatedIdentities, err := ProjectRunIdentities(actuated, "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if actuatedIdentities.StateIdentity == base.StateIdentity ||
-		!strings.HasPrefix(actuatedIdentities.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
-		actuatedIdentities.MeasurementProtocolIdentity != base.MeasurementProtocolIdentity {
-		t.Fatalf("actuation was not isolated to physical state identity: %#v", actuatedIdentities)
-	}
-	if !strings.HasPrefix(base.StateIdentity, stateIdentitySchemaVersion+"@sha256:") ||
-		!strings.HasPrefix(base.MeasurementProtocolIdentity, measurementProtocolIdentitySchemaVersion+"@sha256:") {
-		t.Fatalf("unversioned identities: %#v", base)
-	}
-}
-
-func admissionRunConfig() profilingrun.RunConfig {
+func projectionRunConfig() profilingrun.RunConfig {
 	return profilingrun.RunConfig{
 		State: profilingrun.ExecutionState{
 			DeviceClass: "lattepanda", Model: "mobilenet",
@@ -405,7 +175,7 @@ func (s activeFixtureStore) OpenLocation(
 	return io.NopCloser(bytes.NewReader(payload)), nil
 }
 
-func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, FrozenPolicy) {
+func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 	t.Helper()
 	intentBytes, err := os.ReadFile("../evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -432,8 +202,8 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 			ObservedAt: started.Add(500*time.Millisecond + time.Duration(index)*time.Second),
 			Watts:      5.2,
 			Thermal: &metricobserver.ThermalReading{
-				ObservationAvailable: admissionBool(true),
-				Active:               admissionBool(false),
+				ObservationAvailable: projectionBool(true),
+				Active:               projectionBool(false),
 			},
 		}
 	}
@@ -599,30 +369,5 @@ func acceptedActiveFixture(t *testing.T) (profilerevidence.VerifiedEvidence, Fro
 		t.Fatal(err)
 	}
 
-	return verified, activeFixturePolicy(t, "accepted-active", 2)
-}
-
-func activeFixturePolicy(t *testing.T, name string, minimumSamples int) FrozenPolicy {
-	t.Helper()
-	policyCatalog := fmt.Sprintf(`
-schemaVersion: chill.dacs.io/profiler-admission-policies.v1alpha1
-policies:
-  - name: %s
-    workloadMode: saturated-serial-fixed-batch
-    minimumSamples: %d
-    maximumGapSeconds: 2
-    maximumBoundaryDistanceSeconds: 1
-    minimumCoverage: 0.9
-    allowReceiptTimestamps: true
-    rejectConcurrentCHILLWorkloads: true
-    rejectExternalWorkloadChanges: true
-`, name, minimumSamples)
-	policy, err := FreezeConfiguredPolicy([]byte(policyCatalog), name, PolicySource{
-		Kind: ConfigMapPolicySourceKind, Namespace: "chill-system", Name: "admission-policies",
-		UID: "policy-uid", ResourceVersion: "1", Key: "admission-policies.yaml",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return policy
+	return verified
 }

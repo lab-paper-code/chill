@@ -37,11 +37,11 @@ func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing
 	if decodedSpec.MeasurementState != spec.MeasurementState {
 		t.Fatalf("measurement state = %+v, want %+v", decodedSpec.MeasurementState, spec.MeasurementState)
 	}
-	if decodedSpec.AdmittedTrials[0].Run.Namespace != "chill-system" ||
+	if decodedSpec.CompletedTrials[0].Run.Namespace != "chill-system" ||
 		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
 		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
 	}
-	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha3" {
+	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha4" {
 		t.Fatalf("schema version = %q", decoded.SchemaVersion())
 	}
 }
@@ -59,16 +59,16 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha2",
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha1",
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha0",
-		"chill.example.io/batch-energy-optimization-result.v1alpha3",
+		"chill.example.io/batch-energy-optimization-result.v1alpha4",
 	} {
 		mutated := bytes.Replace(
 			payload,
-			[]byte("chill.dacs.io/batch-energy-optimization-result.v1alpha3"),
+			[]byte("chill.dacs.io/batch-energy-optimization-result.v1alpha4"),
 			[]byte(schema),
 			1,
 		)
 		if _, err := DecodeResultRecord(mutated); err == nil {
-			t.Fatalf("schema version %q was accepted", schema)
+			t.Fatalf("schema version %q was completed", schema)
 		}
 	}
 }
@@ -86,7 +86,7 @@ func TestResultRecordRequiresCleanMeasurementState(t *testing.T) {
 			spec := validResultRecordSpec()
 			set(&spec.MeasurementState, value)
 			if _, err := NewResultRecord(spec); err == nil {
-				t.Fatalf("%s value %q was accepted", name, value)
+				t.Fatalf("%s value %q was completed", name, value)
 			}
 		}
 	}
@@ -94,9 +94,9 @@ func TestResultRecordRequiresCleanMeasurementState(t *testing.T) {
 
 func TestResultRecordRejectsDuplicateRunUID(t *testing.T) {
 	spec := validResultRecordSpec()
-	spec.ExcludedTrials[0].Run.UID = spec.AdmittedTrials[0].Run.UID
+	spec.ExcludedTrials[0].Run.UID = spec.CompletedTrials[0].Run.UID
 	if _, err := NewResultRecord(spec); err == nil {
-		t.Fatal("duplicate ProfilingRun UID was accepted")
+		t.Fatal("duplicate ProfilingRun UID was completed")
 	}
 }
 
@@ -104,7 +104,7 @@ func TestResultRecordRejectsInvalidDetail(t *testing.T) {
 	spec := validResultRecordSpec()
 	spec.Detail = []byte(`{"unfinished":`)
 	if _, err := NewResultRecord(spec); err == nil {
-		t.Fatal("invalid result detail was accepted")
+		t.Fatal("invalid result detail was completed")
 	}
 }
 
@@ -112,15 +112,15 @@ func TestResultRecordRejectsNonPositiveExcludedAttempt(t *testing.T) {
 	spec := validResultRecordSpec()
 	spec.ExcludedTrials[0].Attempt = 0
 	if _, err := NewResultRecord(spec); err == nil {
-		t.Fatal("non-positive excluded attempt was accepted")
+		t.Fatal("non-positive excluded attempt was completed")
 	}
 }
 
 func TestResultRecordRequiresRunNamespace(t *testing.T) {
 	spec := validResultRecordSpec()
-	spec.AdmittedTrials[0].Run.Namespace = ""
+	spec.CompletedTrials[0].Run.Namespace = ""
 	if _, err := NewResultRecord(spec); err == nil {
-		t.Fatal("Run reference without a namespace was accepted")
+		t.Fatal("Run reference without a namespace was completed")
 	}
 }
 
@@ -135,7 +135,7 @@ func validResultRecordSpec() ResultRecordSpec {
 			Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 1024,
 		},
-		AdmittedTrials: []AdmittedTrialReference{{
+		CompletedTrials: []CompletedTrialReference{{
 			Run: RunReference{
 				Namespace: "chill-system", Name: "active-b2-a2", UID: "active-uid",
 			},

@@ -46,7 +46,7 @@ type BatchEnergyOptimizationResultCampaign struct {
 	Spec            edgev1alpha1.BatchEnergyOptimizationSpec `json:"spec"`
 	Phase           string                                   `json:"phase,omitempty"`
 	Outcome         string                                   `json:"outcome,omitempty"`
-	AcceptedTrials  int32                                    `json:"acceptedTrials"`
+	CompletedTrials int32                                    `json:"completedTrials"`
 	Conditions      []metav1.Condition                       `json:"conditions,omitempty"`
 	StoredResult    evidencestore.ObjectIdentity             `json:"storedResult"`
 }
@@ -77,8 +77,8 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			ResourceVersion: campaign.ResourceVersion, Generation: campaign.Generation,
 			Spec:  campaign.Spec,
 			Phase: campaign.Status.Phase, Outcome: campaign.Status.Outcome,
-			AcceptedTrials: campaign.Status.AcceptedTrials,
-			Conditions:     append([]metav1.Condition(nil), campaign.Status.Conditions...),
+			CompletedTrials: campaign.Status.CompletedTrials,
+			Conditions:      append([]metav1.Condition(nil), campaign.Status.Conditions...),
 			StoredResult: evidencestore.ObjectIdentity{
 				Store: campaign.Status.Result.Store,
 				Key:   campaign.Status.Result.Key,

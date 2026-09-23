@@ -213,7 +213,6 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 				TargetNode: "gc-fixture",
 				CPURequest: resource.MustParse("1m"),
 			},
-			AdmissionPolicy: "gc-fixture",
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 1, DurationSeconds: 1,
 				WorkloadMode:     "saturated-serial-fixed-batch",

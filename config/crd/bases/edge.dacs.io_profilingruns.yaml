@@ -23,9 +23,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="EvidenceVerified")].status
       name: Evidence
       type: string
-    - jsonPath: .status.conditions[?(@.type=="EvidenceAdmitted")].status
-      name: Admitted
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -56,13 +53,6 @@ spec:
               ProfilingRunSpec requests exactly one immutable profiling execution.
               Materially different inputs require a new ProfilingRun.
             properties:
-              admissionPolicy:
-                description: AdmissionPolicy identifies the configured single-Run
-                  scientific admission policy.
-                maxLength: 63
-                minLength: 1
-                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                type: string
               candidate:
                 description: Candidate selects one static catalog execution path.
                 properties:
@@ -199,7 +189,6 @@ spec:
                 minLength: 1
                 type: string
             required:
-            - admissionPolicy
             - candidate
             - cpuRequest
             - measurement
@@ -277,37 +266,8 @@ spec:
                 - name
                 - uid
                 type: object
-              admission:
-                description: Admission records the evaluated scientific verdict without
-                  raw evidence.
-                properties:
-                  policyVersion:
-                    maxLength: 128
-                    minLength: 1
-                    type: string
-                  reasonCodes:
-                    description: ReasonCodes contains stable typed codes, not raw
-                      diagnostic messages.
-                    items:
-                      maxLength: 128
-                      minLength: 1
-                      type: string
-                    maxItems: 32
-                    type: array
-                    x-kubernetes-list-type: set
-                  verdict:
-                    enum:
-                    - Accepted
-                    - Rejected
-                    - Insufficient
-                    type: string
-                required:
-                - policyVersion
-                - verdict
-                type: object
               conditions:
-                description: Conditions separately report execution, evidence verification,
-                  and admission.
+                description: Conditions separately report execution and evidence verification.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

@@ -29,7 +29,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	}
 	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
 	attempts := make(map[Measurement]int)
-	accepted := make(map[Measurement]struct{})
+	completed := make(map[Measurement]struct{})
 	for _, trial := range snapshot.Trials {
 		if trial.Verdict == VerdictPending {
 			return Decision{Action: ActionWait, Reason: "TrialInFlight"}, nil
@@ -37,11 +37,11 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		if trial.Attempt > attempts[trial.Measurement] {
 			attempts[trial.Measurement] = trial.Attempt
 		}
-		if trial.Verdict == VerdictAccepted {
-			if _, exists := accepted[trial.Measurement]; !exists {
-				accepted[trial.Measurement] = struct{}{}
+		if trial.Verdict == VerdictCompleted {
+			if _, exists := completed[trial.Measurement]; !exists {
+				completed[trial.Measurement] = struct{}{}
 			}
-			observed.Accepted = append(observed.Accepted, trial.Measurement)
+			observed.Completed = append(observed.Completed, trial.Measurement)
 		}
 	}
 
@@ -49,7 +49,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		if trial.Verdict != VerdictFailed {
 			continue
 		}
-		if _, admitted := accepted[trial.Measurement]; admitted {
+		if _, completed := completed[trial.Measurement]; completed {
 			continue
 		}
 		next := attempts[trial.Measurement] + 1

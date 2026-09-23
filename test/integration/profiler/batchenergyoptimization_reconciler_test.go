@@ -143,22 +143,22 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 	}
 	requireOwnedRunCount(t, ctx, kube, parent.UID, 1)
 	currentParent := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-	if currentParent.Status.AcceptedTrials != 0 || currentParent.Status.Phase != "Measuring" {
-		t.Fatalf("recomputed live status = %#v, want Measuring with zero accepted trials", currentParent.Status)
+	if currentParent.Status.CompletedTrials != 0 || currentParent.Status.Phase != "Measuring" {
+		t.Fatalf("recomputed live status = %#v, want Measuring with zero completed trials", currentParent.Status)
 	}
 	measuringSince := currentParent.Status.Conditions[0].LastTransitionTime
 
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 1, "Rejected")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 1, "Failed")
 	reconcileBatch(t, ctx, restarted, request)
 	requireCampaignRun(t, ctx, kube, parent, idle, 2)
 
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 2, "Accepted")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 2, "Completed")
 	reconcileBatch(t, ctx, restarted, request)
 	requireCampaignRun(t, ctx, kube, parent, idle, 3)
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 3, "Accepted")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 3, "Completed")
 	reconcileBatch(t, ctx, restarted, request)
 	requireCampaignRun(t, ctx, kube, parent, idle, 4)
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 4, "Accepted")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 4, "Completed")
 
 	activeBatchOne := batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
@@ -174,7 +174,7 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 
 	finished := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
 	if finished.Status.Phase != "Complete" || finished.Status.Outcome != "MinimumFound/SearchSpaceExhausted" ||
-		finished.Status.ObservedGeneration != finished.Generation || finished.Status.AcceptedTrials != 9 ||
+		finished.Status.ObservedGeneration != finished.Generation || finished.Status.CompletedTrials != 9 ||
 		finished.Status.Result == nil {
 		t.Fatalf("terminal BatchEnergyOptimization status = %#v", finished.Status)
 	}
@@ -222,17 +222,17 @@ func TestBatchEnergyOptimizationReconcilerExhaustsRetryLimit(t *testing.T) {
 	requireCampaignRun(t, ctx, kube, parent, idle, 1)
 	reconcileBatch(t, ctx, reconciler, request)
 	requireOwnedRunCount(t, ctx, kube, parent.UID, 1)
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 1, "Rejected")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 1, "Failed")
 	reconcileBatch(t, ctx, reconciler, request)
 	requireCampaignRun(t, ctx, kube, parent, idle, 2)
 	reconcileBatch(t, ctx, reconciler, request)
 	requireOwnedRunCount(t, ctx, kube, parent.UID, 2)
-	setCampaignRunVerdict(t, ctx, kube, parent, idle, 2, "Rejected")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 2, "Failed")
 	reconcileBatch(t, ctx, reconciler, request)
 
 	failed := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
 	if failed.Status.Phase != "Failed" || failed.Status.Outcome != "RetryLimitExhausted" ||
-		failed.Status.AcceptedTrials != 0 || failed.Status.Result != nil {
+		failed.Status.CompletedTrials != 0 || failed.Status.Result != nil {
 		t.Fatalf("exhausted BatchEnergyOptimization status = %#v", failed.Status)
 	}
 	if results.calls != 0 || curves.calls != 0 {
@@ -308,7 +308,6 @@ func createBatchEnergyOptimization(
 				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
-				AdmissionPolicy:  "wall-power-v2",
 				WarmupIterations: 20, DurationSeconds: 30,
 				InputGenerator: "numpy-default-rng-seed-0-fp32-v1", OutputValidation: "nonempty-shape-batch-v1",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
@@ -316,7 +315,6 @@ func createBatchEnergyOptimization(
 				},
 			},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{
-				AdmissionPolicy:         "idle-wall-power-v1",
 				SettlingDurationSeconds: 5, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,
@@ -362,7 +360,7 @@ func acceptActiveCampaignRuns(
 		for attempt := 1; attempt <= 3; attempt++ {
 			reconcileBatch(t, ctx, reconciler, request)
 			requireCampaignRun(t, ctx, kube, parent, measurement, attempt)
-			setCampaignRunVerdict(t, ctx, kube, parent, measurement, attempt, "Accepted")
+			setCampaignRunOutcome(t, ctx, kube, parent, measurement, attempt, "Completed")
 			if measurementIndex == 0 && attempt == 1 {
 				measuring := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
 				if !measuring.Status.Conditions[0].LastTransitionTime.Equal(&measuringSince) {
@@ -426,7 +424,7 @@ func requireCampaignRun(
 	return run
 }
 
-func setCampaignRunVerdict(
+func setCampaignRunOutcome(
 	t *testing.T,
 	ctx context.Context,
 	kube client.Client,
@@ -437,16 +435,16 @@ func setCampaignRunVerdict(
 ) {
 	t.Helper()
 	run := requireCampaignRun(t, ctx, kube, parent, measurement, attempt)
-	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
-		Verdict: verdict, PolicyVersion: "wall-power-v2",
-	}
-	if verdict == "Accepted" {
+
+	if verdict == "Completed" {
 		run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{
 			Store: "run-evidence", Key: fmt.Sprintf("runs/%s/execution.json", run.UID),
 			SchemaVersion: "run-evidence-schema", Size: 1000 + int64(attempt),
 		}
 	} else {
-		run.Status.Admission.ReasonCodes = []string{"SyntheticFailure"}
+		run.Status.Conditions = []metav1.Condition{{
+			Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed", LastTransitionTime: metav1.Now(),
+		}}
 	}
 	if err := kube.Status().Update(ctx, run); err != nil {
 		t.Fatal(err)
@@ -489,7 +487,7 @@ func corruptBatchStatus(
 	current.Status = edgev1alpha1.BatchEnergyOptimizationStatus{
 		ObservedGeneration: current.Generation,
 		Phase:              "Failed",
-		AcceptedTrials:     accepted,
+		CompletedTrials:    accepted,
 		Outcome:            "StaleStatusMustNotDriveDecision",
 	}
 	if err := kube.Status().Update(ctx, current); err != nil {

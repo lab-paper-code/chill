@@ -36,7 +36,6 @@ type FactSourceConfig struct {
 	ExecutionFactsKey      string `json:"executionFactsKey"`
 	MetricSourcesKey       string `json:"metricSourcesKey"`
 	WorkloadObservationKey string `json:"workloadObservationKey"`
-	AdmissionPoliciesKey   string `json:"admissionPoliciesKey"`
 	ExecutionPoliciesKey   string `json:"executionPoliciesKey"`
 	ActuationPoliciesKey   string `json:"actuationPoliciesKey"`
 }
@@ -67,7 +66,6 @@ func (c Config) Validate() error {
 		{name: "factSource.executionFactsKey", value: c.FactSource.ExecutionFactsKey},
 		{name: "factSource.metricSourcesKey", value: c.FactSource.MetricSourcesKey},
 		{name: "factSource.workloadObservationKey", value: c.FactSource.WorkloadObservationKey},
-		{name: "factSource.admissionPoliciesKey", value: c.FactSource.AdmissionPoliciesKey},
 		{name: "factSource.executionPoliciesKey", value: c.FactSource.ExecutionPoliciesKey},
 		{name: "factSource.actuationPoliciesKey", value: c.FactSource.ActuationPoliciesKey},
 		{name: "workloadObserver.serviceAccountName", value: c.WorkloadObserver.ServiceAccountName},
@@ -86,13 +84,12 @@ func (c Config) Validate() error {
 		c.FactSource.ExecutionFactsKey,
 		c.FactSource.MetricSourcesKey,
 		c.FactSource.WorkloadObservationKey,
-		c.FactSource.AdmissionPoliciesKey,
 		c.FactSource.ExecutionPoliciesKey,
 		c.FactSource.ActuationPoliciesKey,
 	} {
 		keys[key] = struct{}{}
 	}
-	if len(keys) != 6 {
+	if len(keys) != 5 {
 		problems = append(problems, "factSource keys must be different")
 	}
 	if c.Replicas < 1 {

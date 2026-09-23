@@ -58,9 +58,13 @@ func Integrate(window Window, policy Policy) (float64, error) {
 		return 0, errors.New("sample coverage is below policy")
 	}
 	points := make([]Sample, 0, len(inside)+2)
-	points = append(points, Sample{ObservedAt: window.Start, Watts: inside[0].Watts})
+	if inside[0].ObservedAt.After(window.Start) {
+		points = append(points, Sample{ObservedAt: window.Start, Watts: inside[0].Watts})
+	}
 	points = append(points, inside...)
-	points = append(points, Sample{ObservedAt: window.End, Watts: inside[len(inside)-1].Watts})
+	if inside[len(inside)-1].ObservedAt.Before(window.End) {
+		points = append(points, Sample{ObservedAt: window.End, Watts: inside[len(inside)-1].Watts})
+	}
 	var joules float64
 	for index := 1; index < len(points); index++ {
 		duration := points[index].ObservedAt.Sub(points[index-1].ObservedAt)

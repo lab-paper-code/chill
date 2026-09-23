@@ -59,7 +59,7 @@ components:
   profiling-run: { in: internal/profiling/run }
   profiler-app: { in: internal/profiling/profiler }
   profiler-controller: { in: internal/profiling/profiler/controller }
-  profiler-admission: { in: internal/profiling/profiler/admission }
+  profiler-projection: { in: internal/profiling/profiler/projection }
   profiler-evidence: { in: internal/profiling/profiler/evidence }
   profiler-evidence-kube: { in: internal/profiling/profiler/evidence/kube }
   profiler-kube: { in: internal/profiling/profiler/kube }
@@ -86,7 +86,7 @@ deps:
       - evidence-core
       - profile-derivation
       - profiler-app
-      - profiler-admission
+      - profiler-projection
       - profiler-controller
       - profiler-evidence
       - profiling-run
@@ -101,7 +101,7 @@ deps:
       - evidence-core
       - idle-baseline-core
       - profile-derivation
-      - profiler-admission
+      - profiler-projection
       - profiler-app
       - profiler-controller
       - profiler-evidence
@@ -238,7 +238,7 @@ deps:
       - profiler-evidence
       - profiling-run
 
-  profiler-admission:
+  profiler-projection:
     mayDependOn:
       - evidence-core
       - metric-core
@@ -266,7 +266,7 @@ deps:
       - evidence-core
       - evidence-kube
       - profiler-app
-      - profiler-admission
+      - profiler-projection
       - profiler-evidence
       - profiler-evidence-kube
       - profiling-run
@@ -280,5 +280,5 @@ deps:
       - metric-edgemetrics
       - model-compat
       - profiler-app
-      - profiler-admission
+      - profiler-projection
       - profiling-run

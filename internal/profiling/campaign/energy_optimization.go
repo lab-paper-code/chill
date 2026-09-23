@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// CurveSource derives the energy-objective decision over the admitted active
+// CurveSource derives the energy-objective decision over the completed active
 // batches it is given. The controller supplies it because building a Curve
 // needs evidence the progress rules never see.
 type CurveSource func(batches []int) (CurveResult, error)
@@ -41,9 +41,9 @@ func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
 	if len(observed.PlannedBatchSizes) == 0 {
 		return Plan{}, errors.New("a non-empty planned batch size set is required")
 	}
-	counts := make(map[Measurement]int, len(observed.Accepted))
+	counts := make(map[Measurement]int, len(observed.Completed))
 	highestActive := 0
-	for _, measurement := range observed.Accepted {
+	for _, measurement := range observed.Completed {
 		counts[measurement]++
 		if measurement.WorkloadMode == WorkloadModeActive && measurement.Batch > highestActive {
 			highestActive = measurement.Batch

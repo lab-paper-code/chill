@@ -32,11 +32,11 @@ var _ = Describe("ModelLoadedIdleBaseline API", func() {
 			Expect(apierrors.IsInvalid(err)).To(BeTrue())
 		},
 		Entry("fewer than three accepted Runs", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
-			request.Spec.PointPolicy.MinimumAcceptedRuns = 2
+			request.Spec.PointPolicy.MinimumRuns = 2
 		}),
 		Entry("attempt limit below accepted target", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.AttemptLimit = 3
-			request.Spec.PointPolicy.MinimumAcceptedRuns = 4
+			request.Spec.PointPolicy.MinimumRuns = 4
 		}),
 		Entry("active-style zero batch", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.Batch = 0
@@ -85,13 +85,13 @@ func validModelLoadedIdleBaseline(name string) *edgev1alpha1.ModelLoadedIdleBase
 			CPUQuota: resource.MustParse("4"),
 			Batch:    1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
-				AdmissionPolicy: "idle-wall-power-v1", SettlingDurationSeconds: 60, DurationSeconds: 30,
+				SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 				},
 			},
 			PointPolicy: edgev1alpha1.ModelLoadedIdleBaselinePointPolicySpec{
-				Version: "idle-point-v1", MinimumAcceptedRuns: 3, ConfidenceLevel: "0.95",
+				Version: "idle-point-v1", MinimumRuns: 3, ConfidenceLevel: "0.95",
 			},
 			AttemptLimit: 5,
 		},

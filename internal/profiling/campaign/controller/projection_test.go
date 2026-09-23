@@ -19,9 +19,8 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 	}
 	run.Labels[labelBatch] = "99"
 	run.Labels[labelAttempt] = "99"
-	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{
-		Verdict: "Accepted", PolicyVersion: "v1",
-	}
+
+	run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "evidence", Key: "run/final", Size: 1}
 	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1, 2}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -30,7 +29,7 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 		snapshot.Trials[0].Attempt != 1 {
 		t.Fatalf("projection trusted the label instead of the spec: %+v", snapshot.Trials)
 	}
-	if snapshot.Trials[0].Verdict != batchenergyoptimization.VerdictAccepted {
+	if snapshot.Trials[0].Verdict != batchenergyoptimization.VerdictCompleted {
 		t.Fatalf("verdict = %q", snapshot.Trials[0].Verdict)
 	}
 }
@@ -42,7 +41,7 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 	}, 1)
 	run.OwnerReferences[0].UID = "someone-else"
 	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false); err == nil {
-		t.Fatal("a Run owned by another object was accepted")
+		t.Fatal("a Run owned by another object was completed")
 	}
 }
 

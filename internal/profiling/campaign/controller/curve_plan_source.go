@@ -15,8 +15,8 @@ import (
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	"github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -131,7 +131,7 @@ func (p *CurvePlanProjector) Project(
 		return profilederivation.CurvePlan{}, nil, err
 	}
 
-	spec, err := admission.ProjectCurvePlanSpec(
+	spec, err := projection.ProjectCurvePlanSpec(
 		parent.Name,
 		active.RunConfig,
 		idle.RunConfig,

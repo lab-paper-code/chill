@@ -12,9 +12,8 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -60,46 +59,6 @@ type recordingRunEvidenceFinalizer struct {
 	calls  int
 	result FinalizedRunEvidence
 	err    error
-}
-
-type recordingRunEvidenceAdmitter struct {
-	calls  int
-	result profileradmission.Result
-	err    error
-}
-
-type statusPatchFailureClient struct {
-	client.Client
-	err error
-}
-
-func (c *statusPatchFailureClient) Status() client.SubResourceWriter {
-	return &statusPatchFailureWriter{SubResourceWriter: c.Client.Status(), err: c.err}
-}
-
-type statusPatchFailureWriter struct {
-	client.SubResourceWriter
-	err error
-}
-
-func (w *statusPatchFailureWriter) Patch(
-	context.Context,
-	client.Object,
-	client.Patch,
-	...client.SubResourcePatchOption,
-) error {
-	return w.err
-}
-
-func (a *recordingRunEvidenceAdmitter) Admit(
-	context.Context,
-	*edgev1alpha1.ProfilingRun,
-	ResolvedRun,
-	*batchv1.Job,
-	evidencestore.ObjectIdentity,
-) (profileradmission.Result, error) {
-	a.calls++
-	return a.result, a.err
 }
 
 func (f *recordingRunEvidenceFinalizer) Finalize(
@@ -146,7 +105,7 @@ func TestRunReconcilerResolvesThenRecordsOneMeasurementJob(t *testing.T) {
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient, resolver, jobs,
-		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		&recordingRunEvidenceFinalizer{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +138,6 @@ func TestRunReconcilerEndsWithoutJobWhenRequiredStateIsUnconfirmed(t *testing.T)
 		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +182,6 @@ func TestRunReconcilerUsesNewestSuccessfulTransitionOnly(t *testing.T) {
 		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +221,6 @@ func TestRunReconcilerRecordsConfirmingTransitionBeforeCreatingJob(t *testing.T)
 		&recordingRunConfigResolver{result: resolved},
 		jobs,
 		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +284,6 @@ func TestRunReconcilerFinalizesActuatedEvidenceAfterReadyTarget(t *testing.T) {
 		&recordingRunConfigResolver{result: resolved},
 		&recordingExecutionJobs{},
 		finalizer,
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -379,7 +334,6 @@ func TestRunReconcilerDoesNotRefinalizePermanentTargetMismatch(t *testing.T) {
 		&recordingRunConfigResolver{result: resolved},
 		&recordingExecutionJobs{},
 		finalizer,
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +385,6 @@ func TestRunReconcilerRetriesTransientEvidenceFinalizationFailure(t *testing.T) 
 		&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)},
 		&recordingExecutionJobs{},
 		finalizer,
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +422,7 @@ func TestRunReconcilerDoesNotMaterializeASecondRecordedJob(t *testing.T) {
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient, resolver, jobs,
-		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		&recordingRunEvidenceFinalizer{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +462,6 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 		&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)},
 		&recordingExecutionJobs{},
 		finalizer,
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -539,145 +491,6 @@ func TestRunReconcilerFinalizesSuccessfulJobAndPublishesCompactStatus(t *testing
 	}
 }
 
-func TestRunReconcilerPublishesScientificAdmissionWithoutNewExecution(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name       string
-		verdict    profileradmission.Verdict
-		wantStatus metav1.ConditionStatus
-		wantReason string
-	}{
-		{name: "accepted", verdict: profileradmission.VerdictAccepted, wantStatus: metav1.ConditionTrue, wantReason: "EvidenceAccepted"},
-		{name: "rejected", verdict: profileradmission.VerdictRejected, wantStatus: metav1.ConditionFalse, wantReason: "EvidenceRejected"},
-		{name: "insufficient", verdict: profileradmission.VerdictInsufficient, wantStatus: metav1.ConditionUnknown, wantReason: "EvidenceInsufficient"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			scheme := runReconcilerTestScheme(t)
-			run, job := admissionReadyRun(t)
-			prepared := currentPreparedRun(t)
-			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
-			admitter := &recordingRunEvidenceAdmitter{result: profileradmission.Result{
-				Verdict: test.verdict, PolicyVersion: "wall-power-v2",
-				ReasonCodes: []string{"ThermalStateUnavailable", "WorkloadWindowUnknown"},
-			}}
-			jobs := &recordingExecutionJobs{}
-			finalizer := &recordingRunEvidenceFinalizer{}
-			reconciler, err := NewRunReconciler(
-				kubeClient,
-				&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)},
-				jobs,
-				finalizer,
-				admitter,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
-			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-				t.Fatal(err)
-			}
-			if admitter.calls != 1 || jobs.calls != 0 || finalizer.calls != 0 {
-				t.Fatalf("transition calls: admit=%d jobs=%d finalize=%d", admitter.calls, jobs.calls, finalizer.calls)
-			}
-			actual := &edgev1alpha1.ProfilingRun{}
-			if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
-				t.Fatal(err)
-			}
-			if actual.Status.Admission == nil || actual.Status.Admission.Verdict != string(test.verdict) ||
-				actual.Status.Admission.PolicyVersion != "wall-power-v2" || len(actual.Status.Admission.ReasonCodes) != 2 {
-				t.Fatalf("admission status = %#v", actual.Status.Admission)
-			}
-			condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
-			if condition == nil || condition.Status != test.wantStatus || condition.Reason != test.wantReason {
-				t.Fatalf("admission condition = %#v", condition)
-			}
-		})
-	}
-}
-
-func TestRunReconcilerRetriesAdmissionEvaluationFailure(t *testing.T) {
-	t.Parallel()
-	scheme := runReconcilerTestScheme(t)
-	run, job := admissionReadyRun(t)
-	prepared := currentPreparedRun(t)
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run, job).Build()
-	want := errors.New("admission evaluator temporarily unavailable")
-	admitter := &recordingRunEvidenceAdmitter{err: want}
-	jobs := &recordingExecutionJobs{}
-	finalizer := &recordingRunEvidenceFinalizer{}
-	reconciler, err := NewRunReconciler(
-		kubeClient,
-		&recordingRunConfigResolver{result: resolvedRunForPrepared(t, prepared)},
-		jobs,
-		finalizer,
-		admitter,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
-
-	for attempt := 1; attempt <= 2; attempt++ {
-		result, reconcileErr := reconciler.Reconcile(context.Background(), request)
-		if !errors.Is(reconcileErr, want) || result != (ctrl.Result{}) {
-			t.Fatalf("attempt %d result = %#v, error = %v, want wrapped %v", attempt, result, reconcileErr, want)
-		}
-		if !strings.Contains(reconcileErr.Error(), "admit ProfilingRun chill-system/run evidence") {
-			t.Fatalf("attempt %d error context = %q", attempt, reconcileErr)
-		}
-		if admitter.calls != attempt || jobs.calls != 0 || finalizer.calls != 0 {
-			t.Fatalf(
-				"attempt %d transition calls: admit=%d jobs=%d finalize=%d",
-				attempt, admitter.calls, jobs.calls, finalizer.calls,
-			)
-		}
-	}
-
-	actual := &edgev1alpha1.ProfilingRun{}
-	if err := kubeClient.Get(context.Background(), request.NamespacedName, actual); err != nil {
-		t.Fatal(err)
-	}
-	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
-	if actual.Status.Admission != nil || condition == nil || condition.Status != metav1.ConditionUnknown ||
-		condition.ObservedGeneration != run.Generation || condition.Reason != "AdmissionEvaluationFailed" ||
-		condition.Message != "verified evidence could not be evaluated" {
-		t.Fatalf("retryable admission failure status = %#v", actual.Status)
-	}
-}
-
-func TestRunReconcilerJoinsAdmissionAndStatusPublicationFailures(t *testing.T) {
-	t.Parallel()
-	scheme := runReconcilerTestScheme(t)
-	run := testRun()
-	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
-	statusErr := errors.New("status API temporarily unavailable")
-	reconciler := &RunReconciler{Client: &statusPatchFailureClient{Client: baseClient, err: statusErr}}
-	admissionErr := errors.New("admission evaluator temporarily unavailable")
-
-	err := reconciler.handleAdmissionFailure(
-		context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, run, admissionErr,
-	)
-	if !errors.Is(err, admissionErr) || !errors.Is(err, statusErr) {
-		t.Fatalf("joined admission failure = %v, want %v and %v", err, admissionErr, statusErr)
-	}
-}
-
-func admissionReadyRun(t *testing.T) (*edgev1alpha1.ProfilingRun, *batchv1.Job) {
-	t.Helper()
-	run := testRun()
-	recordRunConfigAndJob(run)
-	run.Status.Evidence = testEvidenceReference()
-	run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
-		Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "run-pod", UID: "pod-uid"},
-		Node: edgev1alpha1.ProfilingRunObjectReference{Name: "lattepanda", UID: "node-uid"},
-	}
-	job := recordedJob(t, run, resolvedRunForPrepared(t, currentPreparedRun(t)), &batchv1.JobStatus{
-		Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
-	})
-	return run, job
-}
-
 func recordedJob(
 	t *testing.T,
 	run *edgev1alpha1.ProfilingRun,
@@ -690,16 +503,11 @@ func recordedJob(
 	if err != nil {
 		t.Fatal(err)
 	}
-	admissionPolicy, err := resolved.AdmissionPolicy.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
 	executionPolicy, err := resolved.ExecutionPolicy.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	job.Annotations = map[string]string{
-		admissionPolicyAnnotation: string(admissionPolicy),
 		executionPolicyAnnotation: string(executionPolicy),
 	}
 	if resolved.Prepared.ActuationPolicy != nil {
@@ -723,7 +531,7 @@ func TestRunReconcilerIgnoresMissingRun(t *testing.T) {
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
 		kubeClient, resolver, jobs,
-		&recordingRunEvidenceFinalizer{}, &recordingRunEvidenceAdmitter{},
+		&recordingRunEvidenceFinalizer{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -748,7 +556,6 @@ func TestRunReconcilerReturnsTransitionErrors(t *testing.T) {
 		&recordingRunConfigResolver{err: want},
 		&recordingExecutionJobs{},
 		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -773,7 +580,7 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 	run.Generation = 7
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	resolver := &recordingRunConfigResolver{
-		err: profiler.InvalidAdmissionPolicy("admission policy %q is not configured", "typo-v9"),
+		err: profiler.InvalidExecutionPolicy("execution policy %q is not configured", "typo-v9"),
 	}
 	jobs := &recordingExecutionJobs{}
 	reconciler, err := NewRunReconciler(
@@ -781,7 +588,6 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 		resolver,
 		jobs,
 		&recordingRunEvidenceFinalizer{},
-		&recordingRunEvidenceAdmitter{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -801,8 +607,8 @@ func TestRunReconcilerPublishesTerminalResolutionFailureWithoutRequeue(t *testin
 	condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 	if actual.Status.ObservedGeneration != run.Generation || condition == nil ||
 		condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != run.Generation ||
-		condition.Reason != profiler.ResolutionReasonAdmissionPolicyInvalid ||
-		!strings.Contains(condition.Message, `admission policy "typo-v9" is not configured`) {
+		condition.Reason != profiler.ResolutionReasonExecutionPolicyInvalid ||
+		!strings.Contains(condition.Message, `execution policy "typo-v9" is not configured`) {
 		t.Fatalf("terminal freeze status = %#v", actual.Status)
 	}
 }
@@ -820,15 +626,6 @@ func runReconcilerTestScheme(t *testing.T) *runtime.Scheme {
 
 func resolvedRunForPrepared(t *testing.T, prepared profiler.PreparedRun) ResolvedRun {
 	t.Helper()
-	admissionPolicyName := profileradmission.WallPowerPolicyV2
-	if prepared.RunConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
-		admissionPolicyName = profileradmission.IdleWallPowerPolicyV1
-	}
-	policy := configuredAdmissionPolicy(
-		t,
-		admissionPolicyName,
-		prepared.RunConfig.Measurement.WorkloadMode,
-	)
 	executionPolicy, err := profiler.FreezeConfiguredExecutionPolicy(
 		controllerExecutionPolicyCatalog(t),
 		prepared.RunConfig,
@@ -843,7 +640,6 @@ func resolvedRunForPrepared(t *testing.T, prepared profiler.PreparedRun) Resolve
 	}
 	return ResolvedRun{
 		Prepared:        prepared,
-		AdmissionPolicy: policy,
 		ExecutionPolicy: executionPolicy,
 	}
 }

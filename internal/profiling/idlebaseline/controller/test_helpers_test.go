@@ -27,13 +27,13 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 			CPUQuota: resource.MustParse("4"),
 			Batch:    1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
-				AdmissionPolicy: "idle-admission-v1", SettlingDurationSeconds: 60, DurationSeconds: 30,
+				SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
 				},
 			},
 			PointPolicy: edgev1alpha1.ModelLoadedIdleBaselinePointPolicySpec{
-				Version: "idle-point-v1", MinimumAcceptedRuns: 3, ConfidenceLevel: "0.95",
+				Version: "idle-point-v1", MinimumRuns: 3, ConfidenceLevel: "0.95",
 			},
 			AttemptLimit: 5,
 		},
@@ -45,12 +45,12 @@ func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline
 	trials := make([]profilederivation.IdleTrial, count)
 	for index := range trials {
 		trials[index] = profilederivation.IdleTrial{
-			StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
+			ModelLoadedIdleMeanWallWatts: float64(10 + index),
+			StateIdentity:                "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "protocol",
 			TrialID: fmt.Sprintf("trial-%d", index),
 			RawEvidence: profilederivation.RawEvidenceIdentity{
 				Store: "evidence", Key: fmt.Sprintf("runs/%d/raw.json", index), Size: 10,
 			},
-			AdmissionPolicyVersion: "idle-admission-v1", ModelLoadedIdleMeanWallWatts: float64(10 + index),
 		}
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(trials, profilederivation.PointPolicy{
@@ -62,8 +62,8 @@ func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline
 	return baseline
 }
 
-func testFinalReferences(count int) idlebaseline.AcceptedFinalEvidence {
-	references := make(idlebaseline.AcceptedFinalEvidence, count)
+func testFinalReferences(count int) idlebaseline.FinalEvidence {
+	references := make(idlebaseline.FinalEvidence, count)
 	for index := 0; index < count; index++ {
 		references[fmt.Sprintf("trial-%d", index)] = idlebaseline.StoredObjectReference{
 			Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", index),
@@ -80,7 +80,7 @@ func acceptedRun(t *testing.T, parent *edgev1alpha1.ModelLoadedIdleBaseline, att
 		t.Fatal(err)
 	}
 	run.UID = types.UID(fmt.Sprintf("run-%d", attempt))
-	run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{Verdict: "Accepted", PolicyVersion: "idle-admission-v1"}
+
 	run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{
 		Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", attempt-1),
 		SchemaVersion: "final.v1", Size: 20,

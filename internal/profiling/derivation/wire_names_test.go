@@ -8,8 +8,7 @@ import (
 
 func TestEnergyWireNamesMatchGoFieldNames(t *testing.T) {
 	types := []any{
-		AdmittedTrial{},
-		IdleAdmissionResult{},
+		EnergyTrial{},
 		IdleTrial{},
 		IdleBaseline{},
 		Point{},

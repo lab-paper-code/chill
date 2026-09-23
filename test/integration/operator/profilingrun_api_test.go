@@ -15,9 +15,7 @@ import (
 )
 
 const (
-	idleAdmissionPolicy    = "idle-wall-power-v1"
-	invalidAdmissionPolicy = "Invalid Policy"
-	noProtocol             = "none"
+	noProtocol = "none"
 )
 
 var _ = Describe("ProfilingRun API", func() {
@@ -53,15 +51,6 @@ var _ = Describe("ProfilingRun API", func() {
 		run := validProfilingRun(uniqueProfilingRunName("idle-batch-fixed"))
 		configureIdleProfilingRun(run)
 		run.Spec.Measurement.Batch = 2
-
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-	})
-
-	It("accepts an operator-configured admission policy name", func() {
-		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("configured-policy"))
-		run.Spec.AdmissionPolicy = "lab-wall-meter-2026.08"
 
 		Expect(k8sClient.Create(ctx, run)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
@@ -104,18 +93,11 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("power window shorter than measurement", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.MetricObservation.DurationSeconds = run.Spec.Measurement.DurationSeconds - 1
 		}),
-		Entry("empty admission policy", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.AdmissionPolicy = ""
-		}),
-		Entry("malformed admission policy name", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.AdmissionPolicy = invalidAdmissionPolicy
-		}),
 		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.WarmupIterations = 0
 			run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
 			run.Spec.Measurement.InputGenerator = noProtocol
 			run.Spec.Measurement.OutputValidation = noProtocol
-			run.Spec.AdmissionPolicy = idleAdmissionPolicy
 		}),
 	)
 
@@ -152,10 +134,6 @@ var _ = Describe("ProfilingRun API", func() {
 				Store: "chill-evidence", Key: "runs/run-uid/execution.json",
 				SchemaVersion: "chill.dacs.io/profiling-execution-evidence.v1alpha14", Size: 1024,
 			},
-			Admission: &edgev1alpha1.ProfilingRunAdmissionStatus{
-				Verdict: "Insufficient", PolicyVersion: "wall-power-v2",
-				ReasonCodes: []string{"ThermalStateUnavailable"},
-			},
 		}
 		Expect(k8sClient.Status().Update(ctx, run)).To(Succeed())
 	})
@@ -179,7 +157,6 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 				CPURequest: resource.MustParse("100m"),
 			},
-			AdmissionPolicy: "wall-power-v2",
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode:     "saturated-serial-fixed-batch",
@@ -200,5 +177,4 @@ func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
 	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
 	run.Spec.Measurement.InputGenerator = noProtocol
 	run.Spec.Measurement.OutputValidation = noProtocol
-	run.Spec.AdmissionPolicy = idleAdmissionPolicy
 }

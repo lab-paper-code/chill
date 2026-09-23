@@ -129,7 +129,6 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey:       "metric-sources.yaml",
 			WorkloadObservationKey: "workload-observation.yaml",
-			AdmissionPoliciesKey:   "admission-policies.yaml",
 			ExecutionPoliciesKey:   "execution-policies.yaml",
 			ActuationPoliciesKey:   "actuation-policies.yaml",
 		},

@@ -84,7 +84,7 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Kind != "BatchEnergyOptimizationResult" || result.Campaign.Name != "campaign" ||
-		len(result.Result.AdmittedTrials) != 1 {
+		len(result.Result.CompletedTrials) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 	if strings.Contains(response.Body.String(), "accessKey") {
@@ -535,7 +535,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizatio
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
 		},
-		AdmittedTrials: []batchenergyoptimization.AdmittedTrialReference{{
+		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{
 				Namespace: testNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
 			},
@@ -557,7 +557,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizatio
 		Campaign: edgev1alpha1.BatchEnergyOptimization{
 			ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "campaign", UID: "campaign-uid"},
 			Status: edgev1alpha1.BatchEnergyOptimizationStatus{
-				Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", AcceptedTrials: 3,
+				Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", CompletedTrials: 3,
 				Result: &edgev1alpha1.ProfilingRunEvidenceReference{
 					Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/result.json",
 					Size: 1024, SchemaVersion: record.SchemaVersion(),

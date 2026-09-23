@@ -166,7 +166,7 @@ func TestBatchEnergyOptimizationResultQueryRejectsContentTheReferenceDoesNotDesc
 		"trailing content": {payload: append(bytes.Clone(payload), ' '), match: "where the reference declares"},
 		"unsupported schema": {
 			payload: bytes.Replace(
-				payload, []byte("batch-energy-optimization-result.v1alpha3"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
+				payload, []byte("batch-energy-optimization-result.v1alpha4"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
 			),
 			match: "unsupported batch-energy-optimization result schema",
 		},
@@ -256,7 +256,7 @@ func campaignResultFixture(t *testing.T) (
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
 		},
-		AdmittedTrials: []batchenergyoptimization.AdmittedTrialReference{{
+		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{
 				Namespace: consoleTestNamespace, Name: "campaign-active-b1-a1", UID: "run-uid",
 			},
@@ -296,7 +296,7 @@ func campaignResultFixture(t *testing.T) (
 			Namespace: consoleTestNamespace, Name: "campaign", UID: "campaign-uid",
 		},
 		Status: edgev1alpha1.BatchEnergyOptimizationStatus{
-			Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", AcceptedTrials: 27,
+			Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", CompletedTrials: 27,
 			Result: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: identity.Store, Key: identity.Key, Size: identity.Size,
 				SchemaVersion: record.SchemaVersion(),

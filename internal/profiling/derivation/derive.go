@@ -17,19 +17,15 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 		MeasurementProtocolIdentity: trials[0].MeasurementProtocolIdentity,
 		Trials:                      append([]IdleTrial(nil), trials...),
 		PolicyVersion:               policy.Version,
-		AdmissionPolicyVersion:      trials[0].AdmissionPolicyVersion,
 	}
 	values := make([]float64, len(trials))
 	seen := map[string]struct{}{}
 	seenEvidence := map[string]struct{}{}
-	admissionVersion := trials[0].AdmissionPolicyVersion
 	for index, trial := range trials {
 		if trial.StateIdentity != baseline.StateIdentity ||
 			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
 			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
 			trial.TrialID == "" ||
-			trial.AdmissionPolicyVersion != admissionVersion ||
-			admissionVersion == "" ||
 			!validRawEvidenceIdentity(trial.RawEvidence) ||
 			trial.ModelLoadedIdleMeanWallWatts < 0 ||
 			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
@@ -69,7 +65,7 @@ func RestoreIdleBaseline(record IdleBaseline) (IdleBaseline, error) {
 func validateIdleBaseline(baseline IdleBaseline) error {
 	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
 		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
-		baseline.AdmissionPolicyVersion == "" || len(baseline.Trials) < 3 {
+		len(baseline.Trials) < 3 {
 		return errors.New("idle baseline value or identity is invalid")
 	}
 	if err := validateIdleBaselineSummary(baseline); err != nil {
@@ -81,7 +77,7 @@ func validateIdleBaseline(baseline IdleBaseline) error {
 		if trial.StateIdentity != baseline.StateIdentity ||
 			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
 			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
-			trial.AdmissionPolicyVersion != baseline.AdmissionPolicyVersion || trial.TrialID == "" ||
+			trial.TrialID == "" ||
 			!validRawEvidenceIdentity(trial.RawEvidence) || trial.ModelLoadedIdleMeanWallWatts < 0 ||
 			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
 			math.IsInf(trial.ModelLoadedIdleMeanWallWatts, 0) {
@@ -119,51 +115,32 @@ func validateIdleBaselineSummary(baseline IdleBaseline) error {
 	return nil
 }
 
-func IncrementalWorkTrial(trial Trial, admission AdmissionResult, baseline IdleBaseline) (AdmittedTrial, error) {
-	if admission.Verdict != VerdictAccepted || admission.TotalWallJoules == nil {
-		return AdmittedTrial{}, errors.New("trial is not admitted")
+func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, error) {
+	if baseline.StateIdentity != trial.StateIdentity || baseline.EnvironmentIdentity != trial.EnvironmentIdentity || baseline.MeasurementProtocolIdentity == "" {
+		return EnergyTrial{}, errors.New("idle baseline does not match the measured state and environment")
 	}
-	if admission.StateIdentity != trial.StateIdentity ||
-		admission.EnvironmentIdentity != trial.EnvironmentIdentity ||
-		admission.MeasurementProtocolIdentity != trial.MeasurementProtocolIdentity ||
-		admission.TrialID != trial.TrialID ||
-		admission.PolicyVersion == "" ||
-		admission.CompletedItems != trial.CompletedItems ||
-		trial.CompletedItems <= 0 ||
-		admission.WindowSeconds <= 0 ||
-		math.IsNaN(admission.WindowSeconds) ||
-		math.IsInf(admission.WindowSeconds, 0) ||
-		*admission.TotalWallJoules < 0 ||
-		math.IsNaN(*admission.TotalWallJoules) ||
-		math.IsInf(*admission.TotalWallJoules, 0) ||
-		baseline.StateIdentity != trial.StateIdentity ||
-		baseline.EnvironmentIdentity != trial.EnvironmentIdentity ||
-		baseline.MeasurementProtocolIdentity == "" {
-		return AdmittedTrial{}, errors.New("admitted idle baseline identity is invalid")
+	joules, err := measureTrial(trial)
+	if err != nil {
+		return EnergyTrial{}, err
 	}
-	if err := validateIdleBaseline(baseline); err != nil {
-		return AdmittedTrial{}, errors.New("admitted idle baseline is invalid")
-	}
-	incrementalWorkWallJoules := *admission.TotalWallJoules -
-		baseline.ModelLoadedIdleMeanWallWatts*admission.WindowSeconds
-	if incrementalWorkWallJoules < 0 || math.IsNaN(incrementalWorkWallJoules) ||
+	windowSeconds := trial.WindowEnd.Sub(trial.WindowStart).Seconds()
+	incrementalWorkWallJoules := joules -
+		baseline.ModelLoadedIdleMeanWallWatts*windowSeconds
+	if math.IsNaN(incrementalWorkWallJoules) ||
 		math.IsInf(incrementalWorkWallJoules, 0) {
-		return AdmittedTrial{}, errors.New("incremental energy is invalid")
+		return EnergyTrial{}, errors.New("incremental energy is invalid")
 	}
 	completedItems := float64(trial.CompletedItems)
-	activeWindowWallJoulesPerItem := *admission.TotalWallJoules / completedItems
-	idleBaselineSecondsPerItem := admission.WindowSeconds / completedItems
+	activeWindowWallJoulesPerItem := joules / completedItems
+	idleBaselineSecondsPerItem := windowSeconds / completedItems
 	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
-		"|idleProtocol=" + baseline.MeasurementProtocolIdentity +
-		"|activeAdmission=" + admission.PolicyVersion +
-		"|idleAdmission=" + baseline.AdmissionPolicyVersion + "|idlePoint=" + baseline.PolicyVersion
-	return AdmittedTrial{
+		"|idleProtocol=" + baseline.MeasurementProtocolIdentity + "|idlePoint=" + baseline.PolicyVersion
+	return EnergyTrial{
 		StateIdentity:                 trial.StateIdentity,
 		EnvironmentIdentity:           trial.EnvironmentIdentity,
 		MeasurementProtocolIdentity:   trial.MeasurementProtocolIdentity,
 		TrialID:                       trial.TrialID,
-		AdmissionPolicyVersion:        admission.PolicyVersion,
 		EstimatorIdentity:             estimatorIdentity,
 		BaselineMeanWallWattsVariance: baseline.MeanWallWattsVariance,
 		BaselineDegreesOfFreedom:      baseline.DegreesOfFreedom,
@@ -176,7 +153,7 @@ func IncrementalWorkTrial(trial Trial, admission AdmissionResult, baseline IdleB
 	}, nil
 }
 
-func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
+func Aggregate(trials []EnergyTrial, policy PointPolicy) (Point, error) {
 	if err := validatePointPolicy(policy); err != nil {
 		return Point{}, errors.New("point policy is invalid")
 	}
@@ -190,23 +167,22 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 		EstimatorIdentity:           trials[0].EstimatorIdentity,
 		Batch:                       trials[0].Batch,
 		PointPolicyVersion:          policy.Version,
-		Trials:                      append([]AdmittedTrial(nil), trials...),
+		Trials:                      append([]EnergyTrial(nil), trials...),
 	}
 	incrementalWorkJoulesPerItem := make([]float64, len(trials))
 	idleBaselineSecondsPerItem := make([]float64, len(trials))
 	var latency float64
 	seen := map[string]struct{}{}
-	admissionVersion := trials[0].AdmissionPolicyVersion
 	baselineVariance := trials[0].BaselineMeanWallWattsVariance
 	baselineDegreesOfFreedom := trials[0].BaselineDegreesOfFreedom
 	for index, trial := range trials {
-		if err := validateAdmittedTrialIdentity(trial, point, admissionVersion); err != nil {
+		if err := validateEnergyTrialIdentity(trial, point); err != nil {
 			return Point{}, err
 		}
 		if _, exists := seen[trial.TrialID]; exists {
 			return Point{}, errors.New("duplicate active trial ID")
 		}
-		if err := validateAdmittedTrialStatistics(
+		if err := validateEnergyTrialStatistics(
 			trial, baselineVariance, baselineDegreesOfFreedom, policy.ConfidenceLevel,
 		); err != nil {
 			return Point{}, err
@@ -233,13 +209,12 @@ func Aggregate(trials []AdmittedTrial, policy PointPolicy) (Point, error) {
 	return point, nil
 }
 
-func validateAdmittedTrialIdentity(trial AdmittedTrial, point Point, admissionVersion string) error {
+func validateEnergyTrialIdentity(trial EnergyTrial, point Point) error {
 	if trial.StateIdentity != point.StateIdentity ||
 		trial.EnvironmentIdentity != point.EnvironmentIdentity ||
 		trial.MeasurementProtocolIdentity != point.MeasurementProtocolIdentity ||
-		trial.TrialID == "" || trial.AdmissionPolicyVersion != admissionVersion || admissionVersion == "" ||
 		trial.EstimatorIdentity != point.EstimatorIdentity || point.EstimatorIdentity == "" ||
-		trial.Batch != point.Batch || trial.IncrementalWorkJoulesPerItem <= 0 ||
+		trial.Batch != point.Batch ||
 		math.IsNaN(trial.IncrementalWorkJoulesPerItem) ||
 		math.IsInf(trial.IncrementalWorkJoulesPerItem, 0) {
 		return errors.New("trial state, environment, protocol, estimator, or batch mismatch")
@@ -247,8 +222,8 @@ func validateAdmittedTrialIdentity(trial AdmittedTrial, point Point, admissionVe
 	return nil
 }
 
-func validateAdmittedTrialStatistics(
-	trial AdmittedTrial,
+func validateEnergyTrialStatistics(
+	trial EnergyTrial,
 	baselineVariance float64,
 	baselineDegreesOfFreedom int,
 	confidenceLevel float64,

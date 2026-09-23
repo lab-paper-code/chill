@@ -12,16 +12,9 @@ const (
 	PassSearch PassRole = "search"
 )
 
-// TrialAdmission keeps an exact projected trial beside the admission result that
-// authorized its use.
-type TrialAdmission struct {
-	Trial     Trial           `json:"trial"`
-	Admission AdmissionResult `json:"admission"`
-}
-
 type PassBatch struct {
-	Batch      int              `json:"batch"`
-	Admissions []TrialAdmission `json:"runs,omitempty"`
+	Batch  int     `json:"batch"`
+	Trials []Trial `json:"runs,omitempty"`
 }
 
 type Pass struct {
@@ -116,34 +109,34 @@ func deriveCurvePoint(
 	policy PointPolicy,
 	seenTrials map[string]struct{},
 ) (Point, error) {
-	if len(input.Admissions) == 0 {
-		return Point{}, fmt.Errorf("batch %d has no admitted trials", input.Batch)
+	if len(input.Trials) == 0 {
+		return Point{}, fmt.Errorf("batch %d has no completed trials", input.Batch)
 	}
 	baseline, exists := baselines[state.StateIdentity]
 	if !exists {
 		return Point{}, fmt.Errorf("batch %d has no exact-state idle baseline", input.Batch)
 	}
-	admitted := make([]AdmittedTrial, 0, len(input.Admissions))
-	for _, run := range input.Admissions {
-		if run.Trial.Batch != input.Batch || run.Trial.StateIdentity != state.StateIdentity ||
-			run.Trial.EnvironmentIdentity != state.EnvironmentIdentity ||
-			run.Trial.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {
+	completed := make([]EnergyTrial, 0, len(input.Trials))
+	for _, run := range input.Trials {
+		if run.Batch != input.Batch || run.StateIdentity != state.StateIdentity ||
+			run.EnvironmentIdentity != state.EnvironmentIdentity ||
+			run.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {
 			return Point{}, fmt.Errorf("batch %d trial does not match the plan's verified execution state", input.Batch)
 		}
-		if run.Trial.TrialID == "" {
+		if run.TrialID == "" {
 			return Point{}, fmt.Errorf("batch %d contains an empty trial identity", input.Batch)
 		}
-		if _, exists := seenTrials[run.Trial.TrialID]; exists {
-			return Point{}, fmt.Errorf("trial %q appears in more than one curve position", run.Trial.TrialID)
+		if _, exists := seenTrials[run.TrialID]; exists {
+			return Point{}, fmt.Errorf("trial %q appears in more than one curve position", run.TrialID)
 		}
-		seenTrials[run.Trial.TrialID] = struct{}{}
-		trial, err := IncrementalWorkTrial(run.Trial, run.Admission, baseline)
+		seenTrials[run.TrialID] = struct{}{}
+		trial, err := IncrementalWorkTrial(run, baseline)
 		if err != nil {
-			return Point{}, fmt.Errorf("derive batch %d trial %q: %w", input.Batch, run.Trial.TrialID, err)
+			return Point{}, fmt.Errorf("derive batch %d trial %q: %w", input.Batch, run.TrialID, err)
 		}
-		admitted = append(admitted, trial)
+		completed = append(completed, trial)
 	}
-	point, err := Aggregate(admitted, policy)
+	point, err := Aggregate(completed, policy)
 	if err != nil {
 		return Point{}, fmt.Errorf("aggregate batch %d: %w", input.Batch, err)
 	}
@@ -213,7 +206,7 @@ func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {
 }
 
 func clonePoint(point Point) Point {
-	point.Trials = append([]AdmittedTrial(nil), point.Trials...)
+	point.Trials = append([]EnergyTrial(nil), point.Trials...)
 	point.Confidence = clonePointConfidence(point.Confidence)
 	return point
 }

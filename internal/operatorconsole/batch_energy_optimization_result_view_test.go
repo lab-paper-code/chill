@@ -48,12 +48,12 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 		t.Fatalf("declared state = %#v", view.Campaign.Spec)
 	}
 	if view.Campaign.Outcome != campaign.Status.Outcome ||
-		view.Campaign.AcceptedTrials != campaign.Status.AcceptedTrials ||
+		view.Campaign.CompletedTrials != campaign.Status.CompletedTrials ||
 		view.Campaign.StoredResult != identity {
 		t.Fatalf("campaign status = %#v", view.Campaign)
 	}
 	if view.Result.SchemaVersion != record.SchemaVersion() ||
-		len(view.Result.AdmittedTrials) != 1 || len(view.Result.ExcludedTrials) != 1 ||
+		len(view.Result.CompletedTrials) != 1 || len(view.Result.ExcludedTrials) != 1 ||
 		view.Result.ExcludedTrials[0].Reasons[0] != "PowerWindowCoverage" {
 		t.Fatalf("record = %#v", view.Result)
 	}
@@ -97,7 +97,7 @@ func TestBuildBatchEnergyOptimizationResultPassesDetailThroughUninterpreted(t *t
 	}
 	// The record fields are embedded, so they must appear beside schemaVersion
 	// rather than nested under a wrapper key.
-	if !bytes.Contains(encoded, []byte(`"schemaVersion":"chill.dacs.io/batch-energy-optimization-result.v1alpha3"`)) ||
+	if !bytes.Contains(encoded, []byte(`"schemaVersion":"chill.dacs.io/batch-energy-optimization-result.v1alpha4"`)) ||
 		bytes.Contains(encoded, []byte(`"ResultRecordSpec"`)) {
 		t.Fatalf("record encoding = %s", encoded)
 	}
@@ -165,7 +165,7 @@ func campaignResultFixture(t *testing.T) (
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
 			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
 		},
-		AdmittedTrials: []batchenergyoptimization.AdmittedTrialReference{{
+		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{
 				Namespace: "chill-system", Name: "campaign-active-b1-a1", UID: "run-uid",
 			},
@@ -205,7 +205,7 @@ func campaignResultFixture(t *testing.T) (
 			Namespace: "chill-system", Name: "campaign", UID: "campaign-uid",
 		},
 		Status: edgev1alpha1.BatchEnergyOptimizationStatus{
-			Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", AcceptedTrials: 27,
+			Phase: "Complete", Outcome: "MinimumFound/LocalMinimum", CompletedTrials: 27,
 			Result: &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: identity.Store, Key: identity.Key, Size: identity.Size,
 				SchemaVersion: record.SchemaVersion(),

@@ -84,7 +84,7 @@ func TestDecide(t *testing.T) {
 			snapshot: func() Snapshot {
 				s := directSnapshot()
 				s.Trials = []Trial{
-					{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
+					{Measurement: idle(1), Attempt: 1, Verdict: VerdictCompleted},
 				}
 				return s
 			}(),
@@ -112,15 +112,15 @@ func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
 	snapshot := directSnapshot()
 	snapshot.Trials = []Trial{
 		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
-		{Measurement: idle(1), Attempt: 2, Verdict: VerdictAccepted},
-		{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
+		{Measurement: idle(1), Attempt: 2, Verdict: VerdictCompleted},
+		{Measurement: active(1), Attempt: 1, Verdict: VerdictCompleted},
 	}
 	_, err := Decide(snapshot, method)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(method.seen.Accepted) != 2 {
-		t.Fatalf("method saw %d measurements, want only the admitted 2", len(method.seen.Accepted))
+	if len(method.seen.Completed) != 2 {
+		t.Fatalf("method saw %d measurements, want only the completed 2", len(method.seen.Completed))
 	}
 }
 
@@ -130,8 +130,8 @@ func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	snapshot.RetryLimit = 1
 	snapshot.PlannedBatchSizes = []int{1, 2, 4}
 	snapshot.Trials = []Trial{
-		{Measurement: idle(1), Attempt: 1, Verdict: VerdictAccepted},
-		{Measurement: active(1), Attempt: 1, Verdict: VerdictAccepted},
+		{Measurement: idle(1), Attempt: 1, Verdict: VerdictCompleted},
+		{Measurement: active(1), Attempt: 1, Verdict: VerdictCompleted},
 	}
 
 	if _, err := Decide(snapshot, method); err != nil {
@@ -184,7 +184,7 @@ func TestDecideEmitsOneTransitionForAWholeSweep(t *testing.T) {
 		case ActionCreateRun:
 			runCount++
 			snapshot.Trials = append(snapshot.Trials, Trial{
-				Measurement: *decision.Run, Attempt: 1, Verdict: VerdictAccepted,
+				Measurement: *decision.Run, Attempt: 1, Verdict: VerdictCompleted,
 			})
 		case ActionFinish:
 			if transitionCount != 1 || runCount != len(measurements) {
@@ -221,9 +221,9 @@ type sweepMethod struct {
 }
 
 func (m *sweepMethod) Plan(observed Observed) (Plan, error) {
-	if len(observed.Accepted) == len(m.measurements) {
+	if len(observed.Completed) == len(m.measurements) {
 		return Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}, nil
 	}
-	next := m.measurements[len(observed.Accepted)]
+	next := m.measurements[len(observed.Completed)]
 	return Plan{Next: &next}, nil
 }

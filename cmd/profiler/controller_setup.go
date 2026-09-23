@@ -34,8 +34,6 @@ type profilerControllerShared struct {
 	power             profilerapp.MetricSourceResolver
 	actuationPolicies profilerapp.ActuationPolicyResolver
 	preparer          profilercontroller.RunPreparer
-	records           *profilercontroller.RunRecords
-	policies          profilercontroller.AdmissionPolicyResolver
 	executionPolicies profilercontroller.ExecutionPolicyResolver
 	stores            profilercontroller.EvidenceStoreBindingResolver
 	evidence          *currentEvidenceStore
@@ -64,7 +62,6 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControllerShared) error {
 	resolver, err := profilercontroller.NewRunConfigResolver(
 		shared.preparer,
-		shared.policies,
 		shared.executionPolicies,
 	)
 	if err != nil {
@@ -89,12 +86,8 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 	if err != nil {
 		return fmt.Errorf("construct execution evidence finalizer: %w", err)
 	}
-	admitter, err := profilercontroller.NewKubernetesEvidenceAdmitterWithRetainedLoader(shared.retainedEvidence)
-	if err != nil {
-		return fmt.Errorf("construct execution evidence admitter: %w", err)
-	}
 	reconciler, err := profilercontroller.NewRunReconciler(
-		mgr.GetClient(), resolver, jobs, finalizer, admitter,
+		mgr.GetClient(), resolver, jobs, finalizer,
 	)
 	if err != nil {
 		return fmt.Errorf("construct ProfilingRun reconciler: %w", err)
@@ -158,20 +151,6 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
-	records, err := profilercontroller.NewRunRecords(reader)
-	if err != nil {
-		return nil, fmt.Errorf("construct Run record loader: %w", err)
-	}
-	policies, err := profilerkube.NewKubernetesAdmissionPolicyResolver(
-		reader,
-		profilerkube.AdmissionPolicyResolverOptions{
-			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey: opts.admissionPoliciesKey,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct admission-policy resolver: %w", err)
-	}
 	executionPolicies, err := profilerkube.NewKubernetesExecutionPolicyResolver(
 		reader,
 		profilerkube.ExecutionPolicyResolverOptions{
@@ -201,8 +180,8 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	}
 	return &profilerControllerShared{
 		reader: reader, candidates: candidates, nodes: nodes, power: power,
-		actuationPolicies: actuationPolicies, preparer: preparer, records: records,
-		policies: policies, executionPolicies: executionPolicies, stores: stores,
+		actuationPolicies: actuationPolicies, preparer: preparer,
+		executionPolicies: executionPolicies, stores: stores,
 		evidence: evidence, retainedEvidence: retainedEvidence,
 	}, nil
 }
@@ -223,7 +202,6 @@ func setupBatchEnergyOptimizationController(
 		return fmt.Errorf("construct BatchEnergyOptimization curve-plan source: %w", err)
 	}
 	curves, err := batchcontroller.NewCurveDeriver(
-		shared.records,
 		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
 	)
 	if err != nil {
@@ -256,7 +234,6 @@ func setupModelLoadedIdleBaselineController(
 	shared *profilerControllerShared,
 ) error {
 	deriver, err := idlebaselinecontroller.NewDeriver(
-		shared.records,
 		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
 	)
 	if err != nil {
@@ -392,7 +369,7 @@ func (l retainedCurveEvidenceLoader) Load(
 	if err != nil {
 		return profilerevidence.VerifiedEvidence{}, err
 	}
-	return verified.ForAdmission(), nil
+	return verified.ForDerivation(), nil
 }
 
 func (l retainedCurveEvidenceLoader) LoadIdle(
@@ -404,7 +381,7 @@ func (l retainedCurveEvidenceLoader) LoadIdle(
 	if err != nil {
 		return profilerevidence.VerifiedIdleEvidence{}, err
 	}
-	return verified.ForAdmission(), nil
+	return verified.ForDerivation(), nil
 }
 
 func newRetainedEvidenceLoader(reader client.Reader) (*evidencekube.RetainedLoader, error) {

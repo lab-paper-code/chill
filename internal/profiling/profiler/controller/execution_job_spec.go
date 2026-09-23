@@ -69,10 +69,6 @@ func buildExecutionJob(
 		return nil, fmt.Errorf("encode RunConfig for measurement Job: %w", err)
 	}
 	runConfig := string(runConfigBytes)
-	admissionPolicyBytes, err := resolved.AdmissionPolicy.CanonicalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("encode selected admission policy: %w", err)
-	}
 	executionPolicyBytes, err := resolved.ExecutionPolicy.CanonicalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("encode selected execution policy: %w", err)
@@ -88,7 +84,6 @@ func buildExecutionJob(
 		profilingrun.MeasurementWorkloadLabelKey: profilingrun.MeasurementWorkloadLabelValue,
 	}
 	annotations := map[string]string{
-		admissionPolicyAnnotation: string(admissionPolicyBytes),
 		executionPolicyAnnotation: string(executionPolicyBytes),
 	}
 	if prepared.ActuationPolicy != nil {

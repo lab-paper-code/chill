@@ -79,8 +79,8 @@ job_recovery="$(position_of \
 job_recovery_references="$(gopls_command references "$job_recovery")"
 require_contains job-recovery-reconciler-reference "$job_recovery_references" \
   'internal/profiling/profiler/controller/run_reconciler.go'
-require_contains job-recovery-loader-reference "$job_recovery_references" \
-  'internal/profiling/profiler/controller/run_record.go'
+require_contains job-recovery-drift-reference "$job_recovery_references" \
+  'internal/profiling/profiler/controller/execution_job_drift.go'
 require_contains job-recovery-ensure-reference "$job_recovery_references" \
   'internal/profiling/profiler/controller/execution_job.go'
 

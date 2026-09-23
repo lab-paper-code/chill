@@ -132,7 +132,7 @@ func TestIdleBaselineSourceRequiresExactCurrentResultBytes(t *testing.T) {
 			payload   []byte
 			reference idlebaseline.StoredObjectReference
 		} {
-			old := bytes.Replace(payload, []byte("result.v1alpha1"), []byte("result.v1alpha0"), 1)
+			old := bytes.Replace(payload, []byte("result.v1alpha2"), []byte("result.v1alpha0"), 1)
 			changed := reference
 			changed.Size = int64(len(old))
 			return struct {
@@ -363,12 +363,12 @@ func retainedIdleBaseline(t *testing.T) profilederivation.IdleBaseline {
 	trials := make([]profilederivation.IdleTrial, 3)
 	for index := range trials {
 		trials[index] = profilederivation.IdleTrial{
-			StateIdentity: state, EnvironmentIdentity: "environment",
+			ModelLoadedIdleMeanWallWatts: mean + float64(index),
+			StateIdentity:                state, EnvironmentIdentity: "environment",
 			MeasurementProtocolIdentity: "idle-protocol", TrialID: fmt.Sprintf("%s-idle-%d", state, index+1),
 			RawEvidence: profilederivation.RawEvidenceIdentity{
 				Store: "evidence", Key: fmt.Sprintf("%s/idle/%d", state, index+1), Size: int64(index + 1),
 			},
-			AdmissionPolicyVersion: "idle-admission-v1", ModelLoadedIdleMeanWallWatts: mean + float64(index),
 		}
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(trials, profilederivation.PointPolicy{
@@ -386,7 +386,7 @@ func retainedIdleResult(
 	baseline profilederivation.IdleBaseline,
 ) (idlebaseline.StoredObjectReference, []byte) {
 	t.Helper()
-	accepted := make(idlebaseline.AcceptedFinalEvidence, len(baseline.Trials))
+	accepted := make(idlebaseline.FinalEvidence, len(baseline.Trials))
 	for _, trial := range baseline.Trials {
 		accepted[trial.TrialID] = idlebaseline.StoredObjectReference{
 			Store: "evidence", Key: "runs/" + trial.TrialID + "/final.json",

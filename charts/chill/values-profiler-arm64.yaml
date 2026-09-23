@@ -156,13 +156,3 @@ profiling:
         cpuPackageThrottleEvents: device_thermal_cpu_package_throttle_event_count
         latched: device_thermal_throttle_latched
         maximumTemperatureCelsius: device_thermal_max_celsius
-  additionalAdmissionPolicies:
-    - name: wall-power-2p5s-source-v1
-      workloadMode: saturated-serial-fixed-batch
-      minimumSamples: 20
-      maximumGapSeconds: 4.0
-      maximumBoundaryDistanceSeconds: 2.5
-      minimumCoverage: 0.95
-      allowReceiptTimestamps: true
-      rejectConcurrentCHILLWorkloads: true
-      rejectExternalWorkloadChanges: true

@@ -1,4 +1,4 @@
-package admission
+package projection
 
 import (
 	"encoding/json"

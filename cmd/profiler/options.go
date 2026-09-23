@@ -22,7 +22,6 @@ type options struct {
 	executionFactsKey                         string
 	metricSourcesKey                          string
 	workloadObservationKey                    string
-	admissionPoliciesKey                      string
 	executionPoliciesKey                      string
 	actuationPoliciesKey                      string
 	workloadObserverServiceAccount            string
@@ -99,12 +98,6 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")
 	flags.StringVar(&o.metricSourcesKey, "metric-sources-key", "", "ConfigMap key containing Node metric sources.")
 	flags.StringVar(
-		&o.admissionPoliciesKey,
-		"admission-policies-key",
-		"",
-		"ConfigMap key containing versioned scientific admission policies.",
-	)
-	flags.StringVar(
 		&o.executionPoliciesKey,
 		"execution-policies-key",
 		"",
@@ -135,7 +128,6 @@ func (o options) validate() error {
 		{name: "execution-facts key", value: o.executionFactsKey},
 		{name: "metric-sources key", value: o.metricSourcesKey},
 		{name: "workload-observation key", value: o.workloadObservationKey},
-		{name: "admission-policies key", value: o.admissionPoliciesKey},
 		{name: "execution-policies key", value: o.executionPoliciesKey},
 		{name: "actuation-policies key", value: o.actuationPoliciesKey},
 		{name: "workload-observer ServiceAccount", value: o.workloadObserverServiceAccount},
@@ -155,12 +147,12 @@ func (o options) validate() error {
 	keys := map[string]struct{}{}
 	for _, key := range []string{
 		o.executionFactsKey, o.metricSourcesKey, o.workloadObservationKey,
-		o.admissionPoliciesKey, o.executionPoliciesKey,
+		o.executionPoliciesKey,
 		o.actuationPoliciesKey,
 	} {
 		keys[key] = struct{}{}
 	}
-	if len(keys) != 6 {
+	if len(keys) != 5 {
 		return errors.New("Profiler fact-source keys must be different")
 	}
 	switch corev1.PullPolicy(o.transitionObserverPullPolicy) {

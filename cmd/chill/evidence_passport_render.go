@@ -162,18 +162,6 @@ func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.Evide
 		return err
 	}
 
-	admission := [][2]string{{"Verdict", "not evaluated"}, {"Policy", "-"}, {"Reason codes", "-"}}
-	if passport.Admission != nil {
-		admission = [][2]string{
-			{"Verdict", passport.Admission.Verdict},
-			{"Policy", passport.Admission.PolicyVersion},
-			{"Reason codes", display(strings.Join(passport.Admission.ReasonCodes, ", "))},
-		}
-	}
-	if err := writePassportSection(table, "SCIENTIFIC ADMISSION", admission); err != nil {
-		return err
-	}
-
 	if err := writePassportSection(table, "EVIDENCE LINEAGE", [][2]string{
 		{"Finalized at", passport.Evidence.FinalizedAt.Format(time.RFC3339Nano)},
 		{"Final object", passport.Evidence.Final.Store + "/" + passport.Evidence.Final.Key},

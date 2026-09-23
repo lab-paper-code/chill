@@ -46,7 +46,7 @@ func (e RetainedActiveEvidence) Records() (
 	return e.verified.Records()
 }
 
-func (e RetainedActiveEvidence) ForAdmission() profilerevidence.VerifiedEvidence {
+func (e RetainedActiveEvidence) ForDerivation() profilerevidence.VerifiedEvidence {
 	return e.verified
 }
 
@@ -55,7 +55,7 @@ type RetainedIdleEvidence struct {
 	verified profilerevidence.VerifiedIdleEvidence
 }
 
-func (e RetainedIdleEvidence) ForAdmission() profilerevidence.VerifiedIdleEvidence {
+func (e RetainedIdleEvidence) ForDerivation() profilerevidence.VerifiedIdleEvidence {
 	return e.verified
 }
 

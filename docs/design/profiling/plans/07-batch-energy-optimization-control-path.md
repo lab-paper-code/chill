@@ -51,7 +51,7 @@ minimumIncrementalWorkJoulesPerItem
 measuredBatchSizes
 incrementalWorkByBatch
 completionReason
-exact-state idle baseline and policy identity
+exact-state idle baseline and measurement identity
 ```
 
 The result is the minimum found by this local search. It is not a statistical
@@ -62,7 +62,7 @@ The result is the minimum found by this local search. It is not a statistical
 Controller-runtime delivers direct `BatchEnergyOptimization` events and
 framework-derived events from owned `NodeActuation` and `ProfilingRun` objects.
 The reconciler reconstructs progress from immutable spec and owned children,
-reloads admitted evidence, derives the objective result, writes one immutable
+loads completed Run evidence, derives the objective result, writes one immutable
 terminal record, and publishes only its reference in status.
 
 `ProfilingRun` remains independently submittable. No serving or scheduler

@@ -22,7 +22,7 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .status.acceptedTrials
+    - jsonPath: .status.completedTrials
       name: Trials
       type: integer
     - jsonPath: .status.outcome
@@ -60,13 +60,6 @@ spec:
             properties:
               activeProtocol:
                 properties:
-                  admissionPolicy:
-                    description: AdmissionPolicy identifies the configured admission
-                      policy for active Runs.
-                    maxLength: 63
-                    minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -108,7 +101,6 @@ spec:
                     minimum: 0
                     type: integer
                 required:
-                - admissionPolicy
                 - durationSeconds
                 - inputGenerator
                 - metricObservation
@@ -136,13 +128,6 @@ spec:
                   rule: self.isSorted()
               idleProtocol:
                 properties:
-                  admissionPolicy:
-                    description: AdmissionPolicy identifies the configured admission
-                      policy for idle Runs.
-                    maxLength: 63
-                    minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    type: string
                   durationSeconds:
                     format: int32
                     minimum: 1
@@ -176,7 +161,6 @@ spec:
                     minimum: 1
                     type: integer
                 required:
-                - admissionPolicy
                 - durationSeconds
                 - metricObservation
                 - settlingDurationSeconds
@@ -185,9 +169,8 @@ spec:
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
               retryLimit:
-                description: |-
-                  RetryLimit bounds attempts per batch that did not reach an Accepted
-                  verdict. It does not bound admitted trials.
+                description: RetryLimit bounds attempts per batch that did not reach
+                  a completed execution. It does not bound completed trials.
                 format: int32
                 maximum: 10
                 minimum: 0
@@ -250,7 +233,7 @@ spec:
                 type: object
               trialsPerBatch:
                 description: |-
-                  TrialsPerBatch is the number of admitted active and idle observations used
+                  TrialsPerBatch is the number of completed active and idle observations used
                   to compare each batch under the minimum-energy objective.
                 format: int32
                 minimum: 3
@@ -265,13 +248,9 @@ spec:
             x-kubernetes-validations:
             - message: BatchEnergyOptimization spec is immutable
               rule: self == oldSelf
-            - message: active and idle Runs require policies for different workload
-                modes
-              rule: '!has(self.activeProtocol.admissionPolicy) || !has(self.idleProtocol.admissionPolicy)
-                || self.activeProtocol.admissionPolicy != self.idleProtocol.admissionPolicy'
           status:
             properties:
-              acceptedTrials:
+              completedTrials:
                 format: int32
                 type: integer
               conditions:

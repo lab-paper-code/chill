@@ -18,7 +18,7 @@ import (
 
 type fakeBaselineDeriver struct {
 	baseline   profilederivation.IdleBaseline
-	references idlebaseline.AcceptedFinalEvidence
+	references idlebaseline.FinalEvidence
 	calls      int
 	runs       []edgev1alpha1.ProfilingRun
 }
@@ -41,10 +41,10 @@ func (d *fakeBaselineDeriver) Derive(
 	_ context.Context,
 	runs []edgev1alpha1.ProfilingRun,
 	_ profilederivation.PointPolicy,
-) (profilederivation.IdleBaseline, idlebaseline.AcceptedFinalEvidence, error) {
+) (profilederivation.IdleBaseline, idlebaseline.FinalEvidence, error) {
 	d.calls++
 	d.runs = append([]edgev1alpha1.ProfilingRun(nil), runs...)
-	references := make(idlebaseline.AcceptedFinalEvidence, len(d.references))
+	references := make(idlebaseline.FinalEvidence, len(d.references))
 	for trialID, reference := range d.references {
 		references[trialID] = reference
 	}
@@ -99,7 +99,7 @@ func TestReconcilerCreatesOneIdleRunAtATimeAndCompletes(t *testing.T) {
 	if err := kube.List(context.Background(), list, client.InNamespace(parent.Namespace)); err != nil || len(list.Items) != 3 {
 		t.Fatalf("owned Runs = %d, err = %v", len(list.Items), err)
 	}
-	third.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{Verdict: "Accepted"}
+
 	third.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{
 		Store: "evidence", Key: "runs/2/final.json", SchemaVersion: "final.v1", Size: 20,
 	}
@@ -114,7 +114,7 @@ func TestReconcilerCreatesOneIdleRunAtATimeAndCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete ||
-		updated.Status.AcceptedRuns != 3 || updated.Status.AttemptedRuns != 3 ||
+		updated.Status.CompletedRuns != 3 || updated.Status.AttemptedRuns != 3 ||
 		updated.Status.Result == nil || *updated.Status.Result != testResultReference() ||
 		deriver.calls != 1 || len(deriver.runs) != 3 || writer.loads != 1 || writer.writes != 1 {
 		t.Fatalf("completion drifted: status=%#v derive=%d writer=%d/%d", updated.Status, deriver.calls, writer.loads, writer.writes)
@@ -130,7 +130,7 @@ func TestReconcilerClosesInsufficientWithoutResult(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run.Status.Admission = &edgev1alpha1.ProfilingRunAdmissionStatus{Verdict: "Insufficient"}
+		run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
 		objects = append(objects, run)
 	}
 	kube := baselineFakeClient(t, objects...)
@@ -145,7 +145,7 @@ func TestReconcilerClosesInsufficientWithoutResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient ||
-		updated.Status.Result != nil || updated.Status.AttemptedRuns != 3 || updated.Status.AcceptedRuns != 0 ||
+		updated.Status.Result != nil || updated.Status.AttemptedRuns != 3 || updated.Status.CompletedRuns != 0 ||
 		deriver.calls != 0 || writer.loads != 0 || writer.writes != 0 {
 		t.Fatalf("Insufficient status fabricated a result: %#v", updated.Status)
 	}

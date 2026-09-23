@@ -36,7 +36,7 @@ type ReconcileCurvePlanSource interface {
 	) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error)
 }
 
-// ReconcileCurveDeriver derives the method result from accepted owned Runs.
+// ReconcileCurveDeriver derives the method result from completed owned Runs.
 type ReconcileCurveDeriver interface {
 	Derive(
 		context.Context,
@@ -114,7 +114,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	}
 
 	config, policy := projectEnergyObjectivePolicy(parent)
-	activeRuns, idleRuns, err := acceptedRuns(parent.Name, snapshot, runs)
+	activeRuns, idleRuns, err := completedRuns(parent.Name, snapshot, runs)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -234,7 +234,7 @@ func projectEnergyObjectivePolicy(
 		}
 }
 
-func acceptedRuns(
+func completedRuns(
 	parentName string,
 	snapshot batchenergyoptimization.Snapshot,
 	runs []edgev1alpha1.ProfilingRun,
@@ -253,7 +253,7 @@ func acceptedRuns(
 				"projected trial/Run order invariant failed at index %d", index,
 			)
 		}
-		if trial.Verdict != batchenergyoptimization.VerdictAccepted {
+		if trial.Verdict != batchenergyoptimization.VerdictCompleted {
 			continue
 		}
 		if trial.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
@@ -282,15 +282,15 @@ func deriveStatus(
 	resultReference *batchenergyoptimization.StoredObjectReference,
 	previousConditions []metav1.Condition,
 ) edgev1alpha1.BatchEnergyOptimizationStatus {
-	accepted := int32(0)
+	completed := int32(0)
 	for _, trial := range snapshot.Trials {
-		if trial.Verdict == batchenergyoptimization.VerdictAccepted {
-			accepted++
+		if trial.Verdict == batchenergyoptimization.VerdictCompleted {
+			completed++
 		}
 	}
 	status := edgev1alpha1.BatchEnergyOptimizationStatus{
 		ObservedGeneration: generation,
-		AcceptedTrials:     accepted,
+		CompletedTrials:    completed,
 	}
 	condition := metav1.Condition{
 		Type: batchEnergyOptimizationConditionDone, ObservedGeneration: generation,

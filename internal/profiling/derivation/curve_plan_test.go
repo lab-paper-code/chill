@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
@@ -507,7 +508,7 @@ func testCurveBaselines(t *testing.T, plan VerifiedCurvePlan) map[string]IdleBas
 			StateIdentity: state.StateIdentity, EnvironmentIdentity: state.EnvironmentIdentity,
 			MeasurementProtocolIdentity: state.IdleProtocolIdentity,
 			TrialID:                     key, RawEvidence: rawEvidence(key),
-			AdmissionPolicyVersion: "idle-admission-v1", ModelLoadedIdleMeanWallWatts: 1,
+			ModelLoadedIdleMeanWallWatts: 1,
 		}
 	}
 	baseline, err := DeriveIdleBaseline(trials, pointPolicy("idle-point-v1"))
@@ -530,20 +531,16 @@ func testPass(t *testing.T, plan VerifiedCurvePlan, means []float64, idPrefix st
 		batchInput := PassBatch{Batch: plannedBatchSize}
 		for trialIndex := 0; trialIndex < 3; trialIndex++ {
 			trialID := idPrefix + "-b" + string(rune('0'+plannedBatchSize)) + "-" + string(rune('1'+trialIndex))
-			total := mean + 1
+			total := mean*float64(plannedBatchSize) + 1
 			trial := Trial{
 				StateIdentity: state.StateIdentity, EnvironmentIdentity: state.EnvironmentIdentity,
 				MeasurementProtocolIdentity: state.ActiveProtocolIdentity,
-				TrialID:                     trialID, Batch: plannedBatchSize, CompletedItems: 1,
+				TrialID:                     trialID, Batch: plannedBatchSize, CompletedItems: plannedBatchSize, CompletedCalls: 1,
+				WindowStart: time.Unix(0, 0), WindowEnd: time.Unix(1, 0),
+				Samples:             []Sample{{time.Unix(0, 100000000), total}, {time.Unix(0, 900000000), total}},
 				LatencyMilliseconds: []float64{1},
 			}
-			admission := AdmissionResult{
-				Verdict: VerdictAccepted, PolicyVersion: "active-admission-v1",
-				StateIdentity: trial.StateIdentity, EnvironmentIdentity: trial.EnvironmentIdentity,
-				MeasurementProtocolIdentity: trial.MeasurementProtocolIdentity,
-				TrialID:                     trialID, TotalWallJoules: &total, WindowSeconds: 1, CompletedItems: 1,
-			}
-			batchInput.Admissions = append(batchInput.Admissions, TrialAdmission{Trial: trial, Admission: admission})
+			batchInput.Trials = append(batchInput.Trials, trial)
 		}
 		pass.Batches = append(pass.Batches, batchInput)
 	}

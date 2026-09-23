@@ -15,9 +15,9 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
-	profileradmission "github.com/lab-paper-code/chill/internal/profiling/profiler/admission"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -92,10 +92,6 @@ func (j *apiExecutionJobs) Ensure(
 	if err != nil {
 		return nil, false, err
 	}
-	admissionPolicy, err := j.resolved.AdmissionPolicy.CanonicalJSON()
-	if err != nil {
-		return nil, false, err
-	}
 	executionPolicy, err := j.resolved.ExecutionPolicy.CanonicalJSON()
 	if err != nil {
 		return nil, false, err
@@ -104,7 +100,6 @@ func (j *apiExecutionJobs) Ensure(
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: key.Namespace, Name: key.Name,
 			Annotations: map[string]string{
-				"edge.dacs.io/profiling-admission-policy": string(admissionPolicy),
 				"edge.dacs.io/profiling-execution-policy": string(executionPolicy),
 			},
 		},
@@ -145,29 +140,11 @@ func (f *recordingFinalizer) Finalize(
 	return f.result, f.err
 }
 
-type recordingAdmitter struct {
-	calls  int
-	result profileradmission.Result
-	err    error
-}
-
-func (a *recordingAdmitter) Admit(
-	context.Context,
-	*edgev1alpha1.ProfilingRun,
-	profilercontroller.ResolvedRun,
-	*batchv1.Job,
-	evidencestore.ObjectIdentity,
-) (profileradmission.Result, error) {
-	a.calls++
-	return a.result, a.err
-}
-
 type reconcilerHarness struct {
 	reconciler *profilercontroller.RunReconciler
 	resolver   *staticRunConfigResolver
 	jobs       *apiExecutionJobs
 	finalizer  *recordingFinalizer
-	admitter   *recordingAdmitter
 }
 
 func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testing.T) {
@@ -209,7 +186,7 @@ func TestRunReconcilerPersistsJobIdentityAcrossDuplicatesRestartAndLoss(t *testi
 	assertNoExecutionCalls(t, restarted)
 }
 
-func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
+func TestRunReconcilerIsCompleteAfterFinalizationRestart(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
 	run, resolved := createRunWithResolvedConfig(t, ctx, kube)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
@@ -233,46 +210,20 @@ func TestRunReconcilerResumesAdmissionAfterFinalizationRestart(t *testing.T) {
 	reconcile(t, ctx, finalizing.reconciler, request)
 	afterFinalization := getRun(t, ctx, kube, request.NamespacedName)
 	assertFinalizedEvidence(t, afterFinalization, finalizing.finalizer.result)
-	if finalizing.finalizer.calls != 1 || finalizing.admitter.calls != 0 {
-		t.Fatalf(
-			"finalization transition calls: finalize=%d admit=%d",
-			finalizing.finalizer.calls,
-			finalizing.admitter.calls,
-		)
+	if finalizing.finalizer.calls != 1 {
+		t.Fatalf("finalization calls: %d", finalizing.finalizer.calls)
 	}
-
 	restarted := newReconcilerHarness(t, kube, resolved)
-	restarted.admitter.err = nil
-	restarted.admitter.result = profileradmission.Result{
-		Verdict: profileradmission.VerdictAccepted, PolicyVersion: "wall-power-v2",
+	for i := 0; i < 2; i++ {
+		reconcile(t, ctx, restarted.reconciler, request)
+		completed := getRun(t, ctx, kube, request.NamespacedName)
+		assertFinalizedEvidence(t, completed, finalizing.finalizer.result)
+		if completed.ResourceVersion != afterFinalization.ResourceVersion {
+			t.Fatal("completed Run rewrote status")
+		}
 	}
-	reconcile(t, ctx, restarted.reconciler, request)
-	afterAdmission := getRun(t, ctx, kube, request.NamespacedName)
-	assertAcceptedAdmission(t, afterAdmission, restarted.admitter.result.PolicyVersion)
-	if restarted.finalizer.calls != 0 || restarted.admitter.calls != 1 {
-		t.Fatalf(
-			"restart transition calls: finalize=%d admit=%d",
-			restarted.finalizer.calls,
-			restarted.admitter.calls,
-		)
-	}
-
-	resourceVersion := afterAdmission.ResourceVersion
-	reconcile(t, ctx, restarted.reconciler, request)
-	afterDuplicate := getRun(t, ctx, kube, request.NamespacedName)
-	if afterDuplicate.ResourceVersion != resourceVersion {
-		t.Fatalf(
-			"completed duplicate event rewrote status: before=%s after=%s",
-			resourceVersion,
-			afterDuplicate.ResourceVersion,
-		)
-	}
-	if restarted.finalizer.calls != 0 || restarted.admitter.calls != 1 {
-		t.Fatalf(
-			"completed duplicate crossed boundaries: finalize=%d admit=%d",
-			restarted.finalizer.calls,
-			restarted.admitter.calls,
-		)
+	if restarted.finalizer.calls != 0 {
+		t.Fatal("completed Run finalized again")
 	}
 }
 
@@ -412,11 +363,10 @@ func newReconcilerHarness(
 	resolver := &staticRunConfigResolver{resolved: resolved}
 	jobs := &apiExecutionJobs{kube: kube, resolved: resolved}
 	finalizer := &recordingFinalizer{err: errors.New("unexpected finalization")}
-	admitter := &recordingAdmitter{err: errors.New("unexpected admission")}
-	reconciler := newRunReconciler(t, kube, resolver, jobs, finalizer, admitter)
+	reconciler := newRunReconciler(t, kube, resolver, jobs, finalizer)
 	return &reconcilerHarness{
 		reconciler: reconciler, resolver: resolver, jobs: jobs,
-		finalizer: finalizer, admitter: admitter,
+		finalizer: finalizer,
 	}
 }
 
@@ -606,10 +556,10 @@ func assertRunUnchangedAfterDrift(
 
 func assertNoExecutionCalls(t *testing.T, harness *reconcilerHarness) {
 	t.Helper()
-	if harness.jobs.calls != 0 || harness.finalizer.calls != 0 || harness.admitter.calls != 0 {
+	if harness.jobs.calls != 0 || harness.finalizer.calls != 0 {
 		t.Fatalf(
-			"loss path crossed execution boundaries: jobs=%d finalize=%d admit=%d",
-			harness.jobs.calls, harness.finalizer.calls, harness.admitter.calls,
+			"loss path crossed execution boundaries: jobs=%d finalize=%d",
+			harness.jobs.calls, harness.finalizer.calls,
 		)
 	}
 }
@@ -620,11 +570,10 @@ func newRunReconciler(
 	resolver *staticRunConfigResolver,
 	jobs *apiExecutionJobs,
 	finalizer *recordingFinalizer,
-	admitter *recordingAdmitter,
 ) *profilercontroller.RunReconciler {
 	t.Helper()
 	reconciler, err := profilercontroller.NewRunReconciler(
-		kube, resolver, jobs, finalizer, admitter,
+		kube, resolver, jobs, finalizer,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -670,18 +619,6 @@ func assertFinalizedEvidence(
 	}
 }
 
-func assertAcceptedAdmission(t *testing.T, run *edgev1alpha1.ProfilingRun, policyVersion string) {
-	t.Helper()
-	if run.Status.Admission == nil || run.Status.Admission.Verdict != "Accepted" ||
-		run.Status.Admission.PolicyVersion != policyVersion {
-		t.Fatalf("accepted admission status is incomplete: %#v", run.Status.Admission)
-	}
-	admitted := findCondition(run.Status.Conditions, edgev1alpha1.ProfilingRunConditionEvidenceAdmitted)
-	if admitted == nil || admitted.Status != metav1.ConditionTrue || admitted.Reason != "EvidenceAccepted" {
-		t.Fatalf("accepted admission condition is incomplete: %#v", run.Status.Conditions)
-	}
-}
-
 func loadRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	payload, err := os.ReadFile(filepath.Join(
@@ -705,29 +642,9 @@ func resolvedRun(
 	prepared profiler.PreparedRun,
 ) profilercontroller.ResolvedRun {
 	t.Helper()
-	source := profileradmission.PolicySource{
-		Kind: profileradmission.ConfigMapPolicySourceKind, Namespace: "chill-system",
-		Name: "chill-profiler-facts", UID: "facts-uid", ResourceVersion: "42",
-		Key: "admission-policies.yaml",
-	}
-	admissionCatalog, err := yaml.Marshal(profileradmission.PolicyCatalog{
-		SchemaVersion: profileradmission.PolicyCatalogSchemaVersion,
-		Policies: []profileradmission.PolicySpec{{
-			Name: "wall-power-v2", WorkloadMode: prepared.RunConfig.Measurement.WorkloadMode,
-			MinimumSamples: 20, MaximumGapSeconds: 1.5,
-			MaximumBoundaryDistanceSeconds: 1, MinimumCoverage: 0.95,
-			AllowReceiptTimestamps: true, RejectConcurrentCHILLWorkloads: true,
-			RejectExternalWorkloadChanges: true,
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	admissionPolicy, err := profileradmission.FreezeConfiguredPolicy(
-		admissionCatalog, "wall-power-v2", source,
-	)
-	if err != nil {
-		t.Fatal(err)
+	source := profiler.ExecutionPolicySource{
+		Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: "chill-system",
+		Name: "chill-profiler-facts", UID: "facts-uid", ResourceVersion: "42", Key: "execution-policies.yaml",
 	}
 	const mebibyte = int64(1024 * 1024)
 	executionCatalog, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
@@ -770,7 +687,7 @@ func resolvedRun(
 		t.Fatal(err)
 	}
 	return profilercontroller.ResolvedRun{
-		Prepared: prepared, AdmissionPolicy: admissionPolicy, ExecutionPolicy: executionPolicy,
+		Prepared: prepared, ExecutionPolicy: executionPolicy,
 	}
 }
 
@@ -786,7 +703,6 @@ func validRun() *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 				CPURequest: resource.MustParse("100m"),
 			},
-			AdmissionPolicy: "wall-power-v2",
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch", InputGenerator: "numpy-default-rng-seed-0-fp32-v1",

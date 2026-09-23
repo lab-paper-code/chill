@@ -8,8 +8,6 @@ import (
 const (
 	// ResolutionReasonInvalidRunSpec marks an immutable Run request that cannot be projected.
 	ResolutionReasonInvalidRunSpec = "InvalidRunSpec"
-	// ResolutionReasonAdmissionPolicyInvalid marks an invalid selected admission policy.
-	ResolutionReasonAdmissionPolicyInvalid = "AdmissionPolicyInvalid"
 	// ResolutionReasonExecutionPolicyInvalid marks an invalid selected execution policy.
 	ResolutionReasonExecutionPolicyInvalid = "ExecutionPolicyInvalid"
 	// ResolutionReasonActuationPolicyInvalid marks an invalid selected actuation policy.
@@ -48,11 +46,6 @@ func TerminalResolutionReason(err error) (string, bool) {
 		return "", false
 	}
 	return terminal.reason, true
-}
-
-// InvalidAdmissionPolicy constructs a terminal admission-policy failure.
-func InvalidAdmissionPolicy(format string, args ...any) error {
-	return NewTerminalResolutionError(ResolutionReasonAdmissionPolicyInvalid, fmt.Errorf(format, args...))
 }
 
 // InvalidExecutionPolicy constructs a terminal execution-policy failure.

@@ -63,13 +63,13 @@ func TestDecideSelectsOneBoundedNextAction(t *testing.T) {
 				RunConfig: &config, JobReference: "job-uid", Job: JobMissing,
 				EvidenceReference: &evidenceReference,
 			},
-			want: ActionAdmitEvidence,
+			want: ActionComplete,
 		},
 		{
-			name: "complete after admission verdict is recorded",
+			name: "complete with stored evidence",
 			snapshot: Snapshot{
 				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
-				EvidenceReference: &evidenceReference, AdmissionRecorded: true,
+				EvidenceReference: &evidenceReference,
 			},
 			want: ActionComplete,
 		},
@@ -110,14 +110,6 @@ func TestDecideRejectsContradictoryFacts(t *testing.T) {
 			name:     "reference without observation",
 			snapshot: Snapshot{RunConfig: &config, JobReference: "job-uid"},
 			match:    "requires a supported observation",
-		},
-		{
-			name: "admission without evidence",
-			snapshot: Snapshot{
-				RunConfig: &config, JobReference: "job-uid", Job: JobSucceeded,
-				AdmissionRecorded: true,
-			},
-			match: "without verified evidence",
 		},
 		{
 			name: "evidence before Job",

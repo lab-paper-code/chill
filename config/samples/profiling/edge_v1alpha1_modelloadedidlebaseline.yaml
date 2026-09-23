@@ -15,7 +15,6 @@ spec:
   cpuQuota: "4"
   batch: 1
   protocol:
-    admissionPolicy: idle-wall-power-v1
     settlingDurationSeconds: 60
     durationSeconds: 30
     metricObservation:
@@ -24,6 +23,6 @@ spec:
       durationSeconds: 31
   pointPolicy:
     version: idle-point-v1
-    minimumAcceptedRuns: 3
+    minimumRuns: 3
     confidenceLevel: "0.95"
   attemptLimit: 5

@@ -2,8 +2,16 @@
 
 ## Status
 
+Scientific admission has been removed. The current boundary is execution,
+raw evidence storage, and numeric derivation; thermal/workload observations
+are retained without an automatic accept/reject decision. See
+[Plan 3](plans/03-profile-admission-derivation.md) for the current contract and
+stored-result versions. The historical experiment descriptions below retain
+the terminology and outcomes recorded at the time.
+
+
 Roadmap for the implemented `ProfilingRun` path through durable
-execution-evidence verification and single-Run admission. Execution evidence
+execution-evidence verification and measurement derivation. Execution evidence
 uses `chill.dacs.io/profiling-execution-evidence.v1alpha14`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against the RunConfig. Permanently
@@ -83,7 +91,7 @@ one immutable profiling Run on Kubernetes
 runtime evidence + metric evidence
     |
     v
-profile admission and batch-energy optimization
+measurement derivation and batch-energy optimization
     |
     v
 future enumerator / scheduler
@@ -133,37 +141,24 @@ ProfilingRun.spec
 The Job is the single recoverable execution record. CHILL creates no separate
 Run-record ConfigMap and exposes no intermediate resolution status phase.
 
-### 3. Profile admission and derivation — implemented first read-only path
+### 3. Profile measurement derivation — implemented
 
 [plans/03-profile-admission-derivation.md](plans/03-profile-admission-derivation.md)
 
-Answers only:
+Completed Run evidence is projected into measurements and used to calculate
+idle power, incremental energy, repeated-trial statistics, and batch curves.
+There is no scientific admission policy or accept/reject stage. Raw readings
+and environmental observations remain available for the experimenter.
 
-> Are the execution and metric observations sufficient to admit a profile, and
-> what incremental-energy observations follow from that evidence?
-
-Its first pure read-only plan is approved against the retained real Run
-evidence. Persistence remains deferred until the output contract survives
-adversarial and live-evidence review.
-
-### 4. Minimal Profiler control path — first bounded path implemented
+### 4. Minimal Profiler control path — implemented
 
 [plans/04-minimal-profiler-control-path.md](plans/04-minimal-profiler-control-path.md)
 
-Answers only:
-
-> Can an operator-managed CHILL Profiler own one exact ProfilingRun from a
-> compatible request through durable evidence and single-Run admission?
-
-The Operator manages a separately deployed Profiler operand and reports its
-component availability. The Profiler resolves trusted facts into one RunConfig,
-creates one owned Job, verifies the worker's durable raw object, finalizes
-terminal Kubernetes evidence, independently reloads it, applies the named
-single-Run admission policy, and publishes compact execution, evidence, and
-admission status. Model-loaded-idle request, evidence, and admission dispatch
-are live-verified. The scope does not orchestrate a batch
-campaign, optimize batch energy, publish a `DeviceProfile`, or connect to the
-scheduler.
+The Operator manages the Profiler operand. A Run resolves its execution
+configuration, executes one owned Job, and completes after raw and finalized
+evidence are stored. Single-Run scientific admission in the historical Plan 4
+is superseded by Plan 3. Execution errors and structural evidence-boundary
+checks remain; there is no extra scientific verdict in Run status.
 
 ### 5 and 5a. Saturation designs — superseded by the energy objective
 
@@ -338,7 +333,7 @@ These documents define reusable internal subsystem boundaries. They support the
 plans but do not expand a plan's authorization:
 
 - [MetricObserver](components/metric-observer.md) owns bounded typed power and
-  thermal observation, not evidence-admission policy or profile derivation.
+  thermal observation, not scientific policy or profile derivation.
 - [WorkloadObserver](components/workload-observer.md) defines bounded
   measurement-window Pod-membership evidence, external-environment stability,
   and concurrent CHILL measurement detection.
@@ -369,7 +364,7 @@ plans or competing architecture authorities:
 - Helm owns installation-time identities, permissions, and base configuration;
   controllers are not granted authority to create or bind their own RBAC.
 - CHILL owns its desired Run decision, runtime-specific validation, evidence
-  admission, and derived scheduler facts.
+  storage, and derived scheduler facts.
 - The Profiler controller is a time-bounded, reconstructable control plane.
   The one-shot profiling Job is the execution plane that runs inference,
   receives typed metric observations, and persists raw evidence.
@@ -398,7 +393,7 @@ profile derivation
         -> bounded power-window integration leaf
 
 model-loaded idle baseline controller
-        -> retained idle ProfilingRun evidence + profile admission/derivation
+        -> retained idle ProfilingRun evidence + measurement derivation
         -> immutable Complete aggregate result
 
 transition-cost derivation -> bounded power-window integration leaf
