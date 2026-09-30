@@ -1,54 +1,141 @@
 # Serving Design
 
-## Status
+## 현재 구현 범위
 
-The entry point runs. `internal/serving` holds its routing decision,
-`internal/serving/entrypoint` serves that decision over HTTP, and
-`cmd/serving-entrypoint` assembles them and supplies the weights from a table it
-reads at start-up. An image, a chart component that renders only when
-`servingEntrypoint.enabled` is set, and a `fast-deploy` component deliver it.
-The chart renders the per-node Services that table names, so every address the
-entry point can choose exists.
+`internal/serving`에는 모델별 가중치 선택이 있고, `internal/serving/entrypoint`는
+선택한 백엔드로 HTTP 요청을 전달한다. `cmd/serving-entrypoint`가 시작 시 읽은
+고정 테이블을 공급한다. 기존 이미지·차트·배포 경로와 노드별 Service는 이 전달
+경로를 위한 구현 자산이다.
 
-Two things this document decides are not implemented: nothing carries the SLO
-class the consumer contract declares, and nothing serves inference behind those
-Services, which stand without an endpoint until something does.
+이 경로는 아직 워크로드 객체와 SLO를 해석하지 않는다. 요청 본문을 읽지 않고
+한 백엔드로 전달하므로 단일 추론 입력 검증과 워크로드별 배칭도 수행하지 않는다.
+워크로드 조회·관리, 동적 분배 기준 공급, 유입 대기열, 실제 추론 워커와 배칭은
+아래 설계를 구현하기 위해 추가하거나 연결해야 하는 부분이다.
 
-This document carries decisions and the observations they rest on. Anything not
-stated here is not decided — including the object model, the control loops, node
-roles, and whether CHILL owns the serving worker or adopts one.
+이 문서의 요청 처리 흐름은 구현 목표이며, 현재 구현 또는 라이브 클러스터에서
+완성된 동작을 뜻하지 않는다. 기존 전달 경로의 네트워크 관측은 뒤에서 구분한다.
 
-## Question
+## 설계 기준
 
-> A consumer sends inference requests around the clock at a load it does not
-> coordinate with us. What must CHILL be, as a Kubernetes-native system, for that
-> to work while the cluster runs at the energy-minimal configuration for whatever
-> load has arrived?
+이 문서는 [시스템 명세](../../spec/README.md)의 구현 설계다. 요구사항은
+[라우팅과 배칭](../../spec/03_routing.md),
+[구성 비용](../../spec/04_configuration_selection.md),
+[전환 실행](../../spec/05_transition_control.md)을 따른다.
+프로세스 수, CRD 필드, API 경로는 논리적인 역할과 별도로 정한다.
 
-The scheduler this requires is specified in [`docs/spec/`](../../spec/): routing
-weights in `03_routing.md`, configuration selection in
-`04_configuration_selection.md`, transition control in `05_transition_control.md`.
+## 워크로드와 외부 요청
 
-## The consumer contract
+워크로드는 기존 모델 등록정보 참조, SLO 백분위·목표 시간, POOL 참조를 연결한다.
+POOL 하나는 여러 워크로드를 지원한다. 같은 모델이라도 SLO가 다르면 다른
+워크로드로 표현할 수 있으므로 모델 이름만으로 서비스 정체성을 대신하지 않는다.
 
-CHILL accepts inference requests for a declared model at a declared SLO class
-and returns each result within that class's latency target, at whatever load
-arrives.
+- 사용자는 워크로드 목록·상세에서 식별자, 모델, SLO, 입력 형식과 요청 가능한
+  상태를 조회한다.
+- 추론 요청에는 워크로드 식별자와 독립적으로 완료할 수 있는 추론 입력 1개를 보낸다.
+  CHILL은 등록된 정의를 확인하며, 요청마다 모델·SLO 정의를 복사하거나 덮어쓰게 하지 않는다.
+- 운영자는 모델 등록정보와 워크로드를 CRUD하고, 모델 연결·SLO·POOL을 관리한다.
+  구체적인 리소스 표현과 갱신·삭제 절차는 미결정이다.
 
-| The consumer supplies | The consumer receives |
+하나의 추론에 함께 필요한 여러 tensor나 파일은 입력 1개를 구성할 수 있다.
+독립적인 추론 입력은 각각 별도 요청으로 보낸다. 응답과 SLO는 각 요청에 적용하며,
+사용자는 내부 인스턴스 배치나 실행 배치 크기를 알 필요가 없다.
+SLO는 CHILL의 요청 수신부터 해당 추론 결과의 응답 반환 완료까지 적용한다.
+통계 집계 구간과 실패 요청의 취급은 서비스 계약에서 정한다.
+
+## 노드 자원과 모델 인스턴스
+
+노드와 서빙 파드는 1:N, 하나의 서빙 파드가 제공하는 모델 인스턴스와 워크로드도
+1:N 관계를 허용한다. 노드 하나를 모델 하나나 워크로드 하나의 전용 장비로 취급하지 않는다.
+한 파드는 하나의 모델 실행 인스턴스를 제공하며, 같은 산출물·런타임·입력 조건으로
+처리할 수 있는 여러 워크로드가 이를 공유할 수 있다.
+
+공존의 기준은 순간 CPU/GPU 사용률이 아니라 **배정 가능한 자원**이다. 이미 다른
+서빙 파드에 할당한 연산 자원을 중복 할당하지 않는다. CPU 파드끼리는 분리된 CPU
+할당, GPU 파드끼리는 서로 다른 물리 GPU를 사용한다. GPU 파드의 보조 CPU와
+메모리도 계산하므로, CPU 파드와 GPU 파드의 공존에도 자원 배정이 필요하다.
+
+별도 장치 할당기를 만들지 않고 Kubernetes의 기존 자원 할당을 사용한다. GPU는
+운영자가 마련한 장치 자원 노출·할당을 활용하며, 한 물리 GPU를 여러 모델 파드가
+time-slicing이나 MPS로 나누는 구성은 범위 밖이다. CPU의 request/limit만으로는
+CPU 집합이 분리되지 않는다. 전용 CPU 배정에는 CPU Manager의 static 정책,
+Guaranteed Pod와 정수 CPU 할당 등 플랫폼 조건이 필요하다. 프로파일링 Job의
+관측 컨테이너를 포함한 Pod 자원 설정도 이 조건과 맞아야 한다. 실제 지원 여부와
+배정 결과는 배포 시 확인하며, 이 문서가 현재 클러스터의 격리를 입증하지는 않는다.
+
+모델 인스턴스를 공유해도 유입 측과 인스턴스 내부의 큐는 워크로드별로 구분한다.
+처리량 계획에는 입력량을 합산하되, 각 큐의 대기·SLO를 유지하고 실행 배치는
+워크로드별로 만든다. 큐 선택은 서로 다른 SLO와 진행 중인 실행의 영향을 고려해야
+하지만, 특정 우선순위·공정성 알고리즘은 아직 정하지 않는다.
+
+할당을 분리해도 캐시·메모리 대역폭·노드 전력·열은 영향을 주고받을 수 있다.
+우선 자원이 맞는 공존 후보를 허용하고 실제 지연·전력 차이를 관측한다. 자원 적합성과
+SLO 적합성은 별개의 판단이며, 관측 없이 무간섭을 보장하거나 모든 조합의 간섭
+예측기를 만들지 않는다. 노드 전력모드 변경은 공존 중인 모든 인스턴스에 영향을 준다.
+
+## 요청 처리 흐름
+
+```text
+워크로드 식별자 + 추론 입력 1개
+            │
+            ▼
+워크로드 확인 · 입력 검증
+            │
+            ▼
+워크로드별 유입 대기열
+            │
+            ▼
+요청별 인스턴스 선택 · 전달
+            │
+            ▼
+선택한 인스턴스의 워크로드별 큐
+            │
+            ▼
+같은 워크로드의 호환 요청들을 동적 배칭
+            │
+            ▼
+           추론
+            │
+            ▼
+각 결과를 해당 요청에 반환
+```
+
+한 상자가 별도 서비스나 CRD 하나를 뜻하지 않는다. 유입 대기열도 우선 논리적인
+요청 관리 구조이며, 별도 메시지 브로커나 영속 큐를 요구하지 않는다.
+
+### 처리 단위와 추적 정보
+
+| 단위 | 관리할 정보 |
 |---|---|
-| model identity | the inference result |
-| SLO class | delivery within that class's latency target |
-| request payload | nothing about how it was served |
+| 사용자 요청 | 워크로드, 수신 시각, 배정 인스턴스, 대기·진행·완료·실패 |
+| 실행 배치 | 같은 워크로드의 호환되는 입력 묶음과 각 입력·결과에 대응하는 요청 |
 
-A consumer does not observe which node served a request, what power mode that
-node was in, what batch its request joined, or that the cluster changed
-configuration while its request was in flight.
+각 요청은 모델 인스턴스 하나에 배정한다. 인스턴스는 같은 워크로드의 호환되는
+요청들을 묶어 실행하고 각 결과를 해당 요청에 연결해 반환한다.
+서로 다른 요청의 완료 순서는 독립적이다.
 
-CHILL speaks the Open Inference Protocol, also published as the KServe V2
-predict protocol, rather than a wire form of its own. That protocol is
-implemented by NVIDIA Triton, TensorFlow Serving, and ONNX Runtime Server, and a
-compliant server may offer HTTP/REST, gRPC, or both.
+인스턴스에 전달하고 내부 실행 배치로 묶을 때도 각 요청의 수신 시각을 유지한다.
+지연을 노드 도착 시각부터 새로 재지 않으며, 실행 배치의 지연을 요청별 지연으로
+대신하지 않는다. 요청별 대기·완료 상태와 SLO를 관측한다.
+
+### 책임 분리
+
+| 역할 | 책임 |
+|---|---|
+| 스케줄러 | POOL 전체의 워크로드별 부하·SLO를 보고 구성과 자원 할당·분배 기준을 갱신 |
+| 요청 진입·분배 경로 | 워크로드·입력 확인, 미배정 요청 관리, 현재 분배 기준과 준비 상태에 따른 인스턴스 선택·전달, 해당 요청에 응답 반환 |
+| 서빙 파드의 워커 | 워크로드별 큐와 큐 선택, 프로파일·SLO 기반 배칭, 추론과 요청별로 식별 가능한 결과 반환 |
+
+요청마다 새 배포 계획의 계산·실행을 기다리지 않는다. 요청 분배 경로는 현재
+유효한 분배 기준으로 준비된 인스턴스에 계속 전달하고, 스케줄러는 관측에 따라 그
+기준을 갱신한다. 수용 가능한 인스턴스가 있으면 유입 측에서 불필요하게 기다리지 않는다.
+유입 대기열은 실행 배치를 만들기 위한 별도의 대기를 추가하지 않는다.
+
+워크로드별로 유입 대기 상태를 구분하여 하나의 섞인 FIFO가 자원 할당 정책을
+대신하지 않게 한다. 같은 모델 인스턴스를 공유하는 경우에도 이 경계를 유지한다.
+
+부하는 워크로드별 inputs/s로 관측하며 요청률과 같다. 대기·완료량도 요청 수로
+기록하고 내부 실행 배치 수와 구분한다. 모델·워크로드의 수정·삭제가 이미 받은
+요청의 의미를 조용히 바꾸거나 요청을 유실시키지 않아야 한다.
 
 ## Why concealment forces routing
 
@@ -56,12 +143,14 @@ Some configuration changes cannot be made underneath live traffic. A power mode
 applies to a whole node, and on a memory-constrained device a new model cannot
 be resident before the old one leaves.
 
-`03_routing.md` §7 states the consequence: routing is not only how load is
-distributed, it is the precondition for other variables being changeable at all,
-because the only way to change them without interrupting service is to move a
-node's traffic away first.
+The [transition specification](../../spec/05_transition_control.md) requires
+planning request handling while a node changes state. Routing can move traffic
+to other ready nodes when the changing node cannot continue serving.
 
-## What this cluster's network can do
+## 기존 전달 경로의 네트워크 관측
+
+아래는 기존 전달 경로를 설계할 때 기록한 관측이다. 워크로드별 요청 처리·배칭의
+검증이나 현재 라이브 상태 확인을 대신하지 않는다.
 
 | Observation | Verified against |
 |---|---|
@@ -88,7 +177,7 @@ which all requests pass.
 An external consumer has no such node, so its request enters the cluster
 somewhere, and that entry is the one point every external request crosses.
 
-## The entry point
+## 현재 전달 경로와 재사용
 
 CHILL supplies the entry point, and the entry point distributes.
 
@@ -136,18 +225,52 @@ deployed and reached before anything computes a weight. It lives in the binary
 that assembles the entry point rather than beside it, so what replaces it is a
 different value passed at the same seam.
 
+## 구현 대응
+
+| 현재 자산 또는 필요한 기능 | 구현 방향 |
+|---|---|
+| 모델별 경로 해석 | 워크로드 식별과 등록된 모델·SLO 해석을 연결 |
+| 시작 시 읽는 고정 가중치 테이블 | 워크로드별로 갱신되는 분배 기준 공급으로 교체 |
+| 한 백엔드로 본문을 그대로 전달하는 HTTP 경로 | 워크로드·단일 추론 입력 검증, 인스턴스 선택과 요청별 수신·응답 시각 관측을 연결. 가중치 교체만으로 완성되지 않음 |
+| 노드별 Service와 전달 경로 | 노드뿐 아니라 선택한 모델 인스턴스까지 도달하도록 변경. 다른 모델 파드를 하나의 노드 단위 목적지로 혼동하지 않음 |
+| 워크로드 조회·관리, 유입 대기열·요청 추적 | 위 요청 계약에 맞춰 추가 |
+| 실제 추론 워커·인스턴스 내부 큐·동적 배칭 | 서빙 엔진을 선택하고 워크로드별 큐 선택·프로파일·SLO 기반 제어와 연결 |
+
+현재 진입점은 모델을 경로에 담는 Open Inference Protocol 형태의 HTTP 요청을
+전달한다. 워크로드 식별자와 단일 추론 입출력을 외부·인스턴스 API에 어떻게
+표현할지는 별도의 결정이며, 기존 투명 프록시 계약을 요청 처리 흐름의 제약으로 삼지 않는다.
+
 ## What serving would unlock for measurement
 
-`μ_s`, the SLO capacity of a state, is defined against an arrival process: the
-largest arrival rate whose steady-state tail latency stays inside the class
-target. The current measurement workload is a closed loop with no arrivals, so
-it yields throughput at saturation, which is an upper bound on `μ_s` and not
-`μ_s`. Every capacity constraint in `03_routing.md` and
-`04_configuration_selection.md` is stated in terms of `μ_s`.
+SLO capacity is the arrival rate a state can handle while meeting the workload's
+latency target. The current measurement workload is a closed loop with no arrivals,
+so its saturated throughput does not establish that capacity. The
+[measurement specification](../../spec/00_measurement.md) requires evidence that
+accounts for request waiting and the serving load conditions.
 
-## Not yet verified
+Profiles must match the selected resource allocation and runtime concurrency,
+not just the model and node. Sharing an instance does not require repeating an
+identical compute measurement for each SLO, but it does require a serving
+experiment that observes each workload's queue and per-request response latency.
+For colocated Pods, isolated whole-node power measurements cannot simply be
+summed. See the [profiling implementation boundary](../profiling/README.md#serving-resource-allocation).
 
-This bears on the decisions above and has not been demonstrated on this cluster.
+## 미결정 사항과 검증 경계
 
-- **Weight propagation delay**, which bounds how fast a routing loop can run.
-  The table in force today is read once at start-up, so nothing propagates yet.
+- Workload의 CRD 여부와 필드, 조회·관리·추론 API 경로와 입출력 형식.
+- 모델·워크로드 수정·삭제 시 진행 중 요청과 모델 참조를 다루는 절차.
+- 요청 실패·과부하 처리 정책.
+- SLO 통계 집계 구간과 실패 요청의 취급.
+- 큐의 물리적 구현과 인스턴스 내부 배칭 정책·엔진.
+- 워크로드 사이의 자원 할당 정책, 플랫폼의 비중복 할당 구현·검증과 공유 인스턴스의 큐 선택.
+- 분배 기준의 갱신·반영 방식과 관찰·제어 주기.
+
+워크로드 조회부터 요청 분배·내부 배칭·응답 반환까지의 경로는 구현 후 검증해야 한다.
+동시에 도착한 요청들이 서로 다른 인스턴스에서 처리되거나 같은 실행 배치로 묶여도
+각 결과가 해당 요청에 반환되는지, 수신 시각 기준으로 요청별 SLO가 집계되는지
+확인한다. 같은 POOL의 여러 워크로드가 같은 모델을 사용하더라도 정의와 결과가
+섞이지 않아야 한다.
+
+현재의 고정 테이블은 동적으로 갱신되지 않으므로 가중치 반영 지연을 입증하지 않는다.
+이 설계의 요청 처리·SLO·반영 지연에 대한 라이브 클러스터 검증을 완료했다고
+주장하지 않는다.
