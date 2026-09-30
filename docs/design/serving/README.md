@@ -23,6 +23,10 @@
 [전환 실행](../../spec/05_transition_control.md)을 따른다.
 프로세스 수, CRD 필드, API 경로는 논리적인 역할과 별도로 정한다.
 
+구성 유지·전환 정책의 문헌과 적용 한계는
+[온라인 전환 정책 레퍼런스](online-switching-references.md)에 정리한다.
+이 문헌 안내는 특정 알고리즘의 채택을 확정하지 않는다.
+
 ### Triton 재사용 원칙
 
 CHILL 서빙의 기본 실행기는 Triton이다. 모델 로딩, backend 추론 실행, 동적 배치
