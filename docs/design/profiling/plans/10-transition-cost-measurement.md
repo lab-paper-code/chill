@@ -2,9 +2,9 @@
 
 > Navigation: [Profiling design index](../README.md)
 >
-> Research target: `docs/spec/00_measurement.md`,
-> `docs/spec/spec_v0.2_plain.md`, and
-> `docs/spec/05_transition_control.md`
+> Research target: [Profiling and evidence](../../../spec/00_measurement.md),
+> [Configuration costs](../../../spec/04_configuration_selection.md), and
+> [Transition execution](../../../spec/05_transition_control.md)
 >
 > Existing transition atom: [Plan 9](09-transition-extraction.md)
 >

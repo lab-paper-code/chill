@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The initial project name, GearEdge, described edge-oriented operating-point control but did not clearly expose the current research framing in `docs/spec/spec_v0.2_plain.md`: cost-aware heterogeneous inference under latency and load constraints, with energy minimization as the primary objective.
+The initial project name, GearEdge, described edge-oriented operating-point control but did not clearly expose the current research framing in `docs/spec/README.md`: cost-aware heterogeneous inference under latency and load constraints, with energy minimization as the primary objective.
 
 The repository is still in the early scaffold phase, so changing user-facing names, module paths, chart names, and development defaults is still cheaper than carrying a weaker name into later artifacts.
 
