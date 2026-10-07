@@ -79,12 +79,28 @@ type ModelArtifactDerivation struct {
 	Conversion ModelArtifactConversion `json:"conversion"`
 }
 
+// ModelArtifactInputContract declares every named input without its batch axis.
 type ModelArtifactInputContract struct {
-	// InputSampleShape is the ordered input tensor dimensions without its batch
-	// axis. The selected measurement batch supplies that axis.
+	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=name
+	Tensors []ModelInputTensor `json:"tensors"`
+}
+
+// ModelInputTensor is the batch-invariant Triton input contract.
+type ModelInputTensor struct {
+	// Name is the exact runtime input name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Datatype uses the Triton inference protocol spelling.
+	// +kubebuilder:validation:Enum=BOOL;UINT8;UINT16;UINT32;UINT64;INT8;INT16;INT32;INT64;FP16;FP32;FP64;BYTES;BF16
+	Datatype string `json:"datatype"`
+
+	// SampleShape excludes the batch axis supplied by the selected batch.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Minimum=1
-	InputSampleShape []int32 `json:"inputSampleShape"`
+	SampleShape []int32 `json:"sampleShape"`
 }
 
 // ModelArtifactConversion identifies the executable converter and conversion recipe.
@@ -123,6 +139,31 @@ type ModelRuntimeRequirement struct {
 	// Backend names the required backend within the runtime-family context.
 	// +kubebuilder:validation:MinLength=1
 	Backend string `json:"backend"`
+
+	// Settings selects native settings that profiling and serving must share.
+	// +optional
+	Settings *ModelRuntimeSettings `json:"settings,omitempty"`
+}
+
+// ModelRuntimeSettings contains settings selected by the execution path.
+type ModelRuntimeSettings struct {
+	// Triton is required for triton/python and absent for other families.
+	// +optional
+	Triton *TritonRuntimeSettings `json:"triton,omitempty"`
+}
+
+// TritonRuntimeSettings selects scheduler bounds. One CPU instance and zero
+// additional batch wait are mechanism constraints, not tuning settings.
+type TritonRuntimeSettings struct {
+	// MaxBatchSize is shared across every measured batch trial.
+	// +kubebuilder:validation:Minimum=1
+	MaxBatchSize int32 `json:"maxBatchSize"`
+	// PriorityLevels bounds fixed native priority lanes.
+	// +kubebuilder:validation:Minimum=1
+	PriorityLevels int32 `json:"priorityLevels"`
+	// MaxQueueSize bounds each native priority lane's queue.
+	// +kubebuilder:validation:Minimum=1
+	MaxQueueSize int32 `json:"maxQueueSize"`
 }
 
 // ModelSpecStatus defines the observed state of ModelSpec

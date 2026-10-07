@@ -106,18 +106,55 @@ spec:
                       description: Input declares this artifact's input tensor contract
                         without its batch axis.
                       properties:
-                        inputSampleShape:
-                          description: |-
-                            InputSampleShape is the ordered input tensor dimensions without its batch
-                            axis. The selected measurement batch supplies that axis.
+                        tensors:
                           items:
-                            format: int32
-                            minimum: 1
-                            type: integer
+                            description: ModelInputTensor is the batch-invariant Triton
+                              input contract.
+                            properties:
+                              datatype:
+                                description: Datatype uses the Triton inference protocol
+                                  spelling.
+                                enum:
+                                - BOOL
+                                - UINT8
+                                - UINT16
+                                - UINT32
+                                - UINT64
+                                - INT8
+                                - INT16
+                                - INT32
+                                - INT64
+                                - FP16
+                                - FP32
+                                - FP64
+                                - BYTES
+                                - BF16
+                                type: string
+                              name:
+                                description: Name is the exact runtime input name.
+                                minLength: 1
+                                type: string
+                              sampleShape:
+                                description: SampleShape excludes the batch axis supplied
+                                  by the selected batch.
+                                items:
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                minItems: 1
+                                type: array
+                            required:
+                            - datatype
+                            - name
+                            - sampleShape
+                            type: object
                           minItems: 1
                           type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
                       required:
-                      - inputSampleShape
+                      - tensors
                       type: object
                     name:
                       description: Name is unique within one ModelSpec and is referenced
@@ -191,6 +228,38 @@ spec:
                             as onnxruntime.
                           minLength: 1
                           type: string
+                        settings:
+                          description: Settings selects native settings that profiling
+                            and serving must share.
+                          properties:
+                            triton:
+                              description: Triton is required for triton/python and
+                                absent for other families.
+                              properties:
+                                maxBatchSize:
+                                  description: MaxBatchSize is shared across every
+                                    measured batch trial.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                maxQueueSize:
+                                  description: MaxQueueSize bounds each native priority
+                                    lane's queue.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                priorityLevels:
+                                  description: PriorityLevels bounds fixed native
+                                    priority lanes.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                              required:
+                              - maxBatchSize
+                              - maxQueueSize
+                              - priorityLevels
+                              type: object
+                          type: object
                       required:
                       - backend
                       - family

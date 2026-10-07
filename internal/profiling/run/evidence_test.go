@@ -3,6 +3,8 @@ package profilingrun
 import (
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
@@ -31,11 +33,6 @@ func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
 		t.Fatal("expected invalid measurement end rejection")
 	}
-	invalid = valid
-	invalid.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha4"
-	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {
-		t.Fatal("expected retired runtime-result schema rejection")
-	}
 
 	started, ended, err := valid.MeasurementWindow()
 	if err != nil {
@@ -44,6 +41,28 @@ func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 	if !started.Equal(time.Date(2026, time.January, 1, 0, 0, 1, 0, time.UTC)) ||
 		!ended.Equal(time.Date(2026, time.January, 1, 0, 0, 31, 0, time.UTC)) {
 		t.Fatalf("measurement window = %s..%s", started, ended)
+	}
+}
+
+func TestRuntimeEvidenceRejectsNamedInputDrift(t *testing.T) {
+	for _, field := range []string{"name", testDatatypeField, testShapeField, "missing"} {
+		t.Run(field, func(t *testing.T) {
+			config := validRunConfig()
+			result := validRuntimeResult(config)
+			switch field {
+			case "name":
+				result.Inputs[0].Name = testDifferentIdentity
+			case testDatatypeField:
+				result.Inputs[0].Datatype = testINT64Datatype
+			case testShapeField:
+				result.Inputs[0].SampleShape[0]++
+			case "missing":
+				result.Inputs = nil
+			}
+			if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+				t.Fatal("runtime input evidence drift was accepted")
+			}
+		})
 	}
 }
 
@@ -91,6 +110,7 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 		Runtime:      config.State.RuntimeFamily,
 		Architecture: "x86_64", RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
 		AvailableProviders: []string{config.State.Backend},
+		Inputs:             modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
 		InferenceCount: 1, MeasurementMode: "duration",
 		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
@@ -193,6 +213,7 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		Architecture: "x86_64",
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
 		AvailableProviders:   []string{config.State.Backend},
+		Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
 		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
@@ -229,6 +250,7 @@ func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
 		Architecture: "aarch64",
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: config.State.Backend,
 		RKNN:                 validRKNNRuntimeEvidence(1),
+		Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
 		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,

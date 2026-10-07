@@ -14,6 +14,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 
@@ -133,6 +134,7 @@ func deriverIdleEvidence(
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
+			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.Format(time.RFC3339Nano),

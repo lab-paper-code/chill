@@ -19,6 +19,8 @@ node_discovery_image="${NODE_DISCOVERY_IMG:-}"
 node_actuator_image="${NODE_ACTUATOR_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
 console_image="${CONSOLE_IMG:-}"
+serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
+dashboard_image="${DASHBOARD_IMG:-}"
 system_name="${CHILL_SYSTEM_NAME:-}"
 skip_preflight="${HELM_SKIP_PREFLIGHT:-false}"
 
@@ -44,6 +46,8 @@ Environment:
   NODE_ACTUATOR_IMG      Optional NodeActuator image repository:tag.
   PROFILER_IMG           Optional Profiler image repository:tag.
   CONSOLE_IMG            Optional Console API image repository:tag.
+  SERVING_ENTRYPOINT_IMG Optional serving entrypoint image repository:tag.
+  DASHBOARD_IMG          Optional Dashboard image repository:tag.
   HELM_SKIP_PREFLIGHT    Skip helm lint/template/kubeconform and CRD ownership check during install. Default: false.
 EOF
 }
@@ -89,6 +93,8 @@ render_validate() {
 	append_image_values args nodeActuator "${node_actuator_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
+	append_image_values args servingEntrypoint "${serving_entrypoint_image}"
+	append_image_values args dashboard "${dashboard_image}"
 
 	"${helm_bin}" lint "${chart}" "${values_args[@]}" "${args[@]}" "${extra_args[@]}"
 	"${helm_bin}" template "${release}" "${chart}" \
@@ -129,6 +135,8 @@ install_release() {
 	append_image_values args nodeActuator "${node_actuator_image}"
 	append_image_values args profiler "${profiler_image}"
 	append_image_values args console "${console_image}"
+	append_image_values args servingEntrypoint "${serving_entrypoint_image}"
+	append_image_values args dashboard "${dashboard_image}"
 	echo "==> install"
 	"${helm_bin}" upgrade --install "${release}" "${chart}" \
 		--namespace "${release_namespace}" \

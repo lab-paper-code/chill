@@ -322,7 +322,8 @@ func freezeCPUContract(
 		contract.Limit = strconv.FormatInt(quotaCores, 10)
 		threadCount = int(quotaCores)
 	}
-	if candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend {
+	if (candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend) ||
+		(candidate.State.RuntimeFamily == profilingrun.TritonRuntimeFamily && candidate.State.Backend == profilingrun.TritonPythonBackend) {
 		contract.ORTIntraOpThreads = threadCount
 		contract.ORTInterOpThreads = 1
 	}
@@ -385,6 +386,9 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	switch {
 	case candidate.State.RuntimeFamily == firstRuntimeFamily &&
 		candidate.State.Backend == firstRuntimeBackend:
+	case candidate.State.RuntimeFamily == profilingrun.TritonRuntimeFamily &&
+		candidate.State.Backend == profilingrun.TritonPythonBackend &&
+		candidate.State.Triton != nil:
 	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
 		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
 		candidate.State.HostContract != nil:

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +41,63 @@ func TestKubernetesCandidateResolverBuildsBoundCompatibleCandidate(t *testing.T)
 	}
 	assertResolvedCandidate(t, resolved, selection)
 	assertCandidateReport(t, resolved, selection)
+}
+
+func TestKubernetesCandidateResolverRejectsMalformedArtifactInputs(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*edgev1alpha1.ModelArtifact)
+	}{
+		{"missing contract", func(a *edgev1alpha1.ModelArtifact) { a.Input = nil }},
+		{"empty tensors", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors = nil }},
+		{"empty name", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors[0].Name = "" }},
+		{"duplicate name", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors = append(a.Input.Tensors, a.Input.Tensors[0]) }},
+		{"unknown datatype", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors[0].Datatype = "float32" }},
+		{"empty sample shape", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors[0].SampleShape = nil }},
+		{"nonpositive dimension", func(a *edgev1alpha1.ModelArtifact) { a.Input.Tensors[0].SampleShape[0] = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			objects := validCandidateObjects()
+			model := objects[0].(*edgev1alpha1.ModelSpec)
+			test.mutate(&model.Spec.Artifacts[0])
+			_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
+			if err == nil || !strings.Contains(err.Error(), `artifact "canonical-onnx" input tensor contract`) {
+				t.Fatalf("malformed artifact inputs were not visible to the consumer: %v", err)
+			}
+		})
+	}
+}
+
+func TestKubernetesCandidateResolverValidatesUnselectedArtifactInputs(t *testing.T) {
+	objects := validRKNNCandidateObjects()
+	model := objects[0].(*edgev1alpha1.ModelSpec)
+	model.Spec.Artifacts[1].Input.Tensors[0].Datatype = "float32"
+	selection := validCandidateSelection()
+	selection.DeviceClass = "orangepi-5-plus-16g"
+	_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), selection)
+	if err == nil || !strings.Contains(err.Error(), `artifact "mobilenet-v2-050-rk3588-bs1" input tensor contract`) {
+		t.Fatalf("unselected malformed declaration was accepted: %v", err)
+	}
+}
+
+func TestReportArtifactCapabilityPreservesDetachedNamedInputs(t *testing.T) {
+	for _, objects := range [][]client.Object{validCandidateObjects(), validRKNNCandidateObjects()} {
+		model := objects[0].(*edgev1alpha1.ModelSpec)
+		for _, artifact := range model.Spec.Artifacts {
+			capability := reportArtifactCapability(artifact)
+			if capability == nil || capability.Tensors[0].Name != "input" || capability.Tensors[0].Datatype != "FP32" {
+				t.Fatalf("artifact %q lost its input contract: %#v", artifact.Name, capability)
+			}
+			capability.Tensors[0].SampleShape[0] = 99
+			if artifact.Input.Tensors[0].SampleShape[0] == 99 {
+				t.Fatal("projected tensor contract aliases the catalog")
+			}
+			if artifact.Derivation == nil && (capability.TargetPlatform != "" || len(capability.DeclaredBatchSizes) != 0) {
+				t.Fatalf("canonical contract acquired derivation facts: %#v", capability)
+			}
+		}
+	}
 }
 
 func TestKubernetesCandidateResolverReusesRuntimeDeclarationAcrossModels(t *testing.T) {
@@ -107,7 +165,7 @@ func TestKubernetesCandidateResolverSeparatesRKNNRuntimeAndHostFacts(t *testing.
 	}
 	if report.ArtifactCapability == nil || report.ArtifactCapability.TargetPlatform != "rk3588" ||
 		!slices.Equal(report.ArtifactCapability.DeclaredBatchSizes, []int32{1}) ||
-		!slices.Equal(report.ArtifactCapability.InputSampleShape, []int32{224, 224, 3}) || report.RuntimeAccess == nil ||
+		!reflect.DeepEqual(report.ArtifactCapability.Tensors, []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}}) || report.RuntimeAccess == nil ||
 		!report.RuntimeAccess.Privileged || !slices.Equal(report.RuntimeAccess.SupplementalGroups, []int64{44, 110}) {
 		t.Fatalf("artifact capability or runtime access was not retained: %#v %#v",
 			report.ArtifactCapability, report.RuntimeAccess)
@@ -128,20 +186,6 @@ func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutInputContract(t *t
 	})
 	if err == nil || !strings.Contains(err.Error(), "input tensor contract") {
 		t.Fatalf("RKNN artifact without input tensor contract was accepted: %v", err)
-	}
-}
-
-func TestKubernetesCandidateResolverRejectsRKNNArtifactWithoutDeclaredBatchSizes(t *testing.T) {
-	objects := validRKNNCandidateObjects()
-	model := objects[0].(*edgev1alpha1.ModelSpec)
-	model.Spec.Artifacts[1].Derivation.DeclaredBatchSizes = nil
-	resolver := newCandidateResolver(t, objects...)
-	_, err := resolver.ResolveCandidate(context.Background(), profiler.CandidateSelection{
-		ModelSpec: "mobilenet-v2-050", DeviceClass: "orangepi-5-plus-16g",
-		ExecutionPath: profilingrun.RKNNLiteExecutionPath, PowerMode: profilingrun.FixedPowerMode,
-	})
-	if err == nil || err.Error() != "RKNNLite artifact requires a matching input tensor contract" {
-		t.Fatalf("RKNN artifact without declared batch sizes returned %v", err)
 	}
 }
 
@@ -237,6 +281,10 @@ func assertResolvedCandidate(t *testing.T, resolved profiler.ResolvedCandidate, 
 
 func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, selection profiler.CandidateSelection) {
 	t.Helper()
+	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := profilingrun.RunConfig{
 		Candidate: profilingrun.CandidateIdentity{
 			Inputs: resolved.Inputs, ExecutionPath: selection.ExecutionPath, Verdict: resolved.Verdict,
@@ -247,15 +295,12 @@ func assertCandidateReport(t *testing.T, resolved profiler.ResolvedCandidate, se
 			MetricObserver: resolved.MetricObserverImage,
 		},
 		TargetNode: profilingrun.NodeSnapshot{Architecture: resolved.DeviceArchitecture},
+		Delivery:   report.RuntimeDelivery(),
 	}
 	if err := profilingrun.ValidateCandidateReport(resolved.ReportBytes, config); err != nil {
 		t.Fatalf("generated report is not consumable by RunConfig: %v", err)
 	}
 
-	report, err := profilingrun.DecodeCandidateReport(resolved.ReportBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if report.SchemaVersion != profilingrun.CandidateReportSchemaVersion || report.Inputs.ModelSpec.UID != "model-uid" ||
 		report.Inputs.ModelSpec.ResourceVersion != "10" ||
 		report.Inputs.RuntimeDeclaration.Namespace != testSystemNamespace ||
@@ -359,19 +404,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				)
 			},
 			match: "unsupported Profiler execution facts schema",
-		},
-		{
-			name: "retired model-specific execution field",
-			mutate: func(objects []client.Object) {
-				config := objects[2].(*corev1.ConfigMap)
-				config.Data["execution-facts.yaml"] = strings.Replace(
-					config.Data["execution-facts.yaml"],
-					"  - deviceClass:",
-					"  - modelSpec: mobilenet-v2-050\n    deviceClass:",
-					1,
-				)
-			},
-			match: `unknown field "modelSpec"`,
 		},
 		{
 			name: "unknown execution fact field",
@@ -546,7 +578,7 @@ func validCandidateObjects() []client.Object {
 					Image: testArtifactImage, Architecture: testArchitecture, Path: testArtifactPath,
 				},
 				Input: &edgev1alpha1.ModelArtifactInputContract{
-					InputSampleShape: []int32{3, 224, 224},
+					Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
 				},
 			}},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
@@ -588,7 +620,7 @@ func validRKNNCandidateObjects() []client.Object {
 			Path: "/artifact/mobilenet-v2-050-rk3588-bs1.rknn",
 		},
 		Input: &edgev1alpha1.ModelArtifactInputContract{
-			InputSampleShape: []int32{224, 224, 3},
+			Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 		},
 		Derivation: validArtifactDerivation("canonical-onnx"),
 	})

@@ -9,6 +9,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
@@ -521,7 +522,8 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	config.State.HostContract = &host
 	config.Delivery = profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
-			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
+			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 		},
 		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
 		HostContract:    &host,

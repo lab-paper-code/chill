@@ -1,0 +1,181 @@
+{{- if .Values.servingEntrypoint.enabled }}
+{{- $name := include "chill.servingEntrypointName" . -}}
+{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/component: serving-entrypoint
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [modelspecs]
+    verbs: [get, list, create, update, delete]
+  - apiGroups: [edge.dacs.io]
+    resources: [workloads]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [edge.dacs.io]
+    resources: [workloads/status]
+    verbs: [update]
+  - apiGroups: [edge.dacs.io]
+    resources: [workloads/finalizers]
+    verbs: [update]
+  - apiGroups: [edge.dacs.io]
+    resources: [deviceclasses]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, patch]
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $servingNamespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [list, delete]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $servingNamespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- $actuationRole := printf "%s-actuation" $name }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $actuationRole }}
+  namespace: {{ $actuationNamespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [nodeactuations]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $actuationRole }}
+  namespace: {{ $actuationNamespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $actuationRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- $campaigns := dict }}
+{{- range .Values.servingEntrypoint.profileCampaigns }}
+{{- $parts := splitList "/" . }}
+{{- $namespace := index $parts 0 }}
+{{- $names := default (list) (get $campaigns $namespace) }}
+{{- $_ := set $campaigns $namespace (append $names (index $parts 1)) }}
+{{- end }}
+{{- $profileRole := printf "%s-profiles" $name }}
+{{- range $namespace := keys $campaigns | sortAlpha }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $profileRole }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chill.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [batchenergyoptimizations]
+    resourceNames:
+      {{- range get $campaigns $namespace | uniq | sortAlpha }}
+      - {{ . | quote }}
+      {{- end }}
+    verbs: [get]
+  - apiGroups: [edge.dacs.io]
+    resources: [profilingruns]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $profileRole }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chill.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $profileRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+---
+# Unbound caller grants use /chill to exclude Kubernetes' public /api/* discovery grants.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-serving-manager
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
+    verbs: [get, post, put, delete]
+  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/*"]
+    verbs: [get]
+  - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/namespaces/*"]
+    verbs: [get]
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" .Release.Namespace | quote }}
+    verbs: [post]
+{{- end }}

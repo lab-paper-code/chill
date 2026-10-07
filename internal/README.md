@@ -13,9 +13,10 @@ treating every directory under `internal/` as an equal entry point.
 | Node actuation | [`nodeactuator/`](nodeactuator/) | One verified Node power-state transition |
 | Operator console | [`operatorconsole/`](operatorconsole/) | Read models, Kubernetes queries, and the read-only HTTP API |
 | Evidence storage | [`evidencestore/`](evidencestore/) | Immutable object identity, verification, and storage adapters |
-| Device facts | [`deviceclass/`](deviceclass/) and [`modelcompat/`](modelcompat/) | Stable hardware facts and static model-path compatibility |
+| Device facts | [`deviceclass/`](deviceclass/) and [`modelcompat/`](modelcompat/) | Stable hardware facts and pure static model/input/native-setting compatibility |
 | Observation | [`metricobserver/`](metricobserver/) and [`workloadobserver/`](workloadobserver/) | Bounded metric and workload evidence collection |
-| Serving | [`serving/`](serving/) | Request parsing, backend selection, and HTTP forwarding |
+| Model registration | [`modelcatalog/`](modelcatalog/) | Shared API-to-model projection and registration validation |
+| Serving | [`serving/`](serving/) | Immutable applied definitions, admission, bounded queues, instance routing, physical drain and private observation journals |
 
 Small support packages remain at the top level because they do not define a
 separate product capability: `component` owns stable component names,
@@ -42,6 +43,25 @@ profiling/
 The executable composition root is [`../cmd/profiler/`](../cmd/profiler/).
 It assembles the controller and Kubernetes readers; neither package constructs
 the other.
+
+## Serving layout
+
+```text
+modelcompat/              pure tensor and runtime compatibility contracts
+modelcatalog/             shared ModelSpec projection and validation
+serving/                  admission, snapshots, routes, drain, JSONL/S3 windows
+├── entrypoint/           authenticated HTTPS query, management and inference
+├── kube/                 private uncached writer, TokenReview/SAR, measured
+│                         catalog and current Node/Pod/native observations
+└── triton/               official native HTTP V2 client and progress facts
+```
+
+[`../cmd/serving-entrypoint/`](../cmd/serving-entrypoint/) assembles concrete
+adapters. Serving does not import Profiler controllers or candidate resolvers.
+The native runtime is official Triton with Python/ORT CPU execution and its
+same-Workload-UID batching guard, not a separate HTTP inference proxy.
+Reviewed allowed directions and current `go list` edges are recorded in the
+[architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
 
 ## Layer vocabulary
 

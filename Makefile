@@ -13,6 +13,7 @@ METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
+DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
 RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
@@ -48,7 +49,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_DISCOVERY_IMG NODE_ACTUATOR_IMG PROFILER_IMG CONSOLE_IMG
+HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_DISCOVERY_IMG NODE_ACTUATOR_IMG PROFILER_IMG CONSOLE_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
 helm_flow_image_assignment = $(if $(and $(strip $(HELM_VALUES)),$(filter file,$(origin $(1)))),,$(1)="$($(1))")
 HELM_FLOW_IMAGE_ENV = $(foreach variable,$(HELM_FLOW_IMAGE_VARIABLES),$(call helm_flow_image_assignment,$(variable)))
 HELM_FLOW_ENV = HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
@@ -82,7 +83,7 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=operator-role crd paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=operator-role crd:allowDangerousTypes=true paths="./..." output:crd:artifacts:config=config/crd/bases
 	$(MAKE) helm-sync-crds
 	$(MAKE) helm-sync-rbac
 
@@ -110,6 +111,7 @@ vet: ## Run go vet against code.
 test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/ortcpu -p 'test_*.py'
 	python3 -m unittest discover -s runtime/rknnlite -p 'test_*.py'
+	python3 -m unittest discover -s runtime/triton -p 'test_*.py'
 
 .PHONY: test-artifact-tools
 test-artifact-tools: ## Run model-artifact build-tool tests.
@@ -135,6 +137,14 @@ lint: golangci-lint ## Run golangci-lint linter
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
+
+.PHONY: dashboard-check
+dashboard-check: ## Install frozen Dashboard dependencies, lint, typecheck, test, and build.
+	pnpm --dir chill-dashboard install --frozen-lockfile
+	pnpm --dir chill-dashboard lint
+	pnpm --dir chill-dashboard typecheck
+	pnpm --dir chill-dashboard test
+	pnpm --dir chill-dashboard build
 
 .PHONY: code-intelligence-baseline
 code-intelligence-baseline: ## Print the reproducible code-intelligence baseline.
@@ -351,6 +361,10 @@ docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 docker-build-serving-entrypoint: ## Build the inference entry point image.
 	$(CONTAINER_TOOL) build -f build/docker/serving-entrypoint.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
 
+.PHONY: docker-build-dashboard
+docker-build-dashboard: ## Build the independent Dashboard image.
+	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
+
 .PHONY: docker-build-all
 docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
 
@@ -376,6 +390,10 @@ docker-push-node-actuator: ## Push the NodeActuator image.
 .PHONY: docker-push-console
 docker-push-console: ## Push the Console API image.
 	$(CONTAINER_TOOL) push $(CONSOLE_IMG)
+
+.PHONY: docker-push-dashboard
+docker-push-dashboard: ## Push the independent Dashboard image.
+	$(CONTAINER_TOOL) push $(DASHBOARD_IMG)
 
 .PHONY: docker-push-metric-observer
 docker-push-metric-observer: ## Push the MetricObserver image.
@@ -459,6 +477,12 @@ docker-buildx-serving-entrypoint: ## Build and push the inference entry point im
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/serving-entrypoint.Dockerfile --tag $(SERVING_ENTRYPOINT_IMG) .
+
+.PHONY: docker-buildx-dashboard
+docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platform support.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
 .PHONY: docker-buildx-all
 docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.

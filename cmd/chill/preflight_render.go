@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 func writeBatchEnergyOptimizationPreflight(
@@ -53,11 +54,9 @@ func writeBatchEnergyOptimizationPreflightTable(
 				Name          string `json:"name"`
 				ExecutionPath string `json:"executionPath"`
 			} `json:"artifact"`
-			DeviceClass string `json:"deviceClass"`
-			PowerMode   string `json:"powerMode"`
-			Tensor      struct {
-				InputSampleShape []int `json:"inputSampleShape"`
-			} `json:"tensor"`
+			DeviceClass string                                `json:"deviceClass"`
+			PowerMode   string                                `json:"powerMode"`
+			Tensor      profilederivation.CurveTensorContract `json:"tensor"`
 		} `json:"shared"`
 	}
 	if len(preflight.Plan) != 0 {
@@ -66,12 +65,18 @@ func writeBatchEnergyOptimizationPreflightTable(
 		}
 	}
 	_, err := fmt.Fprintf(table, "PLANNED_BATCH_SIZES\t%s\nARTIFACT\t%s\nEXECUTION_PATH\t%s\n"+
-		"DEVICE_CLASS\t%s\nPOWER_MODE\t%s\nINPUT_SAMPLE_SHAPE\t%s\n",
+		"DEVICE_CLASS\t%s\nPOWER_MODE\t%s\n",
 		display(formatIntegers(plan.Shared.PlannedBatchSizes)), display(plan.Shared.Artifact.Name),
 		display(plan.Shared.Artifact.ExecutionPath), display(plan.Shared.DeviceClass),
-		display(plan.Shared.PowerMode), display(formatIntegers(plan.Shared.Tensor.InputSampleShape)))
+		display(plan.Shared.PowerMode))
 	if err != nil {
 		return err
+	}
+	for _, tensor := range plan.Shared.Tensor.Tensors {
+		if _, err := fmt.Fprintf(table, "INPUT_TENSOR\t%s\nDATATYPE\t%s\nSAMPLE_SHAPE\t%v\n",
+			display(tensor.Name), display(tensor.Datatype), tensor.SampleShape); err != nil {
+			return err
+		}
 	}
 	return table.Flush()
 }

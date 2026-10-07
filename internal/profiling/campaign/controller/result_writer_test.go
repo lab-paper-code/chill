@@ -300,7 +300,7 @@ func newResultWriter(t *testing.T, store ResultStore, maximumBytes int64) *Resul
 func resultWriterCurvePlanReference() batchenergyoptimization.StoredObjectReference {
 	return batchenergyoptimization.StoredObjectReference{
 		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
-		SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 4096,
+		SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 4096,
 	}
 }
 

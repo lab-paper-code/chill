@@ -43,6 +43,7 @@ type options struct {
 	workloadResultPath      string
 	terminationMessagePath  string
 	runtimeCommand          []string
+	tritonRuntimeCommand    []string
 	attemptTimeout          time.Duration
 	observerReadyTimeout    time.Duration
 	metricResultTimeout     time.Duration
@@ -74,6 +75,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.workloadResultPath = defaultWorkloadResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
 	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
+	o.tritonRuntimeCommand = []string{"python3", "/opt/chill/triton/runner.py"}
 	o.podUID = os.Getenv("POD_UID")
 	o.scheduledNodeName = os.Getenv("NODE_NAME")
 	o.accessKeyID = os.Getenv("AWS_ACCESS_KEY_ID")

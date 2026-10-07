@@ -191,6 +191,22 @@ app.kubernetes.io/component: operator
 {{- default .Chart.AppVersion .Values.servingEntrypoint.image.tag -}}
 {{- end -}}
 
+{{- define "chill.dashboardName" -}}
+{{- printf "%s-dashboard" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "chill.dashboardImage" -}}
+{{- printf "%s:%s" .Values.dashboard.image.repository (default .Chart.AppVersion .Values.dashboard.image.tag) -}}
+{{- end -}}
+
+{{- define "chill.dashboardBaseURL" -}}
+{{- if .Values.dashboard.baseURL -}}
+{{- .Values.dashboard.baseURL -}}
+{{- else if .Values.servingEntrypoint.enabled -}}
+{{- printf "https://%s.%s.svc.cluster.local:%v" (include "chill.servingEntrypointName" .) .Release.Namespace .Values.servingEntrypoint.port -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "chill.uninstallCleanupName" -}}
 {{- printf "%s-uninstall-cleanup" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

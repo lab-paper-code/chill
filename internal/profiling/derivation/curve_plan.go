@@ -10,10 +10,12 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha6"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha7"
 )
 
 // CurveCPUContract is the execution CPU contract shared by every planned batch.
@@ -62,7 +64,7 @@ type CurveConversionContract struct {
 }
 
 type CurveTensorContract struct {
-	InputSampleShape []int `json:"inputSampleShape"`
+	Tensors []modelcompat.InputTensor `json:"tensors"`
 }
 
 // CurveArtifactContract binds the one immutable artifact every planned batch
@@ -76,22 +78,23 @@ type CurveArtifactContract struct {
 
 // CurvePlanSpec is the raw material selected for one measurement plan.
 type CurvePlanSpec struct {
-	Name              string                    `json:"name"`
-	LogicalModel      string                    `json:"logicalModel"`
-	DeviceClass       string                    `json:"deviceClass"`
-	NodeUID           string                    `json:"nodeUID"`
-	RuntimeFamily     string                    `json:"runtimeFamily"`
-	Backend           string                    `json:"backend"`
-	RuntimeImage      string                    `json:"runtimeImage"`
-	PowerMode         string                    `json:"powerMode"`
-	CPU               CurveCPUContract          `json:"cpu"`
-	MetricSource      CurveMetricSourceContract `json:"metricSource"`
-	ActiveProtocol    CurveProtocolContract     `json:"activeProtocol"`
-	IdleProtocol      CurveProtocolContract     `json:"idleProtocol"`
-	Conversion        CurveConversionContract   `json:"conversion"`
-	Artifact          CurveArtifactContract     `json:"artifact"`
-	PlannedBatchSizes []int                     `json:"plannedBatchSizes"`
-	Tensor            CurveTensorContract       `json:"tensor"`
+	Name              string                      `json:"name"`
+	LogicalModel      string                      `json:"logicalModel"`
+	DeviceClass       string                      `json:"deviceClass"`
+	NodeUID           string                      `json:"nodeUID"`
+	RuntimeFamily     string                      `json:"runtimeFamily"`
+	Backend           string                      `json:"backend"`
+	Triton            *modelcompat.TritonSettings `json:"triton,omitempty"`
+	RuntimeImage      string                      `json:"runtimeImage"`
+	PowerMode         string                      `json:"powerMode"`
+	CPU               CurveCPUContract            `json:"cpu"`
+	MetricSource      CurveMetricSourceContract   `json:"metricSource"`
+	ActiveProtocol    CurveProtocolContract       `json:"activeProtocol"`
+	IdleProtocol      CurveProtocolContract       `json:"idleProtocol"`
+	Conversion        CurveConversionContract     `json:"conversion"`
+	Artifact          CurveArtifactContract       `json:"artifact"`
+	PlannedBatchSizes []int                       `json:"plannedBatchSizes"`
+	Tensor            CurveTensorContract         `json:"tensor"`
 }
 
 type curvePlanRecord struct {
@@ -222,6 +225,16 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	if !cleanCurveValue(shared.RuntimeImage) {
 		return errors.New("curve plan runtime image is invalid")
 	}
+	if shared.RuntimeFamily == "triton" {
+		if shared.Backend != "python" {
+			return errors.New("Triton curve plan requires the Python CPU backend")
+		}
+		if err := modelcompat.ValidateTritonRuntimeSettings(shared.Triton); err != nil {
+			return err
+		}
+	} else if shared.Triton != nil {
+		return errors.New("non-Triton curve plan cannot contain Triton settings")
+	}
 	if err := validateCurveCPU(shared.CPU); err != nil {
 		return err
 	}
@@ -262,18 +275,16 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 		if plannedBatchSize <= 0 {
 			return errors.New("curve plan batch sizes must be positive")
 		}
+		if shared.Triton != nil && plannedBatchSize > int(shared.Triton.MaxBatchSize) {
+			return errors.New("curve plan batch exceeds selected Triton maxBatchSize")
+		}
 		if _, exists := seenBatches[plannedBatchSize]; exists {
 			return fmt.Errorf("curve plan batch size %d is duplicated", plannedBatchSize)
 		}
 		seenBatches[plannedBatchSize] = struct{}{}
 	}
-	if len(shared.Tensor.InputSampleShape) == 0 {
-		return errors.New("curve plan tensor contract is incomplete")
-	}
-	for _, dimension := range shared.Tensor.InputSampleShape {
-		if dimension < 1 {
-			return errors.New("curve plan tensor dimensions must be positive")
-		}
+	if err := modelcompat.ValidateInputTensors(shared.Tensor.Tensors); err != nil {
+		return fmt.Errorf("curve plan tensor contract: %w", err)
 	}
 	return nil
 }
@@ -342,6 +353,7 @@ func cleanCurveValue(value string) bool {
 
 func cloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
-	shared.Tensor.InputSampleShape = append([]int(nil), shared.Tensor.InputSampleShape...)
+	shared.Tensor.Tensors = modelcompat.CloneInputTensors(shared.Tensor.Tensors)
+	shared.Triton = modelcompat.CloneTritonRuntimeSettings(shared.Triton)
 	return shared
 }

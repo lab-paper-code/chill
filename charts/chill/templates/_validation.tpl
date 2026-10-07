@@ -31,9 +31,6 @@
 {{- end -}}
 {{- end -}}
 {{- if .Values.servingEntrypoint.enabled -}}
-{{- if lt (int .Values.servingEntrypoint.replicaCount) 1 -}}
-{{- fail "servingEntrypoint.replicaCount must be positive when servingEntrypoint.enabled=true" -}}
-{{- end -}}
 {{- if empty .Values.servingEntrypoint.image.repository -}}
 {{- fail "servingEntrypoint.image.repository must not be empty when servingEntrypoint.enabled=true" -}}
 {{- end -}}
@@ -43,32 +40,37 @@
 {{- if or (lt (int .Values.servingEntrypoint.port) 1) (gt (int .Values.servingEntrypoint.port) 65535) -}}
 {{- fail "servingEntrypoint.port must be between 1 and 65535 when servingEntrypoint.enabled=true" -}}
 {{- end -}}
-{{- if or (lt (int .Values.servingEntrypoint.servingPort) 1) (gt (int .Values.servingEntrypoint.servingPort) 65535) -}}
-{{- fail "servingEntrypoint.servingPort must be between 1 and 65535 when servingEntrypoint.enabled=true" -}}
+{{- if empty .Values.servingEntrypoint.tls.secretName -}}
+{{- fail "servingEntrypoint.tls.secretName must name an existing TLS Secret when servingEntrypoint.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.servingEntrypoint.routes -}}
-{{- fail "servingEntrypoint.routes must name at least one model when servingEntrypoint.enabled=true" -}}
+{{- if or (empty .Values.evidenceStore.connection.bucket) (empty .Values.evidenceStore.connection.region) -}}
+{{- fail "evidenceStore.connection.bucket and region must match the evidence store when servingEntrypoint.enabled=true" -}}
 {{- end -}}
-{{- $serviceToNode := dict -}}
-{{- $nodeToService := dict -}}
-{{- range $backends := .Values.servingEntrypoint.routes -}}
-{{- range $backend := $backends -}}
-{{- $service := $backend.service -}}
-{{- $node := $backend.node -}}
-{{- if hasKey $serviceToNode $service -}}
-{{- if ne (get $serviceToNode $service) $node -}}
-{{- fail (printf "servingEntrypoint.routes service %q maps to multiple nodes: %q, %q" $service (get $serviceToNode $service) $node) -}}
+{{- if empty .Values.servingEntrypoint.observationStorage.size -}}
+{{- fail "servingEntrypoint.observationStorage.size must not be empty when servingEntrypoint.enabled=true" -}}
 {{- end -}}
-{{- else -}}
-{{- $_ := set $serviceToNode $service $node -}}
+{{- range $selection := .Values.servingEntrypoint.profileCampaigns -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $selection) -}}
+{{- fail "servingEntrypoint.profileCampaigns entries must be namespace/name" -}}
 {{- end -}}
-{{- if hasKey $nodeToService $node -}}
-{{- if ne (get $nodeToService $node) $service -}}
-{{- fail (printf "servingEntrypoint.routes node %q maps to multiple services: %q, %q" $node (get $nodeToService $node) $service) -}}
 {{- end -}}
-{{- else -}}
-{{- $_ := set $nodeToService $node $service -}}
 {{- end -}}
+{{- if .Values.dashboard.enabled -}}
+{{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}
+{{- fail "dashboard requires a positive replicaCount and image.repository" -}}
+{{- end -}}
+{{- if or (lt (int .Values.dashboard.port) 1) (gt (int .Values.dashboard.port) 65535) -}}
+{{- fail "dashboard.port must be between 1 and 65535" -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[^/?#@]+/?$" (include "chill.dashboardBaseURL" .)) -}}
+{{- fail "dashboard requires a fixed HTTPS baseURL or an enabled servingEntrypoint" -}}
+{{- end -}}
+{{- if and .Values.dashboard.caSecretName (empty .Values.dashboard.caSecretKey) -}}
+{{- fail "dashboard.caSecretKey is required with caSecretName" -}}
+{{- end -}}
+{{- if .Values.dashboard.ingress.enabled -}}
+{{- if or (empty .Values.dashboard.ingress.host) (empty .Values.dashboard.ingress.tlsSecretName) -}}
+{{- fail "dashboard ingress requires host and tlsSecretName; bearer traffic must use HTTPS" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

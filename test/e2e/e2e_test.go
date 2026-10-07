@@ -216,7 +216,7 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 1, DurationSeconds: 1,
 				WorkloadMode:     "saturated-serial-fixed-batch",
-				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
+				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

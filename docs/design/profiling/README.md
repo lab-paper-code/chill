@@ -102,6 +102,105 @@ previous plan's output without taking over its responsibility. If live
 evidence exposes a bad earlier assumption, that earlier boundary is revised
 separately.
 
+## Profiling runtime input contracts
+
+Every frozen RunConfig carries `delivery.artifactCapability.tensors`, including
+canonical ONNX artifacts with no target platform or artifact-declared batch set.
+Each tensor declares `name`, uppercase Triton `datatype`, and batch-free
+`sampleShape`; the selected measurement batch is added only at invocation.
+The ORT and RKNNLite request schemas are respectively v1alpha15 and v1alpha11,
+RunConfig is v1alpha15, active runtime results are v1alpha6, and model-loaded
+idle results are v1alpha4. Both results record typed, batch-free `inputs`.
+These readers accept only their current schema, without shape or datatype
+inference from missing declarations.
+
+[CPU ORT](../../../runtime/ortcpu/runner.py) validates every declared input name,
+datatype, rank, fixed sample dimension, and selected batch against session
+metadata before either active or idle measurement. A symbolic runtime batch
+axis accepts the selected batch; a fixed axis must equal it. Named multi-input
+feeds support BOOL, UINT8/16/32/64, INT8/16/32/64, and FP16/32/64. Unsupported
+datatypes fail explicitly. The `numpy-default-rng-seed-0-inputs-v1` generator
+fills floating tensors with seeded standard-normal values cast to the declared
+dtype and integer/boolean tensors with seeded zero/one values; the combined
+input byte budget is admitted before allocating any feed.
+
+[RKNNLite](../../../runtime/rknnlite/runner.py) supports one FP32 tensor with
+rank-three NHWC sample dimensions. It validates the artifact input name,
+datatype, shape, and selected static or dynamic batch through the delivered
+`librknnrt` library before initializing the measured Lite2 context. This
+temporary metadata context performs no inference and is destroyed before
+measurement. Official
+[RKNN C API metadata](https://github.com/airockchip/rknn-toolkit2/blob/master/rknpu2/runtime/Linux/librknn_api/include/rknn_api.h)
+defines the queried structures and NCHW/NHWC layouts; NCHW metadata is explicitly
+reordered to the NHWC invocation shape. Inference explicitly requests
+`float32`/`nhwc`; unsupported contracts or unavailable metadata fail, including
+for model-loaded idle runs.
+
+The [RKNN exporter](../../../build/model-artifacts/rknn/export_rknn.py) accepts
+one FP32 rank-four NCHW ONNX input with symbolic batch and positive fixed sample
+dimensions. Conversion profiles retain that ONNX ordering, while conversion
+record v1alpha4 preserves the source tensor name and FP32 datatype in
+`conversion.tensors` with NHWC `sampleShape`. It does not emit the old anonymous
+`inputSampleShape` field.
+
+## Serving execution
+
+**Status:** Design.
+
+Serving profiles follow the
+[shared execution contract](../../spec/00_measurement.md#측정의-단위).
+Reuse the Run and campaign controllers, repeated trials, power observation,
+raw evidence storage, and numeric derivation. Runtime invocation and frozen
+execution conditions use the Serving Triton/backend configuration.
+
+Confirm target-device and backend support, including RKNN, on the Serving path;
+profiling shares that integration. Use Triton's
+[backend and platform support guidance](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/backend/README.html#where-can-i-find-all-the-backends-that-are-available-for-triton).
+
+## Serving resource allocation
+
+The [measurement specification](../../spec/00_measurement.md) requires profiles
+for resource allocations actually used by Serving. The scheduler selects only
+measured execution configurations. CPU inference thread settings follow the CPU
+allocation, and each serving instance executes one batch at a time; threads and
+execution concurrency are not independent search dimensions.
+Memory usage, including observed peaks, supplies placement-feasibility evidence,
+not a memory-limit performance sweep. Account separately for system reservations
+and serving memory not represented by the profiling workload.
+The current implementation and the required alignment are distinct:
+
+| Condition | Current implementation |
+|---|---|
+| CPU scheduling request | `ProfilingRun.spec.cpuRequest`, applied to the runtime container |
+| CPU quota | Optional `spec.measurement.cpuQuota`, a positive whole-core count; omission uses Node allocatable CPU |
+| CPU ORT threads | Intra-op threads follow the frozen quota; inter-op threads are one, not a separately selectable sweep axis |
+| CPU observations | Runtime checks cgroup quota and sufficient affinity, and records affinity and effective cpuset; this does not establish exclusive CPU allocation |
+| Memory | Runtime requests/limits come from the selected execution policy, not a per-Run measurement parameter |
+| Accelerator execution | Job projection supports CPU ORT and RKNNLite; an installed GPU device plugin alone does not provide a GPU ProfilingRun runtime path |
+
+Sources: [public Run fields](../../../api/v1alpha1/profilingrun_types.go),
+[CPU freezing](../../../internal/profiling/profiler/preparation.go),
+[runtime resources](../../../internal/profiling/profiler/controller/execution_job_spec.go),
+[CPU read-back](../../../runtime/ortcpu/runner.py),
+[execution policy](../../../internal/profiling/profiler/execution_policy_types.go),
+and [runtime Job projection](../../../internal/profiling/profiler/controller/runtime_job_projection.go).
+
+The CPU contract already participates in
+[execution-state identity](../../../internal/profiling/profiler/projection/identity.go)
+and [curve conditions](../../../internal/profiling/profiler/projection/curve_plan.go).
+Different quotas are not interchangeable measurements. A standalone Run can
+already select a quota, but
+[BatchEnergyOptimization Run construction](../../../internal/profiling/campaign/controller/run_builder.go)
+does not pass one: its public state and protocols have no quota selection.
+An allocation-selecting campaign must carry the selected conditions to both
+active and idle Runs rather than silently using the full-node quota.
+
+Exclusive CPU partitions require an allocation contract, compatible native Pod
+resource settings and node configuration, and evidence of the actual assignment.
+Quota read-back is not that evidence. GPU profiling separately needs its runtime
+path and allocation evidence. These are implementation gaps, not new arbitrary
+“interference level” parameters; existing quota and thread fields should be reused.
+
 ## Split plans
 
 ### 1. Catalog and static compatibility

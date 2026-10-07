@@ -119,9 +119,16 @@ func buildRuntimeAdapter(
 	if err != nil {
 		return nil, err
 	}
-	if profilingrun.IsSupportedCPUORTRunConfig(runConfigRecord) {
-		runtimeAdapter, err := worker.NewORTCPURuntime(worker.ORTCPURuntimeConfig{
-			Command: opts.runtimeCommand, ModelPath: opts.modelPath,
+	if profilingrun.IsSupportedCPUORTRunConfig(runConfigRecord) ||
+		profilingrun.IsSupportedTritonCPURunConfig(runConfigRecord) {
+		command := opts.runtimeCommand
+		constructor := worker.NewORTCPURuntime
+		if profilingrun.IsSupportedTritonCPURunConfig(runConfigRecord) {
+			command = opts.tritonRuntimeCommand
+			constructor = worker.NewTritonCPURuntime
+		}
+		runtimeAdapter, err := constructor(worker.CPURuntimeConfig{
+			Command: command, ModelPath: opts.modelPath,
 			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
 			MeasurementStartPath:    opts.measurementStartPath,
 			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
@@ -131,7 +138,7 @@ func buildRuntimeAdapter(
 			MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("construct CPU ORT adapter: %w", err)
+			return nil, fmt.Errorf("construct %s CPU adapter: %w", runConfigRecord.State.RuntimeFamily, err)
 		}
 		return runtimeAdapter, nil
 	}

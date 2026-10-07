@@ -8,6 +8,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -309,7 +310,7 @@ func createBatchEnergyOptimization(
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 30,
-				InputGenerator: "numpy-default-rng-seed-0-fp32-v1", OutputValidation: "nonempty-shape-batch-v1",
+				InputGenerator: "numpy-default-rng-seed-0-inputs-v1", OutputValidation: "nonempty-shape-batch-v1",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31,
 				},
@@ -567,7 +568,7 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
-			InputSampleShape: []int{3, 224, 224},
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
 		},
 	})
 	if err != nil {

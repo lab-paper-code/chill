@@ -17,3 +17,9 @@ PROJECT
 README.md
 cover.out
 *.out
+
+chill-dashboard/node_modules/
+chill-dashboard/.next/
+chill-dashboard/.pnpm-store/
+chill-dashboard/tsconfig.tsbuildinfo
+chill-dashboard/.env*

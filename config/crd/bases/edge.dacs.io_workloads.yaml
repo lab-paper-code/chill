@@ -1,0 +1,200 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: workloads.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: Workload
+    listKind: WorkloadList
+    plural: workloads
+    singular: workload
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Workload identifies a service by name and a registration by UID.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WorkloadSpec declares only the desired logical model and
+              request SLO.
+            properties:
+              modelRef:
+                properties:
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
+              slo:
+                properties:
+                  percentile:
+                    exclusiveMinimum: true
+                    maximum: 100
+                    minimum: 0
+                    type: number
+                  targetLatency:
+                    type: string
+                    x-kubernetes-validations:
+                    - message: targetLatency must be a positive duration
+                      rule: duration(self) > duration('0s')
+                    - message: targetLatency must fit a Go duration
+                      rule: duration(self) <= duration('2562047h47m16.854775807s')
+                required:
+                - percentile
+                - targetLatency
+                type: object
+            required:
+            - modelRef
+            - slo
+            type: object
+          status:
+            properties:
+              admission:
+                properties:
+                  allowed:
+                    type: boolean
+                  observedAt:
+                    format: date-time
+                    type: string
+                  reason:
+                    type: string
+                required:
+                - allowed
+                - observedAt
+                type: object
+              appliedDefinition:
+                properties:
+                  modelRef:
+                    properties:
+                      generation:
+                        format: int64
+                        type: integer
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - generation
+                    - name
+                    - uid
+                    type: object
+                  slo:
+                    properties:
+                      percentile:
+                        exclusiveMinimum: true
+                        maximum: 100
+                        minimum: 0
+                        type: number
+                      targetLatency:
+                        type: string
+                        x-kubernetes-validations:
+                        - message: targetLatency must be a positive duration
+                          rule: duration(self) > duration('0s')
+                        - message: targetLatency must fit a Go duration
+                          rule: duration(self) <= duration('2562047h47m16.854775807s')
+                    required:
+                    - percentile
+                    - targetLatency
+                    type: object
+                  workloadGeneration:
+                    format: int64
+                    type: integer
+                required:
+                - modelRef
+                - slo
+                - workloadGeneration
+                type: object
+              operation:
+                description: WorkloadOperation describes one accepted management change,
+                  not a queue.
+                properties:
+                  acceptedAt:
+                    format: date-time
+                    type: string
+                  actorUID:
+                    type: string
+                  actorUsername:
+                    description: ActorUsername and ActorUID are the TokenReview-verified
+                      original caller.
+                    type: string
+                  appliedAt:
+                    format: date-time
+                    type: string
+                  completedAt:
+                    format: date-time
+                    type: string
+                  error:
+                    type: string
+                  kind:
+                    enum:
+                    - Update
+                    - Delete
+                    - ModelUpdate
+                    type: string
+                  phase:
+                    enum:
+                    - Stopping
+                    - Draining
+                    - Detaching
+                    - Applying
+                    - Cleaning
+                    - Completed
+                    - Failed
+                    type: string
+                  reason:
+                    type: string
+                  targetGeneration:
+                    format: int64
+                    type: integer
+                  targetModelGeneration:
+                    format: int64
+                    type: integer
+                  targetModelUID:
+                    description: Target model identity is present only for a shared
+                      ModelSpec update.
+                    type: string
+                required:
+                - acceptedAt
+                - kind
+                - phase
+                - targetGeneration
+                type: object
+            required:
+            - admission
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

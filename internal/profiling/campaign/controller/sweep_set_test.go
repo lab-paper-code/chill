@@ -30,7 +30,7 @@ func TestResolvePlannedBatchSizesRejectsARepeatedBatch(t *testing.T) {
 }
 
 func TestResolvePlannedBatchSizesKeepsADeclaredSweep(t *testing.T) {
-	planned, err := resolvePlannedBatchSizes([]int32{1, 2, 4, 8, 16}, nil)
+	planned, err := resolvePlannedBatchSizes([]int32{1, 2, 4, 8, 16}, &profilingrun.CandidateArtifactCapability{})
 	if err != nil {
 		t.Fatal(err)
 	}

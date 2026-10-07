@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -145,6 +146,7 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 			ArtifactPath:  artifact.Source.Path,
 			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
 			PowerMode: selection.PowerMode, HostContract: reportHostContract(declaration.Host),
+			Triton: modelcatalog.TritonSettings(modelPath.Runtime),
 		},
 		DeviceArchitecture:   deviceClass.Spec.Architecture,
 		DeviceNodeSelector:   deviceFacts.nodeSelector,

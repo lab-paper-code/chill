@@ -29,8 +29,10 @@ artifact.
 ## Decision
 
 Every artifact declares its batch-invariant input tensor contract as
-`ModelArtifact.input`. A selected artifact without that declaration cannot
-produce a curve plan and returns a typed error naming the artifact.
+`ModelArtifact.input.tensors`. Each tensor records its exact runtime `name`,
+Triton `datatype` (for example `FP32` or `INT64`), and positive `sampleShape`
+without the batch axis. Names are unique within the artifact. A selected
+artifact without a complete declaration returns an error naming the artifact.
 
 Every derived artifact additionally declares the finite batch set fixed by its
 conversion as `ModelArtifact.derivation.declaredBatchSizes`. One execution
@@ -48,6 +50,13 @@ unchanged and the selected batch set as `PlannedBatchSizes`. Its conversion
 contract is populated for the artifact-declared source and all-empty for the
 campaign-declared canonical source, so the immutable plan records whether its
 boundary is an artifact constraint or a measurement choice.
+
+Candidate reports and frozen RunConfig delivery preserve the complete typed
+inputs for canonical and derived artifacts. Active and model-loaded-idle
+runtime evidence records the same inputs and is matched against the frozen
+declaration. Workers validate actual runtime metadata before measurement;
+they never infer a datatype or substitute a shape for a missing declaration.
+An unsupported datatype or runtime input contract is an explicit error.
 
 The capability boundary is resolved when the campaign records its curve plan. The
 sweep advances through the recorded set in ascending order, steps over omitted

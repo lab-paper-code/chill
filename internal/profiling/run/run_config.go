@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -106,23 +107,8 @@ func (i RunConfig) validateDelivery() error {
 	if err := validateCandidateRuntimePackages(delivery.RuntimePackages); err != nil {
 		return fmt.Errorf("validate RunConfig delivery: %w", err)
 	}
-	if delivery.ArtifactCapability != nil {
-		capability := delivery.ArtifactCapability
-		if strings.TrimSpace(capability.TargetPlatform) == "" ||
-			strings.TrimSpace(capability.TargetPlatform) != capability.TargetPlatform ||
-			len(capability.DeclaredBatchSizes) == 0 {
-			return errors.New("RunConfig delivery artifact capability is incomplete")
-		}
-		for _, batch := range capability.DeclaredBatchSizes {
-			if batch < 1 {
-				return errors.New("RunConfig delivery declared batch sizes must be positive")
-			}
-		}
-		for _, dimension := range capability.InputSampleShape {
-			if dimension < 1 {
-				return errors.New("RunConfig delivery input shape dimensions must be positive")
-			}
-		}
+	if err := validateArtifactCapability(delivery.ArtifactCapability); err != nil {
+		return fmt.Errorf("RunConfig delivery artifact capability: %w", err)
 	}
 	if delivery.HostContract != nil {
 		if err := validateCandidateHostContract(*delivery.HostContract); err != nil {
@@ -134,12 +120,28 @@ func (i RunConfig) validateDelivery() error {
 			return fmt.Errorf("validate RunConfig delivery: %w", err)
 		}
 	}
+	if i.State.RuntimeFamily == TritonRuntimeFamily {
+		if i.State.Backend != TritonPythonBackend {
+			return errors.New("Triton CPU runtime requires the Python backend")
+		}
+		if err := modelcompat.ValidateTritonRuntimeSettings(i.State.Triton); err != nil {
+			return err
+		}
+		if i.Measurement.Batch > int(i.State.Triton.MaxBatchSize) {
+			return errors.New("measurement batch exceeds the selected Triton maxBatchSize")
+		}
+		if delivery.ArtifactCapability == nil || len(delivery.ArtifactCapability.Tensors) == 0 {
+			return errors.New("Triton CPU runtime requires frozen artifact inputs")
+		}
+	} else if i.State.Triton != nil {
+		return errors.New("non-Triton RunConfig cannot contain Triton settings")
+	}
 	if i.State.RuntimeFamily != RKNNLiteRuntimeFamily {
 		return nil
 	}
 	if delivery.ArtifactCapability == nil || len(delivery.RuntimePackages) != 1 ||
 		delivery.HostContract == nil || delivery.RuntimeAccess == nil ||
-		len(delivery.ArtifactCapability.InputSampleShape) == 0 {
+		len(delivery.ArtifactCapability.Tensors) == 0 {
 		return errors.New("RKNNLite RunConfig delivery is incomplete")
 	}
 	if !reflect.DeepEqual(i.State.HostContract, delivery.HostContract) {
@@ -249,10 +251,20 @@ func IsSupportedRKNNLiteRunConfig(i RunConfig) bool {
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
 
+// IsSupportedTritonCPURunConfig is the native Triton Python/CPU-ORT path, not an
+// alias for standalone ONNX Runtime measurements.
+func IsSupportedTritonCPURunConfig(i RunConfig) bool {
+	return i.SchemaVersion == RunConfigSchemaVersion && hasExecutionPath(i) &&
+		i.State.RuntimeFamily == TritonRuntimeFamily && i.State.Backend == TritonPythonBackend &&
+		i.State.Triton != nil &&
+		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
+			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+}
+
 func isCPUORTExecution(i RunConfig) bool {
 	return hasExecutionPath(i) &&
-		i.State.RuntimeFamily == "onnxruntime" &&
-		i.State.Backend == "CPUExecutionProvider"
+		i.State.RuntimeFamily == cpuORTRuntimeFamily &&
+		i.State.Backend == cpuExecutionProvider
 }
 
 func hasExecutionPath(i RunConfig) bool {

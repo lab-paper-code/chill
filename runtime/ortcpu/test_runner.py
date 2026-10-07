@@ -7,6 +7,7 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
 import runner
 
@@ -166,7 +167,9 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "powerMode": "fixed",
             },
             "images": {},
-            "delivery": {},
+            "delivery": {"artifactCapability": {"tensors": [
+                {"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}
+            ]}},
             "targetNode": {
                 "name": "lattepanda",
                 "uid": "node-uid",
@@ -212,6 +215,95 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_named_multi_input_measurement_uses_declared_dtypes(self) -> None:
+        import numpy
+
+        tensors = [
+            {"name": "tokens", "datatype": "INT64", "sampleShape": [4]},
+            {"name": "weights", "datatype": "FP32", "sampleShape": [4]},
+            {"name": "mask", "datatype": "BOOL", "sampleShape": [4]},
+        ]
+        session = mock.Mock()
+        session.get_providers.return_value = ["CPUExecutionProvider"]
+        session.get_inputs.return_value = [
+            SimpleNamespace(name=t["name"], type=runner.INPUT_DATATYPES[t["datatype"]][0], shape=["batch", 4])
+            for t in reversed(tensors)
+        ]
+        session.run.return_value = [numpy.ones((2, 1), dtype=numpy.float32)]
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            request = valid_request(model)
+            request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
+            request["runConfig"]["measurement"]["batch"] = 2
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
+                stack.enter_context(mock.patch.object(runner, "validate_cpu_contract", return_value=("400000 100000", [0], "0")))
+                stack.enter_context(mock.patch.object(FakeORT, "InferenceSession", return_value=session))
+                stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+                stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                stack.enter_context(mock.patch.object(runner, "cpu_stat", return_value={}))
+                stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
+                result = runner.execute(request, FakeORT, numpy)
+            self.assertEqual(session.run.call_count, 3)
+            for call in session.run.call_args_list:
+                feeds = call.args[1]
+                self.assertEqual(set(feeds), {"tokens", "weights", "mask"})
+                self.assertEqual(feeds["tokens"].dtype, numpy.dtype("int64"))
+                self.assertEqual(feeds["weights"].dtype, numpy.dtype("float32"))
+                self.assertEqual(feeds["mask"].dtype, numpy.dtype("bool"))
+                self.assertTrue(all(value.shape == (2, 4) for value in feeds.values()))
+            self.assertEqual(result["inputs"], tensors)
+            self.assertEqual(result["batchSize"], 2)
+            self.assertNotIn("inputShape", result)
+
+    def test_metadata_mismatch_fails_before_active_or_idle_window(self) -> None:
+        mismatches = [
+            ("names", SimpleNamespace(name="wrong", type="tensor(float)", shape=[1, 3, 224, 224])),
+            ("datatype", SimpleNamespace(name="input", type="tensor(int64)", shape=[1, 3, 224, 224])),
+            ("rank", SimpleNamespace(name="input", type="tensor(float)", shape=[1, 224, 224])),
+            ("sampleShape", SimpleNamespace(name="input", type="tensor(float)", shape=["batch", 3, "height", 224])),
+            ("batch", SimpleNamespace(name="input", type="tensor(float)", shape=[2, 3, 224, 224])),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.onnx"
+            model.write_bytes(b"model")
+            for factory in (valid_request, valid_idle_request):
+                for message, metadata in mismatches:
+                    with self.subTest(mode=factory.__name__, mismatch=message), ExitStack() as stack:
+                        request = factory(model)
+                        stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="x86_64"))
+                        stack.enter_context(mock.patch.object(runner, "validate_cpu_contract", return_value=("", [], "")))
+                        stack.enter_context(mock.patch.object(FakeSession, "get_inputs", return_value=[metadata]))
+                        publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                        with self.assertRaisesRegex(runner.ContractError, message):
+                            runner.execute(request, FakeORT, FakeNumpy)
+                        publish.assert_not_called()
+                        self.assertEqual(FakeORT.last_session.calls, 0)
+
+    def test_capability_requires_named_typed_tensors(self) -> None:
+        for tensors, message in [
+            ([], "non-empty"),
+            ([{"name": "input", "datatype": "float32", "sampleShape": [4]}], "datatype"),
+            ([{"name": "input", "datatype": "FP32", "sampleShape": [0]}], "sampleShape"),
+            ([{"name": "input", "datatype": "FP32", "sampleShape": [4]}] * 2, "unique"),
+        ]:
+            with self.subTest(tensors=tensors):
+                request = valid_request(Path("/model.onnx"))
+                request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
+                with self.assertRaisesRegex(runner.ContractError, message):
+                    runner.validate_request(request)
+
+    def test_multi_input_budget_is_admitted_before_any_allocation(self) -> None:
+        numpy = mock.Mock()
+        tensors = [
+            {"name": name, "datatype": "FP32", "sampleShape": [4]}
+            for name in ("first", "second")
+        ]
+        with self.assertRaisesRegex(runner.ContractError, "size budget"):
+            runner.generate_inputs(numpy, tensors, 1, 16)
+        numpy.empty.assert_not_called()
+
     def test_decode_request_rejects_duplicate_field(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "duplicate JSON field"):
             runner.decode_request(
@@ -289,14 +381,14 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha13"
+            request["runConfig"]["schemaVersion"] = "unsupported"
             with self.assertRaisesRegex(
                 runner.ContractError, "supported CPU RunConfig schema"
             ):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/ort-cpu-runtime-request.v1alpha12"
+            request["schemaVersion"] = "unsupported"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):
@@ -354,8 +446,8 @@ class RunnerTest(unittest.TestCase):
                 runner.validate_request(idle)
 
     def test_producer_budgets_fail_before_growth(self) -> None:
-        with self.assertRaisesRegex(runner.ContractError, "input tensor"):
-            runner.admitted_input_bytes([8, 3, 224, 224], 1024)
+        with self.assertRaisesRegex(runner.ContractError, "input tensors"):
+            runner.admitted_input_bytes([8, 3, 224, 224], "FP32", 1024)
         with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
             runner.measurement_complete(0.5, 1, 10, 10)
         self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10))
@@ -498,6 +590,8 @@ class RunnerTest(unittest.TestCase):
             )
             self.assertEqual(FakeORT.last_session.calls, 3)
             self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
+            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
+            self.assertNotIn("inputShape", result)
             self.assertNotIn("bSat", result)
             self.assertEqual(result["status"], "Succeeded")
             self.assertEqual(result["experimentId"], "pod-uid")
@@ -578,6 +672,7 @@ class RunnerTest(unittest.TestCase):
 
             self.assertEqual(FakeORT.last_session.calls, 0)
             self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
+            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
             self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
             self.assertTrue(result["modelResidentAtEnd"])
             self.assertEqual(result["settlingStartedAt"], "2026-07-16T00:00:01.000000Z")

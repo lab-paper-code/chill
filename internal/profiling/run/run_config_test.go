@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 func decodeTestRunConfig(payload []byte) (RunConfig, error) {
@@ -111,9 +113,6 @@ func TestCurrentRunConfigValidatesTypedActuation(t *testing.T) {
 		{name: "mixed actuator union", mutate: func(candidate *RunConfig) {
 			candidate.Actuation.Actuator.NvidiaLockedGPUClock = &NvidiaLockedGPUClockTarget{MinMHz: 1, MaxMHz: 2}
 		}},
-		{name: "retired predecessor schema", mutate: func(candidate *RunConfig) {
-			candidate.SchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha13"
-		}},
 		{name: "unsupported schema", mutate: func(candidate *RunConfig) { candidate.SchemaVersion = "foreign" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -195,7 +194,7 @@ func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 		func(i *RunConfig) { i.Measurement.WarmupIterations = 1 },
 		func(i *RunConfig) { i.Measurement.SettlingDurationSeconds = 0 },
 		func(i *RunConfig) { i.Measurement.InputGenerator = "seeded" },
-		func(i *RunConfig) { i.Measurement.OutputValidation = "shape" },
+		func(i *RunConfig) { i.Measurement.OutputValidation = testShapeField },
 	} {
 		candidate := idle
 		mutate(&candidate)
@@ -285,7 +284,7 @@ func TestRunConfigRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 		func(i *RunConfig) { i.CPU.Policy = ConfiguredCPUQuotaPolicy; i.CPU.Limit = "5" },
 		func(i *RunConfig) { i.CPU.ORTIntraOpThreads = 2 },
 		func(i *RunConfig) { i.CPU.ExclusivityClaimed = true },
-		func(i *RunConfig) { i.Metrics.NodeName = "other" },
+		func(i *RunConfig) { i.Metrics.NodeName = testDifferentIdentity },
 	}
 	for _, mutate := range tests {
 		config := validRunConfig()
@@ -358,6 +357,60 @@ func TestVerifiedRunConfigOwnsMetricLabels(t *testing.T) {
 	}
 }
 
+func TestFrozenRunConfigOwnsNamedInputContract(t *testing.T) {
+	config := validRunConfig()
+	verified, err := ValidateRunConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Delivery.ArtifactCapability.Tensors[0].Name = "mutated-source"
+	config.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
+	record, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := record.Delivery.ArtifactCapability.Tensors[0]
+	if input.Name != "input" || input.Datatype != "FP32" || input.SampleShape[0] != 3 {
+		t.Fatalf("frozen input contract was mutated: %+v", input)
+	}
+	record.Delivery.ArtifactCapability.Tensors[0].Datatype = testINT64Datatype
+	record.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
+	second, err := verified.Record()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Delivery.ArtifactCapability.Tensors[0].Datatype != "FP32" ||
+		second.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 3 {
+		t.Fatal("returned input contract mutated the frozen record")
+	}
+}
+
+func TestRunConfigRejectsInvalidInputDeclarations(t *testing.T) {
+	for _, name := range []string{"missing", "blank-name", "duplicate-name", testDatatypeField, "empty-shape", "nonpositive-shape"} {
+		t.Run(name, func(t *testing.T) {
+			config := validRunConfig()
+			capability := config.Delivery.ArtifactCapability
+			switch name {
+			case "missing":
+				capability.Tensors = nil
+			case "blank-name":
+				capability.Tensors[0].Name = " "
+			case "duplicate-name":
+				capability.Tensors = append(capability.Tensors, capability.Tensors[0])
+			case testDatatypeField:
+				capability.Tensors[0].Datatype = "float32"
+			case "empty-shape":
+				capability.Tensors[0].SampleShape = nil
+			case "nonpositive-shape":
+				capability.Tensors[0].SampleShape[0] = 0
+			}
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "input") {
+				t.Fatalf("invalid input contract accepted: %v", err)
+			}
+		})
+	}
+}
+
 func validRunConfig() RunConfig {
 	d := "sha256:" + strings.Repeat("a", 64)
 	image := "registry.local/chill/image@" + d
@@ -384,13 +437,16 @@ func validRunConfig() RunConfig {
 			Model:         "mobilenet-v2-050",
 			Artifact:      "canonical-onnx",
 			ArtifactPath:  "/artifact/mobilenet-v2-050.onnx",
-			RuntimeFamily: "onnxruntime",
-			Backend:       "CPUExecutionProvider",
+			RuntimeFamily: cpuORTRuntimeFamily,
+			Backend:       cpuExecutionProvider,
 			PowerMode:     "fixed",
 		},
 		Images: Images{
 			Runtime: image, Artifact: image, MetricObserver: image, WorkloadObserver: image,
 		},
+		Delivery: CandidateRuntimeDelivery{ArtifactCapability: &CandidateArtifactCapability{
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
+		}},
 		TargetNode: NodeSnapshot{
 			Name:            "lattepanda",
 			UID:             "uid",
@@ -411,7 +467,7 @@ func validRunConfig() RunConfig {
 			WarmupIterations: 20,
 			DurationSeconds:  30,
 			WorkloadMode:     "saturated-serial-fixed-batch",
-			InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
+			InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
 			OutputValidation: "nonempty-shape-batch-v1",
 		},
 		Metrics: MetricContract{

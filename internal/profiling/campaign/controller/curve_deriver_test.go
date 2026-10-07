@@ -16,6 +16,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -262,7 +263,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	}
 	capability := profilingrun.CandidateArtifactCapability{
 		TargetPlatform: "test", DeclaredBatchSizes: []int32{1, 2},
-		InputSampleShape: []int32{3, 224, 224},
+		Tensors: modelcompat.CloneInputTensors(base.Delivery.ArtifactCapability.Tensors),
 	}
 	spec, err := profilerprojection.ProjectCurvePlanSpec(
 		"test-curve", base, idleRunConfig, capability,
@@ -395,6 +396,11 @@ func curveFixtureRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.State.ArtifactPath = "/artifact/mobilenet-v2-050.onnx"
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
+	config.Delivery.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
+		Tensors: []modelcompat.InputTensor{
+			{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
+		},
+	}
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -445,6 +451,7 @@ func curveFixtureIdleEvidence(
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
+			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.Format(time.RFC3339Nano),
@@ -506,6 +513,7 @@ func curveFixtureActiveRaw(
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders: []string{config.State.Backend}, BatchSize: config.Measurement.Batch,
+			Inputs:            modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			WarmupIterations:  config.Measurement.WarmupIterations,
 			WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 			InferenceCount:    2, MeasurementMode: "duration",

@@ -35,7 +35,7 @@ var _ = Describe("ModelSpec API", func() {
 				Path: "/artifact/model.rknn",
 			},
 			Input: &edgev1alpha1.ModelArtifactInputContract{
-				InputSampleShape: []int32{224, 224, 3},
+				Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 			},
 			Derivation: validDerivedArtifact(),
 		})
@@ -166,7 +166,7 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 						Path: "/artifact/model.onnx",
 					},
 					Input: &edgev1alpha1.ModelArtifactInputContract{
-						InputSampleShape: []int32{3, 224, 224},
+						Tensors: []edgev1alpha1.ModelInputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
 					},
 				},
 			},

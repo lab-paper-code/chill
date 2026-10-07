@@ -12,9 +12,9 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha14"
+const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha15"
 
-type ORTCPURuntimeConfig struct {
+type CPURuntimeConfig struct {
 	Command                 []string
 	ModelPath               string
 	ObserverReadyPaths      []string
@@ -31,15 +31,16 @@ type ORTCPURuntimeConfig struct {
 	Stderr                  io.Writer
 }
 
-// ORTCPURuntime invokes the trusted CPU ONNX Runtime entrypoint and accepts its
-// result only from a dedicated JSON file. Stdout and stderr remain diagnostics.
-type ORTCPURuntime struct {
-	config ORTCPURuntimeConfig
+// CPURuntime invokes a trusted CPU runtime entrypoint and accepts evidence only
+// from its dedicated JSON file. Stdout and stderr remain diagnostics.
+type CPURuntime struct {
+	config                               CPURuntimeConfig
+	name, family, backend, requestSchema string
 }
 
-var _ Runtime = (*ORTCPURuntime)(nil)
+var _ Runtime = (*CPURuntime)(nil)
 
-type ortCPURequest struct {
+type cpuRuntimeRequest struct {
 	SchemaVersion                    string                 `json:"schemaVersion"`
 	RunConfig                        profilingrun.RunConfig `json:"runConfig"`
 	PodUID                           string                 `json:"podUID"`
@@ -56,13 +57,17 @@ type ortCPURequest struct {
 	MaxResultBytes                   int64                  `json:"maxResultBytes"`
 }
 
-func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
+func NewORTCPURuntime(config CPURuntimeConfig) (*CPURuntime, error) {
+	return newCPURuntime(config, "CPU ORT", "onnxruntime", "CPUExecutionProvider", ortCPURequestSchemaVersion)
+}
+
+func newCPURuntime(config CPURuntimeConfig, runtimeName, family, backend, requestSchema string) (*CPURuntime, error) {
 	if len(config.Command) == 0 || strings.TrimSpace(config.Command[0]) == "" {
-		return nil, errors.New("CPU ORT command is required")
+		return nil, errors.New(runtimeName + " command is required")
 	}
 	for _, value := range config.Command {
 		if strings.TrimSpace(value) == "" {
-			return nil, errors.New("CPU ORT command contains an empty argument")
+			return nil, errors.New(runtimeName + " command contains an empty argument")
 		}
 	}
 	for name, value := range map[string]string{
@@ -73,40 +78,43 @@ func NewORTCPURuntime(config ORTCPURuntimeConfig) (*ORTCPURuntime, error) {
 		"measurement-end":       config.MeasurementEndPath,
 	} {
 		if !validAbsoluteFilePath(value) {
-			return nil, fmt.Errorf("CPU ORT %s path must be a clean absolute file path", name)
+			return nil, fmt.Errorf("%s %s path must be a clean absolute file path", runtimeName, name)
 		}
 	}
 	if len(config.ObserverReadyPaths) == 0 {
-		return nil, errors.New("CPU ORT observer-ready paths are required")
+		return nil, errors.New(runtimeName + " observer-ready paths are required")
 	}
 	seenReadyPaths := map[string]struct{}{}
 	for _, value := range config.ObserverReadyPaths {
 		if !validAbsoluteFilePath(value) {
-			return nil, errors.New("CPU ORT observer-ready path must be a clean absolute file path")
+			return nil, errors.New(runtimeName + " observer-ready path must be a clean absolute file path")
 		}
 		if _, exists := seenReadyPaths[value]; exists {
-			return nil, errors.New("CPU ORT observer-ready paths must be unique")
+			return nil, errors.New(runtimeName + " observer-ready paths must be unique")
 		}
 		seenReadyPaths[value] = struct{}{}
 	}
 	if config.MaxResultBytes < 1 {
-		return nil, errors.New("CPU ORT result maximum size must be positive")
+		return nil, errors.New(runtimeName + " result maximum size must be positive")
 	}
 	if config.MaxLatencySamples < 1 || config.MaxInputBytes < 1 {
-		return nil, errors.New("CPU ORT resource budgets must be supplied by the Job execution contract")
+		return nil, errors.New(runtimeName + " resource budgets must be supplied by the Job execution contract")
 	}
 	if config.ObserverReadyTimeout < time.Millisecond {
-		return nil, errors.New("CPU ORT observer-ready timeout must be supplied by the Job execution contract")
+		return nil, errors.New(runtimeName + " observer-ready timeout must be supplied by the Job execution contract")
 	}
 	if config.Stdout == nil || config.Stderr == nil {
-		return nil, errors.New("CPU ORT diagnostic writers are required")
+		return nil, errors.New(runtimeName + " diagnostic writers are required")
 	}
 	config.Command = append([]string(nil), config.Command...)
 	config.ObserverReadyPaths = append([]string(nil), config.ObserverReadyPaths...)
-	return &ORTCPURuntime{config: config}, nil
+	return &CPURuntime{
+		config: config, name: runtimeName, family: family,
+		backend: backend, requestSchema: requestSchema,
+	}, nil
 }
 
-func (r *ORTCPURuntime) Measure(
+func (r *CPURuntime) Measure(
 	ctx context.Context,
 	request RuntimeRequest,
 ) (RuntimeMeasurement, error) {
@@ -114,48 +122,48 @@ func (r *ORTCPURuntime) Measure(
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
-	if runConfig.State.RuntimeFamily != "onnxruntime" || runConfig.State.Backend != "CPUExecutionProvider" {
-		return RuntimeMeasurement{}, errors.New("CPU ORT adapter received an unsupported runtime path")
+	if runConfig.State.RuntimeFamily != r.family || runConfig.State.Backend != r.backend {
+		return RuntimeMeasurement{}, errors.New(r.name + " adapter received an unsupported runtime path")
 	}
 	payload, err := r.encodeRequest(request)
 	if err != nil {
 		return RuntimeMeasurement{}, err
 	}
 	if err := runRuntimeEntrypoint(
-		ctx, "CPU ORT", r.config.Command, r.config.ResultPath, payload, r.config.Stdout, r.config.Stderr,
+		ctx, r.name, r.config.Command, r.config.ResultPath, payload, r.config.Stdout, r.config.Stderr,
 	); err != nil {
 		return RuntimeMeasurement{}, err
 	}
 	if runConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		var result profilingrun.IdleRuntimeResult
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
-			return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT idle result: %w", err)
+			return RuntimeMeasurement{}, fmt.Errorf("read %s idle result: %w", r.name, err)
 		}
 		verified, err := profilingrun.VerifyIdleRuntimeResult(request.RunConfig, request.PodUID, result)
 		if err != nil {
-			return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT idle result: %w", err)
+			return RuntimeMeasurement{}, fmt.Errorf("validate %s idle result: %w", r.name, err)
 		}
 		return idleRuntimeMeasurement(verified), nil
 	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
-		return RuntimeMeasurement{}, fmt.Errorf("read CPU ORT result: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("read %s result: %w", r.name, err)
 	}
 	verified, err := profilingrun.VerifyRuntimeResult(request.RunConfig, request.PodUID, result)
 	if err != nil {
-		return RuntimeMeasurement{}, fmt.Errorf("validate CPU ORT result: %w", err)
+		return RuntimeMeasurement{}, fmt.Errorf("validate %s result: %w", r.name, err)
 	}
 	return activeRuntimeMeasurement(verified), nil
 }
 
-func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
+func (r *CPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, error) {
 	runConfig, err := runtimeRequest.RunConfig.Record()
 	if err != nil {
-		return nil, fmt.Errorf("read CPU ORT RunConfig: %w", err)
+		return nil, fmt.Errorf("read %s RunConfig: %w", r.name, err)
 	}
 
-	request := ortCPURequest{
-		SchemaVersion: ortCPURequestSchemaVersion, RunConfig: runConfig,
+	request := cpuRuntimeRequest{
+		SchemaVersion: r.requestSchema, RunConfig: runConfig,
 		PodUID: runtimeRequest.PodUID, ScheduledNodeName: runtimeRequest.ScheduledNodeName,
 		ModelPath: r.config.ModelPath, ObserverReadyPaths: r.config.ObserverReadyPaths,
 		WorkloadWindowStartPath:          r.config.WorkloadWindowStartPath,
@@ -169,7 +177,7 @@ func (r *ORTCPURuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, er
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("encode CPU ORT request: %w", err)
+		return nil, fmt.Errorf("encode %s request: %w", r.name, err)
 	}
 	return payload, nil
 }

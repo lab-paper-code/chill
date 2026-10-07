@@ -10,6 +10,7 @@ flat list of equally authoritative files.
 | Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Ordered profiling plans, reusable component contracts, and supporting fact audits |
 | Serving | [serving/README.md](serving/README.md) | The consumer contract for inference, the entry point that distributes requests, and the routing decision it applies |
 | Operator console | [operator-console/README.md](operator-console/README.md) | Operator-facing concepts, workflows, interfaces, use cases, and requirements |
+| Dashboard implementation | [dashboard/README.md](dashboard/README.md) | Pinned web template, core architecture, API ownership and gaps, and full Dashboard SRS acceptance |
 | Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Current semantic-navigation, package-boundary, optional indexing, and Helm-topology evidence contract |
 
 Architectural decisions that must remain stable across design areas belong in

@@ -98,14 +98,48 @@ class FakeRKNNLite:
             raise AssertionError(f"unexpected core mask {core_mask}")
         return 0
 
-    def inference(self, *, inputs: list[FakeSample]) -> list[FakeArray]:
+    def inference(self, *, inputs: list[FakeSample], data_type: list[str], data_format: list[str]) -> list[FakeArray]:
         if len(inputs) != 1 or not isinstance(inputs[0], FakeSample):
             raise AssertionError("unexpected inference inputs")
+        if data_type != ["float32"] or data_format != ["nhwc"]:
+            raise AssertionError("inference must declare FP32 NHWC explicitly")
         self.inference_calls += 1
         return [FakeArray()]
 
     def release(self) -> None:
         self.released = True
+
+
+def metadata_library(
+    *, name: bytes = b"input", datatype: int = 0, shape=(1, 3, 224, 224), count: int = 1, layout: int = 0
+):
+    library = mock.Mock()
+    library.rknn_init.return_value = 0
+    library.rknn_destroy.return_value = 0
+
+    def query(_context, command, pointer, _size):
+        value = pointer._obj
+        if command == 0:
+            value.n_input = count
+        elif command == 1:
+            value.name = name
+            value.type = datatype
+            value.fmt = layout
+            value.n_dims = len(shape)
+            value.dims[:len(shape)] = shape
+        elif command == 13:
+            value.name = name
+            value.fmt = 0
+            value.n_dims = 4
+            value.shape_number = 3
+            for index, batch in enumerate((1, 2, 4)):
+                value.dyn_range[index][:4] = (batch, 3, 224, 224)
+        else:
+            raise AssertionError(f"unexpected metadata query {command}")
+        return 0
+
+    library.rknn_query.side_effect = query
+    return library
 
 
 def valid_host_evidence() -> dict[str, object]:
@@ -184,7 +218,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
             "artifactCapability": {
                 "targetPlatform": "rk3588",
                 "declaredBatchSizes": [1, 2, 4],
-                "inputSampleShape": [224, 224, 3],
+                "tensors": [{"name": "input", "datatype": "FP32", "sampleShape": [224, 224, 3]}],
             },
             "runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
             "hostContract": host_contract,
@@ -269,6 +303,71 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_contract_rejects_unsupported_inputs_for_active_and_idle(self) -> None:
+        for factory in (valid_request, valid_idle_request):
+            for tensors in [
+                [],
+                [{"name": "input", "datatype": "INT64", "sampleShape": [224, 224, 3]}],
+                [{"name": "input", "datatype": "FP32", "sampleShape": [224, 3]}],
+                [{"name": name, "datatype": "FP32", "sampleShape": [224, 224, 3]} for name in ("one", "two")],
+            ]:
+                with self.subTest(mode=factory.__name__, tensors=tensors):
+                    request = factory(Path("/model.rknn"))
+                    request["runConfig"]["delivery"]["artifactCapability"]["tensors"] = tensors
+                    with self.assertRaisesRegex(runner.ContractError, "one FP32 NHWC rank3"):
+                        runner.validate_request(request)
+
+    def test_metadata_mismatch_fails_before_active_or_idle_window(self) -> None:
+        cases = [
+            ("name", {"name": b"wrong"}),
+            ("datatype", {"datatype": 1}),
+            ("sampleShape", {"shape": (1, 3, 112, 224)}),
+            ("rank4", {"shape": (1, 224, 3)}),
+            ("exactly one", {"count": 2}),
+            ("layout", {"layout": 2}),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.rknn"
+            model.write_bytes(b"model")
+            for factory in (valid_request, valid_idle_request):
+                for message, metadata in cases:
+                    with self.subTest(mode=factory.__name__, mismatch=message), ExitStack() as stack:
+                        request = factory(model)
+                        library = metadata_library(**metadata)
+                        stack.enter_context(mock.patch.object(runner.platform, "machine", return_value="aarch64"))
+                        stack.enter_context(mock.patch.object(runner, "validate_cpu_contract", return_value=("", [], "")))
+                        stack.enter_context(mock.patch.object(runner, "observe_host_contract", return_value=valid_host_evidence()))
+                        stack.enter_context(mock.patch.object(runner.ctypes, "CDLL", return_value=library))
+                        publish = stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                        with self.assertRaisesRegex(runner.ContractError, message):
+                            runner.execute(request, FakeRKNNLite, FakeNumpy)
+                        publish.assert_not_called()
+                        library.rknn_destroy.assert_called_once()
+
+    def test_metadata_validates_selected_dynamic_batch(self) -> None:
+        candidate = valid_request(Path("/model.rknn"))["runConfig"]["delivery"]
+        library = metadata_library()
+        with mock.patch.object(runner.ctypes, "CDLL", return_value=library):
+            runner.validate_runtime_inputs(Path("/model.rknn"), candidate, 4)
+        self.assertEqual([call.args[1] for call in library.rknn_query.call_args_list], [0, 1, 13])
+        library.rknn_destroy.assert_called_once()
+        with self.assertRaisesRegex(runner.ContractError, "not declared"):
+            runner.validate_runtime_inputs(Path("/model.rknn"), candidate, 3)
+        candidate["artifactCapability"]["declaredBatchSizes"].append(8)
+        with mock.patch.object(runner.ctypes, "CDLL", return_value=metadata_library()):
+            with self.assertRaisesRegex(runner.ContractError, "does not provide the selected"):
+                runner.validate_runtime_inputs(Path("/model.rknn"), candidate, 8)
+
+    def test_metadata_query_failure_is_not_a_shape_fallback(self) -> None:
+        candidate = valid_request(Path("/model.rknn"))["runConfig"]["delivery"]
+        library = metadata_library()
+        library.rknn_query.side_effect = None
+        library.rknn_query.return_value = -1
+        with mock.patch.object(runner.ctypes, "CDLL", return_value=library):
+            with self.assertRaisesRegex(runner.ContractError, "query RKNN input count returned -1"):
+                runner.validate_runtime_inputs(Path("/model.rknn"), candidate, 1)
+        library.rknn_destroy.assert_called_once()
+
     def test_current_cgroup_v2_directory_resolves_host_visible_membership(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cgroup"
@@ -355,12 +454,12 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.rknn"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha13"
+            request["runConfig"]["schemaVersion"] = "unsupported"
             with self.assertRaisesRegex(runner.ContractError, "current RunConfig schema"):
                 runner.validate_request(request)
 
             request = valid_request(model)
-            request["schemaVersion"] = "chill.dacs.io/rknnlite-runtime-request.v1alpha8"
+            request["schemaVersion"] = "unsupported"
             with self.assertRaisesRegex(
                 runner.ContractError, "unsupported runtime request"
             ):
@@ -396,23 +495,6 @@ class RunnerTest(unittest.TestCase):
             ):
                 runner.validate_request(request)
 
-    def test_validate_request_rejects_retired_configured_data_type(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.rknn"
-            model.write_bytes(b"model")
-            request = valid_request(model)
-            request["runConfig"]["delivery"]["artifactCapability"]["inputDataType"] = "float32"
-            with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
-                runner.validate_request(request)
-
-    def test_validate_request_rejects_retired_configured_layout(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.rknn"
-            model.write_bytes(b"model")
-            request = valid_request(model)
-            request["runConfig"]["delivery"]["artifactCapability"]["inputLayout"] = "NHWC"
-            with self.assertRaisesRegex(runner.ContractError, "fields mismatch"):
-                runner.validate_request(request)
 
     def test_validate_request_keeps_active_and_idle_fields_disjoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -463,6 +545,7 @@ class RunnerTest(unittest.TestCase):
                         return_value=valid_host_evidence(),
                     )
                 )
+                stack.enter_context(mock.patch.object(runner.ctypes, "CDLL", return_value=metadata_library()))
                 wait = stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
                 publish = stack.enter_context(
                     mock.patch.object(runner, "publish_immutable")
@@ -500,7 +583,8 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(result["runtime"], "rknnlite")
             self.assertEqual(result["provider"] if "provider" in result else "", "")
             self.assertEqual(result["rknn"]["coreMask"], "NPU_CORE_0")
-            self.assertEqual(result["inputShape"], [1, 224, 224, 3])
+            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
+            self.assertNotIn("inputShape", result)
             self.assertEqual(result["outputValidation"]["outputShapes"], [[1, 1000]])
             self.assertEqual(
                 publish.call_args_list,
@@ -537,6 +621,7 @@ class RunnerTest(unittest.TestCase):
                         return_value=valid_host_evidence(),
                     )
                 )
+                stack.enter_context(mock.patch.object(runner.ctypes, "CDLL", return_value=metadata_library()))
                 stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
                 stack.enter_context(mock.patch.object(runner, "publish_immutable"))
                 stack.enter_context(mock.patch.object(runner.time, "sleep"))
@@ -566,6 +651,7 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(instance.inference_calls, 0)
             self.assertTrue(instance.released)
             self.assertEqual(result["schemaVersion"], runner.IDLE_RESULT_SCHEMA)
+            self.assertEqual(result["inputs"], request["runConfig"]["delivery"]["artifactCapability"]["tensors"])
             self.assertEqual(result["inferenceCountAfterModelLoad"], 0)
             self.assertTrue(result["modelResidentAtEnd"])
 

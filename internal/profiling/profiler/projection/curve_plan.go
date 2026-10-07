@@ -3,7 +3,9 @@ package projection
 import (
 	"errors"
 	"fmt"
+	"reflect"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -27,10 +29,6 @@ func ProjectCurvePlanSpec(
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project idle curve protocol: %w", err)
 	}
 
-	inputSampleShape := make([]int, len(capability.InputSampleShape))
-	for index, dimension := range capability.InputSampleShape {
-		inputSampleShape[index] = int(dimension)
-	}
 	spec := profilederivation.CurvePlanSpec{
 		Name:           name,
 		LogicalModel:   active.State.Model,
@@ -38,6 +36,7 @@ func ProjectCurvePlanSpec(
 		NodeUID:        active.TargetNode.UID,
 		RuntimeFamily:  active.State.RuntimeFamily,
 		Backend:        active.State.Backend,
+		Triton:         modelcompat.CloneTritonRuntimeSettings(active.State.Triton),
 		RuntimeImage:   active.Images.Runtime,
 		PowerMode:      active.State.PowerMode,
 		CPU:            projectCurveCPU(active.CPU),
@@ -53,8 +52,14 @@ func ProjectCurvePlanSpec(
 		},
 		PlannedBatchSizes: append([]int(nil), plannedBatchSizes...),
 		Tensor: profilederivation.CurveTensorContract{
-			InputSampleShape: inputSampleShape,
+			Tensors: modelcompat.CloneInputTensors(capability.Tensors),
 		},
+	}
+	if err := modelcompat.ValidateInputTensors(spec.Tensor.Tensors); err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("curve plan tensor contract: %w", err)
+	}
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
+		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active curve RunConfig disagrees: %w", err)
 	}
 	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
@@ -66,8 +71,8 @@ func ProjectCurvePlanSpec(
 }
 
 // ProjectVerifiedCurveState consumes only evidence already sealed by the
-// active and idle Loader boundaries. Catalog-only conversion, batch capability,
-// and tensor facts remain bound through the curve plan.
+// active and idle Loader boundaries. Conversion, batch capability, and complete
+// tensor facts remain bound through the curve plan and frozen RunConfigs.
 func ProjectVerifiedCurveState(
 	plan profilederivation.CurvePlan,
 	active profilerevidence.VerifiedEvidence,
@@ -170,6 +175,13 @@ func validateCurvePlanRunConfig(
 		config.Images.Artifact != spec.Artifact.Image || config.TargetNode.UID != spec.NodeUID ||
 		actualNodeUID != spec.NodeUID {
 		return errors.New("RunConfig contradicts curve-plan state or artifact facts")
+	}
+	if !reflect.DeepEqual(config.State.Triton, spec.Triton) {
+		return errors.New("RunConfig contradicts curve-plan Triton settings")
+	}
+	if config.Delivery.ArtifactCapability == nil ||
+		!reflect.DeepEqual(config.Delivery.ArtifactCapability.Tensors, spec.Tensor.Tensors) {
+		return errors.New("RunConfig contradicts curve-plan input tensor facts")
 	}
 	if projectCurveCPU(config.CPU) != spec.CPU || projectCurveMetricSource(config.Metrics) != spec.MetricSource {
 		return errors.New("RunConfig contradicts curve-plan CPU or metric-source facts")

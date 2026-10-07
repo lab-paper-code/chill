@@ -12,6 +12,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -223,7 +224,7 @@ func (p *CurvePlanProjector) resolveCurveArtifactContracts(
 			&ArtifactInputContractMissingError{Artifact: artifact.Name}
 	}
 	capability := profilingrun.CandidateArtifactCapability{
-		InputSampleShape: append([]int32(nil), artifact.Input.InputSampleShape...),
+		Tensors: modelcatalog.InputTensors(artifact.Input),
 	}
 	if report.ArtifactCapability != nil {
 		capability.TargetPlatform = report.ArtifactCapability.TargetPlatform
@@ -260,7 +261,7 @@ func resolvePlannedBatchSizes(
 	campaign []int32,
 	capability *profilingrun.CandidateArtifactCapability,
 ) ([]int, error) {
-	if capability != nil {
+	if capability != nil && len(capability.DeclaredBatchSizes) != 0 {
 		if len(campaign) != 0 {
 			return nil, errors.New("BatchEnergyOptimization batchSizes must be absent when the selected artifact declares batch sizes")
 		}
@@ -342,7 +343,7 @@ func resolveConversion(
 	report profilingrun.CandidateReport,
 ) (profilederivation.CurveConversionContract, error) {
 	if selected.Derivation == nil {
-		if report.ArtifactCapability != nil {
+		if report.ArtifactCapability != nil && (report.ArtifactCapability.TargetPlatform != "" || len(report.ArtifactCapability.DeclaredBatchSizes) != 0) {
 			return profilederivation.CurveConversionContract{}, errors.New(
 				"canonical artifact disagrees with the candidate report artifact capability",
 			)

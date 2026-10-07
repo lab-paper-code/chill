@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,7 +61,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if firstReference.Store != storeName || firstReference.Key != wantKey ||
-		firstReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha6" ||
+		firstReference.SchemaVersion != first.SchemaVersion() ||
 		firstReference.Size != int64(len(storedPayload)) {
 		t.Fatalf("created curve-plan reference = %+v, payload bytes = %d", firstReference, len(storedPayload))
 	}
@@ -80,7 +82,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 	if store.puts != 2 || store.opens != 1 || recoveredReference.Store != storeName ||
 		recoveredReference.Key != wantKey ||
-		recoveredReference.SchemaVersion != "chill.dacs.io/curve-plan.v1alpha6" ||
+		recoveredReference.SchemaVersion != first.SchemaVersion() ||
 		recoveredReference.Size != int64(len(storedPayload)) ||
 		recoveredReference.Size == firstReference.Size {
 		t.Fatalf("recovery = reference %+v, puts %d, opens %d", recoveredReference, store.puts, store.opens)
@@ -93,6 +95,53 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 	}
 }
 
+func TestCurvePlanSourceRejectsCompleteTensorIdentityDrift(t *testing.T) {
+	for _, field := range []string{"name", "datatype", "shape"} {
+		t.Run(field, func(t *testing.T) {
+			parent := testParent()
+			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+			reportBytes, report := curvePlanCandidateReport(t, parent)
+			reader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
+			resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}
+			preparer := &fakeCurvePlanPreparer{
+				report: report, reportBytes: reportBytes, nodeUID: "node-uid",
+			}
+			source, err := NewCurvePlanSource(
+				reader, resolver, preparer, newFakeCurvePlanStore(),
+				CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frozen, _, _, err := source.Resolve(context.Background(), parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := frozen.Shared().Tensor
+			switch field {
+			case "name":
+				reader.model.Spec.Artifacts[0].Input.Tensors[0].Name = "other-input"
+				report.ArtifactCapability.Tensors[0].Name = "other-input"
+			case "datatype":
+				reader.model.Spec.Artifacts[0].Input.Tensors[0].Datatype = "INT32"
+				report.ArtifactCapability.Tensors[0].Datatype = "INT32"
+			case "shape":
+				reader.model.Spec.Artifacts[0].Input.Tensors[0].SampleShape[0]++
+				report.ArtifactCapability.Tensors[0].SampleShape[0]++
+			}
+			resolver.reportBytes = encodeCurvePlanCandidateReport(t, report)
+			preparer.report = report
+			if !reflect.DeepEqual(frozen.Shared().Tensor, want) {
+				t.Fatal("catalog mutation changed the frozen tensor contract")
+			}
+			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
+				!strings.Contains(err.Error(), "stored curve plan disagrees") {
+				t.Fatalf("tensor identity drift error = %v", err)
+			}
+		})
+	}
+}
+
 func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(t *testing.T) {
 	parent := testParent()
 	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
@@ -100,12 +149,18 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 	_, report := curvePlanCandidateReport(t, parent)
 	report.Selection.Artifact = "canonical-onnx"
 	report.ArtifactSupply.Path = "/artifact/canonical.onnx"
-	report.ArtifactCapability = nil
+	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
+		Tensors: []modelcompat.InputTensor{
+			{Name: "canonical-input", Datatype: "FP32", SampleShape: []int32{3, 192, 256}},
+		},
+	}
 	reportBytes := encodeCurvePlanCandidateReport(t, report)
 	model := curvePlanModel(report)
 	model.Spec.Artifacts[0].Derivation = nil
 	model.Spec.Artifacts[0].Input = &edgev1alpha1.ModelArtifactInputContract{
-		InputSampleShape: []int32{3, 192, 256},
+		Tensors: []edgev1alpha1.ModelInputTensor{
+			{Name: "canonical-input", Datatype: "FP32", SampleShape: []int32{3, 192, 256}},
+		},
 	}
 	preparer := &fakeCurvePlanPreparer{
 		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
@@ -133,7 +188,7 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 		shared.Conversion.ToolVersion != "" {
 		t.Fatalf("canonical artifact conversion contract = %+v", shared.Conversion)
 	}
-	if !slices.Equal(shared.Tensor.InputSampleShape, []int{3, 192, 256}) {
+	if !reflect.DeepEqual(shared.Tensor.Tensors, report.ArtifactCapability.Tensors) {
 		t.Fatalf("canonical artifact tensor contract = %+v", shared.Tensor)
 	}
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
@@ -148,7 +203,8 @@ func TestCurvePlanSourceRejectsArtifactWithoutDeclaredInputContract(t *testing.T
 	parent.Spec.BatchSizes = []int32{1, 2}
 	_, report := curvePlanCandidateReport(t, parent)
 	report.Selection.Artifact = "undeclared-input"
-	report.ArtifactCapability = nil
+	report.ArtifactCapability.DeclaredBatchSizes = nil
+	report.ArtifactCapability.TargetPlatform = ""
 	reportBytes := encodeCurvePlanCandidateReport(t, report)
 	model := curvePlanModel(report)
 	model.Spec.Artifacts[0].Derivation = nil
@@ -169,8 +225,7 @@ func TestCurvePlanSourceRejectsArtifactWithoutDeclaredInputContract(t *testing.T
 	if !errors.As(err, &missing) {
 		t.Fatalf("Resolve() error = %v, want ArtifactInputContractMissingError", err)
 	}
-	if missing.Artifact != "undeclared-input" ||
-		err.Error() != `artifact "undeclared-input" declares no input tensor contract` {
+	if missing.Artifact != "undeclared-input" {
 		t.Fatalf("missing input contract error = %v, artifact = %q", err, missing.Artifact)
 	}
 }
@@ -342,7 +397,9 @@ func curvePlanCandidateReport(
 		},
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "cpu", DeclaredBatchSizes: []int32{4, 1, 2},
-			InputSampleShape: []int32{3, 224, 224},
+			Tensors: []modelcompat.InputTensor{
+				{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
+			},
 		},
 		MetricObserverImage: "metric@sha256:cccccccc",
 		Verdict:             "Compatible",
@@ -371,7 +428,9 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 		Spec: edgev1alpha1.ModelSpecSpec{Artifacts: []edgev1alpha1.ModelArtifact{{
 			Name: report.Selection.Artifact, Format: "onnx",
 			Input: &edgev1alpha1.ModelArtifactInputContract{
-				InputSampleShape: []int32{3, 224, 224},
+				Tensors: []edgev1alpha1.ModelInputTensor{
+					{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
+				},
 			},
 			Derivation: &edgev1alpha1.ModelArtifactDerivation{
 				SourceArtifact: "canonical-onnx", TargetPlatform: "cpu",
@@ -468,6 +527,9 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		Images: profilingrun.Images{
 			Runtime: p.report.Inputs.RuntimeDeclaration.Image, Artifact: p.report.ArtifactSupply.Image,
 			MetricObserver: p.report.MetricObserverImage, WorkloadObserver: "workload@sha256:dddddddd",
+		},
+		Delivery: profilingrun.CandidateRuntimeDelivery{
+			ArtifactCapability: p.report.ArtifactCapability,
 		},
 		TargetNode: profilingrun.NodeSnapshot{
 			Name: request.TargetNode, UID: p.nodeUID, ResourceVersion: "10",

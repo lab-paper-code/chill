@@ -8,6 +8,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -147,7 +148,9 @@ func batchEnergyOptimizationPreflightPlan(t *testing.T) profilederivation.CurveP
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
 		Tensor: profilederivation.CurveTensorContract{
-			InputSampleShape: []int{224, 224, 3},
+			Tensors: []modelcompat.InputTensor{
+				{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+			},
 		},
 	})
 	if err != nil {

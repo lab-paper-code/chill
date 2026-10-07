@@ -6,13 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha10"
+const rknnLiteRequestSchemaVersion = "chill.dacs.io/rknnlite-runtime-request.v1alpha11"
 
 type RKNNLiteRuntimeConfig struct {
 	Command                 []string
@@ -139,7 +141,7 @@ func (r *RKNNLiteRuntime) Measure(
 		if err != nil {
 			return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite idle result: %w", err)
 		}
-		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, nil, runConfig.Measurement.Batch); err != nil {
+		if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.Inputs); err != nil {
 			return RuntimeMeasurement{}, err
 		}
 		return idleRuntimeMeasurement(verified), nil
@@ -152,7 +154,7 @@ func (r *RKNNLiteRuntime) Measure(
 	if err != nil {
 		return RuntimeMeasurement{}, fmt.Errorf("validate RKNNLite result: %w", err)
 	}
-	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.InputShape, runConfig.Measurement.Batch); err != nil {
+	if err := r.validateObservedContract(result.RuntimeVersion, result.RKNN, result.Inputs); err != nil {
 		return RuntimeMeasurement{}, err
 	}
 	return activeRuntimeMeasurement(verified), nil
@@ -162,6 +164,9 @@ func (r *RKNNLiteRuntime) encodeRequest(runtimeRequest RuntimeRequest) ([]byte, 
 	runConfig, err := runtimeRequest.RunConfig.Record()
 	if err != nil {
 		return nil, fmt.Errorf("read RKNNLite RunConfig: %w", err)
+	}
+	if err := validateRKNNLiteDelivery(runConfig.Delivery); err != nil {
+		return nil, err
 	}
 	request := rknnLiteRequest{
 		SchemaVersion: rknnLiteRequestSchemaVersion, RunConfig: runConfig,
@@ -193,8 +198,12 @@ func validateRKNNLiteDelivery(delivery profilingrun.CandidateRuntimeDelivery) er
 		return errors.New("RKNNLite adapter requires exactly one image-owned runtime package")
 	}
 	capability := delivery.ArtifactCapability
-	if len(capability.InputSampleShape) == 0 {
-		return errors.New("verified RKNNLite artifact input contract is unsupported")
+	if err := modelcompat.ValidateInputTensors(capability.Tensors); err != nil {
+		return fmt.Errorf("verified RKNNLite artifact input contract: %w", err)
+	}
+	if len(capability.Tensors) != 1 || capability.Tensors[0].Datatype != "FP32" ||
+		len(capability.Tensors[0].SampleShape) != 3 {
+		return errors.New("RKNNLite adapter requires one FP32 rank-3 NHWC sample input")
 	}
 	if len(delivery.HostContract.Libraries) == 0 || len(delivery.HostContract.Devices) == 0 {
 		return errors.New("verified RKNNLite host contract is incomplete")
@@ -205,8 +214,7 @@ func validateRKNNLiteDelivery(delivery profilingrun.CandidateRuntimeDelivery) er
 func (r *RKNNLiteRuntime) validateObservedContract(
 	runtimeVersion string,
 	evidence *profilingrun.RKNNRuntimeEvidence,
-	inputShape []int,
-	batch int,
+	inputs []modelcompat.InputTensor,
 ) error {
 	delivery := r.config.Delivery
 	expectedPackage := delivery.RuntimePackages[0]
@@ -214,17 +222,11 @@ func (r *RKNNLiteRuntime) validateObservedContract(
 		evidence.Package.Name != expectedPackage.Name || evidence.Package.Version != expectedPackage.Version {
 		return errors.New("observed RKNNLite package does not match the verified candidate")
 	}
-	if inputShape != nil {
-		capability := delivery.ArtifactCapability
-		expectedShape := append([]int32{int32(batch)}, capability.InputSampleShape...)
-		if len(inputShape) != len(expectedShape) {
-			return errors.New("observed RKNNLite input shape does not match the verified artifact")
-		}
-		for index := range inputShape {
-			if inputShape[index] != int(expectedShape[index]) {
-				return errors.New("observed RKNNLite input shape does not match the verified artifact")
-			}
-		}
+	if !slices.EqualFunc(inputs, delivery.ArtifactCapability.Tensors, func(observed, expected modelcompat.InputTensor) bool {
+		return observed.Name == expected.Name && observed.Datatype == expected.Datatype &&
+			slices.Equal(observed.SampleShape, expected.SampleShape)
+	}) {
+		return errors.New("observed RKNNLite inputs do not match the verified artifact")
 	}
 	expectedLibraries := make(map[string]profilingrun.CandidateReportHostLibrary, len(delivery.HostContract.Libraries))
 	for _, library := range delivery.HostContract.Libraries {
@@ -269,7 +271,7 @@ func copyRuntimeDelivery(delivery profilingrun.CandidateRuntimeDelivery) profili
 	if delivery.ArtifactCapability != nil {
 		capability := *delivery.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), capability.DeclaredBatchSizes...)
-		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
+		capability.Tensors = modelcompat.CloneInputTensors(capability.Tensors)
 		copy.ArtifactCapability = &capability
 	}
 	copy.RuntimePackages = append([]profilingrun.CandidateReportRuntimePackage(nil), delivery.RuntimePackages...)

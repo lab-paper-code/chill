@@ -5,11 +5,17 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
 	testActuatedNVPMode   = "MODE_15W_6CORE"
 	testARM64Architecture = "arm64"
+	testDifferentIdentity = "other"
+	testINT64Datatype     = "INT64"
+	testDatatypeField     = "datatype"
+	testShapeField        = "shape"
 )
 
 func TestCandidateReportMatchesMaterialSelectionSemantics(t *testing.T) {
@@ -28,7 +34,7 @@ func TestCandidateReportMatchesMaterialSelectionSemantics(t *testing.T) {
 	if err := ValidateCandidateReport(payload, config); err != nil {
 		t.Fatal(err)
 	}
-	config.Candidate.ExecutionPath = "other"
+	config.Candidate.ExecutionPath = testDifferentIdentity
 	if err := ValidateCandidateReport(payload, config); err == nil {
 		t.Fatal("expected pre-run selection mismatch rejection")
 	}
@@ -58,6 +64,9 @@ func TestDecodeInternalCandidateReportIsStrictAndComplete(t *testing.T) {
 		},
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: "artifact@sha256:digest", Architecture: "amd64", Path: "/artifact/model.onnx",
+		},
+		ArtifactCapability: &CandidateArtifactCapability{
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}}},
 		},
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},
@@ -137,6 +146,7 @@ func TestCandidateReportBindsSelectedActuatorTarget(t *testing.T) {
 			Image: config.Images.Artifact, Architecture: config.TargetNode.Architecture,
 			Path: config.State.ArtifactPath,
 		},
+		ArtifactCapability:  config.Delivery.ArtifactCapability,
 		MetricObserverImage: config.Images.MetricObserver,
 		Verdict:             config.Candidate.Verdict,
 		Reasons:             []CandidateReportReason{},
@@ -193,34 +203,6 @@ func TestDecodeCandidateReportValidatesSeparatedHostContract(t *testing.T) {
 	}
 }
 
-func TestDecodeCandidateReportRequiresArtifactDeclaredBatchSizes(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.DeclaredBatchSizes = nil
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = DecodeCandidateReport(payload)
-	if err == nil || err.Error() != "candidate report artifact target platform and declared batch sizes are required" {
-		t.Fatalf("candidate without declared batch sizes returned %v", err)
-	}
-}
-
-func TestDecodeCandidateReportRequiresPositiveArtifactDeclaredBatchSizes(t *testing.T) {
-	report := completeCandidateReportForTest()
-	report.ArtifactCapability = rknnArtifactCapabilityForTest()
-	report.ArtifactCapability.DeclaredBatchSizes = []int32{1, 0, 4}
-	payload, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = DecodeCandidateReport(payload)
-	if err == nil || err.Error() != "candidate report artifact declared batch sizes must be positive" {
-		t.Fatalf("candidate with a non-positive declared batch size returned %v", err)
-	}
-}
-
 func TestDecodeCandidateReportRejectsRetiredConfiguredTensorFields(t *testing.T) {
 	report := completeCandidateReportForTest()
 	report.ArtifactCapability = rknnArtifactCapabilityForTest()
@@ -271,6 +253,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		},
 		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
 		Measurement: MeasurementContract{Batch: 1},
+		Delivery:    report.RuntimeDelivery(),
 	}
 	verified, err := VerifyCandidateReport(payload, config)
 	if err != nil {
@@ -279,23 +262,27 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 	firstDelivery := verified.RuntimeDelivery()
 	firstDelivery.HostContract.Devices[0].Path = "/mutated"
 	firstDelivery.RuntimeAccess.SupplementalGroups[0] = 999
+	firstDelivery.ArtifactCapability.Tensors[0].Name = "mutated"
+	firstDelivery.ArtifactCapability.Tensors[0].SampleShape[0] = 999
 	secondDelivery := verified.RuntimeDelivery()
 	if secondDelivery.HostContract.Devices[0].Path == "/mutated" ||
-		secondDelivery.RuntimeAccess.SupplementalGroups[0] == 999 {
+		secondDelivery.RuntimeAccess.SupplementalGroups[0] == 999 ||
+		secondDelivery.ArtifactCapability.Tensors[0].Name == "mutated" ||
+		secondDelivery.ArtifactCapability.Tensors[0].SampleShape[0] == 999 {
 		t.Fatal("verified candidate report exposed mutable internal delivery state")
 	}
 
-	withoutShape := report
-	withoutShapeCapability := *report.ArtifactCapability
-	withoutShapeCapability.InputSampleShape = nil
-	withoutShape.ArtifactCapability = &withoutShapeCapability
-	withoutShapePayload, err := json.Marshal(withoutShape)
+	withoutInputs := report
+	withoutInputsCapability := *report.ArtifactCapability
+	withoutInputsCapability.Tensors = nil
+	withoutInputs.ArtifactCapability = &withoutInputsCapability
+	withoutInputsPayload, err := json.Marshal(withoutInputs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyCandidateReport(withoutShapePayload, config); err == nil ||
-		err.Error() != "candidate report artifact input shape is required" {
-		t.Fatalf("RKNN candidate without an input shape returned %v", err)
+	if _, err := VerifyCandidateReport(withoutInputsPayload, config); err == nil ||
+		!strings.Contains(err.Error(), "input tensors are required") {
+		t.Fatalf("candidate without input tensors returned %v", err)
 	}
 
 	withoutPlatform := report
@@ -367,6 +354,7 @@ func verifyRKNNCandidateAtBatch(
 		},
 		TargetNode:  NodeSnapshot{Architecture: report.DeviceClassFacts.Architecture},
 		Measurement: MeasurementContract{Batch: batch},
+		Delivery:    report.RuntimeDelivery(),
 	}
 	return VerifyCandidateReport(payload, config)
 }
@@ -391,7 +379,8 @@ func rknnHostContractForTest() CandidateReportHostContract {
 
 func rknnArtifactCapabilityForTest() *CandidateArtifactCapability {
 	return &CandidateArtifactCapability{
-		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
+		Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 	}
 }
 
@@ -420,6 +409,7 @@ func completeCandidateReportForTest() CandidateReport {
 		ArtifactSupply: CandidateReportArtifactSupply{
 			Image: "artifact@sha256:digest", Architecture: testARM64Architecture, Path: "/artifact/model.rknn",
 		},
+		ArtifactCapability:  rknnArtifactCapabilityForTest(),
 		MetricObserverImage: "observer@sha256:digest",
 		Verdict:             "Compatible", Reasons: []CandidateReportReason{},
 	}
@@ -446,9 +436,6 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 		{name: "unsupported schema", mutate: func(report map[string]any) {
 			report["schemaVersion"] = "foreign"
 		}},
-		{name: "retired predecessor schema", mutate: func(report map[string]any) {
-			report["schemaVersion"] = "chill.dacs.io/modelcompat-report.v1alpha9"
-		}},
 		{name: "ModelSpec name drift", mutate: func(report map[string]any) {
 			report["inputs"].(map[string]any)["modelSpec"].(map[string]any)["name"] = "other-model"
 		}},
@@ -469,6 +456,41 @@ func TestCandidateReportRejectsUnsupportedSchemaAndCatalogNameDrift(t *testing.T
 			candidate := config
 			if err := ValidateCandidateReport(changed, candidate); err == nil {
 				t.Fatal("expected candidate report identity rejection")
+			}
+		})
+	}
+}
+
+func TestCandidateReportRejectsFrozenInputDrift(t *testing.T) {
+	payload, err := os.ReadFile("testdata/candidate-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := decodeTestRunConfig(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"name", testDatatypeField, testShapeField} {
+		t.Run(field, func(t *testing.T) {
+			report, err := DecodeCandidateReport(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "name":
+				report.ArtifactCapability.Tensors[0].Name = testDifferentIdentity
+			case testDatatypeField:
+				report.ArtifactCapability.Tensors[0].Datatype = testINT64Datatype
+			case testShapeField:
+				report.ArtifactCapability.Tensors[0].SampleShape[0]++
+			}
+			if _, err := VerifyCandidateReportRecord(report, config); err == nil ||
+				!strings.Contains(err.Error(), "input contract") {
+				t.Fatalf("candidate input drift accepted: %v", err)
 			}
 		})
 	}

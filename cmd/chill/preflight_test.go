@@ -75,7 +75,8 @@ func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 	for _, want := range []string{
 		"READ_AT", "NAMESPACE", preflightTestNamespace, "CAMPAIGN", "hourly-curve", "RESOLVES", "yes",
 		"PLANNED_BATCH_SIZES", "1,2,4", "mobilenet.rknn", "rknnlite", "orangepi-5-plus", "fixed",
-		"224,224,3",
+		"INPUT_TENSOR", "input", "DATATYPE", "FP32", "SAMPLE_SHAPE", "[224 224 3]",
+		"aux", "INT32", "[2]",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("table missing %q:\n%s", want, stdout.String())
@@ -160,13 +161,16 @@ func testBatchEnergyOptimizationPreflight(resolves bool) operatorconsole.BatchEn
 		return preflight
 	}
 	preflight.Plan = json.RawMessage(`{
-		"schemaVersion":"chill.dacs.io/profile-curve-plan.v1alpha1",
+		"schemaVersion":"chill.dacs.io/curve-plan.v1alpha7",
 		"shared":{
 			"plannedBatchSizes":[1,2,4],
 			"artifact":{"name":"mobilenet.rknn","executionPath":"rknnlite"},
 			"deviceClass":"orangepi-5-plus",
 			"powerMode":"fixed",
-			"tensor":{"inputSampleShape":[224,224,3]}
+		"tensor":{"tensors":[
+			{"name":"input","datatype":"FP32","sampleShape":[224,224,3]},
+			{"name":"aux","datatype":"INT32","sampleShape":[2]}
+		]}
 		}
 	}`)
 	return preflight

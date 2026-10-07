@@ -1,0 +1,637 @@
+# 워크로드 관리 구현 설계
+
+## 1. 목적과 설계 범위
+
+[워크로드 관리 SRS](../../spec/workloads/SRS.md)의 `WM-01`부터 `WM-32`까지에 대응하는 구현 계약이다.
+요구사항의 원본은 SRS이며, 아래에는 현재 리소스 표현, 책임과 적용 순서를 기록한다.
+실제 검증 범위와 남은 실행 증거는 12장에서 구분한다.
+
+사용자가 승인한 제외 범위는 **adaptive SLO batch waiting과 configuration selection 알고리즘**뿐이다.
+공식 custom batching API는 배치 포함 조건을 제어하지만 조절 가능한 큐 대기나 dispatch를
+교체하지 못한다. Triton core patch, 자체 추론 서버나 외부 HTTP 추론 proxy를 추가하지 않는다.
+공식 native Triton Python/ORT CPU serving과 동일 경로의 profiling은 구현되어 있다.
+
+### 핵심 결정
+
+| 결정 | 이유 |
+|---|---|
+| Workload는 cluster-scoped CRD로 저장 | 기존 cluster-scoped ModelSpec과 동일한 연구 클러스터 관리 범위를 사용하고, 등록 건은 Kubernetes UID로 구분 |
+| Workload 정의에는 모델 참조와 SLO만 저장 | 서비스 식별자는 객체 이름으로 표현. 정적 POOL 참조나 산출물 복사본을 선언에 추가하지 않음 |
+| POOL은 현재 구성의 운영 상태로 제공 | 현재 노드와 서빙 워크로드 관계가 바뀌므로 Workload 정의와 분리. 별도 Pool CRD는 추가하지 않음 |
+| 관리 API와 요청 접수 제어는 기존 Serving entrypoint에 배치 | 신규 접수 중지와 큐 상태를 실제로 소유하는 경로에서 변경을 적용. 별도 관리 서버와 WorkloadController를 만들지 않음 |
+| 정의 변경 writer는 하나로 제한 | 워크로드 생성과 모델 삭제의 경쟁, 모델 변경과 신규 접수 사이의 경쟁을 같은 관리 경계에서 처리 |
+| 요청은 수락 당시 적용 정의를 유지 | SLO 변경과 POOL 재구성 때문에 기존 요청의 의미가 바뀌지 않게 함 |
+| 큐는 bounded in-memory 구조 | SRS는 영속 요청 큐를 요구하지 않음. broker와 요청별 Kubernetes 객체를 추가하지 않음 |
+| 실행과 배칭은 Triton 재사용 | CHILL은 워크로드 문맥, 정책과 관측을 연결하며 자체 추론 서버를 만들지 않음 |
+
+하나의 CHILL 서비스에 활성 Serving entrypoint 하나를 둔다. 다중 활성 진입점의 큐 동기화,
+분산 관리 잠금이나 고가용성 복구는 이 연구 클러스터의 구현 전제가 아니다.
+배포는 `replicas: 1`과 `strategy: Recreate`로 고정한다. replica 수만 1이어도 기본 RollingUpdate는
+두 프로세스를 겹쳐 실행할 수 있으므로 허용하지 않는다. 강제 Pod 삭제로 단일 owner를 우회하지 않는다.
+이 전제는 chart 검증과 실제 배포 검증에서 확인한다.
+
+## 2. 현재 코드와 재사용 경계
+
+| 현재 근거 | 구현 책임 |
+|---|---|
+| [ModelSpec API](../../../api/v1alpha1/modelspec_types.go)와 [modelcatalog](../../../internal/modelcatalog/) | 논리 모델, 산출물과 named tensor 계약의 공통 등록 검증 및 projection |
+| [HTTP entrypoint](../../../internal/serving/entrypoint/handler.go) | bearer 인증된 Workload 조회, 관리와 단일 샘플 추론. 기존 투명 모델 proxy 계약은 제거 |
+| [Serving core](../../../internal/serving/)와 [실행 진입점](../../../cmd/serving-entrypoint/) | 불변 적용 정의, 접수 gate, bounded 큐, 인스턴스 route와 실제 physical drain 및 조립 |
+| [modelcompat](../../../internal/modelcompat/) | Kubernetes와 독립적인 입력, 실행 경로와 native 설정 호환성. Profiler 후보 resolver를 Serving에 연결하지 않음 |
+| [Serving kube](../../../internal/serving/kube/) | private uncached writer, TokenReview/SAR, 현재 POOL과 native 관측, 선택된 완료 campaign의 검증된 profile catalog |
+| [Triton adapter](../../../internal/serving/triton/) | 공식 HTTP V2 native 요청과 실행 관측. 사용자 인증 header를 backend에 전달하지 않음 |
+| [Evidence Loader](../../../internal/profiling/profiler/evidence/loader.go) | frozen 실행 조건과 원시 evidence의 typed 검증 경계. 이것만으로 SLO나 scientific admission을 증명하지 않음 |
+| [모델 호환성 ADR](../../adr/0012-model-artifact-compatibility-boundary.md) | 정적 호환성, 측정 근거, 현재 배치 가능성과 SLO 적합성을 서로 다른 판단으로 유지 |
+| [DeviceClass 상태 ADR](../../adr/0011-deviceclass-status-boundary.md) | DeviceClass를 POOL이나 실제 Serving 구성 저장소로 사용하지 않음 |
+| [ChillSystem 상태 ADR](../../adr/0008-chillsystem-status-surface.md) | 설치 상태에 워크로드 큐, 노드 구성이나 관리 작업 상태를 덧붙이지 않음 |
+| [전환 소유권 ADR](../../adr/0018-transition-ownership-boundary.md) | 전력 변경은 NodeActuator의 단일 writer를 유지. 워크로드 등록이 측정이나 전력 전환을 소유하지 않음 |
+
+현재 입력 계약은 `tensors[].name`, `datatype`, `sampleShape`이며 여러 numeric/bool tensor를
+하나의 독립 샘플로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
+`DeviceProfile`을 새 profile DB로 사용하지 않고 선택된 완료 campaign의 메모리 view를 사용한다.
+standalone ORT 및 RKNNLite 결과를 Triton의 같은 실행 조건으로 간주하지 않는다.
+
+## 3. 데이터 모델과 원본
+
+### 3.1 Workload
+
+`edge.dacs.io/v1alpha1`의 `Workload`는 cluster-scoped CRD다.
+cluster scope는 기존 [CRD 범위 ADR](../../adr/0005-crd-scope.md)의 단일 연구 클러스터 방향을 따른다.
+다음 YAML은 저장 형태 설명이며, 관리자는 5장의 HTTPS API로 등록한다.
+
+```yaml
+apiVersion: edge.dacs.io/v1alpha1
+kind: Workload
+metadata:
+  name: detector-fast
+spec:
+  modelRef:
+    name: detector
+  slo:
+    percentile: 99.5
+    targetLatency: 100ms
+```
+
+- `metadata.name`은 외부 서비스 식별자다. Kubernetes 객체 이름의 형식과 길이 제한을 API에 명시한다.
+- `metadata.uid`는 등록 건 식별자다. 삭제 후 같은 이름으로 생성한 객체는 별도 등록 건이다.
+- `spec.modelRef`는 기존 ModelSpec을 참조한다. POOL, 노드, 인스턴스와 profile 참조를 Workload spec에 넣지 않는다.
+- `percentile`은 `0 < p ≤ 100`이며 유한해야 한다. `targetLatency`는 명시적 단위를 가진 양수 duration이다.
+  Go `time.Duration`이 표현하지 못하는 값은 오류로 반환하고, 잘라내거나 근사하지 않는다.
+- 이름 변경은 지원하지 않는다. 다른 식별자가 필요하면 별도 등록 건으로 생성한다.
+
+상태는 다음 정보만 보유한다. 큐 길이나 요청마다 변하는 측정값은 status에 쓰지 않는다.
+
+| 상태 정보 | 의미 |
+|---|---|
+| `appliedDefinition` | 진입 경로가 실제 적용한 모델 참조와 모델 UID 및 generation, SLO, Workload generation |
+| `admission` | 실제 신규 접수 가능 여부, 제한 이유와 확인 시각 |
+| `operation` | 현재 변경 또는 삭제의 종류, 대상 generation, 진행 단계, 수락 시각과 실패 원인 |
+
+`spec`은 원하는 정의이고 `appliedDefinition`은 요청 경로가 확인한 정의다.
+`observedGeneration`이나 CRD 저장 성공만으로 실제 적용 완료를 판단하지 않는다.
+상태 writer는 Serving 제어 어댑터 하나이며, 노드나 Pod의 Kubernetes 상태를 복제하지 않는다.
+`operation`의 단계는 접수 중지, 드레인, 기존 연결 해제, 새 정의 적용 또는 전용 자원 정리,
+완료와 실패다. 8장의 해당 절차만 표현하며 범용 단계 그래프를 저장하지 않는다.
+사용자에게 보이는 준비 대기와 준비 중 및 Ready는 실행 근거와 현재 인스턴스로 산출하고,
+변경 및 삭제의 진행과 실제 접수 가능 여부는 별도 정보로 함께 제공한다.
+
+현재 적용 정의와 변경 대상 한 건만 운영 상태에 둔다. 이미 수락한 요청이 보유한 불변 문맥과
+보존용 정의 기록은 별도이며, 다중 버전 워크로드 조회기나 호환 reader를 만들지 않는다.
+
+### 3.2 POOL의 운영 상태
+
+POOL은 Serving runtime의 현재 구성에서 제공하는 `PoolState`다.
+각 상태에는 POOL 식별자, 현재 Node 참조와 현재 서빙 Workload 참조를 포함한다.
+Workload 참조는 이름과 UID를 함께 사용해 같은 이름의 재등록을 혼동하지 않는다.
+
+```text
+PoolState
+  currentNodes: Node 이름과 UID
+  instances: Pod UID, Node UID, 실행 조건, 실제 준비와 연결 상태
+  servingWorkloads: 현재 연결된 Workload 이름과 UID
+```
+
+- 노드의 현재 논리 소속은 CHILL 소유의 `edge.dacs.io/serving-pool` Node label 하나로 기록한다.
+  DeviceClass label은 장비 분류이고, POOL label은 동적 운영 소속이므로 서로 대신하지 않는다.
+  이 label의 writer는 전환 실행 어댑터 하나이며, 모델 관리 API나 장비 discovery가 소속을 따로 수정하지 않는다.
+- 실제 인스턴스의 원본은 Kubernetes Pod와 실행기 관측이다. Pod 식별 metadata는 관측 대상을 찾는 데 사용하며,
+  Running, label이나 원하는 설정만으로 모델 준비와 워크로드 연결 완료를 증명하지 않는다.
+- `servingWorkloads`는 실제 인스턴스의 확인된 워크로드 연결에서 산출한다.
+  등록이나 목표 배정만 있는 워크로드는 포함하지 않는다. 드레인 중인 기존 연결은 실제 해제될 때까지 유지한다.
+- 조회하는 `PoolState`는 현재 구성 snapshot에 노드와 참조 목록을 함께 보유한다.
+  독립적으로 수정할 서빙 워크로드 목록이나 Workload 쪽의 역방향 POOL 필드는 만들지 않는다.
+- 노드별 label은 단일 소속을 표현한다. 여러 POOL 상태를 산출할 때 같은 Node UID를 중복 배정하지 않는다.
+  노드의 Serving 참여 여부와 POOL 소속은 구분하며, 비활성 노드도 전체 POOL 비용 관측에서 제외하지 않는다.
+
+현재 구성은 스케줄러가 선택한 목표와 분리한다. 전환 실행이 실제 준비, 연결, 드레인과 자원 해제를
+확인한 결과로 현재 구성을 갱신하고, 같은 snapshot으로 POOL 조회와 분배 대상을 제공한다.
+조회에는 각 관측의 시각과 source identity를 포함한다. runtime 내부 snapshot의 일관성과
+여러 Kubernetes 리소스 및 backend 관측의 원자성은 다르므로, 이들을 한 API transaction처럼 설명하지 않는다.
+재시작 시 Node label, 관리 대상 Pod와 실행기 상태를 다시 관측한다. 확인할 수 없는 관계는
+불명 사유를 표시하고 신규 분배에서 제외한다. 오래된 목표를 실제 서빙 관계로 복구하지 않는다.
+재시작 시 접수 gate는 먼저 닫는다. 삭제 의도와 진행 중 작업, 원하는 정의와 마지막 적용 identity의
+차이를 실제 실행 상태와 대조한 뒤에만 접수를 연다. status 저장 실패를 적용 성공으로 덮어쓰지 않는다.
+
+### 3.3 요청 문맥
+
+수락한 요청은 적용 정의의 불변 snapshot을 참조한다. 큰 모델 정의나 입력 payload를 매 단계 복사하지 않는다.
+
+| 확정 시점 | 기록 |
+|---|---|
+| 최초 CHILL 수신 | request ID, 요청한 서비스 식별자, 수신 시각과 종단 경과 시간 기준 |
+| 요청 수락 | Workload UID, 적용 Workload 및 ModelSpec identity, 모델과 입력 계약, SLO |
+| 실제 분배 | POOL ID, Node UID, Pod UID와 container identity로 식별한 physical 인스턴스, 산출물과 실행 조건, profile 및 confidence, 분배 시각 |
+| 실행 및 반환 | Triton 큐 진입과 실행 관측, 실제 배치 연결, backend 결과, 응답 전달 결과와 종료 시각 |
+
+미배정 요청에 담당 POOL을 미리 기록하지 않는다. 배정 후 현재 POOL 구성이 바뀌어도 해당 요청의
+실제 배정 기록을 덮어쓰지 않는다. 입력 payload 전체를 관측 기록에 남기지는 않는다.
+
+## 4. 책임과 패키지
+
+| 소유자 | 책임 |
+|---|---|
+| `internal/serving` | 적용 정의, 접수 gate, 워크로드별 미배정 큐, 요청 문맥과 관리 동작. Kubernetes와 HTTP에 의존하지 않는 core |
+| `internal/serving/entrypoint` | 조회와 관리 및 추론 HTTP 경로, 본문 제한과 디코딩, 오류 응답, backend 전달과 응답 전달 관측 |
+| `internal/serving/kube` | Workload와 ModelSpec의 private uncached 저장 및 조회, Kubernetes 권한 검증, 모델 및 profile boundary 연결, 상태 기록과 실제 구성 관측 |
+| `cmd/serving-entrypoint` | concrete 객체와 공유 transport의 조립, 설정 로딩과 종료 처리 |
+| 구성 및 전환 경계 | 현재 Node label과 자원 및 실제 인스턴스 관측을 반영. configuration selection 알고리즘은 승인된 제외 범위 |
+| `internal/serving/triton` 및 공식 native runtime | same-UID 배치 분리, 고정 frozen 설정, native 큐 및 실행 종료 관측. adaptive 추가 대기는 없음 |
+
+어댑터는 API와 core를 연결하지만 core가 API, Kubernetes client나 Profiler application을 import하지 않는다.
+profile은 6장에서 정한 catalog로 조회하고 evidence는 기존 typed 검증 경계로 소비한다.
+Profiler controller나 Profiler 전용 후보 resolver를 요청 handler에서 호출하지 않는다.
+구성은 기존 concrete 타입을 사용하며 범용 repository나 workflow engine을 추가하지 않는다.
+
+현재 [.go-arch-lint.yml](../../../.go-arch-lint.yml)은 `model-catalog`, `serving-core`,
+`serving-entrypoint`, `serving-kube`, `serving-triton`을 구분한다.
+허용 경계와 `go list`로 캡처한 실제 import는 [패키지 아키텍처](../code-intelligence/README.md#reviewed-model-and-serving-boundaries)에 기록한다.
+
+## 5. API와 권한
+
+### 5.1 HTTP 계약
+
+기존 Serving entrypoint의 HTTPS 경로는 다음과 같다. Workload 조회는 선언과 실제 적용 정의를 구분한다.
+
+| 경로 | 의미와 결과 |
+|---|---|
+| `GET /api/v1/workloads` | 모든 생존 등록 건의 목록과 접수 상태. 변경 중과 삭제 중인 객체 포함 |
+| `GET /api/v1/workloads/{id}` | 원하는 정의, 현재 적용 정의, 지원 입력, 접수 상태와 관리 진행 |
+| `POST /api/v1/workloads` | 등록 검증 후 생성. `201`, 근거 부족이어도 등록 가능 |
+| `PUT /api/v1/workloads/{id}` | 모델과 SLO의 전체 목표 정의 수정. SLO만 실제 적용하면 `200`, 드레인이 필요한 변경은 `202` |
+| `DELETE /api/v1/workloads/{id}` | 신규 접수 중지와 삭제 의도를 저장한 뒤 `202`. 실제 삭제 완료는 조회에서 확인 |
+| `POST /api/v1/workloads/{id}/infer` | 독립 입력 한 건의 추론. backend의 해당 요청 결과 반환 |
+| `GET /api/v1/pools` 및 `GET /api/v1/pools/{id}` | 현재 노드와 서빙 워크로드 참조, 인스턴스와 전환 관측. 운영자 조회 |
+| `/api/v1/models` 및 `/api/v1/models/{id}` | ModelSpec 목록과 상세 및 생성, 수정, 삭제. 참조 보호와 연관 워크로드 변경 절차 적용 |
+| `GET /api/v1/observations/workloads/{uid}` | 지정 구간의 요청 및 관리 기록과 집계. 적용 정의와 결과 종류별로 구분하며, 삭제된 등록 건도 UID로 조회 |
+
+수정과 삭제는 조회한 `resourceVersion`을 `If-Match`로 제출한다. stale 변경은 `409`로 거부한다.
+`202`는 관리 요청을 맡았다는 뜻이지 실행 준비나 자원 해제가 끝났다는 뜻이 아니다.
+수락 후 HTTP 연결이 끊겨도 저장된 관리 작업은 요청 취소와 별개이며, 객체 조회로 실제 결과를 확인한다.
+관측 조회의 `from`, `to`와 적용 정의 및 결과 종류 필터를 집계 조건으로 반환한다.
+원시 기록 pagination과 집계 대상 구간을 구분해, 한 페이지의 표본만으로 전체 구간 백분위를 계산하지 않는다.
+
+POST 본문은 `{"name":"...","spec":{...}}`, PUT은 `{"spec":{...}}`만 받는다.
+Workload GET의 `desired.metadata.resourceVersion`과 Model GET의 `metadata.resourceVersion`을
+사용한다. 알 수 없는 JSON 필드와 클라이언트 모델/SLO 덮어쓰기는 허용하지 않는다.
+다음은 이미 등록된 `detector`를 참조하는 예다:
+
+```sh
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' "$OWNER/api/v1/workloads" \
+  --data '{"name":"detector-fast","spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"100ms"}}}'
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$OWNER/api/v1/workloads/detector-fast"
+# RV는 방금 조회한 desired.metadata.resourceVersion이다.
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  -H "If-Match: $RV" -H 'Content-Type: application/json' -X PUT \
+  "$OWNER/api/v1/workloads/detector-fast" \
+  --data '{"spec":{"modelRef":{"name":"detector"},"slo":{"percentile":99.5,"targetLatency":"200ms"}}}'
+```
+
+조회는 `desired`, `appliedDefinition`, `supportedInputs`, `admission`, `readiness`,
+`reason`, `pending`, `assigned`, `operation`, `observedAt`을 구분한다.
+근거 없는 유효 등록도 `201`이며 `admission:false`와 `MissingEvidence`로 닫힌다.
+SLO-only 적용은 `200`, 드레인 변경과 Workload 삭제는 `202`다.
+삭제 완료 뒤 상세는 실제 `404`, 같은 이름 재등록은 새 UID다. 참조 없는 Model 삭제는 `204`다.
+
+입력은 조회한 계약의 batch-free shape를 사용한다. 예를 들어 등록된 두 tensor가
+`x / FP32 / [2]`, `enabled / BOOL / [1]`이면 한 요청은 다음과 같다:
+
+```sh
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -H 'X-Chill-Request-Timeout: 5s' \
+  "$OWNER/api/v1/workloads/example/infer" \
+  --data '{"inputs":[{"name":"x","datatype":"FP32","shape":[2],"data":[1,2]},{"name":"enabled","datatype":"BOOL","shape":[1],"data":[true]}]}'
+```
+
+이는 `example`에 이 계약을 등록했을 때의 예이며 detector의 입력을 대신하지 않는다.
+응답은 해당 backend 결과이고 `X-Chill-Request-ID`, 확인된 경우 `X-Chill-Workload-UID`를 제공한다.
+명시적 요청 timeout은 양수이며 설정된 `requestTimeout` 이하이고 SLO와 별개다.
+
+```sh
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$OWNER/api/v1/observations/workloads/$UID?from=$FROM&to=$TO&limit=100"
+```
+
+`from`/`to`는 RFC3339Nano, `definition`/`outcome`은 반복 가능한 필터,
+`cursor`는 반환된 `nextCursor`다. 집계는 raw page 크기와 무관한 전체 선택 모집단을 사용한다.
+
+오류 응답은 `code`, `message`, 해당할 때 `field`다. 관리 단계는 Workload 조회의 `operation`으로 확인한다.
+존재하지 않는 객체는 `404`, 등록 및 입력 검증 오류는 `400`, 권한 오류는 `401` 또는 `403`,
+진행 중 작업과 충돌은 `409`, `QueueFull`은 `429`, 근거 부족이나 접수 제한은 `503`으로 반환한다.
+transport/backend 어댑터 오류는 `502`, 명시적인 종단 timeout은 `504`다.
+native backend의 HTTP 결과는 해당 status를 유지하며 queue timeout의 실제 `503`과 구분한다.
+연결이 살아 있는 요청 취소는 `408`, 이미 닫힌 경우 응답을 전달했다고 기록하지 않는다.
+
+### 5.2 변경 권한과 단일 writer
+
+사용자의 신원과 권한은 기존 Kubernetes 인증 및 RBAC를 사용한다.
+HTTP 경로에서는 bearer 신원의 `TokenReview`와 경로 및 동작의 `SubjectAccessReview`를 사용한다.
+별도 계정 저장소를 만들거나, 외부 호출자가 보내는 신원 header를 권한 근거로 신뢰하지 않는다.
+조회와 추론 권한, 모델 및 워크로드 변경 권한, POOL 운영 조회 권한을 분리한다.
+권한 확인 실패는 접수를 허용하지 않는다. bearer를 받는 외부 연결은 TLS를 사용한다.
+backend로 보낼 때 사용자 `Authorization`, cookie와 신원 header를 전달하지 않고,
+모델 및 SLO와 내부 시간 정보는 CHILL이 확인한 값만 연결한다.
+
+사용자에게 ModelSpec과 Workload spec의 직접 쓰기 권한을 주지 않는다.
+관리 어댑터의 service account만 정의를 쓰며, 모델 선언 변경을 이 관리 경로로 옮긴다.
+운영자의 기존 manifest 입력도 관리 API에 제출하는 방식으로 전환한다.
+직접 `kubectl apply`가 gate와 참조 보호를 우회하는 호환 경로를 남기지 않는다.
+클러스터 관리자가 강제로 상태를 변경하는 행위는 이 단일 writer 전제 밖의 운영 변경이다.
+
+관리 검증과 선언 저장은 짧은 단일 관리 잠금으로 직렬화한다.
+이 잠금 안에서 모델 참조 확인과 생성, 모델 삭제 판정, 충돌 판정 및 변경 대상 확정을 수행한다.
+backend 드레인과 준비를 기다리는 동안에는 잠금을 보유하지 않는다.
+작업 진행은 워크로드마다 하나이며, 공유 모델 변경은 관련 워크로드들을 함께 잠근 작업으로 취급한다.
+이 방식은 낮은 빈도의 연구 클러스터 관리 변경을 전제로 한다.
+참조와 충돌 판정은 이 owner가 반영한 현재 등록 상태 또는 uncached API 조회를 사용한다.
+오래된 informer 결과만으로 모델 삭제나 참조 생성의 승인 여부를 정하지 않는다.
+전용 owner ServiceAccount만 managed 정의와 status를 쓴다. 상태는 resourceVersion precondition을
+가진 full status Update로 기록하여 필수 `allowed:false`도 빠뜨리지 않는다.
+TLS Secret, TokenReview/SAR 권한, 유지되는 RWO PVC와 S3 연결은 chart의 owner 배포에 포함된다.
+
+## 6. 등록과 입력 검증
+
+등록에서는 식별자, 필수 필드, SLO와 ModelSpec의 존재 및 삭제 상태를 검증한다.
+모델 입력과 산출물 및 실행 경로는 공통 `internal/modelcatalog` projection과
+`internal/modelcompat` 순수 계약으로 검증한다. Kubernetes 변환은 어댑터가 맡으며
+Serving만의 두 번째 모델 검증 규칙을 만들지 않는다.
+검증 실패는 저장 전에 반환하므로 현재 정의를 바꾸지 않는다.
+profile이나 준비 인스턴스가 없다는 이유만으로 유효한 Workload 등록을 거부하지 않는다.
+근거 부족 상태를 제공하며, ProfilingRun이나 campaign을 자동으로 생성하지 않는다.
+
+실행 후보는 다음 조건을 구분해 얻는다.
+
+1. 모델 산출물과 runtime/backend의 정적 호환성을 확인한다. Unknown도 후보에서 제외한다.
+2. 입력과 실행 조건, 장비, 전력모드와 자원 할당에 대응하는 유효한 측정 근거를 조회한다.
+3. 현재 제공된 노드와 runtime 및 자원으로 준비 가능한지 확인한다.
+4. 준비 인스턴스는 실제 모델 준비와 현재 연결 상태를 확인한 뒤 분배 대상으로 사용한다.
+
+근거가 전혀 없는 준비 대기와, 근거가 있고 인스턴스만 일시적으로 없는 Serving 준비 중을 구분한다.
+후자는 설정된 유입 큐와 timeout 안에서 수락할 수 있다. SLO 만족 가능성과 요청 수락 가능성을 동일한 값으로 만들지 않는다.
+
+### 실행 근거 조회 경계
+
+새 catalog는 운영자가 선택한 완료 campaign의 frozen 실행 조건과 결과 및 원시 evidence 참조를 읽어
+현재 사용 가능한 profile을 제공하는 메모리 read model이다. 별도 profile DB나 DeviceProfile controller를 추가하지 않는다.
+기존 campaign 결과 조회와 `profilerevidence.Loader`의 검증된 결과를 재사용하되,
+`VerifiedEvidence` 자체를 SLO 적합 판정이나 scientific admission 결과로 해석하지 않는다.
+
+조회 key는 모델 산출물과 입력 계약, runtime/backend 및 버전과 설정, 측정 대상 Node와 장비,
+전력모드, 자원 할당과 스레드, 실행 배치 조건을 포함한다.
+측정 출처를 유지하고, 같은 DeviceClass라는 이유만으로 다른 Node의 결과를 자동 대체하지 않는다.
+현재 경로에 필요한 메모리나 실행 분포 등 필수 근거가 없으면 후보를 제외하고 부족한 항목을 제공한다.
+profile key, 선택할 campaign과 적용 범위는 설정으로 기록한다.
+
+요청 경로는 이 catalog의 검증된 현재 view를 사용하며, 매 요청마다 evidence를 내려받지 않는다.
+선택 결과에는 frozen 조건과 원시 근거 참조를 보존한다.
+Triton/backend 실행 경로의 결과가 없으면 기존 ORT 수치를 변환해서 채우지 않고 측정 필요 상태로 둔다.
+native admission은 frozen `plannedBatchSizes`와 측정된 batch 모두 `1..maxBatchSize` 전체가
+있어야 한다. 선호 배치 크기만 측정하거나 standalone ORT 근거를 변환하여 채우지 않는다.
+idle baseline confidence는 `profileConfidenceLevel`로 설정하며 선택 profile과 실제 배정 기록에 보존한다.
+
+### 구현된 입력 계약
+
+ModelSpec, campaign frozen 조건, worker, evidence와 sample은 모두 named tensor 계약을 사용한다.
+이름이나 FP32를 추정해 보충하지 않고 shape-only 호환 decoder나 alias를 두지 않는다.
+
+산출물 입력 계약은 `tensors[]`의 `name`, `datatype`, `sampleShape`로 표현한다.
+입력 이름은 유일하고 shape는 batch 축을 제외한다. 지원 입력 조회는 이 계약과 실행 근거를 연결해 제공한다.
+서로 다른 산출물의 계약을 한 모델의 단일 shape로 합치지 않는다.
+
+외부 추론 본문은 Triton HTTP V2의 tensor 표현을 사용하되, 각 tensor는 독립 샘플 하나다.
+클라이언트의 batch 축이나 내부 실행 배치 크기는 받지 않는다.
+입력 이름, 자료형, sample shape와 실제 데이터 수 및 자료형 범위를 경계에서 확인한다.
+자료형과 입력 형태는 실제 측정 및 실행 경로가 지원하는 범위만 허용하고, 지원하지 않는 인코딩은 명시적으로 거부한다.
+backend 전달 시 해당 실행 계약에 맞는 batch 축과 Triton 모델 경로를 연결한다.
+
+API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다.
+[저장 계약 ADR](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 읽을 수 없는
+이전 저장 계약을 새 계약처럼 해석하지 않는다. 검증된 입력 및 profile을 downstream에서 반복 검증하지 않는다.
+
+## 7. 요청 경로와 큐
+
+```text
+최초 수신 시각 기록
+  -> 권한과 워크로드 확인, 본문 디코딩
+  -> 현재 적용 정의로 입력과 실행 근거 검증
+  -> 접수 gate 확인과 수락, 적용 정의 고정
+  -> 준비된 인스턴스에 분배 또는 워크로드별 유입 큐
+  -> Triton의 워크로드별 큐와 배칭 및 실행
+  -> 해당 요청에 결과 반환, 실제 결과와 시간 기록
+```
+
+본문 디코딩은 configured 크기 한도를 적용한다.
+현재 정의에 대한 의미 검증, gate 확인, 수락 카운터 증가와 큐 삽입은 워크로드별 같은 동기화 경계에서 처리한다.
+모델 변경이 gate를 닫고 큐가 비었다고 판단한 직후 새 요청이 들어오는 경쟁을 허용하지 않는다.
+이 경계 안에서는 네트워크나 인스턴스 준비를 기다리지 않는다.
+
+수용 가능한 준비 인스턴스가 있으면 즉시 분배한다.
+미배정 큐는 워크로드별 bounded FIFO로 두며 실행 배치를 모으기 위한 대기를 추가하지 않는다.
+취소와 명시적 timeout은 큐에서 요청을 종료하고 실제 결과를 남긴다.
+공유 인스턴스를 향한 여러 워크로드 큐의 선택은 배칭 및 구성 정책과 연결하고, 하나의 섞인 FIFO로 대체하지 않는다.
+
+기존 가중치 선택은 유지하되 대상 identity를 노드가 아닌 인스턴스까지 구분한다.
+같은 Node의 여러 Pod가 하나의 backend 항목으로 합쳐지지 않게 한다.
+분배 기준은 Workload UID와 입력 조건별로 제공하고, 준비가 확인된 인스턴스에 대해서만 갱신한다.
+현재 경로는 새로운 구성 계산을 요청마다 기다리지 않는다.
+가중치의 중복 대상, 범위와 합은 분배 view를 설치하는 입력 경계에서 한 번 검증한다.
+입력별 route와 가중치 합을 캐시하며 요청마다 map이나 누적 가중치 vector를 만들지 않는다.
+현재 준비와 physical capacity를 반영하여 가용 대상에서 선택한다.
+
+HTTP transport는 공유하고, 인스턴스 목적지와 전달 객체는 준비 시 구성해 요청마다 만들지 않는다.
+backend에 전달한 뒤에는 연결 장애를 이유로 같은 요청을 다른 인스턴스에 자동 재실행하지 않는다.
+실제 backend 결과와 응답 전달 결과를 분리해서 기록한다.
+정상 종료도 모든 접수 gate를 먼저 닫고 설정된 종료 한도 안에서 요청을 마무리한다.
+종료 한도에서 취소하거나 끝내지 못한 요청은 그 결과로 기록하며, backend 종료를 확인하지 못하면
+해당 연결이 해제되었다고 기록하지 않는다.
+
+### 드레인 완료 기준
+
+신규 수락을 막는 gate와 기존 수락 요청을 처리하는 경로는 다르다.
+gate를 닫아도 기존 유입 큐의 요청은 이전 적용 정의로 배정하고, 인스턴스 큐와 실행을 마무리한다.
+
+드레인 완료는 다음 조건을 모두 만족해야 한다.
+
+- 해당 등록 건의 미배정 요청이 남아 있지 않다.
+- 인스턴스에서 해당 워크로드의 대기와 진행 중 실행이 남아 있지 않다.
+- 각 요청의 실제 결과와 응답 전달 상태가 기록되었다.
+
+HTTP timeout이나 연결 종료만으로 backend 실행이 끝났다고 간주하지 않는다.
+실행기는 완료 또는 실제 취소 결과를 제공해야 하며, 확인할 수 없으면 드레인 미완료와 원인을 표시한다.
+SLO 목표 시간 초과는 timeout이 아니므로 이를 이유로 기존 요청을 일괄 폐기하지 않는다.
+
+native trace의 `REQUEST_END`는 Python 실행에 진입하지 않은 큐 timeout/cancel도
+실제 release로 관측하는 근거다. transport 종료만 관측하고 native 종료를 모르면
+physical occupancy를 유지한다. backend 완료나 해당 physical container 종료 증거가 있어야 해제한다.
+Python 모델의 `execute` 반환은 native request release보다 이르므로 종료 근거로 사용하지 않는다.
+`assignedUnknown`은 배정은 되었지만 native waiting/running phase 증거가 없는 상태다.
+이 값을 실제 큐 대기나 실행 수로 바꾸지 않으며 미확인 physical 점유는 계속 유지한다.
+별도 recovery engine, 자동 inference 재실행이나 낙관적인 드레인 완료는 없다.
+
+## 8. 수정과 삭제 적용
+
+### 8.1 SLO만 변경
+
+1. 새 SLO와 수정 precondition을 검증한다. 진행 중 관리 작업이 있으면 거부한다.
+2. 원하는 정의를 저장한다.
+3. 워크로드별 수락 경계에서 새 적용 snapshot으로 교체한다.
+4. 적용과 관측 정의를 상태 및 journal에 기록한 뒤 완료 응답을 반환한다.
+
+기존 요청은 이전 snapshot을 유지한다. 새로 수락하는 요청은 새 SLO를 사용한다.
+진입 경로의 SLO 적용 완료와 POOL 재구성 완료를 동일한 사건으로 보고하지 않는다.
+저장이나 실제 적용이 실패하면 확인한 적용 정의와 실패 원인을 반환한다.
+
+### 8.2 모델 또는 모델과 SLO 변경
+
+1. 새 정의를 검증하고 목표를 저장한다.
+2. 실제 접수 gate를 닫고 관리 진행을 기록한 뒤 `202`로 수락을 알린다.
+3. 기존 유입 큐, 인스턴스 큐와 실행을 수락 당시 정의로 마무리한다.
+4. 완료가 확인되면 기존 워크로드 연결을 해제한다. 공유 인스턴스의 다른 워크로드 연결은 유지한다.
+5. 새 모델 및 SLO의 적용 snapshot을 설치하고 상태에 기록한다.
+6. 새 정의의 근거가 있으면 설정 한도에서 접수를 열고 준비 또는 Ready 상태로 전환한다.
+   근거가 없으면 적용은 완료하되 준비 대기로 두고 접수 제한 사유를 제공한다.
+
+저장된 목표와 실제 접수 중지, 적용 완료의 시각을 구분한다.
+연결 해제나 준비 실패는 실패한 단계와 실제 적용 정의로 표시한다.
+실패했다고 기존 모델로 모두 원복되었다고 가정하지 않는다.
+실패한 작업은 종료 결과와 실제 상태로 조회에 남긴다. 진행 중 동작이 남아 있으면 충돌을 거부한다.
+다음 명시적 수정이나 삭제는 확인된 현재 상태에서 시작하며, 완료된 동작을 중복 실행하거나
+실패한 단계의 후속 동작을 성공한 것처럼 실행하지 않는다. 자동 재시도나 별도 resume API는 추가하지 않는다.
+
+### 8.3 워크로드 삭제
+
+1. 충돌과 삭제 precondition을 확인한다.
+2. 실제 접수 gate를 닫고 finalizer가 있는 Workload에 삭제 의도를 저장한다.
+3. gate 중지 확인과 삭제 진행 저장 후 `202`를 반환한다.
+4. 기존 요청을 같은 드레인 기준으로 마무리한다.
+5. 라우팅과 실제 인스턴스의 워크로드 연결을 해제한다.
+6. 해당 워크로드만 사용하는 준비 작업과 Serving 자원의 실제 종료를 확인한다.
+7. finalizer를 제거한 뒤 실제 객체 삭제를 확인한다. 이후 서비스 목록에서 사라지고 상세는 `404`다.
+   전용 자원은 blocking owner link의 Pod → ReplicaSet → Deployment → Workload chain을 확인한다.
+   지원하지 않는 chain이나 nonblocking link는 cleanup 전에 fail closed하며 임의 child 정리를 추가하지 않는다.
+
+공유 자원 자체를 해당 워크로드의 소유 자원으로 삭제하지 않는다.
+남은 워크로드를 위한 인스턴스 축소나 재배치는 구성 선택에서 판단한다.
+삭제 실패도 조회 가능한 단계와 원인으로 남긴다. 실패 종료 후의 명시적 DELETE는 현재 상태에서
+같은 삭제 계약을 적용하며, 미완료를 실제 삭제 완료로 보고하지 않는다.
+보존된 요청과 정의 기록은 Workload 삭제의 garbage collection 대상으로 두지 않는다.
+
+### 8.4 ModelSpec 수정과 삭제
+
+모델 삭제 판정에는 Workload의 원하는 참조와 실제 적용 참조를 모두 확인한다.
+진행 중 모델 교체가 사용하는 참조도 포함하며, 관련 등록 건을 알려주고 삭제를 거부한다.
+워크로드 참조 확인과 ModelSpec 삭제는 같은 관리 잠금 안에서 수행해 신규 등록과의 경쟁을 막는다.
+
+참조 중인 ModelSpec의 산출물 또는 입력 정의 수정은 관련 워크로드 전체에 모델 변경 절차를 적용한다.
+모델의 새 선언을 저장하더라도 Serving이 사용하는 기존 불변 실행 정의를 즉시 덮어쓰지 않는다.
+관련 gate를 모두 닫고 수락 상태를 기록하며, 각 기존 요청이 끝나기 전 새 실행 정의를 적용하지 않는다.
+다른 작업과 충돌하는 워크로드가 하나라도 있으면 시작 전에 변경을 거부한다.
+모델 변경이 진행 중이면 그 모델을 새로 참조하는 등록과 수정도 충돌로 거부한다.
+
+모든 관련 gate 닫기 → 전체 드레인 → 전체 연결 해제 → 모든 새 snapshot을 닫힌 상태로
+게시 → 전체 gate 열기의 barrier를 적용한다. 공유 인스턴스도 포함하며 일부 Workload만 먼저 열지 않는다.
+진행과 실패는 관련 워크로드의 관리 상태에서 조회하고, 관리 기록은 같은 모델 변경 대상과 연결한다.
+다중 객체 status 업데이트를 원자적 Kubernetes transaction이라고 설명하지 않으며,
+요청 경로의 적용 barrier는 단일 runtime owner가 소유한다.
+
+## 9. POOL 재구성과 요청 의미
+
+구성 선택 알고리즘은 승인된 제외 범위다. 현재 POOL은 실제 Node의 소속 label과 자원,
+준비된 native 인스턴스 및 확인된 Workload 연결로 산출한다. 등록만으로 노드를 합성하지 않는다.
+Workload spec이나 서비스 식별자를 POOL 이동을 위해 수정하지 않는다.
+
+- 새 인스턴스는 실제 모델 준비와 워크로드 연결이 확인된 후 분배에 편입한다.
+- 제외할 인스턴스는 신규 배정을 막고 이미 배정된 요청을 마무리한 뒤 연결 및 자원을 해제한다.
+- 노드를 다른 POOL로 옮기면 기존 POOL의 해당 노드에 남은 연결과 실행을 먼저 마무리한다.
+  실제 소속 label을 바꾸고 새 POOL의 준비된 구성에 편입한다. 같은 노드를 두 POOL의 현재 용량으로 세지 않는다.
+- 준비 인스턴스가 없는 동안에도 실행 근거가 유효하면 Workload 유입 큐를 설정 범위에서 유지한다.
+- 실제 관측 결과를 현재 구성 snapshot에 반영하고 POOL 조회 및 유효한 분배 대상을 함께 갱신한다.
+- 노드 전력모드 변경은 모든 공유 Workload에 영향을 주며 현재 관측에 드러낸다. 자동 비용 비교와 구성 선택은 제외 범위다.
+
+전환 도중 각 요청은 실제 배정 기록을 유지한다. backend에서 실행 중인 요청을 다른 인스턴스로 옮긴 것으로
+표시하거나, 계획만 선택된 노드를 준비된 용량으로 계산하지 않는다.
+
+## 10. 실행기 연결의 필수 계약
+
+현재 Triton 연결은 Workload UID, request ID, 불변 모델 및 입력 계약과 SLO를 실행에 연결한다.
+공식 custom batching API를 사용하는 CHILL guard는 **같은 Workload UID만** 한 배치에 포함하며 priority만으로
+워크로드를 구분하지 않는다. 실제 같은 priority의 서로 다른 UID 요청으로 배치 혼합 방지를 확인했다.
+공식 Python backend의 numeric/bool named multi-input 실행과 matching ACTIVE/IDLE profiling을 사용한다.
+`instance_group.count: 1`과 frozen measured batch 설정을 유지하며 runtime이 추가 배치 대기를 넣지 않는다.
+adaptive SLO batch wait는 승인된 제외 범위이고 fixed queue timeout을 그 알고리즘이라고 부르지 않는다.
+
+Triton의 native 모델 준비, 큐 한도/timeout, trace와 공식 확장만 사용한다.
+선호 크기는 실제 실행 크기 보장이 아니므로 실현된 batch와 요청별 실행 및 종료를 관측한다.
+native `REQUEST_END`가 `finished`를 제공하여 Python 미실행 queue timeout/cancel도 종료로 기록한다.
+native 큐 timestamp는 raw `CLOCK_MONOTONIC` nanoseconds다. collector의 `At`은 UTC 관측 시각이며
+이를 native 큐 진입 UTC로 꾸미거나 서로 다른 호스트의 시계를 단순 차감하지 않는다.
+종단 elapsed는 entrypoint의 같은 monotonic 기준으로 측정한다.
+SLO를 HTTP deadline이나 Triton queue timeout으로 그대로 변환하지 않는다.
+
+## 11. 관측과 보존
+
+요청 기록은 수신, 수락, 배정, 실행 및 응답 전달의 실제 사건을 request ID로 연결한다.
+거절, backend 오류, timeout, 취소와 응답 전달 실패도 보존하며 완료 요청만으로 유입량을 계산하지 않는다.
+유효한 완료 시각이 없는 요청에는 완료 지연을 만들어 넣지 않는다.
+
+정의 기록은 Workload UID와 적용 정의 identity별로 모델 및 입력 정의와 SLO를 보존한다.
+변경 및 삭제 기록에는 적용 전후 정의, 요청 저장과 관리 수락 및 실제 적용 시각, 진행 결과와 실패 원인을 남긴다.
+이는 실험 해석용 기록이며 runtime의 다중 버전 정의 저장소가 아니다.
+
+기존 Evidence Store의 저장 수단을 재사용하되, Serving 요청 기록을 ProfilingRun evidence로 위장하거나
+그 검증 계약에 요청 이벤트를 끼워 넣지 않는다. 보존 파일은 다음 세 JSONL stream으로 구분한다.
+
+| 기록 | 필수 내용 |
+|---|---|
+| `definitions` | Workload UID와 적용 identity, 서비스 이름, 모델 및 입력 정의와 SLO |
+| `requests` | request ID별 수신과 수락 및 배정, 큐와 실행 관측 및 반환 사건, 결과와 오류. 각 사건의 시각 및 관측 주체 |
+| `management` | 대상 UID와 변경 종류, 적용 전후 정의, 요청 저장과 수락 및 실제 적용 시각, 단계와 최종 결과 |
+
+각 stream은 같은 schema version과 관측 구간 metadata를 사용한다.
+private persistent directory에 append JSONL journal을 남기며 구간 종료 시
+`serving/<windowID>/` 아래 `metadata.json`, `definitions.jsonl`, `requests.jsonl`,
+`management.jsonl`을 immutable S3 object로 보존한다. 필터와 관측 구간은 metadata에 기록한다.
+Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보존 완료로 게시하지 않고
+닫히기 전에는 live 요청 상태와 이미 수집한 사건을 조회한다.
+요청별 Kubernetes 객체나 요청마다 갱신하는 status는 만들지 않는다.
+
+조회는 다음을 분리한다.
+
+- Workload별 전체 유입과 미배정 대기 및 실제 결과.
+- 인스턴스별 Workload 대기와 진행 중 실행, 전체 처리 부담.
+- 현재 적용한 SLO 목표와 실제 접수 여부.
+- 이동 관측 구간 또는 지정 실험 구간의 요청 수, 유효 지연 표본 수와 분포 및 백분위.
+
+집계는 구간, 등록 UID, 적용 정의, outcome 필터와 지연 표본 모집단을 반환하며
+전체 필터 모집단을 집계한 뒤 raw event page를 투영한다.
+`response_finished`의 양수 monotonic elapsed만 사용하고 `delivery_failed`, `canceled`,
+`incomplete`는 제외한다. error/rejected/timeout outcome은 각각 별도로 집계한다.
+지연 표본이 없으면 `sampleCount:0`, `quantileNanos:null`이다.
+백분위는 `gonum/stat.Empirical`이며 지연이나 완료 시각을 합성하지 않는다.
+SLO 변경 전후와 같은 이름의 재등록을 묵시적으로 같은 목표의 통계로 합치지 않는다.
+
+무영속 큐이므로 entrypoint 장애 후 수락 요청을 투명하게 재실행하지 않는다.
+이미 보존된 수락 기록에 종료 사건이 없으면 분석 시 미완료로 남긴다.
+재시작은 실제 인스턴스와 연결 상태를 다시 확인하며, 실행 종료가 불명인 상태를 드레인 성공으로 보고하지 않는다.
+관측 저장 실패는 명시적인 오류와 기록 공백으로 드러내고, 실험 evidence가 보존된 것처럼 성공을 주장하지 않는다.
+event append 또는 local sync/read 오류는 기록 무결성을 닫고 해당 window를 incomplete로 남긴다.
+local 원시 기록이 온전한 archive-only 오류는 반환 및 로그에 남기며 기존 flush가 미게시 window를 다시 보낸다.
+이를 영구적인 local 기록 손실로 취급하거나 새 recovery 상태를 추가하지 않는다.
+
+## 12. 배포와 구현 검증 경계
+
+owner 설정은 [options.go](../../../cmd/serving-entrypoint/options.go)와
+[Helm values](../../../charts/chill/values.yaml)의 `servingEntrypoint`가 원본이다.
+기존 모델-only 공개 endpoint, 고정 테이블과 shape-only 호환 reader는 제거되었다.
+
+```sh
+helm upgrade --install chill charts/chill --namespace chill-system --create-namespace \
+  --set servingEntrypoint.enabled=true \
+  --set servingEntrypoint.tls.secretName=chill-serving-tls \
+  --set 'servingEntrypoint.profileCampaigns[0]=chill-system/native-cpu-campaign'
+```
+
+TLS Secret은 release namespace에 미리 존재해야 한다. CA 검증을 끄지 않고 certificate의
+SAN과 맞는 HTTPS 주소를 사용한다. native serving Pod와 qualifying campaign은 별도로 준비한다.
+owner chart는 capacity나 campaign을 자동 생성하지 않는다.
+
+| Helm 값 | 실제 flag 또는 배포 계약 |
+|---|---|
+| `enabled`, `tls.secretName`, `port:8080` | HTTPS owner 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
+| `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
+| `profileCampaigns:[]` | 반복 `--profile-campaign=namespace/name`; 빈 목록은 근거 없음 |
+| `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
+| `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
+| `sourceInterval:1s`, `profileInterval:1m`, `observationWindow:1m` | 현재 상태, profile refresh와 immutable window 주기 |
+| `maxRequestBytes:8388608`, `maxEvidenceBytes:67108864`, `maxQueryEvents:1000` | HTTP body, evidence object와 raw query page 상한 |
+| `observationDefinitions:[]`, `observationOutcomes:[]` | 반복 `--observation-definition`, `--observation-outcome` 기본 집계 필터 |
+| `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |
+| `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
+| `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
+
+`requestTimeout`은 요청 처리와 body 읽기의 상한이다. 처리가 만료된 뒤 오류 응답을 전달할 수 있도록
+같은 길이의 유한한 delivery 구간을 별도로 예약한다. body drain과 최종 flush 전에 connection deadline을
+지우지 않으며, 실제 응답 완료 지연은 이 전달 구간을 포함해 관측한다.
+
+
+배포는 `replicas:1`, `strategy:Recreate`, 전용 SA와 ClusterIP HTTPS Service다.
+S3 연결은 기존 `evidenceStore.connection`과 credentials Secret을 사용하며
+binary는 `--store-name/endpoint/bucket/region`, `--observation-directory`, `--tls-cert/key`를 받는다.
+RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 owner/drain 전제를 우회하지 않는다.
+
+### 실제 확인한 변경 기록
+
+| 실행 경계 | 관측된 결과 |
+|---|---|
+| 격리된 local kind와 verified HTTPS | TokenReview/SAR, Model/Workload `201`, 근거 없는 닫힌 admission, fractional percentile, stale `If-Match` `409`, 참조 모델 삭제 `409`, SLO-only `200`, shared model `202` barrier, Workload 삭제 `202` 후 실제 `404`, 재등록 새 UID |
+| manager 권한 | 관리 API는 허용되고 managed Workload 직접 Kubernetes PATCH는 `403` |
+| 실제 native runner | 공식 Triton Python/ORT CPU named multi-input numeric/bool 결과, 같은 priority의 두 UID batch guard, 여러 실제 batch 크기, native queue timeout과 실행 없는 `REQUEST_END`; 모델 반환 시의 조기 finished는 제거하고 unrelated native ID도 server를 종료하지 않음 |
+| 실제 profiling runner smoke | fixed batch ACTIVE의 native inference/execution, warmup 제외, IDLE 실행 0과 model resident, 실제 cgroup lifetime memory peak, Docker root RAPL 읽기 |
+| 실제 보존 및 loadgen | private local JSONL과 MinIO immutable windows, TLS/bearer/named tensor loadgen의 `503 MissingEvidence`; RWO PVC는 배포 manifest 계약 |
+| 리뷰 회귀 | 실제 HTTP timeout 응답 전달, archive-only 오류의 local health, append 손실의 incomplete metadata가 수정 전 실패하고 수정 후 통과 |
+| 최종 repository gate | `make lint test`, `make arch-check gopls-check`, default 및 owner/Profiler별 `make helm-lint helm-template` 통과. `make test`의 manifests/generate, Go vet와 integration도 통과 |
+| 배포 계약 | default와 Profiler deployment graph check 통과. 별도 owner render의 단일 replica/Recreate, RWO PVC, status update 및 HTTP-only manager 권한을 manifest에서 확인 |
+
+위 smoke는 full qualifying power campaign이나 모든 SRS/hardware acceptance를 증명하지 않는다.
+**완전한 native campaign 근거 → Ready gateway 추론**, ARM/RKNN 실제 장비와 live testbed는
+검증하지 않았다. live testbed 변경이나 image publish를 수행한 것으로 주장하지 않는다.
+e2e와 위의 미검증 실행 경계는 최종 gate 통과와 구분한다. Go-only 후속 수정으로
+추가 package edge가 생기면 architecture와 pinned gopls gate도 다시 적용한다.
+
+## 13. 요구사항 대응
+
+| 요구사항 | 구현 책임과 핵심 검증 |
+|---|---|
+| WM-01 | 5장, Kubernetes 신원과 동작별 권한 분리 및 직접 정의 쓰기 제한 |
+| WM-02 | 3장, 객체 이름과 UID, 모델 및 SLO 필수 정보와 식별자 유지 |
+| WM-03 | 3장과 7장, 같은 ModelSpec의 다른 Workload 등록 및 요청 문맥과 큐 분리 |
+| WM-04 | 6장, 모델 및 측정 근거의 지원 입력 조회와 적용 정의 사용 |
+| WM-05 | 3장과 5장, desired/applied/admission/operation 및 POOL 운영 조회 분리 |
+| WM-06 | 5장과 6장, 등록 및 수정 검증과 단일 writer의 삭제 참조 경쟁 방지 |
+| WM-07 | 6장, 근거 없이 등록 가능하며 측정은 운영자 요청으로 수행 |
+| WM-08 | 6장과 9장, 호환성 및 profile 및 현재 자원의 별도 후보 필터 |
+| WM-09 | 6장과 7장, 입력 및 근거 검증과 실제 접수 gate |
+| WM-10 | 7장, Workload별 미배정 큐와 한도, 실제 준비 후 분배 |
+| WM-11 | 6장과 7장 및 11장, 수락 가능성과 SLO 목표 및 실제 결과 분리 |
+| WM-12 | 5장, 생존 등록 건의 상태별 목록과 상세 및 없는 객체 오류 |
+| WM-13 | 3장과 8장, 관리 수락과 실제 적용 및 완료의 조회 |
+| WM-14 | 8.1절, 새 수락 경계에서 SLO 교체와 기존 요청 snapshot 유지 |
+| WM-15 | 8.1절과 10장 및 11장, 정책에 변경 전달과 적용 SLO별 기록 |
+| WM-16 | 7장과 8.2절, gate 중지부터 드레인 및 새 모델 적용까지의 순서 |
+| WM-17 | 8.2절, 실제 적용 단계와 실패 및 근거 없는 적용 후 준비 대기 |
+| WM-18 | 5.2절과 8장, Workload별 한 관리 작업 및 공유 모델 변경 충돌 거부 |
+| WM-19 | 7장과 8.3절, 삭제 수락 전 실제 gate 중지와 기존 결과 보존 |
+| WM-20 | 8.3절, 연결 해제와 전용 자원의 실제 종료 후 삭제 완료 |
+| WM-21 | 8.2절과 8.3절, 공유 인스턴스의 나머지 Workload 유지 |
+| WM-22 | 3.1절과 8.3절 및 11장, 삭제 완료 후 서비스 제거와 UID별 기록 보존 |
+| WM-23 | 5.2절과 8.4절, 원하는 참조 및 적용 참조 확인과 모델 삭제 거부 |
+| WM-24 | 8.4절, 관련 Workload 전체와 공유 인스턴스의 모델 변경 barrier |
+| WM-25 | 3.2절과 9장, 실제 POOL 노드 및 서빙 참조 갱신과 Workload 정의 유지 |
+| WM-26 | 6장과 10장, 입력 계약 검증과 Workload별 호환 배치 |
+| WM-27 | 6장과 3.3절, 입력과 실행 근거의 대응 및 실제 선택 profile 기록 |
+| WM-28 | 3.3절과 7장 및 9장, 수락 정의와 최초 수신 및 실제 배정 기록 유지 |
+| WM-29 | 5.1절과 7장 및 11장, 실제 backend와 응답 경로 결과 및 미완료 보존 |
+| WM-30 | 7장과 10장 및 11장, 공유 인스턴스에서도 Workload별 부하와 실행 상태 제공 |
+| WM-31 | 8장과 11장, 변경 전후 정의와 실제 수락 및 적용 시각 및 결과 보존 |
+| WM-32 | 11장, 구간과 표본 선택이 명시된 원시 기록 기반 통계 |

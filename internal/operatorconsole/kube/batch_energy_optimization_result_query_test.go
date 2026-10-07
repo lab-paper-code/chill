@@ -254,7 +254,7 @@ func campaignResultFixture(t *testing.T) (
 		},
 		CurvePlan: batchenergyoptimization.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 2459,
 		},
 		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{

@@ -26,7 +26,7 @@ type runtimeJobProjection struct {
 func projectRuntimeJob(
 	config profilingrun.RunConfig,
 ) (runtimeJobProjection, error) {
-	if profilingrun.IsSupportedCPUORTRunConfig(config) {
+	if profilingrun.IsSupportedCPUORTRunConfig(config) || profilingrun.IsSupportedTritonCPURunConfig(config) {
 		return runtimeJobProjection{
 			ArtifactDestination: cpuORTModelDestination,
 			SecurityContext:     restrictedContainerSecurityContext(),

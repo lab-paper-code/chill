@@ -9,11 +9,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha10"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha11"
 	candidateReportScope         = "StaticCompatibility"
 )
 
@@ -31,6 +32,7 @@ type CandidateReport struct {
 	RuntimePackages     []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
 	HostContract        *CandidateReportHostContract    `json:"hostContract,omitempty"`
 	RuntimeAccess       *CandidateReportRuntimeAccess   `json:"runtimeAccess,omitempty"`
+	Triton              *modelcompat.TritonSettings     `json:"triton,omitempty"`
 	MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
 	Verdict             string                          `json:"verdict"`
 	Reasons             []CandidateReportReason         `json:"reasons"`
@@ -76,12 +78,12 @@ type CandidateReportArtifactSupply struct {
 	Path         string `json:"path,omitempty"`
 }
 
-// CandidateArtifactCapability carries only runtime-consumed facts of one
-// derived artifact. Full conversion provenance remains in ModelSpec content.
+// CandidateArtifactCapability freezes inputs for canonical and derived artifacts.
+// Conversion provenance remains in ModelSpec content.
 type CandidateArtifactCapability struct {
-	TargetPlatform     string  `json:"targetPlatform"`
-	DeclaredBatchSizes []int32 `json:"declaredBatchSizes"`
-	InputSampleShape   []int32 `json:"inputSampleShape"`
+	TargetPlatform     string                    `json:"targetPlatform,omitempty"`
+	DeclaredBatchSizes []int32                   `json:"declaredBatchSizes,omitempty"`
+	Tensors            []modelcompat.InputTensor `json:"tensors"`
 }
 
 // CandidateReportRuntimePackage is one image-owned package fact from the
@@ -152,10 +154,11 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
 	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
 	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
+	result.Triton = modelcompat.CloneTritonRuntimeSettings(r.report.Triton)
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), r.report.ArtifactCapability.DeclaredBatchSizes...)
-		capability.InputSampleShape = append([]int32(nil), r.report.ArtifactCapability.InputSampleShape...)
+		capability.Tensors = modelcompat.CloneInputTensors(r.report.ArtifactCapability.Tensors)
 		result.ArtifactCapability = &capability
 	}
 	if r.report.RuntimeAccess != nil {
@@ -196,7 +199,7 @@ func (r CandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	if r.ArtifactCapability != nil {
 		capability := *r.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), capability.DeclaredBatchSizes...)
-		capability.InputSampleShape = append([]int32(nil), capability.InputSampleShape...)
+		capability.Tensors = modelcompat.CloneInputTensors(capability.Tensors)
 		delivery.ArtifactCapability = &capability
 	}
 	delivery.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.RuntimePackages...)
@@ -216,6 +219,34 @@ func (r CandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 		delivery.RuntimeAccess = &access
 	}
 	return delivery
+}
+
+func validateArtifactCapability(capability *CandidateArtifactCapability) error {
+	if capability == nil {
+		return errors.New("artifact input tensors are required")
+	}
+	if err := modelcompat.ValidateInputTensors(capability.Tensors); err != nil {
+		return err
+	}
+	if capability.TargetPlatform == "" && len(capability.DeclaredBatchSizes) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(capability.TargetPlatform) == "" ||
+		strings.TrimSpace(capability.TargetPlatform) != capability.TargetPlatform ||
+		len(capability.DeclaredBatchSizes) == 0 {
+		return errors.New("artifact target platform and declared batch sizes must be supplied together")
+	}
+	seen := make(map[int32]struct{}, len(capability.DeclaredBatchSizes))
+	for _, batch := range capability.DeclaredBatchSizes {
+		if batch < 1 {
+			return errors.New("artifact declared batch sizes must be positive")
+		}
+		if _, duplicate := seen[batch]; duplicate {
+			return errors.New("artifact declared batch sizes must be unique")
+		}
+		seen[batch] = struct{}{}
+	}
+	return nil
 }
 
 type CandidateReportReason struct {
@@ -323,27 +354,18 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	if err := validateCandidateRuntimePackages(report.RuntimePackages); err != nil {
 		return err
 	}
+	if report.Triton != nil {
+		if err := modelcompat.ValidateTritonRuntimeSettings(report.Triton); err != nil {
+			return err
+		}
+	}
 	if report.HostContract != nil {
 		if err := validateCandidateHostContract(*report.HostContract); err != nil {
 			return err
 		}
 	}
-	if report.ArtifactCapability != nil {
-		if strings.TrimSpace(report.ArtifactCapability.TargetPlatform) == "" ||
-			strings.TrimSpace(report.ArtifactCapability.TargetPlatform) != report.ArtifactCapability.TargetPlatform ||
-			len(report.ArtifactCapability.DeclaredBatchSizes) == 0 {
-			return errors.New("candidate report artifact target platform and declared batch sizes are required")
-		}
-		for _, declaredBatchSize := range report.ArtifactCapability.DeclaredBatchSizes {
-			if declaredBatchSize < 1 {
-				return errors.New("candidate report artifact declared batch sizes must be positive")
-			}
-		}
-		for _, dimension := range report.ArtifactCapability.InputSampleShape {
-			if dimension < 1 {
-				return errors.New("candidate report artifact input shape dimensions must be positive")
-			}
-		}
+	if err := validateArtifactCapability(report.ArtifactCapability); err != nil {
+		return fmt.Errorf("candidate report artifact capability: %w", err)
 	}
 	if report.SchemaVersion == CandidateReportSchemaVersion &&
 		(report.HostContract == nil) != (report.RuntimeAccess == nil) {
@@ -457,8 +479,8 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability is required")
 		}
-		if len(report.ArtifactCapability.InputSampleShape) == 0 {
-			return VerifiedCandidateReport{}, errors.New("candidate report artifact input shape is required")
+		if len(report.ArtifactCapability.Tensors) == 0 {
+			return VerifiedCandidateReport{}, errors.New("candidate report artifact input tensors are required")
 		}
 		if !slices.Contains(report.ArtifactCapability.DeclaredBatchSizes, int32(config.Measurement.Batch)) {
 			return VerifiedCandidateReport{}, errors.New(
@@ -496,8 +518,14 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 	if !reflect.DeepEqual(config.Candidate.Inputs, report.Inputs) {
 		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match RunConfig")
 	}
+	if !reflect.DeepEqual(config.State.Triton, report.Triton) {
+		return VerifiedCandidateReport{}, errors.New("candidate Triton settings do not match frozen RunConfig")
+	}
 	if !reflect.DeepEqual(config.State.HostContract, report.HostContract) {
 		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match RunConfig")
+	}
+	if !reflect.DeepEqual(config.Delivery.ArtifactCapability, report.ArtifactCapability) {
+		return VerifiedCandidateReport{}, errors.New("candidate input contract does not match frozen RunConfig")
 	}
 	if config.Actuation == nil {
 		if report.Selection.Actuator != nil {

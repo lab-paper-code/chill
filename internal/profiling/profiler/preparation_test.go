@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -31,6 +32,44 @@ func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
 		resolvers.node.selection.DeviceArchitecture != expected.TargetNode.Architecture ||
 		resolvers.node.selection.DeviceClassSelector["edge.dacs.io/device-class"] != expected.State.DeviceClass {
 		t.Fatalf("Node selection lost resolved DeviceClass facts: %#v", resolvers.node.selection)
+	}
+}
+
+func TestPreparerFreezesNamedArtifactInputs(t *testing.T) {
+	for _, path := range []string{"ort", "rknn"} {
+		t.Run(path, func(t *testing.T) {
+			expected, candidateBytes := preparationFixture(t)
+			if path == "rknn" {
+				expected, candidateBytes = rknnPreparationFixture(t)
+			}
+			prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
+				context.Background(), fixtureRequest(expected),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(prepared.RunConfig.Delivery.ArtifactCapability.Tensors, expected.Delivery.ArtifactCapability.Tensors) {
+				t.Fatal("preparation changed the artifact's named inputs")
+			}
+			for _, mutate := range []func([]modelcompat.InputTensor){
+				func(inputs []modelcompat.InputTensor) { inputs[0].Name = "other" },
+				func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" },
+				func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0]++ },
+			} {
+				report, err := profilingrun.DecodeCandidateReport(candidateBytes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				mutate(report.ArtifactCapability.Tensors)
+				payload, err := json.Marshal(report)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := profilingrun.ValidateCandidateReport(payload, prepared.RunConfig); err == nil {
+					t.Fatal("candidate input contract drift did not invalidate the frozen Run")
+				}
+			}
+		})
 	}
 }
 
@@ -587,7 +626,8 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 		Path: config.State.ArtifactPath,
 	}
 	report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
-		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{2}, InputSampleShape: []int32{224, 224, 3},
+		TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{2},
+		Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 	}
 	report.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}}
 	report.HostContract = &host

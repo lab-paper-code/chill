@@ -16,6 +16,25 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{name: "compatible", wantVerdict: VerdictCompatible},
 		{
+			name: "compatible native Triton ONNX relation",
+			mutate: func(input *Input) {
+				input.Path.RuntimeFamily = runtimeFamilyTriton
+				input.Path.Backend = "python"
+				input.Runtime.Family = runtimeFamilyTriton
+				input.Runtime.Backends = []string{"python"}
+			},
+			wantVerdict: VerdictCompatible,
+		},
+		{
+			name: "standalone ORT is not Triton evidence",
+			mutate: func(input *Input) {
+				input.Path.RuntimeFamily = runtimeFamilyTriton
+				input.Path.Backend = "python"
+			},
+			wantVerdict: VerdictIncompatible,
+			wantReasons: []Reason{conflict(ReasonRuntimeFamilyMismatch)},
+		},
+		{
 			name: "compatible RKNNLite relation",
 			mutate: func(input *Input) {
 				input.Artifact.Format = "rknn"

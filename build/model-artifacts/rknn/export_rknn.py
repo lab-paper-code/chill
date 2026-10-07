@@ -11,18 +11,40 @@ import tempfile
 from pathlib import Path
 
 
-RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha3"
+RECORD_SCHEMA = "chill.dacs.io/rknn-conversion-record.v1alpha4"
 
 
 def input_sample_shape(shape):
-    if not shape or len(shape) < 2:
-        raise ValueError("input shape must carry a batch axis and at least one more")
+    if not shape or len(shape) != 4:
+        raise ValueError("RKNN export supports one FP32 NCHW rank4 ONNX input")
     if isinstance(shape[0], int):
         raise ValueError("input batch axis must be symbolic, not a concrete size")
     for dimension in shape[1:]:
         if not isinstance(dimension, int) or dimension < 1:
             raise ValueError("non-batch dimensions must be positive integers")
     return list(shape[1:])
+
+
+def model_input_contract(model):
+    initializer_names = {value.name for value in model.graph.initializer}
+    inputs = [value for value in model.graph.input if value.name not in initializer_names]
+    if len(inputs) != 1:
+        raise ValueError("RKNN export supports exactly one ONNX input")
+    value = inputs[0]
+    if not value.name or value.name.strip() != value.name:
+        raise ValueError("ONNX input must have a non-empty tensor name")
+    tensor_type = value.type.tensor_type
+    if tensor_type.elem_type != 1:  # onnx.TensorProto.FLOAT
+        raise ValueError("RKNN export supports only FP32 ONNX inputs")
+    sample = input_sample_shape([
+        dimension.dim_param or dimension.dim_value for dimension in tensor_type.shape.dim
+    ])
+    channels, height, width = sample
+    return sample, {
+        "name": value.name,
+        "datatype": "FP32",
+        "sampleShape": [height, width, channels],
+    }
 
 
 def build_dynamic_input(input_sample, declared_batch_sizes):
@@ -88,11 +110,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="chill-rknn-export-") as directory:
         temporary_output = Path(directory) / "artifact.rknn"
         model = onnx.load(str(source))
-        graph_input = model.graph.input[0].type.tensor_type.shape.dim
-        declared = [
-            dimension.dim_param or dimension.dim_value for dimension in graph_input
-        ]
-        input_sample = input_sample_shape(declared)
+        input_sample, input_tensor = model_input_contract(model)
         dynamic_input = build_dynamic_input(input_sample, args.declared_batch_sizes)
 
         converter = RKNN(verbose=False)
@@ -128,7 +146,7 @@ def main():
             "onnxVersion": onnx.__version__,
             "targetPlatform": args.target_platform,
             "declaredBatchSizes": sorted(set(args.declared_batch_sizes)),
-            "inputSampleShape": input_sample,
+            "tensors": [input_tensor],
             "quantized": False,
         },
         "output": {

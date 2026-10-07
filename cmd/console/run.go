@@ -12,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 	"github.com/lab-paper-code/chill/internal/operatorconsole/readapi"
 	bscontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
@@ -192,11 +193,35 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	systems, err := consolekube.NewKubernetesSystemQuery(reader)
+	if err != nil {
+		return nil, err
+	}
+	inventory, err := consolekube.NewKubernetesInventoryQuery(reader)
+	if err != nil {
+		return nil, err
+	}
+	queries := readapi.NewQueryHandler(readapi.QueryReaders{
+		Systems:   systems.Read,
+		Inventory: inventory.Read,
+		ProfilingRuns: func(ctx context.Context, namespace string) (operatorconsole.ProfilingRunsSnapshot, error) {
+			query, err := consolekube.NewKubernetesProfilingRunsQuery(reader, namespace)
+			if err != nil {
+				return operatorconsole.ProfilingRunsSnapshot{}, err
+			}
+			return query.Read(ctx)
+		},
+	})
 	handler, err := readapi.NewHandler(passports, results, preflights)
 	if err != nil {
 		return nil, fmt.Errorf("construct Console HTTP handler: %w", err)
 	}
-	return handler, nil
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/systems", queries)
+	mux.Handle("GET /api/v1/inventory", queries)
+	mux.Handle("GET /api/v1/namespaces/{namespace}/profiling-runs", queries)
+	mux.Handle("/", handler)
+	return mux, nil
 }
 
 // campaignResultObjectReader opens one stored object using the Evidence Store

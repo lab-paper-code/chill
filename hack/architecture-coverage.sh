@@ -29,6 +29,7 @@ components=(
   workload-core
   workload-kube
   model-compat
+  model-catalog
   node-actuator-core
   node-actuator-controller
   node-actuator-jetson
@@ -48,6 +49,8 @@ components=(
   profiler-worker
   serving-core
   serving-entrypoint
+  serving-kube
+  serving-triton
 )
 
 component_for() {
@@ -76,6 +79,7 @@ component_for() {
     internal/workloadobserver) echo workload-core ;;
     internal/workloadobserver/kube) echo workload-kube ;;
     internal/modelcompat) echo model-compat ;;
+    internal/modelcatalog) echo model-catalog ;;
     internal/nodeactuator) echo node-actuator-core ;;
     internal/nodeactuator/controller) echo node-actuator-controller ;;
     internal/nodeactuator/jetson) echo node-actuator-jetson ;;
@@ -95,6 +99,8 @@ component_for() {
     internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
     internal/serving/entrypoint) echo serving-entrypoint ;;
+    internal/serving/kube) echo serving-kube ;;
+    internal/serving/triton) echo serving-triton ;;
     *) return 1 ;;
   esac
 }

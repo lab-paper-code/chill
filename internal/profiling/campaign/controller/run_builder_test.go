@@ -73,7 +73,7 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 75,
-				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
+				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 2500, TimeoutMilliseconds: 2400, DurationSeconds: 78,

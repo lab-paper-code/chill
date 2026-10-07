@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha14"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha15"
 
 	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
 	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
@@ -22,6 +24,12 @@ const (
 	RKNNLiteExecutionPath                 = "rknnlite"
 	RKNNLiteRuntimeFamily                 = "rknnlite"
 	RKNNLiteBackend                       = "not-applicable"
+	TritonRuntimeFamily                   = "triton"
+	TritonPythonBackend                   = "python"
+	cpuORTRuntimeFamily                   = "onnxruntime"
+	cpuExecutionProvider                  = "CPUExecutionProvider"
+	memoryPeakCgroupV1                    = "cgroup-v1-memory.max_usage_in_bytes:runtime-container-lifetime"
+	memoryPeakCgroupV2                    = "cgroup-v2-memory.peak:runtime-container-lifetime"
 	FixedPowerMode                        = "fixed"
 	ActuatorKindJetsonNVPModel            = "JetsonNVPModel"
 	ActuatorKindNvidiaLockedGPUClock      = "NvidiaLockedGPUClock"
@@ -89,6 +97,7 @@ type ExecutionState struct {
 	ArtifactPath  string                       `json:"artifactPath,omitempty"`
 	RuntimeFamily string                       `json:"runtimeFamily"`
 	Backend       string                       `json:"backend"`
+	Triton        *modelcompat.TritonSettings  `json:"triton,omitempty"`
 	PowerMode     string                       `json:"powerMode"`
 	HostContract  *CandidateReportHostContract `json:"hostContract,omitempty"`
 }

@@ -1,17 +1,39 @@
 {{- if .Values.servingEntrypoint.enabled }}
 {{- $name := include "chill.servingEntrypointName" . -}}
 {{- $labels := include "chill.labels" . -}}
+{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $actuationNamespace := default .Release.Namespace .Values.servingEntrypoint.actuationNamespace -}}
+{{- $storeName := default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name -}}
+{{- $storeEndpoint := default (printf "http://%s-evidence-store.%s.svc.cluster.local:9000" (include "chill.systemName" .) .Release.Namespace) .Values.evidenceStore.connection.endpoint -}}
+{{- $credentialsSecret := default (printf "%s-evidence-store-credentials" (include "chill.systemName" .)) .Values.evidenceStore.credentialsSecret.name -}}
 apiVersion: v1
-kind: ConfigMap
+kind: ServiceAccount
 metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: serving-entrypoint
     {{- $labels | nindent 4 }}
-data:
-  routes.yaml: |
-    {{- dict "models" .Values.servingEntrypoint.routes | toYaml | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    app.kubernetes.io/component: serving-entrypoint
+    {{- $labels | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if ne .Values.servingEntrypoint.observationStorage.storageClassName nil }}
+  storageClassName: {{ .Values.servingEntrypoint.observationStorage.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.servingEntrypoint.observationStorage.size | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -22,7 +44,9 @@ metadata:
     app.kubernetes.io/component: serving-entrypoint
     {{- $labels | nindent 4 }}
 spec:
-  replicas: {{ .Values.servingEntrypoint.replicaCount }}
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "chill.name" . }}
@@ -34,10 +58,10 @@ spec:
         app.kubernetes.io/name: {{ include "chill.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: serving-entrypoint
-      annotations:
-        checksum/routes: {{ dict "models" .Values.servingEntrypoint.routes | toYaml | sha256sum }}
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.servingEntrypoint.terminationGracePeriodSeconds }}
       securityContext:
 {{- toYaml .Values.servingEntrypoint.podSecurityContext | nindent 8 }}
       containers:
@@ -46,11 +70,69 @@ spec:
           imagePullPolicy: {{ .Values.servingEntrypoint.image.pullPolicy }}
           args:
             - {{ printf "--bind-address=:%v" .Values.servingEntrypoint.port | quote }}
-            - "--routes=/etc/chill/serving/routes.yaml"
-            - {{ printf "--serving-namespace=%s" .Release.Namespace | quote }}
-            - {{ printf "--serving-port=%v" .Values.servingEntrypoint.servingPort | quote }}
+            - {{ printf "--serving-namespace=%s" $servingNamespace | quote }}
+            - {{ printf "--actuation-namespace=%s" $actuationNamespace | quote }}
+            - "--tls-cert=/etc/chill/tls/tls.crt"
+            - "--tls-key=/etc/chill/tls/tls.key"
+            - "--observation-directory=/data"
+            {{- if .Values.console.enabled }}
+            - {{ printf "--console-url=http://%s.%s.svc.cluster.local:%v" (include "chill.consoleName" .) .Release.Namespace .Values.console.port | quote }}
+            {{- end }}
+            {{- if .Values.dashboard.enabled }}
+            - {{ printf "--dashboard-url=http://%s.%s.svc.cluster.local:%v" (include "chill.dashboardName" .) .Release.Namespace .Values.dashboard.port | quote }}
+            {{- end }}
+            - {{ printf "--store-name=%s" $storeName | quote }}
+            - {{ printf "--store-endpoint=%s" $storeEndpoint | quote }}
+            - {{ printf "--store-bucket=%s" .Values.evidenceStore.connection.bucket | quote }}
+            - {{ printf "--store-region=%s" .Values.evidenceStore.connection.region | quote }}
+            - {{ printf "--queue-limit=%s" (.Values.servingEntrypoint.queueLimit | toJson) | quote }}
+            - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
+            - {{ printf "--drain-timeout=%s" .Values.servingEntrypoint.drainTimeout | quote }}
+            - {{ printf "--source-interval=%s" .Values.servingEntrypoint.sourceInterval | quote }}
+            - {{ printf "--profile-interval=%s" .Values.servingEntrypoint.profileInterval | quote }}
+            - {{ printf "--profile-confidence-level=%v" .Values.servingEntrypoint.profileConfidenceLevel | quote }}
+            - {{ printf "--observation-window=%s" .Values.servingEntrypoint.observationWindow | quote }}
+            - {{ printf "--max-request-bytes=%s" (.Values.servingEntrypoint.maxRequestBytes | toJson) | quote }}
+            - {{ printf "--max-evidence-bytes=%s" (.Values.servingEntrypoint.maxEvidenceBytes | toJson) | quote }}
+            {{- range .Values.servingEntrypoint.observationDefinitions }}
+            - {{ printf "--observation-definition=%s" . | quote }}
+            {{- end }}
+            {{- range .Values.servingEntrypoint.observationOutcomes }}
+            - {{ printf "--observation-outcome=%s" . | quote }}
+            {{- end }}
+            - {{ printf "--max-query-events=%s" (.Values.servingEntrypoint.maxQueryEvents | toJson) | quote }}
+            {{- range .Values.servingEntrypoint.profileCampaigns }}
+            - {{ printf "--profile-campaign=%s" . | quote }}
+            {{- end }}
+            {{- with .Values.servingEntrypoint.kubeAPI.apiServer }}
+            - {{ printf "--kube-api-server=%s" . | quote }}
+            {{- end }}
+            {{- with .Values.servingEntrypoint.kubeAPI.tokenFile }}
+            - {{ printf "--kube-token-file=%s" . | quote }}
+            {{- end }}
+            {{- with .Values.servingEntrypoint.kubeAPI.caFile }}
+            - {{ printf "--kube-ca-file=%s" . | quote }}
+            {{- end }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ .Values.evidenceStore.credentialsSecret.accessKeyKey | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ .Values.evidenceStore.credentialsSecret.secretKeyKey | quote }}
+            {{- with .Values.evidenceStore.credentialsSecret.sessionTokenKey }}
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ . | quote }}
+            {{- end }}
           ports:
-            - name: http
+            - name: https
               containerPort: {{ .Values.servingEntrypoint.port }}
               protocol: TCP
           resources:
@@ -58,13 +140,18 @@ spec:
           securityContext:
 {{- toYaml .Values.servingEntrypoint.securityContext | nindent 12 }}
           volumeMounts:
-            - name: routes
-              mountPath: /etc/chill/serving
+            - name: tls
+              mountPath: /etc/chill/tls
               readOnly: true
+            - name: observations
+              mountPath: /data
       volumes:
-        - name: routes
-          configMap:
-            name: {{ $name }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.servingEntrypoint.tls.secretName | quote }}
+        - name: observations
+          persistentVolumeClaim:
+            claimName: {{ $name }}
       nodeSelector:
 {{- toYaml .Values.servingEntrypoint.nodeSelector | nindent 8 }}
       {{- with .Values.servingEntrypoint.affinity }}
@@ -89,8 +176,8 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: serving-entrypoint
   ports:
-    - name: http
+    - name: https
       port: {{ .Values.servingEntrypoint.port }}
-      targetPort: http
+      targetPort: https
       protocol: TCP
 {{- end }}

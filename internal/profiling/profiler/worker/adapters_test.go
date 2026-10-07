@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -20,6 +21,7 @@ const (
 	testPodUID              = "pod-uid"
 	rknnIdleSuccessTestMode = "idle-success"
 	mutatedCopyName         = "mutated-copy"
+	testDifferentIdentity   = "other"
 )
 
 func TestORTCPURuntimeUsesDedicatedResultFile(t *testing.T) {
@@ -83,12 +85,18 @@ func TestORTCPURuntimeDecodesIdleResultByRunConfigMode(t *testing.T) {
 }
 
 func TestORTCPURequestMatchesPythonContract(t *testing.T) {
+	multiInput := testRunConfig(t)
+	multiInput.Delivery.ArtifactCapability.Tensors = []modelcompat.InputTensor{
+		{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
+		{Name: "mask", Datatype: "INT64", SampleShape: []int32{224, 224}},
+	}
 	for _, test := range []struct {
 		name   string
 		config profilingrun.RunConfig
 	}{
 		{name: "active", config: testRunConfig(t)},
 		{name: "idle", config: testIdleRunConfig(t)},
+		{name: "multiple typed inputs", config: multiInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := newTestORTCPURuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
@@ -164,7 +172,7 @@ func TestORTCPURuntimeRejectsUnsupportedPathBeforeExecution(t *testing.T) {
 
 func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
 	directory := t.TempDir()
-	_, err := NewORTCPURuntime(ORTCPURuntimeConfig{
+	_, err := NewORTCPURuntime(CPURuntimeConfig{
 		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
@@ -182,7 +190,7 @@ func TestORTCPURuntimeRequiresJobTimingBinding(t *testing.T) {
 
 func TestORTCPURuntimeRequiresJobResourceBudgets(t *testing.T) {
 	directory := t.TempDir()
-	_, err := NewORTCPURuntime(ORTCPURuntimeConfig{
+	_, err := NewORTCPURuntime(CPURuntimeConfig{
 		Command: []string{"ort-cpu"}, ModelPath: filepath.Join(directory, "model.onnx"),
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
 		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
@@ -319,6 +327,63 @@ func TestRKNNLiteRuntimeRejectsObservedHostDrift(t *testing.T) {
 	}
 }
 
+func TestRKNNLiteRuntimeOwnsTypedDelivery(t *testing.T) {
+	delivery := testRKNNDelivery()
+	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), delivery)
+	delivery.ArtifactCapability.Tensors[0].Name = "changed"
+	delivery.ArtifactCapability.Tensors[0].SampleShape[0] = 99
+	if runtime.config.Delivery.ArtifactCapability.Tensors[0].Name != "input" ||
+		runtime.config.Delivery.ArtifactCapability.Tensors[0].SampleShape[0] != 224 {
+		t.Fatal("runtime delivery aliases caller-owned tensor contract")
+	}
+}
+
+func TestRKNNLiteRejectsUnsupportedTypedInputs(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*profilingrun.CandidateArtifactCapability)
+	}{
+		{"multiple inputs", func(c *profilingrun.CandidateArtifactCapability) {
+			c.Tensors = append(c.Tensors, modelcompat.InputTensor{Name: testDifferentIdentity, Datatype: "FP32", SampleShape: []int32{224, 224, 3}})
+		}},
+		{"non FP32", func(c *profilingrun.CandidateArtifactCapability) { c.Tensors[0].Datatype = "INT32" }},
+		{"non rank3", func(c *profilingrun.CandidateArtifactCapability) { c.Tensors[0].SampleShape = []int32{224, 224} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			delivery := testRKNNDelivery()
+			test.mutate(delivery.ArtifactCapability)
+			if err := validateRKNNLiteDelivery(delivery); err == nil ||
+				!strings.Contains(err.Error(), "one FP32 rank-3 NHWC") {
+				t.Fatalf("unsupported RKNN input contract accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestRKNNLiteRejectsTypedInputEvidenceDrift(t *testing.T) {
+	runtime := newTestRKNNLiteRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"), testRKNNDelivery())
+	for _, test := range []struct {
+		name   string
+		mutate func([]modelcompat.InputTensor)
+	}{
+		{"name", func(inputs []modelcompat.InputTensor) { inputs[0].Name = testDifferentIdentity }},
+		{"datatype", func(inputs []modelcompat.InputTensor) { inputs[0].Datatype = "INT32" }},
+		{"shape", func(inputs []modelcompat.InputTensor) { inputs[0].SampleShape[0] = 223 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inputs := modelcompat.CloneInputTensors(runtime.config.Delivery.ArtifactCapability.Tensors)
+			test.mutate(inputs)
+			if err := runtime.validateObservedContract("2.3.2", testRKNNEvidence(), inputs); err == nil ||
+				!strings.Contains(err.Error(), "inputs do not match") {
+				t.Fatalf("typed evidence drift accepted: %v", err)
+			}
+		})
+	}
+	if err := runtime.validateObservedContract("2.3.2", testRKNNEvidence(), nil); err == nil {
+		t.Fatal("missing observed inputs accepted")
+	}
+}
+
 func TestRKNNLiteRuntimeRequiresCompleteVerifiedDelivery(t *testing.T) {
 	directory := t.TempDir()
 	_, err := NewRKNNLiteRuntime(RKNNLiteRuntimeConfig{
@@ -439,7 +504,7 @@ func TestORTCPUHelperProcess(t *testing.T) {
 	if mode == "" {
 		return
 	}
-	var request ortCPURequest
+	var request cpuRuntimeRequest
 	decoder := json.NewDecoder(os.Stdin)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -521,7 +586,7 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 		active.CPUContract.ORTInterOpThreads = 0
 		active.DerivedContract.Provider = ""
 		active.RKNN = testRKNNEvidence()
-		active.InputShape = []int{1, 224, 224, 3}
+		active.Inputs = modelcompat.CloneInputTensors(request.RunConfig.Delivery.ArtifactCapability.Tensors)
 		if mode == "host-drift" {
 			active.RKNN.HostLibraries[0].Path = "/opt/vendor/lib/other.so"
 		}
@@ -533,10 +598,10 @@ func TestRKNNLiteHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func newTestORTCPURuntime(t *testing.T, resultPath string) *ORTCPURuntime {
+func newTestORTCPURuntime(t *testing.T, resultPath string) *CPURuntime {
 	t.Helper()
 	directory := filepath.Dir(resultPath)
-	runtime, err := NewORTCPURuntime(ORTCPURuntimeConfig{
+	runtime, err := NewORTCPURuntime(CPURuntimeConfig{
 		Command:                 []string{os.Args[0], "-test.run=TestORTCPUHelperProcess", "--"},
 		ModelPath:               filepath.Join(directory, "model.onnx"),
 		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
@@ -608,7 +673,8 @@ func testRKNNRunConfig(t *testing.T, idle bool) profilingrun.RunConfig {
 func testRKNNDelivery() profilingrun.CandidateRuntimeDelivery {
 	return profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
-			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1}, InputSampleShape: []int32{224, 224, 3},
+			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
+			Tensors: []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}}},
 		},
 		RuntimePackages: []profilingrun.CandidateReportRuntimePackage{{Name: "rknn-toolkit-lite2", Version: "2.3.2"}},
 		HostContract: &profilingrun.CandidateReportHostContract{

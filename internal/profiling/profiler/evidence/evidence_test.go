@@ -10,6 +10,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
@@ -525,6 +526,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			Backend:                   config.State.Backend,
 			Provider:                  config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
+			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).UTC().Format(time.RFC3339Nano),
@@ -642,6 +644,7 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 			Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
+			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			ModelLoadCompletedAt:      started.Add(-61 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingStartedAt:         started.Add(-60 * time.Second).UTC().Format(time.RFC3339Nano),
 			SettlingCompletedAt:       started.UTC().Format(time.RFC3339Nano),

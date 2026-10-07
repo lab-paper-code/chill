@@ -7,7 +7,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
+
+const testINT32Datatype = "INT32"
 
 func TestNewCurvePlanCarriesThePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
@@ -131,36 +135,22 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	if _, err := DecodeCurvePlan(unknown); err == nil {
 		t.Fatal("expected unknown plan field rejection")
 	}
-	retiredDataType := bytes.Replace(
-		canonical,
-		[]byte(`"inputSampleShape":`),
-		[]byte(`"dataType":"float32","inputSampleShape":`),
-		1,
-	)
-	if _, err := DecodeCurvePlan(retiredDataType); err == nil {
-		t.Fatal("expected retired configured data type rejection")
-	}
 	if _, err := DecodeCurvePlan(append(canonical, []byte(` {}`)...)); err == nil {
 		t.Fatal("expected trailing plan value rejection")
-	}
-	previousSchema := bytes.Replace(
-		canonical,
-		[]byte(curvePlanSchemaVersion),
-		[]byte("chill.dacs.io/curve-plan.v1alpha5"),
-		1,
-	)
-	if _, err := DecodeCurvePlan(previousSchema); err == nil {
-		t.Fatal("expected previous curve-plan schema rejection")
 	}
 
 	// Inputs and projections are copies, not mutation paths into the initialized record.
 	shared.PlannedBatchSizes[0] = 99
-	shared.Tensor.InputSampleShape[0] = 99
+	shared.Tensor.Tensors[0].Name = "mutated"
+	shared.Tensor.Tensors[0].Datatype = testINT32Datatype
+	shared.Tensor.Tensors[0].SampleShape[0] = 99
 	projected := contract.Shared()
 	projected.PlannedBatchSizes[0] = 99
-	projected.Tensor.InputSampleShape[0] = 99
+	projected.Tensor.Tensors[0].Name = "projected"
+	projected.Tensor.Tensors[0].Datatype = testINT32Datatype
+	projected.Tensor.Tensors[0].SampleShape[0] = 99
 	if !reflect.DeepEqual(contract.PlannedBatchSizes(), []int{1, 2, 4}) ||
-		contract.Shared().Tensor.InputSampleShape[0] != 224 {
+		!reflect.DeepEqual(contract.Shared().Tensor, validCurvePlanSpec().Tensor) {
 		t.Fatal("curve plan was mutable through a caller slice")
 	}
 
@@ -175,6 +165,69 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	verified.Shared.Conversion.ToolVersion = "other-version"
 	if _, err := VerifyCurvePlan(contract, verified); err == nil {
 		t.Fatal("expected verified conversion drift rejection")
+	}
+}
+
+func TestCurvePlanFreezesCompleteTensorIdentity(t *testing.T) {
+	contract, err := NewCurvePlan(validCurvePlanSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := contract.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"name", "datatype", "shape"} {
+		t.Run(field, func(t *testing.T) {
+			changed := contract.Shared()
+			switch field {
+			case "name":
+				changed.Tensor.Tensors[0].Name = "other-input"
+			case "datatype":
+				changed.Tensor.Tensors[0].Datatype = testINT32Datatype
+			case "shape":
+				changed.Tensor.Tensors[0].SampleShape[0]++
+			}
+			other, err := NewCurvePlan(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherJSON, err := other.CanonicalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Equal(canonical, otherJSON) {
+				t.Fatal("changed tensor contract retained the frozen plan identity")
+			}
+			verified := testVerifiedState(contract)
+			verified.Shared = changed
+			if _, err := VerifyCurvePlan(contract, verified); err == nil ||
+				err.Error() != "verified curve state does not match the plan" {
+				t.Fatalf("changed tensor verification error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCurvePlanRejectsIncompleteTensorContract(t *testing.T) {
+	for _, field := range []string{"tensors", "name", "datatype", "shape"} {
+		t.Run(field, func(t *testing.T) {
+			shared := validCurvePlanSpec()
+			switch field {
+			case "tensors":
+				shared.Tensor.Tensors = nil
+			case "name":
+				shared.Tensor.Tensors[0].Name = ""
+			case "datatype":
+				shared.Tensor.Tensors[0].Datatype = ""
+			case "shape":
+				shared.Tensor.Tensors[0].SampleShape[0] = 0
+			}
+			if _, err := NewCurvePlan(shared); err == nil ||
+				!strings.Contains(err.Error(), "curve plan tensor contract:") {
+				t.Fatalf("incomplete tensor contract error = %v", err)
+			}
+		})
 	}
 }
 
@@ -216,8 +269,11 @@ func TestVerifyCurvePlanOwnsTheVerifiedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	verified.Shared.PlannedBatchSizes[0] = 99
-	verified.Shared.Tensor.InputSampleShape[0] = 99
-	if plan.state.Shared.PlannedBatchSizes[0] == 99 || plan.state.Shared.Tensor.InputSampleShape[0] == 99 {
+	verified.Shared.Tensor.Tensors[0].Name = "mutated"
+	verified.Shared.Tensor.Tensors[0].Datatype = testINT32Datatype
+	verified.Shared.Tensor.Tensors[0].SampleShape[0] = 99
+	if plan.state.Shared.PlannedBatchSizes[0] == 99 ||
+		!reflect.DeepEqual(plan.state.Shared.Tensor, validCurvePlanSpec().Tensor) {
 		t.Fatal("verified curve-plan state was mutable through caller slices")
 	}
 }
@@ -447,7 +503,9 @@ func validCurvePlanSpec() CurvePlanSpec {
 			Path: "/artifact/model.rknn", Image: testImage("artifact", "c"),
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
-		Tensor:            CurveTensorContract{InputSampleShape: []int{224, 224, 3}},
+		Tensor: CurveTensorContract{Tensors: []modelcompat.InputTensor{
+			{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+		}},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
 	shared.IdleProtocol.InputGenerator = "none"

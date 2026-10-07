@@ -5,13 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha5"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha6"
 
 	RKNNLiteCoreMask    = "NPU_CORE_0"
 	RKNNLiteInputLayout = "NHWC"
@@ -19,38 +23,45 @@ const (
 )
 
 type RuntimeResult struct {
-	SchemaVersion             string               `json:"schemaVersion"`
-	Status                    string               `json:"status"`
-	ExperimentID              string               `json:"experimentId"`
-	NodeName                  string               `json:"nodeName"`
-	Model                     string               `json:"model"`
-	Architecture              string               `json:"architecture"`
-	Runtime                   string               `json:"runtime"`
-	RuntimeVersion            string               `json:"runtimeVersion"`
-	Backend                   string               `json:"backend,omitempty"`
-	Provider                  string               `json:"provider,omitempty"`
-	AvailableProviders        []string             `json:"availableProviders,omitempty"`
-	RKNN                      *RKNNRuntimeEvidence `json:"rknn,omitempty"`
-	BatchSize                 int                  `json:"batchSize"`
-	WarmupIterations          int                  `json:"warmupIterations"`
-	WarmupCompletedAt         string               `json:"warmupCompletedAt"`
-	InferenceCount            int                  `json:"inferenceCount"`
-	MeasurementMode           string               `json:"measurementMode"`
-	MeasurementStartedAt      string               `json:"measurementStartedAt"`
-	MeasurementEndedAt        string               `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds float64              `json:"measurementElapsedSecondsMonotonic"`
-	OutputValidation          OutputValidation     `json:"outputValidation"`
-	CPUContract               RuntimeCPU           `json:"cpuContract"`
-	DerivedContract           DerivedContract      `json:"derivedExecutionContract"`
-	RepetitionResults         []Repetition         `json:"repetitionResults"`
-	CompletionIndex           int                  `json:"completionIndex"`
-	InputShape                []int                `json:"inputShape"`
-	MeasurementIterations     int                  `json:"measurementIterations"`
-	TargetDurationSeconds     *float64             `json:"targetDurationSecondsPerRepetition"`
-	Latency                   map[string]float64   `json:"latencyMs"`
-	ThroughputItemsPerSecond  float64              `json:"throughputItemsPerSecond"`
-	Power                     json.RawMessage      `json:"power"`
-	EnergyPerRequest          json.RawMessage      `json:"energyPerRequest"`
+	SchemaVersion             string                    `json:"schemaVersion"`
+	Status                    string                    `json:"status"`
+	ExperimentID              string                    `json:"experimentId"`
+	NodeName                  string                    `json:"nodeName"`
+	Model                     string                    `json:"model"`
+	Architecture              string                    `json:"architecture"`
+	Runtime                   string                    `json:"runtime"`
+	RuntimeVersion            string                    `json:"runtimeVersion"`
+	Backend                   string                    `json:"backend,omitempty"`
+	Provider                  string                    `json:"provider,omitempty"`
+	AvailableProviders        []string                  `json:"availableProviders,omitempty"`
+	RKNN                      *RKNNRuntimeEvidence      `json:"rknn,omitempty"`
+	Triton                    *TritonRuntimeEvidence    `json:"triton,omitempty"`
+	BatchSize                 int                       `json:"batchSize"`
+	WarmupIterations          int                       `json:"warmupIterations"`
+	WarmupCompletedAt         string                    `json:"warmupCompletedAt"`
+	InferenceCount            int                       `json:"inferenceCount"`
+	MeasurementMode           string                    `json:"measurementMode"`
+	MeasurementStartedAt      string                    `json:"measurementStartedAt"`
+	MeasurementEndedAt        string                    `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds float64                   `json:"measurementElapsedSecondsMonotonic"`
+	OutputValidation          OutputValidation          `json:"outputValidation"`
+	CPUContract               RuntimeCPU                `json:"cpuContract"`
+	DerivedContract           DerivedContract           `json:"derivedExecutionContract"`
+	RepetitionResults         []Repetition              `json:"repetitionResults"`
+	CompletionIndex           int                       `json:"completionIndex"`
+	Inputs                    []modelcompat.InputTensor `json:"inputs"`
+	// MemoryBytes is the kernel cgroup high-water mark (v2 memory.peak or v1
+	// memory.max_usage_in_bytes) since runtime container creation, including
+	// server, backend, worker, and page cache.
+	// Zero is absent evidence, never artifact size or summed process peaks.
+	MemoryBytes              uint64             `json:"memoryBytes,omitempty"`
+	MemorySource             string             `json:"memorySource,omitempty"`
+	MeasurementIterations    int                `json:"measurementIterations"`
+	TargetDurationSeconds    *float64           `json:"targetDurationSecondsPerRepetition"`
+	Latency                  map[string]float64 `json:"latencyMs"`
+	ThroughputItemsPerSecond float64            `json:"throughputItemsPerSecond"`
+	Power                    json.RawMessage    `json:"power"`
+	EnergyPerRequest         json.RawMessage    `json:"energyPerRequest"`
 }
 
 type OutputValidation struct {
@@ -77,6 +88,25 @@ type DerivedContract struct {
 	CPU            json.RawMessage `json:"cpu"`
 	RuntimeOptions json.RawMessage `json:"runtimeOptions"`
 	Scheduling     json.RawMessage `json:"scheduling"`
+}
+
+// TritonRuntimeEvidence binds native scheduler statistics to the loaded backend.
+// Counts cover measured inference only; idle has no executions.
+type TritonRuntimeEvidence struct {
+	ORTVersion                      string            `json:"ortVersion"`
+	ModelInstanceCount              int               `json:"modelInstanceCount"`
+	MaxBatchSize                    int               `json:"maxBatchSize"`
+	MaxQueueDelayMicroseconds       uint64            `json:"maxQueueDelayMicroseconds"`
+	PreferredBatchSizes             []int             `json:"preferredBatchSizes"`
+	PriorityLevels                  int               `json:"priorityLevels"`
+	MaxQueueSize                    int               `json:"maxQueueSize"`
+	DefaultQueueTimeoutMicroseconds uint64            `json:"defaultQueueTimeoutMicroseconds"`
+	TimeoutAction                   string            `json:"timeoutAction"`
+	AllowTimeoutOverride            bool              `json:"allowTimeoutOverride"`
+	WorkloadUIDGuard                string            `json:"workloadUIDGuard"`
+	ExecutionCount                  uint64            `json:"executionCount"`
+	InferenceCount                  uint64            `json:"inferenceCount"`
+	BatchExecutionCounts            map[string]uint64 `json:"batchExecutionCounts"`
 }
 
 type RKNNRuntimeEvidence struct {
@@ -169,6 +199,9 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if result.BatchSize != config.Measurement.Batch || result.WarmupIterations != config.Measurement.WarmupIterations {
 		return errors.New("measurement protocol mismatch")
 	}
+	if err := validateRuntimeInputs(config, result.Inputs); err != nil {
+		return err
+	}
 	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
 	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
 		result.MeasurementElapsedSeconds < minimumElapsed {
@@ -226,12 +259,35 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	return nil
 }
 
+func validateRuntimeInputs(config RunConfig, inputs []modelcompat.InputTensor) error {
+	if err := modelcompat.ValidateInputTensors(inputs); err != nil {
+		return fmt.Errorf("runtime input evidence: %w", err)
+	}
+	if config.Delivery.ArtifactCapability == nil ||
+		!reflect.DeepEqual(config.Delivery.ArtifactCapability.Tensors, inputs) {
+		return errors.New("runtime input evidence does not match the frozen artifact inputs")
+	}
+	return nil
+}
+
 func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("effective CPU evidence is incomplete")
 	}
+	if IsSupportedTritonCPURunConfig(config) {
+		if result.RKNN != nil || result.Provider != cpuExecutionProvider ||
+			!contains(result.AvailableProviders, cpuExecutionProvider) ||
+			result.DerivedContract.Provider != cpuExecutionProvider ||
+			result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
+			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
+			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads ||
+			result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) {
+			return errors.New("Triton CPU backend or memory evidence mismatch")
+		}
+		return validateTritonRuntimeEvidence(config, result.Triton, uint64(result.InferenceCount))
+	}
 	if IsSupportedCPUORTRunConfig(config) {
-		if result.RKNN != nil || result.Provider != config.State.Backend ||
+		if result.RKNN != nil || result.Triton != nil || result.Provider != config.State.Backend ||
 			!contains(result.AvailableProviders, config.State.Backend) ||
 			(result.SchemaVersion == RuntimeResultSchemaVersion &&
 				result.DerivedContract.Provider != config.State.Backend) {
@@ -245,10 +301,39 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 		return nil
 	}
 	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != RuntimeResultSchemaVersion ||
-		result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
+		result.Triton != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
 		return errors.New("runtime result does not match an explicit supported path")
 	}
 	return validateRKNNRuntimeEvidence(config, result.RKNN)
+}
+
+func validRuntimeMemorySource(source string) bool {
+	return source == memoryPeakCgroupV2 ||
+		source == memoryPeakCgroupV1
+}
+
+func validateTritonRuntimeEvidence(config RunConfig, evidence *TritonRuntimeEvidence, executions uint64) error {
+	if config.State.Triton == nil || evidence == nil || strings.TrimSpace(evidence.ORTVersion) == "" ||
+		evidence.ModelInstanceCount != 1 || evidence.MaxBatchSize != int(config.State.Triton.MaxBatchSize) ||
+		evidence.MaxQueueDelayMicroseconds != 0 || evidence.PriorityLevels != int(config.State.Triton.PriorityLevels) ||
+		!slices.Equal(evidence.PreferredBatchSizes, []int{int(config.State.Triton.MaxBatchSize)}) ||
+		evidence.MaxQueueSize != int(config.State.Triton.MaxQueueSize) ||
+		evidence.DefaultQueueTimeoutMicroseconds != uint64(math.MaxInt64/1000+2) ||
+		evidence.TimeoutAction != "REJECT" || !evidence.AllowTimeoutOverride ||
+		evidence.WorkloadUIDGuard != "same-workload-uid-v1" || evidence.BatchExecutionCounts == nil ||
+		evidence.ExecutionCount != executions ||
+		evidence.InferenceCount != executions*uint64(config.Measurement.Batch) {
+		return errors.New("native Triton runtime configuration or execution counts mismatch")
+	}
+	for batch, count := range evidence.BatchExecutionCounts {
+		if count != 0 && batch != strconv.Itoa(config.Measurement.Batch) {
+			return errors.New("native Triton executed a different batch size")
+		}
+	}
+	if evidence.BatchExecutionCounts[strconv.Itoa(config.Measurement.Batch)] != executions {
+		return errors.New("native Triton fixed-batch execution evidence is missing")
+	}
+	return nil
 }
 
 func validateRKNNRuntimeEvidence(config RunConfig, evidence *RKNNRuntimeEvidence) error {

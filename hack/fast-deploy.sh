@@ -17,6 +17,7 @@ metric_observer_image="${METRIC_OBSERVER_IMG:-}"
 workload_observer_image="${WORKLOAD_OBSERVER_IMG:-}"
 measurement_worker_image="${MEASUREMENT_WORKER_IMG:-}"
 serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
+dashboard_image="${DASHBOARD_IMG:-}"
 platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
 measurement_worker_platforms="${MEASUREMENT_WORKER_PLATFORMS:-${platforms}}"
 push_mode="${CHILL_FAST_PUSH_MODE:-auto}"
@@ -59,7 +60,7 @@ Options:
   --components NAME            all, operator, node-discovery, node-actuator,
                                profiler, console, metric-observer,
                                workload-observer, measurement-worker, or
-                               serving-entrypoint. Default: ${components}
+                               serving-entrypoint, or dashboard. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
   --observe MODE               summary or full. Default: ${observe_mode}
   --helm-release NAME          Helm release. Default: ${release}
@@ -82,6 +83,7 @@ Environment:
   WORKLOAD_OBSERVER_IMG        Full WorkloadObserver image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_IMG       Full measurement worker image ref. Overrides registry/tag defaults.
   SERVING_ENTRYPOINT_IMG       Full inference entry point image ref. Overrides registry/tag defaults.
+  DASHBOARD_IMG                Full Dashboard image ref. Overrides registry/tag defaults.
   MEASUREMENT_WORKER_PLATFORMS Measurement worker platforms. Default: ${measurement_worker_platforms}
   IMAGE_TAG                    Image tag when --tag is not provided.
   CONTAINER_TOOL               docker-compatible build tool. Default: docker
@@ -232,7 +234,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker|serving-entrypoint) ;;
+all|operator|node-discovery|node-actuator|profiler|console|metric-observer|workload-observer|measurement-worker|serving-entrypoint|dashboard) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -271,6 +273,8 @@ node_discovery_selector="app.kubernetes.io/instance=${release},app.kubernetes.io
 node_actuator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-actuator"
 profiler_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=profiler"
 console_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator-console"
+serving_entrypoint_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=serving-entrypoint"
+dashboard_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=dashboard"
 
 component_selected() {
 	local component="$1"
@@ -360,6 +364,9 @@ fi
 if [[ -z "${serving_entrypoint_image}" ]] && component_selected serving-entrypoint; then
 	serving_entrypoint_image="${registry}/${image_namespace}/chill-serving-entrypoint:${image_tag}"
 fi
+if [[ -z "${dashboard_image}" ]] && component_selected dashboard; then
+	dashboard_image="${registry}/${image_namespace}/chill-dashboard:${image_tag}"
+fi
 push_mode="$(choose_push_mode)"
 
 split_image_ref "${operator_image}" "operator"
@@ -385,6 +392,9 @@ fi
 if [[ -n "${serving_entrypoint_image}" ]]; then
 	split_image_ref "${serving_entrypoint_image}" "serving-entrypoint"
 fi
+if [[ -n "${dashboard_image}" ]]; then
+	split_image_ref "${dashboard_image}" "dashboard"
+fi
 
 if [[ -n "${extra_helm_set}" ]]; then
 	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeDiscovery.image.pullPolicy=${pull_policy} --set nodeActuator.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
@@ -393,6 +403,10 @@ else
 fi
 if [[ -n "${console_image}" ]]; then
 	helm_set="${helm_set} --set console.enabled=true"
+fi
+helm_set="${helm_set} --set servingEntrypoint.image.pullPolicy=${pull_policy} --set dashboard.image.pullPolicy=${pull_policy}"
+if [[ -n "${dashboard_image}" ]]; then
+	helm_set="${helm_set} --set dashboard.enabled=true"
 fi
 
 if [[ "${push_mode}" == "ctr-plain-http" ]] ||
@@ -427,6 +441,7 @@ echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
+echo "dashboard image: ${dashboard_image:-not selected}"
 echo "platforms: ${platforms}"
 echo "measurement-worker platforms: ${measurement_worker_platforms}"
 echo "components: ${components}"
@@ -607,6 +622,11 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("serving-entrypoint")
 	fi
+	if component_selected dashboard; then
+		"${function_name}" "build/docker/dashboard.Dockerfile" "${dashboard_image}" &
+		pids+=("$!")
+		names+=("dashboard")
+	fi
 
 	for i in "${!pids[@]}"; do
 		if ! wait "${pids[$i]}"; then
@@ -676,6 +696,12 @@ run_ctr_plain_http_components() {
 			"build/docker/serving-entrypoint.Dockerfile" "${serving_entrypoint_image}" &
 		pids+=("$!")
 		names+=("serving-entrypoint")
+	fi
+	if component_selected dashboard; then
+		ctr_plain_http_build_push_one dashboard \
+			"build/docker/dashboard.Dockerfile" "${dashboard_image}" &
+		pids+=("$!")
+		names+=("dashboard")
 	fi
 
 	for i in "${!pids[@]}"; do
@@ -762,6 +788,8 @@ if ! is_true "${skip_deploy}"; then
 		"NODE_ACTUATOR_IMG=${node_actuator_image}"
 		"PROFILER_IMG=${profiler_image}"
 		"CONSOLE_IMG=${console_image}"
+		"SERVING_ENTRYPOINT_IMG=${serving_entrypoint_image}"
+		"DASHBOARD_IMG=${dashboard_image}"
 	)
 
 	echo "==> uninstall"
@@ -787,6 +815,14 @@ if ! is_true "${skip_deploy}"; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
 			-l "${console_selector}" "--timeout=${timeout}"
 	fi
+	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${serving_entrypoint_selector}" -o name 2>/dev/null | grep -q .; then
+		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
+			-l "${serving_entrypoint_selector}" "--timeout=${timeout}"
+	fi
+	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${dashboard_selector}" -o name 2>/dev/null | grep -q .; then
+		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
+			-l "${dashboard_selector}" "--timeout=${timeout}"
+	fi
 fi
 
 echo "==> observation"
@@ -800,6 +836,7 @@ echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "measurement-worker image: ${measurement_worker_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
+echo "dashboard image: ${dashboard_image:-not selected}"
 try "${helm_bin}" status "${release}" --namespace "${release_namespace}"
 try "${kubectl_bin}" get chillsystems.edge.dacs.io -A -o wide
 try "${kubectl_bin}" -n "${release_namespace}" get deployments,daemonsets,pods -o wide
@@ -810,6 +847,8 @@ try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${no
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_actuator_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${profiler_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${console_selector}" "--timeout=${timeout}"
+try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${serving_entrypoint_selector}" "--timeout=${timeout}"
+try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${dashboard_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" get events \
 	--field-selector type=Warning --sort-by=.lastTimestamp
 if [[ "${observe_mode}" == "full" ]]; then
@@ -819,4 +858,6 @@ if [[ "${observe_mode}" == "full" ]]; then
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_actuator_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${profiler_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${console_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${serving_entrypoint_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${dashboard_selector}" --all-containers=true --tail=120 --prefix
 fi

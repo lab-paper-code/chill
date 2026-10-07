@@ -5,8 +5,9 @@ convert, or inspect a local model file.
 
 ## Before registration
 
-1. Select the executable artifact and record its format and input sample shape.
-   Omit the batch axis; CHILL supplies the batch for each measurement.
+1. Select the executable artifact and record every input tensor's exact name,
+   Triton datatype, and sample shape. Omit the batch axis; CHILL supplies the
+   batch for each measurement.
 2. For a converted artifact, retain its source artifact, target platform,
    supported batch sizes, converter, and converter version. The repository's
    `make rknn-convert-artifact` target writes both the RKNN file and a conversion
@@ -69,26 +70,56 @@ docker run --rm --platform linux/arm64 --entrypoint sh \
 | `source.image` | Pushed immutable OCI reference |
 | `source.architecture` | Carrier platform and target `DeviceClass` architecture |
 | `source.path` | Exact absolute path inside the carrier |
-| `input.inputSampleShape` | Artifact input dimensions without the batch axis |
+| `input.tensors[].name` | Exact artifact input name, preserving input order |
+| `input.tensors[].datatype` | Explicit uppercase Triton datatype, such as `FP32` |
+| `input.tensors[].sampleShape` | Artifact input dimensions without the batch axis |
 | `derivation` | Conversion record; omit for the canonical artifact |
 | `executionPaths[].runtime` | Installed `profiling.executionDeclarations` entry |
 
-Input data type and layout are runtime-owned and are not registration fields.
+The [canonical source evidence](../../../docs/design/profiling/plans/08-declared-batch-size-artifacts.md#measured-evidence)
+records this sample's ONNX input name as `input`, element type as `float32`
+(`FP32`), and batch-free dimensions as `[3, 224, 224]`. The
+[RKNN converter](../../../build/model-artifacts/rknn/export_rknn.py) loads that
+source graph without renaming inputs and builds without quantization. The RKNN
+sample declares `input` / `FP32` with batch-free dimensions `[224, 224, 3]`.
+Layout is not a registration field. Runtime loading must agree with the
+complete declared tensor contract; it does not infer missing names or types.
 Use [the ModelSpec sample](edge_v1alpha1_modelspec.yaml) as the final manifest.
 
 ## Validate and register
 
-Confirm that CHILL has discovered the intended device class, then validate the
-API object before creating it:
+Confirm that CHILL has discovered the intended device class. Administrators may
+use server-side dry-run solely to inspect CRD structure; this requires Kubernetes
+write authorization even though it persists nothing, and is not the manager path:
 
 ```sh
 kubectl get deviceclasses.edge.dacs.io
 kubectl apply --dry-run=server \
   -f config/samples/catalog/edge_v1alpha1_modelspec.yaml
-kubectl apply -f config/samples/catalog/edge_v1alpha1_modelspec.yaml
-kubectl get modelspecs.edge.dacs.io mobilenet-v2-050 -o yaml
 ```
 
-Server-side validation proves only that the API object is structurally valid.
-Image pull, artifact-path access, runtime support, and device compatibility are
-resolved when a profiling request selects this model and execution path.
+Register through the HTTPS owner instead. With `yq` v4 and `jq`, extract only the
+accepted API fields from the existing manifest:
+
+```sh
+yq -o=json '.' config/samples/catalog/edge_v1alpha1_modelspec.yaml |
+  jq '{name: .metadata.name, spec: .spec}' |
+  curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' --data-binary @- \
+    "$OWNER/api/v1/models"
+curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
+  "$OWNER/api/v1/models/mobilenet-v2-050"
+```
+
+POST returns `201`. PUT accepts `{"spec": ...}` and DELETE has no body; both
+require the queried ModelSpec `metadata.resourceVersion` in `If-Match`.
+Referenced ModelSpecs cannot be deleted (`409`); changing a shared model drains
+all referring Workloads before publishing the new immutable definitions.
+Bearer auth uses TokenReview and path/verb SubjectAccessReview. Managers need
+HTTP non-resource permissions, not direct managed-resource write permissions.
+
+Structural validation does not prove image access, runtime support or hardware
+compatibility. Those facts and measured evidence are resolved by profiling and
+native admission. This sample's standalone ORT/RKNN paths are not relabeled as
+Triton profiles; native serving needs a matching Triton/Python execution path
+and a completed campaign measuring every frozen batch size `1..maxBatchSize`.

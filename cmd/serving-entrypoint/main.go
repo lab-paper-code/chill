@@ -21,17 +21,11 @@ func main() {
 		log.Error(err, "invalid inference entry point options")
 		os.Exit(1)
 	}
-	routes, err := readRoutes(opts.routesPath)
-	if err != nil {
-		log.Error(err, "read the routing table", "path", opts.routesPath)
-		os.Exit(1)
-	}
-	log.Info("starting the inference entry point",
+	log.Info("starting the Workload owner",
 		"bindAddress", opts.bindAddress,
 		"servingNamespace", opts.servingNamespace,
-		"servingPort", opts.servingPort,
-		"models", routes.modelNames())
-	if err := serve(ctrl.SetupSignalHandler(), opts, buildHandler(routes, opts)); err != nil {
+		"profileCampaigns", opts.campaigns)
+	if err := run(ctrl.SetupSignalHandler(), opts); err != nil {
 		log.Error(err, "run the inference entry point")
 		os.Exit(1)
 	}

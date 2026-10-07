@@ -1,3 +1,4 @@
+# Use metadata.name and spec as serving management API input, not kubectl apply.
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
@@ -11,7 +12,10 @@ spec:
       architecture: arm64
       path: /artifact/mobilenet-v2-050.onnx
     input:
-      inputSampleShape: [3, 224, 224]
+      tensors:
+      - name: input
+        datatype: FP32
+        sampleShape: [3, 224, 224]
   - name: mobilenet-v2-050-rk3588
     format: rknn
     source:
@@ -19,7 +23,10 @@ spec:
       architecture: arm64
       path: /artifact/mobilenet-v2-050-rk3588.rknn
     input:
-      inputSampleShape: [224, 224, 3]
+      tensors:
+      - name: input
+        datatype: FP32
+        sampleShape: [224, 224, 3]
     derivation:
       sourceArtifact: canonical-onnx
       targetPlatform: rk3588

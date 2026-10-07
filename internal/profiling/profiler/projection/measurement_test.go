@@ -14,6 +14,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -60,6 +61,7 @@ func TestProjectTrialPreservesFactsAndDoesNotInferWindowFactsFromTerminalSnapsho
 	raw := profilerevidence.RawMeasurement{
 		RunConfig: config,
 		Runtime: profilingrun.RuntimeResult{
+			Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:   started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			InferenceCount:       2,
@@ -110,6 +112,7 @@ func TestProjectIdleObservationPreservesRawProvenanceAndRuntimeWindow(t *testing
 	raw := profilerevidence.IdleRawMeasurement{
 		RunConfig: config,
 		Runtime: profilingrun.IdleRuntimeResult{
+			Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			ModelLoadCompletedAt: started.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt:    started.Add(-60 * time.Second).Format(time.RFC3339Nano),
 			SettlingCompletedAt:  started.Format(time.RFC3339Nano),
@@ -140,7 +143,14 @@ func projectionRunConfig() profilingrun.RunConfig {
 			DeviceClass: "lattepanda", Model: "mobilenet",
 			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
 		},
-		Images:     profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
+		Images: profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
+		Delivery: profilingrun.CandidateRuntimeDelivery{
+			ArtifactCapability: &profilingrun.CandidateArtifactCapability{
+				Tensors: []modelcompat.InputTensor{
+					{Name: "input", Datatype: "FP32", SampleShape: []int32{3, 224, 224}},
+				},
+			},
+		},
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
@@ -250,6 +260,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			Backend:                   config.State.Backend,
 			Provider:                  config.State.Backend,
 			AvailableProviders:        []string{config.State.Backend},
+			Inputs:                    modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).Format(time.RFC3339Nano),

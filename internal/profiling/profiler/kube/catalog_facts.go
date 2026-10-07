@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
+	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -89,94 +90,7 @@ func selectModelPath(
 	if err := validateObjectIdentity("ModelSpec", model.Name, model.UID, model.ResourceVersion); err != nil {
 		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, err
 	}
-	artifacts := make(map[string]edgev1alpha1.ModelArtifact, len(model.Spec.Artifacts))
-	for _, artifact := range model.Spec.Artifacts {
-		if _, duplicate := artifacts[artifact.Name]; duplicate {
-			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-				"ModelSpec contains duplicate artifact %q", artifact.Name,
-			)
-		}
-		artifacts[artifact.Name] = artifact
-	}
-	var selected *edgev1alpha1.ModelExecutionPath
-	seenPaths := map[string]struct{}{}
-	for index := range model.Spec.ExecutionPaths {
-		path := &model.Spec.ExecutionPaths[index]
-		if _, duplicate := seenPaths[path.Name]; duplicate {
-			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-				"ModelSpec contains duplicate execution path %q", path.Name,
-			)
-		}
-		seenPaths[path.Name] = struct{}{}
-		if path.Name == pathName {
-			copy := *path
-			selected = &copy
-		}
-	}
-	if selected == nil {
-		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-			"execution path %q is not declared by ModelSpec %q", pathName, model.Name,
-		)
-	}
-	artifact, exists := artifacts[selected.Artifact]
-	if !exists {
-		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-			"execution path %q references missing artifact %q", selected.Name, selected.Artifact,
-		)
-	}
-	if err := validateModelArtifactSource(artifact.Source); err != nil {
-		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-			"artifact %q source: %w",
-			artifact.Name,
-			err,
-		)
-	}
-	if artifact.Derivation != nil {
-		if artifact.Derivation.SourceArtifact == artifact.Name {
-			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-				"derived artifact %q references itself as source", artifact.Name,
-			)
-		}
-		if _, exists := artifacts[artifact.Derivation.SourceArtifact]; !exists {
-			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-				"derived artifact %q references missing source artifact %q",
-				artifact.Name, artifact.Derivation.SourceArtifact,
-			)
-		}
-	}
-	if selected.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily {
-		if artifact.Derivation == nil || artifact.Input == nil ||
-			len(artifact.Derivation.DeclaredBatchSizes) == 0 ||
-			len(artifact.Input.InputSampleShape) == 0 {
-			return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
-				"RKNNLite artifact requires a matching input tensor contract",
-			)
-		}
-		for _, dimension := range artifact.Input.InputSampleShape {
-			if dimension < 1 {
-				return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, errors.New(
-					"RKNNLite artifact input dimensions must be positive",
-				)
-			}
-		}
-	}
-	return *selected, artifact, nil
-}
-
-func validateModelArtifactSource(source edgev1alpha1.ModelArtifactSource) error {
-	for name, value := range map[string]string{
-		"image":        source.Image,
-		"architecture": source.Architecture,
-		"path":         source.Path,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("%s is required without surrounding whitespace", name)
-		}
-	}
-	if !cleanAbsolutePath(source.Path) {
-		return errors.New("path must be a clean absolute container path")
-	}
-	return nil
+	return modelcatalog.SelectModelPath(model, pathName)
 }
 
 func validateObjectIdentity(kind, name string, uid types.UID, resourceVersion string) error {

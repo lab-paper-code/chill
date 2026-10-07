@@ -23,7 +23,7 @@ metadata:
 rules:
   - apiGroups: ["edge.dacs.io"]
     resources: ["profilingruns", "batchenergyoptimizations"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get"]
@@ -100,6 +100,12 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get"]
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["chillsystems", "deviceclasses", "modelspecs"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

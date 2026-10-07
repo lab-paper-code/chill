@@ -9,6 +9,18 @@ evidenceStore:
   enabled: false
   configRef:
     name: ""
+  # Gateway delivery binding. Match the existing operand config's bucket/region.
+  # Empty name/endpoint/credentialsSecret.name use ChillSystem operand names.
+  connection:
+    name: ""
+    endpoint: ""
+    bucket: ""
+    region: us-east-1
+  credentialsSecret:
+    name: ""
+    accessKeyKey: access-key
+    secretKeyKey: secret-key
+    sessionTokenKey: ""
 
 crds:
   enabled: true
@@ -311,34 +323,45 @@ console:
     create: true
     name: ""
 
-# The inference entry point: the one point every external request crosses. It
-# distributes each request over the nodes serving the declared model. The table
-# below is read once at start-up, so it is a development stand-in for whatever
-# computes routing weights.
+# Single HTTPS management/inference gateway. Native Pods supply backend addresses;
+# completed selected campaigns supply real profiles. No serving capacity is created.
 servingEntrypoint:
   enabled: false
-  replicaCount: 1
   image:
     repository: daclab/chill-serving-entrypoint
     tag: ""
     pullPolicy: IfNotPresent
-  # Port the entry point accepts consumer requests on.
   port: 8080
-  # Port the per-node serving Services expose. CHILL takes no position on what
-  # a serving worker listens on, so this must be set when enabled=true.
-  servingPort: 0
-  # Routing weights per model. Each entry names a serving node, the Service in
-  # this release's namespace that reaches only that node, and its weight.
-  #   mobilenet:
-  #     - node: jetsono
-  #       service: chill-serving-jetsono
-  #       weight: 1
-  # The chart renders one ClusterIP Service per node this table names, so every
-  # address the entry point can reach exists. Each one selects
-  # app.kubernetes.io/component: serving and edge.dacs.io/serving-node: <node>,
-  # and carries no endpoint until a Pod on that node carries both labels. A node
-  # therefore appears under one Service name throughout the table.
-  routes: {}
+  # Empty namespaces use the Helm release namespace. Namespaces must already exist.
+  namespace: ""
+  actuationNamespace: ""
+  # Explicit namespace/name selections; empty means no profiles are admitted.
+  profileCampaigns: []
+  tls:
+    # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
+    secretName: ""
+  observationStorage:
+    size: 1Gi
+    # null uses the cluster default; "" explicitly requests no StorageClass.
+    storageClassName: null
+  queueLimit: 1024
+  requestTimeout: 30s
+  drainTimeout: 2m
+  # Must exceed drainTimeout plus HTTP shutdown overhead.
+  terminationGracePeriodSeconds: 150
+  sourceInterval: 1s
+  profileInterval: 1m
+  profileConfidenceLevel: 0.95
+  observationWindow: 1m
+  observationDefinitions: []
+  observationOutcomes: []
+  maxRequestBytes: 8388608
+  maxEvidenceBytes: 67108864
+  maxQueryEvents: 1000
+  kubeAPI:
+    apiServer: ""
+    tokenFile: ""
+    caFile: ""
   service:
     type: ClusterIP
   nodeSelector: {}
@@ -353,6 +376,60 @@ servingEntrypoint:
       memory: 64Mi
   podSecurityContext:
     runAsNonRoot: true
+    fsGroup: 65532
+    fsGroupChangePolicy: OnRootMismatch
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+# Independent web process; the caller's bearer is never a pod credential.
+dashboard:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: daclab/chill-dashboard
+    tag: ""
+    pullPolicy: IfNotPresent
+  port: 3000
+  # Empty uses the enabled serving entrypoint's HTTPS Service.
+  baseURL: ""
+  namespace: ""
+  systemName: ""
+  # Optional trusted owner CA, mounted for native Node TLS verification.
+  caSecretName: ""
+  caSecretKey: ca.crt
+  queryTimeoutMilliseconds: 10000
+  mutationTimeoutMilliseconds: 60000
+  inferTimeoutMilliseconds: 30000
+  maxRequestBytes: 8388608
+  pageSize: 50
+  maxPageSize: 200
+  maxWindowHours: 24
+  pollIntervalMilliseconds: 5000
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tlsSecretName: ""
+    annotations: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 10m
+      memory: 128Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true

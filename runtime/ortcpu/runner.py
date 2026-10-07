@@ -17,21 +17,35 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha14"
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha14"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha5"
+REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha15"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha15"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha6"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
-SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
+SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-inputs-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 IDLE_WORKLOAD = "idle-model-loaded"
 NO_INPUT_GENERATOR = "none"
 NO_OUTPUT_VALIDATION = "none"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha4"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+INPUT_DATATYPES = {
+    "BOOL": ("tensor(bool)", "bool_", 1),
+    "UINT8": ("tensor(uint8)", "uint8", 1),
+    "UINT16": ("tensor(uint16)", "uint16", 2),
+    "UINT32": ("tensor(uint32)", "uint32", 4),
+    "UINT64": ("tensor(uint64)", "uint64", 8),
+    "INT8": ("tensor(int8)", "int8", 1),
+    "INT16": ("tensor(int16)", "int16", 2),
+    "INT32": ("tensor(int32)", "int32", 4),
+    "INT64": ("tensor(int64)", "int64", 8),
+    "FP16": ("tensor(float16)", "float16", 2),
+    "FP32": ("tensor(float)", "float32", 4),
+    "FP64": ("tensor(double)", "float64", 8),
+}
 
 
 class ContractError(Exception):
@@ -187,7 +201,12 @@ def validate_actuation(run_config: dict[str, Any], state: dict[str, Any]) -> Non
     raise ContractError("unsupported run_config actuation kind")
 
 
-def validate_request(request: dict[str, Any]) -> None:
+def validate_request(
+    request: dict[str, Any],
+    request_schema: str = REQUEST_SCHEMA,
+    runtime_family: str = "onnxruntime",
+    backend: str = "CPUExecutionProvider",
+) -> None:
     require_fields(
         request,
         {
@@ -208,7 +227,7 @@ def validate_request(request: dict[str, Any]) -> None:
         },
         "runtime request",
     )
-    if request["schemaVersion"] != REQUEST_SCHEMA:
+    if request["schemaVersion"] != request_schema:
         raise ContractError("unsupported runtime request schemaVersion")
     require_string(request["podUID"], "podUID")
     scheduled_node_name = require_string(
@@ -272,12 +291,12 @@ def validate_request(request: dict[str, Any]) -> None:
             "runtimeFamily",
             "backend",
             "powerMode",
-        },
+        } | ({"triton"} if runtime_family == "triton" else set()),
         "run_config.state",
     )
     if (
-        state["runtimeFamily"] != "onnxruntime"
-        or state["backend"] != "CPUExecutionProvider"
+        state["runtimeFamily"] != runtime_family
+        or state["backend"] != backend
     ):
         raise ContractError("unsupported runtime family or backend")
     require_string(state["model"], "run_config.state.model")
@@ -361,8 +380,7 @@ def validate_request(request: dict[str, Any]) -> None:
     )
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         if (
-            measurement["batch"] != 1
-            or measurement["warmupIterations"] != 0
+            measurement["warmupIterations"] != 0
             or require_integer(
                 measurement["settlingDurationSeconds"],
                 "run_config.measurement.settlingDurationSeconds",
@@ -379,6 +397,90 @@ def validate_request(request: dict[str, Any]) -> None:
         or measurement["outputValidation"] != SUPPORTED_OUTPUT_VALIDATION
     ):
         raise ContractError("unsupported measurement implementation contract")
+    validate_candidate(run_config["delivery"], runtime_family)
+
+
+def validate_candidate(value: Any, runtime_family: str = "onnxruntime") -> None:
+    candidate = require_object(value, "run_config.delivery")
+    optional_fields = {"runtimePackages"} & set(candidate) if runtime_family == "triton" else set()
+    require_fields(candidate, {"artifactCapability"} | optional_fields, "run_config.delivery")
+    if "runtimePackages" in candidate:
+        packages = candidate["runtimePackages"]
+        if not isinstance(packages, list):
+            raise ContractError("runtimePackages must be an array")
+        names: set[str] = set()
+        for package in packages:
+            package = require_object(package, "runtime package")
+            require_fields(package, {"name", "version"}, "runtime package")
+            name = require_string(package["name"], "runtime package name")
+            require_string(package["version"], "runtime package version")
+            if name in names:
+                raise ContractError("runtime package names must be unique")
+            names.add(name)
+    capability = require_object(
+        candidate["artifactCapability"], "candidate.artifactCapability"
+    )
+    optional_fields = {"targetPlatform", "declaredBatchSizes"} & set(capability)
+    require_fields(
+        capability, {"tensors"} | optional_fields, "candidate.artifactCapability"
+    )
+    if "targetPlatform" in capability:
+        require_string(capability["targetPlatform"], "candidate targetPlatform")
+    if "declaredBatchSizes" in capability:
+        batches = capability["declaredBatchSizes"]
+        if not isinstance(batches, list) or not batches:
+            raise ContractError("candidate declaredBatchSizes must be a non-empty array")
+        for batch in batches:
+            require_integer(batch, "candidate declaredBatchSizes item", 1)
+        if batches != sorted(set(batches)):
+            raise ContractError("candidate declaredBatchSizes must be strictly increasing")
+    tensors = capability["tensors"]
+    if not isinstance(tensors, list) or not tensors:
+        raise ContractError("candidate tensors must be a non-empty array")
+    names: set[str] = set()
+    for item in tensors:
+        tensor = require_object(item, "candidate tensor")
+        require_fields(tensor, {"name", "datatype", "sampleShape"}, "candidate tensor")
+        name = require_string(tensor["name"], "candidate tensor name")
+        if name in names:
+            raise ContractError("candidate tensor names must be unique")
+        names.add(name)
+        if require_string(tensor["datatype"], f"tensor {name} datatype") not in INPUT_DATATYPES:
+            raise ContractError(f"unsupported input datatype for tensor {name}")
+        shape = tensor["sampleShape"]
+        if not isinstance(shape, list) or not shape:
+            raise ContractError(f"tensor {name} sampleShape must be a non-empty array")
+        for dimension in shape:
+            require_integer(dimension, f"tensor {name} sampleShape item", 1)
+            if dimension > 2147483647:
+                raise ContractError(f"tensor {name} sampleShape item exceeds int32")
+
+
+def validate_runtime_inputs(
+    inputs: list[Any], tensors: list[dict[str, Any]], batch: int
+) -> None:
+    observed = {item.name: item for item in inputs}
+    if len(observed) != len(inputs) or set(observed) != {t["name"] for t in tensors}:
+        raise ContractError("runtime input names do not match declared tensors")
+    for tensor in tensors:
+        name = tensor["name"]
+        metadata = observed[name]
+        if metadata.type != INPUT_DATATYPES[tensor["datatype"]][0]:
+            raise ContractError(f"runtime input {name} datatype does not match declaration")
+        shape = metadata.shape
+        if not isinstance(shape, (list, tuple)) or len(shape) != len(tensor["sampleShape"]) + 1:
+            raise ContractError(f"runtime input {name} rank does not match declaration")
+        leading = shape[0]
+        if isinstance(leading, int):
+            if isinstance(leading, bool) or leading != batch:
+                raise ContractError(f"runtime input {name} batch does not match selected batch")
+        elif leading is not None and not isinstance(leading, str):
+            raise ContractError(f"runtime input {name} has unsupported batch metadata")
+        if any(
+            isinstance(actual, bool) or not isinstance(actual, int) or actual != declared
+            for actual, declared in zip(shape[1:], tensor["sampleShape"])
+        ):
+            raise ContractError(f"runtime input {name} sampleShape does not match declaration")
 
 
 def validate_model_file(path: Path) -> None:
@@ -392,8 +494,12 @@ def validate_model_file(path: Path) -> None:
 
 def read_required_text(path: Path, name: str) -> str:
     try:
-        value = path.read_text(encoding="utf-8").strip()
-    except OSError as error:
+        with path.open(encoding="utf-8") as stream:
+            value = stream.read(4097)
+        if len(value) > 4096:
+            raise ContractError(f"{name} exceeds the controller-file size limit")
+        value = value.strip()
+    except (OSError, UnicodeError) as error:
         raise ContractError(f"read {name}: {error}") from error
     if not value:
         raise ContractError(f"{name} is empty")
@@ -470,14 +576,19 @@ def cgroup_cpu_files(root: Path = CGROUP_ROOT) -> tuple[Path, Path, Path | None,
         return root / "cpu.stat", v2_quota, None, root / "cpuset.cpus.effective"
 
     v1_cpu = root / "cpu,cpuacct"
+    if not (v1_cpu / "cpu.cfs_quota_us").is_file():
+        v1_cpu = root / "cpu"
     v1_cpuset = root / "cpuset"
+    v1_effective = v1_cpuset / "cpuset.effective_cpus"
+    if not v1_effective.is_file():
+        v1_effective = v1_cpuset / "cpuset.cpus"
     v1_quota = v1_cpu / "cpu.cfs_quota_us"
     if v1_quota.is_file():
         return (
             v1_cpu / "cpu.stat",
             v1_quota,
             v1_cpu / "cpu.cfs_period_us",
-            v1_cpuset / "cpuset.cpus",
+            v1_effective,
         )
 
     raise ContractError("supported cgroup CPU controller is unavailable")
@@ -497,34 +608,51 @@ def cpu_stat(root: Path = CGROUP_ROOT) -> dict[str, int]:
     return values
 
 
+def read_cpu_environment(root: Path = CGROUP_ROOT) -> tuple[str, list[int], str]:
+    """Read actual CPU quota, process affinity and effective CPUs on v1/v2."""
+    _, quota_path, period_path, cpuset_path = cgroup_cpu_files(root)
+    cpu_max = read_required_text(quota_path, "cgroup CPU quota")
+    if period_path is not None:
+        cpu_max += " " + read_required_text(period_path, "cgroup CPU period")
+    fields = cpu_max.split()
+    if len(fields) != 2:
+        raise ContractError("cgroup CPU quota/period is malformed")
+    if fields[0] in {"max", "-1"}:
+        raise ContractError("cgroup CPU quota is unlimited")
+    try:
+        quota, period = map(int, fields)
+    except ValueError as error:
+        raise ContractError("cgroup CPU quota/period is malformed") from error
+    if quota < 1 or period < 1:
+        raise ContractError("cgroup CPU quota/period must be positive")
+    cpuset = read_required_text(cpuset_path, "effective CPU set")
+    for item in cpuset.split(","):
+        parts = item.split("-")
+        if not 1 <= len(parts) <= 2 or any(not part.isascii() or not part.isdigit() for part in parts):
+            raise ContractError("effective CPU set is malformed")
+        if int(parts[0]) > int(parts[-1]):
+            raise ContractError("effective CPU set range is reversed")
+    if not hasattr(os, "sched_getaffinity"):
+        raise ContractError("process CPU affinity is unavailable")
+    return cpu_max, sorted(os.sched_getaffinity(0)), cpuset
+
+
 def validate_cpu_contract(
     run_config: dict[str, Any], root: Path = CGROUP_ROOT
 ) -> tuple[str, list[int], str]:
     cpu = run_config["cpu"]
-    _, quota_path, period_path, cpuset_path = cgroup_cpu_files(root)
-    quota_value = read_required_text(quota_path, "cgroup CPU quota")
-    if period_path is None:
-        cpu_max = quota_value
-    else:
-        period_value = read_required_text(period_path, "cgroup CPU period")
-        cpu_max = f"{quota_value} {period_value}"
-    fields = cpu_max.split()
-    if len(fields) != 2 or fields[0] == "max":
-        raise ContractError("cgroup CPU quota is missing or unlimited")
+    cpu_max, affinity, cpuset = read_cpu_environment(root)
+    quota, period = map(int, cpu_max.split())
     try:
-        quota, period, expected = int(fields[0]), int(fields[1]), int(cpu["limit"])
+        expected = int(cpu["limit"])
     except ValueError as error:
-        raise ContractError("cgroup CPU quota or RunConfig limit is malformed") from error
-    if quota < 1 or period < 1 or quota // period != expected or quota % period != 0:
+        raise ContractError("RunConfig CPU limit is malformed") from error
+    if expected < 1 or quota // period != expected or quota % period != 0:
         raise ContractError("cgroup CPU quota does not match the RunConfig limit")
-    if not hasattr(os, "sched_getaffinity"):
-        raise ContractError("process CPU affinity is unavailable")
-    affinity = sorted(os.sched_getaffinity(0))
     if len(affinity) < cpu["ortIntraOpThreads"]:
         raise ContractError(
             "process CPU affinity is smaller than the ORT thread contract"
         )
-    cpuset = read_required_text(cpuset_path, "effective CPU set")
     return cpu_max, affinity, cpuset
 
 
@@ -558,32 +686,46 @@ def validate_outputs(outputs: list[Any], batch: int) -> list[list[int]]:
     return shapes
 
 
-def admitted_input_bytes(shape: list[int], max_bytes: int) -> int:
-    input_bytes = math.prod(shape) * 4
+def admitted_input_bytes(shape: list[int], datatype: str, max_bytes: int) -> int:
+    input_bytes = math.prod(shape) * INPUT_DATATYPES[datatype][2]
     if input_bytes > max_bytes:
-        raise ContractError(
-            "input tensor exceeds the Job execution contract size budget"
-        )
+        raise ContractError("input tensors exceed the Job execution contract size budget")
     return input_bytes
 
 
-def generate_input(numpy: Any, shape: list[int], max_bytes: int) -> Any:
-    input_bytes = admitted_input_bytes(shape, max_bytes)
-    sample = numpy.empty(shape, dtype=numpy.float32)
+def generate_input(
+    numpy: Any, shape: list[int], datatype: str, max_bytes: int
+) -> Any:
+    input_bytes = admitted_input_bytes(shape, datatype, max_bytes)
+    sample = numpy.empty(shape, dtype=getattr(numpy, INPUT_DATATYPES[datatype][1]))
     if getattr(sample, "nbytes", None) != input_bytes:
-        raise ContractError(
-            "generated input tensor does not match its admitted byte size"
-        )
-
-    # The v1 generator is defined by float64 standard_normal values cast to
-    # float32. Filling one final tensor in bounded chunks preserves that seeded
-    # sequence without retaining a full-size float64 temporary beside it.
+        raise ContractError("generated input tensor does not match its admitted byte size")
     flat = sample.reshape(-1)
     generator = numpy.random.default_rng(0)
     for start in range(0, len(flat), INPUT_GENERATION_CHUNK_ELEMENTS):
         stop = min(start + INPUT_GENERATION_CHUNK_ELEMENTS, len(flat))
-        flat[start:stop] = generator.standard_normal(stop - start)
+        if datatype.startswith("FP"):
+            flat[start:stop] = generator.standard_normal(stop - start)
+        else:
+            flat[start:stop] = generator.integers(0, 2, size=stop - start)
     return sample
+
+
+def generate_inputs(
+    numpy: Any, tensors: list[dict[str, Any]], batch: int, max_bytes: int
+) -> dict[str, Any]:
+    sizes = [
+        admitted_input_bytes([batch, *t["sampleShape"]], t["datatype"], max_bytes)
+        for t in tensors
+    ]
+    if sum(sizes) > max_bytes:
+        raise ContractError("input tensors exceed the Job execution contract size budget")
+    return {
+        t["name"]: generate_input(
+            numpy, [batch, *t["sampleShape"]], t["datatype"], max_bytes
+        )
+        for t in tensors
+    }
 
 
 def measurement_complete(
@@ -598,12 +740,14 @@ def measurement_complete(
     return False
 
 
-def derived_contract(run_config: dict[str, Any]) -> dict[str, Any]:
+def derived_contract(
+    run_config: dict[str, Any], provider: str = "CPUExecutionProvider"
+) -> dict[str, Any]:
     cpu = run_config["cpu"]
     return {
         "schemaVersion": DERIVED_CONTRACT_SCHEMA,
         "backend": run_config["state"]["backend"],
-        "provider": run_config["state"]["backend"],
+        "provider": provider,
         "nodeSnapshot": run_config["targetNode"],
         "cpu": {
             "budgetSource": (
@@ -651,7 +795,7 @@ def runtime_cpu_evidence(
 
 def execute_idle(
     request: dict[str, Any],
-    ort: Any,
+    runtime_version: str,
     session: Any,
     available_providers: list[str],
     architecture: str,
@@ -698,7 +842,7 @@ def execute_idle(
     measurement_ended_at = now()
     providers_at_end = session.get_providers()
     model_resident_at_end = bool(
-        providers_at_end and providers_at_end[0] == state["backend"]
+        providers_at_end and providers_at_end[0] == "CPUExecutionProvider"
     )
     publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
     process_cpu_seconds = time.process_time() - process_before
@@ -711,11 +855,12 @@ def execute_idle(
         "nodeName": request["scheduledNodeName"],
         "model": state["model"],
         "architecture": architecture,
-        "runtime": "onnxruntime",
-        "runtimeVersion": ort.__version__,
+        "runtime": state["runtimeFamily"],
+        "runtimeVersion": runtime_version,
         "backend": state["backend"],
         "provider": providers_at_end[0] if providers_at_end else "",
         "availableProviders": available_providers,
+        "inputs": run_config["delivery"]["artifactCapability"]["tensors"],
         "modelLoadCompletedAt": model_load_completed_at,
         "settlingStartedAt": settling_started_at,
         "settlingCompletedAt": settling_completed_at,
@@ -775,10 +920,12 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         raise ContractError(
             "actual ONNX Runtime provider does not match the configured backend"
         )
+    tensors = run_config["delivery"]["artifactCapability"]["tensors"]
+    validate_runtime_inputs(session.get_inputs(), tensors, measurement["batch"])
     if measurement["workloadMode"] == IDLE_WORKLOAD:
         return execute_idle(
             request,
-            ort,
+            ort.__version__,
             session,
             available_providers,
             architecture,
@@ -787,14 +934,31 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
             cpuset,
             now(),
         )
-    inputs = session.get_inputs()
-    if len(inputs) != 1 or inputs[0].type != "tensor(float)":
-        raise ContractError("input generator supports exactly one float32 tensor input")
-    shape = [measurement["batch"]] + [
-        dimension if isinstance(dimension, int) and dimension > 0 else 1
-        for dimension in inputs[0].shape[1:]
-    ]
-    sample = generate_input(numpy, shape, request["maxInputBytes"])
+    return execute_loaded(
+        request, session, numpy, ort.__version__, available_providers,
+        architecture, cpu_max, affinity, cpuset,
+    )
+
+
+def execute_loaded(
+    request: dict[str, Any],
+    session: Any,
+    numpy: Any,
+    runtime_version: str,
+    available_providers: list[str],
+    architecture: str,
+    cpu_max: str,
+    affinity: list[int],
+    cpuset: str,
+    feeds: dict[str, Any] | None = None,
+    before_measurement: Any = None,
+) -> dict[str, Any]:
+    """Measure a loaded CPU session; startup and warm-up stay outside the window."""
+    run_config = request["runConfig"]
+    state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
+    tensors = run_config["delivery"]["artifactCapability"]["tensors"]
+    if feeds is None:
+        feeds = generate_inputs(numpy, tensors, measurement["batch"], request["maxInputBytes"])
 
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
@@ -804,15 +968,15 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "warmup",
         "starting configured warm-up",
         iterations=measurement["warmupIterations"],
-        inputShape=shape,
+        inputs=tensors,
     )
     output_shapes: list[list[int]] | None = None
     try:
         for _ in range(measurement["warmupIterations"]):
-            outputs = session.run(None, {inputs[0].name: sample})
+            outputs = session.run(None, feeds)
             output_shapes = validate_outputs(outputs, measurement["batch"])
     except Exception as error:
-        raise ContractError(f"execute ONNX Runtime warm-up: {error}") from error
+        raise ContractError(f"execute {state['runtimeFamily']} warm-up: {error}") from error
     warmup_completed_at = now()
 
     publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
@@ -820,6 +984,8 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         Path(request["workloadWindowReadyPath"]),
         request["observerReadyTimeoutMilliseconds"] / 1000.0,
     )
+    if before_measurement is not None:
+        before_measurement()
     publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
     stat_before = cpu_stat()
     process_before = time.process_time()
@@ -830,7 +996,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     try:
         while True:
             inference_started = time.perf_counter_ns()
-            outputs = session.run(None, {inputs[0].name: sample})
+            outputs = session.run(None, feeds)
             samples.append((time.perf_counter_ns() - inference_started) / 1_000_000.0)
             if output_shapes is None:
                 output_shapes = validate_outputs(outputs, measurement["batch"])
@@ -842,7 +1008,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
             ):
                 break
     except Exception as error:
-        raise ContractError(f"execute ONNX Runtime measurement: {error}") from error
+        raise ContractError(f"execute {state['runtimeFamily']} measurement: {error}") from error
     measurement_elapsed = time.monotonic() - monotonic_started
     repetition_ended_at = now()
     measurement_ended_at = repetition_ended_at
@@ -860,8 +1026,8 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         "nodeName": request["scheduledNodeName"],
         "model": state["model"],
         "architecture": architecture,
-        "runtime": "onnxruntime",
-        "runtimeVersion": ort.__version__,
+        "runtime": state["runtimeFamily"],
+        "runtimeVersion": runtime_version,
         "backend": state["backend"],
         "provider": session.get_providers()[0],
         "availableProviders": available_providers,
@@ -897,7 +1063,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
             }
         ],
         "completionIndex": 0,
-        "inputShape": shape,
+        "inputs": tensors,
         "measurementIterations": 0,
         "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
         "latencyMs": {
@@ -914,7 +1080,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
     }
     log(
         "result",
-        "completed CPU ORT measurement",
+        f"completed {state['runtimeFamily']} CPU measurement",
         inferences=len(samples),
         elapsedSeconds=round(measurement_elapsed, 3),
     )

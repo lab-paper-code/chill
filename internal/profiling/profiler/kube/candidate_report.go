@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -76,6 +77,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
 		HostContract:        hostContract,
 		RuntimeAccess:       reportRuntimeAccess(input.Declaration.Access),
+		Triton:              modelcatalog.TritonSettings(input.Path.Runtime),
 		MetricObserverImage: input.Declaration.MetricObserverImage,
 		Verdict:             string(input.Result.Verdict), Reasons: reasons,
 	}
@@ -109,16 +111,12 @@ func cloneActuatorTarget(source *profilingrun.ActuatorTarget) *profilingrun.Actu
 func reportArtifactCapability(
 	artifact edgev1alpha1.ModelArtifact,
 ) *profilingrun.CandidateArtifactCapability {
-	derivation := artifact.Derivation
-	if derivation == nil {
-		return nil
-	}
 	capability := &profilingrun.CandidateArtifactCapability{
-		TargetPlatform:     derivation.TargetPlatform,
-		DeclaredBatchSizes: append([]int32(nil), derivation.DeclaredBatchSizes...),
+		Tensors: modelcatalog.InputTensors(artifact.Input),
 	}
-	if artifact.Input != nil {
-		capability.InputSampleShape = append([]int32(nil), artifact.Input.InputSampleShape...)
+	if artifact.Derivation != nil {
+		capability.TargetPlatform = artifact.Derivation.TargetPlatform
+		capability.DeclaredBatchSizes = append([]int32(nil), artifact.Derivation.DeclaredBatchSizes...)
 	}
 	return capability
 }

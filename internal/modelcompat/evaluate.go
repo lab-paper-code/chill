@@ -2,7 +2,10 @@ package modelcompat
 
 import "strings"
 
-const runtimeFamilyRKNNLite = "rknnlite"
+const (
+	runtimeFamilyRKNNLite = "rknnlite"
+	runtimeFamilyTriton   = "triton"
+)
 
 // Evaluate compares one artifact/path requirement with stable DeviceClass and
 // accepted runtime-image declaration facts. Structurally malformed API input
@@ -68,7 +71,7 @@ func Evaluate(input Input) Result {
 }
 
 func knownArtifactRuntimeRelation(format, runtimeFamily string) bool {
-	return (format == "onnx" && runtimeFamily == "onnxruntime") ||
+	return (format == "onnx" && (runtimeFamily == "onnxruntime" || runtimeFamily == runtimeFamilyTriton)) ||
 		(format == "rknn" && runtimeFamily == runtimeFamilyRKNNLite)
 }
 

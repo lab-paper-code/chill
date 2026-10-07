@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha14",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha15",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -33,6 +33,11 @@
     "backend": "CPUExecutionProvider",
     "powerMode": "fixed"
   },
+  "delivery": {
+    "artifactCapability": {
+      "tensors": [{"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}]
+    }
+  },
   "images": {
     "runtime": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "artifact": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -60,7 +65,7 @@
     "warmupIterations": 20,
     "durationSeconds": 30,
     "workloadMode": "saturated-serial-fixed-batch",
-    "inputGenerator": "numpy-default-rng-seed-0-fp32-v1",
+    "inputGenerator": "numpy-default-rng-seed-0-inputs-v1",
     "outputValidation": "nonempty-shape-batch-v1"
   },
   "metrics": {

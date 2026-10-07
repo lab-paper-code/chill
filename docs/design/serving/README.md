@@ -2,18 +2,16 @@
 
 ## 현재 구현 범위
 
-`internal/serving`에는 모델별 가중치 선택이 있고, `internal/serving/entrypoint`는
-선택한 백엔드로 HTTP 요청을 전달한다. `cmd/serving-entrypoint`가 시작 시 읽은
-고정 테이블을 공급한다. 기존 이미지·차트·배포 경로와 노드별 Service는 이 전달
-경로를 위한 구현 자산이다.
+`cmd/serving-entrypoint`는 단일 HTTPS Workload owner다. Kubernetes bearer 신원을
+TokenReview/SAR로 검증하고 모델 및 Workload 등록, 조회, 수정, 삭제와 추론을 제공한다.
+`internal/serving`은 불변 적용 snapshot, 접수 gate, bounded Workload 큐,
+인스턴스별 route와 physical drain 및 private JSONL 관측을 소유한다.
+모델-only 투명 proxy와 시작 시 고정 테이블은 제거되었다.
 
-이 경로는 아직 워크로드 객체와 SLO를 해석하지 않는다. 요청 본문을 읽지 않고
-한 백엔드로 전달하므로 단일 추론 입력 검증과 워크로드별 배칭도 수행하지 않는다.
-워크로드 조회·관리, 동적 분배 기준 공급과 유입 대기열은 추가하거나 연결해야 한다.
-추론 실행과 동적 배칭은 Triton을 연결하며, 자체 추론 서버·범용 batcher를 만들지 않는다.
-
-이 문서의 요청 처리 흐름은 구현 목표이며, 현재 구현 또는 라이브 클러스터에서
-완성된 동작을 뜻하지 않는다. 기존 전달 경로의 네트워크 관측은 뒤에서 구분한다.
+공식 native Triton Python/ORT CPU serving과 같은 실행 경로의 profiling은 구현되어 있다.
+local kind의 HTTPS 관리 계약과 실제 native runner smoke를 확인했지만 full qualifying
+native campaign에서 Ready gateway까지, ARM/RKNN 장비와 live testbed는 검증하지 않았다.
+정확한 API, Helm 설정과 실행 증거는 [Workload 계약](workload-management.md)에 기록한다.
 
 ## 설계 기준
 
@@ -29,41 +27,42 @@
 
 ### Triton 재사용 원칙
 
-CHILL 서빙의 기본 실행기는 Triton이다. 모델 로딩, backend 추론 실행, 동적 배치
-구성과 실행 dispatch, 추론 결과 반환은 Triton의 기존 구현을 재사용한다.
-CHILL은 evidence와 현재 부하·SLO에 근거한 운영·배칭 정책과 요청 추적을 담당한다.
-POOL의 자원 할당·전력모드·라우팅·전환 판단도 CHILL의 책임으로 유지한다.
+CHILL은 공식 Triton의 모델 로딩, native 큐와 dynamic batching, dispatch 및 결과 반환을 재사용한다.
+Python backend는 ORT CPU의 named multi-input numeric/bool 실행을 제공하며 공식 custom batching
+API를 사용하는 CHILL guard가 한 배치에 **같은 Workload UID만** 포함한다. native priority를 Workload identity로
+간주하지 않으며 실제 같은 priority의 두 UID로 혼합 방지를 확인했다.
 
-배칭 정책은 Triton의 기존 설정으로 표현하는 것을 우선하고, 부족한 조건은 공식
-custom batching 확장 지점으로 연결한다. 이 확장은 기존 batcher에 배치 포함 조건을
-추가하는 것이지 큐 선택·대기·dispatch 전체를 교체하는 API는 아니다. 실제 요구를
-표현할 수 없는 부분이 확인되면 그 연결 범위만 설계하며, 자체 추론 서버나 범용
-batcher를 개발하지 않는다. Triton 포크도 기본 전제로 두지 않는다.
+사용자가 승인한 제외 범위는 **adaptive SLO batch wait와 configuration selection 알고리즘**이다.
+공식 custom batching callback은 포함 조건을 다루지만 조절 가능한 delay/dispatch를
+구현하지 못한다. 이를 위해 Triton core patch나 외부 HTTP 추론 proxy를 만들지 않는다.
+현재 경로는 고정 frozen measured profile과 native 설정을 사용하고 추가 배치 대기를 넣지 않는다.
+SLO는 불변 요청 문맥과 관측 목표로 유지하며 HTTP lifetime이나 native queue timeout과 같지 않다.
 
-Triton의 기본 모델 단위 큐나 priority를 CHILL의 워크로드별 큐·배치 분리와
-동일시하지 않는다. 워크로드 정체성·수신 시각을 유지하고 큐 선택과 배치 혼합 방지를
-Triton에 연결하는 방법은 별도로 정한다. 배칭 대기 설정은 종단 SLO 보장이 아니며,
-선호 배치 크기는 실제 실행 크기를 보장하지 않는다. 실현된 배치와 대기·완료 상태를
-관측해 정책과 evidence의 적용을 확인한다.
+native admission에는 frozen 계획과 실제 측정 batch 모두 `1..maxBatchSize` 전체가 필요하다.
+standalone ORT evidence를 Triton profile로 바꾸지 않는다. 선호 크기는 실제 batch 보장이
+아니므로 실제 batch 크기와 요청별 결과, native `REQUEST_END`를 관측한다.
 
 ## 워크로드와 외부 요청
 
-워크로드는 기존 모델 등록정보 참조, SLO 백분위·목표 시간, POOL 참조를 연결한다.
-POOL 하나는 여러 워크로드를 지원한다. 같은 모델이라도 SLO가 다르면 다른
-워크로드로 표현할 수 있으므로 모델 이름만으로 서비스 정체성을 대신하지 않는다.
+워크로드는 서비스 식별자, 기존 모델 등록정보 참조와 SLO 백분위 및 목표 시간을 정의한다.
+POOL은 현재 소속 노드와 서빙 중인 워크로드를 운영 상태로 참조하며,
+구성 선택과 실제 전환에 따라 이 관계를 갱신한다. 같은 모델이라도 SLO가 다르면
+다른 워크로드로 표현할 수 있으므로 모델 이름만으로 서비스 정체성을 대신하지 않는다.
 
 - 사용자는 워크로드 목록·상세에서 식별자, 모델, SLO, 입력 형식과 요청 가능한
   상태를 조회한다.
 - 추론 요청에는 워크로드 식별자와 독립적으로 완료할 수 있는 추론 입력 1개를 보낸다.
   CHILL은 등록된 정의를 확인하며, 요청마다 모델·SLO 정의를 복사하거나 덮어쓰게 하지 않는다.
-- 운영자는 모델 등록정보와 워크로드를 CRUD하고, 모델 연결·SLO·POOL을 관리한다.
-  구체적인 리소스 표현과 갱신·삭제 절차는 미결정이다.
+- 운영자는 모델 등록정보와 워크로드를 CRUD하고 모델 연결과 SLO를 관리한다.
+  등록, 요청 접수 조건과 변경 및 삭제는 [워크로드 관리 SRS](../../spec/workloads/SRS.md)를 따른다.
+  리소스와 API, 접수 중지와 드레인 및 동적 POOL 상태는 [워크로드 관리 구현 설계](workload-management.md)에서 구체화한다.
 
 하나의 추론에 함께 필요한 여러 tensor나 파일은 입력 1개를 구성할 수 있다.
 독립적인 추론 입력은 각각 별도 요청으로 보낸다. 응답과 SLO는 각 요청에 적용하며,
 사용자는 내부 인스턴스 배치나 실행 배치 크기를 알 필요가 없다.
-SLO는 CHILL의 요청 수신부터 해당 추론 결과의 응답 반환 완료까지 적용한다.
-통계 집계 구간과 실패 요청의 취급은 서비스 계약에서 정한다.
+워크로드의 SLO 백분위·목표 시간은 스케줄러의 제어 목표다. 요청 지연은 CHILL
+수신부터 응답 반환 완료까지 측정하며, 집계와 분석 책임은
+[SLO 관측과 집계](../../spec/README.md#slo-관측과-집계)를 따른다.
 
 ## 노드 자원과 모델 인스턴스
 
@@ -72,13 +71,26 @@ SLO는 CHILL의 요청 수신부터 해당 추론 결과의 응답 반환 완료
 한 파드는 하나의 모델 실행 인스턴스를 제공하며, 같은 산출물·런타임·입력 조건으로
 처리할 수 있는 여러 워크로드가 이를 공유할 수 있다.
 
-Triton 서버와 내부 model instance는 같은 단위가 아니다. 위 계약에 맞게 파드가
-제공하는 모델의 실행 인스턴스를 하나로 명시적으로 구성하며, backend의 추론 스레드
-설정은 CPU 할당량에 맞춘다. instance 수를 스레드 수로 해석하지 않는다.
+Triton 서버와 내부 model instance는 같은 단위가 아니다. 모델의
+`instance_group.count`는 기본값에 의존하지 않고 **1로 명시해 고정**한다.
+instance group과 대상 GPU 구성도 파드가 제공하는 실행 인스턴스의 총수가 하나가
+되도록 맞춘다. `count`는 스케줄러가 동적으로 변경하거나 탐색하는 변수가 아니다.
 
-스케줄러는 측정한 실행 구성과 현재 부하를 근거로 배치와 인스턴스별 CPU·메모리
-요청량을 결정한다. 기존 인스턴스의 자원 변경도 제어 대상이며, 적용 절차와 전환
-비용은 [전환 명세](../../spec/05_transition_control.md)에 따라 다룬다.
+| 조절 대상 | CHILL의 제어 단위 |
+|---|---|
+| 전체 모델 실행 인스턴스 수 | 서빙 Pod 추가·제거 |
+| 인스턴스 하나에 줄 실행 자원 | Pod별 자원 할당과 그에 연동되는 backend 설정 |
+| 한 번에 묶어 실행할 입력 수 | 배칭 정책 |
+
+이는 Pod 단위 자원 할당이 Triton의 `count: 1`을 기술적으로 강제해서가 아니라,
+CHILL의 자원 할당 단위·프로파일 실행 구성 단위·서빙 인스턴스를 맞추기 위한 선택이다.
+`count: 1`은 단일 CPU나 단일 스레드를 뜻하지 않는다. CPU 추론 스레드 설정은
+Pod의 CPU 할당량에 맞추며, 하나의 배치 내부에서 여러 CPU를 활용할 수 있다.
+여러 Pod의 인스턴스는 각자 배치 하나씩 병렬 실행할 수 있다.
+
+현재 구성은 실제 Node label과 자원, native 준비와 연결 관측으로 산출한다.
+파드 수, 자원과 전력모드의 자동 configuration selection 알고리즘은 승인된 제외 범위다.
+자원 변경과 전환 계약은 [전환 명세](../../spec/05_transition_control.md)의 기준으로 구분한다.
 메모리는 프로파일에서 관측한 사용량으로 필요한 예산을 산정하는 가용성 제약이다.
 시스템 예약분과 프로파일에 포함되지 않은 서빙 부가 사용량을 고려하며,
 메모리 할당량 자체를 성능·비용 조절용 탐색 변수로 사용하지 않는다.
@@ -96,16 +108,11 @@ Guaranteed Pod와 정수 CPU 할당 등 플랫폼 조건이 필요하다. 프로
 관측 컨테이너를 포함한 Pod 자원 설정도 이 조건과 맞아야 한다. 실제 지원 여부와
 배정 결과는 배포 시 확인하며, 이 문서가 현재 클러스터의 격리를 입증하지는 않는다.
 
-모델 인스턴스를 공유해도 유입 측과 인스턴스 내부의 큐는 워크로드별로 구분한다.
-처리량 계획에는 입력량을 합산하되, 각 큐의 대기·SLO를 유지하고 실행 배치는
-워크로드별로 만든다. CPU 추론의 스레드 설정은 CPU 할당량에 연동하며, 각 인스턴스는
-배치 하나의 실행을 마친 뒤 다음 배치를 시작한다. 배치 내부의 병렬 계산과
-여러 인스턴스의 병렬 실행은 이 제한과 구분한다. 큐 선택은 서로 다른 SLO와
-진행 중인 실행의 영향을 고려하지만, 특정 우선순위·공정성 알고리즘은 아직 정하지 않는다.
-
-Triton의 동일 instance에 대한 Execute 콜백 직렬화만으로 위 완료 경계를
-보장하지 않는다. 선택한 backend가 비동기 작업을 남기고 반환하는 경우도 있으므로,
-backend와 실행 설정이 배치 완료 후 다음 실행이라는 CHILL 계약을 충족하는지 확인한다.
+공유 인스턴스에서도 적용 정의, 유입 큐와 대기 및 실행 관측은 Workload UID로 구분한다.
+native custom batching API의 CHILL guard는 다른 UID를 같은 실행 배치에 넣지 않는다.
+CPU 스레드와 `instance_group.count: 1`은 frozen profiling/serving 계약에 맞춘다.
+한 실행 배치가 끝난 뒤 다음 backend 실행을 시작하며 실제 완료 경계는 native 관측으로 확인한다.
+adaptive SLO 기반 추가 대기 알고리즘을 구현했다고 주장하지 않는다.
 
 할당을 분리해도 캐시·메모리 대역폭·노드 전력·열은 영향을 주고받을 수 있다.
 우선 자원이 맞는 공존 후보를 허용하고 실제 지연·전력 차이를 관측한다. 자원 적합성과
@@ -124,13 +131,13 @@ SLO 적합성은 별개의 판단이며, 관측 없이 무간섭을 보장하거
 워크로드별 유입 대기열
             │
             ▼
-요청별 인스턴스 선택 · 전달
+요청별 인스턴스 선택 · 시간 정보 전달
             │
             ▼
 선택한 인스턴스의 워크로드별 큐
             │
             ▼
-CHILL 정책을 적용한 Triton 동적 배칭
+Triton native batching (same-UID guard, frozen 설정, 추가 대기 없음)
             │
             ▼
       Triton backend 추론
@@ -146,37 +153,53 @@ CHILL 정책을 적용한 Triton 동적 배칭
 
 | 단위 | 관리할 정보 |
 |---|---|
-| 사용자 요청 | 워크로드, 수신 시각, 배정 인스턴스, 대기·진행·완료·실패 |
+| 사용자 요청 | 워크로드, CHILL 수신·분배·Triton 큐 진입·응답 반환 완료 시각, 배정 인스턴스, 대기·진행 상태와 실제 완료·오류·거절·timeout/cancel·미완료 결과 |
 | 실행 배치 | 같은 워크로드의 호환되는 입력 묶음과 각 입력·결과에 대응하는 요청 |
 
 각 요청은 모델 인스턴스 하나에 배정한다. 인스턴스는 같은 워크로드의 호환되는
 요청들을 묶어 실행하고 각 결과를 해당 요청에 연결해 반환한다.
 서로 다른 요청의 완료 순서는 독립적이다.
 
-인스턴스에 전달하고 내부 실행 배치로 묶을 때도 각 요청의 수신 시각을 유지한다.
-지연을 노드 도착 시각부터 새로 재지 않으며, 실행 배치의 지연을 요청별 지연으로
-대신하지 않는다. 요청별 대기·완료 상태와 SLO를 관측한다.
+CHILL은 요청별 원시 시각과 처리 결과를 보존하고, 워크로드별 요청 수와 지연
+분포·백분위를 제공한다. 실제 완료·오류·거절·timeout/cancel·미완료를 관측에
+드러내며, 실험의 성공·실패 해석은 분석자가 수행한다. 관측 구간과 통계 부재의
+표현은 [SLO 관측과 집계](../../spec/README.md#slo-관측과-집계)를 따른다.
+
+### 시간 기준과 실행 종료
+
+종단 지연은 entrypoint의 동일 monotonic 기준으로 최초 수신부터 응답 반환 완료까지 측정한다.
+Triton 큐 진입과 compute 시작은 raw `CLOCK_MONOTONIC` nanoseconds로 보존한다.
+collector `At`은 UTC 관측 시각이지 native 큐 진입 UTC가 아니다.
+서로 다른 host의 시각을 단순 차감하거나 native 시각을 임의로 변환하지 않는다.
+
+Triton의 [native queue policy](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/batcher.html#queue-policy)는
+frozen 큐 한도와 timeout을 적용한다. adaptive SLO batch waiting은 승인된 제외 범위이며
+queue timeout이나 고정 설정을 그 알고리즘으로 설명하지 않는다.
+
+`REQUEST_END`는 Python execute에 도달하지 않은 queue timeout/cancel도 실제 release로 제공한다.
+caller나 transport가 종료되어도 실행 종료가 불명이면 physical capacity를 유지한다.
+실제 backend 종료 또는 해당 physical container의 종료 증거를 확인해야 drain을 완료한다.
+자동 inference 재실행이나 별도 recovery engine은 없다.
 
 ### 책임 분리
 
 | 역할 | 책임 |
 |---|---|
-| 스케줄러 | POOL 전체의 워크로드별 부하·SLO를 보고 구성과 자원 할당·분배 기준을 갱신 |
-| 요청 진입·분배 경로 | 워크로드·입력 확인, 미배정 요청 관리, 현재 분배 기준과 준비 상태에 따른 인스턴스 선택·전달, 해당 요청에 응답 반환 |
-| CHILL 배칭 정책 | evidence·현재 요청 상태·SLO에 근거한 워크로드별 큐 선택·배치·대기 결정과 Triton 연결 |
-| Triton 실행기 | 모델 로딩, 정책을 적용한 동적 배치 구성·실행 dispatch, backend 추론과 요청별 결과 반환 |
+| 현재 구성 및 전환 관측 | 실제 Node label, 자원, Pod/native 준비와 연결을 반영. configuration selection은 제외 |
+| 요청 진입 및 분배 | TLS/bearer 권한, Workload와 named tensor 확인, 불변 snapshot 수락, bounded 큐, 인스턴스 선택과 응답 관측 |
+| CHILL native batching 연결 | frozen measured 설정과 same-UID include guard, batch/request identity와 관측 |
+| Triton native batcher/backend | 모델 로딩, 큐와 timeout, dispatch, Python/ORT CPU 추론과 요청별 결과 및 trace 종료 |
 
-요청마다 새 배포 계획의 계산·실행을 기다리지 않는다. 요청 분배 경로는 현재
-유효한 분배 기준으로 준비된 인스턴스에 계속 전달하고, 스케줄러는 관측에 따라 그
-기준을 갱신한다. 수용 가능한 인스턴스가 있으면 유입 측에서 불필요하게 기다리지 않는다.
-유입 대기열은 실행 배치를 만들기 위한 별도의 대기를 추가하지 않는다.
+요청마다 새 구성 계산이나 evidence 다운로드를 기다리지 않는다.
+입력별 route와 가중치 합을 갱신 시 캐시하고 현재 준비와 physical capacity 안에서 분배한다.
+수용 가능한 인스턴스가 있으면 즉시 전달하며 유입 큐가 실행 batch를 모으는 대기를 추가하지 않는다.
 
 워크로드별로 유입 대기 상태를 구분하여 하나의 섞인 FIFO가 자원 할당 정책을
 대신하지 않게 한다. 같은 모델 인스턴스를 공유하는 경우에도 이 경계를 유지한다.
 
 부하는 워크로드별 inputs/s로 관측하며 요청률과 같다. 대기·완료량도 요청 수로
-기록하고 내부 실행 배치 수와 구분한다. 모델·워크로드의 수정·삭제가 이미 받은
-요청의 의미를 조용히 바꾸거나 요청을 유실시키지 않아야 한다.
+기록하고 내부 실행 배치 수와 구분한다. 관리 작업 중 요청과 공유 인스턴스의 처리 계약은
+[워크로드 관리 SRS](../../spec/workloads/SRS.md)를 따른다.
 
 ## Why concealment forces routing
 
@@ -218,9 +241,10 @@ which all requests pass.
 An external consumer has no such node, so its request enters the cluster
 somewhere, and that entry is the one point every external request crosses.
 
-## 현재 전달 경로와 재사용
+## 기존 전달 경로의 배경
 
-CHILL supplies the entry point, and the entry point distributes.
+아래 전달 구조는 Workload cutover 전의 네트워크 설계 배경이다. 현재 고정 테이블이나
+모델-only 공개 proxy를 유지한다는 뜻은 아니다.
 
 Choosing a backend and reaching it pull in opposite directions: calling a shared
 Service hands the choice to EdgeMesh, which applies no weight, and calling a pod
@@ -240,87 +264,57 @@ entry point ── weighted choice of Service ──▶ chill-serving-<node>
 The decision is CHILL's and the transport is EdgeMesh's, which is the division
 that already governs power mode.
 
-The chart renders those Services from the routing table itself, so a weight and
-the address it names cannot disagree, and a node appears under one Service name
-or the render fails. Each selects `app.kubernetes.io/component: serving` and
-`edge.dacs.io/serving-node`, and carries the EdgeMesh proxy label the
-demonstrated path ran through. Whatever carries those labels on that node is
-what the Service reaches, which is how the address is settled without settling
-what serves behind it.
-
-[`internal/serving`](../../../internal/serving) carries that decision alone:
-what the entry point reads from an inference request — the declared model, with
-the payload left opaque — and which node's Service receives it, given the
-weights. It touches no transport and holds no state.
-
-[`internal/serving/entrypoint`](../../../internal/serving/entrypoint) serves
-that decision over HTTP. It forwards the request to the chosen node's Service
-with its method, path, and payload intact and returns the response unread, so
-transport is the only thing it adds and neither end observes that a choice
-happened. It reads the weights in force through an interface and takes no
-position on what supplies them.
-
-A table read once at start-up supplies those weights today. It revises nothing,
-which is what makes it a development stand-in, and it lets the entry point be
-deployed and reached before anything computes a weight. It lives in the binary
-that assembles the entry point rather than beside it, so what replaces it is a
-different value passed at the same seam.
+현재 목적지는 노드 이름만이 아니라 실제 Pod UID와 container identity까지 구분한다.
+Kubernetes adapter가 현재 Node/Pod, native 모델 준비와 profile 조건을 관측하고
+core에 준비된 인스턴스 및 입력별 route를 공급한다. 같은 Node의 서로 다른 모델 파드를
+한 목적지로 합치거나 원하는 배포 설정만으로 준비된 용량으로 세지 않는다.
+정적 routing table과 이를 렌더하던 노드별 Service는 현재 공개 설정 경로가 아니다.
 
 ## 구현 대응
 
-| 현재 자산 또는 필요한 기능 | 구현 방향 |
+| 현재 기능 | 구현 경계 |
 |---|---|
-| 모델별 경로 해석 | 워크로드 식별과 등록된 모델·SLO 해석을 연결 |
-| 시작 시 읽는 고정 가중치 테이블 | 워크로드별로 갱신되는 분배 기준 공급으로 교체 |
-| 한 백엔드로 본문을 그대로 전달하는 HTTP 경로 | 워크로드·단일 추론 입력 검증, 인스턴스 선택과 요청별 수신·응답 시각 관측을 연결. 가중치 교체만으로 완성되지 않음 |
-| 노드별 Service와 전달 경로 | 노드뿐 아니라 선택한 모델 인스턴스까지 도달하도록 변경. 다른 모델 파드를 하나의 노드 단위 목적지로 혼동하지 않음 |
-| 워크로드 조회·관리, 유입 대기열·요청 추적 | 위 요청 계약에 맞춰 추가 |
-| 모델 로딩·추론 실행·동적 배칭 | Triton을 연결하고 기존 구현을 재사용. 자체 추론 서버·범용 batcher는 개발하지 않음 |
-| 워크로드별 큐 선택·배치 분리·에너지 기반 배칭 정책 | Triton 설정과 공식 확장 지점에 우선 연결하며, 기본 모델 큐가 CHILL 계약을 대신하지 않게 함 |
+| 모델 및 Workload CRUD | HTTPS owner와 private uncached Kubernetes writer, TokenReview/SAR, resourceVersion `If-Match`, 참조 삭제 보호 |
+| 요청 접수 및 분배 | immutable applied snapshot, bounded Workload 큐, 준비된 인스턴스의 route와 가중치 합 |
+| 모델 변경 및 삭제 | 모든 관련 admission 닫기, 전체 physical drain, 해제, 닫힌 새 snapshot 전체 게시 후 gate 열기 |
+| 현재 POOL | 실제 Node label과 자원, native instance와 확인된 Workload 연결. 별도 Pool CRD나 합성 Node 없음 |
+| 실행과 profiling | 공식 Triton Python/ORT CPU, same-UID batch guard, 전체 frozen `1..Max` measured profile |
+| 관측 보존 | private persistent JSONL과 immutable S3 window, 전체 모집단 집계와 no-data null |
 
-현재 진입점은 모델을 경로에 담는 Open Inference Protocol 형태의 HTTP 요청을
-전달한다. 워크로드 식별자와 단일 추론 입출력을 외부·인스턴스 API에 어떻게
-표현할지는 별도의 결정이며, 기존 투명 프록시 계약을 요청 처리 흐름의 제약으로 삼지 않는다.
+외부 요청은 `/api/v1/workloads/{id}/infer`의 named tensor 독립 샘플 한 건이다.
+[Workload 관리 계약](workload-management.md)의 입력 검증과 SLO를 우회하는 alias는 없다.
 
 ## 프로파일 기반 지연 계산과 검증
 
-프로파일은 자원·전력모드·실행 배치 등의 조건별 실행시간 분포·처리량·메모리·
-전력을 제공한다. 스케줄러는 측정한 실행 구성만 선택하고, 현재 요청의 도착·큐·
-진행 상태와 분배·배칭·큐 선택 규칙을 적용해 요청별 예상 완료 시각을 계산한다.
-프로파일이 배치 실행에 걸리는 시간을 제공하면, Serving 상태와 처리 규칙으로
-그 배치를 언제 시작할 수 있는지 판단하는 구조다.
+프로파일은 frozen 자원, 전력모드와 native batch 조건별 raw 실행시간 분포,
+incremental energy/item과 실제 memory peak를 제공한다. 완료 campaign과 원시 evidence의
+identity 및 조건을 검증하고 idle-baseline confidence 설정을 profile과 배정 기록에 유지한다.
+configuration selection이나 요청별 adaptive 추가 대기 예측 알고리즘은 제외되어 있다.
 
-프로파일의 실행 조건은 실제 사용하는 Triton/backend·자원·스레드·배치 설정과
-대응해야 한다. 직접 런타임을 호출한 측정값이 Triton 경로에도 그대로 적용된다고
-가정하지 않으며, 실행 조건의 대응과 프로파일에 포함되지 않은 서빙 비용을 구분한다.
+profiling과 serving은 같은 [실행 계약](../../spec/00_measurement.md#측정의-단위)을 사용한다.
+같은 실행 조건의 근거는 SLO가 다른 Workload에도 재사용하되 다른 Node나 standalone ORT의
+결과를 native Triton 근거처럼 바꾸지 않는다. 현재 준비와 측정 근거, SLO 관측은 별개 판단이다.
 
-SLO는 CHILL 수신부터 응답 반환까지의 요청별 지연에 적용한다. 프로파일에 포함되지
-않은 전달·응답 처리 비용은 Serving 관측으로 보완한다. 최대 처리량을 SLO 용량으로
-대신하거나, 평균 실행시간만으로 지연 백분위를 결정하지 않는다.
-같은 실행 조건의 프로파일은 SLO가 다른 워크로드에도 재사용하며, 별도의 부하별
-Serving 성능표를 사전 측정하지 않는다. 기존 종단 평가에서 실제 SLO·에너지와
-예측 오차를 확인한다.
+실행 구간 관측에는 [Triton의 지연 메트릭](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/metrics.html#latencies)과
+기존 추적 기능을 우선 활용한다. 종단 지연은 CHILL 수신부터 응답 반환 완료까지의
+요청별 기록으로 집계한다.
 
 같은 노드에 공존하는 파드들의 단독 실험에서 잰 노드 전체 전력을 단순 합산하지 않는다.
 측정 경계는 [프로파일링 설계](../profiling/README.md#serving-resource-allocation)를 따른다.
 
-## 미결정 사항과 검증 경계
+## 구현 및 검증 경계
 
-- Workload의 CRD 여부와 필드, 조회·관리·추론 API 경로와 입출력 형식.
-- 모델·워크로드 수정·삭제 시 진행 중 요청과 모델 참조를 다루는 절차.
-- 요청 실패·과부하 처리 정책.
-- SLO 통계 집계 구간과 실패 요청의 취급.
-- Triton에 연결할 워크로드별 큐·배칭 정책, 적용할 설정·확장 지점과 갱신 시점.
-- 워크로드 사이의 자원 할당 정책, 플랫폼의 비중복 할당 구현·검증과 공유 인스턴스의 큐 선택.
-- 분배 기준의 갱신·반영 방식과 관찰·제어 주기.
-- 대상 장비·모델의 Triton/backend 지원과 배포 구성, 단일 배치 완료 경계의 충족 여부.
+local isolated kind와 verified HTTPS로 등록, 조회, fractional SLO 수정, stale `If-Match`,
+공유 모델 변경 barrier, 참조 삭제 보호와 실제 Workload 삭제 및 새 UID 재등록을 확인했다.
+private RWO journal과 MinIO immutable window, TLS/bearer/named tensor loadgen도 실행했으며
+근거 없는 admission은 `503 MissingEvidence`로 닫혔다.
 
-워크로드 조회부터 요청 분배·내부 배칭·응답 반환까지의 경로는 구현 후 검증해야 한다.
-동시에 도착한 요청들이 서로 다른 인스턴스에서 처리되거나 같은 실행 배치로 묶여도
-각 결과가 해당 요청에 반환되는지, 수신 시각 기준으로 요청별 SLO가 집계되는지
-확인한다. 같은 POOL의 여러 워크로드가 같은 모델을 사용하더라도 정의와 결과가
-섞이지 않아야 한다.
+실제 공식 native runner에서 다중 named numeric/bool tensor 결과, 같은 priority의 서로 다른
+Workload UID batch guard, 여러 실현 batch 크기, native queue timeout과 `REQUEST_END`를 확인했다.
+matching ACTIVE/IDLE runner의 fixed batch 실행, warmup 제외, model resident 및 실제
+cgroup memory peak와 root RAPL 읽기도 smoke로 확인했다.
 
-현재의 고정 테이블은 동적으로 갱신되지 않으므로 가중치 반영 지연을 입증하지 않는다.
-이 설계의 요청 처리·SLO·반영 지연에 대한 라이브 클러스터 검증을 완료했다고
-주장하지 않는다.
+이는 full qualifying power campaign이 아니다. **완전한 native campaign → Ready gateway 추론**,
+ARM/RKNN hardware와 live testbed는 검증하지 않았다. 이전 test나 Helm 실행을 최신 refactor의
+모든 gate 통과로 설명하지 않는다. 정확한 배포 값과 변경 기록은
+[Workload 관리 계약 12장](workload-management.md#12-배포와-구현-검증-경계)을 따른다.

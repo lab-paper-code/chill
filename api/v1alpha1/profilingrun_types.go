@@ -68,7 +68,7 @@ type ProfilingRunCandidateSpec struct {
 	PowerMode string `json:"powerMode"`
 }
 
-// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && self.inputGenerator == 'none' && self.outputValidation == 'none' : !has(self.settlingDurationSeconds) && self.inputGenerator == 'numpy-default-rng-seed-0-fp32-v1' && self.outputValidation == 'nonempty-shape-batch-v1'",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && self.inputGenerator == 'none' && self.outputValidation == 'none' : !has(self.settlingDurationSeconds) && self.inputGenerator == 'numpy-default-rng-seed-0-inputs-v1' && self.outputValidation == 'nonempty-shape-batch-v1'",message="measurement fields must match the selected workloadMode"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
 type ProfilingRunMeasurementSpec struct {

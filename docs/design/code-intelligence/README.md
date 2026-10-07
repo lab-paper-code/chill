@@ -74,11 +74,51 @@ remain separate from code-intelligence checks.
 - Operator and Profiler runtime packages do not import each other.
 - Test files and `test/` packages are measured but are not yet enforced by the
   architecture gate.
+- `chill-dashboard/` is a CHILL-internal Node web/BFF deployment unit, not a
+  Go package or an invented architecture-lint component. Its API boundary is
+  the fixed HTTPS owner; validate it with its native pnpm checks and browser
+  smoke separately from `go list` and `.go-arch-lint.yml`.
 
 Detailed direction is encoded in `.go-arch-lint.yml` and grounded in the
 [profiling dependency rule](../profiling/README.md#dependency-rule),
 [MetricObserver ADR](../../adr/0013-metric-observation-boundary.md), and
 [Evidence Store boundary](../profiling/components/evidence-store.md#dependency-direction).
+
+### Reviewed model and serving boundaries
+
+The following CHILL-internal edges were captured with `go list` for the six
+packages below. They are actual imports, not call edges or runtime validation.
+Component names and permissions come separately from `.go-arch-lint.yml`.
+
+| Package / component | Actual internal/API imports |
+|---|---|
+| `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
+| `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
+| `serving` / `serving-core` | `evidencestore`, `modelcompat`, `profiling/derivation` |
+| `serving/entrypoint` / `serving-entrypoint` | `api/v1alpha1`, `serving`, `serving/kube` |
+| `serving/triton` / `serving-triton` | `modelcompat`, `serving` |
+| `serving/kube` / `serving-kube` | `api/v1alpha1`, `deviceclass`, `evidencestore`, `modelcatalog`, `modelcompat`, `profiling/campaign`, `profiling/derivation`, `profiling/profiler/evidence`, `profiling/profiler/projection`, `profiling/run`, `serving`, `serving/triton` |
+
+```sh
+go list -f '{{.ImportPath}} {{join .Imports " "}}' \
+  ./internal/modelcompat ./internal/modelcatalog ./internal/serving \
+  ./internal/serving/entrypoint ./internal/serving/kube ./internal/serving/triton
+```
+
+Allowed directions retain a plain Serving core without API, HTTP or Kubernetes
+clients. `model-catalog` may depend on API and `model-compat`; entrypoint may
+depend on API, core and its concrete kube adapter; Triton may depend on core and
+`model-compat`. The kube adapter may use the listed model, evidence, campaign,
+derivation, evidence/projection, `profiling-run` and runtime boundaries, not
+Profiler orchestration, controllers or its candidate resolver. Composition roots assemble them.
+The Triton adapter also imports Kubernetes resource quantities; that does not
+turn it into a Kubernetes resource writer. No architecture-gate pass is implied
+by this dependency capture.
+
+The named-input projection also imports `modelcompat`:
+`go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/profiling/profiler/projection`
+captures that actual edge. `profiler-projection → model-compat` is reviewed in
+`.go-arch-lint.yml`; it reuses the tensor contract, not a Serving runtime.
 
 ## Optional CodeGraph contract
 

@@ -57,7 +57,7 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20,
 				DurationSeconds:  30,
-				InputGenerator:   "numpy-default-rng-seed-0-fp32-v1",
+				InputGenerator:   "numpy-default-rng-seed-0-inputs-v1",
 				OutputValidation: "nonempty-shape-batch-v1",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 1000,

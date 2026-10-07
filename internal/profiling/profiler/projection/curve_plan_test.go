@@ -1,9 +1,11 @@
 package projection
 
 import (
-	"slices"
+	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -30,7 +32,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		"test-curve", active, idle,
 		profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-			InputSampleShape: []int32{224, 224, 3},
+			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
 		},
 		profilederivation.CurveConversionContract{
 			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
@@ -40,7 +42,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("project curve plan: %v", err)
 	}
-	if !slices.Equal(spec.Tensor.InputSampleShape, []int{224, 224, 3}) {
+	if !reflect.DeepEqual(spec.Tensor.Tensors, active.Delivery.ArtifactCapability.Tensors) {
 		t.Fatalf("projected tensor contract = %+v", spec.Tensor)
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
@@ -53,6 +55,49 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	}
 	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
 		t.Fatalf("validate idle RunConfig against projected plan: %v", err)
+	}
+}
+
+func TestCurvePlanProjectionFreezesCompleteInputs(t *testing.T) {
+	active := curvePlanRunConfig()
+	idle := active
+	idle.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	capability := *active.Delivery.ArtifactCapability
+	spec, err := ProjectCurvePlanSpec(
+		"test-curve", active, idle, capability, profilederivation.CurveConversionContract{}, []int{1, 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := modelcompat.CloneInputTensors(capability.Tensors)
+	capability.Tensors[0].Name = "mutated"
+	capability.Tensors[0].Datatype = "INT32"
+	capability.Tensors[0].SampleShape[0]++
+	if !reflect.DeepEqual(spec.Tensor.Tensors, want) {
+		t.Fatal("capability mutation changed the projected input contract")
+	}
+	for _, field := range []string{"name", "datatype", "shape", "missing"} {
+		t.Run(field, func(t *testing.T) {
+			drifted := curvePlanRunConfig()
+			switch field {
+			case "name":
+				drifted.Delivery.ArtifactCapability.Tensors[0].Name = "other-input"
+			case "datatype":
+				drifted.Delivery.ArtifactCapability.Tensors[0].Datatype = "INT32"
+			case "shape":
+				drifted.Delivery.ArtifactCapability.Tensors[0].SampleShape[0]++
+			case "missing":
+				drifted.Delivery.ArtifactCapability = nil
+			}
+			if err := validateCurvePlanRunConfig(drifted, drifted.TargetNode.UID, spec, spec.ActiveProtocol); err == nil ||
+				!strings.Contains(err.Error(), "curve-plan input tensor facts") {
+				t.Fatalf("input contract drift error = %v", err)
+			}
+		})
 	}
 }
 
@@ -94,7 +139,7 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 				"test-curve", active, idle,
 				profilingrun.CandidateArtifactCapability{
 					TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
-					InputSampleShape: []int32{224, 224, 3},
+					Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
 				},
 				profilederivation.CurveConversionContract{
 					TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
@@ -136,6 +181,9 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 			Path: active.State.ArtifactPath, Image: active.Images.Artifact,
 		},
 		PlannedBatchSizes: []int{1},
+		Tensor: profilederivation.CurveTensorContract{
+			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
+		},
 	}
 	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
@@ -193,7 +241,7 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 		},
 		PlannedBatchSizes: []int{1, 2},
 		Tensor: profilederivation.CurveTensorContract{
-			InputSampleShape: []int{3, 224, 224},
+			Tensors: modelcompat.CloneInputTensors(active.Delivery.ArtifactCapability.Tensors),
 		},
 	}
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
@@ -246,5 +294,10 @@ func curvePlanRunConfig() profilingrun.RunConfig {
 	}
 	config.CPU.Request = "3"
 	config.Measurement.Batch = 1
+	config.Delivery.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
+		Tensors: []modelcompat.InputTensor{
+			{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+		},
+	}
 	return config
 }

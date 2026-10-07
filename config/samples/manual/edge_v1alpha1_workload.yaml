@@ -1,0 +1,12 @@
+# Submit this definition through the serving management API, not kubectl apply.
+# The management owner validates model references and serializes changes.
+apiVersion: edge.dacs.io/v1alpha1
+kind: Workload
+metadata:
+  name: detector-fast
+spec:
+  modelRef:
+    name: detector
+  slo:
+    percentile: 99
+    targetLatency: 100ms

@@ -12,6 +12,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
@@ -167,7 +168,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 
 	t.Run("runtime", func(t *testing.T) {
 		runtimeResult := testRuntimeResult(t, config)
-		runtimeResult.NodeName = "other"
+		runtimeResult.NodeName = testDifferentIdentity
 		metricCalls := 0
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -187,7 +188,7 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 
 	t.Run("metrics", func(t *testing.T) {
 		metricResult := testMetricResult(config)
-		metricResult.Source.NodeName = "other"
+		metricResult.Source.NodeName = testDifferentIdentity
 		store := &fakeStore{}
 		coordinator := mustCoordinator(t,
 			runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -402,6 +403,7 @@ func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingru
 		Backend:                      config.State.Backend,
 		Provider:                     config.State.Backend,
 		AvailableProviders:           []string{config.State.Backend},
+		Inputs:                       modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		ModelLoadCompletedAt:         modelLoaded.Format(time.RFC3339Nano),
 		SettlingStartedAt:            settlingStarted.Format(time.RFC3339Nano),
 		SettlingCompletedAt:          settlingCompleted.Format(time.RFC3339Nano),
@@ -432,6 +434,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 		Backend: config.State.Backend, Provider: config.State.Backend,
 		AvailableProviders: []string{config.State.Backend}, BatchSize: config.Measurement.Batch,
+		Inputs:            modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
 		InferenceCount:    2, MeasurementMode: "duration",

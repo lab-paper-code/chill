@@ -2,6 +2,7 @@
 """Execute one executable CHILL RKNNLite measurement."""
 
 from __future__ import annotations
+import ctypes
 
 import argparse
 import importlib.metadata
@@ -18,13 +19,13 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha10"
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha14"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha5"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha3"
+REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha11"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha15"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha6"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha4"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
-SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-fp32-v1"
+SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-inputs-v1"
 SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 IDLE_WORKLOAD = "idle-model-loaded"
 NO_INPUT_GENERATOR = "none"
@@ -393,7 +394,7 @@ def validate_candidate(value: Any) -> None:
     )
     require_fields(
         capability,
-        {"targetPlatform", "declaredBatchSizes", "inputSampleShape"},
+        {"targetPlatform", "declaredBatchSizes", "tensors"},
         "candidate.artifactCapability",
     )
     declared_batch_sizes = capability["declaredBatchSizes"]
@@ -401,11 +402,21 @@ def validate_candidate(value: Any) -> None:
         raise ContractError("candidate declaredBatchSizes must be a non-empty array")
     for declared_batch_size in declared_batch_sizes:
         require_integer(declared_batch_size, "candidate declaredBatchSizes item", 1)
-    shape = capability["inputSampleShape"]
-    if not isinstance(shape, list) or not shape:
-        raise ContractError("candidate inputSampleShape must be a non-empty array")
+    if declared_batch_sizes != sorted(set(declared_batch_sizes)):
+        raise ContractError("candidate declaredBatchSizes must be strictly increasing")
+    tensors = capability["tensors"]
+    if not isinstance(tensors, list) or len(tensors) != 1:
+        raise ContractError("RKNNLite supports exactly one FP32 NHWC rank3 input tensor")
+    tensor = require_object(tensors[0], "candidate tensor")
+    require_fields(tensor, {"name", "datatype", "sampleShape"}, "candidate tensor")
+    require_string(tensor["name"], "candidate tensor name")
+    shape = tensor["sampleShape"]
+    if tensor["datatype"] != "FP32" or not isinstance(shape, list) or len(shape) != 3:
+        raise ContractError("RKNNLite supports exactly one FP32 NHWC rank3 input tensor")
     for value in shape:
-        require_integer(value, "candidate inputSampleShape item", 1)
+        require_integer(value, "candidate tensor sampleShape item", 1)
+        if value > 2147483647:
+            raise ContractError("candidate tensor sampleShape item exceeds int32")
     if capability["targetPlatform"] != SUPPORTED_TARGET_PLATFORM:
         raise ContractError("candidate artifact capability is unsupported")
 
@@ -511,6 +522,122 @@ def validate_candidate(value: Any) -> None:
     ]
     if len(set(normalized_groups)) != len(normalized_groups):
         raise ContractError("candidate supplementalGroups must be unique")
+
+
+# ABI from Rockchip rknpu2/runtime/Linux/librknn_api/include/rknn_api.h.
+# Lite2 2.3.2 has no public tensor query method; use the delivered host library.
+class RKNNInputOutputNum(ctypes.Structure):
+    _fields_ = [("n_input", ctypes.c_uint32), ("n_output", ctypes.c_uint32)]
+
+
+class RKNNTensorAttr(ctypes.Structure):
+    _fields_ = [
+        ("index", ctypes.c_uint32), ("n_dims", ctypes.c_uint32),
+        ("dims", ctypes.c_uint32 * 16), ("name", ctypes.c_char * 256),
+        ("n_elems", ctypes.c_uint32), ("size", ctypes.c_uint32),
+        ("fmt", ctypes.c_int), ("type", ctypes.c_int), ("qnt_type", ctypes.c_int),
+        ("fl", ctypes.c_int8), ("zp", ctypes.c_int32), ("scale", ctypes.c_float),
+        ("w_stride", ctypes.c_uint32), ("size_with_stride", ctypes.c_uint32),
+        ("pass_through", ctypes.c_uint8), ("h_stride", ctypes.c_uint32),
+    ]
+
+
+class RKNNInputRange(ctypes.Structure):
+    _fields_ = [
+        ("index", ctypes.c_uint32), ("shape_number", ctypes.c_uint32),
+        ("fmt", ctypes.c_int), ("name", ctypes.c_char * 256),
+        ("dyn_range", (ctypes.c_uint32 * 16) * 512), ("n_dims", ctypes.c_uint32),
+    ]
+
+
+def nhwc_shape(dimensions: list[int], layout: int) -> list[int]:
+    if len(dimensions) != 4 or any(value < 1 for value in dimensions):
+        raise ContractError("RKNN artifact input must have positive rank4 metadata")
+    if layout == 0:  # RKNN_TENSOR_NCHW
+        batch, channels, height, width = dimensions
+        return [batch, height, width, channels]
+    if layout == 1:  # RKNN_TENSOR_NHWC
+        return dimensions
+    raise ContractError("RKNN artifact input has unsupported layout metadata")
+
+
+def validate_runtime_inputs(
+    model_path: Path, candidate: dict[str, Any], batch: int
+) -> None:
+    capability = candidate["artifactCapability"]
+    if batch not in capability["declaredBatchSizes"]:
+        raise ContractError("selected batch is not declared by the RKNN artifact")
+    libraries = [
+        item["containerPath"] for item in candidate["hostContract"]["libraries"]
+        if item["name"] == "librknnrt"
+    ]
+    if len(libraries) != 1:
+        raise ContractError("RKNN metadata requires the delivered librknnrt library")
+    context = ctypes.c_uint64()
+    try:
+        library = ctypes.CDLL(libraries[0])
+        library.rknn_init.argtypes = [
+            ctypes.POINTER(ctypes.c_uint64), ctypes.c_void_p, ctypes.c_uint32,
+            ctypes.c_uint32, ctypes.c_void_p,
+        ]
+        library.rknn_init.restype = ctypes.c_int
+        library.rknn_query.argtypes = [
+            ctypes.c_uint64, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32,
+        ]
+        library.rknn_query.restype = ctypes.c_int
+        library.rknn_destroy.argtypes = [ctypes.c_uint64]
+        library.rknn_destroy.restype = ctypes.c_int
+        # size=0 loads by filename without another Python copy of artifact bytes.
+        result = library.rknn_init(
+            ctypes.byref(context), ctypes.c_char_p(os.fsencode(model_path)), 0, 0, None
+        )
+        if result != 0:
+            raise ContractError(f"initialize RKNN metadata context returned {result}")
+        try:
+            count = RKNNInputOutputNum()
+            result = library.rknn_query(context, 0, ctypes.byref(count), ctypes.sizeof(count))
+            if result != 0:
+                raise ContractError(f"query RKNN input count returned {result}")
+            if count.n_input != 1:
+                raise ContractError("RKNN artifact does not have exactly one input")
+            attribute = RKNNTensorAttr(index=0)
+            result = library.rknn_query(
+                context, 1, ctypes.byref(attribute), ctypes.sizeof(attribute)
+            )
+            if result != 0:
+                raise ContractError(f"query RKNN input metadata returned {result}")
+            tensor = capability["tensors"][0]
+            if attribute.name.decode("utf-8") != tensor["name"]:
+                raise ContractError("RKNN runtime input name does not match declaration")
+            if attribute.type != 0:  # RKNN_TENSOR_FLOAT32
+                raise ContractError("RKNN runtime input datatype does not match FP32 declaration")
+            shape = nhwc_shape(list(attribute.dims[:attribute.n_dims]), attribute.fmt)
+            expected = [batch, *tensor["sampleShape"]]
+            if shape[1:] != expected[1:]:
+                raise ContractError("RKNN runtime input sampleShape does not match declaration")
+            if shape != expected:
+                profiles = RKNNInputRange(index=0)
+                result = library.rknn_query(
+                    context, 13, ctypes.byref(profiles), ctypes.sizeof(profiles)
+                )
+                if result != 0:
+                    raise ContractError(f"query RKNN declared batch metadata returned {result}")
+                if not 1 <= profiles.shape_number <= 512 or profiles.n_dims != 4:
+                    raise ContractError("RKNN runtime has invalid dynamic input metadata")
+                if profiles.name.decode("utf-8") != tensor["name"]:
+                    raise ContractError("RKNN dynamic input name does not match declaration")
+                shapes = [
+                    nhwc_shape(list(row[:profiles.n_dims]), profiles.fmt)
+                    for row in profiles.dyn_range[:profiles.shape_number]
+                ]
+                if expected not in shapes:
+                    raise ContractError("RKNN runtime does not provide the selected declared batch")
+        finally:
+            result = library.rknn_destroy(context)
+            if result != 0:
+                raise ContractError(f"destroy RKNN metadata context returned {result}")
+    except (OSError, AttributeError, UnicodeError) as error:
+        raise ContractError(f"read RKNN runtime input metadata: {error}") from error
 
 
 def validate_regular_file(path: Path, name: str = "file") -> None:
@@ -904,6 +1031,7 @@ def execute_idle(
         "runtimeVersion": evidence["package"]["version"],
         "backend": state["backend"],
         "rknn": evidence,
+        "inputs": run_config["delivery"]["artifactCapability"]["tensors"],
         "modelLoadCompletedAt": model_load_completed_at,
         "settlingStartedAt": settling_started_at,
         "settlingCompletedAt": settling_completed_at,
@@ -941,6 +1069,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         raise ContractError("runtime architecture does not match the RunConfig Node")
     cpu_max, affinity, cpuset = validate_cpu_contract(run_config)
     evidence = observe_host_contract(candidate, measurement["batch"])
+    validate_runtime_inputs(model_path, candidate, measurement["batch"])
 
     rknn = rknn_type()
     try:
@@ -972,7 +1101,8 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 model_load_completed_at,
             )
 
-        shape = [measurement["batch"], *candidate["artifactCapability"]["inputSampleShape"]]
+        tensors = candidate["artifactCapability"]["tensors"]
+        shape = [measurement["batch"], *tensors[0]["sampleShape"]]
         sample = generate_input(numpy, shape, request["maxInputBytes"])
         for ready_path in request["observerReadyPaths"]:
             wait_for_signal(
@@ -987,7 +1117,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         output_shapes: list[list[int]] | None = None
         try:
             for _ in range(measurement["warmupIterations"]):
-                outputs = rknn.inference(inputs=[sample])
+                outputs = rknn.inference(inputs=[sample], data_type=["float32"], data_format=["nhwc"])
                 observed_shapes = validate_outputs(outputs, measurement["batch"])
                 if output_shapes is not None and observed_shapes != output_shapes:
                     raise ContractError("RKNNLite output shapes changed during warm-up")
@@ -1011,7 +1141,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         try:
             while True:
                 inference_started = time.perf_counter_ns()
-                outputs = rknn.inference(inputs=[sample])
+                outputs = rknn.inference(inputs=[sample], data_type=["float32"], data_format=["nhwc"])
                 samples.append(
                     (time.perf_counter_ns() - inference_started) / 1_000_000.0
                 )
@@ -1076,7 +1206,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
                 }
             ],
             "completionIndex": 0,
-            "inputShape": shape,
+            "inputs": tensors,
             "measurementIterations": 0,
             "targetDurationSecondsPerRepetition": float(measurement["durationSeconds"]),
             "latencyMs": {

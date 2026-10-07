@@ -2,6 +2,8 @@
 //
 // It resolves trusted catalog facts, configured policies, Nodes, metric
 // sources, workload-observation delivery, and the current Evidence Store
-// binding. Reconciliation and owned-object writes remain in the sibling
-// controller package; executable entrypoints assemble both packages.
+// binding. Model content and required named tensor declarations are validated
+// through modelcatalog; Kubernetes identity checks remain at this read boundary.
+// Reconciliation and owned-object writes remain in the sibling controller package;
+// executable entrypoints assemble both packages.
 package kube

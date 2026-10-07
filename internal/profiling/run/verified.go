@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 // VerifiedRunConfig is populated only after one RunConfig has passed
@@ -104,6 +106,7 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 
 func cloneRunConfig(source RunConfig) RunConfig {
 	result := source
+	result.State.Triton = modelcompat.CloneTritonRuntimeSettings(source.State.Triton)
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
 	result.Delivery = cloneRuntimeDelivery(source.Delivery)
 	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
@@ -131,7 +134,7 @@ func cloneRuntimeDelivery(source CandidateRuntimeDelivery) CandidateRuntimeDeliv
 	if source.ArtifactCapability != nil {
 		capability := *source.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), source.ArtifactCapability.DeclaredBatchSizes...)
-		capability.InputSampleShape = append([]int32(nil), source.ArtifactCapability.InputSampleShape...)
+		capability.Tensors = modelcompat.CloneInputTensors(source.ArtifactCapability.Tensors)
 		result.ArtifactCapability = &capability
 	}
 	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), source.RuntimePackages...)

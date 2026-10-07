@@ -14,6 +14,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -22,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -451,7 +453,9 @@ func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 		},
 		PlannedBatchSizes: []int{1, 2, 4},
 		Tensor: profilederivation.CurveTensorContract{
-			InputSampleShape: []int{224, 224, 3},
+			Tensors: []modelcompat.InputTensor{
+				{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+			},
 		},
 	})
 	if err != nil {
@@ -533,7 +537,7 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizatio
 		},
 		CurvePlan: batchenergyoptimization.StoredObjectReference{
 			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha6", Size: 2459,
+			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 2459,
 		},
 		CompletedTrials: []batchenergyoptimization.CompletedTrialReference{{
 			Run: batchenergyoptimization.RunReference{
@@ -565,5 +569,72 @@ func campaignResultSnapshot(t *testing.T) operatorconsole.BatchEnergyOptimizatio
 			},
 		},
 		Result: record,
+	}
+}
+
+func TestQueryHandlerBoundsRealNamespaceProjection(t *testing.T) {
+	calls := 0
+	handler := NewQueryHandler(QueryReaders{
+		ProfilingRuns: func(_ context.Context, namespace string) (operatorconsole.ProfilingRunsSnapshot, error) {
+			calls++
+			if namespace != testNamespace {
+				t.Fatalf("query namespace = %q", namespace)
+			}
+			snapshot := operatorconsole.ProfilingRunsSnapshot{ReadAt: time.Unix(42, 0).UTC(), ResourceVersion: "list-version", Namespace: namespace}
+			for _, name := range []string{"measure-a", "measure-b", "other"} {
+				snapshot.Runs = append(snapshot.Runs, edgev1alpha1.ProfilingRun{
+					ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, UID: "uid-" + types.UID(name), ResourceVersion: "run-version"},
+					Status:     edgev1alpha1.ProfilingRunStatus{Conditions: []metav1.Condition{{Type: "EvidenceVerified", Status: metav1.ConditionTrue}}},
+				})
+			}
+			// Never expose another namespace even if a faulty reader returned it.
+			snapshot.Runs = append(snapshot.Runs, edgev1alpha1.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "measure-leak"}})
+			return snapshot, nil
+		},
+	})
+	base := "/api/v1/namespaces/" + testNamespace + "/profiling-runs"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, base+"?q=MEASURE&condition=EvidenceVerified%3DTrue&limit=1&offset=1", nil))
+	var body struct {
+		operatorconsole.ProfilingRunsView
+		Page queryPage `json:"page"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || calls != 1 || body.Namespace != testNamespace || body.AllNamespaces ||
+		body.ResourceVersion != "list-version" || body.ReadAt != time.Unix(42, 0).UTC().Format(time.RFC3339Nano) ||
+		len(body.Runs) != 1 || body.Runs[0].Name != "measure-b" || body.Runs[0].ResourceVersion != "run-version" ||
+		body.Page.Total != 2 || body.Page.Offset != 1 || body.Page.NextOffset != nil {
+		t.Fatalf("bounded real projection = %d %s", response.Code, response.Body.String())
+	}
+	for _, query := range []string{"limit=201", "limit=0", "offset=-1", "offset=1000001", "limit=1&limit=2", "phase=Complete", "condition=EvidenceVerified%3Dinvalid", "q=%XX", "q=a;b=c", "q=" + strings.Repeat("a", 257)} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, base+"?"+query, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("unbounded query %q = %d", query, response.Code)
+		}
+	}
+	if calls != 1 {
+		t.Fatal("invalid list/filter/page input reached producer")
+	}
+}
+
+func TestQueryHandlerMissingDependencyIsUnavailableAndDenialIsReal(t *testing.T) {
+	paths := []string{"/api/v1/systems", "/api/v1/inventory", "/api/v1/namespaces/" + testNamespace + "/profiling-runs"}
+	for _, path := range paths {
+		response := httptest.NewRecorder()
+		NewQueryHandler(QueryReaders{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("missing %s = %d", path, response.Code)
+		}
+	}
+	handler := NewQueryHandler(QueryReaders{Systems: func(context.Context) (operatorconsole.SystemSnapshot, error) {
+		return operatorconsole.SystemSnapshot{}, apierrors.NewForbidden(schema.GroupResource{Group: "chill.dacs.io", Resource: "chillsystems"}, "", errors.New("private credential denied"))
+	}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/systems", nil))
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "private credential") {
+		t.Fatalf("denial classification/leak: %d %s", response.Code, response.Body.String())
 	}
 }

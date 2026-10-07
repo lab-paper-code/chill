@@ -16,6 +16,8 @@ allow:
 exclude:
   - test
   - hack
+  # Independent Node application; installed npm packages may contain Go examples.
+  - chill-dashboard
 excludeFiles:
   - "^.*_test\\.go$"
 
@@ -47,6 +49,7 @@ components:
   workload-core: { in: internal/workloadobserver }
   workload-kube: { in: internal/workloadobserver/kube }
   model-compat: { in: internal/modelcompat }
+  model-catalog: { in: internal/modelcatalog }
   node-actuator-core: { in: internal/nodeactuator }
   node-actuator-controller: { in: internal/nodeactuator/controller }
   node-actuator-jetson: { in: internal/nodeactuator/jetson }
@@ -66,6 +69,8 @@ components:
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-entrypoint: { in: internal/serving/entrypoint }
+  serving-kube: { in: internal/serving/kube }
+  serving-triton: { in: internal/serving/triton }
 
 deps:
   # Executables are composition roots. Their job is to assemble any internal
@@ -90,6 +95,7 @@ deps:
       - profiler-controller
       - profiler-evidence
       - profiling-run
+      - model-catalog
 
   idle-baseline-core:
     mayDependOn:
@@ -175,6 +181,10 @@ deps:
 
   model-compat:
     anyVendorDeps: true
+  model-catalog:
+    mayDependOn:
+      - api
+      - model-compat
   node-actuator-core:
     anyVendorDeps: true
   node-actuator-controller:
@@ -188,6 +198,7 @@ deps:
     anyVendorDeps: true
     mayDependOn:
       - power-window
+      - model-compat
   power-window:
     anyVendorDeps: true
   transition-cost-core:
@@ -216,6 +227,8 @@ deps:
       - transition-cost-core
   profiling-run:
     anyVendorDeps: true
+    mayDependOn:
+      - model-compat
 
   profiler-app:
     mayDependOn:
@@ -246,6 +259,7 @@ deps:
       - profiler-evidence
       - profiling-run
       - workload-core
+      - model-compat
 
   profiler-worker:
     mayDependOn:
@@ -254,10 +268,39 @@ deps:
       - profiler-evidence
       - profiling-run
       - workload-core
+      - model-compat
 
   serving-entrypoint:
     mayDependOn:
       - serving-core
+      - api
+      - serving-kube
+
+  serving-core:
+    mayDependOn:
+      - model-compat
+      - evidence-core
+      - profile-derivation
+
+  serving-triton:
+    mayDependOn:
+      - serving-core
+      - model-compat
+
+  serving-kube:
+    mayDependOn:
+      - api
+      - device-class
+      - model-catalog
+      - model-compat
+      - evidence-core
+      - batch-energy-optimization-core
+      - profile-derivation
+      - profiler-evidence
+      - profiler-projection
+      - profiling-run
+      - serving-core
+      - serving-triton
 
   profiler-controller:
     mayDependOn:
@@ -279,6 +322,7 @@ deps:
       - evidence-kube
       - metric-edgemetrics
       - model-compat
+      - model-catalog
       - profiler-app
       - profiler-projection
       - profiling-run

@@ -17,11 +17,11 @@ Before editing a `ModelSpec`, follow the
 [model artifact preparation guide](catalog/README.md) to produce its immutable
 OCI reference and collect the input, architecture, and runtime facts.
 
-The default Kustomize path registers only the model catalog:
-
-```sh
-kubectl apply -k config/samples
-```
+The Kustomize path is a structural model-catalog input, not a management writer.
+Convert `metadata.name` and `spec` from the sample to JSON and submit them to
+`POST /api/v1/models` over verified HTTPS as shown in the
+[registration guide](catalog/README.md#validate-and-register).
+Do not give manager credentials direct ModelSpec or Workload write access.
 
 ## ModelSpec structure
 
@@ -29,14 +29,16 @@ kubectl apply -k config/samples
 ModelSpec
 ├── artifacts[]       immutable model files
 │   ├── source        OCI image, architecture, and path
-│   ├── input         sample shape without the batch axis
+│   ├── input.tensors  name, Triton datatype, and sampleShape without the batch axis
 │   └── derivation    conversion facts for a derived artifact
 └── executionPaths[]  artifact-to-runtime bindings
 ```
 
-Use immutable image digests. Input data type and layout are runtime-owned, not
-registration fields. A canonical artifact needs no `derivation`; a converted
-artifact records its source, target platform, supported batches, and converter.
+Use immutable image digests and declare every input's exact name, uppercase
+Triton datatype and sample shape. Multiple named numeric/bool tensors are
+supported; layout is not a separate registration field. A canonical artifact
+needs no `derivation`; a converted artifact records its source, target platform,
+supported batches, and converter. Shape-only compatibility readers are absent.
 
 ## Profiling requests
 
