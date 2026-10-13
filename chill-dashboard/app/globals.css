@@ -295,6 +295,7 @@ main .attention-link { font-size: .875rem; font-weight: 600; white-space: nowrap
 .lifecycle-label::before { counter-increment: stage; content: counter(stage) ". "; }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem 1.5rem; }
 .facts dd { margin: .2rem 0 0; }
+.lifecycle .badge { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 .timeline { display: grid; gap: .9rem; border-left: 2px solid var(--border); padding-left: 1rem; }
 .timeline li { position: relative; display: grid; gap: .2rem; }
 .timeline li::before { content: ""; position: absolute; left: calc(-1rem - 5px); top: .55rem; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
