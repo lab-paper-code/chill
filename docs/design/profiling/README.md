@@ -12,7 +12,7 @@ the terminology and outcomes recorded at the time.
 
 Roadmap for the implemented `ProfilingRun` path through durable
 execution-evidence verification and measurement derivation. Execution evidence
-uses `chill.dacs.io/profiling-execution-evidence.v1alpha14`; actuated evidence
+uses `chill.dacs.io/profiling-execution-evidence.v1alpha15`; actuated evidence
 retains the confirming transition identity, its target read-back, and its
 completion time, and checks the target against the RunConfig. Permanently
 invalid retained evidence produces the terminal `EvidenceInvalid` outcome.
@@ -146,6 +146,9 @@ record v1alpha4 preserves the source tensor name and FP32 datatype in
 ## Serving execution
 
 **Status:** Implemented native runner and campaign/catalog integration.
+
+Profiling Jobs explicitly invoke `/measurement-worker`; the shared runtime
+image's serving entrypoint is not the measurement command.
 
 Serving profiles follow the
 [shared execution contract](../../spec/00_measurement.md#측정의-단위).

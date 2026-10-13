@@ -182,6 +182,7 @@ func runtimeContainer(
 	volumeMounts = append(volumeMounts, projection.VolumeMounts...)
 	return corev1.Container{
 		Name: "runtime", Image: config.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
+		Command: []string{"/measurement-worker"},
 		Args: []string{
 			"--run-config=" + runConfig,
 			"--attempt-timeout=" + plan.AttemptTimeout.String(),
