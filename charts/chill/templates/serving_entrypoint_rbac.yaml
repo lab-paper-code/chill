@@ -175,6 +175,8 @@ rules:
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/namespaces/*"]
     verbs: [get]
+  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state"]
+    verbs: [get]
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" .Release.Namespace | quote }}
     verbs: [post]
@@ -204,5 +206,3 @@ rules:
     verbs: [update]
 {{- end }}
 {{- end }}
-  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state"]
-    verbs: [get]

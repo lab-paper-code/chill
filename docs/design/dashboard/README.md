@@ -582,3 +582,15 @@ null/0 J, 0 samples, coverage 실패, 단일 W chart, A/B 정밀 수치 및 whol
 Ponytail 중간 리뷰에서 중복 원본 renderer, 순서 index identity, 범용 deep-encoding 비교와
 단일 호출 wrapper를 제거했다. 입력 경계, 정밀 정수, 권한, 결과 미확인과 접근성 검사는 유지했다.
 전체 SRS 완료 제한과 미제공 생산자 범위는 유지한다.
+
+Node 24.21.0/pnpm 10.33.4의 `make dashboard-check`는 사용자 worktree와 커밋된
+격리 배포 소스에서 각각 통과했다(회귀 검사 10개, lint/typecheck/build).
+실제 standalone 서버의 새 읽기 route와 A/B 선택을 390px에서 열었고 document 폭은
+390px였다. 설정 검토는 키보드 제출/Escape 후 저장 검토 버튼으로 focus를 복귀한다.
+정밀 JSON 미지원 환경은 편집을 제공하지 않으며 실제 미권한 사용자 403은 두 polling
+주기 동안 요청 1건과 payload 없음으로 확인했다.
+기본/Profiler Helm 렌더는 29/42개 자원, invalid/errors 0이며 graph delta는 13개다.
+graph의 C 정렬 입력에는 `LC_ALL=C`를 사용했다. 격리 소스 검사에서 발견한 scheduler
+GET grant의 문서 경계 오류는 manager rules 안으로 이동해 수정했다.
+배포 전 server-resolved 렌더의 변경은 Dashboard image, 기존 manager GET와 unbound
+scheduler editor ClusterRole/Role뿐이며 lookup으로 정해지는 기존 API server 설정은 유지한다.
