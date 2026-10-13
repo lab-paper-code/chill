@@ -63,3 +63,61 @@ test("fixed-owner relay enforces path, origin, body and credential boundaries", 
     }
   }
 })
+
+test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {
+  const config = serverConfig({
+    CHILL_BASE_URL: "https://owner.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
+    CHILL_PAGE_SIZE: "7", CHILL_MAX_PAGE_SIZE: "20", CHILL_MAX_WINDOW_HOURS: "1",
+  })
+  const plan = (method: string, path: string, search = "") => relayPlan(method, path.split("/"), search, config)
+  const from = "2026-01-01T00:00:00.000000001Z"
+  const to = "2026-01-01T01:00:00.000000001Z"
+  const window = new URLSearchParams({ from, to })
+  for (const path of ["v1/scheduler", "v1/scheduler/state", "v1/scheduler/settings"]) {
+    assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    assert.throws(() => plan("GET", path, "?limit=1"), /DashboardQueryInvalid/)
+    for (const method of ["POST", "DELETE", "PATCH", "HEAD", "OPTIONS", ...(path.endsWith("/settings") ? [] : ["PUT"])]) {
+      assert.throws(() => plan(method, path), /DashboardMethodNotAllowed/)
+    }
+  }
+  assert.deepEqual(plan("PUT", "v1/scheduler/settings"), {
+    path: "/api/v1/scheduler/settings", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true,
+  })
+  assert.throws(() => plan("PUT", "v1/scheduler/settings", "?from=now"), /DashboardQueryInvalid/)
+  for (const path of ["v1/scheduler/other", "v1/scheduler/settings/extra", "v1/observations/load/extra", "v1/observations/scheduler/extra"]) {
+    assert.throws(() => plan("GET", path), /DashboardRouteNotAllowed/)
+  }
+
+  assert.equal(plan("GET", "v1/observations/load", `?${window}`).path, `/api/v1/observations/load?${window}`)
+  assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7`)
+  assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`).path,
+    `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`)
+  for (const path of ["v1/observations/load", "v1/observations/scheduler"]) {
+    for (const method of ["POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
+      assert.throws(() => plan(method, path, `?${window}`), /DashboardMethodNotAllowed/)
+    }
+    for (const search of [
+      "", `?from=${from}`, `?to=${to}`, `?${window}&from=${from}`, `?${window}&to=${to}`,
+      `?${window}&unknown=1`, `?${window}&definition=a&definition=b`, `?${window}&outcome=a`,
+      "?from=2026-02-30T00:00:00Z&to=2026-03-01T00:00:00Z",
+      "?from=not-a-time&to=2026-01-01T01:00:00Z",
+      `?from=${from}&to=${from}`, `?from=${to}&to=${from}`,
+      `?from=${from}&to=2026-01-01T01:00:00.000000002Z`,
+    ]) assert.throws(() => plan("GET", path, search), /DashboardQueryInvalid/)
+  }
+  for (const search of ["limit=1", "cursor=0", "offset=0"]) {
+    assert.throws(() => plan("GET", "v1/observations/load", `?${window}&${search}`), /DashboardQueryInvalid/)
+  }
+  for (const search of [
+    "limit=0", "limit=21", "limit=1&limit=2", "cursor=-1", "cursor=1.5",
+    "cursor=9007199254740992", "cursor=0&cursor=1", "offset=0",
+  ]) assert.throws(() => plan("GET", "v1/observations/scheduler", `?${window}&${search}`), /DashboardQueryInvalid/)
+
+  const workload = new URLSearchParams(plan("GET", "v1/observations/workloads/uid",
+    `?${window}&definition=one&definition=two&outcome=complete&outcome=failed`).path.split("?")[1])
+  assert.deepEqual(workload.getAll("definition"), ["one", "two"])
+  assert.deepEqual(workload.getAll("outcome"), ["complete", "failed"])
+  assert.equal(workload.get("limit"), "7")
+  assert.equal(workload.get("from"), from)
+  assert.equal(workload.get("to"), to)
+})

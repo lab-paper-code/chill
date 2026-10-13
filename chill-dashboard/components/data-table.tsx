@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DetailsDialog } from "@/components/read-region"
+import { stringifySchedulerJSON } from "@/lib/scheduler"
 
 const features = tableFeatures({rowPaginationFeature,rowSortingFeature,paginatedRowModel:createPaginatedRowModel(),sortedRowModel:createSortedRowModel()})
 export type DataColumn<T> = {key:string;label:string;value:(row:T)=>React.ReactNode;sortValue?:(row:T)=>string|number}
@@ -15,7 +16,7 @@ export function DataTable<T extends RowData>({data,columns}: {data:T[];columns:D
   const [sorting,setSorting] = React.useState<SortingState>([])
   const [pagination,setPagination] = React.useState({pageIndex:0,pageSize:10})
   const id = React.useId()
-  const filtered = React.useMemo(() => data.filter(row => !search || JSON.stringify(row).toLocaleLowerCase().includes(search.toLocaleLowerCase())),[data,search])
+  const filtered = React.useMemo(() => data.filter(row => !search || stringifySchedulerJSON(row).toLocaleLowerCase().includes(search.toLocaleLowerCase())),[data,search])
   const helper = createColumnHelper<typeof features,T>()
   const table = useTable({features,data:filtered,columns:helper.columns(columns.map(column => helper.accessor(row => column.sortValue?.(row) ?? String(column.value(row)),{id:column.key,header:column.label,cell:({row}) => column.value(row.original),enableSorting:!!column.sortValue}))),state:{sorting,pagination},onSortingChange:setSorting,onPaginationChange:setPagination})
   return <div className="min-w-0 space-y-3">

@@ -5,6 +5,7 @@ import { ApiError, useSession } from "@/lib/client"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { safeSource } from "@/lib/source-export"
+import { stringifySchedulerJSON } from "@/lib/scheduler"
 
 const errorLabels: Record<number, string> = {
   401: "접속 정보를 다시 확인해 주세요.", 403: "이 정보를 볼 권한이 없어요.",
@@ -50,11 +51,11 @@ export function ReadRegion({title,query,children}: {title:string;query:{data?:un
   </section>
 }
 export function SourceJSON({value,title="원본 자료 보기"}:{value:unknown;title?:string}) {
-  return <DetailsDialog label={title} title={title}><pre className="source-json">{JSON.stringify(safeSource(value),null,2)}</pre></DetailsDialog>
+  return <DetailsDialog label={title} title={title}><pre className="source-json">{stringifySchedulerJSON(safeSource(value),2)}</pre></DetailsDialog>
 }
 export function SourceExport({value,filename}:{value:unknown;filename:string}) {
   return <Button variant="outline" onClick={() => {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(safeSource(value),null,2)],{type:"application/json"}))
+    const url = URL.createObjectURL(new Blob([stringifySchedulerJSON(safeSource(value),2)],{type:"application/json"}))
     const link = document.createElement("a"); link.href=url; link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_"); link.click(); URL.revokeObjectURL(url)
   }}>자료 다운로드</Button>
 }

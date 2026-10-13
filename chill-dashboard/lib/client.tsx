@@ -104,10 +104,14 @@ function subscribeVisibility(notify:()=>void) {
   return () => document.removeEventListener("visibilitychange",notify)
 }
 
-export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean}={}) {
+export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean;decoder?:(body:string)=>unknown}={}) {
   const {token,config} = useSession()
   const visible = React.useSyncExternalStore(subscribeVisibility,() => document.visibilityState === "visible",() => true)
-  const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => (await relay(path,token,signal)).data as T,retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
+  const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => {
+    const response = await relay(path,token,signal)
+    try { return (options.decoder ? options.decoder(response.body) : response.data) as T }
+    catch (error) { throw new ApiError(0,error instanceof Error ? error.message : "응답 해석 실패", {code:"DashboardPrecisionUnsupported",message:error instanceof Error ? error.message : "응답 해석 실패"}) }
+  },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
 export function useChillMutation() {

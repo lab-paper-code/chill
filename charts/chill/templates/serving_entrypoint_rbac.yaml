@@ -178,4 +178,31 @@ rules:
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" .Release.Namespace | quote }}
     verbs: [post]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-scheduler-editor
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
+    verbs: [put]
+{{- if .Values.servingEntrypoint.scheduler.configMap }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.fullname" . }}-scheduler-editor
+  namespace: {{ $servingNamespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ .Values.servingEntrypoint.scheduler.configMap | quote }}]
+    verbs: [update]
 {{- end }}
+{{- end }}
+  - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state"]
+    verbs: [get]

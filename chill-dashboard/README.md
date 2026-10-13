@@ -37,6 +37,35 @@ Server runtime environment (not browser build-time variables):
 
 Inference relay lifetime is `CHILL_INFER_TIMEOUT_MS + CHILL_QUERY_TIMEOUT_MS` (default 40 seconds); the native inference timeout remains capped at 30 seconds by default. This bounded delivery margin allows the owner's native timeout status/body to reach the browser without relabeling it as a Dashboard timeout.
 
+### Scheduler API and caller permissions
+
+The BFF exposes GET `v1/scheduler`, `v1/scheduler/settings`, `v1/scheduler/state`,
+PUT `v1/scheduler/settings`, GET `v1/observations/load` and GET
+`v1/observations/scheduler`. Both observation routes require explicit RFC3339Nano
+`from` and `to`; load has no paging input. Scheduler history accepts bounded
+`limit` and nonnegative `cursor` in retained append order, not a total count.
+Settings PUT sends the Settings object itself; owner journal and ConfigMap
+storage remain authoritative. There is no version precondition or dry-run.
+
+Use an existing administrator-approved account, not the Dashboard ServiceAccount.
+`chill-serving-manager` grants the exact scheduler GET paths and observation
+reads. The unbound `chill-scheduler-editor` ClusterRole grants only the settings
+PUT path. When `servingEntrypoint.scheduler.configMap` is selected, a same-name
+unbound Role in the serving namespace grants `update` of that named ConfigMap
+only. An administrator explicitly binds the read ClusterRole, editor ClusterRole
+and named ConfigMap Role to the chosen account. A settings PUT needs both editor
+grants; a path grant alone cannot update the ConfigMap.
+For a ServiceAccount, obtain a short-lived token with
+`kubectl -n <account-namespace> create token <existing-account> --duration=1h`
+after the administrator has confirmed its bindings. Tokens expire and are kept
+only in this browser tab. No automatic bindings or permanent token are created.
+
+Scheduler decoding uses native JSON reviver source and JSON.rawJSON to preserve
+int64 seed, uint64 memory and durations exactly. Editing requires a browser with
+these native features; there is no rounded Number fallback. Original exports
+retain integer literals while removing credentials.
+
+
 ## Public routes and current core
 
 `/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`.
@@ -45,6 +74,6 @@ Real Model/Workload CRUD and version preconditions, one independent named-tensor
 
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
-Resource policy/maintenance writers, measurement writers/options, configuration selector/runtime writers, system transitions, operating power and experiment producers remain `연결 준비 중` with disabled controls. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain `연결 준비 중` with disabled controls. Scheduler query and settings transport are connected; their UI surfaces are tracked separately. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

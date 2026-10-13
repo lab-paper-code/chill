@@ -175,6 +175,15 @@ Console private leg에는 사용자 token/cookie/신원 header를 전달하지 �
 외부 문자열은 React의 텍스트 렌더링을 사용한다. 원본 JSON도 텍스트로 표시하고
 자료 내보내기는 structured 원본의 credential 필드를 제거하며 원본 객체를 변경하지 않는다.
 
+스케줄러의 int64 seed, uint64 메모리와 duration은 native JSON reviver의 원문과
+JSON.rawJSON으로 정확하게 유지한다. 지원 브라우저에서만 설정을 저장한다.
+원본 보기와 내보내기는 같은 직렬화를 사용하고 기존 credential 제거를 유지한다.
+조회는 serving-manager의 정확한 세 scheduler GET 경로를 사용한다.
+설정 PUT은 unbound scheduler-editor ClusterRole과 serving namespace의 같은 이름
+Role을 관리자가 선택한 계정에 각각 binding한다. Role은 설정된 ConfigMap 하나의
+update만 허용한다. Dashboard ServiceAccount에 사용자 변경 권한을 자동 부여하지 않는다.
+
+
 ## 5. 현재 API와 추가 계약
 
 ### 5.1 현재 재사용 가능한 표면
@@ -193,6 +202,9 @@ Console 경로는 [현재 read handler](../../../internal/operatorconsole/readap
 | `GET /namespaces/{namespace}/profiling-runs/{name}/evidence-passport` | 검증된 Run 계보와 제한된 Evidence 요약 | 공통 HTTPS 경계에 인증을 적용해 재사용한다. |
 | `GET /namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 캠페인의 봉인된 결과 | 진행 상세와 구분해 재사용한다. |
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 계획을 반환하는 읽기 전용 요청 | 조건 안내에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
+| `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 journal | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 제공하지 않는다. |
+| `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
+| `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 총건수와 구간 완전성은 제공하지 않는다. |
 
 System, Inventory와 Run 목록은 기존
 [System query](../../../internal/operatorconsole/kube/system_query.go),
