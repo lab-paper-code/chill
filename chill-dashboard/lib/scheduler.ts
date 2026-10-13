@@ -1,3 +1,5 @@
+import type { SchedulerSettings } from "./read-types.ts"
+
 type NativeJSON = { rawJSON?: (text: string) => unknown; parse: (text: string, reviver?: (key: string, value: unknown, context?: {source?: string}) => unknown) => unknown }
 const native = JSON as NativeJSON
 export function preciseJSONSupported(): boolean {
@@ -34,4 +36,10 @@ export function wireInteger(text: string, minimum: bigint, maximum: bigint): big
   const value = BigInt(text)
   if (value < minimum || value > maximum) throw new Error(`${minimum}~${maximum} 범위로 입력합니다.`)
   return value
+}
+
+export function settingsEqual(a: SchedulerSettings, b: SchedulerSettings): boolean {
+  return (Object.keys(a) as (keyof SchedulerSettings)[]).every(key => key === "controls"
+    ? (Object.keys(a.controls) as (keyof SchedulerSettings["controls"])[]).every(control => a.controls[control] === b.controls[control])
+    : String(a[key]) === String(b[key]))
 }

@@ -14,7 +14,7 @@ const navigation = [
   {title:"실행 그룹",url:"/pools",icon:Layers,group:"현황"},
   {title:"운영 판단",url:"/scheduler",icon:Activity,group:"현황"},
   {title:"측정 결과",url:"/measurements",icon:FlaskConical,group:"현황"},
-  {title:"운영 설정",url:"/configuration",icon:Settings,group:"연결 준비 중"},
+  {title:"운영 설정",url:"/configuration",icon:Settings,group:"관리"},
   {title:"전환 기록",url:"/transitions",icon:Workflow,group:"연결 준비 중"},
   {title:"요청 기록",url:"/observations",icon:ChartNoAxesCombined,group:"현황"},
   {title:"실험",url:"/experiments",icon:FlaskConical,group:"연결 준비 중"},

@@ -81,10 +81,17 @@ links query all definitions for the original UID/window; candidate SLO links
 include the provided immutable definition. Request details separately display
 CHILL dispatch and native progress, including exact uint64 batch identity.
 Polling retains open detail snapshots and announces newer observation times.
+`/configuration` edits every owner-supported setting from the current baseline.
+Duration fields use exact ns conversion from ms, memory and seed retain integer
+strings, and advanced search fields remain available. Review re-reads settings,
+preserves the draft on concurrent changes and names whole-object last-write
+semantics. Runtime application is separate from physical transitions. Permission
+failure retains input; response loss requires current settings and bounded
+history lookup before explicit resubmission.
 
 
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
-Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain `연결 준비 중` with disabled controls. Scheduler query and settings transport are connected; their UI surfaces are tracked separately. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain `연결 준비 중` with disabled controls. Scheduler judgment, candidate/load reads and all settings editing are connected; transition/history/power/comparison surfaces are tracked separately. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

@@ -109,6 +109,6 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
 function Unavailable({title}:{title:string}) {
   return <div className="page"><h1>{title}</h1><p>연결 준비 중</p><Button disabled>아직 사용할 수 없습니다</Button></div>
 }
-export function ProducerPage({area}:{area:"configuration"|"transitions"|"experiments";id?:string}) {
-  return <Unavailable title={{configuration:"운영 설정",transitions:"전환 기록",experiments:"실험"}[area]}/>
+export function ProducerPage({area}:{area:"transitions"|"experiments";id?:string}) {
+  return <Unavailable title={{transitions:"전환 기록",experiments:"실험"}[area]}/>
 }
