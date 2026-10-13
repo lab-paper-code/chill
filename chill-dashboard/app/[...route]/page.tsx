@@ -3,9 +3,12 @@ import { notFound } from "next/navigation"
 import { ManagementPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
-import { ResourcesPage, PoolsPage, PoolPage, MeasurementsPage, MeasurementCheckPage, MeasurementDetail, ProducerPage } from "@/features/read-pages"
+import { ResourcesPage, PoolsPage, PoolPage, MeasurementsPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerLoadPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
+import { SchedulerHistoryPage } from "@/features/scheduler-history"
+import { SchedulerTransitionsPage } from "@/features/scheduler-transitions"
+import { SchedulerPowerPage, SchedulerComparePage } from "@/features/scheduler-evidence"
 
 export default async function Page({params,searchParams}:{params:Promise<{route:string[]}>;searchParams:Promise<Record<string,string|string[]|undefined>>}) {
   const {route} = await params
@@ -25,9 +28,13 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if(route[0]==="scheduler"&&route.length===1)page=<SchedulerPage/>
   else if(route[0]==="scheduler"&&route.length===2&&route[1]==="candidates")page=<SchedulerCandidatesPage/>
   else if(route[0]==="scheduler"&&route.length===2&&route[1]==="load")page=<SchedulerLoadPage/>
-  else if(route[0]==="changes"&&route.length===1)page=<ObservationsPage changes/>
+  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="history")page=<SchedulerHistoryPage/>
+  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="power")page=<SchedulerPowerPage/>
+  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="compare")page=<SchedulerComparePage/>
+  else if(route[0]==="changes"&&route.length===1)page=search.scope==="scheduler"?<SchedulerHistoryPage settingsOnly/>:<ObservationsPage changes/>
   else if(route[0]==="configuration"&&route.length===1)page=<SchedulerSettingsPage/>
-  else if((route[0]==="transitions"||route[0]==="experiments")&&route.length<=2)page=<ProducerPage area={route[0]} id={route[1]}/>
+  else if(route[0]==="transitions"&&route.length<=2)page=<SchedulerTransitionsPage id={route[1]}/>
+  else if(route[0]==="experiments"&&route.length<=2)page=<ExperimentsPage/>
   else notFound()
   return <Suspense fallback={<p className="page" role="status">화면 여는 중</p>}>{page}</Suspense>
 }

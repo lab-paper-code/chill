@@ -20,7 +20,8 @@
 | API 제공 | 모델과 워크로드 관리, 단일 추론, POOL의 제공 필드와 요청 관측을 실제 응답에 연결한다. |
 | 인증된 조회 API 제공 | System, Inventory, bounded Run 목록, 검증된 Evidence Passport, 봉인된 campaign result와 read-only preflight를 실제 응답에 연결한다. |
 | 스케줄러 조회 API 제공 | 운영 판단, 실제 구성, 유지안과 후보의 예상 SLO 및 J, 명시적 구간의 부하를 독립 화면에 연결한다. |
-| 설정 조회와 적용 API 제공 | 모든 SchedulerSettings 필드를 현재 값에서 편집하고 변경 전후, 행위자와 Runtime 적용 결과를 확인한다. 자원 정책, 전체 실행 그룹 실측 에너지 합계와 실험 실행은 필요한 생산자 연결을 안내한다. 변경 진행과 기록은 각 구현 단계로 검증한다. |
+| 설정 조회와 적용 API 제공 | 모든 SchedulerSettings 필드를 현재 값에서 편집하고 변경 전후, 행위자와 Runtime 적용 결과를 확인한다. |
+| 스케줄러 기록 API 제공 | 현재/과거 동작, 판단 A/B, 설정 변경 및 개별 노드 전력 기록을 연결한다. 전체 실행 그룹 에너지 합계, 동작별 인과 귀속, 수동 취소/재시도와 실험 실행 API는 미제공이다. |
 
 연결 준비 영역은 기능 설명과 `연결 준비 중` 상태를 표시한다. 실제 데이터 표와 그래프는
 API 응답으로 채우고, 제출 및 제어 버튼은 해당 API와 권한 검사가 연결되면 활성화한다.
@@ -38,6 +39,16 @@ ms를 정확한 ns로 변환한다. 저장 검토는 현재 설정을 재조회�
 최신 값과 비교한다. 전체 객체의 마지막 적용값이 현재 설정이 되며 버전 조건과
 영향 예측은 제공하지 않는다. appliedAt은 설정 저장과 Runtime 적용 시각이다.
 응답이 불명확하면 현재 값과 제한된 최근 기록을 조회한 뒤 명시적으로 다시 제출한다.
+`/scheduler/history`의 종류 필터와 `/scheduler/power`의 노드 필터는 현재 가져온
+페이지에만 적용한다. 제출된 원래 from/to를 cursor 이동에 복사하고 입력 draft는
+별도로 유지한다. 선택 기록은 같은 구간의 append offset에 limit=1로 복원하며
+종류, at, 대상과 action의 노드/시작 시각이 다르면 다른 사건으로 대체하지 않는다.
+A/B 비교는 각 판단의 입력 구간과 미래 horizon을 구분하고 UID/고정 정의별
+owner whole-window cohort를 조회한다. 웹은 백분위, 총에너지와 실험 점수를 계산하지 않는다.
+동작은 제공된 단계와 before/actual을 표시하며 같은 ID의 다른 시작을 병합하지 않는다.
+전력 상세는 단일 기록 모달의 W 시계열과 meter/scope/source/coverage/실패를 표시한다.
+표본 시각은 collector 수신 시각이며 값 없음과 0 J는 별개다. 내보내기는 선택 기록
+또는 현재 페이지의 출처, 구간과 모집단을 명시한다.
 
 
 ## 2. 최신 조사와 Git 템플릿
@@ -245,13 +256,10 @@ Inventory는 각 원본의 resourceVersion과 개별 조회 시각을 유지하�
 | `GET /profiles` | 조건별 성공 Run, 실행시간 분포, 처리량, 메모리, 전력과 에너지, 유휴 기준 및 trial 참조 | 검증된 Run과 campaign 결과의 조회 projection이 필요하다. |
 | `GET /namespaces/{namespace}/profiling-runs/{name}/evidence/raw`, `GET .../power-mode-transition-costs/{name}/result` | 권한 범위의 구조화된 raw 및 전환 측정 결과, 원본 참조와 단위 | 기존 검증 경계와 봉인된 결과 reader를 재사용하는 전송 경로가 필요하다. |
 | `GET, PUT /allowed-resources`, `POST /nodes/{uid}/maintenance` | 허용 Node와 실행 경로 및 전력모드, 제외 또는 복귀, version, 영향, 원본 작업 참조 | 자원 정책과 유지보수 owner가 필요하다. 적용은 CHILL의 실제 드레인과 actuator가 수행한다. |
-| `GET, PUT /runtime-settings` | 비교 기간, 관측 및 제어 주기, 제어요소 설정, 실험의 정적 구성, desired와 applied version 및 영향 | CHILL의 런타임 설정 owner가 필요하다. 설치 값은 기존 Helm 및 GitOps가 소유한다. |
-| `GET /configuration`, `GET /decisions`, `GET /decisions/{id}` | 실제 구성, 비교 후보, 목표와 근거, SLO 가능성, Serving 및 전환 비용, 제외 이유 | CHILL 구성 선택 생산자가 필요하다. |
-| `GET /transitions`, `GET /transitions/{id}` | 출발과 목표, 판단 참조, 동작과 의존관계, 실제 단계 및 시각, 시간과 에너지, 실패와 남은 상태 | 시스템 전환 생산자가 필요하다. 허용 개입은 해당 동작의 API로 제공한다. |
 | `GET /observations/workloads/{uid}/requests/{requestID}` | 원본 적용 정의, 단계와 실제 outcome, CHILL 종단 지연과 SLO 초과 여부 | 기존 journal의 exact 요청 조회 전송 경로가 필요하다. |
-| `GET /observations/power` | Node별 watts와 joules, 전체 및 활성 POOL 범위, 전환 포함, 전체와 증분 에너지, 누락 | 운영 전력 관측과 에너지 집계 생산자가 필요하다. |
+| 운영 전력 집계 API (미제공) | 전체 및 활성 POOL, 전환 포함, 전체와 증분 에너지 및 누락 | 개별 node/meter/window 기록은 `GET /observations/scheduler`로 연결했다. POOL 집계와 동작별 귀속 생산자는 없다. |
 | `GET /experiments`, `GET /experiments/{id}` | 시나리오, 프로파일과 설정, 초기 구성, 제어요소, 요청과 전력 및 전환의 같은 시간축 참조 | 시스템 실험 기록과 조회 projection이 필요하다. |
-| `GET /changes` | 검증 행위자, 대상, 전후 정의와 version, 접수 및 적용 시각, 실제 결과 | Workload management journal의 검증된 actor 구현 완료. 다른 영역의 변경 생산자와 전체 feed는 연결 준비 중이다. |
+| 전체 변경 feed (미제공) | 영역 간 행위자, 대상과 접수 및 적용 결과 | 서비스 management journal과 scheduler settings 사건은 각각 연결했다. 영역 간 통합 feed는 제공되지 않는다. |
 | `GET /exports` | 자료 종류, 대상, from과 to 및 필터로 선택한 records, 집계 조건, 단위와 sourceRefs | 해당 생산자의 조회 및 archive를 사용하는 권한 검사와 비밀정보 제거가 필요하다. |
 
 목록에는 제한된 `limit`, opaque `cursor`, 검색 및 지원한 sort와 filter를 제공한다.
@@ -300,10 +308,14 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/measurements`, `/measurements/[kind]/[namespace]/[name]` | 실제 Run 목록의 이름·조건 선택과 검증된 근거 또는 봉인 결과의 상세. 목록 없는 이전 자료의 직접 참조는 고급 모달에 둔다. |
 | `/measurements/check` | 기존 계획의 읽기 전용 조건 확인만 수행한다. 측정 등록·실행 페이지와 혼합하지 않는다. |
 | `/configuration` | 모든 현재 SchedulerSettings를 편집한다. 최신 값 재조회와 입력 유지, 변경 전후 검토, 권한 오류 및 결과 불명확 시 재조회로 전체 설정을 적용한다. 정적 자원 선언은 배포 설정에서 관리한다. |
-| `/transitions`, `/transitions/[id]` | 전환 생산자 연결 준비 중. 실제 작업·실패·남은 상태가 제공되면 연결한다. |
+| `/transitions`, `/transitions/[id]` | 현재 actions/results 또는 제한된 구간의 action 사건. 노드·시작 identity로 상세를 읽고 제공된 계획·before/actual·실패·부분 적용을 표시한다. 취소/재시도는 관측 정보이며 조작 API는 없다. |
+| `/scheduler`, `/scheduler/candidates`, `/scheduler/load` | 현재 실제/유지/목표, 후보 근거와 명시적 구간의 사건률. 예상 J와 SLO를 실측으로 표시하지 않는다. |
+| `/scheduler/history` | raw 페이지, 단일 기록 상세와 A/B 선택. local 종류 필터, 원래 nano 구간과 append offset을 보존한다. |
+| `/scheduler/power` | 개별 노드·계측 범위의 기록과 상세 모달. 전체 POOL 합계를 만들지 않는다. |
+| `/scheduler/compare` | 선택한 두 판단의 조건·초기 구성·설정·예상 결과와 입력 구간의 owner 실제 cohort. 실험 실행이나 인과 귀속이 아니다. |
 | `/observations` | 실제 서비스 이름과 기간을 선택해 전체 구간의 원본 통계를 조회한다. 조건·적용 정의·개별 기록은 모달로 확인한다. |
-| `/experiments`, `/experiments/[id]` | 실험 생산자 연결 준비 중. 운영 전력과 성능 비교를 측정 전력이나 예시 데이터로 대신하지 않는다. |
-| `/changes` | 같은 기간의 원본 서비스 변경 기록만 조회한다. 요청 통계와 운영 전력 패널을 함께 쌓지 않는다. |
+| `/experiments`, `/experiments/[id]` | 실험 실행 API 준비 상태와 판단 A/B 비교 링크. 운영 전력과 실험 결과를 예시 데이터로 대신하지 않는다. |
+| `/changes` | 기본은 서비스 journal, `scope=scheduler`는 actor·before/after·validatedAt/appliedAt·affected와 오류를 제공한다. |
 
 목록 및 상세의 참조는 kind, namespace, 이름과 UID 또는 원본 evidence identity를 보존한다.
 Workload 관측과 과거 변경은 등록 UID를 사용한다. 상세 URL에 기대 UID를 보존해
@@ -417,11 +429,12 @@ raw 및 내보내기는 producer의 제한된 page 또는 stream을 사용한다
 | DB-FR-08~09 | 기존 infer와 exact 요청 관측, timeout 및 지연 경계 | 모델 공유와 추론 |
 | DB-FR-10~11 | POOL 실제 projection, Inventory, allowed-resources와 maintenance | POOL과 유지보수 |
 | DB-FR-12~14 | 측정 options, immutable create, 실제 status, profiles와 Passport 및 raw | 근거 부족, 측정과 실패 |
-| DB-FR-15~18 | configuration, decisions와 runtime-settings의 실제 생산자 | 구성과 설정 변경 |
-| DB-FR-19~21 | transitions의 실제 동작, 실패와 남은 상태 및 허용 개입 | 전환 일부 실패 |
+| DB-FR-15~18 | `/scheduler` 실제/유지/목표와 근거, `/configuration` 모든 Settings 및 제어요소 편집 | 현재 owner 연결 검증. 허용 자원 전체 편집, 정적 실험 구성과 영향 예측 생산자는 미제공 |
+| DB-FR-19~21 | `/transitions` 계획·의존 동작과 before/actual, 상태·실패·partial, 판단 기록 링크 | 제공된 관측의 조회 검증. 수동 개입과 동작별 실측 에너지 귀속은 미제공 |
 | DB-FR-22~23 | UID journal, 전체 구간 cohort와 분포, SLO 초과 및 archive 조회 | 빈 구간과 집계 |
-| DB-FR-24~25 | 운영 power와 experiments의 동일 시간축 및 전체 POOL 집계 | 에너지와 실험 |
-| DB-FR-26~27 | 원본 export와 changes, 비밀정보 제거 및 검증 actor | 내보내기와 이력 |
+| DB-FR-24 | `/scheduler/power` 개별 node/meter/window W/J, coverage와 누락 | 개별 기록 표시 검증. 전체/활성 POOL 및 증분 에너지 집계는 미제공 |
+| DB-FR-25 | `/scheduler/compare` A/B 조건과 예측, 입력 구간의 실제 cohort 및 전력 링크 | 판단 기록 비교 연결. 실험 생성·실행·수명주기와 인과 비교는 미제공 |
+| DB-FR-26~27 | 선택 기록/현재 페이지 export와 서비스·scheduler 설정 변경, 비밀 제거 및 검증 actor | 실제 설정 journal 조회와 원본 scope 보존. 영역 간 통합 feed는 미제공 |
 | DB-OP-01~05 | 4, 6절의 영향 확인, If-Match, 원본 작업 조회, 제출 잠금과 명시적 재제출 | 처리 중 수정과 삭제, 공유 모델 변경, 충돌과 연결 단절 |
 | DB-NFR-01~02 | 6, 7절의 native 입력, 접근성, 반응형, 시간 및 단위와 값 보존 | 안내형 등록, 접근성과 화면 안전 |
 | DB-NFR-03~04 | 7, 8, 10절의 bounded 조회와 별도 중계 비용 및 성능 예산 | 조회 부하와 재시작 |
@@ -551,3 +564,21 @@ profiling/worker/HTTPS caller 및 생성 CRD·chart·sample·계약 테스트를
 owner/serving/Console/modelcatalog/modelcompat focused tests와 실제 owner CLI `--help`를 통과했다.
 기존 사용자 문서 변경인 ADR 0006, operator-console 설계 6개 및 plan 10의 링크 수정은
 이 구현 커밋에 포함하지 않고 worktree에 보존한다.
+
+### 10.4 스케줄러 연동 검증 (2026-10-13 UTC)
+
+격리된 `kind-chill`의 `scheduler-dashboard-smoke` owner와 실제 Next 화면에서
+Pending/제어요소 off, 정밀 seed·메모리, 설정 PUT의 실제 ConfigMap 및 intent/result
+journal을 확인했다. 중복 제출 1건, ConfigMap update 권한 403의 draft 유지,
+실제 PUT 이후 응답 단절의 결과 재조회와 동시 변경의 최신 baseline 검토를 관측했다.
+서비스 이력 기본 동작을 유지하고 설정 사건의 검증 actor와 5→6 변경을 실제 화면에서 읽었다.
+빈 filtered page의 nextCursor와 입력 중 draft/원래 nano 구간 분리, 직접 기록 복원,
+로그인 bookmark 유지 및 신원 변경의 선택 초기화를 확인했다.
+
+실제 owner에 없는 동작 상태와 전력 기록은 저장소에 남기지 않는 브라우저 interception으로
+별도 확인했다: 계획/실행/완료/실패/취소, partial actual, 같은 ID의 시작 identity 거절,
+null/0 J, 0 samples, coverage 실패, 단일 W chart, A/B 정밀 수치 및 whole-window 무표본 cohort.
+이를 실제 물리 전환이나 계측 실험의 증거로 사용하지 않는다.
+Ponytail 중간 리뷰에서 중복 원본 renderer, 순서 index identity, 범용 deep-encoding 비교와
+단일 호출 wrapper를 제거했다. 입력 경계, 정밀 정수, 권한, 결과 미확인과 접근성 검사는 유지했다.
+전체 SRS 완료 제한과 미제공 생산자 범위는 유지한다.

@@ -58,7 +58,7 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
     const index=definitions.findIndex(item=>item.identity===identity)
     return index<0?"이전 적용 설정":`적용 설정 ${index+1}`
   }
-  return <div className="page"><h1>{changes?"변경 이력":"요청 기록"}</h1><form className="toolbar" onSubmit={event=>{event.preventDefault();selectWindow()}}>
+  return <div className="page"><h1>{changes?"서비스 변경 이력":"요청 기록"}</h1>{changes&&<nav className="toolbar"><Link href="/changes">서비스 변경</Link><Link href={`/changes?scope=scheduler&${new URLSearchParams({...(params.get("from")?{from:params.get("from")!}:{}),...(params.get("to")?{to:params.get("to")!}:{})})}`}>운영 설정 변경</Link></nav>}<form className="toolbar" onSubmit={event=>{event.preventDefault();selectWindow()}}>
     <label>서비스<select aria-label="서비스" value={uid} onChange={event=>setUID(event.target.value)} required><option value="">서비스 선택</option>{uid&&!workloads.data?.some(row=>row.desired.metadata.uid===uid)&&<option value={uid}>이전 등록 서비스</option>}{workloads.data?.map(row=><option key={row.desired.metadata.uid} value={row.desired.metadata.uid}>{row.desired.metadata.name}</option>)}</select></label>
     <label>조회 기간<select value={preset} onChange={event=>setPreset(event.target.value)}><option value="15m">최근 15분</option><option value="1h">최근 1시간</option><option value="24h">최근 24시간</option><option value="custom">직접 선택</option></select></label>
     {preset==="custom"&&<DetailsDialog label="기간 선택" title="조회 기간"><p>현재 기기의 시간대 기준입니다. 최대 {config.maxWindowHours}시간까지 조회할 수 있습니다.</p><label>시작<input type="datetime-local" value={localDateTime(from)} onChange={event=>{if(event.target.value)setFrom(new Date(event.target.value).toISOString())}}/></label><label>종료<input type="datetime-local" value={localDateTime(to)} onChange={event=>{if(event.target.value)setTo(new Date(event.target.value).toISOString())}}/></label></DetailsDialog>}
@@ -73,7 +73,7 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
         {key:"kind",label:"변경",value:row=>statusLabel(row.kind)},
         {key:"phase",label:"상태",value:row=>statusLabel(row.phase)},
         {key:"actor",label:"담당자",value:row=>row.actorUsername?.startsWith("system:serviceaccount:")?row.actorUsername.split(":").at(-1):row.actorUsername??"기록 없음"},
-        {key:"detail",label:"상세",value:row=><DetailsDialog label="변경 자세히" title="변경 전후와 결과"><SourceJSON value={row}/></DetailsDialog>},
+        {key:"detail",label:"상세",value:row=><DetailsDialog label="변경 자세히" title="변경 전후와 결과"><SourceJSON inline value={row}/></DetailsDialog>},
       ]}/><div className="toolbar"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음</Button></div></>:<>
         <h2 className="text-xl font-semibold">전체 조회 기간 결과</h2><p>전체 {data.total}건 · 선택 조건 {data.selected}건</p><div className="toolbar">{Object.entries(data.outcomes).map(([key,value])=><span key={key}>{outcomeLabels[key]??"기타 결과"} {value}건</span>)}</div>
         <DataTable<ObservationCohort> data={data.cohorts??[]} columns={[

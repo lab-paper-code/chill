@@ -109,6 +109,6 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
 function Unavailable({title}:{title:string}) {
   return <div className="page"><h1>{title}</h1><p>연결 준비 중</p><Button disabled>아직 사용할 수 없습니다</Button></div>
 }
-export function ProducerPage({area}:{area:"transitions"|"experiments";id?:string}) {
-  return <Unavailable title={{transitions:"전환 기록",experiments:"실험"}[area]}/>
+export function ExperimentsPage() {
+  return <div className="page"><h1>실험</h1><p>실험 생성과 실행 API 준비 중. 판단 기록 비교는 제공된 조건과 예상 및 실제 관측을 확인하며 실험 실행이나 성공 판정을 대신하지 않습니다.</p><Link href="/scheduler/history">판단 기록에서 비교할 두 조건 선택</Link></div>
 }

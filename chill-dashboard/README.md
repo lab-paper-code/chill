@@ -11,7 +11,7 @@ Actual source fork: https://github.com/shadcn-ui/ui.git at commit `e8c3143b1cd19
 - Retained copied dependency closure: `apps/v4/registry/new-york-v4/ui/{sidebar,button,input,separator,sheet,tooltip,table,chart,dialog}.tsx`, `hooks/use-mobile.ts`; theme tokens from `apps/v4/app/globals.css`. Unused demo primitives are deleted.
 - `LICENSE.shadcn` preserves the upstream MIT copyright and permission notice for copied/adapted source. It does not relicense other CHILL code.
 
-The demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop, sidebar cookies and remote Google fonts are removed. Table uses the copied TanStack Table v9 feature/FlexRender convention; chart adapts the selected ChartContainer/tooltip source with server whole-window statistics only. No fake backend or demo data producer is included.
+The demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop, sidebar cookies and remote Google fonts are removed. Table retains TanStack Table v9; stable body cells preserve open details during polling. Charts use owner whole-window statistics or the samples of one selected power record. No fake backend or demo data producer is included.
 
 ## Runtime
 
@@ -68,7 +68,7 @@ retain integer literals while removing credentials.
 
 ## Public routes and current core
 
-`/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`.
+`/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/scheduler`, `/scheduler/candidates`, `/scheduler/load`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`.
 
 Real Model/Workload CRUD and version preconditions, one independent named-tensor inference, current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management journal; absence of a broader feed is disclosed.
 
@@ -88,10 +88,22 @@ preserves the draft on concurrent changes and names whole-object last-write
 semantics. Runtime application is separate from physical transitions. Permission
 failure retains input; response loss requires current settings and bounded
 history lookup before explicit resubmission.
+`/transitions` separates current actions/results from bounded historical records.
+Exact record links retain submitted from/to, append offset and expected identity;
+same action IDs with different node/start times are not merged. `/scheduler/history`
+selects A/B decisions, `/scheduler/compare` restores those exact records and queries
+owner whole-window request cohorts by UID/definition/input window. It does not
+recompute percentiles, sum energy or assign experimental scores.
+`/scheduler/power` shows individual node/meter/scope records and one-record W charts.
+Absent J, failed coverage, 0 J and zero samples remain distinct. `/changes` keeps
+Workload history by default; `scope=scheduler` selects settings actor/before/after
+and runtime results. Kind/node filters apply only to the fetched page; an empty
+filtered page can still advance. Exports name the selected-record/current-page
+scope. Identity changes clear selections; first login retains bookmarked records.
 
 
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
-Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain `연결 준비 중` with disabled controls. Scheduler judgment, candidate/load reads and all settings editing are connected; transition/history/power/comparison surfaces are tracked separately. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, nodal power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

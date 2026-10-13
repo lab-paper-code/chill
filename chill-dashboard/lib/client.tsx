@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +23,7 @@ export function useSession() {
 }
 
 export function SessionProvider({children}: {children:React.ReactNode}) {
+  const router = useRouter()
   const [client,setClient] = React.useState(() => new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false},mutations:{retry:false}}}))
   const [signals] = React.useState(() => new Set<AbortController>())
   const [token,setToken] = React.useState("")
@@ -43,6 +45,16 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
     signals.clear()
     await client.cancelQueries()
     client.clear()
+    if (token) {
+      const url = new URL(window.location.href)
+      if (["/scheduler/history","/scheduler/power","/scheduler/compare","/transitions"].includes(url.pathname) || url.pathname.startsWith("/transitions/") || (url.pathname === "/changes" && url.searchParams.get("scope") === "scheduler")) {
+        const selection = ["offset","kind","at","id","node","startedAt"]
+        for (const key of selection) url.searchParams.delete(key)
+        for (const prefix of ["a","b"]) for (const key of ["from","to",...selection]) url.searchParams.delete(`${prefix}${key[0].toUpperCase()}${key.slice(1)}`)
+        if (url.pathname.startsWith("/transitions/")) {url.pathname="/transitions";url.searchParams.delete("stage")}
+        router.replace(`${url.pathname}${url.search}${url.hash}`,{scroll:false})
+      }
+    }
     // Detached old observers cannot repopulate the replacement identity's cache.
     setClient(new QueryClient({defaultOptions:client.getDefaultOptions()}))
     setDraft("")
