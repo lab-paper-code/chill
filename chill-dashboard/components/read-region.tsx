@@ -22,9 +22,10 @@ export function statusLabel(value?: string): string {
     Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
     completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
     canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
+    pending: "미배정", assigned: "실행 단계 확인 대기", queued: "실행기 큐 대기", running: "실행 중", returning: "응답 반환 중",
     request_received: "요청 도착", response_finished: "응답 완료",
   }
-  return value ? labels[value] ?? "확인 필요" : "정보 없음"
+  return value ? labels[value] ?? value : "정보 없음"
 }
 export function DetailsDialog({ label, title, children, description }: {
   label: string; title: string; children: React.ReactNode; description?: string
@@ -39,6 +40,7 @@ export function DetailsDialog({ label, title, children, description }: {
 export function ReadRegion({title,query,children}: {title:string;query:{data?:unknown;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown};children:React.ReactNode}) {
   const {token} = useSession()
   const denied = query.error?.status === 401 || query.error?.status === 403
+  const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data ? query.error.data.code : undefined
   return <section className="read-region" aria-label={title}>
     <div className="read-region-heading"><h2>{title}</h2><div className="toolbar">
       {query.dataUpdatedAt > 0 && <span className="text-xs text-muted-foreground">확인 {new Date(query.dataUpdatedAt).toLocaleTimeString("ko-KR", {timeZone:"UTC",hour:"2-digit",minute:"2-digit"})} UTC</span>}
@@ -46,7 +48,7 @@ export function ReadRegion({title,query,children}: {title:string;query:{data?:un
     </div></div>
     {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <p role="status">불러오고 있어요.</p> : null}
     {query.isFetching && query.data !== undefined && <p role="status" className="text-sm text-muted-foreground">새로운 정보를 확인하고 있어요.</p>}
-    {query.error && <div role="alert" className="notice"><p>{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><SourceJSON title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} />{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
+    {query.error && <div role="alert" className="notice"><p>{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><SourceJSON title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} />{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
     {token && !denied && query.data !== undefined && children}
   </section>
 }

@@ -4,15 +4,18 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { CampaignResult, InventoryView, InventoryClass, PoolState, PoolsView, RunsView, ProfilingRun, Passport } from "@/lib/read-types"
+import type { CampaignResult, InventoryView, InventoryClass, PoolState, PoolsView, RunsView, ProfilingRun, Passport, SchedulerView } from "@/lib/read-types"
 import { ReadRegion, SourceJSON, SourceExport, DetailsDialog } from "@/components/read-region"
 import { DataTable } from "@/components/data-table"
 import { SectionCards } from "@/components/section-cards"
 import { Button } from "@/components/ui/button"
+import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
+import { safeSource } from "@/lib/source-export"
 
 export function OverviewPage() {
   const [poll,setPoll]=React.useState(false)
-  return <div className="page"><h1>시스템 상태</h1><label><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/> 자동 새로고침</label><SectionCards poll={poll}/></div>
+  const scheduler=useChillQuery<SchedulerView>("v1/scheduler",{decoder:parseSchedulerJSON,poll})
+  return <div className="page"><h1>시스템 상태</h1><label><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/> 자동 새로고침</label><SectionCards poll={poll}/><Link href="/scheduler">운영 판단과 실제 구성</Link>{scheduler.data&&<p className="text-sm text-muted-foreground">구성 관측 {scheduler.data.state.snapshot.at.startsWith("0001-")?"첫 관측 대기":scheduler.data.state.snapshot.at}. 시스템 준비 상태와 운영 판단은 별개입니다.</p>}</div>
 }
 
 function QueryWindow({path,page,extra}:{path:string;page?:{offset:number;limit:number;total:number;nextOffset?:number};extra?:React.ReactNode}) {
@@ -44,8 +47,9 @@ export function PoolsPage() {
     {key:"name",label:"그룹",value:row=><Link href={`/pools/${encodeURIComponent(row.id)}`}>{row.currentNodes.map(node=>node.name).join(", ")||"노드 없는 그룹"} 자세히</Link>},
     {key:"nodes",label:"노드",value:row=>row.currentNodes.map(node=>node.name).join(", ")||"없음"},
     {key:"workloads",label:"서비스",value:row=><ul>{row.servingWorkloads.map(workload=><li key={workload.uid}><Link href={`/workloads/${encodeURIComponent(workload.name)}?uid=${encodeURIComponent(workload.uid)}`}>{workload.name}</Link></li>)}</ul>},
+    {key:"at",label:"관측 시각",value:row=>row.observedAt},
     {key:"detail",label:"상세",value:row=><SourceJSON value={row}/>},
-  ]}/><SourceJSON title="조회 상세" value={query.data}/></>}</ReadRegion></div>
+  ]}/><SourceJSON title="조회 상세" value={query.data}/></>}</ReadRegion><Link href="/scheduler?view=snapshot">운영 판단의 실제 자원 구성</Link></div>
 }
 
 export function PoolPage({id}:{id:string}) {
@@ -56,7 +60,7 @@ export function PoolPage({id}:{id:string}) {
     {key:"ready",label:"상태",value:row=>row.ready?"준비됨":"준비되지 않음"},
     {key:"workloads",label:"서비스",value:row=>row.workloads.map(workload=>workload.name).join(", ")||"없음"},
     {key:"detail",label:"상세",value:row=><SourceJSON value={row}/>},
-  ]}/><DetailsDialog label="노드와 서비스 보기" title="그룹에 연결된 대상"><h2>노드</h2><ul>{query.data.currentNodes.map(row=><li key={row.uid}>{row.name}</li>)}</ul><h2>서비스</h2><ul>{query.data.servingWorkloads.map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul><p>현재 구성 정보입니다. 자원 할당량과 운영 전력은 아직 제공되지 않습니다.</p><SourceJSON value={query.data}/></DetailsDialog><SourceExport value={query.data} filename={`chill-pool-${id}.json`}/></>}</ReadRegion><Link href="/pools">그룹 목록</Link></div>
+  ]}/><DetailsDialog label="노드와 서비스 보기" title="그룹에 연결된 대상"><h2>노드</h2><ul>{query.data.currentNodes.map(row=><li key={row.uid}>{row.name}</li>)}</ul><h2>서비스</h2><ul>{query.data.servingWorkloads.map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul><p>현재 그룹 관측 {query.data.observedAt}</p><Link href={`/scheduler?view=snapshot&pool=${encodeURIComponent(id)}`}>자원 할당과 전력모드의 실제 구성</Link><details><summary>원본</summary><pre className="source-json">{stringifySchedulerJSON(safeSource(query.data),2)}</pre></details></DetailsDialog><SourceExport value={query.data} filename={`chill-pool-${id}.json`}/></>}</ReadRegion><Link href="/pools">그룹 목록</Link></div>
 }
 
 const runFilters=[ ["","전체"],["ExecutionComplete=True","실행 완료"],["ExecutionComplete=False","실행 미완료"],["ExecutionComplete=Unknown","실행 확인 중"],["EvidenceVerified=True","근거 검증 완료"],["EvidenceVerified=False","근거 미검증"],["EvidenceVerified=Unknown","근거 확인 중"] ]

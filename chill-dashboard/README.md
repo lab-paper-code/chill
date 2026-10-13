@@ -72,6 +72,17 @@ retain integer literals while removing credentials.
 
 Real Model/Workload CRUD and version preconditions, one independent named-tensor inference, current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management journal; absence of a broader feed is disclosed.
 
+`/scheduler`, `/scheduler/candidates` and `/scheduler/load` connect current
+judgment, frozen configuration/candidate details and event-time load. Automatic
+application and evaluated judgment are separate; keep/target J and SLO are
+predictions, not measurements. Load preserves the submitted nanosecond window
+independently of the draft. The owner omits arrivals from load responses, so load
+links query all definitions for the original UID/window; candidate SLO links
+include the provided immutable definition. Request details separately display
+CHILL dispatch and native progress, including exact uint64 batch identity.
+Polling retains open detail snapshots and announces newer observation times.
+
+
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
 Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain `연결 준비 중` with disabled controls. Scheduler query and settings transport are connected; their UI surfaces are tracked separately. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.

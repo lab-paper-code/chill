@@ -9,6 +9,8 @@ import { ReadRegion, SourceJSON, SourceExport, DetailsDialog, statusLabel } from
 import { DataTable } from "@/components/data-table"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { Button } from "@/components/ui/button"
+import { parseSchedulerJSON, stringifySchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
+import { safeSource } from "@/lib/source-export"
 
 type UIDChoice={desired:{metadata:{name:string;uid:string}}}
 const outcomes=["completed","error","rejected","timeout","canceled","incomplete","delivery_failed"]
@@ -31,7 +33,7 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
   const selectedWindow=!!selectedUID&&params.has("from")&&params.has("to")
   const queryText=new URLSearchParams()
   for(const key of ["from","to","limit","cursor","definition","outcome"])params.getAll(key).forEach(value=>queryText.append(key,value))
-  const query=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(selectedUID)}?${queryText}`,{enabled:selectedWindow,poll})
+  const query=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(selectedUID)}?${queryText}`,{enabled:selectedWindow,poll,decoder:changes?undefined:parseSchedulerJSON})
   const workloads=useChillQuery<UIDChoice[]>("v1/workloads")
   const path=changes?"/changes":"/observations"
   function selectWindow() {
@@ -75,17 +77,22 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
       ]}/><div className="toolbar"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음</Button></div></>:<>
         <h2 className="text-xl font-semibold">전체 조회 기간 결과</h2><p>전체 {data.total}건 · 선택 조건 {data.selected}건</p><div className="toolbar">{Object.entries(data.outcomes).map(([key,value])=><span key={key}>{outcomeLabels[key]??"기타 결과"} {value}건</span>)}</div>
         <DataTable<ObservationCohort> data={data.cohorts??[]} columns={[
-          {key:"definition",label:"적용 설정",value:row=><DetailsDialog label={definitionLabel(row.definition)} title="적용 설정"><SourceJSON value={definitions.find(item=>item.identity===row.definition)??row}/></DetailsDialog>},
+          {key:"definition",label:"적용 설정",value:row=><DetailsDialog label={definitionLabel(row.definition)} title="적용 설정"><details><summary>원본</summary><pre>{stringifySchedulerJSON(safeSource(definitions.find(item=>item.identity===row.definition)??row),2)}</pre></details></DetailsDialog>},
           {key:"sampleCount",label:"지연 표본",value:row=>`${row.sampleCount}건`,sortValue:row=>row.sampleCount},
-          {key:"latency",label:"지연 시간",value:row=>row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 미제공":`${row.percentile}% 기준`} · ${row.quantileNanos/1e6} ms`},
-          {key:"target",label:"목표 시간",value:row=>row.targetLatencyNanos==null?"값 없음":`${row.targetLatencyNanos/1e6} ms`},
-        ]}/><ChartAreaInteractive data={(data.cohorts??[]).map(row=>({...row,label:definitionLabel(row.definition)}))}/>
-        <DetailsDialog label="개별 요청 보기" title="개별 요청 기록" description="전체 기간 통계와 별개로, 한 번에 조회한 기록만 표시합니다."><DataTable<RequestEvent> data={data.requests??[]} columns={[
+          {key:"latency",label:"지연 시간",value:row=>row.quantileNanos==null?"값 없음":`${row.percentile===undefined?"백분위 미제공":`${row.percentile}% 기준`} / ${Number(row.quantileNanos)/1e6} ms`},
+          {key:"target",label:"목표 시간",value:row=>row.targetLatencyNanos==null?"값 없음":`${nanosToMilliseconds(row.targetLatencyNanos)} ms`},
+        ]}/><ChartAreaInteractive data={(data.cohorts??[]).map(row=>({definition:row.definition,quantileNanos:row.quantileNanos===null?null:Number(row.quantileNanos),label:definitionLabel(row.definition)}))}/>
+        <h2 className="text-xl font-semibold">개별 요청 기록</h2><p>전체 기간 통계와 별개로, 현재 가져온 기록을 표시합니다.</p><DataTable<RequestEvent> data={data.requests??[]} columns={[
           {key:"at",label:"시각",value:row=>new Date(row.at).toLocaleString(),sortValue:row=>row.at},
-          {key:"outcome",label:"결과",value:row=>row.outcome?outcomeLabels[row.outcome]??"기타 결과":"이 단계에서 결과 없음"},
-          {key:"elapsed",label:"단계 소요 시간",value:row=>`${row.elapsedNanos/1e6} ms`},
-          {key:"detail",label:"상세",value:row=><><span>{params.get("requestID")===row.requestID?"선택한 요청":""}</span><SourceJSON title="요청 자세히" value={row}/></>},
-        ]}/><div className="toolbar"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음</Button></div></DetailsDialog>
+          {key:"outcome",label:"결과",value:row=>row.outcome?outcomeLabels[row.outcome]??row.outcome:"이 단계에서 결과 없음"},
+          {key:"elapsed",label:"단계 소요 시간",value:row=>`${nanosToMilliseconds(row.elapsedNanos)} ms`},
+          {key:"detail",label:"상세",value:row=><><span>{params.get("requestID")===row.requestID?"선택한 요청":""}</span><DetailsDialog label="요청 자세히" title="요청 배정과 실행 관측">
+            <dl className="grid gap-2"><dt>요청</dt><dd>{row.requestID}</dd><dt>서비스</dt><dd>{row.workloadName} / {row.workloadUID??"UID 미제공"}</dd><dt>적용 설정</dt><dd>{row.definition??"미제공"}</dd><dt>사건 단계와 시각</dt><dd>{statusLabel(row.kind)} / {row.at}</dd><dt>수신 시각</dt><dd>{row.receivedAt}</dd><dt>입력 경로</dt><dd>{row.inputPath??"미제공"}</dd><dt>요청 유효 시간</dt><dd>{row.lifetimeNanos===undefined?"미제공":`${nanosToMilliseconds(row.lifetimeNanos)} ms`}</dd><dt>클라이언트 관측 시간</dt><dd>{row.clientSpanNanos===undefined?"미제공":`${nanosToMilliseconds(row.clientSpanNanos)} ms`}</dd><dt>실행 완료 관측</dt><dd>{row.executionComplete?"완료 확인":"완료 확인 대기"}</dd><dt>응답 목표</dt><dd>{row.slo?`${row.slo.percentile}% 기준 / ${nanosToMilliseconds(row.slo.targetLatencyNanos)} ms`:"미제공"}</dd></dl>
+            <h3 className="font-semibold">CHILL 배정</h3>{row.assignment?<dl className="grid gap-2"><dt>실행 그룹과 노드</dt><dd>{row.assignment.pool} / {row.assignment.node.name} / {row.assignment.node.uid}</dd><dt>인스턴스와 배정 시각</dt><dd>{row.assignment.instance} / {row.assignment.dispatchedAt}</dd><dt>실행 경로와 모델 자료</dt><dd>{row.assignment.executionPath} / {row.assignment.artifact}</dd><dt>프로파일과 신뢰 수준</dt><dd>{row.assignment.profile} / {row.assignment.profileConfidenceLevel}</dd></dl>:<p>이 사건에 배정 관측이 없습니다.</p>}
+            <h3 className="font-semibold">Native 실행 진행</h3><p>실행 인스턴스: {row.nativeInstance??"미제공"}</p>{row.nativeProgress?<dl className="grid gap-2"><dt>단계와 시각</dt><dd>{statusLabel(row.nativeProgress.phase)} / {row.nativeProgress.at}</dd><dt>실행 대상</dt><dd>{row.nativeProgress.requestID} / {row.nativeProgress.workloadUID} / {row.nativeProgress.definition}</dd><dt>배치 ID와 크기</dt><dd>{row.nativeProgress.batchID===undefined?"미제공":String(row.nativeProgress.batchID)} / {row.nativeProgress.batchSize??"미제공"}</dd><dt>프로파일과 판단 ID</dt><dd>{row.nativeProgress.profileID??"미제공"} / {row.nativeProgress.decisionID??"미제공"}</dd><dt>큐 대기 / 서비스 실행 / Backend / Native 경과 시간</dt><dd>{row.nativeProgress.queueMS} / {row.nativeProgress.serviceMS} / {row.nativeProgress.backendMS} / {row.nativeProgress.nativeElapsedMS} ms</dd><dt>실행 완료 관측</dt><dd>{row.nativeProgress.executionComplete?"완료 확인":"완료 확인 대기"}</dd><dt>처리 결과</dt><dd>{row.nativeProgress.outcome?outcomeLabels[row.nativeProgress.outcome]??row.nativeProgress.outcome:"미제공"}</dd>{row.nativeProgress.error&&<><dt>실행 오류</dt><dd>{row.nativeProgress.error}</dd></>}</dl>:<p>이 사건에 Native 실행 관측이 없습니다.</p>}
+            {row.error&&<p role="alert">{row.error}</p>}<details><summary>원본</summary><pre>{stringifySchedulerJSON(safeSource(row),2)}</pre></details>
+          </DetailsDialog></>},
+        ]}/><div className="toolbar"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음</Button></div>
       </>}
       {!!data.incompleteWindows?.length&&<p role="alert">일부 기간의 기록이 불완전합니다. 자세한 내용은 조회 자료에서 확인하세요.</p>}
       <SourceJSON title="조회 자료 자세히" value={{conditions:{uid:selectedUID,from:params.get("from"),to:params.get("to"),definition:params.getAll("definition"),outcome:params.getAll("outcome"),cursor:params.get("cursor"),limit:params.get("limit")},source:data}}/>

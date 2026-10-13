@@ -4,6 +4,7 @@ import { ManagementPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
 import { ResourcesPage, PoolsPage, PoolPage, MeasurementsPage, MeasurementCheckPage, MeasurementDetail, ProducerPage } from "@/features/read-pages"
+import { SchedulerPage, SchedulerCandidatesPage, SchedulerLoadPage } from "@/features/scheduler"
 
 export default async function Page({params,searchParams}:{params:Promise<{route:string[]}>;searchParams:Promise<Record<string,string|string[]|undefined>>}) {
   const {route} = await params
@@ -20,6 +21,9 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if(route[0]==="measurements"&&route.length===2&&route[1]==="check")page=<MeasurementCheckPage/>
   else if(route[0]==="measurements"&&route.length===4)page=<MeasurementDetail kind={route[1]} namespace={route[2]} name={route[3]}/>
   else if(route[0]==="observations"&&route.length===1)page=<ObservationsPage/>
+  else if(route[0]==="scheduler"&&route.length===1)page=<SchedulerPage/>
+  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="candidates")page=<SchedulerCandidatesPage/>
+  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="load")page=<SchedulerLoadPage/>
   else if(route[0]==="changes"&&route.length===1)page=<ObservationsPage changes/>
   else if(route[0]==="configuration"&&route.length===1)page=<ProducerPage area="configuration"/>
   else if((route[0]==="transitions"||route[0]==="experiments")&&route.length<=2)page=<ProducerPage area={route[0]} id={route[1]}/>
