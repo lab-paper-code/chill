@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "chill.dacs.io/runtime-declaration.v1alpha2",
+  "image": "155.230.35.213:5000/chill/chill-firstfloor@sha256:7b919a87721d2d0ff30da488a8b9ee215252c63b49facda1faaae32784b6da9a",
+  "architecture": "arm64",
+  "runtime": {
+    "family": "firstfloor",
+    "backends": ["ort-cpu"]
+  },
+  "packages": [
+    {"name": "onnxruntime", "version": "1.27.0"},
+    {"name": "numpy", "version": "2.2.6"}
+  ],
+  "verification": "exact-image-runtime-inspection-v1"
+}

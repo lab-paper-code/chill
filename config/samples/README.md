@@ -60,6 +60,24 @@ kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.
 kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```
 
+## Firstfloor runtime declaration
+
+[`firstfloor/ortcpu-arm64-runtime-declaration.json`](firstfloor/ortcpu-arm64-runtime-declaration.json)
+retains exact-image inspection output from the native ARM64 ORT CPU image on
+`rasp5`. The same image's persistent worker/runner also completed real fixed-K
+inference. It declares supplied runtime facts, not a measured execution profile.
+
+Use its JSON producer output as `runtime.payload` in a
+`profiling.executionDeclarations` entry for a matching ARM64 DeviceClass. Merge
+the entry into the existing declaration list; do not replace unrelated entries.
+The fact-source envelope and Helm renderer use
+`chill.dacs.io/profiler-execution-facts.v1alpha7`. An older envelope is rejected
+by the current resolver, even when its contained runtime declarations are valid.
+
+Adding this entry does not add a ModelSpec execution path or start a measurement.
+After a direct ConfigMap update, carry the merged list into the reviewed Helm
+values before a later upgrade; Helm does not retain such an update automatically.
+
 ## Serving scheduler configuration
 
 `serving-scheduler.json` is a controls-off deployment configuration with positive
