@@ -1,0 +1,25 @@
+{
+  "model": "explicit-synthetic-echo",
+  "mode": "serving",
+  "inputs": [
+    {"name": "input", "datatype": "FP32", "shape": [4]}
+  ],
+  "runnerCommand": ["python3", "runtime/firstfloor/runner.py", "--echo", "--delay-ms", "10", "--warmup-iterations", "1"],
+  "runnerTimeoutMS": 5000,
+  "maxQueueRequests": 32,
+  "maxQueueBytes": 1048576,
+  "maxRequestBytes": 1048576,
+  "maxBatchSize": 4,
+  "batchSizes": [1, 2, 4],
+  "profilePath": "config/samples/firstfloor/echo-profile.json",
+  "policy": {
+    "deadlinePolicy": "keep",
+    "decisionID": "explicit-synthetic-development",
+    "profileID": "explicit-synthetic-not-measured",
+    "transportEnvelopeMS": 1,
+    "returnEnvelopeMS": 1,
+    "envelopeSource": "explicit-synthetic-development-only",
+    "maxBatchWaitMS": 20,
+    "maxBatchSize": 4
+  }
+}

@@ -3,13 +3,18 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"reflect"
+	"slices"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -17,17 +22,20 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
+const invalidEvidenceCode = "InvalidEvidence"
+
 // Catalog is a refresh-only storage boundary. Its returned view is retained by
 // the coordinator; inference never reads campaigns or downloads evidence.
 // Loader verification proves stored structure and binding, not admission.
-// Batch distributions retain every raw latency sample in nanoseconds. Energy
-// uses the existing incremental wall-energy/item estimator and arithmetic trial
-// mean; memory is the largest measured byte count, never a resource limit.
+// Batch distributions retain every raw RUNNER SERVICE sample in nanoseconds,
+// never client roundtrip or backend-call time. Energy uses the existing exact
+// incremental wall-energy/item estimator; memory is measured lifetime peak.
 type Catalog struct {
 	store           *Store
 	objects         evidencestore.LocationReader
@@ -86,27 +94,71 @@ func (c *Catalog) Refresh(ctx context.Context, selections []types.NamespacedName
 		view.Insufficiencies = append(view.Insufficiencies, issues...)
 		if len(profile.Batches) > 0 {
 			if !completeNativeProfile(profile) {
-				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: "Triton/Python serving requires measured and planned batch sizes 1..maxBatchSize under the frozen native settings"})
+				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor serving requires measured batch 1 and an initialized measured subset within the frozen maximum"})
 				continue
 			}
 			view.Profiles = append(view.Profiles, profile)
 		}
+	}
+	var err error
+	view.Profiles, err = latestConditionProfiles(view.Profiles)
+	if err != nil {
+		return CatalogView{}, err
 	}
 	return view, nil
 }
 
 func completeNativeProfile(profile serving.Profile) bool {
 	condition := profile.Condition
-	if condition.RuntimeFamily != profilingrun.TritonRuntimeFamily || condition.Backend != profilingrun.TritonPythonBackend || condition.Triton == nil ||
-		len(profile.Batches) != int(condition.Triton.MaxBatchSize) || len(condition.PlannedBatchSizes) != int(condition.Triton.MaxBatchSize) {
+	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily || condition.Firstfloor == nil ||
+		profile.RuntimeMetadata == nil || profile.RuntimeMetadata.Runtime != condition.Backend || len(profile.Batches) == 0 ||
+		profile.Batches[0].Batch != 1 {
 		return false
 	}
-	for index, batch := range profile.Batches {
-		if batch.Batch != index+1 || condition.PlannedBatchSizes[index] != batch.Batch {
+	if len(condition.CPU.AffinityCPUs) != 0 && !slices.Equal(condition.CPU.AffinityCPUs, profile.RuntimeMetadata.CPUAffinity) {
+		return false
+	}
+	previous := 0
+	for _, batch := range profile.Batches {
+		if batch.Batch <= previous || batch.Batch > int(condition.Firstfloor.MaxBatchSize) ||
+			!slices.Contains(condition.PlannedBatchSizes, batch.Batch) ||
+			!slices.Contains(profile.RuntimeMetadata.InitializedBatches, batch.Batch) {
 			return false
 		}
+		previous = batch.Batch
 	}
-	return len(profile.Batches) > 0
+	return true
+}
+
+// Explicit source selection remains the scope. Plan names, campaign UIDs and
+// SLOs are not execution conditions; source completion decides the latest success.
+func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, error) {
+	result := make([]serving.Profile, 0, len(profiles))
+	indices := make(map[string]int, len(profiles))
+	for _, profile := range profiles {
+		condition := profile.Condition
+		condition.Name = ""
+		condition.PlannedBatchSizes = nil
+		payload, err := json.Marshal(struct {
+			Condition    profilederivation.CurvePlanSpec `json:"condition"`
+			MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
+		}{condition, profile.MetricSource})
+		if err != nil {
+			return nil, fmt.Errorf("encode frozen profile condition: %w", err)
+		}
+		key := string(payload)
+		if index, found := indices[key]; found {
+			old := result[index]
+			if profile.MeasuredAt.After(old.MeasuredAt) ||
+				(profile.MeasuredAt.Equal(old.MeasuredAt) && profile.ID < old.ID) {
+				result[index] = profile
+			}
+			continue
+		}
+		indices[key] = len(result)
+		result = append(result, profile)
+	}
+	return result, nil
 }
 
 //nolint:gocyclo // This refresh boundary follows the explicit ordered campaign, plan, Run, and raw-evidence checks.
@@ -159,7 +211,11 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		condition.MetricSource.NodeName != state.TargetNode || condition.CPU.Request != state.CPURequest.String() {
 		return serving.Profile{}, nil, errors.New("frozen curve plan contradicts campaign measurement state")
 	}
+	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "standalone experiment execution is not same-firstfloor serving evidence"}}, nil
+	}
 
+	var measuredAt time.Time
 	active := make([]profilerevidence.VerifiedEvidence, 0, len(resultSpec.CompletedTrials))
 	idle := make([]profilerevidence.VerifiedIdleEvidence, 0, len(resultSpec.CompletedTrials))
 	evidenceReferences := []evidencestore.ObjectIdentity{planReference}
@@ -202,6 +258,9 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		if err := validateCatalogExecution(run, execution); err != nil {
 			return serving.Profile{}, nil, fmt.Errorf("completed Run %s: %w", runKey, err)
 		}
+		if execution.Terminal.Job.CompletionTime.After(measuredAt) {
+			measuredAt = execution.Terminal.Job.CompletionTime
+		}
 		if _, duplicate := seenRaw[execution.RawMeasurement.Location()]; duplicate {
 			return serving.Profile{}, nil, errors.New("completed trials reuse one raw measurement object")
 		}
@@ -233,7 +292,13 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	if err != nil {
 		return serving.Profile{}, nil, fmt.Errorf("restore measured idle baseline: %w", err)
 	}
+	_, idleRaw, err := idle[0].Records()
+	if err != nil {
+		return serving.Profile{}, nil, err
+	}
+	metricSource := idleRaw.Metrics.Source
 	batches := make(map[int]*catalogBatch)
+	var runtimeMetadata *profilingrun.FirstfloorRuntimeEvidence
 	for _, verified := range active {
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, verified, idle[0]); err != nil {
 			return serving.Profile{}, nil, err
@@ -241,6 +306,16 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		_, raw, err := verified.Records()
 		if err != nil {
 			return serving.Profile{}, nil, err
+		}
+		if !reflect.DeepEqual(metricSource, raw.Metrics.Source) {
+			return serving.Profile{}, nil, errors.New("active and idle wall-power source identities differ")
+		}
+		if raw.Runtime.Firstfloor != nil {
+			if runtimeMetadata == nil {
+				runtimeMetadata = raw.Runtime.Firstfloor
+			} else if !reflect.DeepEqual(runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime) {
+				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
+			}
 		}
 		trial, err := profilerprojection.Trial(verified)
 		if err != nil {
@@ -259,14 +334,42 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 			return serving.Profile{}, nil, err
 		}
 	}
+	if runtimeMetadata != nil {
+		for _, verified := range idle {
+			_, raw, err := verified.Records()
+			if err != nil {
+				return serving.Profile{}, nil, err
+			}
+			if !reflect.DeepEqual(metricSource, raw.Metrics.Source) {
+				return serving.Profile{}, nil, errors.New("idle wall-power source identities differ")
+			}
+			if raw.Runtime.Firstfloor == nil {
+				return serving.Profile{}, nil, errors.New("idle firstfloor actual runner facts are missing")
+			}
+			activeFacts, idleFacts := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime
+			// Warmup is outside both measurement windows; active protocol performs
+			// warmup and the model-loaded idle protocol performs none.
+			activeFacts.WarmupIterations, idleFacts.WarmupIterations = 0, 0
+			if !reflect.DeepEqual(activeFacts, idleFacts) {
+				return serving.Profile{}, nil, errors.New("idle and active actual firstfloor runner conditions differ")
+			}
+		}
+	}
 	profile := serving.Profile{
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
 		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,
-		ConfidenceLevel: c.confidenceLevel,
+		ConfidenceLevel: c.confidenceLevel, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts, MeasuredAt: measuredAt,
+		MetricSource: metricSource,
+	}
+	if runtimeMetadata != nil {
+		profile.RuntimeMetadata = &runtimeMetadata.Runtime
 	}
 	var issues []CatalogIssue
 	for _, batchSize := range condition.PlannedBatchSizes {
 		batch := batches[batchSize]
+		if batch == nil && batchSize == 1 {
+			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor serving requires exact measured batch 1"})
+		}
 		if batch == nil {
 			continue // A terminal minimum search need not measure the whole plan.
 		}
@@ -281,6 +384,12 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
 		profile.Batches = append(profile.Batches, batch.profile)
 	}
+	if len(issues) != 0 {
+		return serving.Profile{}, issues, nil
+	}
+	if !completeNativeProfile(profile) {
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
+	}
 	return profile, issues, nil
 }
 
@@ -292,13 +401,14 @@ type catalogBatch struct {
 }
 
 func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivation.EnergyTrial, memoryBytes uint64) error {
-	if len(trial.LatencyMilliseconds) == 0 || math.IsNaN(energy.IncrementalWorkJoulesPerItem) || math.IsInf(energy.IncrementalWorkJoulesPerItem, 0) {
-		return errors.New("raw latency or measured energy evidence is missing or invalid")
+	if len(trial.NativeSamples) == 0 || len(trial.NativeSamples) != len(trial.LatencyMilliseconds) ||
+		math.IsNaN(energy.IncrementalWorkJoulesPerItem) || math.IsInf(energy.IncrementalWorkJoulesPerItem, 0) {
+		return errors.New("correlated runner service or measured energy evidence is missing or invalid")
 	}
-	for _, milliseconds := range trial.LatencyMilliseconds {
-		nanos := milliseconds * 1e6
-		if nanos <= 0 || math.IsNaN(nanos) || math.IsInf(nanos, 0) {
-			return errors.New("raw latency cannot be represented as finite positive nanoseconds")
+	for _, sample := range trial.NativeSamples {
+		nanos := sample.RunnerServiceMilliseconds * 1e6
+		if sample.BatchSize != trial.Batch || sample.BatchID == 0 || nanos <= 0 || math.IsNaN(nanos) || math.IsInf(nanos, 0) {
+			return errors.New("raw runner service cannot be represented as finite positive nanoseconds")
 		}
 		b.profile.DurationNanos = append(b.profile.DurationNanos, nanos)
 	}
@@ -346,8 +456,13 @@ func validateCatalogRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edg
 
 func validateCatalogRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun) error {
 	measurement := run.Spec.Measurement
-	if measurement.CPUQuota != nil {
-		return errors.New("campaign trial has an unexpected configured CPU quota")
+	selectedQuota := campaign.Spec.CPUQuota
+	if (measurement.CPUQuota == nil) != (selectedQuota == nil) ||
+		(measurement.CPUQuota != nil && measurement.CPUQuota.Cmp(*selectedQuota) != 0) {
+		return errors.New("campaign trial CPU quota contradicts selected source quota")
+	}
+	if !slices.Equal(measurement.CPUAffinity, campaign.Spec.CPUAffinity) {
+		return errors.New("campaign trial CPU affinity contradicts selected source CPU IDs")
 	}
 	if measurement.WorkloadMode == "idle-model-loaded" {
 		protocol := campaign.Spec.IdleProtocol
@@ -399,6 +514,24 @@ func validateCatalogRunConfig(run *edgev1alpha1.ProfilingRun, config profilingru
 		return errors.New("stored RunConfig contradicts completed Run spec")
 	}
 	measurement := run.Spec.Measurement
+	if measurement.CPUQuota == nil {
+		if config.CPU.Policy != profilingrun.AllocatableCPUQuotaPolicy {
+			return errors.New("frozen CPU quota policy contradicts completed Run selection")
+		}
+	} else {
+		quota, err := resource.ParseQuantity(config.CPU.Limit)
+		if err != nil || config.CPU.Policy != profilingrun.ConfiguredCPUQuotaPolicy || quota.Cmp(*measurement.CPUQuota) != 0 {
+			return errors.New("frozen CPU quota contradicts completed Run selection")
+		}
+	}
+	if len(config.CPU.AffinityCPUs) != len(measurement.CPUAffinity) {
+		return errors.New("frozen CPU affinity contradicts completed Run selection")
+	}
+	for index, cpu := range measurement.CPUAffinity {
+		if !slices.Contains(config.CPU.AffinityCPUs, int(cpu)) || slices.Contains(measurement.CPUAffinity[:index], cpu) {
+			return errors.New("frozen CPU affinity contradicts completed Run selection")
+		}
+	}
 	settling := 0
 	if measurement.SettlingDurationSeconds != nil {
 		settling = int(*measurement.SettlingDurationSeconds)

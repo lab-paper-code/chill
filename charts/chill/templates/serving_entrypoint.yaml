@@ -72,9 +72,13 @@ spec:
             - {{ printf "--bind-address=:%v" .Values.servingEntrypoint.port | quote }}
             - {{ printf "--serving-namespace=%s" $servingNamespace | quote }}
             - {{ printf "--actuation-namespace=%s" $actuationNamespace | quote }}
+            {{- with .Values.servingEntrypoint.scheduler.configMap }}
+            - {{ printf "--serving-scheduler-configmap=%s" . | quote }}
+            - {{ printf "--serving-scheduler-config-key=%s" $.Values.servingEntrypoint.scheduler.key | quote }}
+            {{- end }}
             - "--tls-cert=/etc/chill/tls/tls.crt"
             - "--tls-key=/etc/chill/tls/tls.key"
-            - "--observation-directory=/data"
+            - {{ printf "--observation-directory=%s" .Values.servingEntrypoint.observationStorage.directory | quote }}
             {{- if .Values.console.enabled }}
             - {{ printf "--console-url=http://%s.%s.svc.cluster.local:%v" (include "chill.consoleName" .) .Release.Namespace .Values.console.port | quote }}
             {{- end }}
@@ -145,6 +149,8 @@ spec:
               readOnly: true
             - name: observations
               mountPath: /data
+            - name: temporary
+              mountPath: /tmp
       volumes:
         - name: tls
           secret:
@@ -152,6 +158,9 @@ spec:
         - name: observations
           persistentVolumeClaim:
             claimName: {{ $name }}
+        - name: temporary
+          emptyDir:
+            sizeLimit: 128Mi
       nodeSelector:
 {{- toYaml .Values.servingEntrypoint.nodeSelector | nindent 8 }}
       {{- with .Values.servingEntrypoint.affinity }}

@@ -37,6 +37,7 @@ type PreparationRequest struct {
 	TargetNode  string
 	CPURequest  string
 	CPUQuota    string
+	CPUAffinity []int
 	Measurement profilingrun.MeasurementContract
 	Metrics     MetricObservationPolicy
 }
@@ -298,6 +299,7 @@ func freezeCPUContract(
 	contract := profilingrun.CPUContract{
 		Policy: profilingrun.AllocatableCPUQuotaPolicy, PolicyVersion: profilingrun.CPUQuotaPolicyVersion,
 		Request: request.CPURequest, Limit: node.AllocatableCPU,
+		AffinityCPUs: slices.Clone(request.CPUAffinity),
 	}
 	threadCount := allocatableCores
 	if request.CPUQuota != "" {
@@ -322,10 +324,24 @@ func freezeCPUContract(
 		contract.Limit = strconv.FormatInt(quotaCores, 10)
 		threadCount = int(quotaCores)
 	}
+	slices.Sort(contract.AffinityCPUs)
+	for index, cpu := range contract.AffinityCPUs {
+		if cpu < 0 || (index > 0 && cpu == contract.AffinityCPUs[index-1]) {
+			return profilingrun.CPUContract{}, errors.New("CPU affinity IDs must be nonnegative and unique")
+		}
+	}
+	if len(contract.AffinityCPUs) > 0 && candidate.State.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
+		return profilingrun.CPUContract{}, errors.New("explicit CPU affinity requires firstfloor execution")
+	}
 	if (candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend) ||
-		(candidate.State.RuntimeFamily == profilingrun.TritonRuntimeFamily && candidate.State.Backend == profilingrun.TritonPythonBackend) {
+		(candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
+			(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
+				candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend)) {
 		contract.ORTIntraOpThreads = threadCount
 		contract.ORTInterOpThreads = 1
+	}
+	if len(contract.AffinityCPUs) > 0 && len(contract.AffinityCPUs) < contract.ORTIntraOpThreads {
+		return profilingrun.CPUContract{}, errors.New("CPU affinity mask is smaller than the selected ONNX Runtime thread count")
 	}
 	return contract, nil
 }
@@ -386,9 +402,11 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	switch {
 	case candidate.State.RuntimeFamily == firstRuntimeFamily &&
 		candidate.State.Backend == firstRuntimeBackend:
-	case candidate.State.RuntimeFamily == profilingrun.TritonRuntimeFamily &&
-		candidate.State.Backend == profilingrun.TritonPythonBackend &&
-		candidate.State.Triton != nil:
+	case candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
+		(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
+			candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend ||
+			candidate.State.Backend == profilingrun.FirstfloorRKNNLiteBackend) &&
+		candidate.State.Firstfloor != nil:
 	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
 		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
 		candidate.State.HostContract != nil:
@@ -484,6 +502,16 @@ func (r PreparationRequest) Validate() error {
 		if cpuRequest.Cmp(cpuQuota) > 0 {
 			return errors.New("CPU request must not exceed CPU quota")
 		}
+	}
+	seenCPUs := make(map[int]struct{}, len(r.CPUAffinity))
+	for _, cpu := range r.CPUAffinity {
+		if cpu < 0 {
+			return errors.New("CPU affinity IDs must be nonnegative")
+		}
+		if _, exists := seenCPUs[cpu]; exists {
+			return errors.New("CPU affinity IDs must be unique")
+		}
+		seenCPUs[cpu] = struct{}{}
 	}
 	if r.Metrics.IntervalMilliseconds < 1 || r.Metrics.TimeoutMilliseconds < 1 ||
 		r.Metrics.TimeoutMilliseconds >= r.Metrics.IntervalMilliseconds ||

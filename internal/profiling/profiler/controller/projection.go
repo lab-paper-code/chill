@@ -5,6 +5,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -55,6 +56,13 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 	if spec.Measurement.CPUQuota != nil {
 		request.Preparation.CPUQuota = spec.Measurement.CPUQuota.String()
 	}
+	if len(spec.Measurement.CPUAffinity) > 0 {
+		request.Preparation.CPUAffinity = make([]int, len(spec.Measurement.CPUAffinity))
+		for i, cpu := range spec.Measurement.CPUAffinity {
+			request.Preparation.CPUAffinity[i] = int(cpu)
+		}
+		slices.Sort(request.Preparation.CPUAffinity)
+	}
 	if spec.CPURequest.Sign() <= 0 {
 		return RequestedRun{}, errors.New("ProfilingRun CPU request must be positive")
 	}
@@ -82,6 +90,7 @@ func ProjectSnapshot(
 		return profiler.Snapshot{}, errors.New("RunConfig is required to project lifecycle state")
 	}
 	config := *frozenIntent
+	config.CPU.AffinityCPUs = slices.Clone(config.CPU.AffinityCPUs)
 	snapshot := profiler.Snapshot{RunConfig: &config}
 	if err := projectJob(run, job, &snapshot); err != nil {
 		return profiler.Snapshot{}, err

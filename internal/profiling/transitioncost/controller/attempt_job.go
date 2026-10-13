@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha3"
+	transitionAttemptSchemaVersion     = "chill.dacs.io/transition-observer-attempt.v1alpha4"
 	transitionAttemptJSONEnvName       = "CHILL_TRANSITION_ATTEMPT_JSON"
 	transitionObserverBinaryPath       = "/transition-observer"
 	transitionContractMaximumBytesFlag = "--max-contract-bytes="
@@ -87,6 +87,7 @@ type attemptTransitionFacts struct {
 	Namespace                      string `json:"namespace"`
 	NodeActuationName              string `json:"nodeActuationName"`
 	TargetNode                     string `json:"targetNode"`
+	TargetNodeUID                  string `json:"targetNodeUID"`
 	DeviceType                     string `json:"deviceType"`
 	Model                          string `json:"model"`
 	ServingService                 string `json:"servingService"`
@@ -231,6 +232,7 @@ func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection
 		TransitionFacts: attemptTransitionFacts{
 			Namespace: request.Prepared.Namespace, NodeActuationName: request.NodeActuationName,
 			TargetNode:     request.Prepared.TargetNode.Name,
+			TargetNodeUID:  request.Prepared.TargetNode.UID,
 			DeviceType:     direction.FrozenContract.TargetState.DeviceType,
 			Model:          direction.FrozenContract.TargetState.Model,
 			ServingService: request.Prepared.ServingService, ServingContainer: request.Prepared.ServingContainer,

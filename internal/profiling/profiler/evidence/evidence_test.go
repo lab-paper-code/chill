@@ -62,8 +62,8 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 }
 
 func TestCompositeMetricSourcePinsCurrentRawSchemas(t *testing.T) {
-	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha7" ||
-		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha5" {
+	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha8" ||
+		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha6" {
 		t.Fatalf("raw schemas changed: active=%q idle=%q", RawMeasurementSchemaVersion, IdleRawMeasurementSchemaVersion)
 	}
 	config := loadRunConfig(t)
@@ -204,7 +204,7 @@ func TestRawMeasurementBindsCompositeMetricSourceToRunConfig(t *testing.T) {
 
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha14"
+	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
 	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
 		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
 	}

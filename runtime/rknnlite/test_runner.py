@@ -303,6 +303,31 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_optional_affinity_preserves_default_and_applies_actual_inventory(self) -> None:
+        request = valid_request(Path("/model/model.rknn"))
+        runner.validate_request(request)
+        request["runConfig"]["cpu"]["affinityCPUs"] = [17, 9]
+        runner.validate_request(request)
+        for invalid in (None, [], [True], [-1], [9, 9]):
+            with self.subTest(invalid=invalid):
+                request["runConfig"]["cpu"]["affinityCPUs"] = invalid
+                with self.assertRaises(runner.ContractError):
+                    runner.validate_request(request)
+        request["runConfig"]["cpu"]["affinityCPUs"] = [17, 9]
+        with mock.patch.object(runner.os, "sched_getaffinity", side_effect=[{9, 17, 31}, {9, 17}]), \
+                mock.patch.object(runner.os, "sched_setaffinity") as apply:
+            runner.apply_cpu_affinity(request["runConfig"])
+            apply.assert_called_once_with(0, [9, 17])
+        with mock.patch.object(runner.os, "sched_getaffinity", return_value={9, 31}), \
+                mock.patch.object(runner.os, "sched_setaffinity") as apply:
+            with self.assertRaisesRegex(runner.ContractError, "actual allowed CPU inventory"):
+                runner.apply_cpu_affinity(request["runConfig"])
+            apply.assert_not_called()
+        del request["runConfig"]["cpu"]["affinityCPUs"]
+        with mock.patch.object(runner.os, "sched_setaffinity") as apply:
+            runner.apply_cpu_affinity(request["runConfig"])
+            apply.assert_not_called()
+
     def test_contract_rejects_unsupported_inputs_for_active_and_idle(self) -> None:
         for factory in (valid_request, valid_idle_request):
             for tensors in [

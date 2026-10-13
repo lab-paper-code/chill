@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -55,6 +56,49 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 		measurement.SettlingDurationSeconds != nil ||
 		measurement.WarmupIterations != parent.Spec.ActiveProtocol.WarmupIterations {
 		t.Fatalf("active Run does not match the active protocol: %+v", measurement)
+	}
+}
+
+func TestBuildRunCopiesCPUSelectionsIntoEveryWorkload(t *testing.T) {
+	parent := testParent()
+	parent.Spec.CPUAffinity = []int32{31, 8}
+	quota := resource.MustParse("2")
+	parent.Spec.CPUQuota = &quota
+	for _, mode := range []batchenergyoptimization.WorkloadMode{
+		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
+	} {
+		run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(run.Spec.Measurement.CPUAffinity, parent.Spec.CPUAffinity) {
+			t.Fatal("owned Run lost the source affinity")
+		}
+		if run.Spec.Measurement.CPUQuota == nil || run.Spec.Measurement.CPUQuota.Cmp(quota) != 0 {
+			t.Fatal("owned Run lost the source quota")
+		}
+		run.Spec.Measurement.CPUQuota.Set(3)
+		if parent.Spec.CPUQuota.String() != "2" {
+			t.Fatal("owned Run quota aliases the source")
+		}
+		run.Spec.Measurement.CPUAffinity[0] = 99
+		if parent.Spec.CPUAffinity[0] != 31 {
+			t.Fatal("owned Run affinity aliases the source")
+		}
+	}
+}
+
+func TestBuildRunPreservesDefaultCPUSelections(t *testing.T) {
+	for _, mode := range []batchenergyoptimization.WorkloadMode{
+		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
+	} {
+		run, err := BuildRun(testParent(), batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Spec.Measurement.CPUQuota != nil || run.Spec.Measurement.CPUAffinity != nil {
+			t.Fatal("default campaign inferred a quota or CPU IDs")
+		}
 	}
 }
 

@@ -28,7 +28,7 @@ func TestMeasurementResultWriterStoresCompleteTableAndParityProgress(t *testing.
 	}
 	if stored.reference.Store != progress.evidenceStore ||
 		stored.reference.Key != "power-mode-transition-costs/transition-cost-uid/result.json" ||
-		stored.reference.SchemaVersion != measurementResultSchemaVersion || stored.reference.Size < 1 {
+		stored.reference.SchemaVersion != transitioncost.MeasurementResultSchemaVersion || stored.reference.Size < 1 {
 		t.Fatalf("stored reference = %#v", stored.reference)
 	}
 	for directionIndex, direction := range stored.record.Directions {

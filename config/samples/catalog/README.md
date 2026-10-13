@@ -6,7 +6,7 @@ convert, or inspect a local model file.
 ## Before registration
 
 1. Select the executable artifact and record every input tensor's exact name,
-   Triton datatype, and sample shape. Omit the batch axis; CHILL supplies the
+   uppercase datatype, and sample shape. Omit the batch axis; CHILL supplies the
    batch for each measurement.
 2. For a converted artifact, retain its source artifact, target platform,
    supported batch sizes, converter, and converter version. The repository's
@@ -71,7 +71,7 @@ docker run --rm --platform linux/arm64 --entrypoint sh \
 | `source.architecture` | Carrier platform and target `DeviceClass` architecture |
 | `source.path` | Exact absolute path inside the carrier |
 | `input.tensors[].name` | Exact artifact input name, preserving input order |
-| `input.tensors[].datatype` | Explicit uppercase Triton datatype, such as `FP32` |
+| `input.tensors[].datatype` | Explicit uppercase datatype, such as `FP32` |
 | `input.tensors[].sampleShape` | Artifact input dimensions without the batch axis |
 | `derivation` | Conversion record; omit for the canonical artifact |
 | `executionPaths[].runtime` | Installed `profiling.executionDeclarations` entry |
@@ -120,6 +120,6 @@ HTTP non-resource permissions, not direct managed-resource write permissions.
 
 Structural validation does not prove image access, runtime support or hardware
 compatibility. Those facts and measured evidence are resolved by profiling and
-native admission. This sample's standalone ORT/RKNN paths are not relabeled as
-Triton profiles; native serving needs a matching Triton/Python execution path
-and a completed campaign measuring every frozen batch size `1..maxBatchSize`.
+native admission. The sample declares matching firstfloor ORT CPU/RKNN paths;
+standalone ORT/RKNN references remain separate. Native serving consumes a
+completed firstfloor campaign with every initialized measured batch size.

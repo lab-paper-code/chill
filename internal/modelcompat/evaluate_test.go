@@ -16,28 +16,51 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{name: "compatible", wantVerdict: VerdictCompatible},
 		{
-			name: "compatible native Triton ONNX relation",
+			name: "compatible native firstfloor ONNX relation",
 			mutate: func(input *Input) {
-				input.Path.RuntimeFamily = runtimeFamilyTriton
-				input.Path.Backend = "python"
-				input.Runtime.Family = runtimeFamilyTriton
-				input.Runtime.Backends = []string{"python"}
+				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
+				input.Path.Backend = "ort-cpu"
+				input.Runtime.Family = runtimeFamilyFirstfloor
+				input.Runtime.Backends = []string{"ort-cpu"}
 			},
 			wantVerdict: VerdictCompatible,
 		},
 		{
-			name: "standalone ORT is not Triton evidence",
+			name: "standalone ORT is not firstfloor evidence",
 			mutate: func(input *Input) {
-				input.Path.RuntimeFamily = runtimeFamilyTriton
-				input.Path.Backend = "python"
+				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
+				input.Path.Backend = "ort-cpu"
 			},
 			wantVerdict: VerdictIncompatible,
 			wantReasons: []Reason{conflict(ReasonRuntimeFamilyMismatch)},
 		},
 		{
+			name: "compatible firstfloor RKNN relation",
+			mutate: func(input *Input) {
+				input.Artifact.Format = artifactFormatRKNN
+				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
+				input.Path.Backend = "rknnlite"
+				input.Runtime.Family = runtimeFamilyFirstfloor
+				input.Runtime.Backends = []string{"rknnlite"}
+			},
+			wantVerdict: VerdictCompatible,
+		},
+		{
+			name: "firstfloor cannot run RKNN through ORT",
+			mutate: func(input *Input) {
+				input.Artifact.Format = artifactFormatRKNN
+				input.Path.RuntimeFamily = runtimeFamilyFirstfloor
+				input.Path.Backend = "ort-cuda"
+				input.Runtime.Family = runtimeFamilyFirstfloor
+				input.Runtime.Backends = []string{"ort-cuda"}
+			},
+			wantVerdict: VerdictUnknown,
+			wantReasons: []Reason{unknown(ReasonArtifactRuntimeRelationUnknown)},
+		},
+		{
 			name: "compatible RKNNLite relation",
 			mutate: func(input *Input) {
-				input.Artifact.Format = "rknn"
+				input.Artifact.Format = artifactFormatRKNN
 				input.Path.RuntimeFamily = runtimeFamilyRKNNLite
 				input.Path.Backend = "not-applicable"
 				input.Runtime.Family = runtimeFamilyRKNNLite

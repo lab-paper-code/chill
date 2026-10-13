@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -21,9 +22,13 @@ import (
 const requestTimeoutCode = "RequestTimeout"
 
 type HandlerConfig struct {
-	MaxRequestBytes int64
-	RequestTimeout  time.Duration
-	MaxQueryEvents  int
+	MaxRequestBytes                                            int64
+	RequestTimeout                                             time.Duration
+	MaxQueryEvents                                             int
+	ObservationWindow                                          time.Duration
+	Scheduler                                                  *servingkube.SchedulerController
+	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
+	SchedulerLock                                              *sync.Mutex
 }
 type Handler struct {
 	manager    *servingkube.Manager
@@ -40,6 +45,9 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}
 	h := &Handler{manager: manager, runtime: runtime, authorizer: authorizer, journal: journal, observer: observer, config: config, mux: http.NewServeMux()}
+	if h.config.SchedulerLock == nil {
+		h.config.SchedulerLock = &sync.Mutex{}
+	}
 	h.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, http.StatusOK, struct {
 			Alive bool `json:"alive"`
@@ -69,6 +77,13 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/pools", h.management)
 	h.mux.HandleFunc("GET /api/v1/pools/{id}", h.management)
 	h.mux.HandleFunc("GET /api/v1/observations/workloads/{uid}", h.observations)
+	h.mux.HandleFunc("GET /api/v1/scheduler", h.scheduler)
+	h.mux.HandleFunc("GET /api/v1/scheduler/settings", h.scheduler)
+	h.mux.HandleFunc("GET /api/v1/scheduler/state", h.scheduler)
+	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
+	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
+	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
+	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -330,7 +345,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		outcome := "error"
 		switch errorCode(err) {
-		case requestTimeoutCode:
+		case requestTimeoutCode, "SLODeadlineDrop":
 			outcome = "timeout"
 		case "RequestCanceled":
 			outcome = "canceled"
@@ -451,7 +466,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusTooManyRequests
 	case requestTimeoutCode:
 		status = http.StatusGatewayTimeout
-	case "RequestCanceled":
+	case "RequestCanceled", "SLODeadlineDrop":
 		status = http.StatusRequestTimeout
 	case "BackendError", "BackendUnavailable", "BackendResponseInvalid", "BackendResponseTooLarge", "BackendContextMismatch":
 		status = http.StatusBadGateway

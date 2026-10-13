@@ -85,6 +85,11 @@ func BuildRun(
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}
+	spec.Measurement.CPUAffinity = append([]int32(nil), parent.Spec.CPUAffinity...)
+	if parent.Spec.CPUQuota != nil {
+		quota := parent.Spec.CPUQuota.DeepCopy()
+		spec.Measurement.CPUQuota = &quota
+	}
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      RunName(parent.Name, measurement, attempt),

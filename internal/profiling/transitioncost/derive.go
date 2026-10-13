@@ -92,6 +92,20 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 		return classified(verified, VerdictInsufficient, ReasonServingSurvivalUnknown,
 			"pre-transition and post-completion process identity is incomplete"), nil
 	}
+	if err := VerifyNativeTransition(verified.raw.BeforeNative, verified.raw.AfterNative); err != nil {
+		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, err.Error()), nil
+	}
+	for index := range verified.raw.NativeObservations {
+		if err := VerifyNativeTransition(verified.raw.BeforeNative, &verified.raw.NativeObservations[index]); err != nil {
+			return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, err.Error()), nil
+		}
+	}
+	if verified.raw.BeforeNative.ReceivedAt.After(startedAt) || verified.raw.AfterNative.ReceivedAt.Before(completedAt) {
+		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, "native zero-inference observations do not enclose the action window"), nil
+	}
+	if !nativeProcessObserved(raw.BeforeNative, &raw.PreTransitionProcess.Process) || !nativeProcessObserved(raw.AfterNative, raw.PostTransitionProcess) {
+		return classified(verified, VerdictInsufficient, ReasonNativeStateUnverified, "process witness does not match actual native physical incarnation"), nil
+	}
 
 	tauSeconds := completedAt.Sub(startedAt).Seconds()
 	return FinalizedObservation{record: FinalizedObservationRecord{
@@ -102,6 +116,8 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 			TauMilliseconds:                        tauSeconds * 1000, TransitionWallJoules: joules,
 			EtaJoules:       joules - frozen.TargetIdleBaseline.MeanWallWatts*tauSeconds,
 			ServingSurvived: servingSurvived,
+			BeforeNative:    cloneNativeObservation(raw.BeforeNative),
+			AfterNative:     cloneNativeObservation(raw.AfterNative),
 		},
 	}}, nil
 }

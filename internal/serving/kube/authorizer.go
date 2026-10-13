@@ -28,6 +28,7 @@ type Authorizer struct {
 type Principal struct {
 	username string
 	uid      string
+	identity *authenticationv1.UserInfo
 }
 
 type principalKey struct{}
@@ -98,5 +99,36 @@ func (a *Authorizer) Authorize(ctx context.Context, token, verb, path string) (P
 	if !access.Status.Allowed || access.Status.Denied {
 		return Principal{}, ErrForbidden
 	}
-	return Principal{username: review.Status.User.Username, uid: review.Status.User.UID}, nil
+	return Principal{username: review.Status.User.Username, uid: review.Status.User.UID, identity: review.Status.User.DeepCopy()}, nil
+}
+
+// Actor returns the authenticated identity for durable settings audit records.
+func (p Principal) Actor() (string, string) { return p.username, p.uid }
+
+// AuthorizeConfigMapUpdate requires a separate resource grant for the exact
+// scheduler configuration, preserving TokenReview groups and extras.
+func (a *Authorizer) AuthorizeConfigMapUpdate(ctx context.Context, principal Principal, namespace, name string) error {
+	if principal.identity == nil || principal.username == "" {
+		return ErrUnauthenticated
+	}
+	if a.Client == nil {
+		return ErrAuthorizationUnavailable
+	}
+	extra := make(map[string]authorizationv1.ExtraValue, len(principal.identity.Extra))
+	for key, values := range principal.identity.Extra {
+		extra[key] = authorizationv1.ExtraValue(values)
+	}
+	access, err := a.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: principal.username, UID: principal.uid, Groups: principal.identity.Groups, Extra: extra,
+			ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: namespace, Verb: "update", Group: "", Resource: "configmaps", Name: name},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil || access == nil || access.Status.EvaluationError != "" {
+		return ErrAuthorizationUnavailable
+	}
+	if !access.Status.Allowed || access.Status.Denied {
+		return ErrForbidden
+	}
+	return nil
 }

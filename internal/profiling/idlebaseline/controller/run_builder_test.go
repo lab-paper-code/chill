@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,5 +34,21 @@ func TestBuildRunUsesExactLongestParentNameAndUIDLabel(t *testing.T) {
 	}
 	if len(run.Name) != 253 || run.Labels[labelIdleBaselineUID] != string(parent.UID) {
 		t.Fatalf("long child identity = name length %d labels %#v", len(run.Name), run.Labels)
+	}
+}
+
+func TestBuildRunCopiesSourceAffinity(t *testing.T) {
+	parent := testBaselineParent()
+	parent.Spec.CPUAffinity = []int32{31, 8}
+	run, err := buildRun(parent, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(run.Spec.Measurement.CPUAffinity, parent.Spec.CPUAffinity) {
+		t.Fatal("owned idle Run lost source affinity")
+	}
+	run.Spec.Measurement.CPUAffinity[0] = 99
+	if parent.Spec.CPUAffinity[0] != 31 {
+		t.Fatal("owned idle Run affinity aliases the source")
 	}
 }

@@ -156,7 +156,7 @@ Standalone Console과 CLI는 기존 query 및 검증 계약을 유지한다. 별
 
 패키지 허용 범위는 [아키텍처 규칙](../../../.go-arch-lint.yml)을 따른다.
 Serving과 Console의 handler 연결은 `cmd/**`의 조립 권한을 사용한다.
-웹은 CHILL API를 호출하고 Kubernetes, Triton, S3와 Node 동작은 해당 CHILL 생산자가 소유한다.
+웹은 CHILL API를 호출하고 Kubernetes, firstfloor, S3와 Node 동작은 해당 CHILL 생산자가 소유한다.
 
 ## 4. 인증과 API 중계
 

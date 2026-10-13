@@ -454,6 +454,25 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
+    def test_optional_affinity_request_and_actual_cpu_contract(self) -> None:
+        request = valid_request(Path("/model/model.onnx"))
+        cpu = request["runConfig"]["cpu"]
+        cpu["affinityCPUs"] = list(range(100, 100 + cpu["ortIntraOpThreads"]))
+        runner.validate_request(request)
+        for invalid in (None, [], [True], [-1], [100, 100]):
+            with self.subTest(invalid=invalid):
+                cpu["affinityCPUs"] = invalid
+                with self.assertRaises(runner.ContractError):
+                    runner.validate_request(request)
+        run = {"cpu": {"limit": "2", "ortIntraOpThreads": 2, "affinityCPUs": [17, 9]}}
+        with mock.patch.object(runner, "read_cpu_environment", return_value=("200000 100000", [9, 17], "9,17,31")):
+            self.assertEqual(runner.validate_cpu_contract(run), ("200000 100000", [9, 17], "9,17,31"))
+        with mock.patch.object(runner, "read_cpu_environment", return_value=("200000 100000", [9, 17, 31], "9,17,31")):
+            with self.assertRaisesRegex(runner.ContractError, "differs from requested"):
+                runner.validate_cpu_contract(run)
+            del run["cpu"]["affinityCPUs"]
+            self.assertEqual(runner.validate_cpu_contract(run)[1], [9, 17, 31])
+
     def test_cpu_contract_reads_cgroup_v2(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

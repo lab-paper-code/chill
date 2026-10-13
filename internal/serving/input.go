@@ -146,8 +146,7 @@ func validDatum(datatype string, value any) bool {
 		parsed, err := strconv.ParseFloat(string(number), bits)
 		return err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) && (datatype != "FP16" || math.Abs(parsed) <= 65504)
 	default:
-		// Triton HTTP JSON has no BF16 numeric representation. A binary codec
-		// must be implemented before that declared datatype can be served.
+		// The numeric/bool JSON contract covers the initialized runner's types.
 		return false
 	}
 	if datatype[0] == 'U' {

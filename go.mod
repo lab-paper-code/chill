@@ -11,6 +11,7 @@ require (
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.55.0
 	github.com/spf13/pflag v1.0.5
+	github.com/x448/float16 v0.8.4
 	gonum.org/v1/gonum v0.15.1
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0
@@ -60,7 +61,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect

@@ -70,6 +70,16 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              cpuAffinity:
+                description: CPUAffinity selects explicit firstfloor CPU IDs for every
+                  owned idle Run.
+                items:
+                  format: int32
+                  minimum: 0
+                  type: integer
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
               cpuQuota:
                 anyOf:
                 - type: integer

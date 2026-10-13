@@ -1,0 +1,8 @@
+{
+  "profileID": "explicit-synthetic-not-measured",
+  "batches": [
+    {"size": 1, "serviceSamplesMS": [11, 12], "energyPerItemJ": 4},
+    {"size": 2, "serviceSamplesMS": [11, 12], "energyPerItemJ": 2},
+    {"size": 4, "serviceSamplesMS": [11, 12], "energyPerItemJ": 1}
+  ]
+}

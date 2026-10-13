@@ -13,6 +13,7 @@ METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
+FIRSTFLOOR_IMG ?= $(IMAGE_NAMESPACE)/chill-firstfloor:$(IMAGE_TAG)
 DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
 RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
@@ -111,7 +112,7 @@ vet: ## Run go vet against code.
 test-runtime: ## Run production runtime contract tests.
 	python3 -m unittest discover -s runtime/ortcpu -p 'test_*.py'
 	python3 -m unittest discover -s runtime/rknnlite -p 'test_*.py'
-	python3 -m unittest discover -s runtime/triton -p 'test_*.py'
+	python3 -m unittest discover -s runtime/firstfloor -p 'test_*.py'
 
 .PHONY: test-artifact-tools
 test-artifact-tools: ## Run model-artifact build-tool tests.
@@ -318,6 +319,8 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/metric-observer ./cmd/metric-observer
 	go build -o bin/measurement-worker ./cmd/measurement-worker
 	go build -o bin/serving-entrypoint ./cmd/serving-entrypoint
+	go build -o bin/serving-worker ./cmd/serving-worker
+	go build -o bin/serving-operation ./cmd/serving-operation
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
@@ -360,6 +363,20 @@ docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
 .PHONY: docker-build-serving-entrypoint
 docker-build-serving-entrypoint: ## Build the inference entry point image.
 	$(CONTAINER_TOOL) build -f build/docker/serving-entrypoint.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
+
+.PHONY: docker-build-firstfloor
+docker-build-firstfloor: ## Build the native CPU serving runtime image.
+	$(CONTAINER_TOOL) build -f build/docker/firstfloor.Dockerfile -t $(FIRSTFLOOR_IMG) .
+
+.PHONY: docker-push-firstfloor
+docker-push-firstfloor: ## Push the native runtime image.
+	$(CONTAINER_TOOL) push $(FIRSTFLOOR_IMG)
+
+.PHONY: docker-buildx-firstfloor
+docker-buildx-firstfloor: ## Build and push the native CPU runtime for selected platforms.
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
 
 .PHONY: docker-build-dashboard
 docker-build-dashboard: ## Build the independent Dashboard image.

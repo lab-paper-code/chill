@@ -2,7 +2,11 @@
 // from frozen estimator inputs and raw, Kubernetes-independent facts.
 package transitioncost
 
-import "time"
+import (
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+)
 
 // Verdict is the terminal scientific classification of one raw transition
 // observation.
@@ -29,6 +33,7 @@ const (
 	ReasonPowerWindowInsufficient     Reason = "PowerWindowInsufficient"
 	ReasonBoundaryUncertaintyExceeded Reason = "BoundaryUncertaintyExceeded"
 	ReasonServingSurvivalUnknown      Reason = "ServingSurvivalUnknown"
+	ReasonNativeStateUnverified       Reason = "NativeStateUnverified"
 )
 
 // StateIdentity is one exact Layer-0 device, model, and power-mode state.
@@ -160,8 +165,13 @@ type RawObservation struct {
 
 	// PostTransitionProcess is the running process in the fresh Ready Pod whose
 	// receipt time is recorded by MarkerBrackets.ReadyProcessWitness.
-	PreTransitionProcess  *ProcessObservation `json:"preTransitionProcess"`
-	PostTransitionProcess *ProcessIdentity    `json:"postTransitionProcess"`
+	PreTransitionProcess  *ProcessObservation           `json:"preTransitionProcess"`
+	PostTransitionProcess *ProcessIdentity              `json:"postTransitionProcess"`
+	BeforeNative          *NativeNodeObservation        `json:"beforeNative"`
+	AfterNative           *NativeNodeObservation        `json:"afterNative"`
+	NativeObservations    []NativeNodeObservation       `json:"nativeObservations"`
+	NativeFailures        []NativeReadFailure           `json:"nativeFailures"`
+	PowerSource           metricobserver.SourceIdentity `json:"powerSource"`
 }
 
 // Observation is an opaque accepted observation. Its values always originate

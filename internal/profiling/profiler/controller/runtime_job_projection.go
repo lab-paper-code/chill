@@ -26,35 +26,53 @@ type runtimeJobProjection struct {
 func projectRuntimeJob(
 	config profilingrun.RunConfig,
 ) (runtimeJobProjection, error) {
-	if profilingrun.IsSupportedCPUORTRunConfig(config) || profilingrun.IsSupportedTritonCPURunConfig(config) {
+	firstfloor := profilingrun.IsSupportedFirstfloorRunConfig(config)
+	if profilingrun.IsSupportedCPUORTRunConfig(config) ||
+		(firstfloor && config.State.Backend == profilingrun.FirstfloorORTCPUBackend) {
 		return runtimeJobProjection{
 			ArtifactDestination: cpuORTModelDestination,
 			SecurityContext:     restrictedContainerSecurityContext(),
 		}, nil
 	}
-	if !profilingrun.IsSupportedRKNNLiteRunConfig(config) {
+	cuda := firstfloor && config.State.Backend == profilingrun.FirstfloorORTCUDABackend
+	rknn := profilingrun.IsSupportedRKNNLiteRunConfig(config) ||
+		(firstfloor && config.State.Backend == profilingrun.FirstfloorRKNNLiteBackend)
+	if !cuda && !rknn {
 		return runtimeJobProjection{}, errors.New("no Job projection exists for the resolved RunConfig")
 	}
-
 	delivery := config.Delivery
-	if delivery.ArtifactCapability == nil || delivery.HostContract == nil ||
-		delivery.HostContract.Platform == nil || delivery.RuntimeAccess == nil {
-		return runtimeJobProjection{}, errors.New("verified RKNNLite delivery contract is incomplete")
+	if delivery.ArtifactCapability == nil || delivery.RuntimeAccess == nil {
+		return runtimeJobProjection{}, errors.New("verified accelerator delivery contract is incomplete")
 	}
 	projection := runtimeJobProjection{
-		ArtifactDestination: rknnModelDestination,
+		ArtifactDestination: cpuORTModelDestination,
 		SupplementalGroups:  append([]int64(nil), delivery.RuntimeAccess.SupplementalGroups...),
 		SecurityContext:     runtimeAccessSecurityContext(*delivery.RuntimeAccess),
-		AcceleratorResource: corev1.ResourceName(delivery.HostContract.Allocation.ResourceName),
+	}
+	if cuda {
+		if delivery.RuntimeAccess.GPUUUID == "" || len(delivery.RuntimeAccess.Resources) != 1 ||
+			delivery.RuntimeAccess.Resources["nvidia.com/gpu"] != "1" {
+			return runtimeJobProjection{}, errors.New("CUDA Job requires declared GPU identity and exactly one GPU resource")
+		}
+		projection.AcceleratorResource = "nvidia.com/gpu"
+		if delivery.HostContract == nil {
+			return projection, nil
+		}
+	} else {
+		if delivery.HostContract == nil || delivery.HostContract.Platform == nil {
+			return runtimeJobProjection{}, errors.New("verified RKNNLite delivery contract is incomplete")
+		}
+		projection.ArtifactDestination = rknnModelDestination
+		projection.AcceleratorResource = corev1.ResourceName(delivery.HostContract.Allocation.ResourceName)
 	}
 	seenHostPaths := make(map[string]struct{})
 	seenMountPaths := make(map[string]struct{})
 	appendHost := func(name, hostPath, mountPath string, pathType corev1.HostPathType, readOnly bool) error {
 		if _, duplicate := seenHostPaths[hostPath]; duplicate {
-			return fmt.Errorf("RKNNLite host path %q is projected more than once", hostPath)
+			return fmt.Errorf("accelerator host path %q is projected more than once", hostPath)
 		}
 		if _, duplicate := seenMountPaths[mountPath]; duplicate {
-			return fmt.Errorf("RKNNLite container path %q is projected more than once", mountPath)
+			return fmt.Errorf("accelerator container path %q is projected more than once", mountPath)
 		}
 		seenHostPaths[hostPath] = struct{}{}
 		seenMountPaths[mountPath] = struct{}{}
@@ -89,14 +107,16 @@ func projectRuntimeJob(
 	); err != nil {
 		return runtimeJobProjection{}, err
 	}
-	if err := appendHost(
-		"runtime-host-platform",
-		delivery.HostContract.Platform.CompatiblePath,
-		delivery.HostContract.Platform.CompatiblePath,
-		corev1.HostPathFile,
-		true,
-	); err != nil {
-		return runtimeJobProjection{}, err
+	if delivery.HostContract.Platform != nil {
+		if err := appendHost(
+			"runtime-host-platform",
+			delivery.HostContract.Platform.CompatiblePath,
+			delivery.HostContract.Platform.CompatiblePath,
+			corev1.HostPathFile,
+			true,
+		); err != nil {
+			return runtimeJobProjection{}, err
+		}
 	}
 	for index, device := range delivery.HostContract.Devices {
 		if err := appendHost(

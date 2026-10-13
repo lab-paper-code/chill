@@ -2,7 +2,6 @@ package worker_test
 
 import (
 	"context"
-	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -147,15 +146,8 @@ func TestObserveRetainsPowerAcrossSimulatedTargetLossAndDerivesCost(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, ok := derived.AcceptedObservation()
-	if derived.Verdict() != transitioncost.VerdictAccepted || !ok {
-		t.Fatalf("derived outcome = %s/%s: %s", derived.Verdict(), derived.Reason(), derived.Detail())
-	}
-	if accepted.TauMilliseconds() != 4000 || math.Abs(accepted.TransitionWallJoules()-80) > 1e-9 ||
-		math.Abs(accepted.EtaJoules()-32) > 1e-9 || accepted.ServingSurvived() {
-		t.Fatalf("accepted transition = tau %v ms, wall %v J, eta %v J, survived %v",
-			accepted.TauMilliseconds(), accepted.TransitionWallJoules(),
-			accepted.EtaJoules(), accepted.ServingSurvived())
+	if derived.Verdict() != transitioncost.VerdictInsufficient || derived.Reason() != transitioncost.ReasonNativeStateUnverified {
+		t.Fatalf("replacement without final native zero-inference counters was accepted: %+v", derived.Record())
 	}
 }
 

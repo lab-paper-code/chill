@@ -12,6 +12,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -143,7 +144,7 @@ func TestFinalizedTransitionCodecRejectsMalformedCurrentRecord(t *testing.T) {
 	}
 	tests := map[string][]byte{
 		"unknown field": bytes.Replace(payload, []byte(`"observation":`), []byte(`"unknown":true,"observation":`), 1),
-		"old schema": bytes.Replace(payload, []byte(FinalizedTransitionRecordSchemaVersion),
+		"old schema": bytes.Replace(payload, []byte(transitioncost.FinalizedRecordSchemaVersion),
 			[]byte("chill.dacs.io/transition-cost-finalized-observation.v1alpha1"), 1),
 		"trailing value": append(append([]byte(nil), payload...), []byte(" {}")...),
 	}
@@ -325,7 +326,7 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 	base := time.Unix(100, 0).UTC()
 	direction := prepared.Directions[0].FrozenContract
 	process := transitioncost.ProcessIdentity{
-		ContainerName: "runtime", ContainerID: "container", StartedAt: base.Add(-time.Hour),
+		ContainerName: "firstfloor", ContainerID: "container", StartedAt: base.Add(-time.Hour),
 	}
 	raw := transitioncost.RawObservation{
 		ObservationStartedAt: base, ObservationEndedAt: base.Add(4 * time.Second),
@@ -366,6 +367,8 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 		},
 		PostTransitionProcess: &process,
 	}
+	raw.BeforeNative = powerNativeFixture(base.Add(900*time.Millisecond), process)
+	raw.AfterNative = powerNativeFixture(base.Add(3*time.Second), process)
 	switch outcome {
 	case invalidAttempt:
 		raw.SourceReadBack.State.PowerMode = otherMeasurementStateValue
@@ -455,4 +458,7 @@ func finalizationReceipt(
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome,
 	}
+}
+func powerNativeFixture(at time.Time, process transitioncost.ProcessIdentity) *transitioncost.NativeNodeObservation {
+	return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []string{"measure/serving/pod"}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, RestartCount: process.RestartCount, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: time.Unix(1, 0), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelPath: "/model/model.onnx", CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
 }

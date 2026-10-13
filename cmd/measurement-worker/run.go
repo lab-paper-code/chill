@@ -120,15 +120,17 @@ func buildRuntimeAdapter(
 		return nil, err
 	}
 	if profilingrun.IsSupportedCPUORTRunConfig(runConfigRecord) ||
-		profilingrun.IsSupportedTritonCPURunConfig(runConfigRecord) {
+		profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
 		command := opts.runtimeCommand
-		constructor := worker.NewORTCPURuntime
-		if profilingrun.IsSupportedTritonCPURunConfig(runConfigRecord) {
-			command = opts.tritonRuntimeCommand
-			constructor = worker.NewTritonCPURuntime
+		if profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
+			command = opts.firstfloorRuntimeCommand
 		}
-		runtimeAdapter, err := constructor(worker.CPURuntimeConfig{
-			Command: command, ModelPath: opts.modelPath,
+		modelPath := opts.modelPath
+		if runConfigRecord.State.Backend == "rknnlite" {
+			modelPath = defaultRKNNLiteModelPath
+		}
+		config := worker.CPURuntimeConfig{
+			Command: command, ModelPath: modelPath,
 			ObserverReadyPaths: opts.observerReadyPaths, WorkloadWindowStartPath: opts.workloadWindowStartPath,
 			MeasurementStartPath:    opts.measurementStartPath,
 			WorkloadWindowReadyPath: opts.workloadWindowReadyPath,
@@ -136,9 +138,15 @@ func buildRuntimeAdapter(
 			ResultPath:              opts.runtimeResultPath(), ObserverReadyTimeout: opts.observerReadyTimeout,
 			MaxLatencySamples: opts.maxLatencySamples, MaxInputBytes: opts.maxInputBytes,
 			MaxResultBytes: opts.maxRuntimeResultBytes, Stdout: stdout, Stderr: stderr,
-		})
+		}
+		var runtimeAdapter *worker.CPURuntime
+		if profilingrun.IsSupportedFirstfloorRunConfig(runConfigRecord) {
+			runtimeAdapter, err = worker.NewFirstfloorRuntime(config, runConfig)
+		} else {
+			runtimeAdapter, err = worker.NewORTCPURuntime(config)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("construct %s CPU adapter: %w", runConfigRecord.State.RuntimeFamily, err)
+			return nil, fmt.Errorf("construct %s adapter: %w", runConfigRecord.State.RuntimeFamily, err)
 		}
 		return runtimeAdapter, nil
 	}

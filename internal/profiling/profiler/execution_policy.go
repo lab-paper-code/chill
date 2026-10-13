@@ -57,7 +57,7 @@ func DeriveExecutionPlan(
 	if err := frozen.Validate(); err != nil {
 		return ExecutionPlan{}, err
 	}
-	if !profilingrun.IsSupportedCPUORTRunConfig(config) && !profilingrun.IsSupportedTritonCPURunConfig(config) &&
+	if !profilingrun.IsSupportedCPUORTRunConfig(config) && !profilingrun.IsSupportedFirstfloorRunConfig(config) &&
 		!profilingrun.IsSupportedRKNNLiteRunConfig(config) {
 		return ExecutionPlan{}, errors.New("measurement worker requires a supported explicit RunConfig")
 	}

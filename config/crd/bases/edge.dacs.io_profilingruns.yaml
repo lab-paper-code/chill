@@ -101,6 +101,17 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  cpuAffinity:
+                    description: |-
+                      CPUAffinity optionally selects explicit Linux CPU IDs for firstfloor execution.
+                      It does not reserve CPUs or claim exclusivity.
+                    items:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
                   cpuQuota:
                     anyOf:
                     - type: integer

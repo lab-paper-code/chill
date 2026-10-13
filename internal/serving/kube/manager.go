@@ -247,7 +247,7 @@ func snapshot(w *api.Workload, model *api.ModelSpec) (*serving.Definition, error
 			}
 			d.Model.Paths = append(d.Model.Paths, serving.ModelPath{Name: path.Name, Artifact: artifact.Name, Format: artifact.Format,
 				Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Path: artifact.Source.Path,
-				RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Tensors: modelcatalog.InputTensors(artifact.Input), Triton: modelcatalog.TritonSettings(path.Runtime)})
+				RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Tensors: modelcatalog.InputTensors(artifact.Input), Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime)})
 			break
 		}
 	}

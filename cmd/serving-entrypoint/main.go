@@ -21,10 +21,15 @@ func main() {
 		log.Error(err, "invalid inference entry point options")
 		os.Exit(1)
 	}
-	log.Info("starting the Workload owner",
-		"bindAddress", opts.bindAddress,
-		"servingNamespace", opts.servingNamespace,
-		"profileCampaigns", opts.campaigns)
+	if opts.materializeProfile {
+		log.Info("materializing immutable startup profile", "objectKey", opts.profileObjectKey, "output", opts.profileOutput)
+	} else {
+		log.Info("starting the Workload owner",
+			"bindAddress", opts.bindAddress,
+			"servingNamespace", opts.servingNamespace,
+			"profileCampaigns", opts.campaigns,
+			"schedulerConfigMap", opts.schedulerConfigMap)
+	}
 	if err := run(ctrl.SetupSignalHandler(), opts); err != nil {
 		log.Error(err, "run the inference entry point")
 		os.Exit(1)

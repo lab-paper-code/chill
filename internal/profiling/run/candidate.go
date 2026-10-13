@@ -5,16 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"k8s.io/apimachinery/pkg/api/resource"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha11"
+	CandidateReportSchemaVersion = "chill.dacs.io/modelcompat-report.v1alpha12"
 	candidateReportScope         = "StaticCompatibility"
 )
 
@@ -32,7 +34,7 @@ type CandidateReport struct {
 	RuntimePackages     []CandidateReportRuntimePackage `json:"runtimePackages,omitempty"`
 	HostContract        *CandidateReportHostContract    `json:"hostContract,omitempty"`
 	RuntimeAccess       *CandidateReportRuntimeAccess   `json:"runtimeAccess,omitempty"`
-	Triton              *modelcompat.TritonSettings     `json:"triton,omitempty"`
+	Firstfloor          *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
 	MetricObserverImage string                          `json:"metricObserverImage,omitempty"`
 	Verdict             string                          `json:"verdict"`
 	Reasons             []CandidateReportReason         `json:"reasons"`
@@ -136,8 +138,10 @@ type CandidateReportNPUAllocation struct {
 // CandidateReportRuntimeAccess records Kubernetes delivery requirements
 // separately from the physical host contract.
 type CandidateReportRuntimeAccess struct {
-	Privileged         bool    `json:"privileged"`
-	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
+	Privileged         bool              `json:"privileged"`
+	SupplementalGroups []int64           `json:"supplementalGroups,omitempty"`
+	Resources          map[string]string `json:"resources,omitempty"`
+	GPUUUID            string            `json:"gpuUUID,omitempty"`
 }
 
 // VerifiedCandidateReport is constructed only after one decoded report has
@@ -154,7 +158,7 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
 	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
 	result.HostContract = cloneCandidateHostContract(r.report.HostContract)
-	result.Triton = modelcompat.CloneTritonRuntimeSettings(r.report.Triton)
+	result.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(r.report.Firstfloor)
 	if r.report.ArtifactCapability != nil {
 		capability := *r.report.ArtifactCapability
 		capability.DeclaredBatchSizes = append([]int32(nil), r.report.ArtifactCapability.DeclaredBatchSizes...)
@@ -164,6 +168,7 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 	if r.report.RuntimeAccess != nil {
 		access := *r.report.RuntimeAccess
 		access.SupplementalGroups = append([]int64(nil), r.report.RuntimeAccess.SupplementalGroups...)
+		access.Resources = maps.Clone(r.report.RuntimeAccess.Resources)
 		result.RuntimeAccess = &access
 	}
 	return result
@@ -216,6 +221,7 @@ func (r CandidateReport) RuntimeDelivery() CandidateRuntimeDelivery {
 	if r.RuntimeAccess != nil {
 		access := *r.RuntimeAccess
 		access.SupplementalGroups = append([]int64(nil), access.SupplementalGroups...)
+		access.Resources = maps.Clone(r.RuntimeAccess.Resources)
 		delivery.RuntimeAccess = &access
 	}
 	return delivery
@@ -354,8 +360,8 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	if err := validateCandidateRuntimePackages(report.RuntimePackages); err != nil {
 		return err
 	}
-	if report.Triton != nil {
-		if err := modelcompat.ValidateTritonRuntimeSettings(report.Triton); err != nil {
+	if report.Firstfloor != nil {
+		if err := modelcompat.ValidateFirstfloorRuntimeSettings(report.Firstfloor); err != nil {
 			return err
 		}
 	}
@@ -367,9 +373,8 @@ func validateInternalCandidateReport(report CandidateReport) error {
 	if err := validateArtifactCapability(report.ArtifactCapability); err != nil {
 		return fmt.Errorf("candidate report artifact capability: %w", err)
 	}
-	if report.SchemaVersion == CandidateReportSchemaVersion &&
-		(report.HostContract == nil) != (report.RuntimeAccess == nil) {
-		return errors.New("candidate report host and runtime access contracts must be supplied together")
+	if report.HostContract != nil && report.RuntimeAccess == nil {
+		return errors.New("candidate report host contract requires runtime access")
 	}
 	if report.RuntimeAccess != nil {
 		if err := validateCandidateRuntimeAccess(*report.RuntimeAccess); err != nil {
@@ -446,7 +451,27 @@ func validateCandidateHostContract(contract CandidateReportHostContract) error {
 	return nil
 }
 
+// ValidateRuntimeAccess validates declared accelerator delivery at the boundary.
+func ValidateRuntimeAccess(contract CandidateReportRuntimeAccess) error {
+	return validateCandidateRuntimeAccess(contract)
+}
+
 func validateCandidateRuntimeAccess(contract CandidateReportRuntimeAccess) error {
+	if strings.TrimSpace(contract.GPUUUID) != contract.GPUUUID ||
+		(contract.GPUUUID != "" && (!strings.HasPrefix(contract.GPUUUID, "GPU-") || len(contract.GPUUUID) <= 4)) {
+		return errors.New("runtime GPU UUID must name an explicit physical GPU without surrounding whitespace")
+	}
+	for name, value := range contract.Resources {
+		quantity, err := resource.ParseQuantity(value)
+		if !strings.Contains(name, "/") || len(k8svalidation.IsQualifiedName(name)) != 0 ||
+			err != nil || quantity.Sign() <= 0 {
+			return errors.New("runtime resources must have qualified names and positive whole-device quantities")
+		}
+		count, exact := quantity.AsInt64()
+		if !exact || count < 1 {
+			return errors.New("runtime resources must allocate whole devices")
+		}
+	}
 	seen := make(map[int64]struct{}, len(contract.SupplementalGroups))
 	for _, group := range contract.SupplementalGroups {
 		if group < 1 || group > int64(^uint32(0)>>1) {
@@ -475,7 +500,7 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 	if err := validateInternalCandidateReport(report); err != nil {
 		return VerifiedCandidateReport{}, err
 	}
-	if config.State.RuntimeFamily == RKNNLiteRuntimeFamily {
+	if isRKNNExecution(config) {
 		if report.SchemaVersion != CandidateReportSchemaVersion || report.ArtifactCapability == nil {
 			return VerifiedCandidateReport{}, errors.New("candidate RKNN artifact capability is required")
 		}
@@ -518,14 +543,20 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 	if !reflect.DeepEqual(config.Candidate.Inputs, report.Inputs) {
 		return VerifiedCandidateReport{}, errors.New("candidate source objects do not match RunConfig")
 	}
-	if !reflect.DeepEqual(config.State.Triton, report.Triton) {
-		return VerifiedCandidateReport{}, errors.New("candidate Triton settings do not match frozen RunConfig")
+	if !reflect.DeepEqual(modelcompat.CloneFirstfloorRuntimeSettings(config.State.Firstfloor),
+		modelcompat.CloneFirstfloorRuntimeSettings(report.Firstfloor)) {
+		return VerifiedCandidateReport{}, errors.New("candidate firstfloor settings do not match frozen RunConfig")
 	}
 	if !reflect.DeepEqual(config.State.HostContract, report.HostContract) {
 		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match RunConfig")
 	}
 	if !reflect.DeepEqual(config.Delivery.ArtifactCapability, report.ArtifactCapability) {
 		return VerifiedCandidateReport{}, errors.New("candidate input contract does not match frozen RunConfig")
+	}
+	if !reflect.DeepEqual(config.Delivery.RuntimeAccess, report.RuntimeAccess) ||
+		!reflect.DeepEqual(config.Delivery.HostContract, report.HostContract) ||
+		!reflect.DeepEqual(config.Delivery.RuntimePackages, report.RuntimePackages) {
+		return VerifiedCandidateReport{}, errors.New("candidate runtime delivery does not match frozen RunConfig")
 	}
 	if config.Actuation == nil {
 		if report.Selection.Actuator != nil {

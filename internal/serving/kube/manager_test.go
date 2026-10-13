@@ -16,7 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/triton"
+	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -104,7 +104,7 @@ func newManagerHarness(t *testing.T) (*Manager, serving.JournalConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &triton.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,8 @@ func managerModelSpec() api.ModelSpecSpec {
 	return api.ModelSpecSpec{
 		Artifacts: []api.ModelArtifact{{Name: "onnx", Format: "onnx", Source: api.ModelArtifactSource{Image: "model@sha256:immutable", Architecture: "amd64", Path: "/model.onnx"},
 			Input: &api.ModelArtifactInputContract{Tensors: []api.ModelInputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{1}}}}}},
-		ExecutionPaths: []api.ModelExecutionPath{{Name: "native", Artifact: "onnx", Runtime: api.ModelRuntimeRequirement{Family: "triton", Backend: "python",
-			Settings: &api.ModelRuntimeSettings{Triton: &api.TritonRuntimeSettings{MaxBatchSize: 4, PriorityLevels: 4, MaxQueueSize: 8}}}}},
+		ExecutionPaths: []api.ModelExecutionPath{{Name: "native", Artifact: "onnx", Runtime: api.ModelRuntimeRequirement{Family: "firstfloor", Backend: "ort-cpu",
+			Settings: &api.ModelRuntimeSettings{Firstfloor: &api.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 8}}}}},
 	}
 }
 
@@ -138,7 +138,7 @@ func managerWorkloadSpec() api.WorkloadSpec {
 
 func managerProfile(d *serving.Definition) serving.Profile {
 	path := d.Model.Paths[0]
-	return serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Triton: path.Triton,
+	return serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Firstfloor: path.Firstfloor,
 		Artifact: derivation.CurveArtifactContract{ExecutionPath: path.Name, Name: path.Artifact, Path: path.Path, Image: path.Image},
 		Tensor:   derivation.CurveTensorContract{Tensors: path.Tensors}}}
 }
@@ -149,7 +149,7 @@ func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names 
 	m.runtime.SetProfiles([]serving.Profile{profile})
 	started := make(chan serving.Dispatch, len(names))
 	finish := make(chan struct{}, len(names))
-	if err := m.runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "pod/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Pool: "pool", Profile: profile.ID, Ready: true}, Profile: &profile, Weight: 10000, Capacity: 2, Lanes: 4,
+	if err := m.runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "pod/container", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Pool: "pool", Profile: profile.ID, Ready: true}, Profile: &profile, Weight: 10000, Capacity: 2,
 		Execute: func(_ context.Context, d serving.Dispatch) (serving.BackendResult, error) {
 			started <- d
 			<-finish
@@ -405,7 +405,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &triton.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
 	if err != nil {
 		t.Fatal(err)
 	}

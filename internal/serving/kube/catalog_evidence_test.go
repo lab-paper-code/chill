@@ -8,17 +8,21 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,25 +41,19 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 				t.Fatal(err)
 			}
 			if memory == 0 {
-				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "MemoryEvidenceMissing" {
-					t.Fatalf("legacy absent memory became eligible: %+v", view)
+				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
+					t.Fatalf("absent required native memory became eligible: %+v", view)
 				}
 				return
 			}
-			if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "MeasurementEvidenceMissing" {
-				t.Fatalf("standalone ORT measurements became native serving evidence: %+v", view)
+			if len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+				t.Fatalf("same-firstfloor measurements unavailable: %+v", view)
 			}
 			profile, issues, err := catalog.readProfile(context.Background(), source)
 			if err != nil || len(issues) != 0 {
 				t.Fatalf("retained raw measurement facts unavailable: %+v %v", issues, err)
 			}
-			batch := profile.Batches[0]
-			if profile.Condition.RuntimeFamily != "onnxruntime" || profile.Condition.Artifact.ExecutionPath != "ort-cpu" ||
-				profile.NodeName != "lattepanda" || profile.Condition.NodeUID != "uid" || len(profile.Evidence) != 13 ||
-				batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 6 || batch.DurationNanos[0] != 1000000 ||
-				math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 {
-				t.Fatalf("frozen identity or measured raw distribution changed: %+v", profile)
-			}
+			assertCatalogRawProfile(t, profile)
 			// Change only the frozen artifact while keeping the current schema and
 			// declared size valid. Structurally valid but mismatching is ineligible.
 			plan, err := profilederivation.DecodeCurvePlan(objects[planReference.Location()])
@@ -78,10 +76,51 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 			}
 			objects[planReference.Location()] = payload
 			view, err = catalog.Refresh(context.Background(), []types.NamespacedName{source})
-			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "InvalidEvidence" {
+			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
 				t.Fatalf("artifact mismatch remained a candidate: %+v, %v", view, err)
 			}
 		})
+	}
+}
+func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
+	t.Helper()
+	batch := profile.Batches[0]
+	if profile.Condition.RuntimeFamily != "firstfloor" || profile.Condition.Artifact.ExecutionPath != "ort-cpu" ||
+		profile.NodeName != "lattepanda" || profile.Condition.NodeUID != "uid" || len(profile.Evidence) != 13 ||
+		profile.RuntimeMetadata == nil || profile.IdleBaselineWatts != 4 || profile.MeasuredAt.IsZero() ||
+		profile.MetricSource.NodeName != "lattepanda" || len(profile.MetricSource.MetricLabels) == 0 ||
+		profile.Condition.CPU.Limit != "2" || len(profile.Condition.CPU.AffinityCPUs) != 2 ||
+		profile.RuntimeMetadata.IntraOpThreads != 2 || len(profile.RuntimeMetadata.CPUAffinity) != 2 ||
+		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 6 || batch.DurationNanos[0] != 500000 ||
+		math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 {
+		t.Fatalf("frozen identity or measured raw distribution changed: %+v", profile)
+	}
+}
+
+func TestCatalogNeverUsesStandaloneReferenceExecutionAsServingEvidence(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixtureMode(t, 4096, false)
+	view, err := catalog.Refresh(context.Background(), []types.NamespacedName{source})
+	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
+		!strings.Contains(view.Insufficiencies[0].Reason, "standalone") {
+		t.Fatalf("reference execution became firstfloor service evidence: %+v %v", view, err)
+	}
+}
+
+func TestCatalogRejectsRunAffinityChangedFromCampaignSource(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	run := &edgev1alpha1.ProfilingRun{}
+	ctx := context.Background()
+	if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
+		t.Fatal(err)
+	}
+	run.Spec.Measurement.CPUAffinity = []int32{4, 5, 6, 7}
+	if err := catalog.store.client.Update(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
+		view.Insufficiencies[0].Code != invalidEvidenceCode || !strings.Contains(view.Insufficiencies[0].Reason, "CPU affinity") {
+		t.Fatalf("source CPU selection drift accepted: %+v %v", view, err)
 	}
 }
 
@@ -97,6 +136,11 @@ func (objects catalogEvidenceObjects) OpenLocation(_ context.Context, location e
 
 func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
+	return catalogEvidenceFixtureMode(t, memory, true)
+}
+
+func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +148,14 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 	var active profilingrun.RunConfig
 	if err := json.Unmarshal(payload, &active); err != nil {
 		t.Fatal(err)
+	}
+	if native {
+		active.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+		active.State.Backend = profilingrun.FirstfloorORTCPUBackend
+		active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
+		active.CPU.Policy, active.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
+		active.CPU.ORTIntraOpThreads = 2
+		active.CPU.AffinityCPUs = []int{0, 1}
 	}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -148,6 +200,13 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 		},
 		Status: edgev1alpha1.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1, Outcome: "MinimumFound"},
 	}
+	for _, cpu := range active.CPU.AffinityCPUs {
+		campaign.Spec.CPUAffinity = append(campaign.Spec.CPUAffinity, int32(cpu))
+	}
+	if native {
+		quota := resource.MustParse("2")
+		campaign.Spec.CPUQuota = &quota
+	}
 	apiObjects := []client.Object{campaign}
 	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, 6)
 	for index := range 6 {
@@ -168,6 +227,13 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 		settling := int32(config.Measurement.SettlingDurationSeconds)
 		measurement := edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WarmupIterations: int32(config.Measurement.WarmupIterations), DurationSeconds: 30,
 			WorkloadMode: config.Measurement.WorkloadMode, InputGenerator: config.Measurement.InputGenerator, OutputValidation: config.Measurement.OutputValidation}
+		if len(config.CPU.AffinityCPUs) != 0 {
+			measurement.CPUAffinity = append([]int32(nil), campaign.Spec.CPUAffinity...)
+		}
+		if campaign.Spec.CPUQuota != nil {
+			quota := campaign.Spec.CPUQuota.DeepCopy()
+			measurement.CPUQuota = &quota
+		}
 		if mode == batchenergyoptimization.WorkloadModeIdle {
 			measurement.SettlingDurationSeconds = &settling
 		}
@@ -220,8 +286,15 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	end := start.Add(30 * time.Second)
 	completed := end.Add(30 * time.Second)
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	cpu := profilingrun.RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"}
-	derived := profilingrun.DerivedContract{Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode}
+	cpu := profilingrun.RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4, ORTInterOpThreads: 1, AffinityCPUCount: 4, AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3"}
+	if config.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily {
+		cpu.CgroupCPUMax = "200000 100000"
+		cpu.ORTIntraOpThreads = 2
+		cpu.AffinityCPUCount = 2
+		cpu.AffinityCPUs = []int{0, 1}
+	}
+	provider := "CPUExecutionProvider"
+	derived := profilingrun.DerivedContract{Backend: config.State.Backend, Provider: provider, NodeSnapshot: config.TargetNode}
 	pod := workloadobserver.Pod{Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Running", Images: []string{config.Images.Runtime}}
 	thermal := config.Metrics.ThermalMetrics
 	metrics := metricobserver.Result{
@@ -242,17 +315,42 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 	raw := profilerevidence.RawMeasurement{SchemaVersion: profilerevidence.RawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.RuntimeResult{SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", ExperimentID: podUID,
 			NodeName: config.TargetNode.Name, Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
-			Backend: config.State.Backend, Provider: config.State.Backend, AvailableProviders: []string{config.State.Backend}, Inputs: config.Delivery.ArtifactCapability.Tensors,
+			Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider}, Inputs: config.Delivery.ArtifactCapability.Tensors,
 			BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations, WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 2,
 			MeasurementMode: "duration", MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds: &targetDuration, MemoryBytes: memory, OutputValidation: profilingrun.OutputValidation{Method: config.Measurement.OutputValidation, Passed: true, OutputShapes: [][]int{{1, 1000}}},
 			CPUContract: cpu, DerivedContract: derived, RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: []float64{1, 2}}}}}
+	inputs := make([]firstfloor.InputSpec, len(config.Delivery.ArtifactCapability.Tensors))
+	for i, tensor := range config.Delivery.ArtifactCapability.Tensors {
+		shape := make([]int, len(tensor.SampleShape))
+		for j, d := range tensor.SampleShape {
+			shape[j] = int(d)
+		}
+		inputs[i] = firstfloor.InputSpec{Name: tensor.Name, Datatype: tensor.Datatype, Shape: shape}
+	}
+	native := profilingrun.FirstfloorRuntimeEvidence{Mode: "profiling", DeadlinePolicy: firstfloor.DeadlineKeep,
+		ModelInstanceCount: 1, MaxBatchSize: 1, MaxQueueSize: 32,
+		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelPath: "/model/model.onnx", Inputs: inputs,
+			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
+			CgroupCPUMax: "200000 100000", CPUSet: "0-3"}}
+	activeNative := native
+	activeNative.ExecutionCount, activeNative.InferenceCount = 2, 2
+	activeNative.BatchExecutionCounts = map[string]uint64{"1": 2}
+	raw.Runtime.Firstfloor = &activeNative
+	raw.Runtime.MemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
+	raw.Runtime.RepetitionResults[0].NativeSamples = []profilingrun.NativeServiceSample{
+		{BatchID: 1, BatchSize: 1, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
+		{BatchID: 2, BatchSize: 1, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
+	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.IdleRuntimeResult{SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded", PodUID: podUID, NodeName: config.TargetNode.Name,
-			Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0", Backend: config.State.Backend, Provider: config.State.Backend,
-			AvailableProviders: []string{config.State.Backend}, Inputs: config.Delivery.ArtifactCapability.Tensors, ModelLoadCompletedAt: start.Add(-61 * time.Second).Format(time.RFC3339Nano),
+			Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0", Backend: config.State.Backend, Provider: provider,
+			AvailableProviders: []string{provider}, Inputs: config.Delivery.ArtifactCapability.Tensors, ModelLoadCompletedAt: start.Add(-61 * time.Second).Format(time.RFC3339Nano),
 			SettlingStartedAt: start.Add(-60 * time.Second).Format(time.RFC3339Nano), SettlingCompletedAt: start.Format(time.RFC3339Nano), MeasurementStartedAt: start.Format(time.RFC3339Nano),
 			MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true, CPUContract: cpu, DerivedContract: derived}}
+	native.BatchExecutionCounts = map[string]uint64{}
+	idle.Runtime.Firstfloor = &native
+	idle.Runtime.MemoryBytes, idle.Runtime.MemorySource = memory, "cgroup-v2-memory.peak:runtime-container-lifetime"
 	execution := profilerevidence.ExecutionEvidence{SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion, RunConfig: config, FinalizedAt: completed.Add(2 * time.Second),
 		Terminal: profilerevidence.TerminalFacts{Job: profilerevidence.JobTerminalFacts{Namespace: pod.Namespace, Name: "job-" + podUID, UID: "job-" + podUID, Succeeded: 1, CompletionTime: completed},
 			Pod:  profilerevidence.PodTerminalFacts{Namespace: pod.Namespace, Name: pod.Name, UID: podUID, ControllerOwnerUID: "job-" + podUID, NodeName: config.TargetNode.Name, Phase: "Succeeded"},

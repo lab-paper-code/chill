@@ -2,6 +2,7 @@ package projection
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,6 +56,47 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	}
 	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
 		t.Fatalf("validate idle RunConfig against projected plan: %v", err)
+	}
+}
+
+func TestCurveCPUProjectionPreservesExactDetachedAffinityAndStateIdentity(t *testing.T) {
+	active := curvePlanRunConfig()
+	active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, profilingrun.FirstfloorORTCPUBackend
+	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
+	active.CPU.AffinityCPUs = []int{8, 10, 12, 31}
+	idle := active
+	idle.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
+		WorkloadMode:   profilingrun.IdleModelLoadedWorkloadMode,
+		InputGenerator: profilingrun.NoInputGenerator, OutputValidation: profilingrun.NoOutputValidation,
+	}
+	spec, err := ProjectCurvePlanSpec(
+		"test-curve", active, idle, *active.Delivery.ArtifactCapability,
+		profilederivation.CurveConversionContract{}, []int{1, 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.CPU.AffinityCPUs, []int{8, 10, 12, 31}) {
+		t.Fatal("curve CPU projection lost affinity")
+	}
+	before, err := ProjectRunIdentities(active, active.TargetNode.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.CPU.AffinityCPUs[0] = 9
+	if spec.CPU.AffinityCPUs[0] != 8 {
+		t.Fatal("curve CPU projection aliases frozen RunConfig")
+	}
+	after, err := ProjectRunIdentities(active, active.TargetNode.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.StateIdentity == after.StateIdentity || before.MeasurementProtocolIdentity != after.MeasurementProtocolIdentity {
+		t.Fatal("affinity did not change only the execution-state identity")
+	}
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err == nil {
+		t.Fatal("curve accepted a different exact CPU mask")
 	}
 }
 

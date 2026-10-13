@@ -3,8 +3,10 @@ package modelcompat
 import "strings"
 
 const (
-	runtimeFamilyRKNNLite = "rknnlite"
-	runtimeFamilyTriton   = "triton"
+	runtimeFamilyRKNNLite   = "rknnlite"
+	runtimeFamilyFirstfloor = "firstfloor"
+	artifactFormatRKNN      = "rknn"
+	firstfloorORTCPUBackend = "ort-cpu"
 )
 
 // Evaluate compares one artifact/path requirement with stable DeviceClass and
@@ -24,7 +26,7 @@ func Evaluate(input Input) Result {
 		reasons = addReason(reasons, unknown(ReasonRequiredRuntimeFamilyMissing))
 	}
 	if formatPresent && requiredFamilyPresent &&
-		!knownArtifactRuntimeRelation(input.Artifact.Format, input.Path.RuntimeFamily) {
+		!knownArtifactRuntimeRelation(input.Artifact.Format, input.Path.RuntimeFamily, input.Path.Backend) {
 		reasons = addReason(reasons, unknown(ReasonArtifactRuntimeRelationUnknown))
 	}
 
@@ -70,9 +72,13 @@ func Evaluate(input Input) Result {
 	return aggregate(reasons)
 }
 
-func knownArtifactRuntimeRelation(format, runtimeFamily string) bool {
-	return (format == "onnx" && (runtimeFamily == "onnxruntime" || runtimeFamily == runtimeFamilyTriton)) ||
-		(format == "rknn" && runtimeFamily == runtimeFamilyRKNNLite)
+func knownArtifactRuntimeRelation(format, runtimeFamily, backend string) bool {
+	if runtimeFamily == runtimeFamilyFirstfloor {
+		return (format == "onnx" && (backend == firstfloorORTCPUBackend || backend == "ort-cuda")) ||
+			(format == artifactFormatRKNN && backend == runtimeFamilyRKNNLite)
+	}
+	return (format == "onnx" && runtimeFamily == "onnxruntime") ||
+		(format == artifactFormatRKNN && runtimeFamily == runtimeFamilyRKNNLite)
 }
 
 func contains(values []string, expected string) bool {

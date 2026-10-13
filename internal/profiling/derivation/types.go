@@ -17,12 +17,23 @@ type Trial struct {
 	CompletedItems              int       `json:"completedItems"`
 	CompletedCalls              int       `json:"completedCalls"`
 	LatencyMilliseconds         []float64 `json:"latencyMilliseconds"`
-	Samples                     []Sample  `json:"samples"`
-	Failures                    int       `json:"failures"`
-	SourceTimestampAbsent       bool      `json:"sourceTimestampAbsent"`
-	ConcurrentCHILLWorkloads    []string  `json:"concurrentCHILLWorkloads"`
-	ExternalWorkloadChanges     []string  `json:"externalWorkloadChanges"`
-	WorkloadWindowKnown         bool      `json:"workloadWindowKnown"`
+	// NativeSamples retains aligned actual actor batch spans. Client latency is
+	// kept above and is never reinterpreted as backend or runner service time.
+	NativeSamples            []NativeServiceSample `json:"nativeSamples,omitempty"`
+	Samples                  []Sample              `json:"samples"`
+	Failures                 int                   `json:"failures"`
+	SourceTimestampAbsent    bool                  `json:"sourceTimestampAbsent"`
+	ConcurrentCHILLWorkloads []string              `json:"concurrentCHILLWorkloads"`
+	ExternalWorkloadChanges  []string              `json:"externalWorkloadChanges"`
+	WorkloadWindowKnown      bool                  `json:"workloadWindowKnown"`
+}
+
+type NativeServiceSample struct {
+	BatchID                   uint64  `json:"batchID"`
+	BatchSize                 int     `json:"batchSize"`
+	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
+	BackendCallMilliseconds   float64 `json:"backendCallMs"`
+	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
 }
 
 type EnergyTrial struct {
@@ -34,14 +45,16 @@ type EnergyTrial struct {
 	// Baseline sufficient statistics are copied from the completed exact-state
 	// baseline for point aggregation. Curve retains the baseline object that
 	// owns cross-point covariance.
-	BaselineMeanWallWattsVariance float64 `json:"baselineMeanWallWattsVariance"`
-	BaselineDegreesOfFreedom      int     `json:"baselineDegreesOfFreedom"`
-	BaselineConfidenceLevel       float64 `json:"baselineConfidenceLevel"`
-	ActiveWindowWallJoulesPerItem float64 `json:"activeWindowWallJoulesPerItem"`
-	IdleBaselineSecondsPerItem    float64 `json:"idleBaselineSecondsPerItem"`
-	Batch                         int     `json:"batch"`
-	IncrementalWorkJoulesPerItem  float64 `json:"incrementalWorkJoulesPerItem"`
-	LatencyP99Milliseconds        float64 `json:"latencyP99Milliseconds"`
+	BaselineMeanWallWattsVariance float64               `json:"baselineMeanWallWattsVariance"`
+	BaselineDegreesOfFreedom      int                   `json:"baselineDegreesOfFreedom"`
+	BaselineConfidenceLevel       float64               `json:"baselineConfidenceLevel"`
+	ActiveWindowWallJoulesPerItem float64               `json:"activeWindowWallJoulesPerItem"`
+	IdleBaselineSecondsPerItem    float64               `json:"idleBaselineSecondsPerItem"`
+	Batch                         int                   `json:"batch"`
+	IncrementalWorkJoulesPerItem  float64               `json:"incrementalWorkJoulesPerItem"`
+	LatencyP99Milliseconds        float64               `json:"latencyP99Milliseconds"`
+	ClientLatencyMilliseconds     []float64             `json:"clientLatencyMilliseconds,omitempty"`
+	NativeSamples                 []NativeServiceSample `json:"nativeSamples,omitempty"`
 }
 type RawEvidenceIdentity struct {
 	Store string `json:"store"`

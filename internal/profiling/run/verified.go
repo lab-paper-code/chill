@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
@@ -106,7 +107,8 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 
 func cloneRunConfig(source RunConfig) RunConfig {
 	result := source
-	result.State.Triton = modelcompat.CloneTritonRuntimeSettings(source.State.Triton)
+	result.CPU.AffinityCPUs = slices.Clone(source.CPU.AffinityCPUs)
+	result.State.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(source.State.Firstfloor)
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
 	result.Delivery = cloneRuntimeDelivery(source.Delivery)
 	result.Metrics.MetricLabels = maps.Clone(source.Metrics.MetricLabels)
@@ -142,6 +144,7 @@ func cloneRuntimeDelivery(source CandidateRuntimeDelivery) CandidateRuntimeDeliv
 	if source.RuntimeAccess != nil {
 		access := *source.RuntimeAccess
 		access.SupplementalGroups = append([]int64(nil), source.RuntimeAccess.SupplementalGroups...)
+		access.Resources = maps.Clone(source.RuntimeAccess.Resources)
 		result.RuntimeAccess = &access
 	}
 	return result

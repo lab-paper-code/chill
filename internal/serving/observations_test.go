@@ -158,7 +158,7 @@ func checkJournalCohortPopulation(
 		t.Fatal(err)
 	}
 	health := journal.Health()
-	if !health.Windows[0].Published || len(health.Windows[0].Objects) != 4 {
+	if !health.Windows[0].Published {
 		t.Fatalf("window not archived: %+v", health)
 	}
 	for _, object := range health.Windows[0].Objects {

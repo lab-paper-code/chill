@@ -3,11 +3,13 @@ package controller
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -63,6 +65,43 @@ func TestProjectRequestMovesCPUQuotaOnlyToPreparationSelection(t *testing.T) {
 	}
 	if request.Preparation.CPUQuota != "4" {
 		t.Fatalf("projected CPU quota = %q", request.Preparation.CPUQuota)
+	}
+}
+
+func TestProjectRequestAffinityMatchesFrozenReconstruction(t *testing.T) {
+	run := testRun()
+	run.Spec.Measurement.CPUAffinity = []int32{31, 12, 10, 8}
+	request, err := ProjectRequest(run.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(request.Preparation.CPUAffinity, []int{8, 10, 12, 31}) ||
+		!slices.Equal(run.Spec.Measurement.CPUAffinity, []int32{31, 12, 10, 8}) {
+		t.Fatal("projection did not canonicalize a detached copy")
+	}
+	config := testRunConfig(t)
+	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	config.State.Backend = profilingrun.FirstfloorORTCPUBackend
+	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
+	config.CPU.AffinityCPUs = slices.Clone(request.Preparation.CPUAffinity)
+	prepared := profiler.PreparedRun{RunConfig: config}
+	if err := validatePreparedForRun(run, prepared); err != nil {
+		t.Fatalf("unsorted API mask did not match canonical frozen mask: %v", err)
+	}
+	reconstructed := preparationFromRunConfig(config)
+	reconstructed.CPUAffinity[0] = 9
+	if config.CPU.AffinityCPUs[0] != 8 {
+		t.Fatal("request reconstruction aliases frozen affinity")
+	}
+	prepared.RunConfig.CPU.AffinityCPUs = []int{9, 10, 12, 31}
+	if err := validatePreparedForRun(run, prepared); err == nil {
+		t.Fatal("different exact mask passed RunConfig reconstruction")
+	}
+	for _, mask := range [][]int32{{-1, 8}, {8, 8}} {
+		run.Spec.Measurement.CPUAffinity = mask
+		if _, err := ProjectRequest(run.Spec); err == nil {
+			t.Fatalf("invalid API mask accepted: %v", mask)
+		}
 	}
 }
 

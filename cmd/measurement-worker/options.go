@@ -29,38 +29,38 @@ const (
 )
 
 type options struct {
-	runConfig               string
-	podUID                  string
-	scheduledNodeName       string
-	modelPath               string
-	workspacePath           string
-	observerReadyPaths      []string
-	workloadWindowStartPath string
-	measurementStartPath    string
-	workloadWindowReadyPath string
-	measurementEndPath      string
-	metricResultPath        string
-	workloadResultPath      string
-	terminationMessagePath  string
-	runtimeCommand          []string
-	tritonRuntimeCommand    []string
-	attemptTimeout          time.Duration
-	observerReadyTimeout    time.Duration
-	metricResultTimeout     time.Duration
-	workloadResultTimeout   time.Duration
-	maxLatencySamples       int
-	maxInputBytes           int64
-	maxRuntimeResultBytes   int64
-	maxMetricResultBytes    int64
-	maxWorkloadResultBytes  int64
-	storeName               string
-	storeEndpoint           string
-	storeBucket             string
-	storeRegion             string
-	rawObjectKey            string
-	accessKeyID             string
-	secretAccessKey         string
-	sessionToken            string
+	runConfig                string
+	podUID                   string
+	scheduledNodeName        string
+	modelPath                string
+	workspacePath            string
+	observerReadyPaths       []string
+	workloadWindowStartPath  string
+	measurementStartPath     string
+	workloadWindowReadyPath  string
+	measurementEndPath       string
+	metricResultPath         string
+	workloadResultPath       string
+	terminationMessagePath   string
+	runtimeCommand           []string
+	firstfloorRuntimeCommand []string
+	attemptTimeout           time.Duration
+	observerReadyTimeout     time.Duration
+	metricResultTimeout      time.Duration
+	workloadResultTimeout    time.Duration
+	maxLatencySamples        int
+	maxInputBytes            int64
+	maxRuntimeResultBytes    int64
+	maxMetricResultBytes     int64
+	maxWorkloadResultBytes   int64
+	storeName                string
+	storeEndpoint            string
+	storeBucket              string
+	storeRegion              string
+	rawObjectKey             string
+	accessKeyID              string
+	secretAccessKey          string
+	sessionToken             string
 }
 
 func (o *options) bindFlags(set *flag.FlagSet) {
@@ -75,7 +75,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.workloadResultPath = defaultWorkloadResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
 	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
-	o.tritonRuntimeCommand = []string{"python3", "/opt/chill/triton/runner.py"}
+	o.firstfloorRuntimeCommand = []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"}
 	o.podUID = os.Getenv("POD_UID")
 	o.scheduledNodeName = os.Getenv("NODE_NAME")
 	o.accessKeyID = os.Getenv("AWS_ACCESS_KEY_ID")

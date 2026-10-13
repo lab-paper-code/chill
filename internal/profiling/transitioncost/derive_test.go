@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 )
 
@@ -190,13 +191,8 @@ func TestDeriveUsesExactProcessIdentityForMeasuredServingInterruption(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			observation, ok := result.AcceptedObservation()
-			if !ok {
-				t.Fatalf("outcome = %s/%s, want accepted", result.Verdict(), result.Reason())
-			}
-			if observation.ServingSurvived() {
-				t.Fatalf("servingSurvived = true after %s changed, want false", test.name)
-			}
+			assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonNativeStateUnverified)
+			assertNoAcceptedObservation(t, result)
 		})
 	}
 }
@@ -506,7 +502,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		},
 	}
 	process := transitioncost.ProcessIdentity{
-		ContainerName: "server", ContainerID: "container-a", StartedAt: testTime(-20), RestartCount: 0,
+		ContainerName: "firstfloor", ContainerID: "container-a", StartedAt: testTime(-20), RestartCount: 0,
 	}
 	raw := transitioncost.RawObservation{
 		ObservationStartedAt: testTime(0), ObservationEndedAt: testTime(8),
@@ -543,6 +539,11 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		},
 		PostTransitionProcess: &process,
 	}
+	nativeWitness := func(at time.Time) *transitioncost.NativeNodeObservation {
+		return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []string{"measure/serving/pod"}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: testTime(1), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelPath: "/model/model.onnx", CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
+	}
+	raw.BeforeNative = nativeWitness(testTime(1))
+	raw.AfterNative = nativeWitness(testTime(6))
 	policy := transitioncost.Policy{
 		MaximumBoundaryDistance:      200 * time.Millisecond,
 		MinimumCoverage:              0.9,
@@ -559,4 +560,29 @@ func testTime(seconds int) time.Time {
 
 func testTimeMillis(milliseconds int) time.Time {
 	return testTime(0).Add(time.Duration(milliseconds) * time.Millisecond)
+}
+func TestDeriveRequiresActualNativeZeroInferenceAndAllocationInvariance(t *testing.T) {
+	for _, name := range []string{"missing native", "inference between empty queues", "allocation changed", "node replaced"} {
+		t.Run(name, func(t *testing.T) {
+			frozen, raw, policy := validInputs()
+			switch name {
+			case "missing native":
+				raw.AfterNative = nil
+			case "inference between empty queues":
+				raw.AfterNative.Instances[0].State.AcceptedRequests++
+				raw.AfterNative.Instances[0].State.CompletedRequests++
+				raw.AfterNative.Instances[0].State.Executions++
+			case "allocation changed":
+				raw.AfterNative.Instances[0].MemoryLimitBytes++
+			case "node replaced":
+				raw.AfterNative.NodeUID = "replacement"
+			}
+			result, err := transitioncost.Derive(frozen, raw, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonNativeStateUnverified)
+			assertNoAcceptedObservation(t, result)
+		})
+	}
 }

@@ -2,10 +2,17 @@ package kube_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -193,13 +200,8 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 			MaximumReadyObservationDelay: time.Second,
 		},
 	)
-	if err != nil || result.Verdict() != transitioncost.VerdictAccepted {
-		t.Fatalf("Derive() = %s/%s (%s), %v; start=%+v target=%+v",
-			result.Verdict(), result.Reason(), result.Detail(), err, raw.TransitionStart, raw.TargetReadBack)
-	}
-	accepted, ok := result.AcceptedObservation()
-	if !ok || accepted.ServingSurvived() {
-		t.Fatalf("accepted observation = %+v, present = %t", accepted, ok)
+	if err != nil || result.Verdict() != transitioncost.VerdictInsufficient || result.Reason() != transitioncost.ReasonNativeStateUnverified {
+		t.Fatalf("replaced actor without final counters = %s/%s (%s),%v", result.Verdict(), result.Reason(), result.Detail(), err)
 	}
 }
 
@@ -446,15 +448,16 @@ func readyPod(name, containerID string, restartCount int32) *corev1.Pod {
 		},
 		Spec: corev1.PodSpec{
 			NodeName:   "jetsono",
-			Containers: []corev1.Container{{Name: "model", Image: "example.invalid/model:fixture"}},
+			Containers: []corev1.Container{{Name: "firstfloor", Image: "example.invalid/firstfloor:fixture", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}}}},
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodRunning,
+			PodIP: "127.0.0.1",
 			Conditions: []corev1.PodCondition{{
 				Type: corev1.PodReady, Status: corev1.ConditionTrue,
 			}},
 			ContainerStatuses: []corev1.ContainerStatus{{
-				Name: "model", ContainerID: containerID, RestartCount: restartCount,
+				Name: "firstfloor", ContainerID: containerID, RestartCount: restartCount, Ready: true, ImageID: "containerd://fixture-image",
 				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: startedAt}},
 			}},
 		},
@@ -463,8 +466,8 @@ func readyPod(name, containerID string, restartCount int32) *corev1.Pod {
 
 func testRequest() transitionkube.Request {
 	return transitionkube.Request{
-		Namespace: "measurements", NodeActuationName: "transition-1", TargetNode: "jetsono",
-		ServingService: "serving", ServingContainer: "model",
+		Namespace: "measurements", NodeActuationName: "transition-1", TargetNode: "jetsono", TargetNodeUID: "node-uid",
+		ServingService: "serving", ServingContainer: "firstfloor",
 		DeviceType: "jetson_orin", Model: "mobilenet-v2-050",
 		PollInterval: time.Millisecond, ObservationTimeout: 250 * time.Millisecond,
 	}
@@ -476,6 +479,16 @@ func newObserver(t *testing.T, reader client.Reader, request transitionkube.Requ
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/models/chill_model/state" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "fixture-profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelPath: "/model/model.onnx", CPUAffinity: []int{0}, IntraOpThreads: 1}}})
+	}))
+	t.Cleanup(server.Close)
+	endpoint, _ := url.Parse(server.URL)
+	observer.HTTPClient = &http.Client{Transport: nativeHTTPTransport{endpoint: endpoint}}
 	return observer
 }
 
@@ -488,6 +501,7 @@ func newClient(t *testing.T, objects ...client.Object) client.Client {
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add CHILL scheme: %v", err)
 	}
+	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "jetsono", UID: "node-uid"}})
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
@@ -503,4 +517,13 @@ func createActuation(t *testing.T, kubeClient client.Client, actuation *edgev1al
 	if current.Status.Phase == "" {
 		t.Fatalf("fake client did not retain NodeActuation status")
 	}
+}
+
+type nativeHTTPTransport struct{ endpoint *url.URL }
+
+func (t nativeHTTPTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	copy := request.Clone(request.Context())
+	copy.URL.Scheme = t.endpoint.Scheme
+	copy.URL.Host = t.endpoint.Host
+	return http.DefaultTransport.RoundTrip(copy)
 }

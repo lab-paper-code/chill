@@ -39,6 +39,13 @@ type ModelLoadedIdleBaselineSpec struct {
 	// CPUQuota fixes the whole-core runtime quota for each owned idle Run.
 	CPUQuota resource.Quantity `json:"cpuQuota"`
 
+	// CPUAffinity selects explicit firstfloor CPU IDs for every owned idle Run.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Minimum=0
+	// +listType=set
+	CPUAffinity []int32 `json:"cpuAffinity,omitempty"`
+
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
 

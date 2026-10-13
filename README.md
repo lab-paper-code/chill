@@ -2,10 +2,10 @@
 
 CHILL (Cost-aware Heterogeneous Inference for Latency and Load) is a Kubernetes-native research operator for energy-minimal edge inference under tail-latency SLOs.
 
-The repo implements profiling and an HTTPS Workload management/inference owner.
-Adaptive SLO batch waiting and configuration-selection algorithms are excluded
-by the approved implementation boundary; native Triton serving and matching
-profiling are implemented. Public implementation decisions live in:
+The repo implements profiling, an HTTPS Workload management/inference owner,
+and a measured-profile scheduler with native firstfloor serving. Immutable
+request SLOs drive batch selection; measured whole-POOL energy and transition
+costs drive configuration selection. Public implementation decisions live in:
 
 - `docs/adr/`
 
@@ -106,6 +106,10 @@ observation filters, and exact deployment settings are in the
 [Workload contract](docs/design/serving/workload-management.md).
 The [model sample guide](config/samples/catalog/README.md) submits prepared
 manifests through this owner.
+
+The following is the previous serving work unit's verification checkpoint.
+Current firstfloor scheduler evidence is recorded in the
+[scheduler implementation](docs/design/serving/scheduler-implementation.md).
 
 Local isolated kind verified HTTPS auth, lifecycle and reference protection,
 private JSONL/S3 archival, and admission closed without evidence. The actual

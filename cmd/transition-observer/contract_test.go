@@ -79,7 +79,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 	prepared := transitioncontroller.PreparedMeasurement{
 		Namespace: "measure", TargetNode: edgev1alpha1.ProfilingRunObjectReference{Name: "target", UID: "target-uid"},
 		ObserverNodeName: "observer", EvidenceStore: "evidence",
-		ServingService: "serving", ServingContainer: "runtime",
+		ServingService: "serving", ServingContainer: "firstfloor",
 		PowerSource: metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://metrics/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"hostname": "target", "device_type": "device"},
@@ -141,9 +141,9 @@ func validAttemptWire() attemptWire {
 			RequestTimeoutMilliseconds: 50, MaxEvents: 52,
 		},
 		TransitionFacts: transitionFactsWire{
-			Namespace: "measure", NodeActuationName: "transition-1", TargetNode: "target",
+			Namespace: "measure", NodeActuationName: "transition-1", TargetNode: "target", TargetNodeUID: "target-uid",
 			DeviceType: "jetson-orin", Model: "model",
-			ServingService: "serving", ServingContainer: "runtime",
+			ServingService: "serving", ServingContainer: "firstfloor",
 			PollIntervalMilliseconds: 50, ObservationTimeoutMilliseconds: 4000,
 		},
 		RawLocation: evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"},

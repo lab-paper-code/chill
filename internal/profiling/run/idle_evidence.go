@@ -3,6 +3,7 @@ package profilingrun
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,38 +11,38 @@ import (
 )
 
 const (
-	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha4"
+	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
 )
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
 // window. Observer results never determine these timestamps.
 type IdleRuntimeResult struct {
-	SchemaVersion                string                    `json:"schemaVersion"`
-	Status                       string                    `json:"status"`
-	PodUID                       string                    `json:"podUID"`
-	NodeName                     string                    `json:"nodeName"`
-	Model                        string                    `json:"model"`
-	Architecture                 string                    `json:"architecture"`
-	Runtime                      string                    `json:"runtime"`
-	RuntimeVersion               string                    `json:"runtimeVersion"`
-	Backend                      string                    `json:"backend,omitempty"`
-	Provider                     string                    `json:"provider,omitempty"`
-	AvailableProviders           []string                  `json:"availableProviders,omitempty"`
-	RKNN                         *RKNNRuntimeEvidence      `json:"rknn,omitempty"`
-	Triton                       *TritonRuntimeEvidence    `json:"triton,omitempty"`
-	Inputs                       []modelcompat.InputTensor `json:"inputs"`
-	MemoryBytes                  uint64                    `json:"memoryBytes,omitempty"`
-	MemorySource                 string                    `json:"memorySource,omitempty"`
-	ModelLoadCompletedAt         string                    `json:"modelLoadCompletedAt"`
-	SettlingStartedAt            string                    `json:"settlingStartedAt"`
-	SettlingCompletedAt          string                    `json:"settlingCompletedAt"`
-	MeasurementStartedAt         string                    `json:"measurementStartedAt"`
-	MeasurementEndedAt           string                    `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds    float64                   `json:"measurementElapsedSecondsMonotonic"`
-	InferenceCountAfterModelLoad int                       `json:"inferenceCountAfterModelLoad"`
-	ModelResidentAtEnd           bool                      `json:"modelResidentAtEnd"`
-	CPUContract                  RuntimeCPU                `json:"cpuContract"`
-	DerivedContract              DerivedContract           `json:"derivedExecutionContract"`
+	SchemaVersion                string                     `json:"schemaVersion"`
+	Status                       string                     `json:"status"`
+	PodUID                       string                     `json:"podUID"`
+	NodeName                     string                     `json:"nodeName"`
+	Model                        string                     `json:"model"`
+	Architecture                 string                     `json:"architecture"`
+	Runtime                      string                     `json:"runtime"`
+	RuntimeVersion               string                     `json:"runtimeVersion"`
+	Backend                      string                     `json:"backend,omitempty"`
+	Provider                     string                     `json:"provider,omitempty"`
+	AvailableProviders           []string                   `json:"availableProviders,omitempty"`
+	RKNN                         *RKNNRuntimeEvidence       `json:"rknn,omitempty"`
+	Firstfloor                   *FirstfloorRuntimeEvidence `json:"firstfloor,omitempty"`
+	Inputs                       []modelcompat.InputTensor  `json:"inputs"`
+	MemoryBytes                  uint64                     `json:"memoryBytes,omitempty"`
+	MemorySource                 string                     `json:"memorySource,omitempty"`
+	ModelLoadCompletedAt         string                     `json:"modelLoadCompletedAt"`
+	SettlingStartedAt            string                     `json:"settlingStartedAt"`
+	SettlingCompletedAt          string                     `json:"settlingCompletedAt"`
+	MeasurementStartedAt         string                     `json:"measurementStartedAt"`
+	MeasurementEndedAt           string                     `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds    float64                    `json:"measurementElapsedSecondsMonotonic"`
+	InferenceCountAfterModelLoad int                        `json:"inferenceCountAfterModelLoad"`
+	ModelResidentAtEnd           bool                       `json:"modelResidentAtEnd"`
+	CPUContract                  RuntimeCPU                 `json:"cpuContract"`
+	DerivedContract              DerivedContract            `json:"derivedExecutionContract"`
 }
 
 func (r IdleRuntimeResult) MeasurementWindow() (time.Time, time.Time, error) {
@@ -67,7 +68,7 @@ func ValidateIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResu
 //nolint:gocyclo // Idle validation deliberately exposes every model-residency and timing gate.
 func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntimeResult) error {
 	if config.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode ||
-		(!IsSupportedCPUORTRunConfig(config) && !IsSupportedTritonCPURunConfig(config) && !IsSupportedRKNNLiteRunConfig(config)) {
+		(!IsSupportedCPUORTRunConfig(config) && !IsSupportedFirstfloorRunConfig(config) && !IsSupportedRKNNLiteRunConfig(config)) {
 		return errors.New("idle runtime requires a supported model-loaded idle RunConfig")
 	}
 	checks := []struct{ name, want, got string }{
@@ -135,20 +136,23 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("idle runtime CPU evidence is incomplete")
 	}
-	if IsSupportedTritonCPURunConfig(config) {
-		if result.RKNN != nil || result.Provider != cpuExecutionProvider ||
-			!contains(result.AvailableProviders, cpuExecutionProvider) ||
-			result.DerivedContract.Provider != cpuExecutionProvider ||
-			result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads ||
-			result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) {
-			return errors.New("idle Triton CPU backend evidence mismatch")
+	if len(config.CPU.AffinityCPUs) != 0 && (!slices.Equal(config.CPU.AffinityCPUs, result.CPUContract.AffinityCPUs) ||
+		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
+		return errors.New("idle actual CPU affinity differs from requested frozen CPU IDs")
+	}
+	if IsSupportedFirstfloorRunConfig(config) {
+		if result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) ||
+			result.DerivedContract.Provider != result.Provider {
+			return errors.New("idle firstfloor memory or derived provider evidence mismatch")
 		}
-		return validateTritonRuntimeEvidence(config, result.Triton, 0)
+		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
+			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+			return err
+		}
+		return validateFirstfloorRuntimeEvidence(config, result.Firstfloor, 0)
 	}
 	if IsSupportedCPUORTRunConfig(config) {
-		if result.RKNN != nil || result.Triton != nil || result.Provider != config.State.Backend ||
+		if result.RKNN != nil || result.Firstfloor != nil || result.Provider != config.State.Backend ||
 			!contains(result.AvailableProviders, config.State.Backend) ||
 			(result.SchemaVersion == IdleRuntimeResultSchemaVersion &&
 				result.DerivedContract.Provider != config.State.Backend) ||
@@ -160,7 +164,7 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 		return nil
 	}
 	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != IdleRuntimeResultSchemaVersion ||
-		result.Triton != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
+		result.Firstfloor != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
 		return errors.New("idle runtime result does not match an explicit supported path")
 	}
 	return validateRKNNRuntimeEvidence(config, result.RKNN)

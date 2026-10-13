@@ -22,7 +22,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/triton"
+	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,7 +41,10 @@ const (
 	ServingPoolLabel         = "edge.dacs.io/serving-pool"
 	ServingProfileAnnotation = "edge.dacs.io/serving-profile"
 	ServingWeightAnnotation  = "edge.dacs.io/serving-weight"
+	ServingPolicyAnnotation  = "edge.dacs.io/serving-policy"
+	ServingSlotAnnotation    = "edge.dacs.io/serving-slot"
 	sourceFinalizer          = "edge.dacs.io/serving-source-termination"
+	firstfloorContainerName  = "firstfloor"
 )
 
 type ObserverConfig struct {
@@ -68,24 +71,25 @@ type nativeSource struct {
 // ponytail: one source lock serializes refresh/cleanup for this single owner;
 // split locks only if observed cluster size makes refresh contention material.
 type Observer struct {
-	mu          sync.Mutex
-	store       *Store
-	kube        kubernetes.Interface
-	runtime     *serving.Runtime
-	native      *triton.Client
-	config      ObserverConfig
-	profiles    []serving.Profile
-	sources     map[string]*nativeSource
-	issues      map[string]ObserverIssue
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	podWatch    watch.Interface
-	closed      bool
-	movingNodes map[string]bool
+	mu                sync.Mutex
+	store             *Store
+	kube              kubernetes.Interface
+	runtime           *serving.Runtime
+	native            *firstfloor.Client
+	config            ObserverConfig
+	profiles          []serving.Profile
+	sources           map[string]*nativeSource
+	issues            map[string]ObserverIssue
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	podWatch          watch.Interface
+	closed            bool
+	movingNodes       map[string]bool
+	removingInstances map[string]bool
 }
 
-func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *triton.Client, config ObserverConfig) (*Observer, error) {
+func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
 	if store == nil || store.client == nil || kube == nil || runtime == nil || native == nil || config.Namespace == "" {
 		return nil, errors.New("observer requires direct store, Kubernetes/native clients, runtime and selected namespace")
 	}
@@ -93,7 +97,7 @@ func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runti
 		config.ActuationNamespace = config.Namespace
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, ctx: ctx, cancel: cancel}, nil
+	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, removingInstances: map[string]bool{}, ctx: ctx, cancel: cancel}, nil
 }
 
 func (o *Observer) SetProfiles(profiles []serving.Profile) {
@@ -127,9 +131,9 @@ func (o *Observer) issue(source string, err error) {
 func physicalID(podUID types.UID, containerID string) string {
 	return string(podUID) + "/" + containerID
 }
-func tritonStatus(pod *corev1.Pod) *corev1.ContainerStatus {
+func firstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {
 	for i := range pod.Status.ContainerStatuses {
-		if pod.Status.ContainerStatuses[i].Name == "triton" {
+		if pod.Status.ContainerStatuses[i].Name == firstfloorContainerName {
 			return &pod.Status.ContainerStatuses[i]
 		}
 	}
@@ -261,13 +265,13 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 			source.ownerUID = types.UID(owner)
 		}
 	}
-	if status := tritonStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
+	if status := firstfloorStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
 		id := physicalID(pod.UID, status.ContainerID)
 		if retained := o.sources[id]; retained != nil && !retained.stopped {
 			o.issue("logs/"+id, o.startLogs(ctx, pod, owner))
 		}
 	}
-	if pod.Labels["app.kubernetes.io/component"] != "serving-instance" {
+	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 		return serving.ReadyInstance{}, false
 	}
 	spec, err := sourceSpec(pod, node, profile, classes, actuations)
@@ -289,6 +293,8 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 				err = errors.New("native container changed during probe")
 			} else {
 				instance.OwnerWorkloadUID = owner
+				instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
+				instance.State.Stopped = o.removingInstances[spec.InstanceID]
 				err = o.startLogs(ctx, latest, owner)
 			}
 		}
@@ -297,7 +303,7 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 	if err == nil {
 		return instance, true
 	}
-	if status := tritonStatus(pod); status != nil && status.ContainerID != "" && node != nil && node.Labels[ServingPoolLabel] != "" {
+	if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" && node != nil && node.Labels[ServingPoolLabel] != "" {
 		return serving.ReadyInstance{State: serving.InstanceState{ID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: pod.Annotations[ServingProfileAnnotation], Reason: err.Error(), ObservedAt: time.Now().UTC()}}, true
 	}
 	return serving.ReadyInstance{}, false
@@ -309,11 +315,11 @@ func (o *Observer) refreshFailure(err error) error {
 	return err
 }
 func sameNativeContainer(before, after *corev1.Pod) bool {
-	a, b := tritonStatus(before), tritonStatus(after)
+	a, b := firstfloorStatus(before), firstfloorStatus(after)
 	return before.UID == after.UID && a != nil && b != nil && a.ContainerID != "" && a.ContainerID == b.ContainerID && b.State.Running != nil
 }
 func sameRunningContainer(before, after *corev1.Pod) bool {
-	b := tritonStatus(after)
+	b := firstfloorStatus(after)
 	return sameNativeContainer(before, after) && b.Ready && after.DeletionTimestamp == nil && podReady(after)
 }
 func podReady(pod *corev1.Pod) bool {
@@ -331,8 +337,8 @@ func workloadOwner(owners []metav1.OwnerReference) string {
 	return ""
 }
 
-func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) (triton.Spec, error) {
-	var empty triton.Spec
+func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) (firstfloor.Spec, error) {
+	var empty firstfloor.Spec
 	if err := validateSourcePlacement(pod, node, profile, classes, actuations); err != nil {
 		return empty, err
 	}
@@ -348,17 +354,21 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	if err := validateSourceResources(runtime, node, profile); err != nil {
 		return empty, err
 	}
-	status := tritonStatus(pod)
+	status := firstfloorStatus(pod)
 	portOK := false
 	for _, port := range runtime.Ports {
-		if port.Name == "http" && port.ContainerPort == 8000 && port.HostPort == 0 && (port.Protocol == "" || port.Protocol == corev1.ProtocolTCP) {
+		if port.Name == "http" && port.ContainerPort == 8080 && port.HostPort == 0 && (port.Protocol == "" || port.Protocol == corev1.ProtocolTCP) {
 			portOK = true
 		}
 	}
 	if !portOK || net.ParseIP(pod.Status.PodIP) == nil {
-		return empty, errors.New("per-instance Pod IP and native http port 8000 unavailable")
+		return empty, errors.New("per-instance Pod IP and native http port 8080 unavailable")
 	}
-	return triton.Spec{Endpoint: "http://" + net.JoinHostPort(pod.Status.PodIP, "8000"), ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Triton.MaxQueueSize), Lanes: int(condition.Triton.PriorityLevels)}, nil
+	expected := *profile.RuntimeMetadata
+	// Delivery changes only the verified artifact's mount location, not the
+	// measured runtime, model bytes, provider, device or execution allocation.
+	expected.ModelPath = path.Join("/model", "model"+path.Ext(condition.Artifact.Path))
+	return firstfloor.Spec{Endpoint: "http://" + net.JoinHostPort(pod.Status.PodIP, "8080"), ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) error {
@@ -381,7 +391,7 @@ func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *servin
 		return errors.New("selected catalog profile unavailable")
 	}
 	condition := &profile.Condition
-	if profile.NodeName != node.Name || condition.NodeUID != string(node.UID) || condition.RuntimeFamily != profilingrun.TritonRuntimeFamily || condition.Backend != profilingrun.TritonPythonBackend || condition.Triton == nil {
+	if profile.NodeName != node.Name || condition.NodeUID != string(node.UID) || condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily || condition.Firstfloor == nil {
 		return errors.New("profile does not match current physical Node/native execution")
 	}
 	var class *edgev1alpha1.DeviceClass
@@ -398,12 +408,12 @@ func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *servin
 }
 
 func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.CurvePlanSpec) error {
-	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 1 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
-		return errors.New("native source requires isolated triton container and artifact init container")
+	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 2 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
+		return errors.New("native source requires isolated firstfloor runner, artifact and immutable profile init containers")
 	}
 	runtime, artifact := pod.Spec.Containers[0], pod.Spec.InitContainers[0]
-	status := tritonStatus(pod)
-	if runtime.Name != profilingrun.TritonRuntimeFamily || artifact.Name != "artifact" || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
+	status := firstfloorStatus(pod)
+	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
 		return errors.New("actual immutable native runtime image/container unavailable")
 	}
 	var init *corev1.ContainerStatus
@@ -415,8 +425,18 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	if init == nil || init.State.Terminated == nil || init.State.Terminated.ExitCode != 0 || !observedImage(artifact.Image, init.ImageID, condition.Artifact.Image) {
 		return errors.New("immutable artifact preparation unconfirmed")
 	}
-	if !slices.Equal(artifact.Command, []string{"sh", "-ec"}) || !slices.Equal(artifact.Args, []string{`cp "$1" "$2"`, "artifact-copy", condition.Artifact.Path, path.Join("/chill-artifact", path.Base(condition.Artifact.Path))}) || !artifactProjection(pod, artifact, runtime, condition.Artifact.Path) {
+	if !slices.Equal(artifact.Command, []string{"sh", "-ec"}) || !slices.Equal(artifact.Args, []string{`cp "$1" "$2"`, "artifact-copy", condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(condition.Artifact.Path))}) || !artifactProjection(pod, artifact, runtime, condition.Artifact.Path) {
 		return errors.New("artifact must use the verified read-only shared-volume projection")
+	}
+	bundle := pod.Spec.InitContainers[1]
+	var bundleStatus *corev1.ContainerStatus
+	for i := range pod.Status.InitContainerStatuses {
+		if pod.Status.InitContainerStatuses[i].Name == "profile" {
+			bundleStatus = &pod.Status.InitContainerStatuses[i]
+		}
+	}
+	if bundle.Name != "profile" || bundle.Image != condition.RuntimeImage || bundleStatus == nil || bundleStatus.State.Terminated == nil || bundleStatus.State.Terminated.ExitCode != 0 || !observedImage(bundle.Image, bundleStatus.ImageID, condition.RuntimeImage) {
+		return errors.New("immutable profile materialization unconfirmed")
 	}
 	return nil
 }
@@ -437,6 +457,13 @@ func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profi
 			return errors.New("measured batch memory exceeds actual current memory domain")
 		}
 	}
+	if profile.RuntimeMetadata == nil {
+		return errors.New("verified native device evidence unavailable")
+	}
+	gpuRequest, gpuLimit := runtime.Resources.Requests["nvidia.com/gpu"], runtime.Resources.Limits["nvidia.com/gpu"]
+	if profile.RuntimeMetadata.GPUUUID != "" && (gpuRequest.Value() != 1 || gpuLimit.Value() != 1) {
+		return errors.New("actual whole GPU exclusive allocation unavailable")
+	}
 	return nil
 }
 func observedImage(requested, actual, frozen string) bool { return requested == frozen && actual != "" }
@@ -446,7 +473,7 @@ func artifactProjection(pod *corev1.Pod, artifact, runtime corev1.Container, fil
 	}
 	for _, a := range artifact.VolumeMounts {
 		for _, r := range runtime.VolumeMounts {
-			if a.Name == r.Name && a.MountPath == "/chill-artifact" && r.MountPath == "/artifact" && !a.ReadOnly && r.ReadOnly && a.SubPath == "" && r.SubPath == "" && a.SubPathExpr == "" && r.SubPathExpr == "" {
+			if a.Name == r.Name && a.MountPath == "/chill-artifact" && r.MountPath == "/model" && !a.ReadOnly && r.ReadOnly && a.SubPath == "" && r.SubPath == "" && a.SubPathExpr == "" && r.SubPathExpr == "" {
 				for _, volume := range pod.Spec.Volumes {
 					if volume.Name == a.Name && volume.EmptyDir != nil {
 						return true
@@ -494,7 +521,7 @@ func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name str
 }
 
 func (o *Observer) observeTermination(pod *corev1.Pod) {
-	status := tritonStatus(pod)
+	status := firstfloorStatus(pod)
 	if status == nil {
 		return
 	}
@@ -538,7 +565,7 @@ func (o *Observer) watchPods(w watch.Interface) {
 					if source.uid != pod.UID {
 						continue
 					}
-					status := tritonStatus(pod)
+					status := firstfloorStatus(pod)
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
 						o.runtime.DisableInstance(id, "native Pod readiness/identity unavailable")
@@ -557,7 +584,7 @@ func (o *Observer) watchPods(w watch.Interface) {
 	}
 }
 func (o *Observer) startLogs(ctx context.Context, pod *corev1.Pod, owner string) error {
-	status := tritonStatus(pod)
+	status := firstfloorStatus(pod)
 	id := physicalID(pod.UID, status.ContainerID)
 	source := o.sources[id]
 	if source != nil && source.stopped {
@@ -570,7 +597,7 @@ func (o *Observer) startLogs(ctx context.Context, pod *corev1.Pod, owner string)
 		return nil
 	}
 	logCtx, cancel := context.WithCancel(o.ctx)
-	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "triton", Follow: true, Timestamps: true}).Stream(logCtx)
+	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: firstfloorContainerName, Follow: true, Timestamps: true}).Stream(logCtx)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("native progress source unavailable: %w", err)
@@ -595,8 +622,8 @@ func (o *Observer) scanLogs(ctx context.Context, id string, stream io.ReadCloser
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 8192), 64<<10)
 	for scanner.Scan() {
-		progress, err := triton.ParseProgress(scanner.Bytes())
-		if errors.Is(err, triton.ErrNotProgress) {
+		progress, err := firstfloor.ParseProgress(scanner.Bytes())
+		if errors.Is(err, firstfloor.ErrNotProgress) {
 			continue
 		}
 		o.mu.Lock()
@@ -833,7 +860,12 @@ func (o *Observer) Close() error {
 // It neither selects a destination nor retries/resumes a failed operation.
 func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeReference, pool string) error {
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			o.mu.Unlock()
+		}
+	}()
 	if o.closed {
 		return errors.New("observer is closed")
 	}
@@ -858,10 +890,18 @@ func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeRefer
 		return o.refreshLocked(ctx)
 	}
 	o.movingNodes[reference.UID] = true
-	defer delete(o.movingNodes, reference.UID)
+	defer func() {
+		if !locked {
+			o.mu.Lock()
+			locked = true
+		}
+		delete(o.movingNodes, reference.UID)
+	}()
 	if err := o.detachNodeLocked(ctx, reference.UID); err != nil {
 		return err
 	}
+	o.mu.Unlock()
+	locked = false
 	// Re-read after drain, then use native resourceVersion conflict protection.
 	// External mutation is a failure, not a reason to silently retry the patch.
 	node, err = o.kube.CoreV1().Nodes().Get(ctx, reference.Name, metav1.GetOptions{})
@@ -885,6 +925,8 @@ func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeRefer
 	if string(current.UID) != reference.UID || current.Labels[ServingPoolLabel] != pool {
 		return errors.New("new native Node membership remains unconfirmed")
 	}
+	o.mu.Lock()
+	locked = true
 	delete(o.movingNodes, reference.UID)
 	return o.refreshLocked(ctx)
 }

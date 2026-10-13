@@ -49,17 +49,18 @@ the other.
 ```text
 modelcompat/              pure tensor and runtime compatibility contracts
 modelcatalog/             shared ModelSpec projection and validation
+firstfloor/               leaf single-runner actor, SLO batching and framed IPC
 serving/                  admission, snapshots, routes, drain, JSONL/S3 windows
 ├── entrypoint/           authenticated HTTPS query, management and inference
 ├── kube/                 private uncached writer, TokenReview/SAR, measured
 │                         catalog and current Node/Pod/native observations
-└── triton/               official native HTTP V2 client and progress facts
+└── firstfloor/           typed native HTTP client and correlated progress facts
 ```
 
 [`../cmd/serving-entrypoint/`](../cmd/serving-entrypoint/) assembles concrete
 adapters. Serving does not import Profiler controllers or candidate resolvers.
-The native runtime is official Triton with Python/ORT CPU execution and its
-same-Workload-UID batching guard, not a separate HTTP inference proxy.
+The native runtime is firstfloor with explicit ORT CPU/CUDA or RKNN execution,
+per-UID/definition batch isolation and shared actor/replay batching decisions.
 Reviewed allowed directions and current `go list` edges are recorded in the
 [architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
 

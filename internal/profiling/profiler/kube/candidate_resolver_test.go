@@ -398,8 +398,8 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				config := objects[2].(*corev1.ConfigMap)
 				config.Data["execution-facts.yaml"] = strings.Replace(
 					config.Data["execution-facts.yaml"],
+					"profiler-execution-facts.v1alpha7",
 					"profiler-execution-facts.v1alpha6",
-					"profiler-execution-facts.v1alpha5",
 					1,
 				)
 			},
@@ -638,7 +638,7 @@ func validRKNNCandidateObjects() []client.Object {
 
 func validExecutionFacts() string {
 	payload := validRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha6
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha7
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - deviceClass: lattepanda-3-delta-8g
@@ -650,7 +650,7 @@ declarations:
 
 func validRKNNExecutionFacts() string {
 	payload := validRKNNRuntimeDeclaration()
-	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha6
+	return `schemaVersion: chill.dacs.io/profiler-execution-facts.v1alpha7
 metricObserverImage: ` + testMetricObserverImage + `
 declarations:
   - deviceClass: orangepi-5-plus-16g

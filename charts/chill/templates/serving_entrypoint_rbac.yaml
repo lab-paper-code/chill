@@ -28,6 +28,12 @@ rules:
   - apiGroups: [""]
     resources: [nodes]
     verbs: [get, list, patch]
+  {{- if .Values.servingEntrypoint.scheduler.configMap }}
+  # The budget includes non-serving Pods on every candidate Node.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  {{- end }}
   - apiGroups: [authentication.k8s.io]
     resources: [tokenreviews]
     verbs: [create]
@@ -60,10 +66,22 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [pods]
-    verbs: [get, list, watch, patch, delete]
+    verbs: [get, list, watch, create, patch, delete]
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
+  {{- if .Values.servingEntrypoint.scheduler.configMap }}
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ .Values.servingEntrypoint.scheduler.configMap | quote }}]
+    verbs: [update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, delete]
+  {{- end }}
   - apiGroups: [apps]
     resources: [deployments]
     verbs: [list, delete]
@@ -98,7 +116,7 @@ metadata:
 rules:
   - apiGroups: [edge.dacs.io]
     resources: [nodeactuations]
-    verbs: [list]
+    verbs: [get, list, create]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

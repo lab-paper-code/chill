@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -63,6 +64,7 @@ func preparationFromRunConfig(config profilingrun.RunConfig) profiler.Preparatio
 		},
 		TargetNode:  config.TargetNode.Name,
 		CPURequest:  config.CPU.Request,
+		CPUAffinity: slices.Clone(config.CPU.AffinityCPUs),
 		Measurement: config.Measurement,
 		Metrics: profiler.MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,

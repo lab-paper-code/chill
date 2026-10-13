@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	FinalizedTransitionRecordSchemaVersion = "chill.dacs.io/transition-cost-finalized-observation.v1alpha2"
-	maximumTransitionReceiptBytes          = 4 * 1024
+	maximumTransitionReceiptBytes = 4 * 1024
 )
 
 // AttemptFinalizationStore is the exact immutable read/write boundary needed
@@ -219,7 +218,7 @@ func encodeFinalizedTransition(rawReference evidencestore.ObjectIdentity,
 		return nil, fmt.Errorf("validate transition raw reference: %w", err)
 	}
 	payload, err := json.Marshal(finalizedTransitionWire{
-		SchemaVersion: FinalizedTransitionRecordSchemaVersion,
+		SchemaVersion: transitioncost.FinalizedRecordSchemaVersion,
 		RawEvidence:   rawReference, Observation: observation.Record(),
 	})
 	if err != nil {
@@ -242,7 +241,7 @@ func decodeFinalizedTransition(
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
 			errors.New("finalized transition evidence contains a trailing JSON value")
 	}
-	if wire.SchemaVersion != FinalizedTransitionRecordSchemaVersion {
+	if wire.SchemaVersion != transitioncost.FinalizedRecordSchemaVersion {
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
 			fmt.Errorf("unsupported finalized transition schema %q", wire.SchemaVersion)
 	}

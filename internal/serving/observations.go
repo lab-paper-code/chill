@@ -19,7 +19,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-const observationSchema = "chill.dacs.io/serving-observations.v1alpha1"
+const observationSchema = "chill.dacs.io/serving-observations.v1alpha2"
 
 type JournalConfig struct {
 	Directory   string
@@ -55,6 +55,7 @@ type observationRecord struct {
 	Definition    *DefinitionObservation `json:"definition,omitempty"`
 	Request       *RequestEvent          `json:"request,omitempty"`
 	Management    *ManagementEvent       `json:"management,omitempty"`
+	Scheduler     *SchedulerObservation  `json:"scheduler,omitempty"`
 }
 
 type JournalHealth struct {
@@ -109,7 +110,7 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 		}
 		j.windows = append(j.windows, window)
 	}
-	for _, stream := range []string{"definitions", "requests", "management"} {
+	for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
 		if err := j.scan(stream, func(observationRecord) {}); err != nil {
 			return nil, err
 		}
@@ -179,7 +180,7 @@ func (j *Journal) start(now time.Time) (result error) {
 	if err := j.saveWindow(j.active); err != nil {
 		return err
 	}
-	for _, stream := range []string{"definitions", "requests", "management"} {
+	for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
 		file, err := os.OpenFile(filepath.Join(directory, stream+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
@@ -265,9 +266,9 @@ func (j *Journal) archive(ctx context.Context) error {
 		if window.ClosedAt == nil || window.Published {
 			continue
 		}
-		objects := make([]evidencestore.ObjectIdentity, 0, 4)
+		objects := make([]evidencestore.ObjectIdentity, 0, 5)
 		var failed error
-		for _, name := range []string{"definitions.jsonl", "requests.jsonl", "management.jsonl", "metadata.json"} {
+		for _, name := range []string{"definitions.jsonl", "requests.jsonl", "management.jsonl", "scheduler.jsonl", "metadata.json"} {
 			file, err := os.Open(filepath.Join(j.config.Directory, window.ID, name))
 			if err != nil {
 				failed = err
@@ -464,17 +465,17 @@ func (f *requestFacts) addEvent(e *RequestEvent) {
 	}
 	if !e.ReceivedAt.IsZero() {
 		f.received = e.ReceivedAt
-	} else if e.Kind == "received" {
+	} else if e.Kind == phaseReceived {
 		f.received = e.At
 	}
-	if e.Kind == "accepted" {
+	if e.Kind == phaseAccepted {
 		f.accepted = true
 	}
 	if e.Outcome != "" && !strings.HasPrefix(e.Kind, "backend_") &&
-		e.Kind != phaseAssigned && e.Kind != "received" && e.Kind != "accepted" {
+		e.Kind != phaseAssigned && e.Kind != phaseReceived && e.Kind != phaseAccepted {
 		f.outcome = e.Outcome
 	}
-	if e.Kind == "response_finished" {
+	if e.Kind == eventResponseFinished {
 		switch e.Outcome {
 		case "delivery_failed", outcomeIncomplete, "canceled":
 			f.completion = nil
@@ -482,7 +483,7 @@ func (f *requestFacts) addEvent(e *RequestEvent) {
 		}
 		f.completion = e
 		if f.outcome == "" {
-			f.outcome = "completed"
+			f.outcome = outcomeCompleted
 		}
 	}
 }
@@ -570,7 +571,7 @@ func (result *ObservationResult) aggregate(
 			if f.accepted {
 				f.outcome = outcomeIncomplete
 			} else {
-				f.outcome = "pending"
+				f.outcome = phasePending
 			}
 		}
 		result.Outcomes[f.outcome]++
@@ -694,13 +695,15 @@ func (j *Journal) runtimeFacts() (map[string]*Definition, []unfinishedBackend, e
 			if e.Assignment != nil {
 				assigned[e.RequestID] = &unfinishedBackend{event: *e, phase: phaseAssigned}
 			}
-		case "backend_queued", "backend_running":
+		case "backend_queued", "backend_deferred", "backend_running":
 			if a := assigned[e.RequestID]; a != nil {
 				a.phase = strings.TrimPrefix(e.Kind, "backend_")
 			}
 		case "backend_finished":
-			ended[e.RequestID] = true
-		case "response_finished":
+			if e.ExecutionComplete {
+				ended[e.RequestID] = true
+			}
+		case eventResponseFinished:
 			responded[e.RequestID] = true
 		}
 	}); err != nil {

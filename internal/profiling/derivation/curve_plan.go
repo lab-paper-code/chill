@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -15,7 +17,10 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha7"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha8"
+	curveRuntimeFirstfloor = "firstfloor"
+	curveBackendORTCUDA    = "ort-cuda"
+	curveBackendORTCPU     = "ort-cpu"
 )
 
 // CurveCPUContract is the execution CPU contract shared by every planned batch.
@@ -27,7 +32,16 @@ type CurveCPUContract struct {
 	Limit              string `json:"limit"`
 	ORTIntraOpThreads  int    `json:"ortIntraOpThreads"`
 	ORTInterOpThreads  int    `json:"ortInterOpThreads"`
+	AffinityCPUs       []int  `json:"affinityCPUs,omitempty"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+}
+
+// CurveRuntimeAccessContract freezes accelerator delivery and physical GPU identity.
+type CurveRuntimeAccessContract struct {
+	Privileged         bool              `json:"privileged"`
+	SupplementalGroups []int64           `json:"supplementalGroups,omitempty"`
+	Resources          map[string]string `json:"resources,omitempty"`
+	GPUUUID            string            `json:"gpuUUID,omitempty"`
 }
 
 // CurveMetricSourceContract identifies the wall-power source without carrying
@@ -78,23 +92,24 @@ type CurveArtifactContract struct {
 
 // CurvePlanSpec is the raw material selected for one measurement plan.
 type CurvePlanSpec struct {
-	Name              string                      `json:"name"`
-	LogicalModel      string                      `json:"logicalModel"`
-	DeviceClass       string                      `json:"deviceClass"`
-	NodeUID           string                      `json:"nodeUID"`
-	RuntimeFamily     string                      `json:"runtimeFamily"`
-	Backend           string                      `json:"backend"`
-	Triton            *modelcompat.TritonSettings `json:"triton,omitempty"`
-	RuntimeImage      string                      `json:"runtimeImage"`
-	PowerMode         string                      `json:"powerMode"`
-	CPU               CurveCPUContract            `json:"cpu"`
-	MetricSource      CurveMetricSourceContract   `json:"metricSource"`
-	ActiveProtocol    CurveProtocolContract       `json:"activeProtocol"`
-	IdleProtocol      CurveProtocolContract       `json:"idleProtocol"`
-	Conversion        CurveConversionContract     `json:"conversion"`
-	Artifact          CurveArtifactContract       `json:"artifact"`
-	PlannedBatchSizes []int                       `json:"plannedBatchSizes"`
-	Tensor            CurveTensorContract         `json:"tensor"`
+	Name              string                          `json:"name"`
+	LogicalModel      string                          `json:"logicalModel"`
+	DeviceClass       string                          `json:"deviceClass"`
+	NodeUID           string                          `json:"nodeUID"`
+	RuntimeFamily     string                          `json:"runtimeFamily"`
+	Backend           string                          `json:"backend"`
+	Firstfloor        *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
+	RuntimeAccess     *CurveRuntimeAccessContract     `json:"runtimeAccess,omitempty"`
+	RuntimeImage      string                          `json:"runtimeImage"`
+	PowerMode         string                          `json:"powerMode"`
+	CPU               CurveCPUContract                `json:"cpu"`
+	MetricSource      CurveMetricSourceContract       `json:"metricSource"`
+	ActiveProtocol    CurveProtocolContract           `json:"activeProtocol"`
+	IdleProtocol      CurveProtocolContract           `json:"idleProtocol"`
+	Conversion        CurveConversionContract         `json:"conversion"`
+	Artifact          CurveArtifactContract           `json:"artifact"`
+	PlannedBatchSizes []int                           `json:"plannedBatchSizes"`
+	Tensor            CurveTensorContract             `json:"tensor"`
 }
 
 type curvePlanRecord struct {
@@ -111,6 +126,7 @@ type CurvePlan struct {
 func NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error) {
 	spec = cloneCurvePlanSpec(spec)
 	sort.Ints(spec.PlannedBatchSizes)
+	sort.Ints(spec.CPU.AffinityCPUs)
 	if err := validateCurvePlanSpec(spec); err != nil {
 		return CurvePlan{}, err
 	}
@@ -225,15 +241,8 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	if !cleanCurveValue(shared.RuntimeImage) {
 		return errors.New("curve plan runtime image is invalid")
 	}
-	if shared.RuntimeFamily == "triton" {
-		if shared.Backend != "python" {
-			return errors.New("Triton curve plan requires the Python CPU backend")
-		}
-		if err := modelcompat.ValidateTritonRuntimeSettings(shared.Triton); err != nil {
-			return err
-		}
-	} else if shared.Triton != nil {
-		return errors.New("non-Triton curve plan cannot contain Triton settings")
+	if err := validateCurveRuntime(shared); err != nil {
+		return err
 	}
 	if err := validateCurveCPU(shared.CPU); err != nil {
 		return err
@@ -275,8 +284,8 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 		if plannedBatchSize <= 0 {
 			return errors.New("curve plan batch sizes must be positive")
 		}
-		if shared.Triton != nil && plannedBatchSize > int(shared.Triton.MaxBatchSize) {
-			return errors.New("curve plan batch exceeds selected Triton maxBatchSize")
+		if shared.Firstfloor != nil && plannedBatchSize > int(shared.Firstfloor.MaxBatchSize) {
+			return errors.New("curve plan batch exceeds selected firstfloor maxBatchSize")
 		}
 		if _, exists := seenBatches[plannedBatchSize]; exists {
 			return fmt.Errorf("curve plan batch size %d is duplicated", plannedBatchSize)
@@ -289,6 +298,33 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	return nil
 }
 
+func validateCurveRuntime(shared CurvePlanSpec) error {
+	if shared.RuntimeFamily == curveRuntimeFirstfloor {
+		if shared.Backend != curveBackendORTCPU && shared.Backend != curveBackendORTCUDA && shared.Backend != "rknnlite" {
+			return errors.New("firstfloor curve plan requires ort-cpu, ort-cuda, or rknnlite")
+		}
+		if err := modelcompat.ValidateFirstfloorRuntimeSettings(shared.Firstfloor); err != nil {
+			return err
+		}
+		if shared.Backend == curveBackendORTCUDA {
+			if shared.RuntimeAccess == nil || !cleanCurveValue(shared.RuntimeAccess.GPUUUID) ||
+				!strings.HasPrefix(shared.RuntimeAccess.GPUUUID, "GPU-") ||
+				len(shared.RuntimeAccess.Resources) != 1 || shared.RuntimeAccess.Resources["nvidia.com/gpu"] != "1" {
+				return errors.New("firstfloor CUDA curve plan requires the frozen GPU UUID and one nvidia.com/gpu resource")
+			}
+		} else if shared.RuntimeAccess != nil &&
+			(shared.RuntimeAccess.GPUUUID != "" || len(shared.RuntimeAccess.Resources) != 0) {
+			return errors.New("non-CUDA firstfloor curve plan cannot contain CUDA allocation")
+		}
+	} else if shared.Firstfloor != nil {
+		return errors.New("non-firstfloor curve plan cannot contain firstfloor settings")
+	}
+	if len(shared.CPU.AffinityCPUs) > 0 && shared.RuntimeFamily != curveRuntimeFirstfloor {
+		return errors.New("explicit CPU affinity requires firstfloor execution")
+	}
+	return nil
+}
+
 func validateCurveCPU(cpu CurveCPUContract) error {
 	for _, value := range []string{cpu.Policy, cpu.PolicyVersion, cpu.Request, cpu.Limit} {
 		if !cleanCurveValue(value) {
@@ -297,6 +333,14 @@ func validateCurveCPU(cpu CurveCPUContract) error {
 	}
 	if cpu.ORTIntraOpThreads < 0 || cpu.ORTInterOpThreads < 0 {
 		return errors.New("curve plan CPU thread counts cannot be negative")
+	}
+	for index, cpuID := range cpu.AffinityCPUs {
+		if cpuID < 0 || (index > 0 && cpuID <= cpu.AffinityCPUs[index-1]) {
+			return errors.New("curve plan CPU affinity IDs must be nonnegative, unique, and sorted")
+		}
+	}
+	if len(cpu.AffinityCPUs) > 0 && len(cpu.AffinityCPUs) < cpu.ORTIntraOpThreads {
+		return errors.New("curve plan CPU affinity mask is smaller than the ONNX Runtime thread count")
 	}
 	return nil
 }
@@ -353,7 +397,14 @@ func cleanCurveValue(value string) bool {
 
 func cloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
+	shared.CPU.AffinityCPUs = slices.Clone(shared.CPU.AffinityCPUs)
 	shared.Tensor.Tensors = modelcompat.CloneInputTensors(shared.Tensor.Tensors)
-	shared.Triton = modelcompat.CloneTritonRuntimeSettings(shared.Triton)
+	shared.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(shared.Firstfloor)
+	if shared.RuntimeAccess != nil {
+		access := *shared.RuntimeAccess
+		access.SupplementalGroups = append([]int64(nil), access.SupplementalGroups...)
+		access.Resources = maps.Clone(access.Resources)
+		shared.RuntimeAccess = &access
+	}
 	return shared
 }

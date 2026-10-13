@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	randv2 "math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -37,22 +36,29 @@ type Call struct {
 	assignment                                   *Assignment
 	instance                                     *runtimeInstance
 	phase                                        string
+	progress                                     *BackendProgress
+	backendFinishedAt                            time.Time
+	clientSpan                                   time.Duration
+	backendContext                               context.Context
+	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
 }
 
 type runtimeInstance struct {
 	ReadyInstance
 	outstanding int
-	bindings    map[string]uint64
+	bindings    map[string]bool
 }
 type routeEntry struct {
 	instance *runtimeInstance
 	path     *ModelPath
 }
 type inputRoute struct {
-	evidence bool
-	entries  []routeEntry
-	total    uint64
+	evidence  bool
+	entries   []routeEntry
+	weights   []int32
+	current   []int64
+	available []bool
 }
 type runtimeWorkload struct {
 	definition *Definition
@@ -68,20 +74,22 @@ type runtimeWorkload struct {
 // ponytail: one owner and one lock for the research cluster. Use per-Workload
 // locks only if measured contention, not a distributed queue or lock service.
 type Runtime struct {
-	mu               sync.Mutex
-	config           RuntimeConfig
-	ctx              context.Context
-	cancel           context.CancelFunc
-	workloads        map[string]*runtimeWorkload
-	names            map[string]string
-	instances        map[string]*runtimeInstance
-	profiles         []Profile
-	nodes            map[string][]NodeReference
-	calls            map[string]*Call
-	definitions      map[string]*Definition
-	changed          chan struct{}
-	observationError error
-	shuttingDown     bool
+	mu                sync.Mutex
+	config            RuntimeConfig
+	ctx               context.Context
+	cancel            context.CancelFunc
+	workloads         map[string]*runtimeWorkload
+	names             map[string]string
+	instances         map[string]*runtimeInstance
+	profiles          []Profile
+	nodes             map[string][]NodeReference
+	routingControlled bool
+	routeTargets      map[string]map[string]int32
+	calls             map[string]*Call
+	definitions       map[string]*Definition
+	changed           chan struct{}
+	observationError  error
+	shuttingDown      bool
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
@@ -110,20 +118,22 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 			r.names[d.Name] = d.UID
 		}
 		c := &Call{runtime: r, receipt: Receipt{ID: fact.event.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: fact.event.ReceivedAt}, definition: d, identity: fact.event.Definition, assignment: fact.event.Assignment, phase: fact.phase, transportDone: true, responseRecorded: fact.responseRecorded}
-		if c.assignment.Priority == 0 {
-			cancel()
-			return nil, errors.New("unfinished assignment has no native priority")
+		if fact.event.LifetimeNanos > 0 {
+			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(fact.event.LifetimeNanos))
+		}
+		if fact.event.InputPath != nil {
+			c.input.path = *fact.event.InputPath
 		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
-			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Pool: c.assignment.Pool, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]uint64{}}
+			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Pool: c.assignment.Pool, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
 			r.instances[c.assignment.Instance] = instance
 		}
-		instance.bindings[d.UID] = c.assignment.Priority
+		instance.bindings[d.UID] = true
 		instance.outstanding++
 		c.instance = instance
 		if !c.responseRecorded {
-			if err := r.event(c, "response_finished", outcomeIncomplete, "EntrypointRestarted"); err != nil {
+			if err := r.event(c, eventResponseFinished, outcomeIncomplete, "EntrypointRestarted"); err != nil {
 				cancel()
 				return nil, err
 			}
@@ -156,8 +166,15 @@ func (r *Runtime) event(c *Call, kind, outcome, code string) error {
 }
 func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) error {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
+	if !c.receipt.Deadline.IsZero() {
+		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
+	}
+	e.NativeProgress = c.progress
+	e.ClientSpanNanos = int64(c.clientSpan)
+	e.ExecutionComplete = c.backendDone
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
+		e.InputPath = &c.input.path
 	}
 	if err := r.config.Journal.RequestEvent(e); err != nil {
 		r.observationError = err
@@ -175,7 +192,7 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	defer r.mu.Unlock()
 	receipt := Receipt{ID: hex.EncodeToString(random[:]), Name: name, UID: r.names[name], ReceivedAt: at}
 	c := &Call{receipt: receipt}
-	if err := r.event(c, "received", "", ""); err != nil {
+	if err := r.event(c, phaseReceived, "", ""); err != nil {
 		return receipt, failure("ObservationUnavailable", "cannot persist request receipt")
 	}
 	if receipt.UID == "" {
@@ -200,6 +217,13 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	validated, err := validateInput(input, d.Model.Paths)
 	if err != nil {
 		return nil, err
+	}
+	lifetime := int64(0)
+	if !receipt.Deadline.IsZero() {
+		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
+	}
+	if err := r.config.Journal.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: time.Now().UTC(), ReceivedAt: receipt.ReceivedAt, SLO: &d.SLO, InputPath: &validated.path, LifetimeNanos: lifetime}); err != nil {
+		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -226,7 +250,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure("QueueFull", "workload ingress queue limit reached")
 	}
 	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: validated, reply: make(chan callResult, 1)}
-	if err := r.event(c, "accepted", "", ""); err != nil {
+	if err := r.event(c, phaseAccepted, "", ""); err != nil {
 		return nil, failure("ObservationUnavailable", "cannot persist request acceptance")
 	}
 	w.calls[receipt.ID] = c
@@ -248,6 +272,9 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 			c.backendDone = true
 			c.transportDone = true
 		}
+		if c.cancelBackend != nil {
+			c.cancelBackend()
+		}
 		c.runtime.mu.Unlock()
 		c.runtime.signal()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -268,7 +295,7 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) error {
 	if c.responseRecorded {
 		return nil
 	}
-	if err := r.eventAt(c, "response_finished", outcome, code, finishedAt); err != nil {
+	if err := r.eventAt(c, eventResponseFinished, outcome, code, finishedAt); err != nil {
 		return err
 	}
 	c.responseRecorded = true
@@ -294,33 +321,19 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 }
 
 func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
-	total := route.total
-	for _, entry := range route.entries {
-		if !entry.instance.State.Ready || entry.instance.outstanding >= entry.instance.Capacity {
-			total -= uint64(entry.instance.Weight)
-		}
+	for index, entry := range route.entries {
+		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && entry.instance.outstanding < entry.instance.Capacity
 	}
-	if total == 0 {
+	index := SmoothWeightedRoute(route.weights, route.current, route.available)
+	if index < 0 {
 		return nil
 	}
-	offset := randv2.Uint64N(total)
-	for i := range route.entries {
-		entry := &route.entries[i]
-		if !entry.instance.State.Ready || entry.instance.outstanding >= entry.instance.Capacity {
-			continue
-		}
-		weight := uint64(entry.instance.Weight)
-		if offset < weight {
-			return entry
-		}
-		offset -= weight
-	}
-	panic("available weight invariant")
+	return &route.entries[index]
 }
 
 func (r *Runtime) dispatchLocked() {
-	// Workload FIFOs stay separate. This is bounded availability dispatch, not a
-	// new configuration optimizer or an SLO-adaptive batch-wait policy.
+	// The ingress owner promptly distributes accepted samples to ready capacity.
+	// The firstfloor actor owns actual compatible batching and additional wait.
 	for _, w := range r.workloads {
 		for len(w.queue) > 0 {
 			c := w.queue[0]
@@ -336,7 +349,7 @@ func (r *Runtime) dispatchLocked() {
 				break
 			}
 			i := entry.instance
-			c.assignment = &Assignment{Pool: i.State.Pool, Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, Priority: i.bindings[c.receipt.UID], DispatchedAt: time.Now().UTC()}
+			c.assignment = &Assignment{Pool: i.State.Pool, Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
 			c.assignment.ProfileReference = i.Profile.Reference
 			c.assignment.ProfileEvidence = i.Profile.Evidence
 			c.assignment.ProfileConfidenceLevel = i.Profile.ConfidenceLevel
@@ -352,16 +365,17 @@ func (r *Runtime) dispatchLocked() {
 			c.instance = i
 			c.phase = phaseAssigned
 			i.outstanding++
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input.input, Assignment: *c.assignment, Priority: i.bindings[c.receipt.UID], ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline}
+			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline}
 			go r.execute(c, i.Execute, dispatch)
 		}
 	}
 }
 
 func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch) {
-	result, err := execute(r.ctx, dispatch)
+	result, err := execute(c.backendContext, dispatch)
 	finishedAt := time.Now()
-	outcome, code := "completed", ""
+	outcome, code := outcomeCompleted, ""
 	if err != nil {
 		var domain *Error
 		if !errors.As(err, &domain) {
@@ -369,12 +383,24 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		}
 		errors.As(err, &domain)
 		outcome, code = "error", domain.Code
+		if domain.Code == "SLODeadlineDrop" {
+			outcome = "timeout"
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c.transportDone = true
+	if c.cancelBackend != nil {
+		c.cancelBackend()
+		c.cancelBackend = nil
+	}
+	c.clientSpan = result.ClientSpan
+	if result.Progress != nil {
+		c.progress = result.Progress
+	}
 	if result.Finished && !c.backendDone {
 		c.backendDone = true
+		c.backendFinishedAt = finishedAt
 		if eventErr := r.eventAt(c, "backend_finished", "", "", finishedAt); eventErr != nil {
 			err = failure("ObservationUnavailable", "cannot persist native completion")
 		}
@@ -398,7 +424,7 @@ func (r *Runtime) releaseLocked(c *Call) {
 		c.instance.outstanding--
 		c.instance = nil
 	}
-	c.input = validatedInput{}
+	c.input.input = nil
 	if !c.responseRecorded {
 		return
 	}
@@ -413,7 +439,8 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 	defer r.mu.Unlock()
 	c := r.calls[progress.RequestID]
 	e := RequestEvent{RequestID: progress.RequestID, WorkloadUID: progress.WorkloadUID, Definition: progress.Definition, Kind: "backend_" + progress.Phase, At: progress.At, NativeInstance: instance, Outcome: progress.Outcome, Error: progress.Error}
-	e.NativeQueue = progress.NativeQueue
+	e.NativeProgress = &progress
+	e.ExecutionComplete = progress.ExecutionComplete
 	if d := r.definitions[progress.Definition]; d != nil {
 		e.WorkloadName = d.Name
 		e.SLO = &d.SLO
@@ -424,12 +451,20 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 		}
 		e.Assignment = c.assignment
 		e.ReceivedAt = c.receipt.ReceivedAt
-		if progress.Phase == phaseRunning || (progress.Phase == "queued" && c.phase != phaseRunning) {
-			c.phase = progress.Phase
+		if !c.receipt.Deadline.IsZero() {
+			e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 		}
-		if progress.Phase == phaseFinished {
-			c.phase = phaseFinished
-			c.backendDone = true
+		e.InputPath = &c.input.path
+		if !c.backendDone {
+			c.progress = &progress
+			if progress.Phase == phaseRunning || ((progress.Phase == phaseQueued || progress.Phase == phaseDeferred) && c.phase != phaseRunning) {
+				c.phase = progress.Phase
+			}
+			if progress.Phase == phaseFinished && progress.ExecutionComplete {
+				c.phase = phaseFinished
+				c.backendDone = true
+				c.backendFinishedAt = time.Now()
+			}
 		}
 	}
 	if err := r.config.Journal.RequestEvent(e); err != nil {
@@ -456,6 +491,7 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) error {
 	for _, c := range r.calls {
 		if c.assignment != nil && c.assignment.Instance == instance && !c.backendDone {
 			c.backendDone = true
+			c.backendFinishedAt = time.Now()
 			c.phase = phaseFinished
 			if err := r.event(c, "backend_finished", "error", "InstanceStopped"); err != nil {
 				return err
@@ -653,7 +689,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 		if candidate.State.ID == "" || candidate.State.Node.UID == "" {
 			return failure("InvalidDistribution", "actual instance and Node identities are required")
 		}
-		if candidate.State.Ready && (candidate.Profile == nil || candidate.Weight < 0 || candidate.Capacity <= 0 || candidate.Lanes <= 0 || candidate.Execute == nil) {
+		if candidate.State.Ready && (candidate.Profile == nil || candidate.Weight < 0 || candidate.Capacity <= 0 || candidate.Execute == nil) {
 			return failure("InvalidDistribution", "ready instance needs verified profile, bounds and execution")
 		}
 		if seen[candidate.State.ID] {
@@ -668,7 +704,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 	for _, candidate := range instances {
 		i := r.instances[candidate.State.ID]
 		if i == nil {
-			i = &runtimeInstance{bindings: map[string]uint64{}}
+			i = &runtimeInstance{bindings: map[string]bool{}}
 			r.instances[candidate.State.ID] = i
 		}
 		if i.outstanding > 0 && !candidate.State.Ready {
@@ -680,6 +716,7 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) error {
 			i.State.Reason = "ConditionChangedBeforeDrain"
 			continue
 		}
+		candidate.State.Stopped = i.State.Stopped
 		i.ReadyInstance = candidate
 		for _, c := range r.calls {
 			if c.assignment != nil && c.assignment.Instance == candidate.State.ID && c.instance == nil && !c.backendDone {
@@ -738,10 +775,10 @@ func profilePath(d *Definition, p *Profile) *ModelPath {
 	for n := range d.Model.Paths {
 		path := &d.Model.Paths[n]
 		if path.Name == c.Artifact.ExecutionPath && path.Artifact == c.Artifact.Name && path.Path == c.Artifact.Path && path.Image == c.Artifact.Image && path.RuntimeFamily == c.RuntimeFamily && path.Backend == c.Backend && sameInputs(path.Tensors, c.Tensor.Tensors) {
-			if (path.Triton == nil) != (c.Triton == nil) {
+			if (path.Firstfloor == nil) != (c.Firstfloor == nil) {
 				continue
 			}
-			if path.Triton != nil && *path.Triton != *c.Triton {
+			if path.Firstfloor != nil && *path.Firstfloor != *c.Firstfloor {
 				continue
 			}
 			return path
@@ -751,6 +788,11 @@ func profilePath(d *Definition, p *Profile) *ModelPath {
 }
 
 func (r *Runtime) rebuildLocked() {
+	r.pruneInstanceBindingsLocked()
+	r.rebuildWorkloadRoutesLocked()
+}
+
+func (r *Runtime) pruneInstanceBindingsLocked() {
 	for _, i := range r.instances {
 		for uid := range i.bindings {
 			w := r.workloads[uid]
@@ -768,11 +810,15 @@ func (r *Runtime) rebuildLocked() {
 			}
 		}
 	}
+}
+
+func (r *Runtime) rebuildWorkloadRoutesLocked() {
 	for uid, w := range r.workloads {
 		if w.detached {
 			w.routes = nil
 			continue
 		}
+		previous := w.routes
 		w.routes = make([]inputRoute, len(w.definition.Model.Paths))
 		for n, path := range w.definition.Model.Paths {
 			route := &w.routes[n]
@@ -784,34 +830,30 @@ func (r *Runtime) rebuildLocked() {
 			}
 			for _, i := range r.instances {
 				actual := profilePath(w.definition, i.Profile)
-				if !i.State.Ready || i.Weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) || !sameInputs(path.Tensors, actual.Tensors) {
+				weight := r.routeWeightLocked(uid, i)
+				if !i.State.Ready || i.State.Stopped || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) || !sameInputs(path.Tensors, actual.Tensors) {
 					continue
 				}
-				if !i.bind(uid) {
-					continue
-				}
+				i.bindings[uid] = true
 				route.entries = append(route.entries, routeEntry{instance: i, path: actual})
-				route.total += uint64(i.Weight)
+			}
+			sort.Slice(route.entries, func(a, b int) bool { return route.entries[a].instance.State.ID < route.entries[b].instance.State.ID })
+			route.weights = make([]int32, len(route.entries))
+			route.current = make([]int64, len(route.entries))
+			route.available = make([]bool, len(route.entries))
+			for index, entry := range route.entries {
+				route.weights[index] = r.routeWeightLocked(uid, entry.instance)
+				if n < len(previous) {
+					for oldIndex, old := range previous[n].entries {
+						if old.instance.State.ID == entry.instance.State.ID && oldIndex < len(previous[n].weights) && previous[n].weights[oldIndex] == route.weights[index] {
+							route.current[index] = previous[n].current[oldIndex]
+							break
+						}
+					}
+				}
 			}
 		}
 	}
-}
-
-func (i *runtimeInstance) bind(uid string) bool {
-	if i.bindings[uid] != 0 {
-		return true
-	}
-	occupied := make(map[uint64]bool, len(i.bindings))
-	for _, lane := range i.bindings {
-		occupied[lane] = true
-	}
-	for lane := uint64(1); lane <= uint64(i.Lanes); lane++ {
-		if !occupied[lane] {
-			i.bindings[uid] = lane
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Runtime) State(name string) (WorkloadState, error) {
@@ -878,7 +920,7 @@ func (r *Runtime) Pools() []PoolState {
 				continue
 			}
 			switch c.phase {
-			case "queued":
+			case phaseQueued, phaseDeferred:
 				state.Waiting[c.receipt.UID]++
 			case phaseRunning:
 				state.Running[c.receipt.UID]++
@@ -886,7 +928,6 @@ func (r *Runtime) Pools() []PoolState {
 				state.AssignedUnknown[c.receipt.UID]++
 			}
 		}
-		state.ObservedAt = now
 		sort.Slice(state.Workloads, func(a, b int) bool { return state.Workloads[a].UID < state.Workloads[b].UID })
 		pool := get(state.Pool)
 		pool.Instances = append(pool.Instances, state)

@@ -20,9 +20,9 @@ from typing import Any, BinaryIO
 
 
 REQUEST_SCHEMA = "chill.dacs.io/rknnlite-runtime-request.v1alpha11"
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha15"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha6"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha4"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha16"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha7"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/rknnlite-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-inputs-v1"
@@ -313,11 +313,13 @@ def validate_request(request: dict[str, Any]) -> None:
     cpu = require_object(run_config["cpu"], "run_config.cpu")
     require_fields(
         cpu,
-        {"policy", "policyVersion", "request", "limit", "exclusivityClaimed"},
+        {"policy", "policyVersion", "request", "limit", "exclusivityClaimed"}
+        | ({"affinityCPUs"} if "affinityCPUs" in cpu else set()),
         "run_config.cpu",
     )
     if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
         raise ContractError("unsupported RKNNLite CPU quota contract")
+    requested_cpu_affinity(cpu)
     limit = require_string(cpu["limit"], "run_config.cpu.limit")
     if cpu["policy"] == "AllocatableCPUQuota":
         if limit != target["allocatableCPU"]:
@@ -757,6 +759,33 @@ def cpu_stat() -> dict[str, int]:
     return values
 
 
+def requested_cpu_affinity(cpu: dict[str, Any]) -> list[int] | None:
+    if "affinityCPUs" not in cpu:
+        return None
+    values = cpu["affinityCPUs"]
+    if (not isinstance(values, list) or not values or
+            any(type(value) is not int or value < 0 for value in values) or
+            len(set(values)) != len(values)):
+        raise ContractError("CPU affinity must contain unique nonnegative explicit CPU IDs")
+    return sorted(values)
+
+
+def apply_cpu_affinity(run_config: dict[str, Any]) -> None:
+    requested = requested_cpu_affinity(run_config["cpu"])
+    if requested is None:
+        return
+    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+        raise ContractError("process CPU affinity is unavailable")
+    if not set(requested).issubset(os.sched_getaffinity(0)):
+        raise ContractError("requested CPU affinity exceeds actual allowed CPU inventory")
+    try:
+        os.sched_setaffinity(0, requested)
+    except OSError as error:
+        raise ContractError("could not apply requested process CPU affinity") from error
+    if sorted(os.sched_getaffinity(0)) != requested:
+        raise ContractError("actual process CPU affinity differs from requested CPU mask")
+
+
 def validate_cpu_contract(run_config: dict[str, Any]) -> tuple[str, list[int], str]:
     cpu = run_config["cpu"]
     cgroup = current_cgroup_v2_directory()
@@ -775,6 +804,9 @@ def validate_cpu_contract(run_config: dict[str, Any]) -> tuple[str, list[int], s
     affinity = sorted(os.sched_getaffinity(0))
     if not affinity:
         raise ContractError("process CPU affinity is empty")
+    requested = requested_cpu_affinity(cpu)
+    if requested is not None and affinity != requested:
+        raise ContractError("actual process CPU affinity differs from requested CPU mask")
     cpuset = read_required_text(cgroup / "cpuset.cpus.effective", "effective CPU set")
     return cpu_max, affinity, cpuset
 
@@ -1067,6 +1099,7 @@ def execute(request: dict[str, Any], rknn_type: Any, numpy: Any) -> dict[str, An
         run_config["targetNode"]["architecture"]
     ):
         raise ContractError("runtime architecture does not match the RunConfig Node")
+    apply_cpu_affinity(run_config)
     cpu_max, affinity, cpuset = validate_cpu_contract(run_config)
     evidence = observe_host_contract(candidate, measurement["batch"])
     validate_runtime_inputs(model_path, candidate, measurement["batch"])
@@ -1248,6 +1281,8 @@ def main() -> None:
             str(arguments.result_file), "result-file"
         )
         request = decode_request(sys.stdin.buffer)
+        validate_request(request)
+        apply_cpu_affinity(request["runConfig"])
         import numpy
         from rknnlite.api import RKNNLite
 

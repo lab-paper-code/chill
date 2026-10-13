@@ -11,45 +11,47 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha6"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha7"
 
-	RKNNLiteCoreMask    = "NPU_CORE_0"
-	RKNNLiteInputLayout = "NHWC"
-	runtimeAArch64      = "aarch64"
+	RKNNLiteCoreMask      = "NPU_CORE_0"
+	RKNNLiteInputLayout   = "NHWC"
+	runtimeAArch64        = "aarch64"
+	cudaExecutionProvider = "CUDAExecutionProvider"
 )
 
 type RuntimeResult struct {
-	SchemaVersion             string                    `json:"schemaVersion"`
-	Status                    string                    `json:"status"`
-	ExperimentID              string                    `json:"experimentId"`
-	NodeName                  string                    `json:"nodeName"`
-	Model                     string                    `json:"model"`
-	Architecture              string                    `json:"architecture"`
-	Runtime                   string                    `json:"runtime"`
-	RuntimeVersion            string                    `json:"runtimeVersion"`
-	Backend                   string                    `json:"backend,omitempty"`
-	Provider                  string                    `json:"provider,omitempty"`
-	AvailableProviders        []string                  `json:"availableProviders,omitempty"`
-	RKNN                      *RKNNRuntimeEvidence      `json:"rknn,omitempty"`
-	Triton                    *TritonRuntimeEvidence    `json:"triton,omitempty"`
-	BatchSize                 int                       `json:"batchSize"`
-	WarmupIterations          int                       `json:"warmupIterations"`
-	WarmupCompletedAt         string                    `json:"warmupCompletedAt"`
-	InferenceCount            int                       `json:"inferenceCount"`
-	MeasurementMode           string                    `json:"measurementMode"`
-	MeasurementStartedAt      string                    `json:"measurementStartedAt"`
-	MeasurementEndedAt        string                    `json:"measurementEndedAt"`
-	MeasurementElapsedSeconds float64                   `json:"measurementElapsedSecondsMonotonic"`
-	OutputValidation          OutputValidation          `json:"outputValidation"`
-	CPUContract               RuntimeCPU                `json:"cpuContract"`
-	DerivedContract           DerivedContract           `json:"derivedExecutionContract"`
-	RepetitionResults         []Repetition              `json:"repetitionResults"`
-	CompletionIndex           int                       `json:"completionIndex"`
-	Inputs                    []modelcompat.InputTensor `json:"inputs"`
+	SchemaVersion             string                     `json:"schemaVersion"`
+	Status                    string                     `json:"status"`
+	ExperimentID              string                     `json:"experimentId"`
+	NodeName                  string                     `json:"nodeName"`
+	Model                     string                     `json:"model"`
+	Architecture              string                     `json:"architecture"`
+	Runtime                   string                     `json:"runtime"`
+	RuntimeVersion            string                     `json:"runtimeVersion"`
+	Backend                   string                     `json:"backend,omitempty"`
+	Provider                  string                     `json:"provider,omitempty"`
+	AvailableProviders        []string                   `json:"availableProviders,omitempty"`
+	RKNN                      *RKNNRuntimeEvidence       `json:"rknn,omitempty"`
+	Firstfloor                *FirstfloorRuntimeEvidence `json:"firstfloor,omitempty"`
+	BatchSize                 int                        `json:"batchSize"`
+	WarmupIterations          int                        `json:"warmupIterations"`
+	WarmupCompletedAt         string                     `json:"warmupCompletedAt"`
+	InferenceCount            int                        `json:"inferenceCount"`
+	MeasurementMode           string                     `json:"measurementMode"`
+	MeasurementStartedAt      string                     `json:"measurementStartedAt"`
+	MeasurementEndedAt        string                     `json:"measurementEndedAt"`
+	MeasurementElapsedSeconds float64                    `json:"measurementElapsedSecondsMonotonic"`
+	OutputValidation          OutputValidation           `json:"outputValidation"`
+	CPUContract               RuntimeCPU                 `json:"cpuContract"`
+	DerivedContract           DerivedContract            `json:"derivedExecutionContract"`
+	RepetitionResults         []Repetition               `json:"repetitionResults"`
+	CompletionIndex           int                        `json:"completionIndex"`
+	Inputs                    []modelcompat.InputTensor  `json:"inputs"`
 	// MemoryBytes is the kernel cgroup high-water mark (v2 memory.peak or v1
 	// memory.max_usage_in_bytes) since runtime container creation, including
 	// server, backend, worker, and page cache.
@@ -90,23 +92,18 @@ type DerivedContract struct {
 	Scheduling     json.RawMessage `json:"scheduling"`
 }
 
-// TritonRuntimeEvidence binds native scheduler statistics to the loaded backend.
-// Counts cover measured inference only; idle has no executions.
-type TritonRuntimeEvidence struct {
-	ORTVersion                      string            `json:"ortVersion"`
-	ModelInstanceCount              int               `json:"modelInstanceCount"`
-	MaxBatchSize                    int               `json:"maxBatchSize"`
-	MaxQueueDelayMicroseconds       uint64            `json:"maxQueueDelayMicroseconds"`
-	PreferredBatchSizes             []int             `json:"preferredBatchSizes"`
-	PriorityLevels                  int               `json:"priorityLevels"`
-	MaxQueueSize                    int               `json:"maxQueueSize"`
-	DefaultQueueTimeoutMicroseconds uint64            `json:"defaultQueueTimeoutMicroseconds"`
-	TimeoutAction                   string            `json:"timeoutAction"`
-	AllowTimeoutOverride            bool              `json:"allowTimeoutOverride"`
-	WorkloadUIDGuard                string            `json:"workloadUIDGuard"`
-	ExecutionCount                  uint64            `json:"executionCount"`
-	InferenceCount                  uint64            `json:"inferenceCount"`
-	BatchExecutionCounts            map[string]uint64 `json:"batchExecutionCounts"`
+// FirstfloorRuntimeEvidence binds the actual initialized actor and native runner.
+// Counts cover measured inference only; warmup and idle have no executions.
+type FirstfloorRuntimeEvidence struct {
+	Runtime              firstfloor.RuntimeMetadata `json:"runtime"`
+	Mode                 string                     `json:"mode"`
+	ModelInstanceCount   int                        `json:"modelInstanceCount"`
+	MaxBatchSize         int                        `json:"maxBatchSize"`
+	MaxQueueSize         int                        `json:"maxQueueSize"`
+	DeadlinePolicy       string                     `json:"deadlinePolicy"`
+	ExecutionCount       uint64                     `json:"executionCount"`
+	InferenceCount       uint64                     `json:"inferenceCount"`
+	BatchExecutionCounts map[string]uint64          `json:"batchExecutionCounts"`
 }
 
 type RKNNRuntimeEvidence struct {
@@ -150,10 +147,21 @@ type RKNNDeviceObservation struct {
 	Opened          bool   `json:"opened"`
 }
 type Repetition struct {
-	Repetition           int       `json:"repetition"`
-	MeasurementStartedAt string    `json:"measurementStartedAt"`
-	MeasurementEndedAt   string    `json:"measurementEndedAt"`
-	LatencyMilliseconds  []float64 `json:"latencyMs"`
+	Repetition           int                   `json:"repetition"`
+	MeasurementStartedAt string                `json:"measurementStartedAt"`
+	MeasurementEndedAt   string                `json:"measurementEndedAt"`
+	LatencyMilliseconds  []float64             `json:"latencyMs"`
+	NativeSamples        []NativeServiceSample `json:"nativeSamples,omitempty"`
+}
+
+// NativeServiceSample is one actual batch execution, aligned by slice index with
+// the repetition's client latency sample. Spans overlap and must not be summed.
+type NativeServiceSample struct {
+	BatchID                   uint64  `json:"batchID"`
+	BatchSize                 int     `json:"batchSize"`
+	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
+	BackendCallMilliseconds   float64 `json:"backendCallMs"`
+	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
 }
 
 // MeasurementWindow returns the runtime's wall-clock steady-measurement
@@ -274,20 +282,33 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("effective CPU evidence is incomplete")
 	}
-	if IsSupportedTritonCPURunConfig(config) {
-		if result.RKNN != nil || result.Provider != cpuExecutionProvider ||
-			!contains(result.AvailableProviders, cpuExecutionProvider) ||
-			result.DerivedContract.Provider != cpuExecutionProvider ||
-			result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads ||
-			result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) {
-			return errors.New("Triton CPU backend or memory evidence mismatch")
+	if len(config.CPU.AffinityCPUs) != 0 && (!slices.Equal(config.CPU.AffinityCPUs, result.CPUContract.AffinityCPUs) ||
+		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
+		return errors.New("runtime actual CPU affinity differs from requested frozen CPU IDs")
+	}
+	if IsSupportedFirstfloorRunConfig(config) {
+		if result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) {
+			return errors.New("firstfloor cgroup lifetime memory evidence is missing")
 		}
-		return validateTritonRuntimeEvidence(config, result.Triton, uint64(result.InferenceCount))
+		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
+			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+			return err
+		}
+		if result.DerivedContract.Provider != result.Provider {
+			return errors.New("firstfloor derived provider mismatch")
+		}
+		if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
+			return err
+		}
+		return validateNativeSamples(config, result.RepetitionResults)
+	}
+	for _, repetition := range result.RepetitionResults {
+		if len(repetition.NativeSamples) != 0 {
+			return errors.New("standalone reference runtime cannot assert firstfloor native spans")
+		}
 	}
 	if IsSupportedCPUORTRunConfig(config) {
-		if result.RKNN != nil || result.Triton != nil || result.Provider != config.State.Backend ||
+		if result.RKNN != nil || result.Firstfloor != nil || result.Provider != config.State.Backend ||
 			!contains(result.AvailableProviders, config.State.Backend) ||
 			(result.SchemaVersion == RuntimeResultSchemaVersion &&
 				result.DerivedContract.Provider != config.State.Backend) {
@@ -301,7 +322,7 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 		return nil
 	}
 	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != RuntimeResultSchemaVersion ||
-		result.Triton != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
+		result.Firstfloor != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
 		return errors.New("runtime result does not match an explicit supported path")
 	}
 	return validateRKNNRuntimeEvidence(config, result.RKNN)
@@ -312,26 +333,146 @@ func validRuntimeMemorySource(source string) bool {
 		source == memoryPeakCgroupV1
 }
 
-func validateTritonRuntimeEvidence(config RunConfig, evidence *TritonRuntimeEvidence, executions uint64) error {
-	if config.State.Triton == nil || evidence == nil || strings.TrimSpace(evidence.ORTVersion) == "" ||
-		evidence.ModelInstanceCount != 1 || evidence.MaxBatchSize != int(config.State.Triton.MaxBatchSize) ||
-		evidence.MaxQueueDelayMicroseconds != 0 || evidence.PriorityLevels != int(config.State.Triton.PriorityLevels) ||
-		!slices.Equal(evidence.PreferredBatchSizes, []int{int(config.State.Triton.MaxBatchSize)}) ||
-		evidence.MaxQueueSize != int(config.State.Triton.MaxQueueSize) ||
-		evidence.DefaultQueueTimeoutMicroseconds != uint64(math.MaxInt64/1000+2) ||
-		evidence.TimeoutAction != "REJECT" || !evidence.AllowTimeoutOverride ||
-		evidence.WorkloadUIDGuard != "same-workload-uid-v1" || evidence.BatchExecutionCounts == nil ||
-		evidence.ExecutionCount != executions ||
+func validateFirstfloorRuntimeEvidence(config RunConfig, evidence *FirstfloorRuntimeEvidence, executions uint64) error {
+	if config.State.Firstfloor == nil || evidence == nil || evidence.Mode != "profiling" ||
+		evidence.ModelInstanceCount != 1 || evidence.MaxBatchSize != int(config.State.Firstfloor.MaxBatchSize) ||
+		evidence.MaxQueueSize != int(config.State.Firstfloor.MaxQueueSize) ||
+		evidence.DeadlinePolicy != modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy) ||
+		evidence.BatchExecutionCounts == nil || evidence.ExecutionCount != executions ||
 		evidence.InferenceCount != executions*uint64(config.Measurement.Batch) {
-		return errors.New("native Triton runtime configuration or execution counts mismatch")
+		return errors.New("firstfloor actual actor settings or measured counts mismatch")
 	}
 	for batch, count := range evidence.BatchExecutionCounts {
 		if count != 0 && batch != strconv.Itoa(config.Measurement.Batch) {
-			return errors.New("native Triton executed a different batch size")
+			return errors.New("firstfloor executed a different fixed batch")
 		}
 	}
 	if evidence.BatchExecutionCounts[strconv.Itoa(config.Measurement.Batch)] != executions {
-		return errors.New("native Triton fixed-batch execution evidence is missing")
+		return errors.New("firstfloor fixed-batch execution evidence is missing")
+	}
+	return nil
+}
+
+func validateFirstfloorPath(config RunConfig, evidence *FirstfloorRuntimeEvidence, rknn *RKNNRuntimeEvidence,
+	provider string, providers []string, cpu RuntimeCPU, runtimeVersion string) error {
+	modelPath := "/model/model.onnx"
+	if config.State.Backend == FirstfloorRKNNLiteBackend {
+		modelPath = "/model/model.rknn"
+	}
+	if evidence == nil || evidence.Runtime.Synthetic || evidence.Runtime.Runtime != config.State.Backend ||
+		evidence.Runtime.RuntimeVersion == "" || evidence.Runtime.RuntimeVersion != runtimeVersion ||
+		evidence.Runtime.ModelPath != modelPath ||
+		len(evidence.Runtime.CPUAffinity) != cpu.AffinityCPUCount || !slices.Equal(evidence.Runtime.CPUAffinity, cpu.AffinityCPUs) ||
+		evidence.Runtime.CgroupCPUMax != cpu.CgroupCPUMax || evidence.Runtime.CPUSet != cpu.CPUSetEffective ||
+		len(evidence.Runtime.InitializedBatches) == 0 {
+		return errors.New("firstfloor actual runner identity or affinity mismatch")
+	}
+	if !slices.Equal(evidence.Runtime.AvailableProviders, providers) {
+		return errors.New("firstfloor available-provider observations contradict runner metadata")
+	}
+	for _, pkg := range config.Delivery.RuntimePackages {
+		switch pkg.Name {
+		case "onnxruntime", "onnxruntime-gpu", "rknn-toolkit-lite2":
+			if pkg.Version != runtimeVersion {
+				return errors.New("firstfloor actual backend package version differs from exact-image declaration")
+			}
+		case "numpy":
+			if pkg.Version != evidence.Runtime.NumpyVersion {
+				return errors.New("firstfloor actual NumPy version differs from exact-image declaration")
+			}
+		}
+	}
+	if err := validateFirstfloorInputsAndBatches(config, evidence); err != nil {
+		return err
+	}
+	return validateFirstfloorBackend(config, evidence, rknn, provider, providers, cpu)
+}
+
+func validateFirstfloorInputsAndBatches(config RunConfig, evidence *FirstfloorRuntimeEvidence) error {
+	tensors := config.Delivery.ArtifactCapability.Tensors
+	if len(evidence.Runtime.Inputs) != len(tensors) {
+		return errors.New("firstfloor actual input contract mismatch")
+	}
+	for i, tensor := range tensors {
+		input := evidence.Runtime.Inputs[i]
+		if input.Name != tensor.Name || input.Datatype != tensor.Datatype || len(input.Shape) != len(tensor.SampleShape) {
+			return errors.New("firstfloor actual input contract mismatch")
+		}
+		for j, dimension := range tensor.SampleShape {
+			if input.Shape[j] != int(dimension) {
+				return errors.New("firstfloor actual input shape mismatch")
+			}
+		}
+	}
+	seen := make(map[int]bool, len(evidence.Runtime.InitializedBatches))
+	for _, batch := range evidence.Runtime.InitializedBatches {
+		if batch < 1 || batch > evidence.MaxBatchSize || seen[batch] {
+			return errors.New("firstfloor initialized batch bounds are invalid")
+		}
+		seen[batch] = true
+	}
+	if !seen[config.Measurement.Batch] {
+		return errors.New("firstfloor selected batch was not initialized")
+	}
+	return nil
+}
+
+func validateFirstfloorBackend(config RunConfig, evidence *FirstfloorRuntimeEvidence, rknn *RKNNRuntimeEvidence,
+	provider string, providers []string, cpu RuntimeCPU) error {
+	if config.State.Backend == FirstfloorRKNNLiteBackend {
+		if provider != "" || len(providers) != 0 || evidence.Runtime.Device != "npu" {
+			return errors.New("firstfloor RKNN backend provider or device mismatch")
+		}
+		return validateRKNNRuntimeEvidence(config, rknn)
+	}
+	expected := cpuExecutionProvider
+	device := "cpu"
+	if config.State.Backend == FirstfloorORTCUDABackend {
+		expected = cudaExecutionProvider
+		device = "cuda"
+	}
+	if rknn != nil || provider != expected || !contains(providers, expected) ||
+		len(evidence.Runtime.Providers) == 0 || evidence.Runtime.Providers[0] != expected ||
+		evidence.Runtime.Device != device || evidence.Runtime.IntraOpThreads != config.CPU.ORTIntraOpThreads ||
+		evidence.Runtime.InterOpThreads != config.CPU.ORTInterOpThreads ||
+		cpu.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads || cpu.ORTInterOpThreads != config.CPU.ORTInterOpThreads {
+		return errors.New("firstfloor actual provider/device/threads mismatch")
+	}
+	if config.State.Backend == FirstfloorORTCUDABackend {
+		access := config.Delivery.RuntimeAccess
+		if access == nil || access.GPUUUID == "" || evidence.Runtime.GPUUUID != access.GPUUUID ||
+			access.Resources["nvidia.com/gpu"] != "1" {
+			return errors.New("firstfloor CUDA whole GPU identity mismatch")
+		}
+	}
+	return nil
+}
+
+func validateNativeSamples(config RunConfig, repetitions []Repetition) error {
+	seen := make(map[uint64]struct{})
+	for _, repetition := range repetitions {
+		if len(repetition.NativeSamples) != len(repetition.LatencyMilliseconds) {
+			return errors.New("firstfloor native and client samples are not correlated")
+		}
+		for index, sample := range repetition.NativeSamples {
+			if sample.BatchID == 0 || sample.BatchSize != config.Measurement.Batch {
+				return errors.New("firstfloor native batch identity mismatch")
+			}
+			if _, duplicate := seen[sample.BatchID]; duplicate {
+				return errors.New("firstfloor native batch ID is duplicated")
+			}
+			seen[sample.BatchID] = struct{}{}
+			for _, span := range []float64{sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds} {
+				if span <= 0 || math.IsNaN(span) || math.IsInf(span, 0) {
+					return errors.New("firstfloor native span is invalid")
+				}
+			}
+			if sample.BackendCallMilliseconds > sample.RunnerServiceMilliseconds ||
+				sample.RunnerServiceMilliseconds > sample.NativeRequestMilliseconds ||
+				sample.NativeRequestMilliseconds > repetition.LatencyMilliseconds[index] {
+				return errors.New("firstfloor nested monotonic span order is invalid")
+			}
+		}
 	}
 	return nil
 }

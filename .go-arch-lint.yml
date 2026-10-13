@@ -70,7 +70,8 @@ components:
   serving-core: { in: internal/serving }
   serving-entrypoint: { in: internal/serving/entrypoint }
   serving-kube: { in: internal/serving/kube }
-  serving-triton: { in: internal/serving/triton }
+  firstfloor: { in: internal/firstfloor }
+  serving-firstfloor: { in: internal/serving/firstfloor }
 
 deps:
   # Executables are composition roots. Their job is to assemble any internal
@@ -204,6 +205,8 @@ deps:
   transition-cost-core:
     mayDependOn:
       - power-window
+      - firstfloor
+      - metric-core
   transition-cost-controller:
     mayDependOn:
       - api
@@ -220,6 +223,7 @@ deps:
     mayDependOn:
       - api
       - transition-cost-core
+      - firstfloor
   transition-cost-worker:
     mayDependOn:
       - evidence-core
@@ -229,6 +233,7 @@ deps:
     anyVendorDeps: true
     mayDependOn:
       - model-compat
+      - firstfloor
 
   profiler-app:
     mayDependOn:
@@ -281,11 +286,16 @@ deps:
       - model-compat
       - evidence-core
       - profile-derivation
+      - firstfloor
+      - metric-core
+      - power-window
 
-  serving-triton:
+  firstfloor:
+    anyVendorDeps: true
+  serving-firstfloor:
     mayDependOn:
       - serving-core
-      - model-compat
+      - firstfloor
 
   serving-kube:
     mayDependOn:
@@ -300,7 +310,14 @@ deps:
       - profiler-projection
       - profiling-run
       - serving-core
-      - serving-triton
+      - serving-firstfloor
+      - firstfloor
+      - evidence-kube
+      - metric-core
+      - metric-edgemetrics
+      - transition-cost-core
+      - power-window
+      - platform-core
 
   profiler-controller:
     mayDependOn:

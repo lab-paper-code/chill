@@ -23,6 +23,7 @@ export function statusLabel(value?: string): string {
     completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
     canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
     pending: "미배정", assigned: "실행 단계 확인 대기", queued: "실행기 큐 대기", running: "실행 중", returning: "응답 반환 중",
+    deferred: "SLO 위반 후 후순위 대기",
     request_received: "요청 도착", response_finished: "응답 완료",
   }
   return value ? labels[value] ?? value : "정보 없음"

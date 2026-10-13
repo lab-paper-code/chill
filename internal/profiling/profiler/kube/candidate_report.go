@@ -77,7 +77,7 @@ func buildCandidateReport(input candidateReportInput) (builtCandidateReport, err
 		RuntimePackages:     reportRuntimePackages(input.Declaration.Runtime.Packages),
 		HostContract:        hostContract,
 		RuntimeAccess:       reportRuntimeAccess(input.Declaration.Access),
-		Triton:              modelcatalog.TritonSettings(input.Path.Runtime),
+		Firstfloor:          modelcatalog.FirstfloorSettings(input.Path.Runtime),
 		MetricObserverImage: input.Declaration.MetricObserverImage,
 		Verdict:             string(input.Result.Verdict), Reasons: reasons,
 	}
@@ -172,6 +172,7 @@ func reportRuntimeAccess(source *runtimeAccessContract) *profilingrun.CandidateR
 	slices.Sort(groups)
 	return &profilingrun.CandidateReportRuntimeAccess{
 		Privileged: source.Privileged, SupplementalGroups: groups,
+		Resources: copyStringMap(source.Resources), GPUUUID: source.GPUUUID,
 	}
 }
 

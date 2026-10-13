@@ -335,12 +335,22 @@ servingEntrypoint:
   # Empty namespaces use the Helm release namespace. Namespaces must already exist.
   namespace: ""
   actuationNamespace: ""
+  # Empty configMap disables the scheduler. The existing ConfigMap must be in
+  # namespace above and contain the deployment configuration JSON under key.
+  scheduler:
+    configMap: ""
+    key: scheduler.json
+    # Read grants for actual retained PowerModeTransitionCost objects and their
+    # immutable preparation ConfigMaps; entries are {namespace: ..., name: ...}.
+    powerCostSources: []
   # Explicit namespace/name selections; empty means no profiles are admitted.
   profileCampaigns: []
   tls:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
     secretName: ""
   observationStorage:
+    # Journal path inside the retained PVC; select a fresh path for a stored-contract cutover.
+    directory: /data
     size: 1Gi
     # null uses the cluster default; "" explicitly requests no StorageClass.
     storageClassName: null

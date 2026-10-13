@@ -51,8 +51,8 @@ func TestSummarizeBuildsCompleteDirectedTableInFrozenOrder(t *testing.T) {
 		t.Fatalf("maximum boundary uncertainty = %dms, want 5ms",
 			forward.MaximumBoundaryMappingUncertaintyMilliseconds)
 	}
-	if forward.ServingSurvivedTrueCount != 3 || forward.ServingSurvivedFalseCount != 2 {
-		t.Fatalf("survival counts = true:%d false:%d, want true:3 false:2",
+	if forward.ServingSurvivedTrueCount != 5 || forward.ServingSurvivedFalseCount != 0 {
+		t.Fatalf("accepted counter-verified trials lost their physical survival: true:%d false:%d",
 			forward.ServingSurvivedTrueCount, forward.ServingSurvivedFalseCount)
 	}
 	if forward.AttemptCount != 8 || forward.AcceptedCount != 5 ||
@@ -80,11 +80,11 @@ func TestSummarizeReturnsTypedInsufficientWithoutPartialTable(t *testing.T) {
 	results := make([]transitioncost.FinalizedObservation, 0, 9)
 	for index := 0; index < 4; index++ {
 		results = append(results, deriveAttempt(t, directions[0], fmt.Sprintf("forward-%d", index),
-			2+index, float64(index), true, acceptedAttempt, nil))
+			2+index, float64(index), acceptedAttempt, nil))
 	}
 	for index := 0; index < 5; index++ {
 		results = append(results, deriveAttempt(t, directions[1], fmt.Sprintf("reverse-%d", index),
-			2+index, float64(index), true, acceptedAttempt, nil))
+			2+index, float64(index), acceptedAttempt, nil))
 	}
 
 	table, err := transitioncost.Summarize(directions, 5, results)
@@ -111,7 +111,7 @@ func TestSummarizeRejectsThirdOrWrongDirection(t *testing.T) {
 	directions := testDirections()
 	thirdMode := directions[0]
 	thirdMode.Target.PowerMode = mode30W
-	result := deriveAttempt(t, thirdMode, "third-mode", 2, 0, true, acceptedAttempt, nil)
+	result := deriveAttempt(t, thirdMode, "third-mode", 2, 0, acceptedAttempt, nil)
 	_, err := transitioncost.Summarize(directions, 5, []transitioncost.FinalizedObservation{result})
 	assertErrorContains(t, err, "undeclared direction")
 
@@ -135,8 +135,8 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			first := deriveAttempt(t, direction, "first", 2, 0, true, acceptedAttempt, nil)
-			drifted := deriveAttempt(t, direction, "drifted", 2, 0, true, acceptedAttempt,
+			first := deriveAttempt(t, direction, "first", 2, 0, acceptedAttempt, nil)
+			drifted := deriveAttempt(t, direction, "drifted", 2, 0, acceptedAttempt,
 				func(frozen *transitioncost.FrozenContract, raw *transitioncost.RawObservation) {
 					test.mutate(frozen, raw)
 				})
@@ -267,7 +267,7 @@ func completeResults(
 		for index, eta := range etas {
 			results = append(results, deriveAttempt(
 				t, direction, fmt.Sprintf("direction-%d-accepted-%d", directionIndex, index),
-				2+index, eta, index < 3, acceptedAttempt,
+				2+index, eta, acceptedAttempt,
 				func(_ *transitioncost.FrozenContract, raw *transitioncost.RawObservation) {
 					raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
 						raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.
@@ -278,7 +278,7 @@ func completeResults(
 		for outcome := invalidAttempt; outcome <= insufficientAttempt; outcome++ {
 			results = append(results, deriveAttempt(
 				t, direction, fmt.Sprintf("direction-%d-outcome-%d", directionIndex, outcome),
-				2, 0, true, outcome, nil,
+				2, 0, outcome, nil,
 			))
 		}
 	}
@@ -291,7 +291,6 @@ func deriveAttempt(
 	id string,
 	tauSeconds int,
 	etaJoules float64,
-	servingSurvived bool,
 	outcome attemptOutcome,
 	mutate func(*transitioncost.FrozenContract, *transitioncost.RawObservation),
 ) transitioncost.FinalizedObservation {
@@ -326,9 +325,10 @@ func deriveAttempt(
 		ReadyProcessWitness: markerBracket(completedAt, time.Millisecond),
 	}
 	raw.PreTransitionProcess.ObservedAt = startedAt.Add(-time.Second)
-	if !servingSurvived {
-		raw.PostTransitionProcess.ContainerID = "replacement-container"
-	}
+	raw.BeforeNative.ReceivedAt = raw.PreTransitionProcess.ObservedAt
+	raw.AfterNative.ReceivedAt = completedAt
+	raw.BeforeNative.Instances[0].State.At = raw.BeforeNative.ReceivedAt
+	raw.AfterNative.Instances[0].State.At = raw.AfterNative.ReceivedAt
 	watts := frozen.TargetIdleBaseline.MeanWallWatts + etaJoules/float64(tauSeconds)
 	raw.PowerSamples = constantPowerSamples(startedAt, completedAt, watts)
 	policy.MinimumCoverage = 0.85

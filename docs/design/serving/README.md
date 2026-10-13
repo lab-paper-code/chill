@@ -8,10 +8,19 @@ TokenReview/SAR로 검증하고 모델 및 Workload 등록, 조회, 수정, 삭�
 인스턴스별 route와 physical drain 및 private JSONL 관측을 소유한다.
 모델-only 투명 proxy와 시작 시 고정 테이블은 제거되었다.
 
-공식 native Triton Python/ORT CPU serving과 같은 실행 경로의 profiling은 구현되어 있다.
-local kind의 HTTPS 관리 계약과 실제 native runner smoke를 확인했지만 full qualifying
-native campaign에서 Ready gateway까지, ARM/RKNN 장비와 live testbed는 검증하지 않았다.
-정확한 API, Helm 설정과 실행 증거는 [Workload 계약](workload-management.md)에 기록한다.
+firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 동일 실행 경로의 profiling을
+연결했다. 실제 큐·batch·policy 증거, 후보 replay와 원자 전환 및 측정은
+[스케줄러 구현 설계](scheduler-implementation.md)에 기록한다.
+검증 결과는 [Workload 계약](workload-management.md)과 SRS 대조의 검증 상태에서 구분한다.
+
+## 구현 계획
+
+- [Workload 시간창 부하 집계](../../plans/serving-windowed-workload-load.md):
+  지정 구간 분석 후보의 기록. 확정 스케줄러 설계의 운영 관측과 후보 입력에 통합한다.
+- [스케줄러 SRS 대조 결과](scheduler-srs-audit.md):
+  원본 명세·현재 구현의 요구사항별 판정과 사용자 선택에 따른 firstfloor 실행 경계.
+- [스케줄러 구현 설계](scheduler-implementation.md):
+  확정 SRS를 firstfloor 실행·동일 경로 측정·SLO/에너지 후보·실제 전환에 연결하는 설계.
 
 ## 설계 기준
 
@@ -19,28 +28,55 @@ native campaign에서 Ready gateway까지, ARM/RKNN 장비와 live testbed는 �
 [라우팅과 배칭](../../spec/03_routing.md),
 [구성 비용](../../spec/04_configuration_selection.md),
 [전환 실행](../../spec/05_transition_control.md)을 따른다.
+스케줄러의 고수준 입력·출력·책임과 수용 기준은
+[스케줄러 SRS](../../spec/scheduler/SRS.md)를 따른다.
 프로세스 수, CRD 필드, API 경로는 논리적인 역할과 별도로 정한다.
 
 구성 유지·전환 정책의 문헌과 적용 한계는
 [온라인 전환 정책 레퍼런스](online-switching-references.md)에 정리한다.
 이 문헌 안내는 특정 알고리즘의 채택을 확정하지 않는다.
 
-### Triton 재사용 원칙
+### firstfloor 재사용 원칙
 
-CHILL은 공식 Triton의 모델 로딩, native 큐와 dynamic batching, dispatch 및 결과 반환을 재사용한다.
-Python backend는 ORT CPU의 named multi-input numeric/bool 실행을 제공하며 공식 custom batching
-API를 사용하는 CHILL guard가 한 배치에 **같은 Workload UID만** 포함한다. native priority를 Workload identity로
-간주하지 않으며 실제 같은 priority의 두 UID로 혼합 방지를 확인했다.
+CHILL은 firstfloor의 actor·bounded queue·persistent runner·IPC를 재사용한다.
+immutable measured bundle과 작은 mutable policy를 제공하며, actor와 후보 replay가
+같은 selector로 UID·불변 정의·개별 SLO·원래 경과 시간에 맞는 배치를 선택한다.
+실제 큐·running batch·적용 profile/decision/cap·완료 증거를 관측한다.
 
-사용자가 승인한 제외 범위는 **adaptive SLO batch wait와 configuration selection 알고리즘**이다.
-공식 custom batching callback은 포함 조건을 다루지만 조절 가능한 delay/dispatch를
-구현하지 못한다. 이를 위해 Triton core patch나 외부 HTTP 추론 proxy를 만들지 않는다.
-현재 경로는 고정 frozen measured profile과 native 설정을 사용하고 추가 배치 대기를 넣지 않는다.
-SLO는 불변 요청 문맥과 관측 목표로 유지하며 HTTP lifetime이나 native queue timeout과 같지 않다.
+ORT CPU/CUDA는 numeric/bool named multi-tensor 입력과 named 출력, RKNNLite는
+실제 전달 capability가 제공한 입력·배치 domain을 따른다. batch 1과 실제 초기화·
+측정된 sparse batch domain을 사용하며 standalone reference evidence는 별도 조건이다.
+SLO 위반은 모델의 `deadlinePolicy=drop|keep|defer`로 처리한다. 명시적인 요청 수명과
+caller 취소는 세 모드 모두 별도로 적용한다.
 
-native admission에는 frozen 계획과 실제 측정 batch 모두 `1..maxBatchSize` 전체가 필요하다.
-standalone ORT evidence를 Triton profile로 바꾸지 않는다. 선호 크기는 실제 batch 보장이
-아니므로 실제 batch 크기와 요청별 결과, native `REQUEST_END`를 관측한다.
+2026-10-13에 `/home/genesis1/ETRI/donghwan/firstfloor`의 현재 제공 소스와 비교했다.
+CHILL 실행기는 단순한 Go module 교체가 아니라 UID/불변 정의별 큐, 여러 typed tensor,
+ORT CUDA와 같은 경로의 profiling을 연결한 구현이다. 원본 전체를 덮어쓰지 않는다.
+원본의 body 오류 분류를 inference/profile 공통 경계에 반영했다: 요청 취소 중 읽기
+실패는 408, byte 한도 초과는 413을 우선하며 JSON 뒤의 읽기 오류 원인도 보존한다.
+두 HTTP 경로의 회귀 검사와 실제 TCP body-read timeout의 408/no-execution을 확인했다.
+
+모델의 firstfloor 설정에 `deadlinePolicy`를 선언하며 생략 시 `keep`이다.
+`drop`은 만료되거나 실행 불가능한 queued 요청만 408로 제거한다. `keep`은 늦은
+요청도 처리하며 채울 수 있는 minimum-C batch를 즉시 선택한다(동률은 큰 batch).
+`defer`는 실행 불가능한 head를 후순위 FIFO로 옮기고 normal queue가 빈 뒤 처리한다.
+normal/deferred는 같은 요청 수·byte 한도를 공유하며 active batch는 SLO 때문에
+취소하지 않는다. mode 변경은 worker 재시작/인스턴스 교체이고 actor와 replay가
+같은 선택 함수를 사용한다. 고정-K profiling은 SLO로 요청을 버리지 않으며 선택한
+mode를 불변 측정 조건과 실제 metadata에 기록한다.
+
+runner IPC는 big-endian uint32 길이와 작은 JSON header, little-endian binary tensor
+payload다. tensor 값은 IPC에서 JSON 배열로 전달하지 않는다. 공개 HTTP JSON은 원본도
+유지하는 경계이며 CHILL의 multi-tensor/정밀 UINT64/BOOL/FP16와 CUDA 지원을 유지한다.
+
+실제 Python echo runner와 HTTP actor에서 세 모드를 확인했다: `drop`은 expired 요청을
+실행하지 않고 408로 끝내며, `keep`은 expired 요청을 fresh 요청보다 먼저 처리하고,
+`defer`는 fresh 요청을 먼저 처리한 뒤 expired 요청을 완료한다. active 요청은
+SLO를 넘겨도 성공 결과를 반환했다. overdue 큐의 C1=10/C2=15에서는 batch 1,
+C1=C2=10에서는 batch 2를 선택했고 SDK까지 실제 no-execution 완료 증거를 전달했다.
+raw IPC의 UINT64 최대값·BOOL·FP16은 11-byte binary payload로 정확히 왕복했다.
+고정-K 측정 조건, replay, CRD enum/default 및 UI의 세 모드 선택도 검증했다.
+이는 로컬 synthetic 실행 증거이며 실제 CPU/CUDA/RKNN 측정이나 live-cluster 검증은 아니다.
 
 ## 워크로드와 외부 요청
 
@@ -71,10 +107,8 @@ POOL은 현재 소속 노드와 서빙 중인 워크로드를 운영 상태로 �
 한 파드는 하나의 모델 실행 인스턴스를 제공하며, 같은 산출물·런타임·입력 조건으로
 처리할 수 있는 여러 워크로드가 이를 공유할 수 있다.
 
-Triton 서버와 내부 model instance는 같은 단위가 아니다. 모델의
-`instance_group.count`는 기본값에 의존하지 않고 **1로 명시해 고정**한다.
-instance group과 대상 GPU 구성도 파드가 제공하는 실행 인스턴스의 총수가 하나가
-되도록 맞춘다. `count`는 스케줄러가 동적으로 변경하거나 탐색하는 변수가 아니다.
+worker Pod 하나는 persistent runner 하나와 순차 batch 실행 하나를 제공한다.
+실행 중 취소된 HTTP 교환도 runner 완료 또는 actual container 종료까지 물리 자원을 점유한다.
 
 | 조절 대상 | CHILL의 제어 단위 |
 |---|---|
@@ -82,14 +116,12 @@ instance group과 대상 GPU 구성도 파드가 제공하는 실행 인스턴�
 | 인스턴스 하나에 줄 실행 자원 | Pod별 자원 할당과 그에 연동되는 backend 설정 |
 | 한 번에 묶어 실행할 입력 수 | 배칭 정책 |
 
-이는 Pod 단위 자원 할당이 Triton의 `count: 1`을 기술적으로 강제해서가 아니라,
-CHILL의 자원 할당 단위·프로파일 실행 구성 단위·서빙 인스턴스를 맞추기 위한 선택이다.
-`count: 1`은 단일 CPU나 단일 스레드를 뜻하지 않는다. CPU 추론 스레드 설정은
-Pod의 CPU 할당량에 맞추며, 하나의 배치 내부에서 여러 CPU를 활용할 수 있다.
+CHILL의 자원 할당 단위·프로파일 실행 구성 단위·서빙 인스턴스를 일치시킨다.
+CPU quota·threads와 실제 affinity를 각각 확인하며, 한 배치 내부에서 여러 CPU를 사용한다.
 여러 Pod의 인스턴스는 각자 배치 하나씩 병렬 실행할 수 있다.
 
 현재 구성은 실제 Node label과 자원, native 준비와 연결 관측으로 산출한다.
-파드 수, 자원과 전력모드의 자동 configuration selection 알고리즘은 승인된 제외 범위다.
+파드 수·실측 자원 조건·배치 정책·전력모드의 후보 계산과 실제 전환은 스케줄러 owner가 연결한다.
 자원 변경과 전환 계약은 [전환 명세](../../spec/05_transition_control.md)의 기준으로 구분한다.
 메모리는 프로파일에서 관측한 사용량으로 필요한 예산을 산정하는 가용성 제약이다.
 시스템 예약분과 프로파일에 포함되지 않은 서빙 부가 사용량을 고려하며,
@@ -121,29 +153,15 @@ SLO 적합성은 별개의 판단이며, 관측 없이 무간섭을 보장하거
 
 ## 요청 처리 흐름
 
-```text
-워크로드 식별자 + 추론 입력 1개
-            │
-            ▼
-워크로드 확인 · 입력 검증
-            │
-            ▼
-워크로드별 유입 대기열
-            │
-            ▼
-요청별 인스턴스 선택 · 시간 정보 전달
-            │
-            ▼
-선택한 인스턴스의 워크로드별 큐
-            │
-            ▼
-Triton native batching (same-UID guard, frozen 설정, 추가 대기 없음)
-            │
-            ▼
-      Triton backend 추론
-            │
-            ▼
-각 결과를 해당 요청에 반환
+```mermaid
+flowchart TD
+    A["워크로드 + 독립 입력 1개"] --> B["권한·입력 검증 / 불변 정의 수락"]
+    B --> C["워크로드별 유입 큐"]
+    C --> D["ready 인스턴스 분배 / 원래 경과 시간"]
+    D --> E["firstfloor UID·정의별 큐"]
+    E --> F["실측 분포·SLO·에너지 selector"]
+    F --> G["persistent backend / batch 하나씩 실행"]
+    G --> H["각 요청 결과·완료 및 응답 전달 기록"]
 ```
 
 한 상자가 별도 서비스나 CRD 하나를 뜻하지 않는다. 유입 대기열도 우선 논리적인
@@ -153,7 +171,7 @@ Triton native batching (same-UID guard, frozen 설정, 추가 대기 없음)
 
 | 단위 | 관리할 정보 |
 |---|---|
-| 사용자 요청 | 워크로드, CHILL 수신·분배·Triton 큐 진입·응답 반환 완료 시각, 배정 인스턴스, 대기·진행 상태와 실제 완료·오류·거절·timeout/cancel·미완료 결과 |
+| 사용자 요청 | 워크로드, 최초 수신·분배·native monotonic spans·응답 완료, actual 인스턴스·batch·definition, 오류·거절·timeout/cancel·미완료 결과 |
 | 실행 배치 | 같은 워크로드의 호환되는 입력 묶음과 각 입력·결과에 대응하는 요청 |
 
 각 요청은 모델 인스턴스 하나에 배정한다. 인스턴스는 같은 워크로드의 호환되는
@@ -168,15 +186,13 @@ CHILL은 요청별 원시 시각과 처리 결과를 보존하고, 워크로드�
 ### 시간 기준과 실행 종료
 
 종단 지연은 entrypoint의 동일 monotonic 기준으로 최초 수신부터 응답 반환 완료까지 측정한다.
-Triton 큐 진입과 compute 시작은 raw `CLOCK_MONOTONIC` nanoseconds로 보존한다.
-collector `At`은 UTC 관측 시각이지 native 큐 진입 UTC가 아니다.
-서로 다른 host의 시각을 단순 차감하거나 native 시각을 임의로 변환하지 않는다.
+firstfloor는 queue/service/backend/native elapsed를 해당 worker의 monotonic 기준으로 제공한다.
+SDK의 `ObservedAt`은 local receipt 시각이다. remote UTC는 원시 관측 시각으로 보존하고,
+worker duration과 local observation age·측정 transport envelope를 각각 적용한다.
 
-Triton의 [native queue policy](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/batcher.html#queue-policy)는
-frozen 큐 한도와 timeout을 적용한다. adaptive SLO batch waiting은 승인된 제외 범위이며
-queue timeout이나 고정 설정을 그 알고리즘으로 설명하지 않는다.
-
-`REQUEST_END`는 Python execute에 도달하지 않은 queue timeout/cancel도 실제 release로 제공한다.
+immutable profile의 empirical service 분포와 incremental energy, 개별 SLO·UID별 실제
+도착 간격으로 추가 대기·배치·다음 큐를 선택한다. queued cancel은 실행 전 제거하며,
+running cancel은 실제 완료 또는 runner/container 종료로 physical release를 확인한다.
 caller나 transport가 종료되어도 실행 종료가 불명이면 physical capacity를 유지한다.
 실제 backend 종료 또는 해당 physical container의 종료 증거를 확인해야 drain을 완료한다.
 자동 inference 재실행이나 별도 recovery engine은 없다.
@@ -185,10 +201,10 @@ caller나 transport가 종료되어도 실행 종료가 불명이면 physical ca
 
 | 역할 | 책임 |
 |---|---|
-| 현재 구성 및 전환 관측 | 실제 Node label, 자원, Pod/native 준비와 연결을 반영. configuration selection은 제외 |
+| 현재 구성·후보와 전환 | 실제 Node label·allocation·ready/stop 상태, 전환 중 replay, whole-pool 에너지 비교, 실제 원자 동작과 완료 관측 |
 | 요청 진입 및 분배 | TLS/bearer 권한, Workload와 named tensor 확인, 불변 snapshot 수락, bounded 큐, 인스턴스 선택과 응답 관측 |
-| CHILL native batching 연결 | frozen measured 설정과 same-UID include guard, batch/request identity와 관측 |
-| Triton native batcher/backend | 모델 로딩, 큐와 timeout, dispatch, Python/ORT CPU 추론과 요청별 결과 및 trace 종료 |
+| CHILL native policy 연결 | immutable measured bundle, mutable cap/wait/envelope, 원래 UID·정의·SLO·elapsed와 적용 증거 |
+| firstfloor actor/backend | 모델 초기화, UID별 compatible batching·큐 선택·대기, 순차 persistent 추론, typed 결과와 실제 progress |
 
 요청마다 새 구성 계산이나 evidence 다운로드를 기다리지 않는다.
 입력별 route와 가중치 합을 갱신 시 캐시하고 현재 준비와 physical capacity 안에서 분배한다.
@@ -278,7 +294,7 @@ core에 준비된 인스턴스 및 입력별 route를 공급한다. 같은 Node�
 | 요청 접수 및 분배 | immutable applied snapshot, bounded Workload 큐, 준비된 인스턴스의 route와 가중치 합 |
 | 모델 변경 및 삭제 | 모든 관련 admission 닫기, 전체 physical drain, 해제, 닫힌 새 snapshot 전체 게시 후 gate 열기 |
 | 현재 POOL | 실제 Node label과 자원, native instance와 확인된 Workload 연결. 별도 Pool CRD나 합성 Node 없음 |
-| 실행과 profiling | 공식 Triton Python/ORT CPU, same-UID batch guard, 전체 frozen `1..Max` measured profile |
+| 실행과 profiling | 같은 firstfloor actor/runner, 실제 initialized·measured sparse batch와 service/backend/native/client 분포 |
 | 관측 보존 | private persistent JSONL과 immutable S3 window, 전체 모집단 집계와 no-data null |
 
 외부 요청은 `/api/v1/workloads/{id}/infer`의 named tensor 독립 샘플 한 건이다.
@@ -289,27 +305,32 @@ core에 준비된 인스턴스 및 입력별 route를 공급한다. 같은 Node�
 프로파일은 frozen 자원, 전력모드와 native batch 조건별 raw 실행시간 분포,
 incremental energy/item과 실제 memory peak를 제공한다. 완료 campaign과 원시 evidence의
 identity 및 조건을 검증하고 idle-baseline confidence 설정을 profile과 배정 기록에 유지한다.
-configuration selection이나 요청별 adaptive 추가 대기 예측 알고리즘은 제외되어 있다.
+공유 selector의 요청별 replay가 현재 실행·도착·transition readiness와 원래 경과 시간을 반영한다.
 
 profiling과 serving은 같은 [실행 계약](../../spec/00_measurement.md#측정의-단위)을 사용한다.
-같은 실행 조건의 근거는 SLO가 다른 Workload에도 재사용하되 다른 Node나 standalone ORT의
-결과를 native Triton 근거처럼 바꾸지 않는다. 현재 준비와 측정 근거, SLO 관측은 별개 판단이다.
+같은 실행 조건은 SLO가 다른 Workload에도 재사용하며, actual Node·backend·affinity·
+GPU UUID·threads·batch 초기화 조건과 raw 근거를 유지한다. 현재 준비·측정 적격성·
+SLO 평가는 각각의 판단이다.
 
-실행 구간 관측에는 [Triton의 지연 메트릭](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/metrics.html#latencies)과
-기존 추적 기능을 우선 활용한다. 종단 지연은 CHILL 수신부터 응답 반환 완료까지의
-요청별 기록으로 집계한다.
+firstfloor state/progress와 client span·응답 완료, decision/action/power 기록을 연결한다.
+종단 percentile은 원래 수신 기준 요청별 분포에서 계산하고, baseline·wall operation·
+incremental execution 에너지를 같은 전체 POOL comparison horizon에서 한 번씩 반영한다.
 
 같은 노드에 공존하는 파드들의 단독 실험에서 잰 노드 전체 전력을 단순 합산하지 않는다.
 측정 경계는 [프로파일링 설계](../profiling/README.md#serving-resource-allocation)를 따른다.
 
 ## 구현 및 검증 경계
 
+아래 실행 기록은 이전 serving 작업 단위의 checkpoint다. 현재 firstfloor
+scheduler 통합의 실행 증거는 [scheduler 구현 문서](scheduler-implementation.md)의
+최종 검증 기록에 별도로 남긴다.
+
 local isolated kind와 verified HTTPS로 등록, 조회, fractional SLO 수정, stale `If-Match`,
 공유 모델 변경 barrier, 참조 삭제 보호와 실제 Workload 삭제 및 새 UID 재등록을 확인했다.
 private RWO journal과 MinIO immutable window, TLS/bearer/named tensor loadgen도 실행했으며
 근거 없는 admission은 `503 MissingEvidence`로 닫혔다.
 
-실제 공식 native runner에서 다중 named numeric/bool tensor 결과, 같은 priority의 서로 다른
+이전 공식 Triton native runner에서 다중 named numeric/bool tensor 결과, 같은 priority의 서로 다른
 Workload UID batch guard, 여러 실현 batch 크기, native queue timeout과 `REQUEST_END`를 확인했다.
 matching ACTIVE/IDLE runner의 fixed batch 실행, warmup 제외, model resident 및 실제
 cgroup memory peak와 root RAPL 읽기도 smoke로 확인했다.

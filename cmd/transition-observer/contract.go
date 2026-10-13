@@ -13,7 +13,7 @@ import (
 	transitionkube "github.com/lab-paper-code/chill/internal/profiling/transitioncost/kube"
 )
 
-const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha3"
+const attemptSchemaVersion = "chill.dacs.io/transition-observer-attempt.v1alpha4"
 
 type attemptContract struct {
 	powerSource  metricobserver.SourceIdentity
@@ -48,6 +48,7 @@ type transitionFactsWire struct {
 	Namespace                      string       `json:"namespace"`
 	NodeActuationName              string       `json:"nodeActuationName"`
 	TargetNode                     string       `json:"targetNode"`
+	TargetNodeUID                  string       `json:"targetNodeUID"`
 	DeviceType                     string       `json:"deviceType"`
 	Model                          string       `json:"model"`
 	ServingService                 string       `json:"servingService"`
@@ -115,11 +116,13 @@ func (w attemptWire) contract() (attemptContract, error) {
 		powerSource: metricobserver.SourceIdentity{
 			Kind: w.PowerSource.Kind, Endpoint: w.PowerSource.Endpoint,
 			Metric: w.PowerSource.Metric, MetricLabels: w.PowerSource.MetricLabels,
+			NodeName: w.TransitionFacts.TargetNode,
 		},
 		powerRequest: powerRequest,
 		facts: transitionkube.Request{
 			Namespace: w.TransitionFacts.Namespace, NodeActuationName: w.TransitionFacts.NodeActuationName,
 			TargetNode: w.TransitionFacts.TargetNode, ServingService: w.TransitionFacts.ServingService,
+			TargetNodeUID:    w.TransitionFacts.TargetNodeUID,
 			ServingContainer: w.TransitionFacts.ServingContainer,
 			DeviceType:       w.TransitionFacts.DeviceType, Model: w.TransitionFacts.Model,
 			PollInterval:       time.Duration(w.TransitionFacts.PollIntervalMilliseconds),

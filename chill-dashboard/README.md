@@ -72,6 +72,13 @@ retain integer literals while removing credentials.
 
 Real Model/Workload CRUD and version preconditions, one independent named-tensor inference, current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management journal; absence of a broader feed is disclosed.
 
+The Model editor preserves firstfloor queue/batch limits and selects
+`deadlinePolicy=drop|keep|defer` (omitted means `keep`). Changing this frozen
+setting replaces the native instance; it is not an in-place scheduler policy
+update. Deferred requests remain waiting, not running or completed. The actual
+local editor was exercised with all three values and existing limits preserved;
+the browser used an isolated owner-contract fixture and performed no live writes.
+
 `/scheduler`, `/scheduler/candidates` and `/scheduler/load` connect current
 judgment, frozen configuration/candidate details and event-time load. Automatic
 application and evaluated judgment are separate; keep/target J and SLO are
@@ -103,6 +110,8 @@ scope. Identity changes clear selections; first login retains bookmarked records
 
 
 Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
+
+Model authoring and applied workload definitions use `firstfloor` settings with positive int32 `maxBatchSize` and per-workload-UID `maxQueueSize` bounds. Native backends are `ort-cpu` / `ort-cuda` for ONNX and `rknnlite` for RKNN. The API validates artifact/backend compatibility, requires these settings for the `firstfloor` family and rejects them for other families; the editor preserves custom native declarations and existing numeric/bool multi-tensor input behavior.
 
 Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, nodal power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 

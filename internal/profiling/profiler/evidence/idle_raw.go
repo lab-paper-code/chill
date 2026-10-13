@@ -13,7 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha5"
+const IdleRawMeasurementSchemaVersion = "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha6"
 
 // IdleRawMeasurement retains only worker-visible facts. Its runtime result is
 // distinct from active inference evidence, while metric/workload provenance is

@@ -5,17 +5,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 const (
-	phaseAssigned      = "assigned"
-	phaseRunning       = "running"
-	phaseFinished      = "finished"
-	outcomeIncomplete  = "incomplete"
-	reasonShuttingDown = "ShuttingDown"
+	phaseAssigned         = "assigned"
+	phaseRunning          = "running"
+	phaseFinished         = "finished"
+	phaseReceived         = "received"
+	phaseAccepted         = "accepted"
+	phaseQueued           = "queued"
+	phaseDeferred         = "deferred"
+	phasePending          = "pending"
+	phaseReturning        = "returning"
+	eventResponseFinished = "response_finished"
+	outcomeCompleted      = "completed"
+	outcomeIncomplete     = "incomplete"
+	reasonShuttingDown    = "ShuttingDown"
 )
 
 // Error carries a consumer-visible failure without depending on its transport.
@@ -37,16 +48,16 @@ type SLO struct {
 }
 
 type ModelPath struct {
-	Name          string                      `json:"name"`
-	Artifact      string                      `json:"artifact"`
-	Format        string                      `json:"format"`
-	Image         string                      `json:"image"`
-	Architecture  string                      `json:"architecture"`
-	Path          string                      `json:"path"`
-	RuntimeFamily string                      `json:"runtimeFamily"`
-	Backend       string                      `json:"backend"`
-	Tensors       []modelcompat.InputTensor   `json:"tensors"`
-	Triton        *modelcompat.TritonSettings `json:"triton,omitempty"`
+	Name          string                          `json:"name"`
+	Artifact      string                          `json:"artifact"`
+	Format        string                          `json:"format"`
+	Image         string                          `json:"image"`
+	Architecture  string                          `json:"architecture"`
+	Path          string                          `json:"path"`
+	RuntimeFamily string                          `json:"runtimeFamily"`
+	Backend       string                          `json:"backend"`
+	Tensors       []modelcompat.InputTensor       `json:"tensors"`
+	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
 }
 
 type Model struct {
@@ -87,6 +98,12 @@ type Profile struct {
 	Condition       profilederivation.CurvePlanSpec `json:"condition"`
 	Batches         []BatchProfile                  `json:"batches"`
 	ConfidenceLevel float64                         `json:"confidenceLevel"`
+	// IdleBaselineWatts is the exact baseline subtracted by the incremental
+	// estimator. Whole-node prediction adds it back according to its scope.
+	IdleBaselineWatts float64                       `json:"idleBaselineWatts"`
+	MeasuredAt        time.Time                     `json:"measuredAt"`
+	RuntimeMetadata   *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
+	MetricSource      metricobserver.SourceIdentity `json:"metricSource"`
 }
 
 type NodeReference struct {
@@ -109,24 +126,26 @@ type Assignment struct {
 	ProfileReference       evidencestore.ObjectIdentity   `json:"profileReference"`
 	ProfileEvidence        []evidencestore.ObjectIdentity `json:"profileEvidence"`
 	ProfileConfidenceLevel float64                        `json:"profileConfidenceLevel"`
-	Priority               uint64                         `json:"priority"`
 	DispatchedAt           time.Time                      `json:"dispatchedAt"`
 }
 
 type InstanceState struct {
 	ID        string              `json:"id"`
+	TargetID  string              `json:"targetID,omitempty"`
 	Node      NodeReference       `json:"node"`
 	Pool      string              `json:"pool"`
 	Profile   string              `json:"profile"`
 	Ready     bool                `json:"ready"`
+	Stopped   bool                `json:"stopped"`
 	Reason    string              `json:"reason,omitempty"`
 	Workloads []WorkloadReference `json:"workloads"`
 	Waiting   map[string]int      `json:"waiting"`
 	Running   map[string]int      `json:"running"`
 	// AssignedUnknown has been dispatched but lacks a native phase observation.
 	// It is not reported as actual backend waiting or running.
-	AssignedUnknown map[string]int `json:"assignedUnknown"`
-	ObservedAt      time.Time      `json:"observedAt"`
+	AssignedUnknown map[string]int    `json:"assignedUnknown"`
+	ObservedAt      time.Time         `json:"observedAt"`
+	Native          *firstfloor.State `json:"native,omitempty"`
 }
 
 type PoolState struct {
@@ -149,20 +168,24 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
-	RequestID      string             `json:"requestID"`
-	WorkloadName   string             `json:"workloadName"`
-	WorkloadUID    string             `json:"workloadUID,omitempty"`
-	Definition     string             `json:"definition,omitempty"`
-	Kind           string             `json:"kind"`
-	At             time.Time          `json:"at"`
-	ReceivedAt     time.Time          `json:"receivedAt"`
-	ElapsedNanos   int64              `json:"elapsedNanos"`
-	Assignment     *Assignment        `json:"assignment,omitempty"`
-	NativeInstance string             `json:"nativeInstance,omitempty"`
-	NativeQueue    *NativeQueueTiming `json:"nativeQueue,omitempty"`
-	SLO            *SLO               `json:"slo,omitempty"`
-	Outcome        string             `json:"outcome,omitempty"`
-	Error          string             `json:"error,omitempty"`
+	RequestID         string           `json:"requestID"`
+	WorkloadName      string           `json:"workloadName"`
+	WorkloadUID       string           `json:"workloadUID,omitempty"`
+	Definition        string           `json:"definition,omitempty"`
+	Kind              string           `json:"kind"`
+	At                time.Time        `json:"at"`
+	ReceivedAt        time.Time        `json:"receivedAt"`
+	ElapsedNanos      int64            `json:"elapsedNanos"`
+	Assignment        *Assignment      `json:"assignment,omitempty"`
+	NativeInstance    string           `json:"nativeInstance,omitempty"`
+	NativeProgress    *BackendProgress `json:"nativeProgress,omitempty"`
+	ClientSpanNanos   int64            `json:"clientSpanNanos,omitempty"`
+	ExecutionComplete bool             `json:"executionComplete"`
+	InputPath         *int             `json:"inputPath,omitempty"`
+	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
+	SLO               *SLO             `json:"slo,omitempty"`
+	Outcome           string           `json:"outcome,omitempty"`
+	Error             string           `json:"error,omitempty"`
 }
 
 type ManagementEvent struct {
@@ -178,14 +201,13 @@ type ManagementEvent struct {
 	Error         string      `json:"error,omitempty"`
 }
 
-// Dispatch is immutable after assignment. Client cancellation does not cancel
-// the backend execution context: drain needs actual backend completion.
+// Dispatch retains the original accepted context. Client cancellation can
+// withdraw queued native work; physical drain requires actual completion proof.
 type Dispatch struct {
 	RequestID  string
 	Definition *Definition
 	Input      *InferenceInput
 	Assignment Assignment
-	Priority   uint64
 	ReceivedAt time.Time
 	Elapsed    time.Duration
 	Deadline   time.Time
@@ -197,7 +219,9 @@ type BackendResult struct {
 	StatusCode  int
 	// Finished proves either no submission or a completed synchronous response.
 	// A transport failure cannot prove that execution stopped.
-	Finished bool
+	Finished   bool
+	Progress   *BackendProgress
+	ClientSpan time.Duration
 }
 
 // ReadyInstance is constructed by the Kubernetes and native-runtime boundary.
@@ -207,25 +231,25 @@ type ReadyInstance struct {
 	Profile          *Profile
 	Weight           int32
 	Capacity         int
-	Lanes            int
 	OwnerWorkloadUID string
 	Execute          func(context.Context, Dispatch) (BackendResult, error)
 }
 
-// NativeQueueTiming uses Triton's CLOCK_MONOTONIC timestamps, not UTC.
-// A missing ComputeStartNanos records queue entry without inventing execution.
-type NativeQueueTiming struct {
-	QueueStartNanos   uint64 `json:"queueStartNanos"`
-	ComputeStartNanos uint64 `json:"computeStartNanos,omitempty"`
-}
-
 type BackendProgress struct {
-	RequestID   string             `json:"requestID"`
-	WorkloadUID string             `json:"workloadUID"`
-	Definition  string             `json:"definition"`
-	Phase       string             `json:"phase"`
-	At          time.Time          `json:"at"`
-	Outcome     string             `json:"outcome,omitempty"`
-	Error       string             `json:"error,omitempty"`
-	NativeQueue *NativeQueueTiming `json:"nativeQueue,omitempty"`
+	RequestID         string    `json:"requestID"`
+	WorkloadUID       string    `json:"workloadUID"`
+	Definition        string    `json:"definition"`
+	Phase             string    `json:"phase"`
+	At                time.Time `json:"at"`
+	Outcome           string    `json:"outcome,omitempty"`
+	Error             string    `json:"error,omitempty"`
+	BatchID           uint64    `json:"batchID,omitempty"`
+	BatchSize         int       `json:"batchSize,omitempty"`
+	ProfileID         string    `json:"profileID,omitempty"`
+	DecisionID        string    `json:"decisionID,omitempty"`
+	QueueMS           float64   `json:"queueMS"`
+	ServiceMS         float64   `json:"serviceMS"`
+	BackendMS         float64   `json:"backendMS"`
+	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
+	ExecutionComplete bool      `json:"executionComplete"`
 }

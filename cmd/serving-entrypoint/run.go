@@ -5,16 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
+	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	"github.com/lab-paper-code/chill/internal/serving/triton"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -23,6 +21,9 @@ import (
 )
 
 func run(ctx context.Context, opts options) (retErr error) {
+	if opts.materializeProfile {
+		return materializeProfile(ctx, opts)
+	}
 	config, err := kubeconfig.BuildConfig(opts.kube)
 	if err != nil {
 		return err
@@ -42,15 +43,15 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	objects, err := stores3.New(stores3.Config{
-		LogicalStore: opts.storeName, Endpoint: opts.storeEndpoint,
-		Bucket: opts.storeBucket, Region: opts.storeRegion,
-		AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		SessionToken: os.Getenv("AWS_SESSION_TOKEN"),
-	})
+	objects, err := objectStore(opts)
 	if err != nil {
 		return err
 	}
+	observationOwner, err := serving.AcquireObservationOwnership(opts.observationDirectory)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
 	journal, err := serving.NewJournal(serving.JournalConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName, Window: opts.observationWindow,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
@@ -72,7 +73,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	observer, err := servingkube.NewObserver(store, kube, execution, &triton.Client{}, servingkube.ObserverConfig{
+	observer, err := servingkube.NewObserver(store, kube, execution, &firstfloor.Client{}, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace, ActuationNamespace: opts.actuationNamespace,
 	})
 	if err != nil {
@@ -100,12 +101,24 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("initialize Workload owner: %w", err)
 	}
+	scheduler, err := newSchedulerOwner(ctx, store, kube, execution, observer, objects, journal, opts)
+	if err != nil {
+		return fmt.Errorf("initialize scheduler owner: %w", err)
+	}
+	defer scheduler.Close()
+	handlerConfig := entrypoint.HandlerConfig{
+		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
+		MaxQueryEvents: opts.maxQueryEvents, ObservationWindow: opts.observationWindow,
+	}
+	if scheduler != nil {
+		handlerConfig.Scheduler = scheduler.controller
+		handlerConfig.SchedulerConfigMap = opts.schedulerConfigMap
+		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
+		handlerConfig.SchedulerNamespace = opts.servingNamespace
+		handlerConfig.SchedulerLock = &scheduler.lock
+	}
 	authorizer := &servingkube.Authorizer{Client: kube}
-	handler, err := entrypoint.NewHandler(manager, execution, authorizer, journal, observer,
-		entrypoint.HandlerConfig{
-			MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
-			MaxQueryEvents: opts.maxQueryEvents,
-		})
+	handler, err := entrypoint.NewHandler(manager, execution, authorizer, journal, observer, handlerConfig)
 	if err != nil {
 		return err
 	}
@@ -113,12 +126,20 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
+	return serve(ctx, opts, owner, execution, observer, catalog, manager, journal, scheduler)
+}
+
+func serve(ctx context.Context, opts options, owner http.Handler, execution *serving.Runtime,
+	observer *servingkube.Observer, catalog *servingkube.Catalog, manager *servingkube.Manager,
+	journal *serving.Journal, scheduler *schedulerOwner,
+) error {
 	server := &http.Server{
 		Addr: opts.bindAddress, Handler: owner,
 		ReadHeaderTimeout: opts.requestTimeout, IdleTimeout: opts.requestTimeout,
 	}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServeTLS(opts.tlsCert, opts.tlsKey) }()
+	scheduler.Start()
 	sourceTicker := time.NewTicker(opts.sourceInterval)
 	defer sourceTicker.Stop()
 	profileTicker := time.NewTicker(opts.profileInterval)
@@ -157,6 +178,7 @@ loop:
 			cancel()
 		}
 	}
+	scheduler.Close()
 	// Keep native source watches alive until accepted backend work really drains.
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), opts.drainTimeout)
 	defer cancelShutdown()

@@ -14,8 +14,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 )
 
-const measurementResultSchemaVersion = "chill.dacs.io/transition-cost-measurement-result.v1alpha2"
-
 type measurementResultStore interface {
 	evidencestore.LocationReader
 	evidencestore.ImmutableWriter
@@ -153,7 +151,7 @@ func measurementResultLocation(
 
 func buildMeasurementResult(progress measurementProgress) (measurementResultRecord, error) {
 	record := measurementResultRecord{
-		SchemaVersion: measurementResultSchemaVersion,
+		SchemaVersion: transitioncost.MeasurementResultSchemaVersion,
 		Outcome:       progress.stage,
 		Reason:        progress.reason,
 		Directions:    measurementResultDirections(progress.attempts),
@@ -208,7 +206,7 @@ func decodeMeasurementResult(payload []byte) (measurementResultRecord, error) {
 }
 
 func validateStoredMeasurementResult(record measurementResultRecord) error {
-	if record.SchemaVersion != measurementResultSchemaVersion {
+	if record.SchemaVersion != transitioncost.MeasurementResultSchemaVersion {
 		return fmt.Errorf("unsupported transition measurement result schema %q", record.SchemaVersion)
 	}
 	if len(record.Directions) != 2 {
@@ -253,7 +251,7 @@ func validateStoredMeasurementResult(record measurementResultRecord) error {
 
 func measurementResultReference(identity evidencestore.ObjectIdentity) edgev1alpha1.ProfilingRunEvidenceReference {
 	return edgev1alpha1.ProfilingRunEvidenceReference{
-		Store: identity.Store, Key: identity.Key, SchemaVersion: measurementResultSchemaVersion, Size: identity.Size,
+		Store: identity.Store, Key: identity.Key, SchemaVersion: transitioncost.MeasurementResultSchemaVersion, Size: identity.Size,
 	}
 }
 

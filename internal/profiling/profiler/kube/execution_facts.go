@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha6"
+	executionFactsSchema     = "chill.dacs.io/profiler-execution-facts.v1alpha7"
 	runtimeDeclarationSchema = "chill.dacs.io/runtime-declaration.v1alpha2"
 	trustedRuntimeInspection = "exact-image-runtime-inspection-v1"
 )
@@ -97,8 +98,10 @@ type hostPlatformContract struct {
 // runtimeAccessContract is a Kubernetes delivery requirement, not physical
 // host identity.
 type runtimeAccessContract struct {
-	Privileged         bool    `json:"privileged"`
-	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
+	Privileged         bool              `json:"privileged"`
+	SupplementalGroups []int64           `json:"supplementalGroups,omitempty"`
+	Resources          map[string]string `json:"resources,omitempty"`
+	GPUUUID            string            `json:"gpuUUID,omitempty"`
 }
 
 type npuAllocationClaim struct {
@@ -234,13 +237,23 @@ func validateExecutionDeclaration(source executionDeclaration) (resolvedExecutio
 			return resolvedExecutionDeclaration{}, err
 		}
 	}
-	if (source.Host == nil) != (source.Access == nil) {
-		return resolvedExecutionDeclaration{}, errors.New("host and runtime access contracts must be supplied together")
+	if source.Host != nil && source.Access == nil {
+		return resolvedExecutionDeclaration{}, errors.New("host contract requires runtime access")
 	}
 	if source.Access != nil {
 		if err := validateRuntimeAccessContract(*source.Access); err != nil {
 			return resolvedExecutionDeclaration{}, err
 		}
+		if runtime.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
+			slices.Contains(runtime.Runtime.Backends, profilingrun.FirstfloorORTCUDABackend) &&
+			(source.Access.GPUUUID == "" || len(source.Access.Resources) != 1 ||
+				source.Access.Resources["nvidia.com/gpu"] != "1") {
+			return resolvedExecutionDeclaration{}, errors.New("firstfloor CUDA declaration requires an explicit GPU UUID and exactly one nvidia.com/gpu resource")
+		}
+	}
+	if runtime.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
+		slices.Contains(runtime.Runtime.Backends, profilingrun.FirstfloorORTCUDABackend) && source.Access == nil {
+		return resolvedExecutionDeclaration{}, errors.New("firstfloor CUDA declaration requires runtime access")
 	}
 	return resolvedExecutionDeclaration{
 		DeviceClass: source.DeviceClass, Runtime: runtime,
@@ -366,17 +379,10 @@ func cloneHostExecutionContract(source *hostExecutionContract) *hostExecutionCon
 }
 
 func validateRuntimeAccessContract(contract runtimeAccessContract) error {
-	seen := make(map[int64]struct{}, len(contract.SupplementalGroups))
-	for _, group := range contract.SupplementalGroups {
-		if group < 1 || group > int64(^uint32(0)>>1) {
-			return errors.New("runtime supplemental group must be a positive 32-bit ID")
-		}
-		if _, duplicate := seen[group]; duplicate {
-			return fmt.Errorf("duplicate runtime supplemental group %d", group)
-		}
-		seen[group] = struct{}{}
-	}
-	return nil
+	return profilingrun.ValidateRuntimeAccess(profilingrun.CandidateReportRuntimeAccess{
+		Privileged: contract.Privileged, SupplementalGroups: contract.SupplementalGroups,
+		Resources: contract.Resources, GPUUUID: contract.GPUUUID,
+	})
 }
 
 func cloneRuntimeAccessContract(source *runtimeAccessContract) *runtimeAccessContract {
@@ -385,6 +391,7 @@ func cloneRuntimeAccessContract(source *runtimeAccessContract) *runtimeAccessCon
 	}
 	copy := *source
 	copy.SupplementalGroups = append([]int64(nil), source.SupplementalGroups...)
+	copy.Resources = copyStringMap(source.Resources)
 	return &copy
 }
 

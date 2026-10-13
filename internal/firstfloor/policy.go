@@ -1,0 +1,190 @@
+package firstfloor
+
+import (
+	"math"
+
+	"gonum.org/v1/gonum/stat"
+)
+
+func serviceCost(b BatchProfile, percentile float64) float64 {
+	if len(b.ServiceSamplesMS) == 0 {
+		return math.Inf(1)
+	}
+	return stat.Quantile(percentile/100, stat.Empirical, b.ServiceSamplesMS, nil)
+}
+
+// RemainingSLOMS uses frozen sender and native elapsed spans, never remote UTC.
+// Caller cancellation and explicit lifetime are separate from the SLO.
+func RemainingSLOMS(r RequestState) float64 {
+	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
+}
+func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
+func requestSlack(p Policy, r RequestState, b BatchProfile) float64 {
+	return RemainingSLOMS(r) - p.TransportEnvelopeMS - p.ReturnEnvelopeMS - serviceCost(b, r.Context.SLO.Percentile)
+}
+func allowedBatch(p Policy, size int) bool {
+	return p.MaxBatchSize >= 0 && (p.MaxBatchSize == 0 || size <= p.MaxBatchSize)
+}
+func sameQueue(a, b RequestState) bool {
+	return a.Context.WorkloadUID == b.Context.WorkloadUID && a.Context.Definition == b.Context.Definition
+}
+func minimumService(p Policy, q RequestState) float64 {
+	cost := math.Inf(1)
+	for _, b := range p.Batches {
+		if allowedBatch(p, b.Size) {
+			cost = math.Min(cost, serviceCost(b, q.Context.SLO.Percentile))
+		}
+	}
+	return cost
+}
+func normalRequest(q RequestState) bool {
+	return q.Phase != phaseRunning && q.Phase != phaseDeferred && q.Phase != phaseFinished
+}
+func earlierEDF(requests []RequestState, i, j int) bool {
+	a, b := RemainingSLOMS(requests[i]), RemainingSLOMS(requests[j])
+	return a < b || a == b && i < j
+}
+
+// nextCompatible walks normal requests in stable EDF without copying or sorting
+// the caller's snapshot. Deferred work instead uses its contiguous FIFO prefix.
+func nextCompatible(requests []RequestState, head, previous int) int {
+	deferred := requests[head].Phase == phaseDeferred
+	best := -1
+	for i, q := range requests {
+		if deferred {
+			if i < head || i <= previous || q.Phase != phaseDeferred {
+				continue
+			}
+			if !sameQueue(q, requests[head]) {
+				return -1
+			}
+			return i
+		}
+		if !normalRequest(q) || !sameQueue(q, requests[head]) || previous >= 0 && !earlierEDF(requests, previous, i) {
+			continue
+		}
+		if best < 0 || earlierEDF(requests, i, best) {
+			best = i
+		}
+	}
+	return best
+}
+func batchFeasible(p Policy, requests []RequestState, head int, b BatchProfile) bool {
+	previous := -1
+	for range b.Size {
+		previous = nextCompatible(requests, head, previous)
+		if previous < 0 || requestSlack(p, requests[previous], b) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ChooseBatch is shared by the actor and replay. Normal work uses stable EDF;
+// deferred work uses FIFO only after normal work is empty. A lifecycle choice
+// has Size=0 and identifies the single rejected/demoted RequestID. Running work
+// is never preempted; only expired queued drops can be selected while active.
+// ponytail: bounded O(requests²*profiles) scan; index only if measured CPU warrants it.
+func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
+	head, deferred, active := queueHeads(requests)
+	mode := EffectiveDeadlinePolicy(p.DeadlinePolicy)
+	if mode == DeadlineDrop && head >= 0 && SLOExpired(requests[head]) {
+		r := requests[head]
+		return BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition, Reason: OutcomeDeadlineDrop}
+	}
+	if active {
+		return BatchChoice{Reason: "active"}
+	}
+	if head < 0 {
+		head = deferred
+	}
+	if head < 0 {
+		return BatchChoice{Reason: "empty"}
+	}
+	r := requests[head]
+	choice := BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition}
+	count := 0
+	for previous := -1; ; {
+		previous = nextCompatible(requests, head, previous)
+		if previous < 0 {
+			break
+		}
+		count++
+	}
+	var available, fastest BatchProfile
+	fastestCost := math.Inf(1)
+	for _, b := range p.Batches {
+		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
+			continue
+		}
+		cost := serviceCost(b, r.Context.SLO.Percentile)
+		if fastest.Size == 0 || cost < fastestCost || cost == fastestCost && b.Size > fastest.Size {
+			fastest, fastestCost = b, cost
+		}
+		if r.Phase != phaseDeferred && batchFeasible(p, requests, head, b) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+			available = b
+		}
+	}
+	if available.Size == 0 {
+		if r.Phase != phaseDeferred && mode != DeadlineKeep {
+			choice.Reason = OutcomeDeadlineDrop
+			if mode == DeadlineDefer {
+				choice.Reason = ReasonDeadlineDefer
+			}
+			return choice
+		}
+		choice.Size, choice.Reason = fastest.Size, "minimum_service"
+		return choice
+	}
+	choice.Size, choice.Reason = available.Size, "available_energy"
+	return energyGainWait(p, requests, head, count, available, choice)
+}
+func queueHeads(requests []RequestState) (head, deferred int, active bool) {
+	head, deferred = -1, -1
+	for i, r := range requests {
+		if r.Phase == phaseRunning {
+			active = true
+			continue
+		}
+		if normalRequest(r) {
+			if head < 0 || earlierEDF(requests, i, head) {
+				head = i
+			}
+		} else if r.Phase == phaseDeferred && deferred < 0 {
+			deferred = i
+		}
+	}
+	return head, deferred, active
+}
+func energyGainWait(p Policy, requests []RequestState, head, count int, available BatchProfile, choice BatchChoice) BatchChoice {
+	r := requests[head]
+	if r.ArrivalRate <= 0 {
+		return choice
+	}
+	for _, b := range p.Batches {
+		if b.Size <= count || b.EnergyPerItemJ >= available.EnergyPerItemJ || !allowedBatch(p, b.Size) {
+			continue
+		}
+		fill := float64(b.Size-count) / r.ArrivalRate * 1000
+		allowed := p.MaxBatchWaitMS
+		for _, q := range requests {
+			if !normalRequest(q) {
+				continue
+			}
+			slack := requestSlack(p, q, b)
+			if sameQueue(q, r) {
+				allowed = math.Min(allowed, p.MaxBatchWaitMS-q.QueueMS)
+			} else {
+				slack -= minimumService(p, q)
+			}
+			allowed = math.Min(allowed, slack)
+		}
+		if fill > 0 && fill <= allowed {
+			choice.Size = 0
+			choice.WaitMS = fill
+			choice.Reason = "measured_energy_gain_fill"
+			return choice
+		}
+	}
+	return choice
+}

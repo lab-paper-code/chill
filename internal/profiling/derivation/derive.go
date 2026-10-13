@@ -150,6 +150,8 @@ func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, erro
 		Batch:                         trial.Batch,
 		IncrementalWorkJoulesPerItem:  incrementalWorkWallJoules / completedItems,
 		LatencyP99Milliseconds:        percentile(trial.LatencyMilliseconds, 0.99),
+		ClientLatencyMilliseconds:     append([]float64(nil), trial.LatencyMilliseconds...),
+		NativeSamples:                 append([]NativeServiceSample(nil), trial.NativeSamples...),
 	}, nil
 }
 
@@ -167,7 +169,7 @@ func Aggregate(trials []EnergyTrial, policy PointPolicy) (Point, error) {
 		EstimatorIdentity:           trials[0].EstimatorIdentity,
 		Batch:                       trials[0].Batch,
 		PointPolicyVersion:          policy.Version,
-		Trials:                      append([]EnergyTrial(nil), trials...),
+		Trials:                      cloneEnergyTrials(trials),
 	}
 	incrementalWorkJoulesPerItem := make([]float64, len(trials))
 	idleBaselineSecondsPerItem := make([]float64, len(trials))

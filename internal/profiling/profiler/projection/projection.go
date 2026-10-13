@@ -52,8 +52,17 @@ func projectTrial(
 		return profilederivation.Trial{}, err
 	}
 	latencies := make([]float64, 0, raw.Runtime.InferenceCount)
+	nativeSamples := make([]profilederivation.NativeServiceSample, 0, raw.Runtime.InferenceCount)
 	for _, repetition := range raw.Runtime.RepetitionResults {
 		latencies = append(latencies, repetition.LatencyMilliseconds...)
+		for _, sample := range repetition.NativeSamples {
+			nativeSamples = append(nativeSamples, profilederivation.NativeServiceSample{
+				BatchID: sample.BatchID, BatchSize: sample.BatchSize,
+				RunnerServiceMilliseconds: sample.RunnerServiceMilliseconds,
+				BackendCallMilliseconds:   sample.BackendCallMilliseconds,
+				NativeRequestMilliseconds: sample.NativeRequestMilliseconds,
+			})
+		}
 	}
 	samples := make([]profilederivation.Sample, len(raw.Metrics.Samples))
 	for index, sample := range raw.Metrics.Samples {
@@ -78,6 +87,7 @@ func projectTrial(
 		CompletedCalls:              raw.Runtime.InferenceCount,
 		CompletedItems:              raw.Runtime.InferenceCount * execution.RunConfig.Measurement.Batch,
 		LatencyMilliseconds:         latencies,
+		NativeSamples:               nativeSamples,
 		Samples:                     samples,
 		Failures:                    len(raw.Metrics.Failures),
 		SourceTimestampAbsent:       raw.Metrics.Summary.SourceTimestampAbsent,

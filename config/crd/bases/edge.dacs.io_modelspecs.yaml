@@ -106,11 +106,11 @@ spec:
                       properties:
                         tensors:
                           items:
-                            description: ModelInputTensor is the batch-invariant Triton
+                            description: ModelInputTensor is the batch-invariant inference
                               input contract.
                             properties:
                               datatype:
-                                description: Datatype uses the Triton inference protocol
+                                description: Datatype uses the V2 inference protocol
                                   spelling.
                                 enum:
                                 - BOOL
@@ -230,10 +230,20 @@ spec:
                           description: Settings selects native settings that profiling
                             and serving must share.
                           properties:
-                            triton:
-                              description: Triton is required for triton/python and
+                            firstfloor:
+                              description: Firstfloor is required for firstfloor and
                                 absent for other families.
                               properties:
+                                deadlinePolicy:
+                                  default: keep
+                                  description: |-
+                                    DeadlinePolicy handles requests whose selected SLO cannot be met.
+                                    Omitted means keep: execute late requests normally.
+                                  enum:
+                                  - drop
+                                  - keep
+                                  - defer
+                                  type: string
                                 maxBatchSize:
                                   description: MaxBatchSize is shared across every
                                     measured batch trial.
@@ -241,21 +251,14 @@ spec:
                                   minimum: 1
                                   type: integer
                                 maxQueueSize:
-                                  description: MaxQueueSize bounds each native priority
-                                    lane's queue.
-                                  format: int32
-                                  minimum: 1
-                                  type: integer
-                                priorityLevels:
-                                  description: PriorityLevels bounds fixed native
-                                    priority lanes.
+                                  description: MaxQueueSize bounds each workload UID's
+                                    queue.
                                   format: int32
                                   minimum: 1
                                   type: integer
                               required:
                               - maxBatchSize
                               - maxQueueSize
-                              - priorityLevels
                               type: object
                           type: object
                       required:

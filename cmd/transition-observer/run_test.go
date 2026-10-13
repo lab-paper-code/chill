@@ -74,13 +74,13 @@ func TestExecutePublishesReadyAndWritesRawAndReceiptOnce(t *testing.T) {
 	}
 }
 
-func TestExecuteDoesNotWriteBeforeReady(t *testing.T) {
+func TestExecuteRetainsInsufficientRawBeforeReady(t *testing.T) {
 	opts := testOptions(t)
-	writer := &writeStub{}
+	writer := &writeStub{receipt: testReceipt()}
 	err := execute(context.Background(), opts, testDependencies(
 		testAttempt(), observationStub(false, transitioncost.RawObservation{}, errors.New("not ready")), writer,
 	))
-	if err == nil || writer.calls != 0 || pathExists(opts.terminationPath) || pathExists(opts.readyPath) {
+	if err == nil || writer.calls != 1 || !pathExists(opts.terminationPath) || pathExists(opts.readyPath) {
 		t.Fatalf(
 			"error/writes/receipt/ready = %v/%d/%t/%t",
 			err, writer.calls, pathExists(opts.terminationPath), pathExists(opts.readyPath),
@@ -125,13 +125,13 @@ func TestExecuteDoesNotReplaceExistingReadyFile(t *testing.T) {
 	if err := os.WriteFile(opts.readyPath, []byte("owned"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writer := &writeStub{}
+	writer := &writeStub{receipt: testReceipt()}
 	err := execute(context.Background(), opts, testDependencies(
 		testAttempt(), observationStub(true, transitioncost.RawObservation{}, nil), writer,
 	))
 	payload, readErr := os.ReadFile(opts.readyPath)
 	if err == nil || readErr != nil || string(payload) != "owned" ||
-		writer.calls != 0 || pathExists(opts.terminationPath) {
+		writer.calls != 1 || !pathExists(opts.terminationPath) {
 		t.Fatalf("error/content/writes/receipt = %v/%q/%d/%t", err, payload, writer.calls, pathExists(opts.terminationPath))
 	}
 }

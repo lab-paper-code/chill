@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -64,15 +65,16 @@ func execute(ctx context.Context, opts options, deps dependencies) error {
 		}
 	})
 	if readyErr != nil {
-		return fmt.Errorf("publish transition observation ready: %w", readyErr)
+		observeErr = errors.Join(observeErr, fmt.Errorf("publish transition observation ready: %w", readyErr))
 	}
-	if !ready {
-		if observeErr != nil {
-			return observeErr
-		}
-		return errors.New("transition observation ended before ready")
+	if !ready && observeErr == nil {
+		observeErr = errors.New("transition observation ended before ready")
 	}
-	receipt, writeErr := deps.writeRaw(ctx, parts.store, attempt.rawLocation, raw)
+	// Preserve pre-readiness sensor/native failures too. They are raw facts,
+	// never a successful trial or permission to mutate the measured Node.
+	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancelWrite()
+	receipt, writeErr := deps.writeRaw(writeCtx, parts.store, attempt.rawLocation, raw)
 	if writeErr != nil {
 		return errors.Join(observeErr, writeErr)
 	}

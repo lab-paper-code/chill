@@ -10,10 +10,11 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/triton"
+	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,13 +27,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const newTestResourceName = "new"
+
 func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1alpha1.DeviceClass) {
-	digest := "sha256:" + strings.Repeat("a", 64)
-	image := "registry/native@" + digest
-	profile := serving.Profile{ID: "chill-system/campaign/campaign-uid", NodeName: "node", Condition: profilederivation.CurvePlanSpec{NodeUID: "node-uid", DeviceClass: "cpu", RuntimeFamily: "triton", Backend: "python", RuntimeImage: image, PowerMode: "fixed", Triton: &modelcompat.TritonSettings{MaxBatchSize: 1, PriorityLevels: 2, MaxQueueSize: 4}, CPU: profilederivation.CurveCPUContract{Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1}, Artifact: profilederivation.CurveArtifactContract{Image: image, Path: "/artifact/model.onnx"}}, Batches: []serving.BatchProfile{{Batch: 1, MemoryBytes: 1024}}}
+	image := "registry/native@sha256:" + strings.Repeat("a", 64)
+	profile := serving.Profile{ID: "chill-system/campaign/campaign-uid", NodeName: "node", RuntimeMetadata: &native.RuntimeMetadata{Runtime: "ort-cpu", IntraOpThreads: 1, InterOpThreads: 1, CPUAffinity: []int{0}}, Condition: profilederivation.CurvePlanSpec{NodeUID: "node-uid", DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "CPUExecutionProvider", RuntimeImage: image, PowerMode: "fixed", Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 4}, CPU: profilederivation.CurveCPUContract{Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1}, Artifact: profilederivation.CurveArtifactContract{Image: image, Path: "/artifact/model.onnx"}}, Batches: []serving.BatchProfile{{Batch: 1, MemoryBytes: 1024}}}
 	class := edgev1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: "cpu"}, Spec: edgev1alpha1.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"}, Architecture: "amd64", PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}}}}}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", Labels: map[string]string{ServingPoolLabel: "pool", "hardware": "cpu", corev1.LabelArchStable: "amd64"}}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{Architecture: "amd64"}, Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi"), corev1.ResourceCPU: resource.MustParse("4")}}}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{ServingProfileAnnotation: profile.ID, ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", "/artifact/model.onnx", "/chill-artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}}, Containers: []corev1.Container{{Name: "triton", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8000}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Mi")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/artifact", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: "containerd://" + digest, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "triton", ContainerID: "containerd://running", ImageID: "containerd://" + digest, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{ServingProfileAnnotation: profile.ID, ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", "/artifact/model.onnx", "/chill-artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}, {Name: "profile", Image: image}}, Containers: []corev1.Container{{Name: "firstfloor", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "firstfloor", ImageID: image, ContainerID: "containerd://running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "profile", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}}}
 	return pod, node, profile, class
 }
 
@@ -42,7 +44,7 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.0.0.1:8000" || spec.Pool != "pool" || spec.Lanes != 2 || spec.Capacity != 4 {
+	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.0.0.1:8080" || spec.Pool != "pool" || spec.Capacity != 4 {
 		t.Fatalf("wrong physical source: %+v", spec)
 	}
 	opaque := pod.DeepCopy()
@@ -110,7 +112,7 @@ func TestObserverPowerUsesLatestActualReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending := record.DeepCopy()
-	pending.Name = "new"
+	pending.Name = newTestResourceName
 	pending.Spec.StageRequestedAt = metav1.NewTime(now.Add(time.Second))
 	pending.Status.Phase = edgev1alpha1.NodeActuationPhasePending
 	if err := confirmedPower(node, &class, "mode", []edgev1alpha1.NodeActuation{record, *pending}); err == nil {
@@ -131,7 +133,7 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 		}
 	}
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), &serving.Runtime{}, &triton.Client{}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), &serving.Runtime{}, &firstfloor.Client{}, ObserverConfig{Namespace: "chill-system"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,9 +320,9 @@ func TestObserverScannerPersistsExactNativePhasesWithoutReplacingResponse(t *tes
 			t.Fatal(err)
 		}
 	}
-	lines := []string{"unrelated Triton startup output"}
+	lines := []string{"unrelated firstfloor startup output"}
 	for _, phase := range []string{"queued", "running", "finished"} {
-		data, err := json.Marshal(serving.BackendProgress{RequestID: requestID + "~" + definition.Identity(), WorkloadUID: definition.UID, Definition: definition.Identity(), Phase: phase, At: now})
+		data, err := json.Marshal(native.Progress{RequestID: requestID, WorkloadUID: definition.UID, Definition: definition.Identity(), Phase: phase, At: now, ExecutionComplete: phase == "finished"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,7 +378,7 @@ func TestObserverNodeMoveDrainsBeforeChangingNativeMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := physicalID(pod.UID, pod.Status.ContainerStatuses[0].ContainerID)
-	assignment := &serving.Assignment{Pool: "pool", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Instance: id, Profile: "profile", Priority: 1, DispatchedAt: time.Now().UTC()}
+	assignment := &serving.Assignment{Pool: "pool", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Instance: id, Profile: "profile", DispatchedAt: time.Now().UTC()}
 	for _, kind := range []string{"received", "accepted", "assigned"} {
 		event := serving.RequestEvent{RequestID: "accepted-request", WorkloadName: definition.Name, WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: kind, At: time.Now().UTC(), ReceivedAt: assignment.DispatchedAt}
 		if kind == "assigned" {

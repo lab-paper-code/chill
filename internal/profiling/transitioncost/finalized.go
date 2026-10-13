@@ -22,13 +22,15 @@ type FinalizedObservationRecord struct {
 // accepted transition window. The target-idle baseline remains in the frozen
 // contract and is not duplicated here.
 type FinalizedAcceptedObservationRecord struct {
-	StartedAt                              time.Time `json:"startedAt"`
-	CompletedAt                            time.Time `json:"completedAt"`
-	BoundaryMappingUncertaintyMilliseconds int64     `json:"boundaryMappingUncertaintyMilliseconds"`
-	TauMilliseconds                        float64   `json:"tauMilliseconds"`
-	TransitionWallJoules                   float64   `json:"transitionWallJoules"`
-	EtaJoules                              float64   `json:"etaJoules"`
-	ServingSurvived                        bool      `json:"servingSurvived"`
+	StartedAt                              time.Time              `json:"startedAt"`
+	CompletedAt                            time.Time              `json:"completedAt"`
+	BoundaryMappingUncertaintyMilliseconds int64                  `json:"boundaryMappingUncertaintyMilliseconds"`
+	TauMilliseconds                        float64                `json:"tauMilliseconds"`
+	TransitionWallJoules                   float64                `json:"transitionWallJoules"`
+	EtaJoules                              float64                `json:"etaJoules"`
+	ServingSurvived                        bool                   `json:"servingSurvived"`
+	BeforeNative                           *NativeNodeObservation `json:"beforeNative"`
+	AfterNative                            *NativeNodeObservation `json:"afterNative"`
 }
 
 // FinalizedObservation is one verified, raw-free terminal result suitable for
@@ -91,7 +93,7 @@ func validateFinalizedObservationRecord(record FinalizedObservationRecord) error
 		}
 	case VerdictInsufficient:
 		switch record.Reason {
-		case ReasonPowerWindowInsufficient, ReasonBoundaryUncertaintyExceeded, ReasonServingSurvivalUnknown:
+		case ReasonPowerWindowInsufficient, ReasonBoundaryUncertaintyExceeded, ReasonServingSurvivalUnknown, ReasonNativeStateUnverified:
 		default:
 			return errors.New("insufficient finalized observation has an unsupported reason")
 		}
@@ -111,6 +113,9 @@ func validateFinalizedObservationRecord(record FinalizedObservationRecord) error
 		!finite(accepted.TransitionWallJoules) || accepted.TransitionWallJoules < 0 || !finite(accepted.EtaJoules) {
 		return errors.New("accepted finalized observation contains invalid common-window values")
 	}
+	if err := VerifyNativeTransition(accepted.BeforeNative, accepted.AfterNative); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -118,6 +123,8 @@ func cloneFinalizedObservationRecord(record FinalizedObservationRecord) Finalize
 	clone := record
 	if record.AcceptedObservation != nil {
 		accepted := *record.AcceptedObservation
+		accepted.BeforeNative = cloneNativeObservation(accepted.BeforeNative)
+		accepted.AfterNative = cloneNativeObservation(accepted.AfterNative)
 		clone.AcceptedObservation = &accepted
 	}
 	return clone

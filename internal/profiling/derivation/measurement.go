@@ -35,6 +35,28 @@ func measureTrial(trial Trial) (float64, error) {
 			return 0, errors.New("latency must be positive and finite")
 		}
 	}
+	if len(trial.NativeSamples) > 0 {
+		if len(trial.NativeSamples) != trial.CompletedCalls {
+			return 0, errors.New("native samples are not correlated with client calls")
+		}
+		seen := make(map[uint64]bool, len(trial.NativeSamples))
+		for index, sample := range trial.NativeSamples {
+			if sample.BatchID == 0 || seen[sample.BatchID] || sample.BatchSize != trial.Batch {
+				return 0, errors.New("native batch identity is invalid")
+			}
+			seen[sample.BatchID] = true
+			for _, value := range []float64{sample.RunnerServiceMilliseconds, sample.BackendCallMilliseconds, sample.NativeRequestMilliseconds} {
+				if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+					return 0, errors.New("native span must be positive and finite")
+				}
+			}
+			if sample.BackendCallMilliseconds > sample.RunnerServiceMilliseconds ||
+				sample.RunnerServiceMilliseconds > sample.NativeRequestMilliseconds ||
+				sample.NativeRequestMilliseconds > trial.LatencyMilliseconds[index] {
+				return 0, errors.New("native overlapping span order is invalid")
+			}
+		}
+	}
 	return measurePower(trial.WindowStart, trial.WindowEnd, trial.Samples)
 }
 

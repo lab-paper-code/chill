@@ -86,34 +86,35 @@ Detailed direction is encoded in `.go-arch-lint.yml` and grounded in the
 
 ### Reviewed model and serving boundaries
 
-The following CHILL-internal edges were captured with `go list` for the six
-packages below. They are actual imports, not call edges or runtime validation.
-Component names and permissions come separately from `.go-arch-lint.yml`.
+The following reviewed production boundaries follow the native firstfloor
+cutover. Source imports are authoritative; the command below refreshes the
+import evidence. Component permissions live in `.go-arch-lint.yml`.
 
 | Package / component | Actual internal/API imports |
 |---|---|
 | `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
 | `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
-| `serving` / `serving-core` | `evidencestore`, `modelcompat`, `profiling/derivation` |
+| `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation` |
 | `serving/entrypoint` / `serving-entrypoint` | `api/v1alpha1`, `serving`, `serving/kube` |
-| `serving/triton` / `serving-triton` | `modelcompat`, `serving` |
-| `serving/kube` / `serving-kube` | `api/v1alpha1`, `deviceclass`, `evidencestore`, `modelcatalog`, `modelcompat`, `profiling/campaign`, `profiling/derivation`, `profiling/profiler/evidence`, `profiling/profiler/projection`, `profiling/run`, `serving`, `serving/triton` |
+| `firstfloor` / `firstfloor` | No CHILL package imports; bounded native executor leaf |
+| `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
+| `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
+| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, serving core and native adapter |
 
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' \
   ./internal/modelcompat ./internal/modelcatalog ./internal/serving \
-  ./internal/serving/entrypoint ./internal/serving/kube ./internal/serving/triton
+  ./internal/serving/entrypoint ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor
 ```
 
-Allowed directions retain a plain Serving core without API, HTTP or Kubernetes
-clients. `model-catalog` may depend on API and `model-compat`; entrypoint may
-depend on API, core and its concrete kube adapter; Triton may depend on core and
-`model-compat`. The kube adapter may use the listed model, evidence, campaign,
-derivation, evidence/projection, `profiling-run` and runtime boundaries, not
-Profiler orchestration, controllers or its candidate resolver. Composition roots assemble them.
-The Triton adapter also imports Kubernetes resource quantities; that does not
-turn it into a Kubernetes resource writer. No architecture-gate pass is implied
-by this dependency capture.
+The native executor leaf never imports Serving, profiling or Kubernetes. Serving
+reuses its batching policy directly for scheduler replay; the SDK adapter joins
+actual native readiness/state to admitted profiles. The Kubernetes adapter owns
+Pod preparation and removal, immutable bundle materialization and existing
+NodeActuation submission. The transition-cost core may consume firstfloor
+metadata and plain metric observations, not Serving or its Kubernetes adapter.
+Composition roots assemble these owners. No architecture-gate pass is implied
+by this boundary description.
 
 The named-input projection also imports `modelcompat`:
 `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./internal/profiling/profiler/projection`
@@ -176,3 +177,46 @@ operand. Commands, artifacts, metadata, and limitations are in
   MCP entry and run `make codegraph-uninit`. Baseline development is unchanged.
 - If KubeDiagrams output regresses, retain `manifest.yaml` and `resources.txt`
   as the desired-state evidence and remove only the generated graph view.
+
+## Native runtime and scheduler deployment
+
+`make docker-build-firstfloor` builds `build/docker/firstfloor.Dockerfile`.
+It ships `/opt/chill/bin/serving-worker`, `/opt/chill/bin/serving-entrypoint` (including
+`--materialize-profile` mode), `/measurement-worker`, the persistent firstfloor
+runner and its sibling ORT/RKNNLite helpers. CPU defaults install NumPy 2.2.6
+and ONNX Runtime 1.27.0. `make build` includes serving-worker and
+serving-operation; `make test-runtime` selects the firstfloor runtime suite.
+No published image digest or hardware qualification is implied.
+
+CUDA deployment requires an operator-selected NVIDIA CUDA/cuDNN base compatible
+with the exact ONNX Runtime GPU wheel and target architecture. Build with
+`RUNTIME_IMAGE` set to that base and `ORT_PACKAGE=onnxruntime-gpu`; use NVIDIA's
+device plugin/container runtime and the physical GPU UUID inventory. See
+[ONNX Runtime CUDA requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
+Do not install both CPU and GPU ORT distributions in one image. RKNN deployment
+requires a compatible ARM64 vendor base containing the exact Rockchip
+`rknn-toolkit-lite2` wheel and `librknnrt.so`, matched to the board driver and
+compiled model. Obtain these from
+[Rockchip's vendor repository](https://github.com/airockchip/rknn-toolkit2).
+Supply that base as `RUNTIME_IMAGE`; the copied RKNNLite helper loads the real
+vendor SDK. Neither deployment falls back to synthetic inference or CPU when
+its selected provider is absent.
+
+Scheduler configuration is explicit and independent of Profiler enablement:
+set `servingEntrypoint.scheduler.configMap` to an existing ConfigMap in the
+serving namespace and `scheduler.key` (default `scheduler.json`) to its JSON
+entry. The owner reads it directly using
+`--serving-scheduler-configmap`/`--serving-scheduler-config-key`; settings updates
+require update permission on that exact named ConfigMap. The chart does not
+grant blanket ConfigMap update permission. `config/samples/serving-scheduler.json`
+is a valid controls-off example, not a calibrated deployment. Before enabling
+controls, populate physical CPU/GPU inventory, non-serving reservations, measured
+profile preparation bundles, meter identities, immutable operation-cost
+references and existing actuator-backed power requests from the actual cluster.
+Mirror each configured power-cost measurement's namespace/name in Helm
+`servingEntrypoint.scheduler.powerCostSources` to grant named read access to
+the retained measurement and its immutable preparation ConfigMap.
+Raw service samples remain in immutable evidence bundles, not ConfigMaps.
+The owner creates/removes native Pods and their small config/credential objects;
+NodeActuation remains the sole power actuator and pool membership uses the
+existing Node label ownership.

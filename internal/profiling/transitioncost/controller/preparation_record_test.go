@@ -10,6 +10,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -97,7 +98,7 @@ func TestPreparationRecordRejectsMalformedCurrentRecord(t *testing.T) {
 		}},
 		{name: "old schema", mutate: func(record *corev1.ConfigMap) {
 			record.BinaryData[preparationRecordDataKey] = []byte(strings.Replace(
-				string(record.BinaryData[preparationRecordDataKey]), preparationRecordSchemaVersion,
+				string(record.BinaryData[preparationRecordDataKey]), transitioncost.PreparationRecordSchemaVersion,
 				"chill.dacs.io/power-mode-transition-preparation.v1alpha3", 1,
 			))
 		}},

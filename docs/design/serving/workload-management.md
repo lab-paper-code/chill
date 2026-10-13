@@ -6,10 +6,10 @@
 요구사항의 원본은 SRS이며, 아래에는 현재 리소스 표현, 책임과 적용 순서를 기록한다.
 실제 검증 범위와 남은 실행 증거는 12장에서 구분한다.
 
-사용자가 승인한 제외 범위는 **adaptive SLO batch waiting과 configuration selection 알고리즘**뿐이다.
-공식 custom batching API는 배치 포함 조건을 제어하지만 조절 가능한 큐 대기나 dispatch를
-교체하지 못한다. Triton core patch, 자체 추론 서버나 외부 HTTP 추론 proxy를 추가하지 않는다.
-공식 native Triton Python/ORT CPU serving과 동일 경로의 profiling은 구현되어 있다.
+구성 선택과 adaptive SLO 배칭의 요구사항은 [스케줄러 SRS](../../spec/scheduler/SRS.md)를 따른다.
+firstfloor actor와 후보 replay는 같은 실측 SLO·에너지 selector를 사용한다.
+실행기 분담과 실제 전환·원시 관측은 [스케줄러 구현 설계](scheduler-implementation.md)에 기록한다.
+native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Profiling을 연결한다.
 
 ### 핵심 결정
 
@@ -22,7 +22,7 @@
 | 정의 변경 writer는 하나로 제한 | 워크로드 생성과 모델 삭제의 경쟁, 모델 변경과 신규 접수 사이의 경쟁을 같은 관리 경계에서 처리 |
 | 요청은 수락 당시 적용 정의를 유지 | SLO 변경과 POOL 재구성 때문에 기존 요청의 의미가 바뀌지 않게 함 |
 | 큐는 bounded in-memory 구조 | SRS는 영속 요청 큐를 요구하지 않음. broker와 요청별 Kubernetes 객체를 추가하지 않음 |
-| 실행과 배칭은 Triton 재사용 | CHILL은 워크로드 문맥, 정책과 관측을 연결하며 자체 추론 서버를 만들지 않음 |
+| 실행과 배칭은 firstfloor 재사용 | CHILL은 evidence·워크로드 문맥·정책을 연결하고 existing actor·queue·IPC runner가 실제 실행을 소유 |
 
 하나의 CHILL 서비스에 활성 Serving entrypoint 하나를 둔다. 다중 활성 진입점의 큐 동기화,
 분산 관리 잠금이나 고가용성 복구는 이 연구 클러스터의 구현 전제가 아니다.
@@ -39,7 +39,7 @@
 | [Serving core](../../../internal/serving/)와 [실행 진입점](../../../cmd/serving-entrypoint/) | 불변 적용 정의, 접수 gate, bounded 큐, 인스턴스 route와 실제 physical drain 및 조립 |
 | [modelcompat](../../../internal/modelcompat/) | Kubernetes와 독립적인 입력, 실행 경로와 native 설정 호환성. Profiler 후보 resolver를 Serving에 연결하지 않음 |
 | [Serving kube](../../../internal/serving/kube/) | private uncached writer, TokenReview/SAR, 현재 POOL과 native 관측, 선택된 완료 campaign의 검증된 profile catalog |
-| [Triton adapter](../../../internal/serving/triton/) | 공식 HTTP V2 native 요청과 실행 관측. 사용자 인증 header를 backend에 전달하지 않음 |
+| [firstfloor adapter](../../../internal/serving/firstfloor/) | 실제 HTTP V2 native 상태·추론과 요청별 monotonic progress. 사용자 인증 header는 owner 경계에 유지 |
 | [Evidence Loader](../../../internal/profiling/profiler/evidence/loader.go) | frozen 실행 조건과 원시 evidence의 typed 검증 경계. 이것만으로 SLO나 scientific admission을 증명하지 않음 |
 | [모델 호환성 ADR](../../adr/0012-model-artifact-compatibility-boundary.md) | 정적 호환성, 측정 근거, 현재 배치 가능성과 SLO 적합성을 서로 다른 판단으로 유지 |
 | [DeviceClass 상태 ADR](../../adr/0011-deviceclass-status-boundary.md) | DeviceClass를 POOL이나 실제 Serving 구성 저장소로 사용하지 않음 |
@@ -49,7 +49,7 @@
 현재 입력 계약은 `tensors[].name`, `datatype`, `sampleShape`이며 여러 numeric/bool tensor를
 하나의 독립 샘플로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
 `DeviceProfile`을 새 profile DB로 사용하지 않고 선택된 완료 campaign의 메모리 view를 사용한다.
-standalone ORT 및 RKNNLite 결과를 Triton의 같은 실행 조건으로 간주하지 않는다.
+standalone ORT 및 RKNNLite reference 결과와 firstfloor native 측정은 각각의 frozen 실행 조건으로 관리한다.
 
 ## 3. 데이터 모델과 원본
 
@@ -141,7 +141,7 @@ PoolState
 | 최초 CHILL 수신 | request ID, 요청한 서비스 식별자, 수신 시각과 종단 경과 시간 기준 |
 | 요청 수락 | Workload UID, 적용 Workload 및 ModelSpec identity, 모델과 입력 계약, SLO |
 | 실제 분배 | POOL ID, Node UID, Pod UID와 container identity로 식별한 physical 인스턴스, 산출물과 실행 조건, profile 및 confidence, 분배 시각 |
-| 실행 및 반환 | Triton 큐 진입과 실행 관측, 실제 배치 연결, backend 결과, 응답 전달 결과와 종료 시각 |
+| 실행 및 반환 | native queue/service/backend/native spans, 실제 batch·policy, backend 완료와 응답 전달 결과 |
 
 미배정 요청에 담당 POOL을 미리 기록하지 않는다. 배정 후 현재 POOL 구성이 바뀌어도 해당 요청의
 실제 배정 기록을 덮어쓰지 않는다. 입력 payload 전체를 관측 기록에 남기지는 않는다.
@@ -154,8 +154,8 @@ PoolState
 | `internal/serving/entrypoint` | 조회와 관리 및 추론 HTTP 경로, 본문 제한과 디코딩, 오류 응답, backend 전달과 응답 전달 관측 |
 | `internal/serving/kube` | Workload와 ModelSpec의 private uncached 저장 및 조회, Kubernetes 권한 검증, 모델 및 profile boundary 연결, 상태 기록과 실제 구성 관측 |
 | `cmd/serving-entrypoint` | concrete 객체와 공유 transport의 조립, 설정 로딩과 종료 처리 |
-| 구성 및 전환 경계 | 현재 Node label과 자원 및 실제 인스턴스 관측을 반영. configuration selection 알고리즘은 승인된 제외 범위 |
-| `internal/serving/triton` 및 공식 native runtime | same-UID 배치 분리, 고정 frozen 설정, native 큐 및 실행 종료 관측. adaptive 추가 대기는 없음 |
+| 구성 및 전환 경계 | 현재 Node·physical allocation·ready/stop 상태, 후보 replay·whole-pool 비용과 원자 동작 완료 |
+| `internal/serving/firstfloor` 및 `internal/firstfloor` | frozen context·typed 입력 전달, actual state/progress, UID별 실측 SLO·에너지 배칭·순차 runner |
 
 어댑터는 API와 core를 연결하지만 core가 API, Kubernetes client나 Profiler application을 import하지 않는다.
 profile은 6장에서 정한 catalog로 조회하고 evidence는 기존 typed 검증 경계로 소비한다.
@@ -163,7 +163,7 @@ Profiler controller나 Profiler 전용 후보 resolver를 요청 handler에서 �
 구성은 기존 concrete 타입을 사용하며 범용 repository나 workflow engine을 추가하지 않는다.
 
 현재 [.go-arch-lint.yml](../../../.go-arch-lint.yml)은 `model-catalog`, `serving-core`,
-`serving-entrypoint`, `serving-kube`, `serving-triton`을 구분한다.
+`serving-entrypoint`, `serving-kube`, `serving-firstfloor`, `firstfloor`를 구분한다.
 허용 경계와 `go list`로 캡처한 실제 import는 [패키지 아키텍처](../code-intelligence/README.md#reviewed-model-and-serving-boundaries)에 기록한다.
 
 ## 5. API와 권한
@@ -305,9 +305,9 @@ profile key, 선택할 campaign과 적용 범위는 설정으로 기록한다.
 
 요청 경로는 이 catalog의 검증된 현재 view를 사용하며, 매 요청마다 evidence를 내려받지 않는다.
 선택 결과에는 frozen 조건과 원시 근거 참조를 보존한다.
-Triton/backend 실행 경로의 결과가 없으면 기존 ORT 수치를 변환해서 채우지 않고 측정 필요 상태로 둔다.
-native admission은 frozen `plannedBatchSizes`와 측정된 batch 모두 `1..maxBatchSize` 전체가
-있어야 한다. 선호 배치 크기만 측정하거나 standalone ORT 근거를 변환하여 채우지 않는다.
+firstfloor/backend 조건에 대응하는 native 근거와 batch 1을 포함한 실제 measured·
+initialized batch domain을 사용한다. sparse capability·warmup·affinity·threads·
+GPU UUID·메모리와 service 분포를 원래 raw 조건에 연결한다.
 idle baseline confidence는 `profileConfidenceLevel`로 설정하며 선택 profile과 실제 배정 기록에 보존한다.
 
 ### 구현된 입력 계약
@@ -319,11 +319,11 @@ ModelSpec, campaign frozen 조건, worker, evidence와 sample은 모두 named te
 입력 이름은 유일하고 shape는 batch 축을 제외한다. 지원 입력 조회는 이 계약과 실행 근거를 연결해 제공한다.
 서로 다른 산출물의 계약을 한 모델의 단일 shape로 합치지 않는다.
 
-외부 추론 본문은 Triton HTTP V2의 tensor 표현을 사용하되, 각 tensor는 독립 샘플 하나다.
+외부 추론 본문은 named tensor의 `name/datatype/shape/data`를 사용하며, 각 tensor는 독립 샘플 하나다.
 클라이언트의 batch 축이나 내부 실행 배치 크기는 받지 않는다.
 입력 이름, 자료형, sample shape와 실제 데이터 수 및 자료형 범위를 경계에서 확인한다.
 자료형과 입력 형태는 실제 측정 및 실행 경로가 지원하는 범위만 허용하고, 지원하지 않는 인코딩은 명시적으로 거부한다.
-backend 전달 시 해당 실행 계약에 맞는 batch 축과 Triton 모델 경로를 연결한다.
+backend 전달 시 같은 native 실행 계약의 batch 축과 모델 경로, frozen UID·정의·개별 SLO·elapsed를 연결한다.
 
 API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다.
 [저장 계약 ADR](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 읽을 수 없는
@@ -337,7 +337,7 @@ API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다
   -> 현재 적용 정의로 입력과 실행 근거 검증
   -> 접수 gate 확인과 수락, 적용 정의 고정
   -> 준비된 인스턴스에 분배 또는 워크로드별 유입 큐
-  -> Triton의 워크로드별 큐와 배칭 및 실행
+  -> firstfloor의 UID·정의별 큐와 실측 SLO·에너지 배칭 및 순차 실행
   -> 해당 요청에 결과 반환, 실제 결과와 시간 기록
 ```
 
@@ -457,7 +457,7 @@ Python 모델의 `execute` 반환은 native request release보다 이르므로 �
 
 ## 9. POOL 재구성과 요청 의미
 
-구성 선택 알고리즘은 승인된 제외 범위다. 현재 POOL은 실제 Node의 소속 label과 자원,
+구성 선택 알고리즘은 스케줄러 SRS의 구현 과제다. 현재 POOL은 실제 Node의 소속 label과 자원,
 준비된 native 인스턴스 및 확인된 Workload 연결로 산출한다. 등록만으로 노드를 합성하지 않는다.
 Workload spec이나 서비스 식별자를 POOL 이동을 위해 수정하지 않는다.
 
@@ -467,27 +467,28 @@ Workload spec이나 서비스 식별자를 POOL 이동을 위해 수정하지 �
   실제 소속 label을 바꾸고 새 POOL의 준비된 구성에 편입한다. 같은 노드를 두 POOL의 현재 용량으로 세지 않는다.
 - 준비 인스턴스가 없는 동안에도 실행 근거가 유효하면 Workload 유입 큐를 설정 범위에서 유지한다.
 - 실제 관측 결과를 현재 구성 snapshot에 반영하고 POOL 조회 및 유효한 분배 대상을 함께 갱신한다.
-- 노드 전력모드 변경은 모든 공유 Workload에 영향을 주며 현재 관측에 드러낸다. 자동 비용 비교와 구성 선택은 제외 범위다.
+- 노드 전력모드 변경은 모든 공유 Workload에 영향을 주며 현재 관측에 드러낸다. 자동 비용 비교와 구성 선택은 스케줄러 구현 과제다.
 
 전환 도중 각 요청은 실제 배정 기록을 유지한다. backend에서 실행 중인 요청을 다른 인스턴스로 옮긴 것으로
 표시하거나, 계획만 선택된 노드를 준비된 용량으로 계산하지 않는다.
 
 ## 10. 실행기 연결의 필수 계약
 
-현재 Triton 연결은 Workload UID, request ID, 불변 모델 및 입력 계약과 SLO를 실행에 연결한다.
-공식 custom batching API를 사용하는 CHILL guard는 **같은 Workload UID만** 한 배치에 포함하며 priority만으로
-워크로드를 구분하지 않는다. 실제 같은 priority의 서로 다른 UID 요청으로 배치 혼합 방지를 확인했다.
-공식 Python backend의 numeric/bool named multi-input 실행과 matching ACTIVE/IDLE profiling을 사용한다.
-`instance_group.count: 1`과 frozen measured batch 설정을 유지하며 runtime이 추가 배치 대기를 넣지 않는다.
-adaptive SLO batch wait는 승인된 제외 범위이고 fixed queue timeout을 그 알고리즘이라고 부르지 않는다.
+firstfloor 연결은 Workload UID·request ID·불변 모델/입력·개별 SLO·원래 경과 시간을
+native actor에 전달한다. 같은 UID·정의의 호환 요청을 묶고 공유 instance의 다른 UID
+running batch는 비선점 대기로 반영한다. mutable cap/wait/envelope는 immutable
+measured bundle과 분리하며 actual state에 profile/decision/cap·적용 시각을 제공한다.
 
-Triton의 native 모델 준비, 큐 한도/timeout, trace와 공식 확장만 사용한다.
-선호 크기는 실제 실행 크기 보장이 아니므로 실현된 batch와 요청별 실행 및 종료를 관측한다.
-native `REQUEST_END`가 `finished`를 제공하여 Python 미실행 queue timeout/cancel도 종료로 기록한다.
-native 큐 timestamp는 raw `CLOCK_MONOTONIC` nanoseconds다. collector의 `At`은 UTC 관측 시각이며
-이를 native 큐 진입 UTC로 꾸미거나 서로 다른 호스트의 시계를 단순 차감하지 않는다.
-종단 elapsed는 entrypoint의 같은 monotonic 기준으로 측정한다.
-SLO를 HTTP deadline이나 Triton queue timeout으로 그대로 변환하지 않는다.
+persistent runner는 numeric/bool named multi-tensor 입력·typed named 출력과 실제
+batch 크기를 반환한다. Profiling은 동일 actor/runner에서 fixed K를 순차 실행하고
+warmup과 measured service/backend/native/client spans·memory를 구분한다.
+CPU quota/threads와 actual affinity, CUDA GPU UUID, RKNN delivered capability를 연결한다.
+
+queue/service/backend/native duration은 worker monotonic 기준이고 SDK `ObservedAt`은
+local receipt다. remote UTC를 별도로 보존하며 서로 다른 host의 시각 차를 duration으로
+해석하는 대신 local age·frozen elapsed·측정 transport envelope를 사용한다.
+queued cancel은 제거되고 running cancel은 actual complete 또는 container 종료까지
+physical ownership을 유지한다. persisted `executionComplete`로 재시작 drain proof도 보존한다.
 
 ## 11. 관측과 보존
 
@@ -499,19 +500,20 @@ SLO를 HTTP deadline이나 Triton queue timeout으로 그대로 변환하지 않
 변경 및 삭제 기록에는 적용 전후 정의, 요청 저장과 관리 수락 및 실제 적용 시각, 진행 결과와 실패 원인을 남긴다.
 이는 실험 해석용 기록이며 runtime의 다중 버전 정의 저장소가 아니다.
 
-기존 Evidence Store의 저장 수단을 재사용하되, Serving 요청 기록을 ProfilingRun evidence로 위장하거나
-그 검증 계약에 요청 이벤트를 끼워 넣지 않는다. 보존 파일은 다음 세 JSONL stream으로 구분한다.
+Serving과 Profiling은 각 관측 계약을 유지하며, 기존 JSONL journal과 Evidence Store의
+immutable 보존 수단으로 원시 근거를 제공한다.
 
 | 기록 | 필수 내용 |
 |---|---|
 | `definitions` | Workload UID와 적용 identity, 서비스 이름, 모델 및 입력 정의와 SLO |
 | `requests` | request ID별 수신과 수락 및 배정, 큐와 실행 관측 및 반환 사건, 결과와 오류. 각 사건의 시각 및 관측 주체 |
 | `management` | 대상 UID와 변경 종류, 적용 전후 정의, 요청 저장과 수락 및 실제 적용 시각, 단계와 최종 결과 |
+| `scheduler` | 설정·snapshot·decision·action·power raw, source/meter/window·coverage·actual applied 결과 |
 
 각 stream은 같은 schema version과 관측 구간 metadata를 사용한다.
 private persistent directory에 append JSONL journal을 남기며 구간 종료 시
 `serving/<windowID>/` 아래 `metadata.json`, `definitions.jsonl`, `requests.jsonl`,
-`management.jsonl`을 immutable S3 object로 보존한다. 필터와 관측 구간은 metadata에 기록한다.
+`management.jsonl`, `scheduler.jsonl`을 immutable S3 object로 보존한다. 필터와 관측 구간은 metadata에 기록한다.
 Workload 삭제는 이 기록을 삭제하지 않는다. 실패한 구간은 보존 완료로 게시하지 않고
 닫히기 전에는 live 요청 상태와 이미 수집한 사건을 조회한다.
 요청별 Kubernetes 객체나 요청마다 갱신하는 status는 만들지 않는다.
@@ -567,6 +569,7 @@ owner chart는 capacity나 campaign을 자동 생성하지 않는다.
 | `maxRequestBytes:8388608`, `maxEvidenceBytes:67108864`, `maxQueryEvents:1000` | HTTP body, evidence object와 raw query page 상한 |
 | `observationDefinitions:[]`, `observationOutcomes:[]` | 반복 `--observation-definition`, `--observation-outcome` 기본 집계 필터 |
 | `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |
+| `observationStorage.directory:/data` | `--observation-directory`; stored-contract cutover는 같은 PVC의 새 경로를 선택하고 이전 raw 기록은 보존 |
 | `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
 
@@ -580,7 +583,14 @@ S3 연결은 기존 `evidenceStore.connection`과 credentials Secret을 사용�
 binary는 `--store-name/endpoint/bucket/region`, `--observation-directory`, `--tls-cert/key`를 받는다.
 RWO PVC를 강제 해제하거나 Pod를 강제 삭제하여 owner/drain 전제를 우회하지 않는다.
 
-### 실제 확인한 변경 기록
+owner의 read-only root filesystem은 유지하며 `/tmp`에는 128Mi bounded
+`emptyDir`를 제공한다. immutable evidence publication의 임시 candidate는 이
+writable scratch를 사용하고, 원시 Journal은 retained PVC에 기록한다.
+
+### 이전 serving cutover의 검증 기록
+
+아래 표는 firstfloor scheduler 통합 이전 작업 단위의 실행 기록이다.
+현재 firstfloor 구현의 검증 결과는 scheduler 구현 문서의 최종 실행 기록으로 구분한다.
 
 | 실행 경계 | 관측된 결과 |
 |---|---|

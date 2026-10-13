@@ -2,14 +2,14 @@
 export const datatypes = ["BOOL", "UINT8", "UINT16", "UINT32", "UINT64", "INT8", "INT16", "INT32", "INT64", "FP16", "FP32", "FP64", "BYTES", "BF16"] as const
 export type Datatype = typeof datatypes[number]
 export type TensorContract = { name: string; datatype: Datatype; sampleShape: number[] }
-export type TritonSettings = { maxBatchSize: number; priorityLevels: number; maxQueueSize: number }
+export type FirstfloorSettings = { maxBatchSize: number; maxQueueSize: number; deadlinePolicy?: "drop" | "keep" | "defer" }
 export type ModelArtifact = {
   name: string; format: string
   source: { image: string; architecture: string; path: string }
   input: { tensors: TensorContract[] } | null
   derivation?: { sourceArtifact: string; targetPlatform: string; declaredBatchSizes: number[]; conversion: { tool: string; version: string } }
 }
-export type ExecutionPath = { name: string; artifact: string; runtime: { family: string; backend: string; settings?: { triton?: TritonSettings } } }
+export type ExecutionPath = { name: string; artifact: string; runtime: { family: string; backend: string; settings?: { firstfloor?: FirstfloorSettings } } }
 export type ModelSpec = { artifacts: ModelArtifact[]; executionPaths: ExecutionPath[] }
 export type Metadata = { name: string; uid: string; resourceVersion: string; generation: number; creationTimestamp?: string; deletionTimestamp?: string; [key: string]: unknown }
 export type ModelResource = { apiVersion?: string; kind?: string; metadata: Metadata; spec: ModelSpec; status?: unknown }
@@ -18,7 +18,7 @@ export type WorkloadSpec = { modelRef: { name: string }; slo: { percentile: numb
 export type Operation = { kind: string; phase: string; targetGeneration: number; targetModelUID?: string; targetModelGeneration?: number; acceptedAt: string; appliedAt?: string; completedAt?: string; reason?: string; error?: string; actorUsername?: string; actorUID?: string }
 export type WorkloadStatus = { appliedDefinition?: { workloadGeneration: number; modelRef: { name: string; uid: string; generation: number }; slo: WorkloadSpec["slo"] }; admission: { allowed: boolean; reason?: string; observedAt: string }; operation?: Operation }
 export type WorkloadResource = { metadata: Metadata; spec: WorkloadSpec; status?: WorkloadStatus; apiVersion?: string; kind?: string }
-export type AppliedDefinition = { name: string; uid: string; generation: number; model: { name: string; uid: string; generation: number; paths: { name: string; artifact: string; format: string; image: string; architecture: string; path: string; runtimeFamily: string; backend: string; tensors: TensorContract[]; triton?: TritonSettings }[] }; slo: { percentile: number; targetLatencyNanos: number } }
+export type AppliedDefinition = { name: string; uid: string; generation: number; model: { name: string; uid: string; generation: number; paths: { name: string; artifact: string; format: string; image: string; architecture: string; path: string; runtimeFamily: string; backend: string; tensors: TensorContract[]; firstfloor?: FirstfloorSettings }[] }; slo: { percentile: number; targetLatencyNanos: number } }
 export type ObjectIdentity = { store: string; key: string; size: number }
 export type SupportedInput = { executionPath: string; artifact: string; tensors: TensorContract[]; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
 export type WorkloadView = { desired: WorkloadResource; appliedDefinition?: AppliedDefinition; supportedInputs: SupportedInput[]; admission: boolean; readiness: string; reason: string; pending: number; assigned: number; operation?: Operation; observedAt: string }

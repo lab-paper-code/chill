@@ -47,6 +47,7 @@ func buildRun(parent *edgev1alpha1.ModelLoadedIdleBaseline, attempt int32) (*edg
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: parent.Spec.Batch, WarmupIterations: 0,
 				CPUQuota:                &cpuQuota,
+				CPUAffinity:             append([]int32(nil), parent.Spec.CPUAffinity...),
 				SettlingDurationSeconds: &settling,
 				DurationSeconds:         parent.Spec.Protocol.DurationSeconds,
 				WorkloadMode:            idleWorkloadMode,

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// InputTensor is one named, batch-invariant Triton input declaration.
+// InputTensor is one named, batch-invariant inference input declaration.
 // Frozen profiling records preserve this contract without runtime inference.
 type InputTensor struct {
 	Name        string  `json:"name"`
@@ -31,7 +31,7 @@ func ValidateInputTensors(tensors []InputTensor) error {
 		switch tensor.Datatype {
 		case "BOOL", "UINT8", "UINT16", "UINT32", "UINT64", "INT8", "INT16", "INT32", "INT64", "FP16", "FP32", "FP64", "BYTES", "BF16":
 		default:
-			return fmt.Errorf("input tensor %q has invalid Triton datatype %q", tensor.Name, tensor.Datatype)
+			return fmt.Errorf("input tensor %q has invalid inference datatype %q", tensor.Name, tensor.Datatype)
 		}
 		if len(tensor.SampleShape) == 0 {
 			return fmt.Errorf("input tensor %q sampleShape is required", tensor.Name)

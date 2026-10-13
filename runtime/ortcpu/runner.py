@@ -18,8 +18,8 @@ from typing import Any, BinaryIO
 
 
 REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha15"
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha15"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha6"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha16"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha7"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 SUPPORTED_INPUT_GENERATOR = "numpy-default-rng-seed-0-inputs-v1"
@@ -27,7 +27,7 @@ SUPPORTED_OUTPUT_VALIDATION = "nonempty-shape-batch-v1"
 IDLE_WORKLOAD = "idle-model-loaded"
 NO_INPUT_GENERATOR = "none"
 NO_OUTPUT_VALIDATION = "none"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha4"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha5"
 MAX_REQUEST_BYTES = 1 << 20
 INPUT_GENERATION_CHUNK_ELEMENTS = 8192
 SIGNAL_POLL_SECONDS = 0.01
@@ -291,7 +291,8 @@ def validate_request(
             "runtimeFamily",
             "backend",
             "powerMode",
-        } | ({"triton"} if runtime_family == "triton" else set()),
+        } | ({"firstfloor"} if runtime_family == "firstfloor" else set())
+        | ({"hostContract"} if runtime_family == "firstfloor" and backend == "rknnlite" else set()),
         "run_config.state",
     )
     if (
@@ -324,17 +325,18 @@ def validate_request(
             "ortIntraOpThreads",
             "ortInterOpThreads",
             "exclusivityClaimed",
-        },
+        } | ({"affinityCPUs"} if "affinityCPUs" in cpu else set()),
         "run_config.cpu",
     )
     if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
         raise ContractError("unsupported CPU policy")
-    require_integer(cpu["ortIntraOpThreads"], "run_config.cpu.ortIntraOpThreads", 1)
-    if (
-        require_integer(cpu["ortInterOpThreads"], "run_config.cpu.ortInterOpThreads", 1)
-        != 1
+    rknn = runtime_family == "firstfloor" and backend == "rknnlite"
+    require_integer(cpu["ortIntraOpThreads"], "run_config.cpu.ortIntraOpThreads", 0 if rknn else 1)
+    if cpu["ortInterOpThreads"] != (0 if rknn else 1) or (
+        rknn and cpu["ortIntraOpThreads"] != 0
     ):
-        raise ContractError("CPU ORT runtime requires one inter-op thread")
+        raise ContractError("runtime thread counts do not match the backend contract")
+    requested_cpu_affinity(cpu)
     limit = require_string(cpu["limit"], "run_config.cpu.limit")
     if cpu["policy"] == "AllocatableCPUQuota":
         if limit != target["allocatableCPU"]:
@@ -349,7 +351,7 @@ def validate_request(
             ) from error
         if limit_cores < 1 or limit_cores > allocatable_cores:
             raise ContractError("configured CPU quota is outside Node allocatable CPU")
-        if cpu["ortIntraOpThreads"] != limit_cores:
+        if not rknn and cpu["ortIntraOpThreads"] != limit_cores:
             raise ContractError("ORT intra-op threads do not match configured CPU quota")
     else:
         raise ContractError("unsupported CPU policy")
@@ -402,7 +404,10 @@ def validate_request(
 
 def validate_candidate(value: Any, runtime_family: str = "onnxruntime") -> None:
     candidate = require_object(value, "run_config.delivery")
-    optional_fields = {"runtimePackages"} & set(candidate) if runtime_family == "triton" else set()
+    optional_fields = (
+        {"runtimePackages", "hostContract", "runtimeAccess"} & set(candidate)
+        if runtime_family == "firstfloor" else set()
+    )
     require_fields(candidate, {"artifactCapability"} | optional_fields, "run_config.delivery")
     if "runtimePackages" in candidate:
         packages = candidate["runtimePackages"]
@@ -637,6 +642,35 @@ def read_cpu_environment(root: Path = CGROUP_ROOT) -> tuple[str, list[int], str]
     return cpu_max, sorted(os.sched_getaffinity(0)), cpuset
 
 
+def requested_cpu_affinity(cpu: dict[str, Any]) -> list[int] | None:
+    if "affinityCPUs" not in cpu:
+        return None
+    values = cpu["affinityCPUs"]
+    if (not isinstance(values, list) or not values or
+            any(type(value) is not int or value < 0 for value in values) or
+            len(set(values)) != len(values)):
+        raise ContractError("CPU affinity must contain unique nonnegative explicit CPU IDs")
+    if len(values) < cpu["ortIntraOpThreads"]:
+        raise ContractError("requested CPU affinity is smaller than the ORT thread contract")
+    return sorted(values)
+
+
+def apply_cpu_affinity(run_config: dict[str, Any]) -> None:
+    requested = requested_cpu_affinity(run_config["cpu"])
+    if requested is None:
+        return
+    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+        raise ContractError("process CPU affinity is unavailable")
+    if not set(requested).issubset(os.sched_getaffinity(0)):
+        raise ContractError("requested CPU affinity exceeds actual allowed CPU inventory")
+    try:
+        os.sched_setaffinity(0, requested)
+    except OSError as error:
+        raise ContractError("could not apply requested process CPU affinity") from error
+    if sorted(os.sched_getaffinity(0)) != requested:
+        raise ContractError("actual process CPU affinity differs from requested CPU mask")
+
+
 def validate_cpu_contract(
     run_config: dict[str, Any], root: Path = CGROUP_ROOT
 ) -> tuple[str, list[int], str]:
@@ -649,6 +683,9 @@ def validate_cpu_contract(
         raise ContractError("RunConfig CPU limit is malformed") from error
     if expected < 1 or quota // period != expected or quota % period != 0:
         raise ContractError("cgroup CPU quota does not match the RunConfig limit")
+    requested = requested_cpu_affinity(cpu)
+    if requested is not None and affinity != requested:
+        raise ContractError("actual process CPU affinity differs from requested CPU mask")
     if len(affinity) < cpu["ortIntraOpThreads"]:
         raise ContractError(
             "process CPU affinity is smaller than the ORT thread contract"
@@ -803,6 +840,7 @@ def execute_idle(
     affinity: list[int],
     cpuset: str,
     model_load_completed_at: str,
+    expected_provider: str = "CPUExecutionProvider",
 ) -> dict[str, Any]:
     run_config = request["runConfig"]
     state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
@@ -842,7 +880,8 @@ def execute_idle(
     measurement_ended_at = now()
     providers_at_end = session.get_providers()
     model_resident_at_end = bool(
-        providers_at_end and providers_at_end[0] == "CPUExecutionProvider"
+        (providers_at_end and providers_at_end[0] == expected_provider)
+        or (not providers_at_end and expected_provider == "")
     )
     publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
     process_cpu_seconds = time.process_time() - process_before
@@ -900,6 +939,7 @@ def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
         run_config["targetNode"]["architecture"]
     ):
         raise ContractError("runtime architecture does not match the RunConfig Node")
+    apply_cpu_affinity(run_config)
     cpu_max, affinity, cpuset = validate_cpu_contract(run_config)
 
     available_providers = ort.get_available_providers()
@@ -952,6 +992,8 @@ def execute_loaded(
     cpuset: str,
     feeds: dict[str, Any] | None = None,
     before_measurement: Any = None,
+    warmup_already_completed: bool = False,
+    result_provider: str | None = None,
 ) -> dict[str, Any]:
     """Measure a loaded CPU session; startup and warm-up stay outside the window."""
     run_config = request["runConfig"]
@@ -972,7 +1014,7 @@ def execute_loaded(
     )
     output_shapes: list[list[int]] | None = None
     try:
-        for _ in range(measurement["warmupIterations"]):
+        for _ in range(0 if warmup_already_completed else measurement["warmupIterations"]):
             outputs = session.run(None, feeds)
             output_shapes = validate_outputs(outputs, measurement["batch"])
     except Exception as error:
@@ -1029,7 +1071,7 @@ def execute_loaded(
         "runtime": state["runtimeFamily"],
         "runtimeVersion": runtime_version,
         "backend": state["backend"],
-        "provider": session.get_providers()[0],
+        "provider": session.get_providers()[0] if result_provider is None else result_provider,
         "availableProviders": available_providers,
         "batchSize": measurement["batch"],
         "warmupIterations": measurement["warmupIterations"],
@@ -1100,6 +1142,8 @@ def main() -> None:
             str(arguments.result_file), "result-file"
         )
         request = decode_request(sys.stdin.buffer)
+        validate_request(request)
+        apply_cpu_affinity(request["runConfig"])
         import numpy  # imported only after the bounded process contract is decoded
         import onnxruntime as ort
 

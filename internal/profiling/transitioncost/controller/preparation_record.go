@@ -11,6 +11,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,8 +24,7 @@ import (
 )
 
 const (
-	preparationRecordSchemaVersion = "chill.dacs.io/power-mode-transition-preparation.v1alpha4"
-	preparationRecordDataKey       = "preparation.json"
+	preparationRecordDataKey = "preparation.json"
 )
 
 type MeasurementPreparer interface {
@@ -147,7 +147,7 @@ type preparationRecordWire struct {
 
 func encodePreparationRecord(prepared PreparedMeasurement) ([]byte, error) {
 	return json.Marshal(preparationRecordWire{
-		SchemaVersion: preparationRecordSchemaVersion, Prepared: &prepared,
+		SchemaVersion: transitioncost.PreparationRecordSchemaVersion, Prepared: &prepared,
 	})
 }
 
@@ -162,7 +162,7 @@ func decodePreparationRecord(payload []byte) (PreparedMeasurement, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return PreparedMeasurement{}, errors.New("transition preparation contains a trailing JSON value")
 	}
-	if record.SchemaVersion != preparationRecordSchemaVersion {
+	if record.SchemaVersion != transitioncost.PreparationRecordSchemaVersion {
 		return PreparedMeasurement{}, fmt.Errorf("unsupported transition preparation schema %q", record.SchemaVersion)
 	}
 	if record.Prepared == nil {

@@ -87,13 +87,13 @@ type ModelArtifactInputContract struct {
 	Tensors []ModelInputTensor `json:"tensors"`
 }
 
-// ModelInputTensor is the batch-invariant Triton input contract.
+// ModelInputTensor is the batch-invariant inference input contract.
 type ModelInputTensor struct {
 	// Name is the exact runtime input name.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// Datatype uses the Triton inference protocol spelling.
+	// Datatype uses the V2 inference protocol spelling.
 	// +kubebuilder:validation:Enum=BOOL;UINT8;UINT16;UINT32;UINT64;INT8;INT16;INT32;INT64;FP16;FP32;FP64;BYTES;BF16
 	Datatype string `json:"datatype"`
 
@@ -147,23 +147,26 @@ type ModelRuntimeRequirement struct {
 
 // ModelRuntimeSettings contains settings selected by the execution path.
 type ModelRuntimeSettings struct {
-	// Triton is required for triton/python and absent for other families.
+	// Firstfloor is required for firstfloor and absent for other families.
 	// +optional
-	Triton *TritonRuntimeSettings `json:"triton,omitempty"`
+	Firstfloor *FirstfloorRuntimeSettings `json:"firstfloor,omitempty"`
 }
 
-// TritonRuntimeSettings selects scheduler bounds. One CPU instance and zero
-// additional batch wait are mechanism constraints, not tuning settings.
-type TritonRuntimeSettings struct {
+// FirstfloorRuntimeSettings selects bounds shared by profiling and serving.
+// Each instance executes one batch at a time.
+type FirstfloorRuntimeSettings struct {
 	// MaxBatchSize is shared across every measured batch trial.
 	// +kubebuilder:validation:Minimum=1
 	MaxBatchSize int32 `json:"maxBatchSize"`
-	// PriorityLevels bounds fixed native priority lanes.
-	// +kubebuilder:validation:Minimum=1
-	PriorityLevels int32 `json:"priorityLevels"`
-	// MaxQueueSize bounds each native priority lane's queue.
+	// MaxQueueSize bounds each workload UID's queue.
 	// +kubebuilder:validation:Minimum=1
 	MaxQueueSize int32 `json:"maxQueueSize"`
+	// DeadlinePolicy handles requests whose selected SLO cannot be met.
+	// Omitted means keep: execute late requests normally.
+	// +kubebuilder:validation:Enum=drop;keep;defer
+	// +kubebuilder:default=keep
+	// +optional
+	DeadlinePolicy string `json:"deadlinePolicy,omitempty"`
 }
 
 // ModelSpecStatus defines the observed state of ModelSpec

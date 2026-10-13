@@ -161,6 +161,7 @@ type factsOutcome struct {
 func combine(raw transitioncost.RawObservation, power metricobserver.Result) transitioncost.RawObservation {
 	raw.ObservationStartedAt = earliest(raw.ObservationStartedAt, power.StartedAt)
 	raw.ObservationEndedAt = latest(raw.ObservationEndedAt, power.EndedAt)
+	raw.PowerSource = power.Source
 	raw.PowerSamples = make([]transitioncost.PowerSample, len(power.Samples))
 	for index, sample := range power.Samples {
 		raw.PowerSamples[index] = transitioncost.PowerSample{

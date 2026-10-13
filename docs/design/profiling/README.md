@@ -106,13 +106,13 @@ separately.
 
 Every frozen RunConfig carries `delivery.artifactCapability.tensors`, including
 canonical ONNX artifacts with no target platform or artifact-declared batch set.
-Each tensor declares `name`, uppercase Triton `datatype`, and batch-free
+Each tensor declares `name`, uppercase `datatype`, and batch-free
 `sampleShape`; the selected measurement batch is added only at invocation.
-The ORT and RKNNLite request schemas are respectively v1alpha15 and v1alpha11,
-RunConfig is v1alpha15, active runtime results are v1alpha6, and model-loaded
-idle results are v1alpha4. Both results record typed, batch-free `inputs`.
-These readers accept only their current schema, without shape or datatype
-inference from missing declarations.
+The standalone ORT/RKNNLite request schemas are v1alpha15/v1alpha11; the native
+firstfloor request is v1alpha1. RunConfig is v1alpha16, active runtime results are
+v1alpha7 and model-loaded idle results are v1alpha5. Results record typed,
+batch-free `inputs` and native results retain actual firstfloor runtime facts.
+Readers consume the current schema and its explicit input declarations.
 
 [CPU ORT](../../../runtime/ortcpu/runner.py) validates every declared input name,
 datatype, rank, fixed sample dimension, and selected batch against session
@@ -145,17 +145,17 @@ record v1alpha4 preserves the source tensor name and FP32 datatype in
 
 ## Serving execution
 
-**Status:** Design.
+**Status:** Implemented native runner and campaign/catalog integration.
 
 Serving profiles follow the
 [shared execution contract](../../spec/00_measurement.md#측정의-단위).
 Reuse the Run and campaign controllers, repeated trials, power observation,
 raw evidence storage, and numeric derivation. Runtime invocation and frozen
-execution conditions use the Serving Triton/backend configuration.
-
-Confirm target-device and backend support, including RKNN, on the Serving path;
-profiling shares that integration. Use Triton's
-[backend and platform support guidance](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/backend/README.html#where-can-i-find-all-the-backends-that-are-available-for-triton).
+execution conditions use the same firstfloor actor, initialized batches and
+actual ORT CPU/CUDA or RKNN backend as Serving. Fixed-K ACTIVE measurements
+retain raw service/backend/native samples and actual execution IDs; IDLE keeps
+the model resident with zero executed requests. Available SDK/provider/device,
+physical GPU identity and RKNN ABI facts determine actual backend support.
 
 ## Serving resource allocation
 
@@ -173,10 +173,10 @@ The current implementation and the required alignment are distinct:
 |---|---|
 | CPU scheduling request | `ProfilingRun.spec.cpuRequest`, applied to the runtime container |
 | CPU quota | Optional `spec.measurement.cpuQuota`, a positive whole-core count; omission uses Node allocatable CPU |
-| CPU ORT threads | Intra-op threads follow the frozen quota; inter-op threads are one, not a separately selectable sweep axis |
-| CPU observations | Runtime checks cgroup quota and sufficient affinity, and records affinity and effective cpuset; this does not establish exclusive CPU allocation |
+| CPU ORT threads | Intra-op threads fit the selected frozen affinity/quota; inter-op threads are one |
+| CPU observations | Explicit `spec.measurement.cpuAffinity` freezes physical IDs; actual affinity and cgroup quota are separately read back |
 | Memory | Runtime requests/limits come from the selected execution policy, not a per-Run measurement parameter |
-| Accelerator execution | Job projection supports CPU ORT and RKNNLite; an installed GPU device plugin alone does not provide a GPU ProfilingRun runtime path |
+| Accelerator execution | firstfloor ORT CUDA pins a physical GPU UUID; RKNN retains actual queried ABI/core capabilities; standalone ORT CPU/RKNN remain reference paths |
 
 Sources: [public Run fields](../../../api/v1alpha1/profilingrun_types.go),
 [CPU freezing](../../../internal/profiling/profiler/preparation.go),
@@ -188,18 +188,16 @@ and [runtime Job projection](../../../internal/profiling/profiler/controller/run
 The CPU contract already participates in
 [execution-state identity](../../../internal/profiling/profiler/projection/identity.go)
 and [curve conditions](../../../internal/profiling/profiler/projection/curve_plan.go).
-Different quotas are not interchangeable measurements. A standalone Run can
-already select a quota, but
+Different quotas and physical CPU masks are distinct measurements.
 [BatchEnergyOptimization Run construction](../../../internal/profiling/campaign/controller/run_builder.go)
-does not pass one: its public state and protocols have no quota selection.
-An allocation-selecting campaign must carry the selected conditions to both
-active and idle Runs rather than silently using the full-node quota.
+passes its optional `spec.cpuQuota` and explicit `spec.cpuAffinity` to ACTIVE
+Runs; matching idle baseline requests carry the same selected physical mask.
+Default omission keeps the existing Node-derived quota behavior.
 
-Exclusive CPU partitions require an allocation contract, compatible native Pod
-resource settings and node configuration, and evidence of the actual assignment.
-Quota read-back is not that evidence. GPU profiling separately needs its runtime
-path and allocation evidence. These are implementation gaps, not new arbitrary
-“interference level” parameters; existing quota and thread fields should be reused.
+Quota controls CPU time; affinity identifies physical CPUs. Exclusive allocation
+also requires compatible native Pod/Node policy and observed assignment.
+The stored CPU contract records `ExclusivityClaimed=false` for an affinity-only
+binding. GPU/RKNN hardware campaign verification remains a separate device run.
 
 ## Split plans
 

@@ -24,6 +24,10 @@ type options struct {
 	requestTimeout, drainTimeout, sourceInterval, profileInterval, observationWindow         time.Duration
 	campaigns                                                                                []types.NamespacedName
 	definitions, outcomes                                                                    []string
+	materializeProfile                                                                       bool
+	profileObjectKey, profileOutput                                                          string
+	profileObjectSize                                                                        int64
+	schedulerConfigMap, schedulerConfigKey                                                   string
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
@@ -41,6 +45,15 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.storeEndpoint, "store-endpoint", "", "S3-compatible Evidence Store endpoint.")
 	f.StringVar(&o.storeBucket, "store-bucket", "", "Evidence Store bucket.")
 	f.StringVar(&o.storeRegion, "store-region", "", "Evidence Store region.")
+	f.BoolVar(&o.materializeProfile, "materialize-profile", false,
+		"Materialize one bounded immutable profile and exit without Kubernetes or TLS.")
+	f.StringVar(&o.profileObjectKey, "profile-object-key", "", "Immutable profile object key.")
+	f.Int64Var(&o.profileObjectSize, "profile-object-size", 0, "Exact immutable profile object byte count.")
+	f.StringVar(&o.profileOutput, "profile-output", "", "Absolute materialized profile file.")
+	f.StringVar(&o.schedulerConfigMap, "serving-scheduler-configmap", "",
+		"Named scheduler ConfigMap in serving namespace; empty disables scheduler.")
+	f.StringVar(&o.schedulerConfigKey, "serving-scheduler-config-key", "scheduler.json",
+		"Scheduler configuration JSON ConfigMap key.")
 	f.StringVar(&o.kube.APIServer, "kube-api-server", "", "Explicit Kubernetes API endpoint; otherwise in-cluster.")
 	f.StringVar(&o.kube.TokenFile, "kube-token-file", "", "Kubernetes service-account token file.")
 	f.StringVar(&o.kube.CAFile, "kube-ca-file", "", "Kubernetes API CA file.")
@@ -75,6 +88,14 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if o.materializeProfile {
+		return o.validateMaterialization()
+	}
+	if o.schedulerConfigMap != "" &&
+		(len(validation.IsDNS1123Subdomain(o.schedulerConfigMap)) != 0 ||
+			len(validation.IsConfigMapKey(o.schedulerConfigKey)) != 0) {
+		return errors.New("valid scheduler ConfigMap name and JSON key are required")
+	}
 	if strings.TrimSpace(o.bindAddress) == "" || strings.TrimSpace(o.bindAddress) != o.bindAddress {
 		return errors.New("bind address is required without surrounding whitespace")
 	}
@@ -104,6 +125,19 @@ func (o options) validate() error {
 	}
 	if _, err := privateOrigin(o.dashboardURL); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (o options) validateMaterialization() error {
+	if o.profileObjectSize <= 0 || o.profileObjectSize > o.maxEvidenceBytes || o.profileObjectKey == "" {
+		return errors.New("bounded positive immutable profile object identity is required")
+	}
+	if !filepath.IsAbs(o.profileOutput) || filepath.Clean(o.profileOutput) != o.profileOutput {
+		return errors.New("profile output must be a clean absolute file path")
+	}
+	if o.requestTimeout <= 0 {
+		return errors.New("materialization timeout must be positive")
 	}
 	return nil
 }

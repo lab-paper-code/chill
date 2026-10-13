@@ -15,7 +15,7 @@ func TestFinalizedObservationProjectsAndRestoresEveryVerdict(t *testing.T) {
 			acceptedAttempt: "accepted", invalidAttempt: "invalid",
 			failedAttempt: "failed", insufficientAttempt: "insufficient",
 		}[outcome], func(t *testing.T) {
-			finalized := deriveAttempt(t, direction, "finalized", 3, 2, true, outcome, nil)
+			finalized := deriveAttempt(t, direction, "finalized", 3, 2, outcome, nil)
 			record := finalized.Record()
 			restored, err := transitioncost.RestoreFinalizedObservation(record)
 			if err != nil {
@@ -39,7 +39,7 @@ func TestFinalizedObservationProjectsAndRestoresEveryVerdict(t *testing.T) {
 }
 
 func TestRestoreFinalizedObservationRejectsMalformedRecord(t *testing.T) {
-	valid := deriveAttempt(t, testDirections()[0], "valid", 3, 2, true, acceptedAttempt, nil).Record()
+	valid := deriveAttempt(t, testDirections()[0], "valid", 3, 2, acceptedAttempt, nil).Record()
 	tests := []struct {
 		name   string
 		mutate func(*transitioncost.FinalizedObservationRecord)
@@ -82,7 +82,7 @@ func TestRestoreFinalizedObservationRejectsMalformedRecord(t *testing.T) {
 }
 
 func TestFinalizedObservationRecordDoesNotAliasAcceptedValues(t *testing.T) {
-	finalized := deriveAttempt(t, testDirections()[0], "owned", 3, 2, true, acceptedAttempt, nil)
+	finalized := deriveAttempt(t, testDirections()[0], "owned", 3, 2, acceptedAttempt, nil)
 	record := finalized.Record()
 	record.AcceptedObservation.StartedAt = time.Time{}
 	if got := finalized.Record().AcceptedObservation.StartedAt; got.IsZero() {

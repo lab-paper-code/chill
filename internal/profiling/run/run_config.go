@@ -7,6 +7,7 @@ import (
 	"path"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+const inputDatatypeFP32 = "FP32"
 
 var artifactPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
@@ -120,32 +123,69 @@ func (i RunConfig) validateDelivery() error {
 			return fmt.Errorf("validate RunConfig delivery: %w", err)
 		}
 	}
-	if i.State.RuntimeFamily == TritonRuntimeFamily {
-		if i.State.Backend != TritonPythonBackend {
-			return errors.New("Triton CPU runtime requires the Python backend")
-		}
-		if err := modelcompat.ValidateTritonRuntimeSettings(i.State.Triton); err != nil {
-			return err
-		}
-		if i.Measurement.Batch > int(i.State.Triton.MaxBatchSize) {
-			return errors.New("measurement batch exceeds the selected Triton maxBatchSize")
-		}
-		if delivery.ArtifactCapability == nil || len(delivery.ArtifactCapability.Tensors) == 0 {
-			return errors.New("Triton CPU runtime requires frozen artifact inputs")
-		}
-	} else if i.State.Triton != nil {
-		return errors.New("non-Triton RunConfig cannot contain Triton settings")
+	if err := i.validateFirstfloorDelivery(); err != nil {
+		return err
 	}
-	if i.State.RuntimeFamily != RKNNLiteRuntimeFamily {
+	if !isRKNNExecution(i) {
 		return nil
 	}
 	if delivery.ArtifactCapability == nil || len(delivery.RuntimePackages) != 1 ||
-		delivery.HostContract == nil || delivery.RuntimeAccess == nil ||
-		len(delivery.ArtifactCapability.Tensors) == 0 {
+		delivery.RuntimePackages[0].Name != "rknn-toolkit-lite2" ||
+		delivery.HostContract == nil || delivery.HostContract.Platform == nil || delivery.RuntimeAccess == nil ||
+		len(delivery.ArtifactCapability.Tensors) == 0 || delivery.ArtifactCapability.TargetPlatform == "" {
 		return errors.New("RKNNLite RunConfig delivery is incomplete")
+	}
+	if !slices.Contains(delivery.ArtifactCapability.DeclaredBatchSizes, int32(i.Measurement.Batch)) {
+		return errors.New("RKNN artifact does not declare the measurement batch as a supported batch size")
+	}
+	if len(delivery.ArtifactCapability.Tensors) != 1 ||
+		delivery.ArtifactCapability.Tensors[0].Datatype != inputDatatypeFP32 ||
+		len(delivery.ArtifactCapability.Tensors[0].SampleShape) != 3 ||
+		delivery.ArtifactCapability.TargetPlatform != "rk3588" {
+		return errors.New("RKNNLite requires one FP32 rank-3 NHWC sample input for rk3588")
 	}
 	if !reflect.DeepEqual(i.State.HostContract, delivery.HostContract) {
 		return errors.New("RKNNLite RunConfig state and delivery host contracts differ")
+	}
+	return nil
+}
+
+func (i RunConfig) validateFirstfloorDelivery() error {
+	delivery := i.Delivery
+	if i.State.RuntimeFamily == FirstfloorRuntimeFamily {
+		switch i.State.Backend {
+		case FirstfloorORTCPUBackend, FirstfloorORTCUDABackend, FirstfloorRKNNLiteBackend:
+		default:
+			return errors.New("firstfloor backend must be ort-cpu, ort-cuda, or rknnlite")
+		}
+		if err := modelcompat.ValidateFirstfloorRuntimeSettings(i.State.Firstfloor); err != nil {
+			return err
+		}
+		if i.Measurement.Batch > int(i.State.Firstfloor.MaxBatchSize) {
+			return errors.New("measurement batch exceeds the selected firstfloor maxBatchSize")
+		}
+		if delivery.ArtifactCapability == nil || len(delivery.ArtifactCapability.Tensors) == 0 {
+			return errors.New("firstfloor runtime requires frozen artifact inputs")
+		}
+		for _, tensor := range delivery.ArtifactCapability.Tensors {
+			if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
+				return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
+			}
+		}
+		if i.State.Backend == FirstfloorORTCUDABackend {
+			if delivery.RuntimeAccess == nil || delivery.RuntimeAccess.GPUUUID == "" ||
+				len(delivery.RuntimeAccess.Resources) != 1 || delivery.RuntimeAccess.Resources["nvidia.com/gpu"] != "1" {
+				return errors.New("firstfloor ort-cuda requires an explicit GPU UUID and exactly one nvidia.com/gpu resource")
+			}
+			if !reflect.DeepEqual(i.State.HostContract, delivery.HostContract) {
+				return errors.New("CUDA RunConfig state and delivery host contracts differ")
+			}
+		} else if delivery.RuntimeAccess != nil &&
+			(delivery.RuntimeAccess.GPUUUID != "" || len(delivery.RuntimeAccess.Resources) != 0) {
+			return errors.New("non-CUDA firstfloor backend cannot contain CUDA allocation")
+		}
+	} else if i.State.Firstfloor != nil {
+		return errors.New("non-firstfloor RunConfig cannot contain firstfloor settings")
 	}
 	return nil
 }
@@ -207,7 +247,7 @@ func (i RunConfig) validateSchema() error {
 
 func (i RunConfig) validateMeasurementMode() error {
 	if i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode {
-		if (i.State.RuntimeFamily != RKNNLiteRuntimeFamily && i.Measurement.Batch != 1) ||
+		if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
 			i.Measurement.InputGenerator != NoInputGenerator ||
@@ -251,14 +291,22 @@ func IsSupportedRKNNLiteRunConfig(i RunConfig) bool {
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
 
-// IsSupportedTritonCPURunConfig is the native Triton Python/CPU-ORT path, not an
-// alias for standalone ONNX Runtime measurements.
-func IsSupportedTritonCPURunConfig(i RunConfig) bool {
+// IsSupportedFirstfloorRunConfig covers native firstfloor execution only;
+// standalone ORT and RKNNLite measurements retain independent identities.
+// Callers must validate the frozen config separately.
+func IsSupportedFirstfloorRunConfig(i RunConfig) bool {
 	return i.SchemaVersion == RunConfigSchemaVersion && hasExecutionPath(i) &&
-		i.State.RuntimeFamily == TritonRuntimeFamily && i.State.Backend == TritonPythonBackend &&
-		i.State.Triton != nil &&
+		i.State.RuntimeFamily == FirstfloorRuntimeFamily &&
+		(i.State.Backend == FirstfloorORTCPUBackend || i.State.Backend == FirstfloorORTCUDABackend ||
+			i.State.Backend == FirstfloorRKNNLiteBackend) &&
+		i.State.Firstfloor != nil &&
 		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
+}
+
+func isRKNNExecution(i RunConfig) bool {
+	return i.State.RuntimeFamily == RKNNLiteRuntimeFamily ||
+		(i.State.RuntimeFamily == FirstfloorRuntimeFamily && i.State.Backend == FirstfloorRKNNLiteBackend)
 }
 
 func isCPUORTExecution(i RunConfig) bool {
@@ -286,6 +334,19 @@ func (i RunConfig) validateCPUContract() error {
 	}
 	if i.CPU.PolicyVersion != CPUQuotaPolicyVersion {
 		return errors.New("unsupported CPU quota policy version")
+	}
+	if len(i.CPU.AffinityCPUs) > 0 {
+		if i.State.RuntimeFamily != FirstfloorRuntimeFamily {
+			return errors.New("explicit CPU affinity requires firstfloor execution")
+		}
+		for index, cpu := range i.CPU.AffinityCPUs {
+			if cpu < 0 || (index > 0 && cpu <= i.CPU.AffinityCPUs[index-1]) {
+				return errors.New("CPU affinity IDs must be nonnegative, unique, and sorted")
+			}
+		}
+		if len(i.CPU.AffinityCPUs) < i.CPU.ORTIntraOpThreads {
+			return errors.New("CPU affinity mask is smaller than the selected ONNX Runtime thread count")
+		}
 	}
 	requestCPU, err := resource.ParseQuantity(i.CPU.Request)
 	if err != nil || requestCPU.Sign() <= 0 {
@@ -323,7 +384,7 @@ func (i RunConfig) validateCPUContract() error {
 	default:
 		return errors.New("unsupported CPU quota policy")
 	}
-	if i.State.RuntimeFamily == RKNNLiteRuntimeFamily {
+	if isRKNNExecution(i) {
 		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
 			return errors.New("RKNNLite CPU contract cannot contain ONNX Runtime thread settings")
 		}
@@ -418,5 +479,6 @@ func (i RunConfig) CanonicalJSON() ([]byte, error) {
 	if err := i.Validate(); err != nil {
 		return nil, err
 	}
+	i.State.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(i.State.Firstfloor)
 	return json.Marshal(i)
 }

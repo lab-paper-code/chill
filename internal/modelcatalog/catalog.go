@@ -12,6 +12,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
+const (
+	runtimeFamilyRKNNLite = "rknnlite"
+	artifactFormatRKNN    = "rknn"
+)
+
 var artifactPath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
 // InputTensors returns a detached domain contract for an artifact declaration.
@@ -29,17 +34,17 @@ func InputTensors(input *edgev1alpha1.ModelArtifactInputContract) []modelcompat.
 	return tensors
 }
 
-// TritonSettings projects selected API dimensions without inventing defaults.
+// FirstfloorSettings projects selected API dimensions with the keep deadline default.
 // Callers validate/select the execution path first.
-func TritonSettings(runtime edgev1alpha1.ModelRuntimeRequirement) *modelcompat.TritonSettings {
-	if runtime.Settings == nil || runtime.Settings.Triton == nil {
+func FirstfloorSettings(runtime edgev1alpha1.ModelRuntimeRequirement) *modelcompat.FirstfloorSettings {
+	if runtime.Settings == nil || runtime.Settings.Firstfloor == nil {
 		return nil
 	}
-	settings := runtime.Settings.Triton
-	return &modelcompat.TritonSettings{
+	settings := runtime.Settings.Firstfloor
+	return &modelcompat.FirstfloorSettings{
 		MaxBatchSize:   settings.MaxBatchSize,
-		PriorityLevels: settings.PriorityLevels,
 		MaxQueueSize:   settings.MaxQueueSize,
+		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(settings.DeadlinePolicy),
 	}
 }
 
@@ -88,23 +93,39 @@ func Validate(model *edgev1alpha1.ModelSpec) error {
 		if !exists {
 			return fmt.Errorf("execution path %q references missing artifact %q", executionPath.Name, executionPath.Artifact)
 		}
-		if executionPath.Runtime.Family == "rknnlite" &&
-			(artifact.Derivation == nil || len(artifact.Derivation.DeclaredBatchSizes) == 0) {
-			return errors.New("RKNNLite artifact requires a matching input tensor contract and declared batch sizes")
+		if err := validateExecutionRuntime(executionPath.Runtime, artifact); err != nil {
+			return err
 		}
-		runtime := executionPath.Runtime
-		if runtime.Family == "triton" {
-			if runtime.Backend != "python" || artifact.Format != "onnx" ||
-				runtime.Settings == nil || runtime.Settings.Triton == nil {
-				return errors.New("Triton execution path requires ONNX, Python backend, and selected native settings")
-			}
-			native := runtime.Settings.Triton
-			if native.MaxBatchSize < 1 || native.PriorityLevels < 1 || native.MaxQueueSize < 1 {
-				return errors.New("Triton native settings must be positive int32 values")
-			}
-		} else if runtime.Settings != nil && runtime.Settings.Triton != nil {
-			return errors.New("non-Triton execution path cannot contain Triton settings")
+	}
+	return nil
+}
+
+func validateExecutionRuntime(runtime edgev1alpha1.ModelRuntimeRequirement, artifact edgev1alpha1.ModelArtifact) error {
+	isRKNN := runtime.Family == runtimeFamilyRKNNLite ||
+		(runtime.Family == "firstfloor" && runtime.Backend == runtimeFamilyRKNNLite)
+	if isRKNN && (artifact.Format != artifactFormatRKNN || artifact.Derivation == nil ||
+		artifact.Derivation.TargetPlatform == "" || len(artifact.Derivation.DeclaredBatchSizes) == 0) {
+		return errors.New("RKNNLite artifact requires RKNN format, target platform, inputs, and declared batch sizes")
+	}
+	if isRKNN && (len(artifact.Input.Tensors) != 1 || artifact.Input.Tensors[0].Datatype != "FP32" ||
+		len(artifact.Input.Tensors[0].SampleShape) != 3 || artifact.Derivation.TargetPlatform != "rk3588") {
+		return errors.New("RKNNLite requires one FP32 rank-3 NHWC sample input for rk3588")
+	}
+	if runtime.Family == "firstfloor" {
+		if !((artifact.Format == "onnx" && (runtime.Backend == "ort-cpu" || runtime.Backend == "ort-cuda")) ||
+			(artifact.Format == artifactFormatRKNN && runtime.Backend == runtimeFamilyRKNNLite)) {
+			return errors.New("firstfloor requires ONNX with ort-cpu/ort-cuda or RKNN with rknnlite")
 		}
+		if err := modelcompat.ValidateFirstfloorRuntimeSettings(FirstfloorSettings(runtime)); err != nil {
+			return err
+		}
+		for _, tensor := range artifact.Input.Tensors {
+			if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
+				return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
+			}
+		}
+	} else if runtime.Settings != nil && runtime.Settings.Firstfloor != nil {
+		return errors.New("non-firstfloor execution path cannot contain firstfloor settings")
 	}
 	return nil
 }

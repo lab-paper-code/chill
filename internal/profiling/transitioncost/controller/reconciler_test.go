@@ -215,7 +215,7 @@ func reconcilerStoredResult(stage measurementStage) storedMeasurementResult {
 	return storedMeasurementResult{
 		reference: edgev1alpha1.ProfilingRunEvidenceReference{
 			Store: attemptEvidenceStore, Key: "measurement/result.json",
-			SchemaVersion: measurementResultSchemaVersion, Size: 10,
+			SchemaVersion: transitioncost.MeasurementResultSchemaVersion, Size: 10,
 		},
 		record: measurementResultRecord{
 			Outcome: stage,

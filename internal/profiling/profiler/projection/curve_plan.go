@@ -3,7 +3,9 @@ package projection
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -36,7 +38,8 @@ func ProjectCurvePlanSpec(
 		NodeUID:        active.TargetNode.UID,
 		RuntimeFamily:  active.State.RuntimeFamily,
 		Backend:        active.State.Backend,
-		Triton:         modelcompat.CloneTritonRuntimeSettings(active.State.Triton),
+		Firstfloor:     modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
+		RuntimeAccess:  projectCurveRuntimeAccess(active.Delivery.RuntimeAccess),
 		RuntimeImage:   active.Images.Runtime,
 		PowerMode:      active.State.PowerMode,
 		CPU:            projectCurveCPU(active.CPU),
@@ -176,14 +179,22 @@ func validateCurvePlanRunConfig(
 		actualNodeUID != spec.NodeUID {
 		return errors.New("RunConfig contradicts curve-plan state or artifact facts")
 	}
-	if !reflect.DeepEqual(config.State.Triton, spec.Triton) {
-		return errors.New("RunConfig contradicts curve-plan Triton settings")
+	if !sameFirstfloorSettings(config.State.Firstfloor, spec.Firstfloor) {
+		return errors.New("RunConfig contradicts curve-plan firstfloor settings")
+	}
+	if !reflect.DeepEqual(projectCurveRuntimeAccess(config.Delivery.RuntimeAccess), spec.RuntimeAccess) {
+		return errors.New("RunConfig contradicts curve-plan accelerator delivery")
 	}
 	if config.Delivery.ArtifactCapability == nil ||
 		!reflect.DeepEqual(config.Delivery.ArtifactCapability.Tensors, spec.Tensor.Tensors) {
 		return errors.New("RunConfig contradicts curve-plan input tensor facts")
 	}
-	if projectCurveCPU(config.CPU) != spec.CPU || projectCurveMetricSource(config.Metrics) != spec.MetricSource {
+	cpu := config.CPU
+	if cpu.Policy != spec.CPU.Policy || cpu.PolicyVersion != spec.CPU.PolicyVersion ||
+		cpu.Request != spec.CPU.Request || cpu.Limit != spec.CPU.Limit ||
+		cpu.ORTIntraOpThreads != spec.CPU.ORTIntraOpThreads || cpu.ORTInterOpThreads != spec.CPU.ORTInterOpThreads ||
+		cpu.ExclusivityClaimed != spec.CPU.ExclusivityClaimed || !slices.Equal(cpu.AffinityCPUs, spec.CPU.AffinityCPUs) ||
+		projectCurveMetricSource(config.Metrics) != spec.MetricSource {
 		return errors.New("RunConfig contradicts curve-plan CPU or metric-source facts")
 	}
 	projectedProtocol, err := projectCurveProtocol(config)
@@ -195,11 +206,30 @@ func validateCurvePlanRunConfig(
 	}
 	return nil
 }
+func sameFirstfloorSettings(actual, expected *modelcompat.FirstfloorSettings) bool {
+	if actual == nil || expected == nil {
+		return actual == expected
+	}
+	return actual.MaxBatchSize == expected.MaxBatchSize && actual.MaxQueueSize == expected.MaxQueueSize &&
+		modelcompat.EffectiveDeadlinePolicy(actual.DeadlinePolicy) ==
+			modelcompat.EffectiveDeadlinePolicy(expected.DeadlinePolicy)
+}
+
+func projectCurveRuntimeAccess(access *profilingrun.CandidateReportRuntimeAccess) *profilederivation.CurveRuntimeAccessContract {
+	if access == nil {
+		return nil
+	}
+	return &profilederivation.CurveRuntimeAccessContract{
+		Privileged: access.Privileged, SupplementalGroups: append([]int64(nil), access.SupplementalGroups...),
+		Resources: maps.Clone(access.Resources), GPUUUID: access.GPUUUID,
+	}
+}
 
 func projectCurveCPU(cpu profilingrun.CPUContract) profilederivation.CurveCPUContract {
 	return profilederivation.CurveCPUContract{
 		Policy: cpu.Policy, PolicyVersion: cpu.PolicyVersion, Request: cpu.Request, Limit: cpu.Limit,
 		ORTIntraOpThreads: cpu.ORTIntraOpThreads, ORTInterOpThreads: cpu.ORTInterOpThreads,
+		AffinityCPUs:       append([]int(nil), cpu.AffinityCPUs...),
 		ExclusivityClaimed: cpu.ExclusivityClaimed,
 	}
 }

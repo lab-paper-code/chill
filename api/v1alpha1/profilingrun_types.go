@@ -83,6 +83,14 @@ type ProfilingRunMeasurementSpec struct {
 	// +optional
 	CPUQuota *resource.Quantity `json:"cpuQuota,omitempty"`
 
+	// CPUAffinity optionally selects explicit Linux CPU IDs for firstfloor execution.
+	// It does not reserve CPUs or claim exclusivity.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Minimum=0
+	// +listType=set
+	CPUAffinity []int32 `json:"cpuAffinity,omitempty"`
+
 	// SettlingDurationSeconds is required only for model-loaded idle. The
 	// runtime loads the model before this observer-independent settling period.
 	// +optional

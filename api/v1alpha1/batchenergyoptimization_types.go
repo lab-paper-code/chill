@@ -1,12 +1,29 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="BatchEnergyOptimization spec is immutable"
+// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
+// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota)) <= 0",message="state.cpuRequest must not exceed cpuQuota"
 type BatchEnergyOptimizationSpec struct {
 	State          MeasurementStateSpec `json:"state"`
 	ActiveProtocol ActiveProtocolSpec   `json:"activeProtocol"`
 	IdleProtocol   IdleProtocolSpec     `json:"idleProtocol"`
+
+	// CPUQuota optionally fixes the whole-core runtime quota for every owned Run.
+	// +optional
+	CPUQuota *resource.Quantity `json:"cpuQuota,omitempty"`
+
+	// CPUAffinity selects explicit firstfloor CPU IDs for every owned Run.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Minimum=0
+	// +listType=set
+	CPUAffinity []int32 `json:"cpuAffinity,omitempty"`
 
 	// TrialsPerBatch is the number of completed active and idle observations used
 	// to compare each batch under the minimum-energy objective.

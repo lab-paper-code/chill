@@ -244,6 +244,8 @@ func sequenceFinalizedAttempt(
 			StartedAt: time.Unix(100, 0).UTC(), CompletedAt: time.Unix(101, 0).UTC(),
 			BoundaryMappingUncertaintyMilliseconds: 25,
 			TauMilliseconds:                        1000, TransitionWallJoules: 15, EtaJoules: 3, ServingSurvived: true,
+			BeforeNative: powerNativeFixture(time.Unix(100, 0), transitioncost.ProcessIdentity{ContainerName: "firstfloor", ContainerID: "fixture-container", StartedAt: time.Unix(1, 0)}),
+			AfterNative:  powerNativeFixture(time.Unix(101, 0), transitioncost.ProcessIdentity{ContainerName: "firstfloor", ContainerID: "fixture-container", StartedAt: time.Unix(1, 0)}),
 		}
 	case transitioncost.VerdictInvalid:
 		record.Reason, record.Detail = transitioncost.ReasonObservationMalformed, "invalid observation"

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha15"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha16"
 
 	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
 	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
@@ -24,8 +24,10 @@ const (
 	RKNNLiteExecutionPath                 = "rknnlite"
 	RKNNLiteRuntimeFamily                 = "rknnlite"
 	RKNNLiteBackend                       = "not-applicable"
-	TritonRuntimeFamily                   = "triton"
-	TritonPythonBackend                   = "python"
+	FirstfloorRuntimeFamily               = "firstfloor"
+	FirstfloorORTCPUBackend               = "ort-cpu"
+	FirstfloorORTCUDABackend              = "ort-cuda"
+	FirstfloorRKNNLiteBackend             = "rknnlite"
 	cpuORTRuntimeFamily                   = "onnxruntime"
 	cpuExecutionProvider                  = "CPUExecutionProvider"
 	memoryPeakCgroupV1                    = "cgroup-v1-memory.max_usage_in_bytes:runtime-container-lifetime"
@@ -91,15 +93,15 @@ type CandidateIdentity struct {
 }
 
 type ExecutionState struct {
-	DeviceClass   string                       `json:"deviceClass"`
-	Model         string                       `json:"model"`
-	Artifact      string                       `json:"artifact"`
-	ArtifactPath  string                       `json:"artifactPath,omitempty"`
-	RuntimeFamily string                       `json:"runtimeFamily"`
-	Backend       string                       `json:"backend"`
-	Triton        *modelcompat.TritonSettings  `json:"triton,omitempty"`
-	PowerMode     string                       `json:"powerMode"`
-	HostContract  *CandidateReportHostContract `json:"hostContract,omitempty"`
+	DeviceClass   string                          `json:"deviceClass"`
+	Model         string                          `json:"model"`
+	Artifact      string                          `json:"artifact"`
+	ArtifactPath  string                          `json:"artifactPath,omitempty"`
+	RuntimeFamily string                          `json:"runtimeFamily"`
+	Backend       string                          `json:"backend"`
+	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
+	PowerMode     string                          `json:"powerMode"`
+	HostContract  *CandidateReportHostContract    `json:"hostContract,omitempty"`
 }
 
 type Images struct {
@@ -124,6 +126,7 @@ type CPUContract struct {
 	Limit              string `json:"limit"`
 	ORTIntraOpThreads  int    `json:"ortIntraOpThreads,omitempty"`
 	ORTInterOpThreads  int    `json:"ortInterOpThreads,omitempty"`
+	AffinityCPUs       []int  `json:"affinityCPUs,omitempty"`
 	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
 }
 

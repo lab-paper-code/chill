@@ -50,7 +50,8 @@ components=(
   serving-core
   serving-entrypoint
   serving-kube
-  serving-triton
+  firstfloor
+  serving-firstfloor
 )
 
 component_for() {
@@ -100,7 +101,8 @@ component_for() {
     internal/serving) echo serving-core ;;
     internal/serving/entrypoint) echo serving-entrypoint ;;
     internal/serving/kube) echo serving-kube ;;
-    internal/serving/triton) echo serving-triton ;;
+    internal/firstfloor) echo firstfloor ;;
+    internal/serving/firstfloor) echo serving-firstfloor ;;
     *) return 1 ;;
   esac
 }

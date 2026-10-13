@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type Request struct {
 	Namespace          string
 	NodeActuationName  string
 	TargetNode         string
+	TargetNodeUID      string
 	ServingService     string
 	ServingContainer   string
 	DeviceType         string
@@ -34,9 +36,10 @@ type Request struct {
 
 // Observer polls the Kubernetes API without creating or mutating objects.
 type Observer struct {
-	reader  client.Reader
-	request Request
-	now     func() time.Time
+	reader     client.Reader
+	request    Request
+	now        func() time.Time
+	HTTPClient *http.Client
 }
 
 // New constructs one observer and owns a value copy of its request.
@@ -47,7 +50,7 @@ func New(reader client.Reader, request Request) (*Observer, error) {
 	if err := validateRequest(request); err != nil {
 		return nil, err
 	}
-	return &Observer{reader: reader, request: request, now: time.Now}, nil
+	return &Observer{reader: reader, request: request, now: time.Now, HTTPClient: &http.Client{Timeout: request.ObservationTimeout}}, nil
 }
 
 // Observe waits for one initial Ready serving process before reporting ready,
@@ -86,7 +89,19 @@ func (o *Observer) Observe(
 				ObservedAt: snapshot.receivedAt,
 				Process:    *snapshot.process,
 			}
-			raw.MarkerBrackets.ReadyProcessWitness.LastAbsentReceivedAt = snapshot.receivedAt
+			nativeState, nativeErr := o.nativeNode(observeCtx)
+			if nativeErr != nil {
+				raw.NativeFailures = append(raw.NativeFailures, transitioncost.NativeReadFailure{ReceivedAt: o.now().UTC(), Detail: nativeErr.Error()})
+				return finish(nativeErr)
+			}
+			if nativeErr = transitioncost.VerifyNativeTransition(nativeState, nativeState); nativeErr != nil {
+				raw.BeforeNative = nativeState
+				raw.NativeFailures = append(raw.NativeFailures, transitioncost.NativeReadFailure{ReceivedAt: o.now().UTC(), Detail: nativeErr.Error()})
+				return finish(nativeErr)
+			}
+			raw.BeforeNative = nativeState
+			raw.PreTransitionProcess.ObservedAt = nativeState.ReceivedAt
+			raw.MarkerBrackets.ReadyProcessWitness.LastAbsentReceivedAt = raw.BeforeNative.ReceivedAt
 			break
 		}
 		if err := wait(observeCtx, o.request.PollInterval); err != nil {
@@ -117,18 +132,30 @@ func (o *Observer) Observe(
 		if err != nil {
 			return finish(err)
 		}
-		if raw.TargetReadBack != nil && snapshot.process != nil {
+		// Native monotonic counters cover work between polls as well as empty
+		// queues at endpoints. Read every coexistent actor, not just the Service.
+		nativeState, nativeErr := o.nativeNode(observeCtx)
+		if nativeErr == nil {
+			nativeErr = transitioncost.VerifyNativeTransition(nativeState, nativeState)
+		}
+		if nativeErr != nil {
+			raw.NativeFailures = append(raw.NativeFailures, transitioncost.NativeReadFailure{ReceivedAt: o.now().UTC(), Detail: nativeErr.Error()})
+		} else {
+			raw.NativeObservations = append(raw.NativeObservations, *nativeState)
+		}
+		if raw.TargetReadBack != nil && snapshot.process != nil && nativeErr == nil {
 			if err := markPresent(
 				&raw.MarkerBrackets.ReadyProcessWitness,
-				snapshot.receivedAt,
+				nativeState.ReceivedAt,
 			); err != nil {
 				return finish(err)
 			}
 			process := *snapshot.process
 			raw.PostTransitionProcess = &process
+			raw.AfterNative = nativeState
 			return finish(nil)
 		}
-		markAbsent(&raw.MarkerBrackets.ReadyProcessWitness, snapshot.receivedAt)
+		markAbsent(&raw.MarkerBrackets.ReadyProcessWitness, o.now().UTC())
 
 		if err := wait(observeCtx, o.request.PollInterval); err != nil {
 			return finish(fmt.Errorf("observe Kubernetes transition facts: %w", err))
@@ -208,13 +235,16 @@ func (o *Observer) observeActuation(
 func validateRequest(request Request) error {
 	for name, value := range map[string]string{
 		"namespace": request.Namespace, "NodeActuation name": request.NodeActuationName,
-		"target Node": request.TargetNode, "serving Service": request.ServingService,
+		"target Node": request.TargetNode, "target Node UID": request.TargetNodeUID, "serving Service": request.ServingService,
 		"serving container": request.ServingContainer, "device type": request.DeviceType,
 		"model": request.Model,
 	} {
 		if value == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)
 		}
+	}
+	if request.ServingContainer != "firstfloor" {
+		return errors.New("transition measurement requires actual firstfloor native serving container")
 	}
 	if request.PollInterval <= 0 {
 		return errors.New("poll interval must be positive")

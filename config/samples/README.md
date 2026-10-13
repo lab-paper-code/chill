@@ -29,13 +29,13 @@ Do not give manager credentials direct ModelSpec or Workload write access.
 ModelSpec
 ├── artifacts[]       immutable model files
 │   ├── source        OCI image, architecture, and path
-│   ├── input.tensors  name, Triton datatype, and sampleShape without the batch axis
+│   ├── input.tensors  name, uppercase datatype, and sampleShape without the batch axis
 │   └── derivation    conversion facts for a derived artifact
 └── executionPaths[]  artifact-to-runtime bindings
 ```
 
 Use immutable image digests and declare every input's exact name, uppercase
-Triton datatype and sample shape. Multiple named numeric/bool tensors are
+datatype and sample shape. Multiple named numeric/bool tensors are
 supported; layout is not a separate registration field. A canonical artifact
 needs no `derivation`; a converted artifact records its source, target platform,
 supported batches, and converter. Shape-only compatibility readers are absent.
@@ -59,3 +59,21 @@ kubectl apply -f config/samples/profiling/edge_v1alpha1_batchenergyoptimization.
 kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.yaml
 kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```
+
+## Serving scheduler configuration
+
+`serving-scheduler.json` is a controls-off deployment configuration with positive
+bounded evaluation settings and no invented physical inventory or measurements.
+Create a ConfigMap from it in the serving namespace:
+
+```sh
+kubectl -n "$SERVING_NAMESPACE" create configmap serving-scheduler \
+  --from-file=scheduler.json=config/samples/serving-scheduler.json
+```
+
+Set Helm `servingEntrypoint.scheduler.configMap=serving-scheduler`; the default
+key is `scheduler.json`. Populate inventories, reservations, measured profile
+preparations, evidence-cost references and exact meter identities before
+enabling any controls. Mirror configured power measurement namespace/name pairs
+in `servingEntrypoint.scheduler.powerCostSources` for named read permissions.
+No Profiler experiment is started by this configuration.

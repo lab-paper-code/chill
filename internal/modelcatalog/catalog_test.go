@@ -6,32 +6,98 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-func TestTritonExecutionRequiresSelectedNativeCondition(t *testing.T) {
+func TestFirstfloorExecutionRequiresSelectedNativeCondition(t *testing.T) {
 	model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
 		Artifacts: []edgev1alpha1.ModelArtifact{{Name: "model", Format: "onnx",
 			Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "amd64", Path: "/artifact/model.onnx"},
 			Input:  &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{{Name: "x", Datatype: "FP32", SampleShape: []int32{2}}}},
 		}},
 		ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{Name: "native", Artifact: "model",
-			Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "triton", Backend: "python"},
+			Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "firstfloor", Backend: "ort-cpu"},
 		}},
 	}}
 	if err := Validate(model); err == nil {
 		t.Fatal("native execution path accepted unspecified native settings")
 	}
 	model.Spec.ExecutionPaths[0].Runtime.Settings = &edgev1alpha1.ModelRuntimeSettings{
-		Triton: &edgev1alpha1.TritonRuntimeSettings{MaxBatchSize: 4, PriorityLevels: 2, MaxQueueSize: 64},
+		Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 64},
 	}
 	if err := Validate(model); err != nil {
 		t.Fatal(err)
 	}
+	for _, policy := range []string{"", "drop", "keep", "defer"} {
+		runtime := &model.Spec.ExecutionPaths[0].Runtime
+		runtime.Settings.Firstfloor.DeadlinePolicy = policy
+		if err := Validate(model); err != nil {
+			t.Fatalf("deadlinePolicy %q: %v", policy, err)
+		}
+		selected := FirstfloorSettings(*runtime)
+		expected := policy
+		if expected == "" {
+			expected = "keep"
+		}
+		if selected.DeadlinePolicy != expected {
+			t.Fatalf("deadlinePolicy %q mapped to %q", policy, selected.DeadlinePolicy)
+		}
+	}
+	model.Spec.ExecutionPaths[0].Runtime.Settings.Firstfloor.DeadlinePolicy = "invalid"
+	if err := Validate(model); err == nil {
+		t.Fatal("invalid deadlinePolicy accepted")
+	}
+	model.Spec.ExecutionPaths[0].Runtime.Settings.Firstfloor.DeadlinePolicy = "keep"
 	model.Spec.Artifacts[0].Format = "rknn"
 	if err := Validate(model); err == nil {
-		t.Fatal("Triton Python CPU path accepted a non-ONNX artifact")
+		t.Fatal("firstfloor ORT CPU path accepted a non-ONNX artifact")
 	}
 	model.Spec.Artifacts[0].Format = "onnx"
 	model.Spec.ExecutionPaths[0].Runtime.Family = "onnxruntime"
 	if err := Validate(model); err == nil {
 		t.Fatal("native settings were silently ignored by standalone ORT")
+	}
+}
+
+func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
+	for _, test := range []struct {
+		name, format, backend string
+		rknn                  bool
+		wantError             bool
+	}{
+		{"ORT CPU", "onnx", "ort-cpu", false, false},
+		{"ORT CUDA", "onnx", "ort-cuda", false, false},
+		{"RKNN", "rknn", "rknnlite", true, false},
+		{"RKNN through ORT", "rknn", "ort-cpu", true, true},
+		{"ONNX through RKNN", "onnx", "rknnlite", false, true},
+		{"unknown backend", "onnx", "python", false, true},
+		{"RKNN lacks derivation", "rknn", "rknnlite", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			artifact := edgev1alpha1.ModelArtifact{
+				Name: "model", Format: test.format,
+				Source: edgev1alpha1.ModelArtifactSource{Image: "artifact", Architecture: "arm64", Path: "/artifact/model"},
+				Input: &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
+					{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+				}},
+			}
+			if test.rknn {
+				artifact.Derivation = &edgev1alpha1.ModelArtifactDerivation{
+					SourceArtifact: "source", TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
+				}
+			}
+			source := artifact
+			source.Name = "source"
+			source.Derivation = nil
+			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
+				Artifacts: []edgev1alpha1.ModelArtifact{source, artifact},
+				ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
+					Name: "native", Artifact: "model", Runtime: edgev1alpha1.ModelRuntimeRequirement{
+						Family: "firstfloor", Backend: test.backend,
+						Settings: &edgev1alpha1.ModelRuntimeSettings{Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32}},
+					},
+				}},
+			}}
+			if err := Validate(model); (err != nil) != test.wantError {
+				t.Fatalf("Validate() = %v, want error %t", err, test.wantError)
+			}
+		})
 	}
 }

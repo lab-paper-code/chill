@@ -35,6 +35,26 @@ spec:
         tool: rknn-toolkit2
         version: 2.3.2
   executionPaths:
+  - name: firstfloor-ort-cpu
+    artifact: canonical-onnx
+    runtime:
+      family: firstfloor
+      backend: ort-cpu
+      settings:
+        firstfloor:
+          maxBatchSize: 16
+          maxQueueSize: 256
+          deadlinePolicy: keep
+  - name: firstfloor-rknnlite
+    artifact: mobilenet-v2-050-rk3588
+    runtime:
+      family: firstfloor
+      backend: rknnlite
+      settings:
+        firstfloor:
+          maxBatchSize: 16
+          maxQueueSize: 256
+          deadlinePolicy: defer
   - name: ort-cpu
     artifact: canonical-onnx
     runtime:

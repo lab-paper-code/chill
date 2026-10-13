@@ -236,8 +236,8 @@ check_outputs() {
   local removed="$output_root/removed-resources.txt"
   local added="$output_root/added-resources.txt"
 
-  comm -23 "$default_dir/resources.txt" "$profiler_dir/resources.txt" >"$removed"
-  comm -13 "$default_dir/resources.txt" "$profiler_dir/resources.txt" >"$added"
+  LC_ALL=C comm -23 "$default_dir/resources.txt" "$profiler_dir/resources.txt" >"$removed"
+  LC_ALL=C comm -13 "$default_dir/resources.txt" "$profiler_dir/resources.txt" >"$added"
 
   [[ ! -s "$removed" ]] || {
     cat "$removed" >&2

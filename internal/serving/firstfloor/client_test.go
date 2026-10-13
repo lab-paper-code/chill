@@ -1,0 +1,141 @@
+package firstfloor
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving"
+)
+
+func TestNativeCompletionRequiresContainedMonotonicSpans(t *testing.T) {
+	definition := &serving.Definition{UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
+	for _, tc := range []struct {
+		name             string
+		backend, elapsed float64
+		valid            bool
+	}{
+		{"backend inside service", 3, 8, true},
+		{"backend exceeds service", 5, 8, false},
+		{"service exceeds elapsed", 3, 5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(), BatchID: 7, BatchSize: 1, ProfileID: "profile", QueueMS: 2, ServiceMS: 4, BackendMS: tc.backend, NativeElapsedMS: tc.elapsed, ExecutionComplete: true}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if err := json.NewEncoder(w).Encode(native.Response{ModelName: "model", ID: "request", ExecutionComplete: true, Outputs: []native.Tensor{{Name: "output", Datatype: "BOOL", Shape: []int{1, 1}, Data: json.RawMessage(`[true]`)}}, Progress: p}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: definition, ReceivedAt: time.Now(), Input: &serving.InferenceInput{}})
+			if tc.valid {
+				if err != nil || !result.Finished {
+					t.Fatalf("valid nested spans lost completion: %+v %v", result, err)
+				}
+			} else if err == nil || result.Finished {
+				t.Fatalf("impossible spans became physical proof: %+v %v", result, err)
+			}
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ParseProgress(append([]byte("CHILL_PROGRESS "), raw...))
+			if (err == nil) != tc.valid {
+				t.Fatalf("progress and response disagree on contained spans: %v", err)
+			}
+		})
+	}
+}
+func TestNativeTransportFailureDoesNotCompletePhysicalExecution(t *testing.T) {
+	client := &Client{HTTPClient: &http.Client{Transport: failingTransport{}}}
+	result, err := client.Execute(context.Background(), Spec{Endpoint: "http://native", ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
+	if err == nil || result.Finished {
+		t.Fatal("HTTP transport failure became physical completion proof")
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection lost after write")
+}
+func TestProgressUsesDirectIdentityAndExplicitFinish(t *testing.T) {
+	p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: "uid/1/model/1", Phase: "finished", At: time.Now().UTC(), ExecutionComplete: true, BatchSize: 4}
+	raw, _ := json.Marshal(p)
+	observed, err := ParseProgress(append([]byte("2026-10-08T12:00:00Z CHILL_PROGRESS "), raw...))
+	if err != nil || observed.RequestID != "request" || !observed.ExecutionComplete {
+		t.Fatalf("direct native identity lost: %+v %v", observed, err)
+	}
+	p.ExecutionComplete = false
+	raw, _ = json.Marshal(p)
+	if _, err = ParseProgress(append([]byte("CHILL_PROGRESS "), raw...)); err == nil {
+		t.Fatal("unproved finish admitted")
+	}
+	if _, err = ParseProgress([]byte("startup")); !errors.Is(err, ErrNotProgress) {
+		t.Fatal("startup was parsed as native progress")
+	}
+}
+func TestDeferredProgressRemainsQueuedWithoutCompletion(t *testing.T) {
+	p := native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: "uid/1/model/1",
+		Phase: "deferred", At: time.Now().UTC(), QueueMS: 25, NativeElapsedMS: 25}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := ParseProgress(append([]byte("CHILL_PROGRESS "), raw...))
+	if err != nil || observed.Phase != "deferred" || observed.ExecutionComplete || observed.BatchID != 0 {
+		t.Fatalf("deferred queue must not become execution completion: %+v / %v", observed, err)
+	}
+}
+
+func TestDeadlineDropRequiresCorrelatedNoExecutionProof(t *testing.T) {
+	definition := &serving.Definition{UID: "uid", Generation: 1,
+		Model: serving.Model{UID: "model", Generation: 1}}
+	for _, uid := range []string{"uid", "another-registration"} {
+		t.Run(uid, func(t *testing.T) {
+			p := &native.Progress{RequestID: "request", WorkloadUID: uid, Definition: definition.Identity(),
+				Phase: "finished", At: time.Now().UTC(), ProfileID: "profile", Outcome: "deadline_drop",
+				QueueMS: 20, NativeElapsedMS: 20, ExecutionComplete: true}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusRequestTimeout)
+				if err := json.NewEncoder(w).Encode(native.ErrorResponse{
+					Error: "SLO deadline reached", ExecutionComplete: true, Progress: p}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(),
+				Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}},
+				serving.Dispatch{RequestID: "request", Definition: definition, Input: &serving.InferenceInput{}})
+			var domain *serving.Error
+			if uid == "uid" {
+				if !errors.As(err, &domain) || domain.Code != "SLODeadlineDrop" || !result.Finished ||
+					result.StatusCode != http.StatusRequestTimeout || result.Progress == nil ||
+					result.Progress.Outcome != "deadline_drop" {
+					t.Fatalf("verified drop must retain timeout and physical completion: %+v / %v", result, err)
+				}
+			} else if err == nil || result.Finished {
+				t.Fatalf("another registration cannot release execution: %+v / %v", result, err)
+			}
+		})
+	}
+}
+func TestMismatchedNativeCompletionRemainsUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, `{"model_name":"model","id":"other","outputs":[],"progress":{"requestID":"other","phase":"finished","executionComplete":true},"executionComplete":true}`); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	result, err := (&Client{HTTPClient: server.Client()}).Execute(context.Background(), Spec{Endpoint: server.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, serving.Dispatch{RequestID: "request", Definition: &serving.Definition{UID: "uid"}, Input: &serving.InferenceInput{}})
+	if err == nil || result.Finished || !strings.Contains(err.Error(), "completion proof") {
+		t.Fatal("mismatched response freed physical ownership", result, err)
+	}
+}

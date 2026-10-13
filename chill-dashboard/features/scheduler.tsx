@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
-const phaseLabels:Record<string,string>={pending:"미배정",assigned:"배정 후 실행 단계 확인 대기",queued:"실제 대기열",running:"실행 중",returning:"응답 반환 중"}
+const phaseLabels:Record<string,string>={pending:"미배정",assigned:"배정 후 실행 단계 확인 대기",queued:"실제 대기열",deferred:"SLO 위반 후 후순위 대기",running:"실행 중",returning:"응답 반환 중"}
 const time=(value:string)=>!value||value.startsWith("0001-")?"관측 시각 없음":value
 const ms=(value:WireInteger)=>`${nanosToMilliseconds(value)} ms`
 const energy=(value:number|null)=>value==null?"계산값 없음":`${value} J`

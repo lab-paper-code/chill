@@ -206,9 +206,18 @@ func cloneIdleBaseline(baseline IdleBaseline) IdleBaseline {
 }
 
 func clonePoint(point Point) Point {
-	point.Trials = append([]EnergyTrial(nil), point.Trials...)
+	point.Trials = cloneEnergyTrials(point.Trials)
 	point.Confidence = clonePointConfidence(point.Confidence)
 	return point
+}
+
+func cloneEnergyTrials(trials []EnergyTrial) []EnergyTrial {
+	cloned := append([]EnergyTrial(nil), trials...)
+	for index := range cloned {
+		cloned[index].ClientLatencyMilliseconds = append([]float64(nil), trials[index].ClientLatencyMilliseconds...)
+		cloned[index].NativeSamples = append([]NativeServiceSample(nil), trials[index].NativeSamples...)
+	}
+	return cloned
 }
 
 func clonePointConfidence(confidence PointConfidence) PointConfidence {
