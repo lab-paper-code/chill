@@ -594,3 +594,27 @@ graph의 C 정렬 입력에는 `LC_ALL=C`를 사용했다. 격리 소스 검사�
 GET grant의 문서 경계 오류는 manager rules 안으로 이동해 수정했다.
 배포 전 server-resolved 렌더의 변경은 Dashboard image, 기존 manager GET와 unbound
 scheduler editor ClusterRole/Role뿐이며 lookup으로 정해지는 기존 API server 설정은 유지한다.
+
+
+### 10.5 스케줄러 Dashboard 실제 배포와 조회 경계
+
+`fast-deploy --components dashboard --platforms linux/amd64 --push-mode registry-direct
+--skip-deploy`로 격리된 커밋 소스의 Dashboard만 publish했다. 기존 rev 9의 chart와
+values를 캡처하고 필요한 RBAC만 반영한 `helm-release-flow.sh install` upgrade로
+`chill/chill-system` rev 10을 배포했다. uninstall과 root 재생성은 수행하지 않았다.
+실제 Dashboard image는 `scheduler-dashboard-8c7cbec`, image ID는
+`sha256:b408d4913814e8836378b07c1743fb8657bcc211c5cad48e139f3ab08ad09641`이며 ready replica는 1이다.
+System UID `17722831-d04d-4d8f-9e63-1bc13d5eef07` 및 spec, `serving-scheduler` UID/data,
+기존 ConfigMap, 다른 Deployment template, PVC/Service UID와 Profiler 값을 보존했다.
+Helm values의 변경은 Dashboard image뿐이며 새 scheduler editor grants는 unbound다.
+
+기존 `chill-dashboard-user`의 단기 token으로 HTTPS NodePort 31104에서 GET만 확인했다.
+scheduler/settings/state는 no-store 200, 자동 적용 off, Pending, 동작 0개였다.
+현재 판단은 owner가 보관한 `2026-10-10T13:35:30.019186337Z`이며 새 물리 관측으로 해석하지 않는다.
+후보, 현재 변경 진행과 운영 설정을 실제 값으로 열고 실험/비교의 생산자 및 선택 경계도 확인했다.
+load와 scheduler journal은 BFF 504로, 관련 화면은 오류를 표시하고 빈 성공 표를 만들지 않았다.
+명시적 1분 구간/limit=1의 직접 owner journal GET도 BFF 없이 30초 동안 응답하지 않았고
+owner 로그에는 S3 PutObject deadline 초과가 관측됐다. live 과거 기록/A/B 및 전력 데이터의
+정상 조회는 이 owner 장애로 검증하지 못했다. timeout 확대나 다른 컴포넌트 변경은 하지 않았다.
+실클러스터의 설정 PUT, 제어 활성화, 인위 전환과 전력 실험은 수행하지 않았다.
+로컬 실제 ConfigMap/journal 및 별도 UI fixture의 증거를 live 제어 증거와 구분한다.
