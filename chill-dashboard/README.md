@@ -7,11 +7,15 @@ CHILL-internal Next App Router module, built independently and deployed within t
 Actual source fork: https://github.com/shadcn-ui/ui.git at commit `e8c3143b1cd191280befcd6c9538284bb43399a8`.
 
 - Application baseline: `templates/next-app` (package, TypeScript/ESLint/PostCSS/Next configuration, layout, theme provider).
-- Selected block: `apps/v4/registry/new-york-v4/blocks/dashboard-01` (`app-sidebar`, `site-header`, `section-cards`, `data-table`, `chart-area-interactive`, and page shell composition).
+- Selected block: `apps/v4/registry/new-york-v4/blocks/dashboard-01` (`app-sidebar`, `site-header`, `data-table`, `chart-area-interactive`, and page shell composition). The `section-cards` block is replaced by the CHILL overview board.
 - Retained copied dependency closure: `apps/v4/registry/new-york-v4/ui/{sidebar,button,input,separator,sheet,tooltip,table,chart,dialog}.tsx`, `hooks/use-mobile.ts`; theme tokens from `apps/v4/app/globals.css`. Unused demo primitives are deleted.
 - `LICENSE.shadcn` preserves the upstream MIT copyright and permission notice for copied/adapted source. It does not relicense other CHILL code.
 
-The demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop, sidebar cookies and remote Google fonts are removed. Table retains TanStack Table v9; stable body cells preserve open details during polling. Charts use owner whole-window statistics or the samples of one selected power record. No fake backend or demo data producer is included.
+The demo records, accounts/avatars, revenue/time series, marketing links, drag-and-drop and sidebar cookies are removed. Asta Sans (Hangul-capable) is fetched by `next/font` at build time and self-hosted under `/_next/static/media`, so the CSP keeps `font-src 'self'` and the browser makes no font requests to third parties. Table retains TanStack Table v9; stable body cells preserve open details during polling. Charts use owner whole-window statistics or the samples of one selected power record. No fake backend or demo data producer is included.
+
+## Visual system
+
+Tokens live in `app/globals.css`: a cool frost canvas, coolant blue for actions and focus, and heat amber for energy and caution. Status is never color-only: `StatusBadge` pairs each tone with an icon and text. The overview puts the attention queue first, then the operator judgment (expected energy of the kept configuration and the selected candidate on one scale; the larger reads as heat), then one strip of system, service, node and request counts. Related screens use `SubNav` tabs, the model editor shows its five steps as a stepper, and signed-out visitors see only the sign-in screen. Light, dark and 390 px layouts were reviewed against fixture-backed owner responses; no live owner was written.
 
 ## Runtime
 
@@ -68,7 +72,9 @@ retain integer literals while removing credentials.
 
 ## Public routes and current core
 
-`/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/scheduler`, `/scheduler/candidates`, `/scheduler/load`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`.
+`/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/scheduler`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`. The former `/scheduler/candidates` and `/scheduler/load` redirect to `/scheduler#candidates` and `/scheduler#load` with their query (window and service) preserved.
+
+Structure follows the operator's job rather than one page per object. The home page lists what needs attention first (services not admitting with their reason, unready nodes, predicted SLO exceedance, failed or open changes), each linked to the exact section that resolves it. `/workloads/[name]` is the service hub: an ordered lifecycle rail (definition, evidence, placement, admission, response target) over inline sections fed by the workload view, `v1/pools`, `v1/scheduler` and one bounded last-hour `v1/observations/workloads/{uid}` query whose window is shown and reset explicitly. Model details show connected services inline.
 
 Real Model/Workload CRUD and version preconditions, one independent named-tensor inference, current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management journal; absence of a broader feed is disclosed.
 
@@ -79,15 +85,15 @@ update. Deferred requests remain waiting, not running or completed. The actual
 local editor was exercised with all three values and existing limits preserved;
 the browser used an isolated owner-contract fixture and performed no live writes.
 
-`/scheduler`, `/scheduler/candidates` and `/scheduler/load` connect current
-judgment, frozen configuration/candidate details and event-time load. Automatic
-application and evaluated judgment are separate; keep/target J and SLO are
-predictions, not measurements. Load preserves the submitted nanosecond window
+`/scheduler` is one decision workspace: the current judgment, per-service keep/target
+estimates, the current actions, event-time load and a candidate workbench whose
+selection freezes the response it was made on and announces newer decisions.
+Automatic application and evaluated judgment are separate; keep/target J and SLO are
+predictions, not measurements. Load preserves the submitted window in the page URL
 independently of the draft. The owner omits arrivals from load responses, so load
 links query all definitions for the original UID/window; candidate SLO links
 include the provided immutable definition. Request details separately display
 CHILL dispatch and native progress, including exact uint64 batch identity.
-Polling retains open detail snapshots and announces newer observation times.
 `/configuration` edits every owner-supported setting from the current baseline.
 Duration fields use exact ns conversion from ms, memory and seed retain integer
 strings, and advanced search fields remain available. Review re-reads settings,

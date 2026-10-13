@@ -6,17 +6,16 @@ import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, type RelayResponse } from "@/lib/client"
 import { DataTable } from "@/components/data-table"
-import { DetailsDialog, ReadRegion, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
+import { DetailsDialog, ReadRegion, SourceJSON, SourceExport, StatusBadge, statusLabel } from "@/components/read-region"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { datatypes, positiveIntegers, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import { datatypes, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import { ServiceHub } from "@/features/service-hub"
 
 const emptyTensor = (): TensorContract => ({ name: "", datatype: "FP32", sampleShape: [1] })
 const emptyArtifact = (): ModelArtifact => ({ name: "", format: "", source: { image: "", architecture: "", path: "" }, input: { tensors: [emptyTensor()] } })
 const emptyPath = (): ExecutionPath => ({ name: "", artifact: "", runtime: { family: "", backend: "" } })
-const href = (kind: string, name: string, uid: string, action = "") => `/${kind}/${encodeURIComponent(name)}${action ? `/${action}` : ""}?uid=${encodeURIComponent(uid)}`
-const target = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요청을 ${spec.slo.targetLatency} 안에 처리`
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-2 text-sm">{label}{children}</label>
@@ -137,8 +136,8 @@ function Editor({ kind, resource, models, workloads, latest, conflict, adopt, on
     if (!spec.artifacts.length || !spec.executionPaths.length || spec.artifacts.some(a => !a.input?.tensors.length)) throw new Error("모델 파일, 각 파일의 입력, 실행 방식을 하나 이상 설정하세요.")
     return spec
   }
-  return <section className="mx-auto grid w-full max-w-2xl gap-6">
-    <p className="text-sm text-muted-foreground">{step + 1} / {steps.length} 단계</p><h2 className="text-xl font-semibold">{steps[step]}</h2>
+  return <section className="grid w-full max-w-3xl gap-6 rounded-2xl border bg-card p-6 max-sm:p-4">
+    <ol className="stepper" aria-label="작성 단계">{steps.map((label, index) => <li key={label} data-state={index < step ? "done" : index === step ? "current" : "todo"} aria-current={index === step ? "step" : undefined}><span>{index + 1}. {label}</span></li>)}</ol><h2 className="text-xl font-semibold">{steps[step]}</h2>
     {conflict && <section role="alert" className="grid gap-3 rounded-lg border p-4"><h3 className="font-semibold">다른 변경이 먼저 저장됐어요</h3><p>작성한 내용은 유지했어요. 기존 설정과 최신 설정을 비교하고, 최신 상태를 기준으로 저장할지 선택하세요. 자동으로 다시 저장하지 않아요.</p>{original && <DefinitionSummary spec={original.spec} />}{latestResource && <><h4>최신 설정</h4><DefinitionSummary spec={latestResource.spec} /></>}<SourceJSON title="작성 기준과 최신 원본" value={{ before: original, latest }} /><Button disabled={!latestResource || busy || latestResource.metadata.uid !== original?.metadata.uid} onClick={adopt}>최신 상태를 기준으로 계속 작성</Button></section>}
     <form aria-describedby={validation ? "management-validation" : undefined} className="grid gap-5" onSubmit={event => {
       event.preventDefault(); setValidation("")
@@ -228,10 +227,11 @@ export function ManagementPage({ kind, name, newResource = false, editResource =
     ]} /><SourceJSON title="목록 원본" value={models.data} /></ReadRegion> : <ReadRegion title="등록된 서비스" query={workloads}><DataTable data={workloads.data ?? []} columns={[
       { key: "name", label: "서비스 이름", value: w => <Link href={href("workloads", w.desired.metadata.name, w.desired.metadata.uid)}>{w.desired.metadata.name}</Link>, sortValue: w => w.desired.metadata.name },
       { key: "model", label: "모델", value: w => w.desired.spec.modelRef.name },
-      { key: "ready", label: "서비스 준비", value: w => w.admission ? "요청을 받을 수 있어요" : statusLabel(w.reason || w.readiness) },
+      { key: "ready", label: "서비스 준비", value: w => <StatusBadge value={w.admission ? "Ready" : w.reason || w.readiness}>{w.admission ? "요청을 받을 수 있어요" : undefined}</StatusBadge> },
       { key: "slo", label: "응답 목표", value: w => target(w.desired.spec) },
     ]} /><SourceJSON title="목록 원본" value={workloads.data} /></ReadRegion>)}
-    {name && !editResource && <ReadRegion title={`${title} 상태`} query={detail}>{detail.data && <section className="grid gap-5">{"desired" in detail.data ? <><p className="text-xl font-medium">{detail.data.admission ? "추론을 시작할 수 있어요" : "아직 추론을 시작할 수 없어요"}</p><p className="text-muted-foreground">{detail.data.admission ? `${detail.data.desired.spec.modelRef.name} · ${target(detail.data.desired.spec)}` : statusLabel(detail.data.reason || detail.data.readiness)}</p><div className="flex flex-wrap gap-3"><Button asChild><Link href={href("workloads", name, detail.data.desired.metadata.uid, "infer")}>추론하기</Link></Button><DetailsDialog label="설정과 준비 과정" title={`${name} 설정과 준비 과정`}><WorkloadState view={detail.data} /></DetailsDialog></div></> : <><p className="text-xl font-medium">등록된 모델</p><p className="text-muted-foreground">모델 파일 {detail.data.spec.artifacts.length}개 · 실행 방식 {detail.data.spec.executionPaths.length}개</p><p className="text-sm text-muted-foreground">등록과 실제 실행 준비는 달라요. 연결된 서비스에서 측정 결과와 준비 상태를 확인하세요.</p><DetailsDialog label="파일과 연결 서비스" title={`${name} 파일과 연결 서비스`}><DefinitionSummary spec={detail.data.spec} /><ReadRegion title="연결 서비스" query={workloads}><Impact affected={affected} /></ReadRegion><SourceJSON title="모델 전체 원본" value={detail.data} /><SourceExport value={detail.data} filename={`model-${name}.json`} /></DetailsDialog></>}
+    {name && !editResource && kind === "workloads" && (detail.data && "desired" in detail.data && current ? <ServiceHub view={detail.data} query={detail} actions={<><Button asChild><Link href={href("workloads", name, current.metadata.uid, "infer")}>추론하기</Link></Button><Button asChild variant="outline"><Link href={href(kind, name, expectedUID ?? current.metadata.uid, "edit")}>설정 수정</Link></Button><Button variant="ghost" disabled={blocked || conflict} onClick={() => setDeleteConfirm(true)}>삭제</Button></>} /> : <ReadRegion title="서비스 상태" query={detail}>{null}</ReadRegion>)}
+    {name && !editResource && kind === "models" && <ReadRegion title="모델 상태" query={detail}>{detail.data && !("desired" in detail.data) && <section className="grid gap-5"><p className="text-xl font-semibold">등록된 모델</p><p className="text-muted-foreground">모델 파일 {detail.data.spec.artifacts.length}개 · 실행 방식 {detail.data.spec.executionPaths.length}개. 등록과 실제 실행 준비는 달라요. 연결된 서비스에서 측정 결과와 준비 상태를 확인하세요.</p><DefinitionSummary spec={detail.data.spec} /><ReadRegion title="연결 서비스" query={workloads}><Impact affected={affected} /></ReadRegion><div className="flex flex-wrap gap-2"><SourceJSON title="모델 전체 원본" value={detail.data} /><SourceExport value={detail.data} filename={`model-${name}.json`} /></div>
       {current && <div className="flex flex-wrap gap-3 border-t pt-4"><Button asChild variant="outline"><Link href={href(kind, name, expectedUID ?? current.metadata.uid, "edit")}>설정 수정</Link></Button><Button variant="ghost" disabled={blocked || conflict} onClick={() => setDeleteConfirm(true)}>삭제</Button></div>}
     </section>}</ReadRegion>}
     {name && editResource && !baseline && <ReadRegion title="수정할 설정" query={detail}>{null}</ReadRegion>}

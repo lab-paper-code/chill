@@ -4,19 +4,12 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { CampaignResult, InventoryView, InventoryClass, PoolState, PoolsView, RunsView, ProfilingRun, Passport, SchedulerView } from "@/lib/read-types"
-import { ReadRegion, SourceJSON, SourceExport, DetailsDialog } from "@/components/read-region"
+import type { CampaignResult, InventoryView, InventoryClass, PoolState, PoolsView, RunsView, ProfilingRun, Passport } from "@/lib/read-types"
+import { ReadRegion, SourceJSON, SourceExport, DetailsDialog, StatusBadge } from "@/components/read-region"
 import { DataTable } from "@/components/data-table"
-import { SectionCards } from "@/components/section-cards"
 import { Button } from "@/components/ui/button"
-import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
+import { stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-
-export function OverviewPage() {
-  const [poll,setPoll]=React.useState(false)
-  const scheduler=useChillQuery<SchedulerView>("v1/scheduler",{decoder:parseSchedulerJSON,poll})
-  return <div className="page"><h1>시스템 상태</h1><label><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/> 자동 새로고침</label><SectionCards poll={poll}/><Link href="/scheduler">운영 판단과 실제 구성</Link>{scheduler.data&&<p className="text-sm text-muted-foreground">구성 관측 {scheduler.data.state.snapshot.at.startsWith("0001-")?"첫 관측 대기":scheduler.data.state.snapshot.at}. 시스템 준비 상태와 운영 판단은 별개입니다.</p>}</div>
-}
 
 function QueryWindow({path,page,extra}:{path:string;page?:{offset:number;limit:number;total:number;nextOffset?:number};extra?:React.ReactNode}) {
   const params=useSearchParams(),router=useRouter()
@@ -36,7 +29,7 @@ export function ResourcesPage() {
   return <div className="page"><h1>장비 목록</h1><QueryWindow path="/resources" page={query.data?.classPage}/><ReadRegion title="장비와 노드" query={query}>{query.data&&<><DataTable<InventoryClass> data={query.data.classes??[]} columns={[
     {key:"name",label:"장비 종류",value:row=>row.name,sortValue:row=>row.name},
     {key:"capacity",label:"장비 사양",value:row=>`${row.architecture} · ${row.memory}${row.accelerator?` · ${row.accelerator}`:""}`},
-    {key:"nodes",label:"노드",value:row=><ul>{row.nodes.map(node=><li key={node.uid}>{node.name} · {node.ready==="True"?"준비됨":node.ready==="False"?"준비되지 않음":"상태 확인 안 됨"}{node.schedulingDisabled?" · 배정 중지":""}</li>)}</ul>},
+    {key:"nodes",label:"노드",value:row=><ul className="grid gap-1.5">{row.nodes.map(node=><li key={node.uid} className="flex flex-wrap items-center gap-2"><span className="font-medium">{node.name}</span><StatusBadge tone={node.ready==="True"?"ok":node.ready==="False"?"warn":"idle"}>{node.ready==="True"?"준비됨":node.ready==="False"?"준비되지 않음":"상태 확인 안 됨"}</StatusBadge>{node.schedulingDisabled&&<StatusBadge tone="idle">배정 중지</StatusBadge>}</li>)}</ul>},
     {key:"details",label:"상세",value:row=><DetailsDialog label="장비 자세히" title={row.name}><p>등록된 사양과 노드 상태입니다. 실행 적합성과 여유 용량을 보장하지 않습니다.</p><SourceJSON value={row}/></DetailsDialog>},
   ]}/><SourceJSON value={query.data}/><SourceExport value={{conditions:Object.fromEntries(allowed),source:query.data}} filename="chill-inventory.json"/></>}</ReadRegion></div>
 }
@@ -55,9 +48,9 @@ export function PoolsPage() {
 export function PoolPage({id}:{id:string}) {
   const [poll,setPoll]=React.useState(false)
   const query=useChillQuery<PoolState>(`v1/pools/${encodeURIComponent(id)}`,{poll})
-  return <div className="page"><h1>실행 그룹 상세</h1><label><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/> 자동 새로고침</label><ReadRegion title="현재 구성" query={query}>{query.data&&<><DataTable data={query.data.instances??[]} columns={[
+  return <div className="page"><h1>실행 그룹 상세</h1><label className="switch"><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/>자동 새로고침</label><ReadRegion title="현재 구성" query={query}>{query.data&&<><DataTable data={query.data.instances??[]} columns={[
     {key:"node",label:"노드",value:row=>row.node.name},
-    {key:"ready",label:"상태",value:row=>row.ready?"준비됨":"준비되지 않음"},
+    {key:"ready",label:"상태",value:row=><StatusBadge tone={row.ready?"ok":"warn"}>{row.ready?"준비됨":"준비되지 않음"}</StatusBadge>},
     {key:"workloads",label:"서비스",value:row=>row.workloads.map(workload=>workload.name).join(", ")||"없음"},
     {key:"detail",label:"상세",value:row=><SourceJSON value={row}/>},
   ]}/><DetailsDialog label="노드와 서비스 보기" title="그룹에 연결된 대상"><h2>노드</h2><ul>{query.data.currentNodes.map(row=><li key={row.uid}>{row.name}</li>)}</ul><h2>서비스</h2><ul>{query.data.servingWorkloads.map(row=><li key={row.uid}><Link href={`/workloads/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}>{row.name}</Link></li>)}</ul><p>현재 그룹 관측 {query.data.observedAt}</p><Link href={`/scheduler?view=snapshot&pool=${encodeURIComponent(id)}`}>자원 할당과 전력모드의 실제 구성</Link><details><summary>원본</summary><pre className="source-json">{stringifySchedulerJSON(safeSource(query.data),2)}</pre></details></DetailsDialog><SourceExport value={query.data} filename={`chill-pool-${id}.json`}/></>}</ReadRegion><Link href="/pools">그룹 목록</Link></div>
@@ -71,7 +64,7 @@ function runCandidate(row:ProfilingRun,key:string) {
 function runStatus(row:ProfilingRun) {
   const evidence=row.status.conditions?.find(item=>item.type==="EvidenceVerified")
   const execution=row.status.conditions?.find(item=>item.type==="ExecutionComplete")
-  return evidence?.status==="True"?"근거 검증 완료":execution?.status==="True"?"실행 완료 · 근거 미검증":execution?.status==="False"?"실행 미완료":"상태 확인 중"
+  return evidence?.status==="True"?<StatusBadge tone="ok">근거 검증 완료</StatusBadge>:execution?.status==="True"?<StatusBadge tone="warn">실행 완료 · 근거 미검증</StatusBadge>:execution?.status==="False"?<StatusBadge tone="fail">실행 미완료</StatusBadge>:<StatusBadge tone="idle">상태 확인 중</StatusBadge>
 }
 export function MeasurementsPage() {
   const {config}=useSession();const params=useSearchParams(),router=useRouter()
@@ -104,11 +97,11 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
   const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:kind==="profiling-runs"})
   const campaign=useChillQuery<CampaignResult>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations/${encodeURIComponent(name)}/result`,{enabled:kind==="batch-energy-optimizations"})
   if(kind!=="profiling-runs"&&kind!=="batch-energy-optimizations")return <Unavailable title="측정 결과"/>
-  return <div className="page"><h1>{name} 측정 결과</h1>{kind==="profiling-runs"?<ReadRegion title="검증된 측정 근거" query={passport}>{passport.data&&<>{expectedUID&&passport.data.run.uid!==expectedUID?<p role="alert">같은 이름으로 다시 등록된 다른 측정입니다. 이전 자료로 사용할 수 없습니다.</p>:null}<dl><dt>완료 요청</dt><dd>{passport.data.measurement.runtime.completedCalls}건</dd><dt>처리량</dt><dd>{passport.data.measurement.runtime.throughputItemsPerSecond}건/초</dd><dt>평균 전력</dt><dd>{passport.data.measurement.power.watts?.mean??"값 없음"} W</dd></dl><DetailsDialog label="측정 조건과 근거" title="측정 상세"><p>측정 전력은 현재 운영 소비가 아닙니다.</p><SourceJSON title="실행 조건·검증·지연·전력 원본" value={passport.data}/></DetailsDialog><SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:passport.data}} filename={`chill-passport-${name}.json`}/></>}</ReadRegion>:<ReadRegion title="측정 계획 결과" query={campaign}>{campaign.data&&<>{expectedUID&&campaign.data.campaign.uid!==expectedUID?<p role="alert">같은 이름으로 다시 등록된 다른 계획입니다. 이전 자료로 사용할 수 없습니다.</p>:null}<p>완료 측정 {campaign.data.campaign.completedTrials}건</p><DetailsDialog label="결과 자세히 보기" title="계획 결과와 근거"><SourceJSON value={campaign.data}/></DetailsDialog><SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:campaign.data}} filename={`chill-result-${name}.json`}/></>}</ReadRegion>}<Link href={`/measurements?namespace=${encodeURIComponent(namespace)}`}>측정 목록</Link></div>
+  return <div className="page"><h1>{name} 측정 결과</h1>{kind==="profiling-runs"?<ReadRegion title="검증된 측정 근거" query={passport}>{passport.data&&<>{expectedUID&&passport.data.run.uid!==expectedUID?<p role="alert">같은 이름으로 다시 등록된 다른 측정입니다. 이전 자료로 사용할 수 없습니다.</p>:null}<dl className="vitals"><div className="vital"><dt>완료 요청</dt><dd className="vital-value">{passport.data.measurement.runtime.completedCalls}<small>건</small></dd></div><div className="vital"><dt>처리량</dt><dd className="vital-value">{passport.data.measurement.runtime.throughputItemsPerSecond}<small>건/초</small></dd></div><div className="vital"><dt>측정 중 평균 전력</dt><dd className="vital-value">{passport.data.measurement.power.watts?.mean??"값 없음"}<small>W</small></dd></div></dl><DetailsDialog label="측정 조건과 근거" title="측정 상세"><p>측정 전력은 현재 운영 소비가 아닙니다.</p><SourceJSON title="실행 조건·검증·지연·전력 원본" value={passport.data}/></DetailsDialog><SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:passport.data}} filename={`chill-passport-${name}.json`}/></>}</ReadRegion>:<ReadRegion title="측정 계획 결과" query={campaign}>{campaign.data&&<>{expectedUID&&campaign.data.campaign.uid!==expectedUID?<p role="alert">같은 이름으로 다시 등록된 다른 계획입니다. 이전 자료로 사용할 수 없습니다.</p>:null}<p>완료 측정 {campaign.data.campaign.completedTrials}건</p><DetailsDialog label="결과 자세히 보기" title="계획 결과와 근거"><SourceJSON value={campaign.data}/></DetailsDialog><SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:campaign.data}} filename={`chill-result-${name}.json`}/></>}</ReadRegion>}<Link href={`/measurements?namespace=${encodeURIComponent(namespace)}`}>측정 목록</Link></div>
 }
 function Unavailable({title}:{title:string}) {
-  return <div className="page"><h1>{title}</h1><p>연결 준비 중</p><Button disabled>아직 사용할 수 없습니다</Button></div>
+  return <div className="page"><h1>{title}</h1><section className="empty-state"><StatusBadge tone="idle">연결 준비 중</StatusBadge><p>이 자료 종류는 아직 볼 수 없어요.</p><Button disabled>아직 사용할 수 없습니다</Button></section></div>
 }
 export function ExperimentsPage() {
-  return <div className="page"><h1>실험</h1><p>실험 생성과 실행 API 준비 중. 판단 기록 비교는 제공된 조건과 예상 및 실제 관측을 확인하며 실험 실행이나 성공 판정을 대신하지 않습니다.</p><Link href="/scheduler/history">판단 기록에서 비교할 두 조건 선택</Link></div>
+  return <div className="page"><h1>실험</h1><section className="empty-state"><StatusBadge tone="idle">연결 준비 중</StatusBadge><p>실험 생성과 실행 API 준비 중. 판단 기록 비교는 제공된 조건과 예상 및 실제 관측을 확인하며 실험 실행이나 성공 판정을 대신하지 않습니다.</p><Button asChild variant="outline"><Link href="/scheduler/history">판단 기록에서 비교할 두 조건 선택</Link></Button></section></div>
 }

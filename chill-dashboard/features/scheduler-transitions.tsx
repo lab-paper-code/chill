@@ -11,9 +11,8 @@ import { safeSource } from "@/lib/source-export"
 import { DataTable } from "@/components/data-table"
 import { DetailsDialog, ReadRegion, SourceExport, SourceJSON } from "@/components/read-region"
 import { HistoryControls, HistoryPaging, useSchedulerHistory, type SchedulerHistoryRow } from "@/features/scheduler-history"
+import { actionKinds as kinds, actionStatuses as statuses } from "@/features/scheduler"
 
-const kinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",membership:"실행 그룹 소속 변경",resize:"인스턴스 교체"}
-const statuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
 const time=(value?:string)=>!value||value.startsWith("0001-")?"제공된 시각 없음":value
 const label=(value:string)=>statuses[value]??value
 
@@ -133,5 +132,5 @@ function CurrentList({id}:{id?:string}) {
 
 export function SchedulerTransitionsPage({id}:{id?:string}) {
   const params=useSearchParams(),history=params.get("view")==="history"||params.has("offset")||params.has("kind")||params.has("at")
-  return <div className="page grid gap-6"><h1>{id?"변경 상세":"변경 진행"}</h1><nav className="toolbar" aria-label="변경 진행 관련 화면"><Link href="/scheduler">현재 운영 판단</Link><Link href="/configuration">운영 설정</Link><Link href="/transitions?view=current" aria-current={!history?"page":undefined}>현재 변경</Link><Link href={historyWindow(params.get("from"),params.get("to"))} aria-current={history?"page":undefined}>구간의 변경 기록</Link></nav>{history?(id?<HistoryRecord id={id}/>:<HistoryList/>):<CurrentList id={id}/>}</div>
+  return <div className="page grid gap-6"><h1>{id?"변경 상세":"변경 진행"}</h1><nav className="subnav" aria-label="변경 진행 관련 화면"><Link href="/scheduler">현재 운영 판단</Link><Link href="/configuration">운영 설정</Link><Link href="/transitions?view=current" aria-current={!history?"page":undefined}>현재 변경</Link><Link href={historyWindow(params.get("from"),params.get("to"))} aria-current={history?"page":undefined}>구간의 변경 기록</Link></nav>{history?(id?<HistoryRecord id={id}/>:<HistoryList/>):<CurrentList id={id}/>}</div>
 }

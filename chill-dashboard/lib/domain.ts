@@ -24,6 +24,11 @@ export type SupportedInput = { executionPath: string; artifact: string; tensors:
 export type WorkloadView = { desired: WorkloadResource; appliedDefinition?: AppliedDefinition; supportedInputs: SupportedInput[]; admission: boolean; readiness: string; reason: string; pending: number; assigned: number; operation?: Operation; observedAt: string }
 export type TensorInput = { name: string; datatype: Datatype; shape: number[]; data: unknown[] }
 
+export const resourceHref = (kind: string, name: string, uid: string, action = "") => `/${kind}/${encodeURIComponent(name)}${action ? `/${action}` : ""}?uid=${encodeURIComponent(uid)}`
+export const sloTarget = (spec: WorkloadSpec) => `${spec.slo.percentile}%의 요청을 ${spec.slo.targetLatency} 안에 처리`
+// Matches serving.Definition.Identity(): uid/generation/modelUID/modelGeneration.
+export const definitionIdentity = (applied: AppliedDefinition) => `${applied.uid}/${applied.generation}/${applied.model.uid}/${applied.model.generation}`
+
 export function workloadSpec(model: string, percentile: string, latency: string): WorkloadSpec {
   const p = Number(percentile)
   if (!percentile.trim() || !Number.isFinite(p) || p <= 0 || p > 100) throw new Error("SLO 백분위는 0 < p ≤ 100 이어야 합니다.")

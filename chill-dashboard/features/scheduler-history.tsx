@@ -12,6 +12,7 @@ import { SnapshotDetails, CandidateDetails, judgmentLabels } from "@/features/sc
 import { SettingChanges } from "@/features/scheduler-settings"
 import { ReadRegion, SourceJSON, SourceExport } from "@/components/read-region"
 import { DataTable } from "@/components/data-table"
+import { SubNav } from "@/components/sub-nav"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -79,11 +80,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
   return <div className="page">
     <h1 ref={heading} tabIndex={-1}>{settingsOnly?"운영 설정 변경 기록":"운영 판단 기록"}</h1>
-    <nav className="toolbar">
-      {settingsOnly&&<Link href="/changes">서비스 변경</Link>}
-      <Link href="/changes?scope=scheduler">운영 설정 변경</Link><Link href="/scheduler">현재 운영 판단</Link>
-      <Link href="/scheduler/power">전력 기록</Link><Link href="/transitions?view=history">변경 동작 기록</Link>
-    </nav>
+    <SubNav label="운영 기록 관련 화면" links={[...(settingsOnly?[["/changes","서비스 변경"] as [string,string]]:[]),["/changes?scope=scheduler","운영 설정 변경"],...(settingsOnly?[]:[["/scheduler/history","운영 판단 기록"] as [string,string]]),["/scheduler","현재 운영 판단"],["/scheduler/power","전력 기록"],["/transitions?view=history","변경 동작 기록"]]}/>
     <HistoryControls history={history}/>
     {!settingsOnly&&<label>현재 가져온 기록에서 종류<select value={filter} onChange={event=>{
       const next=new URLSearchParams(params.toString());next.set("filter",event.target.value);router.replace(`${pathname}?${next}`)

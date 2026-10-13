@@ -7,6 +7,8 @@ import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { BrandMark, FinField } from "@/components/brand"
+import { KeyRound } from "lucide-react"
 
 export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
 export class ApiError extends Error {
@@ -16,6 +18,7 @@ export class ApiError extends Error {
   }
 }
 const Session = React.createContext<{token:string; config:PublicConfig; epoch:number; signals:Set<AbortController>} | null>(null)
+const Account = React.createContext<{open:boolean; setOpen:(open:boolean)=>void; form:React.ReactNode; signOut:()=>void} | null>(null)
 export function useSession() {
   const session = React.useContext(Session)
   if (!session) throw new Error("Dashboard session is unavailable")
@@ -62,33 +65,42 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
     setToken(next)
     setEpoch(value => value+1)
   }
-  const signInForm = <form onSubmit={event => {event.preventDefault(); void changeIdentity(draft.trim())}} className="grid gap-5">
-    <label className="grid gap-2" htmlFor="bearer-token">접속 토큰
+  const signInForm = <form onSubmit={event => {event.preventDefault(); void changeIdentity(draft.trim())}} className="grid gap-4">
+    <label className="grid gap-2 text-sm font-medium" htmlFor="bearer-token">접속 토큰
       <Input id="bearer-token" type="password" autoComplete="off" spellCheck={false} value={draft} onChange={event => setDraft(event.target.value)} placeholder="관리자에게 받은 토큰을 붙여 넣으세요" required />
     </label>
-    <Button type="submit" disabled={!config || !draft.trim()}>{token ? "접속 정보 바꾸기" : "시작하기"}</Button>
+    <Button type="submit" size="lg" disabled={!config || !draft.trim()}><KeyRound />{token ? "접속 정보 바꾸기" : "시작하기"}</Button>
     <p className="text-sm text-muted-foreground">접속 정보는 이 탭에서만 사용해요. 새로고침하면 다시 입력해야 해요.</p>
   </form>
+  // Signed out shows only the sign-in screen; the shell appears after sign-in.
   return <QueryClientProvider client={client}>
-    {!token ? <section className="login-page" aria-label="접속">
-      <span className="eyebrow">CHILL</span><h1>CHILL에 접속하기</h1>
-      <p className="text-muted-foreground">접속 토큰으로 시작해 주세요.</p>
-      {signInForm}
-      {configError && <p role="alert">접속 설정을 불러오지 못했어요. 잠시 후 다시 확인해 주세요.</p>}
-    </section> : <>
-      <section className="auth-bar" aria-label="접속 관리">
-        <span className="text-sm text-muted-foreground">{config?.systemName}</span>
-        <Dialog open={accountOpen} onOpenChange={open => {setAccountOpen(open); if (!open) setDraft("")}}>
-          <DialogTrigger asChild><Button variant="ghost">접속 관리</Button></DialogTrigger>
-          <DialogContent><DialogHeader><DialogTitle>접속 관리</DialogTitle><DialogDescription>다른 접속 정보로 바꾸거나 안전하게 나갈 수 있어요.</DialogDescription></DialogHeader>
-            {signInForm}<Button variant="outline" onClick={() => void changeIdentity("")}>로그아웃</Button>
-            {config && <p className="text-xs text-muted-foreground">대상 {config.systemName} · namespace {config.namespace}</p>}
-          </DialogContent>
-        </Dialog>
+    {!token ? <div className="login">
+      <section className="login-brand" aria-label="CHILL 소개">
+        <span className="flex items-center gap-2.5 text-lg font-bold"><BrandMark className="size-7 text-[#5fc2e8]" />CHILL</span>
+        <div className="relative grid gap-4"><h1>응답 목표를 지키면서 에너지를 덜 쓰는 구성을 찾아요</h1><p>모델과 서비스를 등록하고, 실행 그룹의 실제 구성과 운영 판단이 예상한 에너지를 한곳에서 확인하세요.</p></div>
+        {config ? <div className="login-target relative" aria-label="접속 대상"><span>대상 {config.systemName}</span><span>namespace {config.namespace}</span></div> : <span />}
+        <FinField className="login-fins" />
       </section>
-      {config && <Session.Provider value={{token,config,epoch,signals}}><React.Fragment key={epoch}>{children}</React.Fragment></Session.Provider>}
-    </>}
+      <main className="login-form" id="main-content"><h2>접속하기</h2>{signInForm}{configError && <p role="alert">접속 설정을 불러오지 못했어요. 잠시 후 다시 확인해 주세요.</p>}</main>
+    </div> : config && <Session.Provider value={{token,config,epoch,signals}}>
+      <Account.Provider value={{open:accountOpen,setOpen:open => {setAccountOpen(open); if (!open) setDraft("")},form:signInForm,signOut:() => void changeIdentity("")}}>
+        <React.Fragment key={epoch}>{children}</React.Fragment>
+      </Account.Provider>
+    </Session.Provider>}
   </QueryClientProvider>
+}
+
+export function AccountControl() {
+  const account = React.useContext(Account)
+  const {config} = useSession()
+  if (!account) return null
+  return <Dialog open={account.open} onOpenChange={account.setOpen}>
+    <DialogTrigger asChild><Button variant="outline" size="sm" className="gap-2 rounded-full"><span className="size-2 rounded-full bg-ok" aria-hidden="true" /><span className="max-w-40 truncate">{config.systemName}</span><span className="hidden text-muted-foreground sm:inline">{config.namespace}</span><span className="sr-only">접속 관리</span></Button></DialogTrigger>
+    <DialogContent><DialogHeader><DialogTitle>접속 관리</DialogTitle><DialogDescription>다른 접속 정보로 바꾸거나 안전하게 나갈 수 있어요.</DialogDescription></DialogHeader>
+      <dl className="grid grid-cols-2 gap-x-4 rounded-lg bg-muted p-3 text-sm"><div><dt>대상</dt><dd>{config.systemName}</dd></div><div><dt>namespace</dt><dd>{config.namespace}</dd></div></dl>
+      {account.form}<Button variant="outline" onClick={account.signOut}>로그아웃</Button>
+    </DialogContent>
+  </Dialog>
 }
 
 async function relay(path:string,token:string,signal:AbortSignal,method="GET",body?:unknown,version?:string,timeout?:string):Promise<RelayResponse> {

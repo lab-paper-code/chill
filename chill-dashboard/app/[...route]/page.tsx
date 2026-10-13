@@ -1,10 +1,10 @@
 import { Suspense } from "react"
-import { notFound } from "next/navigation"
+import { notFound, redirect } from "next/navigation"
 import { ManagementPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
 import { ResourcesPage, PoolsPage, PoolPage, MeasurementsPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
-import { SchedulerPage, SchedulerCandidatesPage, SchedulerLoadPage } from "@/features/scheduler"
+import { SchedulerPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
 import { SchedulerHistoryPage } from "@/features/scheduler-history"
 import { SchedulerTransitionsPage } from "@/features/scheduler-transitions"
@@ -15,6 +15,11 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   const search = await searchParams
   const create = route[1] === "new" && !search.uid
   let page:React.ReactNode
+  if(route[0]==="scheduler"&&route.length===2&&(route[1]==="candidates"||route[1]==="load")) {
+    // Merged into the decision workspace; old links keep their window and service selection.
+    const query=new URLSearchParams(Object.entries(search).flatMap(([key,value])=>(Array.isArray(value)?value:value===undefined?[]:[value]).map(item=>[key,item])))
+    redirect(`/scheduler${query.size?`?${query}`:""}#${route[1]}`)
+  }
   if ((route[0]==="models" || route[0]==="workloads") && route.length<=2) page=<ManagementPage key={`${route.join("/")}/${search.uid ?? ""}`} kind={route[0]} name={create ? undefined : route[1]} newResource={create} />
   else if((route[0]==="models"||route[0]==="workloads")&&route.length===3&&route[2]==="edit")page=<ManagementPage key={`${route.join("/")}/${search.uid ?? ""}`} kind={route[0]} name={route[1]} editResource />
   else if(route[0]==="workloads"&&route.length===3&&route[2]==="infer") page=<InferencePage name={route[1]} />
@@ -26,8 +31,6 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if(route[0]==="measurements"&&route.length===4)page=<MeasurementDetail kind={route[1]} namespace={route[2]} name={route[3]}/>
   else if(route[0]==="observations"&&route.length===1)page=<ObservationsPage/>
   else if(route[0]==="scheduler"&&route.length===1)page=<SchedulerPage/>
-  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="candidates")page=<SchedulerCandidatesPage/>
-  else if(route[0]==="scheduler"&&route.length===2&&route[1]==="load")page=<SchedulerLoadPage/>
   else if(route[0]==="scheduler"&&route.length===2&&route[1]==="history")page=<SchedulerHistoryPage/>
   else if(route[0]==="scheduler"&&route.length===2&&route[1]==="power")page=<SchedulerPowerPage/>
   else if(route[0]==="scheduler"&&route.length===2&&route[1]==="compare")page=<SchedulerComparePage/>

@@ -6,6 +6,23 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button"
 import { safeSource } from "@/lib/source-export"
 import { stringifySchedulerJSON } from "@/lib/scheduler"
+import { Braces, CircleCheck, CircleDashed, CircleX, Download, Info, RefreshCw, TriangleAlert } from "lucide-react"
+
+export type Tone = "ok" | "warn" | "fail" | "info" | "idle"
+const tones: Record<string, Tone> = {
+  Ready: "ok", Applied: "ok", Completed: "ok", True: "ok", completed: "ok", response_finished: "ok",
+  Waiting: "warn", Degraded: "warn", MissingEvidence: "warn", MissingRuntime: "warn", NativeNotReady: "warn", Draining: "warn", False: "warn", deferred: "warn", timeout: "warn", incomplete: "warn",
+  Failed: "fail", error: "fail", rejected: "fail", delivery_failed: "fail",
+  Accepted: "info", Applying: "info", Deleting: "info", Registration: "info", Update: "info", Delete: "info", pending: "info", assigned: "info", queued: "info", running: "info", returning: "info", request_received: "info",
+}
+const toneIcons = {ok: CircleCheck, warn: TriangleAlert, fail: CircleX, info: Info, idle: CircleDashed}
+export const toneOf = (value?: string): Tone => value ? tones[value] ?? "idle" : "idle"
+// Tone is never the only signal: every badge carries an icon and a text label.
+export function StatusBadge({ value, tone, children }: { value?: string; tone?: Tone; children?: React.ReactNode }) {
+  const resolved = tone ?? toneOf(value)
+  const Icon = toneIcons[resolved]
+  return <span className="badge" data-tone={resolved}><Icon aria-hidden="true" />{children ?? statusLabel(value)}</span>
+}
 
 const errorLabels: Record<number, string> = {
   401: "접속 정보를 다시 확인해 주세요.", 403: "이 정보를 볼 권한이 없어요.",
@@ -28,41 +45,40 @@ export function statusLabel(value?: string): string {
   }
   return value ? labels[value] ?? value : "정보 없음"
 }
-export function DetailsDialog({ label, title, children, description }: {
-  label: string; title: string; children: React.ReactNode; description?: string
+export function DetailsDialog({ label, title, children, description, icon }: {
+  label: string; title: string; children: React.ReactNode; description?: string; icon?: React.ReactNode
 }) {
-  return <Dialog><DialogTrigger asChild><Button type="button" variant="ghost" className="detail-trigger self-start">{label}</Button></DialogTrigger>
+  return <Dialog><DialogTrigger asChild><Button type="button" variant="ghost" size="sm" className="detail-trigger self-start justify-self-start">{icon}{label}</Button></DialogTrigger>
     <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
       <DialogHeader><DialogTitle>{title}</DialogTitle>{description ? <DialogDescription>{description}</DialogDescription> : <DialogDescription className="sr-only">{title}의 상세 정보</DialogDescription>}</DialogHeader>
       <div className="min-w-0 space-y-4">{children}</div>
     </DialogContent>
   </Dialog>
 }
-export function ReadRegion({title,query,children,inlineSource=false}: {title:string;query:{data?:unknown;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown};children:React.ReactNode;inlineSource?:boolean}) {
+export function ReadRegion({title,query,children,inlineSource=false,hero=false,id}: {title:string;query:{data?:unknown;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown};children:React.ReactNode;inlineSource?:boolean;hero?:boolean;id?:string}) {
   const {token} = useSession()
   const denied = query.error?.status === 401 || query.error?.status === 403
   const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data ? query.error.data.code : undefined
-  return <section className="read-region" aria-label={title}>
-    <div className="read-region-heading"><h2>{title}</h2><div className="toolbar">
-      {query.dataUpdatedAt > 0 && <span className="text-xs text-muted-foreground">확인 {new Date(query.dataUpdatedAt).toLocaleTimeString("ko-KR", {timeZone:"UTC",hour:"2-digit",minute:"2-digit"})} UTC</span>}
-      <Button type="button" variant="ghost" onClick={() => void query.refetch()} disabled={!token || query.isFetching}>새로고침</Button>
+  return <section id={id} className={hero ? "read-region judgment" : "read-region"} aria-label={title}>
+    <div className="read-region-heading"><h2>{title}</h2><div className="read-region-meta">
+      {query.isFetching && query.data !== undefined ? <span role="status">새로운 정보를 확인하고 있어요</span> : query.dataUpdatedAt > 0 && <span>확인 {new Date(query.dataUpdatedAt).toLocaleTimeString("ko-KR", {timeZone:"UTC",hour:"2-digit",minute:"2-digit"})} UTC</span>}
+      <Button type="button" variant="ghost" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />새로고침</Button>
     </div></div>
-    {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <p role="status">불러오고 있어요.</p> : null}
-    {query.isFetching && query.data !== undefined && <p role="status" className="text-sm text-muted-foreground">새로운 정보를 확인하고 있어요.</p>}
-    {query.error && <div role="alert" className="notice"><p>{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} />{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
+    {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <div className="skeleton" role="status"><span className="sr-only">불러오고 있어요.</span><span /><span /><span /></div> : null}
+    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} />{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
     {token && !denied && query.data !== undefined && children}
   </section>
 }
 export function SourceJSON({value,title="원본 자료 보기",inline=false}:{value:unknown;title?:string;inline?:boolean}) {
   const body=<pre className="source-json">{stringifySchedulerJSON(safeSource(value),2)}</pre>
-  return inline?<details><summary>{title}</summary>{body}</details>:<DetailsDialog label={title} title={title}>{body}</DetailsDialog>
+  return inline?<details><summary>{title}</summary>{body}</details>:<DetailsDialog label={title} title={title} icon={<Braces aria-hidden="true" />}>{body}</DetailsDialog>
 }
 export function SourceExport({value,filename}:{value:unknown;filename:string}) {
-  return <Button variant="outline" onClick={() => {
+  return <Button variant="outline" size="sm" className="self-start" onClick={() => {
     const url = URL.createObjectURL(new Blob([stringifySchedulerJSON(safeSource(value),2)],{type:"application/json"}))
     const link = document.createElement("a"); link.href=url; link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_"); link.click(); URL.revokeObjectURL(url)
-  }}>자료 다운로드</Button>
+  }}><Download aria-hidden="true" />자료 다운로드</Button>
 }
 export function PendingFeature({title,description}:{title:string;description:string}) {
-  return <section className="empty-state"><span className="status-pill">연결 준비 중</span><h2>{title}</h2><p>{description}</p><Button disabled>아직 사용할 수 없어요</Button></section>
+  return <section className="empty-state"><StatusBadge tone="idle">연결 준비 중</StatusBadge><h2>{title}</h2><p>{description}</p><Button disabled>아직 사용할 수 없어요</Button></section>
 }

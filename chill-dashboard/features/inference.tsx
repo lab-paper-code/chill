@@ -69,7 +69,7 @@ function InferenceForm({ name, view, wrongUID }: { name: string; view: WorkloadV
     { enabled: !!requestID && !!submittedAt && !!observationTo && !mutation.isPending },
   )
   const completion = observation.data?.requests.find(event => event.requestID === requestID && event.workloadUID === workloadUID && event.kind === "response_finished")
-  return <section className="mx-auto grid w-full max-w-2xl gap-6">
+  return <section className="grid w-full max-w-2xl gap-6">
     {!view.admission && <div role="status" className="grid gap-2 rounded-xl bg-muted p-5"><h2 className="font-semibold">추론을 시작하려면 준비가 필요해요</h2><p className="text-sm">{view.supportedInputs.length ? "지금은 새 요청을 받을 수 없어요. 준비 상태를 확인해 주세요." : "이 모델의 실행 조건에 맞는 측정 결과가 아직 없어요. 측정이 완료되고 서비스가 준비되면 입력을 선택할 수 있어요."}</p><Link className="text-sm" href="/measurements">측정 결과 확인</Link></div>}
     <div className="flex flex-wrap gap-3"><DetailsDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></DetailsDialog>{contract && <DetailsDialog label="선택한 입력 자세히" title={`${contract.artifact} 입력과 측정 근거`}><p>아래 크기는 한 번의 입력 크기예요. 여러 요청을 묶는 축은 보내지 않아요.</p><SourceJSON title="지원 입력과 측정 원본" value={contract} /><Link href="/measurements">연결된 측정 결과 확인</Link></DetailsDialog>}</div>
     <form className="grid gap-5" onSubmit={handleSubmit}>
