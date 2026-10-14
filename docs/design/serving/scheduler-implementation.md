@@ -214,6 +214,12 @@ node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
 baseline 소비를 **대체**하고, 실제 serving execution의 incremental energy만 더한다.
+비서빙 Pod의 effective CPU request는 Node별 millicore 합계를 먼저 구한 뒤
+한 번만 올림하여 quota 수량 예산으로 기록하고, effective memory request도 합산한다.
+이 quota 합계는 OS affinity/exclusivity 관측의 증거가 아니다. 명시적 exclusive CPU
+예약이 전체 millicore 합계를 덮지 못하면 Node는 ready가 아니며, 비서빙 Pod의
+물리 GPU 소유권 미관측도 계속 차단한다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
+
 전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
 서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.
 

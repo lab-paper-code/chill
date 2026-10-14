@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -184,5 +185,78 @@ func TestPodBudgetAccountsForInitSidecarsAndOverhead(t *testing.T) {
 	cpu, memory, gpu := podBudget(pod)
 	if cpu != 2300 || memory != 330 || gpu {
 		t.Fatal("Kubernetes effective request budget miscounted", cpu, memory, gpu)
+	}
+}
+
+func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cpu        string
+		reserved   []int
+		memory     uint64
+		gpu        bool
+		wantReady  bool
+		wantCPU    int
+		wantMemory bool
+	}{
+		{name: "fractional requests fit", cpu: "10m", reserved: []int{0}, memory: 1000, wantReady: true, wantCPU: 1},
+		{name: "real CPU overbudget", cpu: "110m", reserved: []int{0}, memory: 1000, wantCPU: 2},
+		{name: "missing exclusive reservation", cpu: "10m", memory: 1000, wantCPU: 1},
+		{name: "real memory overbudget", cpu: "10m", reserved: []int{0}, memory: 99, wantReady: true, wantCPU: 1, wantMemory: true},
+		{name: "unknown GPU ownership", cpu: "10m", reserved: []int{0}, memory: 1000, gpu: true, wantCPU: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at := time.Unix(100, 0)
+			node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
+			sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true, CPUs: []int{0, 1}, Reserved: serving.SchedulerAllocation{CPUs: tc.reserved}, MemoryBytes: tc.memory, ObservedAt: at}
+			pods := &core.PodList{}
+			for range 10 {
+				requests := core.ResourceList{core.ResourceCPU: resource.MustParse(tc.cpu), core.ResourceMemory: resource.MustParse("10")}
+				if tc.gpu {
+					requests[core.ResourceName("nvidia.com/gpu")] = resource.MustParse("1")
+				}
+				pods.Items = append(pods.Items, core.Pod{Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Resources: core.ResourceRequirements{Requests: requests}}}}})
+			}
+			// An actual native instance is not part of the non-serving sum.
+			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: firstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: firstfloorContainerName, ContainerID: "container"}}}})
+			physical := map[string]serving.InstanceState{"native-pod/container": {ID: "native-pod/container", Node: sn.Node, Profile: "profile", Native: &native.State{}}}
+			snapshot := serving.SchedulerSnapshot{At: at}
+			captureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
+			if sn.Ready != tc.wantReady || len(sn.NonServing) != 1 || len(snapshot.Instances) != 1 {
+				t.Fatal("incorrect readiness or physical classification", sn, snapshot.Instances)
+			}
+			allocation := sn.NonServing[0]
+			if allocation.CPUCount != tc.wantCPU || allocation.MemoryBytes != 100 || allocation.CPUReserved != (len(tc.reserved) > 0) {
+				t.Fatal("non-serving requests were not aggregated exactly", allocation)
+			}
+			snapshot.Nodes = []serving.SchedulerNode{sn}
+			settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 2}
+			// Isolate the captured non-serving budget in the actual consumer.
+			snapshot.Instances = nil
+			decision := serving.EvaluateScheduler(settings, snapshot)
+			cpuInfeasible, memoryInfeasible, unknownAffinity := false, false, false
+			for _, reason := range decision.Keep.Reasons {
+				cpuInfeasible = cpuInfeasible || strings.HasPrefix(reason, "CPUBudgetInfeasible:")
+				memoryInfeasible = memoryInfeasible || strings.HasPrefix(reason, "MemoryBudgetInfeasible:")
+				unknownAffinity = unknownAffinity || strings.HasPrefix(reason, "UnknownExclusiveCPUAffinity:")
+			}
+			if cpuInfeasible != (len(tc.reserved) > 0 && tc.wantCPU > len(tc.reserved)) || memoryInfeasible != tc.wantMemory || unknownAffinity != (len(tc.reserved) == 0) {
+				t.Fatal("consumer miscounted the captured budget", decision.Keep.Reasons)
+			}
+		})
+	}
+}
+
+func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
+	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
+	sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true, MemoryBytes: math.MaxUint64}
+	pods := &core.PodList{}
+	for range 3 {
+		pods.Items = append(pods.Items, core.Pod{Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceMemory: *resource.NewQuantity(math.MaxInt64, resource.BinarySI)}}}}}})
+	}
+	snapshot := serving.SchedulerSnapshot{}
+	captureNodePods(&snapshot, &sn, node, pods, nil, nil)
+	if sn.Ready {
+		t.Fatal("overflowing effective memory requests became an available node")
 	}
 }

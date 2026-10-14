@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -410,6 +411,7 @@ func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.S
 }
 func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var nonServingMilliCPU int64
+	var nonServingMemory uint64
 	for j := range pods.Items {
 		p := &pods.Items[j]
 		if p.Spec.NodeName != n.Name || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
@@ -456,10 +458,18 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
 		}
 		nonServingMilliCPU += milliCPU
-		// Quota requests are a count budget; affinity remains unknown. The
-		// explicit exclusive reservation must cover the entire non-serving sum.
-		allocation := serving.SchedulerAllocation{CPUCount: int((milliCPU + 999) / 1000), CPUReserved: len(sn.Reserved.CPUs) > 0, MemoryBytes: uint64(memory)}
-		sn.NonServing = append(sn.NonServing, allocation)
+		if math.MaxUint64-nonServingMemory < uint64(memory) {
+			sn.Ready = false
+			sn.Reason = "non-serving memory budget overflow"
+			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
+			return
+		}
+		nonServingMemory += uint64(memory)
+	}
+	// Quota requests are an aggregate count budget, not observed affinity.
+	// Round once; the explicit reservation must cover the entire milliCPU sum.
+	if nonServingMilliCPU > 0 || nonServingMemory > 0 {
+		sn.NonServing = append(sn.NonServing, serving.SchedulerAllocation{CPUCount: int((nonServingMilliCPU + 999) / 1000), CPUReserved: len(sn.Reserved.CPUs) > 0, MemoryBytes: nonServingMemory})
 	}
 	if nonServingMilliCPU > int64(len(sn.Reserved.CPUs))*1000 {
 		sn.Ready = false
