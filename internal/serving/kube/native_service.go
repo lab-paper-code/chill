@@ -19,13 +19,14 @@ import (
 const (
 	instancePodUIDLabel       = "edge.dacs.io/serving-pod-uid"
 	edgeMeshServiceProxyLabel = "service.edgemesh.kubeedge.io/service-proxy-name"
+	instanceServicePrefix     = "chill-executor-"
 )
 
 func instanceService(pod *core.Pod) *core.Service {
 	return &core.Service{
 		ObjectMeta: meta.ObjectMeta{
 			Namespace: pod.Namespace,
-			Name:      "chill-native-" + string(pod.UID),
+			Name:      instanceServicePrefix + string(pod.UID),
 			Labels: map[string]string{
 				"app.kubernetes.io/component": servingInstanceComponent,
 				instancePodUIDLabel:           string(pod.UID),
@@ -54,7 +55,7 @@ func (o *Operations) ensureInstanceService(ctx context.Context, pod *core.Pod) e
 		bound.Labels[instancePodUIDLabel] = string(pod.UID)
 	}
 	services := o.kube.CoreV1().Services(pod.Namespace)
-	existing, err := services.Get(ctx, "chill-native-"+string(pod.UID), meta.GetOptions{})
+	existing, err := services.Get(ctx, instanceServicePrefix+string(pod.UID), meta.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -86,7 +87,7 @@ func (o *Operations) ensureInstanceService(ctx context.Context, pod *core.Pod) e
 	}
 	_, err = services.Create(ctx, instanceService(pod), meta.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
-		existing, err = services.Get(ctx, "chill-native-"+string(pod.UID), meta.GetOptions{})
+		existing, err = services.Get(ctx, instanceServicePrefix+string(pod.UID), meta.GetOptions{})
 		if err == nil {
 			err = validateInstanceService(pod, existing)
 			if err == nil && existing.DeletionTimestamp != nil {
@@ -98,7 +99,7 @@ func (o *Operations) ensureInstanceService(ctx context.Context, pod *core.Pod) e
 }
 
 func validateInstanceServiceOwner(pod *core.Pod, service *core.Service) error {
-	if service.Namespace != pod.Namespace || service.Name != "chill-native-"+string(pod.UID) || len(service.OwnerReferences) != 1 {
+	if service.Namespace != pod.Namespace || service.Name != instanceServicePrefix+string(pod.UID) || len(service.OwnerReferences) != 1 {
 		return errors.New("native Service is not owned by this physical Pod")
 	}
 	owner := service.OwnerReferences[0]
@@ -144,7 +145,7 @@ func validateInstanceService(pod *core.Pod, service *core.Service) error {
 }
 
 func nativeInstanceService(ctx context.Context, kube kubernetes.Interface, pod *core.Pod) (*core.Service, error) {
-	service, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, "chill-native-"+string(pod.UID), meta.GetOptions{})
+	service, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, instanceServicePrefix+string(pod.UID), meta.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +184,7 @@ func nativeInstanceEndpoint(ctx context.Context, kube kubernetes.Interface, pod 
 }
 
 func deleteInstanceService(ctx context.Context, kube kubernetes.Interface, pod *core.Pod) error {
-	service, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, "chill-native-"+string(pod.UID), meta.GetOptions{})
+	service, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, instanceServicePrefix+string(pod.UID), meta.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

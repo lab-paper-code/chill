@@ -272,7 +272,7 @@ Choosing a backend and reaching it pull in opposite directions: calling a shared
 Service hands the choice to EdgeMesh, which applies no weight, and calling a pod
 address directly does not resolve across the tunnel.
 
-Each actual serving Pod gets `chill-native-<Pod UID>`, a ClusterIP Service owned
+Each actual serving Pod gets `chill-executor-<Pod UID>`, a ClusterIP Service owned
 by that Pod. Its selector is only `edge.dacs.io/serving-pod-uid=<actual Pod UID>`,
 installed after Kubernetes assigns the UID; its sole TCP port is named `http`,
 8080, targeting the isolated firstfloor container's named `http` port. The Service
@@ -281,7 +281,7 @@ existing EdgeMesh proxy filter. One endpoint leaves EdgeMesh nothing to select:
 CHILL chooses the physical instance, EdgeMesh transports the request.
 
 ```
-entry point ── physical-instance choice ──▶ chill-native-<Pod UID>:8080
+entry point ── physical-instance choice ──▶ chill-executor-<Pod UID>:8080
                                                     │  EdgeMesh tunnel
                                                     ▼
                                        that Pod's firstfloor container
@@ -289,6 +289,11 @@ entry point ── physical-instance choice ──▶ chill-native-<Pod UID>:808
 
 The decision is CHILL's and the transport is EdgeMesh's, which is the division
 that already governs power mode.
+
+This is an internal execution-instance transport, not a user-facing inference
+service. Workload names describe the inference service and its SLO role; model
+names identify the model artifact, not firstfloor or another execution engine.
+The executor Service name is shared by all Workloads using that physical Pod.
 
 목적지는 실제 Pod UID와 container identity를 구분한다. 생성 동작은 실제 UID label과
 소유권·selector·port가 일치하는 Service만 생성/재사용한다. 같은 이름의 다른 binding은
