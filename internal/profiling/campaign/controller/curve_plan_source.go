@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 
@@ -235,10 +234,15 @@ func (p *CurvePlanProjector) resolveCurveArtifactContracts(
 	return capability, conversion, nil
 }
 
-// Resolve recomputes the selected plan and records it immutably. When the
-// object already exists, the stored plan remains authoritative and is returned
-// with its observed reference only after it agrees semantically with the
-// recomputed plan.
+// Resolve returns the plan recorded for the campaign. The stored plan is read
+// and decoded once and is never compared with current facts. Only when no plan
+// is stored yet is the plan projected once and recorded immutably.
+//
+// The curve plan carries no actuation policy, so transition material comes
+// from the campaign's own frozen state: the owned NodeActuation when one
+// exists, no transition when Runs exist without one (they are only created
+// after the transition), and otherwise, before either exists, the current
+// projection of the one transition the campaign still has to create.
 func (s *CurvePlanSource) Resolve(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -249,12 +253,140 @@ func (s *CurvePlanSource) Resolve(
 	if parent.UID == "" {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, errors.New("BatchEnergyOptimization UID is required")
 	}
-	plan, transition, err := s.projector.Project(ctx, parent)
+	location := s.location(parent.UID)
+	stored, reference, err := s.readStored(ctx, location)
+	if errors.Is(err, evidencestore.ErrNotFound) {
+		plan, transition, projectErr := s.projector.Project(ctx, parent)
+		if projectErr != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, projectErr
+		}
+		recorded, recordedReference, recordErr := s.record(ctx, location, plan)
+		if recordErr != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, recordErr
+		}
+		transition, bindErr := bindTransitionToPlan(recorded, transition)
+		if bindErr != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, bindErr
+		}
+		return recorded, recordedReference, transition, nil
+	}
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
 	}
-	recorded, reference, err := s.record(ctx, parent.UID, plan)
-	return recorded, reference, transition, err
+	transition, err := s.recoverTransition(ctx, parent, stored)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
+	}
+	return stored, reference, transition, nil
+}
+
+func (s *CurvePlanSource) location(parentUID types.UID) evidencestore.ObjectLocation {
+	return evidencestore.ObjectLocation{
+		Store: s.options.Store,
+		Key:   fmt.Sprintf("batch-energy-optimizations/%s/curve-plan.json", parentUID),
+	}
+}
+
+// readStored returns the stored plan and its observed reference. A missing
+// object is returned as evidencestore.ErrNotFound; any other failure,
+// including undecodable stored evidence, is a distinct error.
+func (s *CurvePlanSource) readStored(
+	ctx context.Context,
+	location evidencestore.ObjectLocation,
+) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, error) {
+	storedBytes, err := readStoredObject(
+		ctx, s.store, location, s.options.MaxObjectBytes, "curve-plan object",
+	)
+	if errors.Is(err, evidencestore.ErrNotFound) {
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, err
+	}
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("read existing curve plan: %w", err)
+	}
+	stored, err := profilederivation.DecodeCurvePlan(storedBytes)
+	if err != nil {
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing curve plan: %w", err)
+	}
+	return stored, batchenergyoptimization.StoredObjectReference{
+		Store: location.Store, Key: location.Key,
+		SchemaVersion: stored.SchemaVersion(), Size: int64(len(storedBytes)),
+	}, nil
+}
+
+// recoverTransition returns the transition material for a campaign whose plan
+// is already frozen. An owned NodeActuation is the frozen authority; owned Runs
+// without one need no transition. Only before either exists is the one
+// transition prepared from the current policy for the frozen plan's first batch.
+// Every material is bound to the frozen plan's Node UID.
+func (s *CurvePlanSource) recoverTransition(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	plan profilederivation.CurvePlan,
+) (*TransitionMaterial, error) {
+	matching := []client.ListOption{
+		client.InNamespace(parent.Namespace),
+		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
+	}
+	transitions := &edgev1alpha1.NodeActuationList{}
+	if err := s.projector.reader.List(ctx, transitions, matching...); err != nil {
+		return nil, fmt.Errorf("list BatchEnergyOptimization NodeActuations: %w", err)
+	}
+	if len(transitions.Items) > 1 {
+		return nil, errors.New("a BatchEnergyOptimization cannot own more than one transition")
+	}
+	if len(transitions.Items) == 1 {
+		transition := &transitions.Items[0]
+		if !controlledByParent(parent, transition) {
+			return nil, fmt.Errorf("NodeActuation %q is not controller-owned by this BatchEnergyOptimization", transition.Name)
+		}
+		spec := transition.Spec
+		return bindTransitionToPlan(plan, &TransitionMaterial{
+			Node: spec.Node, DeviceClass: spec.DeviceClass, PowerMode: spec.PowerMode,
+			Actuator: spec.Actuator, PolicyName: spec.PolicyName,
+			SettlingDurationSeconds:     spec.SettlingDurationSeconds,
+			MaxActuationDurationSeconds: spec.MaxActuationDurationSeconds,
+		})
+	}
+	runs := &edgev1alpha1.ProfilingRunList{}
+	if err := s.projector.reader.List(ctx, runs, matching...); err != nil {
+		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
+	}
+	for index := range runs.Items {
+		if !controlledByParent(parent, &runs.Items[index]) {
+			return nil, fmt.Errorf("ProfilingRun %q is not controller-owned by this BatchEnergyOptimization", runs.Items[index].Name)
+		}
+	}
+	if len(runs.Items) > 0 {
+		return nil, nil
+	}
+	batches := plan.PlannedBatchSizes()
+	if len(batches) == 0 {
+		return nil, errors.New("frozen curve plan has no planned batch sizes")
+	}
+	active, err := s.projector.prepare(ctx, parent, batchenergyoptimization.Measurement{
+		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
+		Batch:        batches[0],
+	})
+	if err != nil {
+		return nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
+	}
+	material, err := projectTransitionMaterial(active)
+	if err != nil {
+		return nil, fmt.Errorf("project campaign transition: %w", err)
+	}
+	return bindTransitionToPlan(plan, material)
+}
+
+// bindTransitionToPlan rejects transition material aimed at a Node other than
+// the one the frozen plan was measured on.
+func bindTransitionToPlan(
+	plan profilederivation.CurvePlan,
+	material *TransitionMaterial,
+) (*TransitionMaterial, error) {
+	if material != nil && material.Node.UID != plan.Shared().NodeUID {
+		return nil, errors.New("transition Node UID does not match the frozen curve plan")
+	}
+	return material, nil
 }
 
 func resolvePlannedBatchSizes(
@@ -364,7 +496,7 @@ func resolveConversion(
 
 func (s *CurvePlanSource) record(
 	ctx context.Context,
-	parentUID types.UID,
+	location evidencestore.ObjectLocation,
 	plan profilederivation.CurvePlan,
 ) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, error) {
 	payload, err := plan.CanonicalJSON()
@@ -372,9 +504,7 @@ func (s *CurvePlanSource) record(
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode curve plan: %w", err)
 	}
 	identity := evidencestore.ObjectIdentity{
-		Store: s.options.Store,
-		Key:   fmt.Sprintf("batch-energy-optimizations/%s/curve-plan.json", parentUID),
-		Size:  int64(len(payload)),
+		Store: location.Store, Key: location.Key, Size: int64(len(payload)),
 	}
 	reference := batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
@@ -391,23 +521,8 @@ func (s *CurvePlanSource) record(
 		return plan, reference, nil
 	}
 
-	storedBytes, err := readStoredObject(
-		ctx, s.store, identity.Location(), s.options.MaxObjectBytes, "curve-plan object",
-	)
-	if err != nil {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("read existing curve plan: %w", err)
-	}
-	stored, err := profilederivation.DecodeCurvePlan(storedBytes)
-	if err != nil {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing curve plan: %w", err)
-	}
-	if !reflect.DeepEqual(stored.Shared(), plan.Shared()) {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, errors.New("stored curve plan disagrees with the recomputed plan")
-	}
-	return stored, batchenergyoptimization.StoredObjectReference{
-		Store: identity.Store, Key: identity.Key,
-		SchemaVersion: stored.SchemaVersion(), Size: int64(len(storedBytes)),
-	}, nil
+	// A concurrent writer won the create; its plan is authoritative.
+	return s.readStored(ctx, identity.Location())
 }
 
 func readStoredObject(

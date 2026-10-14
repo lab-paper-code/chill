@@ -78,6 +78,9 @@
 13. 중간 보고·의도 확인은 진행 상태를 설명하는 작업이지 최종 목표의 완료가 아니다.
     보고 뒤 같은 설명을 반복하지 않고 승인된 다음 핵심 작업을 실행한다. GPU 실행 환경
     구축·프로파일 수집도 FULL 제어와 실제 Dashboard 연결을 위한 의존성으로만 다룬다.
+14. 토큰 집약적인 조사·구현·리뷰는 작은 계약으로 에이전트에 맡긴다. 부모 세션은
+    세부 파일 전체를 반복해서 읽지 않고 인터페이스·위험·실행 증거만 확인한다.
+    한 공급자의 실행 실패를 큰 작업 전체를 직접 떠안는 이유로 삼지 않는다.
 
 ## 실행 경계
 
@@ -182,8 +185,21 @@ GPU 측정 성공이나 FULL 제어 검증이 아니다. focused `go test ./inte
 Dashboard `pnpm typecheck && pnpm lint`, 두 image build는 통과했다.
 profiler ConfigMap의 image를 `7771c693..`으로 바꿔 실제 rollout했다. Deployment만
 바꾼 첫 시도는 operator가 선언대로 되돌렸으며, Helm values에는 아직 반영되지 않았다.
-이번 `make lint`는 통과했지만 `make test`는 기존 timeout 응답 테스트가 기대한 504 대신
-408/RequestCanceled를 받은 것으로 실패했다(`artifact://898`). 이 실패를 숨기지 않는다.
+첫 `make lint`는 통과했지만 `make test`는 timeout 응답 테스트가 기대한 504 대신
+408/RequestCanceled를 받은 것으로 실패했다(`artifact://898`). 비어 있거나 이미 소비한
+request body의 transport read deadline이 작업 timeout과 경합하는 원인을 수정했다.
+실제 TCP GET/POST 회귀와 통합 후 `make lint && make test`는 통과했다(`artifact://950`).
+Claude 에이전트의 고정 계획 수정·독립 리뷰·owner/Node UID 보완을 통합했다.
+실제 profiler `4663d8d4..`로 rollout 후, 설정 변경 때문에 Failed가 됐던 기존 GPU
+캠페인 두 개는 각각 기존 9 trial·stored result를 유지하며 Complete로 복구됐다.
+새 Genesis 프로파일링이 아니라 저장된 근거의 상태 복구다. 근거:
+`/tmp/chill-stored-plan-controller-before-fix.json`,
+`/tmp/chill-stored-plan-controller-after-fix.json`.
+Orin image `99f5ddfa..`는 실제 GPU 할당·UUID·설치 package 조회와 cgroup memory.current
+관측을 통과했다. 실제 4개의 시각별 sample과 관측 최대값을 보존했고 테스트 Pod는 삭제했다.
+근거: `/tmp/chill-orin-window-memory-actual-image-inspection.json`.
+이는 kernel high-water가 아닌 측정 창의 sampled maximum이며 짧은 spike를 놓칠 수 있다.
+계획·메모리·Job 네트워크 통합 후 정식 GPU 캠페인 성공은 아직 확인하지 않았다.
 다른 작업을 중단하거나 전력 안전 허용 범위를 넓히지 않는다. baseline-fleet/fastdds가
 있으므로 전력모드 변경은 보류한다. GPU 기대 효율은 가설이며 실측으로 검증한다.
 목표는 그대로 실측 근거 → SLO 우선 판단 → 실제 FULL 적용 → 실제 Dashboard 종단 연결이다.

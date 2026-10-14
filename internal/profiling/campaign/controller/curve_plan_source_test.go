@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
+func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	const storeName = "evidence"
 
 	parent := testParent()
@@ -41,7 +41,7 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatalf("construct curve-plan source: %v", err)
 	}
 
-	first, firstReference, transition, err := source.Resolve(context.Background(), parent)
+	first, _, transition, err := source.Resolve(context.Background(), parent)
 	if err != nil {
 		t.Fatalf("record curve plan: %v", err)
 	}
@@ -56,15 +56,10 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatalf("recorded curve plan = %+v", shared)
 	}
 	wantKey := "batch-energy-optimizations/parent-uid/curve-plan.json"
-	if store.puts != 1 || store.opens != 0 || store.lastIdentity.Key != wantKey {
+	if store.puts != 1 || store.opens != 1 || store.lastIdentity.Key != wantKey {
 		t.Fatalf("first record calls = puts %d, opens %d, identity %+v", store.puts, store.opens, store.lastIdentity)
 	}
 	storedPayload := store.objects[store.lastIdentity.Location()]
-	if firstReference.Store != storeName || firstReference.Key != wantKey ||
-		firstReference.SchemaVersion != first.SchemaVersion() ||
-		firstReference.Size != int64(len(storedPayload)) {
-		t.Fatalf("created curve-plan reference = %+v, payload bytes = %d", firstReference, len(storedPayload))
-	}
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
 		preparer.requests[0].Measurement.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode ||
 		preparer.requests[1].Measurement.Batch != 1 ||
@@ -72,73 +67,216 @@ func TestCurvePlanSourceRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatalf("projected preparation requests = %+v", preparer.requests)
 	}
 
-	// Recovery returns the stored object's observed size, not the recomputed
-	// canonical length.
+	// Recovery returns the stored plan and its observed size without
+	// projecting current facts, even when the live projector is unavailable
+	// and unrelated facts changed.
 	storedPayload = append([]byte(" \n"), storedPayload...)
 	store.objects[store.lastIdentity.Location()] = storedPayload
-	_, recoveredReference, _, err := source.Resolve(context.Background(), parent)
+	modelReader.err = errors.New("model reader unavailable")
+	modelReader.runs = []edgev1alpha1.ProfilingRun{{ObjectMeta: ownedByCampaign(parent)}}
+	preparer.nodeUID = "replacement-node-uid"
+	recovered, recoveredReference, recoveredTransition, err := source.Resolve(context.Background(), parent)
 	if err != nil {
 		t.Fatalf("recover existing curve plan: %v", err)
 	}
-	if store.puts != 2 || store.opens != 1 || recoveredReference.Store != storeName ||
-		recoveredReference.Key != wantKey ||
+	if recoveredTransition != nil || !reflect.DeepEqual(recovered.Shared(), first.Shared()) ||
+		store.puts != 1 || store.opens != 2 || len(preparer.requests) != 2 ||
+		recoveredReference.Store != storeName || recoveredReference.Key != wantKey ||
 		recoveredReference.SchemaVersion != first.SchemaVersion() ||
-		recoveredReference.Size != int64(len(storedPayload)) ||
-		recoveredReference.Size == firstReference.Size {
-		t.Fatalf("recovery = reference %+v, puts %d, opens %d", recoveredReference, store.puts, store.opens)
-	}
-
-	preparer.nodeUID = "replacement-node-uid"
-	if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
-		!strings.Contains(err.Error(), "stored curve plan disagrees") {
-		t.Fatalf("recomputed plan drift error = %v", err)
+		recoveredReference.Size != int64(len(storedPayload)) {
+		t.Fatalf("recovery = reference %+v, puts %d, opens %d, prepares %d",
+			recoveredReference, store.puts, store.opens, len(preparer.requests))
 	}
 }
 
-func TestCurvePlanSourceRejectsCompleteTensorIdentityDrift(t *testing.T) {
-	for _, field := range []string{"name", "datatype", "shape"} {
-		t.Run(field, func(t *testing.T) {
-			parent := testParent()
-			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
-			reportBytes, report := curvePlanCandidateReport(t, parent)
-			reader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
-			resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}
-			preparer := &fakeCurvePlanPreparer{
-				report: report, reportBytes: reportBytes, nodeUID: "node-uid",
-			}
-			source, err := NewCurvePlanSource(
-				reader, resolver, preparer, newFakeCurvePlanStore(),
-				CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			frozen, _, _, err := source.Resolve(context.Background(), parent)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := frozen.Shared().Tensor
-			switch field {
-			case "name":
-				reader.model.Spec.Artifacts[0].Input.Tensors[0].Name = "other-input"
-				report.ArtifactCapability.Tensors[0].Name = "other-input"
-			case "datatype":
-				reader.model.Spec.Artifacts[0].Input.Tensors[0].Datatype = "INT32"
-				report.ArtifactCapability.Tensors[0].Datatype = "INT32"
-			case "shape":
-				reader.model.Spec.Artifacts[0].Input.Tensors[0].SampleShape[0]++
-				report.ArtifactCapability.Tensors[0].SampleShape[0]++
-			}
-			resolver.reportBytes = encodeCurvePlanCandidateReport(t, report)
-			preparer.report = report
-			if !reflect.DeepEqual(frozen.Shared().Tensor, want) {
-				t.Fatal("catalog mutation changed the frozen tensor contract")
-			}
+func TestCurvePlanSourceRecoversTransitionFromOwnedNodeActuation(t *testing.T) {
+	parent := testParent()
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
+	preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+	store := newFakeCurvePlanStore()
+	plan, _, err := (&CurvePlanProjector{
+		reader:   modelReader,
+		resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer: preparer,
+	}).Project(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := plan.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.objects[evidencestore.ObjectLocation{
+		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
+	}] = payload
+	source, err := NewCurvePlanSource(
+		modelReader, &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := len(preparer.requests)
+	modelReader.err = errors.New("model reader unavailable")
+	modelReader.transitions = []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(parent), Spec: edgev1alpha1.NodeActuationSpec{
+		Node:        edgev1alpha1.ProfilingRunObjectReference{Name: parent.Spec.State.TargetNode, UID: "node-uid"},
+		DeviceClass: parent.Spec.State.Candidate.DeviceClass, PowerMode: parent.Spec.State.Candidate.PowerMode,
+		PolicyName: "policy", SettlingDurationSeconds: 5, MaxActuationDurationSeconds: 60,
+	}}}
+
+	_, _, transition, err := source.Resolve(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition == nil || transition.Node.UID != plan.Shared().NodeUID || transition.PolicyName != "policy" ||
+		transition.SettlingDurationSeconds != 5 || transition.MaxActuationDurationSeconds != 60 ||
+		len(preparer.requests) != prepared || store.puts != 0 {
+		t.Fatalf("recovered transition = %+v, puts %d", transition, store.puts)
+	}
+}
+
+func ownedByCampaign(parent *edgev1alpha1.BatchEnergyOptimization) metav1.ObjectMeta {
+	return metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(
+		parent, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"),
+	)}}
+}
+
+func TestCurvePlanSourceRecoveryRequiresOwnershipAndFrozenNode(t *testing.T) {
+	parent := testParent()
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
+	preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+	store := newFakeCurvePlanStore()
+	plan, _, err := (&CurvePlanProjector{
+		reader:   modelReader,
+		resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer: preparer,
+	}).Project(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := plan.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.objects[evidencestore.ObjectLocation{
+		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
+	}] = payload
+	source, err := NewCurvePlanSource(
+		modelReader, &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := parent.DeepCopy()
+	foreign.UID = "stale-parent-uid"
+	transitionSpec := func(nodeUID string) edgev1alpha1.NodeActuationSpec {
+		return edgev1alpha1.NodeActuationSpec{
+			Node:        edgev1alpha1.ProfilingRunObjectReference{Name: parent.Spec.State.TargetNode, UID: nodeUID},
+			DeviceClass: parent.Spec.State.Candidate.DeviceClass, PowerMode: parent.Spec.State.Candidate.PowerMode,
+			PolicyName: "policy", SettlingDurationSeconds: 5, MaxActuationDurationSeconds: 60,
+		}
+	}
+
+	tests := []struct {
+		name        string
+		transitions []edgev1alpha1.NodeActuation
+		runs        []edgev1alpha1.ProfilingRun
+		want        string
+	}{
+		{
+			name:        "unowned transition",
+			transitions: []edgev1alpha1.NodeActuation{{Spec: transitionSpec(preparer.nodeUID)}},
+			want:        "NodeActuation",
+		},
+		{
+			name:        "transition owned by stale parent UID",
+			transitions: []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(foreign), Spec: transitionSpec(preparer.nodeUID)}},
+			want:        "NodeActuation",
+		},
+		{
+			name: "stale predecessor Run",
+			runs: []edgev1alpha1.ProfilingRun{{ObjectMeta: ownedByCampaign(foreign)}},
+			want: "ProfilingRun",
+		},
+		{
+			name:        "owned transition Node UID drift",
+			transitions: []edgev1alpha1.NodeActuation{{ObjectMeta: ownedByCampaign(parent), Spec: transitionSpec("other-node-uid")}},
+			want:        "does not match the frozen curve plan",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			modelReader.transitions, modelReader.runs = test.transitions, test.runs
 			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
-				!strings.Contains(err.Error(), "stored curve plan disagrees") {
-				t.Fatalf("tensor identity drift error = %v", err)
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+
+	// Before any child exists, only the active transition is prepared for the
+	// frozen plan's first batch; the model is not read and no plan is rewritten.
+	modelReader.transitions, modelReader.runs = nil, nil
+	modelReader.err = errors.New("model reader unavailable")
+	prepared := len(preparer.requests)
+	if _, _, _, err := source.Resolve(context.Background(), parent); err != nil {
+		t.Fatalf("resolve before children exist: %v", err)
+	}
+	if len(preparer.requests) != prepared+1 ||
+		preparer.requests[prepared].Measurement.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode ||
+		preparer.requests[prepared].Measurement.Batch != plan.PlannedBatchSizes()[0] || store.puts != 0 {
+		t.Fatalf("pre-child preparation = %+v, puts %d", preparer.requests[prepared:], store.puts)
+	}
+}
+
+func TestBindTransitionToPlanRejectsNodeUIDMismatch(t *testing.T) {
+	parent := testParent()
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	plan, _, err := (&CurvePlanProjector{
+		reader:   &fakeCurvePlanModelReader{model: curvePlanModel(report)},
+		resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
+		preparer: &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"},
+	}).Project(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := &TransitionMaterial{Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "other-node-uid"}}
+	if _, err := bindTransitionToPlan(plan, material); err == nil {
+		t.Fatal("transition for a different Node UID was accepted")
+	}
+	material.Node.UID = "node-uid"
+	if got, err := bindTransitionToPlan(plan, material); err != nil || got != material {
+		t.Fatalf("matching transition = %v, %v", got, err)
+	}
+}
+
+func TestCurvePlanSourceRejectsInvalidStoredPlanWithoutProjecting(t *testing.T) {
+	parent := testParent()
+	reportBytes, report := curvePlanCandidateReport(t, parent)
+	preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+	store := newFakeCurvePlanStore()
+	store.objects[evidencestore.ObjectLocation{
+		Store: "evidence", Key: "batch-energy-optimizations/parent-uid/curve-plan.json",
+	}] = []byte(`{"schemaVersion":"unknown","shared":{}}`)
+	source, err := NewCurvePlanSource(
+		&fakeCurvePlanModelReader{model: curvePlanModel(report)},
+		&fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
+		CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err = source.Resolve(context.Background(), parent)
+	if err == nil || errors.Is(err, evidencestore.ErrNotFound) ||
+		!strings.Contains(err.Error(), "decode existing curve plan") {
+		t.Fatalf("invalid stored plan error = %v", err)
+	}
+	if store.puts != 0 || len(preparer.requests) != 0 {
+		t.Fatalf("invalid stored plan wrote %d objects and prepared %d Runs", store.puts, len(preparer.requests))
 	}
 }
 
@@ -442,9 +580,11 @@ func curvePlanModel(report profilingrun.CandidateReport) *edgev1alpha1.ModelSpec
 }
 
 type fakeCurvePlanModelReader struct {
-	model *edgev1alpha1.ModelSpec
-	calls *[]string
-	err   error
+	model       *edgev1alpha1.ModelSpec
+	calls       *[]string
+	err         error
+	transitions []edgev1alpha1.NodeActuation
+	runs        []edgev1alpha1.ProfilingRun
 }
 
 func (r *fakeCurvePlanModelReader) Get(
@@ -470,12 +610,20 @@ func (r *fakeCurvePlanModelReader) Get(
 	return nil
 }
 
-func (*fakeCurvePlanModelReader) List(
-	context.Context,
-	client.ObjectList,
-	...client.ListOption,
+func (r *fakeCurvePlanModelReader) List(
+	_ context.Context,
+	list client.ObjectList,
+	_ ...client.ListOption,
 ) error {
-	return errors.New("unexpected List call")
+	switch typed := list.(type) {
+	case *edgev1alpha1.NodeActuationList:
+		typed.Items = r.transitions
+	case *edgev1alpha1.ProfilingRunList:
+		typed.Items = r.runs
+	default:
+		return fmt.Errorf("unexpected List type %T", list)
+	}
+	return nil
 }
 
 type fakeCurvePlanCandidateResolver struct {
@@ -556,10 +704,28 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		},
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
+	if config.State.PowerMode != profilingrun.FixedPowerMode {
+		config.Actuation = &profilingrun.ActuationContract{
+			PowerMode: config.State.PowerMode,
+			Actuator: profilingrun.ActuatorTarget{
+				Kind:           profilingrun.ActuatorKindJetsonNVPModel,
+				JetsonNVPModel: &profilingrun.JetsonNVPModelTarget{ID: 2},
+			},
+			PolicyName: "policy",
+		}
+	}
 	if err := config.Validate(); err != nil {
 		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared config fixture: %w", err)
 	}
-	return profiler.PreparedRun{RunConfig: config}, nil
+	prepared := profiler.PreparedRun{RunConfig: config}
+	if config.Actuation != nil {
+		policy := actuatedPreparedRun(testParent()).ActuationPolicy
+		policy.Policy.Name = config.Actuation.PolicyName
+		policy.Policy.DeviceClass = config.State.DeviceClass
+		policy.Policy.PowerMode = config.State.PowerMode
+		prepared.ActuationPolicy = policy
+	}
+	return prepared, nil
 }
 
 type fakeCurvePlanStore struct {

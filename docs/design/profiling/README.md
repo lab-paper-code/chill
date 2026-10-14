@@ -31,6 +31,11 @@ Campaign curve-plan resolution failures are exposed as `Failed` with
 `MeasurementComplete=False`, reason `CurvePlanResolutionFailed`, and the actual
 resolver error. The controller still returns the error for retry; a later
 successful resolution resumes measurement rather than making this status sticky.
+Recorded curve plans are read and decoded before consulting current facts;
+configuration changes do not re-project or compare a campaign's frozen plan.
+Transition recovery uses exact campaign-owned immutable operations and binds
+their Node UID to the recorded plan. Before its first operation exists, only
+that operation's active preparation is resolved, not a replacement curve plan.
 Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the

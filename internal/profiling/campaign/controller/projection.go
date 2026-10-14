@@ -61,10 +61,7 @@ func projectOwnedTransition(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	transition *edgev1alpha1.NodeActuation,
 ) (batchenergyoptimization.Transition, error) {
-	owner := metav1.GetControllerOf(transition)
-	if owner == nil || owner.Kind != "BatchEnergyOptimization" ||
-		owner.APIVersion != edgev1alpha1.GroupVersion.String() ||
-		string(owner.UID) != string(parent.UID) {
+	if !controlledByParent(parent, transition) {
 		return batchenergyoptimization.Transition{}, errors.New("transition is not controller-owned by this BatchEnergyOptimization")
 	}
 	if transition.Name != TransitionName(parent.Name) || transition.Namespace != parent.Namespace ||
@@ -113,13 +110,19 @@ func projectOwnedTrial(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	run *edgev1alpha1.ProfilingRun,
 ) (batchenergyoptimization.Trial, error) {
-	owner := metav1.GetControllerOf(run)
-	if owner == nil || owner.Kind != "BatchEnergyOptimization" ||
-		owner.APIVersion != edgev1alpha1.GroupVersion.String() ||
-		string(owner.UID) != string(parent.UID) {
+	if !controlledByParent(parent, run) {
 		return batchenergyoptimization.Trial{}, errors.New("Run is not controller-owned by this BatchEnergyOptimization")
 	}
 	return projectTrial(parent.Name, run)
+}
+
+// controlledByParent reports whether the parent's exact UID is the object's
+// controller owner.
+func controlledByParent(parent *edgev1alpha1.BatchEnergyOptimization, object metav1.Object) bool {
+	owner := metav1.GetControllerOf(object)
+	return owner != nil && owner.Kind == "BatchEnergyOptimization" &&
+		owner.APIVersion == edgev1alpha1.GroupVersion.String() &&
+		parent.UID != "" && owner.UID == parent.UID
 }
 
 func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenergyoptimization.Trial, error) {
