@@ -174,8 +174,10 @@ The following values are delivery bindings, not scientific Run inputs:
 
 The Profiler receives the owning `ChillSystem` name at startup. At Job creation
 it exact-reads that system's enabled Evidence Store reference and configuration,
-derives the internal Service FQDN and immutable credentials Secret reference,
-and never reads the credential bytes. It requires the current ChillSystem
+exact-reads the system-owned Evidence Store Service and binds its allocated
+ClusterIP and S3 port (not cluster DNS, which hostNetwork Jobs cannot resolve),
+derives the immutable credentials Secret reference, and never reads the
+credential bytes. It requires the current ChillSystem
 availability condition and a completed, operator-owned bootstrap Job attesting
 the exact configuration ConfigMap `resourceVersion`. It does not reconcile or
 directly probe the storage operand.

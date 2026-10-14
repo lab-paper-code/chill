@@ -48,6 +48,10 @@ establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its declared state.
 The host-actuation DaemonSet uses host networking with `ClusterFirstWithHostNet`
 DNS so its verified Kubernetes API client does not depend on edge Pod-CIDR routing.
+Measurement Jobs use the same node network and DNS policy for their workload
+observer. The local firstfloor listener allocates its loopback port dynamically;
+this does not change serving-instance networking. Evidence delivery uses the
+owned Service's allocated ClusterIP, not edge cluster DNS or a new external port.
 Plan 10 is implemented and live-verified for the exact `jetsono` /
 `mobilenet-v2-050` / `MAXN` and `MODE_15W` state pair. Two independent current
 idle-baseline results provide the target-state `P_idle` values. A bounded Gate

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -118,9 +120,18 @@ func (r *KubernetesEvidenceStoreResolver) Resolve(ctx context.Context) (Evidence
 	}
 
 	serviceName := component.EvidenceStoreServiceName(system.Name)
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Namespace: r.options.Namespace, Name: serviceName}
+	if err := r.reader.Get(ctx, serviceKey, service); err != nil {
+		return EvidenceStoreBinding{}, fmt.Errorf("get Evidence Store Service %s: %w", serviceKey, err)
+	}
+	host, err := requireEvidenceStoreServiceAddress(system, service)
+	if err != nil {
+		return EvidenceStoreBinding{}, err
+	}
 	return EvidenceStoreBinding{
 		Store:                 serviceName,
-		Endpoint:              fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, r.options.Namespace, component.EvidenceStoreS3Port),
+		Endpoint:              "http://" + net.JoinHostPort(host, strconv.Itoa(int(component.EvidenceStoreS3Port))),
 		Bucket:                config.Bucket,
 		Region:                config.Region,
 		CredentialsSecretName: component.EvidenceStoreCredentialsSecretName(system.Name),
@@ -137,6 +148,28 @@ func requireEvidenceStoreAvailable(system *edgev1alpha1.ChillSystem) error {
 		return errors.New("owning ChillSystem Evidence Store is not available for the current generation")
 	}
 	return nil
+}
+
+// requireEvidenceStoreServiceAddress returns the allocated ClusterIP of the
+// current system-owned Service that exposes the S3 TCP port.
+func requireEvidenceStoreServiceAddress(system *edgev1alpha1.ChillSystem, service *corev1.Service) (string, error) {
+	if !metav1.IsControlledBy(service, system) || !service.DeletionTimestamp.IsZero() {
+		return "", errors.New("Evidence Store Service ownership or lifecycle is invalid")
+	}
+	ip := service.Spec.ClusterIP
+	if ip == corev1.ClusterIPNone || net.ParseIP(ip) == nil {
+		return "", errors.New("Evidence Store Service has no allocated valid ClusterIP")
+	}
+	for _, port := range service.Spec.Ports {
+		protocol := port.Protocol
+		if protocol == "" {
+			protocol = corev1.ProtocolTCP
+		}
+		if port.Port == component.EvidenceStoreS3Port && protocol == corev1.ProtocolTCP {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("Evidence Store Service does not expose TCP port %d", component.EvidenceStoreS3Port)
 }
 
 func requireCurrentBootstrap(

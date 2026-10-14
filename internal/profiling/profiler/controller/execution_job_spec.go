@@ -112,6 +112,8 @@ func buildExecutionJob(
 					AutomountServiceAccountToken: ptr.To(false),
 					ServiceAccountName:           options.WorkloadObserverServiceAccountName,
 					RestartPolicy:                corev1.RestartPolicyNever,
+					HostNetwork:                  true,
+					DNSPolicy:                    corev1.DNSClusterFirstWithHostNet,
 					NodeSelector: map[string]string{
 						corev1.LabelHostname: prepared.RunConfig.TargetNode.Name,
 					},

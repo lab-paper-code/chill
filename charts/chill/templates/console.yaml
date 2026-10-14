@@ -32,6 +32,12 @@ rules:
     resourceNames:
       - {{ printf "%s-evidence-store-credentials" (include "chill.systemName" .) | quote }}
     verbs: ["get"]
+  # The Evidence Store resolver reads the allocated Service address.
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames:
+      - {{ printf "%s-evidence-store" (include "chill.systemName" .) | quote }}
+    verbs: ["get"]
   # Preflight reports a missing Profiler fact source as a reason, so the
   # Console must be allowed to attempt that read in every deployment profile.
   - apiGroups: [""]

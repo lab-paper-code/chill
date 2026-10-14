@@ -199,7 +199,24 @@ Orin image `99f5ddfa..`는 실제 GPU 할당·UUID·설치 package 조회와 cgr
 관측을 통과했다. 실제 4개의 시각별 sample과 관측 최대값을 보존했고 테스트 Pod는 삭제했다.
 근거: `/tmp/chill-orin-window-memory-actual-image-inspection.json`.
 이는 kernel high-water가 아닌 측정 창의 sampled maximum이며 짧은 spike를 놓칠 수 있다.
-계획·메모리·Job 네트워크 통합 후 정식 GPU 캠페인 성공은 아직 확인하지 않았다.
+캠페인 UID `22cbf028..`은 GPU loaded-idle 10초·전력 12/12·workload 연속 관측에
+성공한 뒤 S3 commit에서 실패했다. 실제 probe는 Store DNS 해석 실패, 기존 Service
+ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했다
+(`/tmp/chill-orin-evidence-actual-route-probe.json`). 에이전트의 공통 binding 수정은
+새 노출·fallback 없이 기존 Service API의 할당 IP를 사용한다. profiler/console에는
+자기 namespace의 그 Service 하나에 get만 허용했고 실제 can-i를 확인했다.
+현재 profiler `1b190380..`, console `905240dd..`를 rollout하고 동일 25W 조건의 자기
+캠페인 UID `9946bf74-4bf1-4c6e-b5f6-ab8f975633f4`를 새로 실행했다.
+기본/Profiler Helm render와 `make lint && make test`는 통과했다(`artifact://980`,
+`artifact://978`). Orin CPU1·batch1/2의 정식 9 trial은 Complete/ResultWritten으로
+완료했고 실제 Dashboard API에서 저장 결과와 CUDAExecutionProvider의 64회 실행·
+12/12 wall-power 관측을 확인했다. 근거:
+`/tmp/chill-orin-q1-completed-dashboard-result.json`,
+`/tmp/chill-orin-q1-actual-gpu-passport.json`.
+CPU2·affinity[2,3]의 다음 캠페인 UID `072cd67a-2f19-4efc-a6a1-6ab059ccce7f`를
+순차 실행 중이다. profile의 scheduler Catalog 채택과 FULL은 아직 완료 처리하지 않았다.
+`make gopls-check`는 PATH에 저장소 bin을 포함한 실행으로 통과했다. 최초 실패는
+그 PATH에 `rg`가 없었던 환경 문제이며 코드/검증을 우회하지 않았다.
 다른 작업을 중단하거나 전력 안전 허용 범위를 넓히지 않는다. baseline-fleet/fastdds가
 있으므로 전력모드 변경은 보류한다. GPU 기대 효율은 가설이며 실측으로 검증한다.
 목표는 그대로 실측 근거 → SLO 우선 판단 → 실제 FULL 적용 → 실제 Dashboard 종단 연결이다.

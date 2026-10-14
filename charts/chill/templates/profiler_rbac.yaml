@@ -93,6 +93,14 @@ rules:
     verbs:
       - get
   - apiGroups:
+      - ""
+    resources:
+      - services
+    resourceNames:
+      - {{ printf "%s-evidence-store" (include "chill.systemName" .) | quote }}
+    verbs:
+      - get
+  - apiGroups:
       - batch
     resources:
       - jobs
