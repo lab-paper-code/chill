@@ -277,7 +277,8 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 				}
 				if err == nil {
 					result.Progress = append(result.Progress, "routing applied")
-					err = o.RemoveInstance(ctx, operation.Node, operation.Instance)
+					result.DrainNative = map[string]native.State{}
+					err = o.removeInstance(ctx, operation.Node, operation.Instance, result.DrainNative)
 				}
 			}
 		default:

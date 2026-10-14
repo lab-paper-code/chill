@@ -57,8 +57,8 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 		t.Fatal("multiple effects relabeled as one atomic preparation")
 	}
 }
-func TestRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) {
-	result := OperationResult{Before: OperationState{Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}}, Actual: OperationState{Native: map[string]native.State{}}}
+func TestResizeRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) {
+	result := OperationResult{Operation: Operation{Kind: operationResize}, Before: OperationState{Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}}, Actual: OperationState{Native: map[string]native.State{"replacement": {Ready: true}}}}
 	if err := operationZeroInference(result); err == nil {
 		t.Fatal("removed process disappearance invented zero-inference proof")
 	}

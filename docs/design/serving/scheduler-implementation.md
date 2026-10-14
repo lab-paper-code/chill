@@ -155,6 +155,10 @@ measurement command가 호출한다. measurement owner는 first successful power
 Raw record에 before/target/actual state, 시작/완료, 실패·부분 상태, samples/failures,
 metric source·구간·설정·raw identity를 보존한다. powerwindow로 wall joules를 적분하며
 짧은 동작의 충분하지 않은 샘플은 `Insufficient`로 남긴다.
+`remove`와 `resize`는 동일한 제거 경로에서 삭제 전 SDK native counter를
+`DrainNative`에 보존한다. 사라진 actor는 이 실제 drain 관측과 시작 counter가
+일치해야 zero-inference wall cost로 인정하며, 삭제나 빈 queue만으로 추론 부재를
+증명하지 않는다. resize cost는 기존 prepare/remove primitive 측정의 조합이다.
 
 현재 NodeActuation와 transition-cost의 독립 read-back·raw directed trial은 그대로
 재사용한다. 준비·제거·idle state 측정은 해당 실제 동작/상태를 측정하는 별도 raw
