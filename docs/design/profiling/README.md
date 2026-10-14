@@ -31,6 +31,8 @@ Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the
 newest successful transition on its target Node confirms its declared state.
+The host-actuation DaemonSet uses host networking with `ClusterFirstWithHostNet`
+DNS so its verified Kubernetes API client does not depend on edge Pod-CIDR routing.
 Plan 10 is implemented and live-verified for the exact `jetsono` /
 `mobilenet-v2-050` / `MAXN` and `MODE_15W` state pair. Two independent current
 idle-baseline results provide the target-state `P_idle` values. A bounded Gate

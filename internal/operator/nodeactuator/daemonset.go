@@ -50,6 +50,8 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 					// mode, and reboot(2) restarts the Node only from the host PID
 					// namespace. Outside it, it would end this Pod instead.
 					HostPID:            true,
+					HostNetwork:        true,
+					DNSPolicy:          corev1.DNSClusterFirstWithHostNet,
 					ServiceAccountName: config.ServiceAccountName,
 					NodeSelector:       config.NodeSelector, Affinity: config.Affinity,
 					Tolerations: config.Tolerations, SecurityContext: config.PodSecurityContext,
