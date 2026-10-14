@@ -32,6 +32,7 @@ const (
 	cpuExecutionProvider                  = "CPUExecutionProvider"
 	memoryPeakCgroupV1                    = "cgroup-v1-memory.max_usage_in_bytes:runtime-container-lifetime"
 	memoryPeakCgroupV2                    = "cgroup-v2-memory.peak:runtime-container-lifetime"
+	memorySampledCgroupV2                 = "cgroup-v2-memory.current-samples:measurement-window"
 	FixedPowerMode                        = "fixed"
 	ActuatorKindJetsonNVPModel            = "JetsonNVPModel"
 	ActuatorKindNvidiaLockedGPUClock      = "NvidiaLockedGPUClock"

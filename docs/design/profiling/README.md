@@ -36,6 +36,12 @@ configuration changes do not re-project or compare a campaign's frozen plan.
 Transition recovery uses exact campaign-owned immutable operations and binds
 their Node UID to the recorded plan. Before its first operation exists, only
 that operation's active preparation is resolved, not a replacement curve plan.
+On an active cgroup-v2 kernel without `memory.peak`, firstfloor retains
+timestamped `memory.current` samples inside the active or loaded-idle window.
+The frozen metric interval is the sampling scheduling target; actual cadence
+is visible in the timestamps. The retained maximum is not a kernel high-water
+mark or an absolute memory bound and can miss short spikes. Kernels exposing
+their high-water counter retain that distinct lifetime source.
 Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the

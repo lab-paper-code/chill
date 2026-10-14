@@ -33,6 +33,7 @@ type IdleRuntimeResult struct {
 	Inputs                       []modelcompat.InputTensor  `json:"inputs"`
 	MemoryBytes                  uint64                     `json:"memoryBytes,omitempty"`
 	MemorySource                 string                     `json:"memorySource,omitempty"`
+	MemorySamples                []MemorySample             `json:"memorySamples,omitempty"`
 	ModelLoadCompletedAt         string                     `json:"modelLoadCompletedAt"`
 	SettlingStartedAt            string                     `json:"settlingStartedAt"`
 	SettlingCompletedAt          string                     `json:"settlingCompletedAt"`
@@ -141,9 +142,12 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 		return errors.New("idle actual CPU affinity differs from requested frozen CPU IDs")
 	}
 	if IsSupportedFirstfloorRunConfig(config) {
-		if result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) ||
-			result.DerivedContract.Provider != result.Provider {
-			return errors.New("idle firstfloor memory or derived provider evidence mismatch")
+		if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
+			result.MeasurementWindow); err != nil {
+			return err
+		}
+		if result.DerivedContract.Provider != result.Provider {
+			return errors.New("idle firstfloor derived provider evidence mismatch")
 		}
 		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
 			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {

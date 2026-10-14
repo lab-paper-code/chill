@@ -11,6 +11,7 @@ import platform
 import stat
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -511,6 +512,66 @@ def read_required_text(path: Path, name: str) -> str:
     return value
 
 
+MEMORY_CURRENT_SOURCE = "cgroup-v2-memory.current-samples:measurement-window"
+
+
+class MemorySampler:
+    """Timestamped whole-container memory.current samples inside one measurement window.
+
+    Used only where the kernel has no memory.peak; the result is the observed maximum of
+    the retained samples, never a kernel high-water mark. The interval is only a scheduling
+    target: the sampled maximum can miss spikes between samples, and the actual cadence is
+    the observed gaps between the retained sample timestamps.
+    """
+
+    def __init__(self, interval_milliseconds: int, root: Path = CGROUP_ROOT):
+        self.interval = interval_milliseconds / 1000.0
+        self.interval_milliseconds = interval_milliseconds
+        self.path = root / "memory.current"
+        self.samples: list[dict[str, Any]] = []
+        self.error: ContractError | None = None
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+
+    def sample(self) -> None:
+        try:
+            value = int(read_required_text(self.path, "cgroup memory current"))
+        except ValueError as error:
+            raise ContractError("cgroup memory current is malformed") from error
+        if value < 1:
+            raise ContractError("cgroup memory current must be positive")
+        self.samples.append({"at": now(), "bytes": value})
+
+    def loop(self) -> None:
+        try:
+            while not self.stopped.wait(self.interval):
+                self.sample()
+        except ContractError as error:
+            self.error = error
+
+    def start(self) -> None:
+        self.sample()
+        self.thread.start()
+
+    def close(self) -> None:
+        """Stop and join the sampler thread; safe on any exit path, before or after start."""
+        self.stopped.set()
+        if self.thread.ident is not None:
+            self.thread.join()
+
+    def stop(self) -> dict[str, Any]:
+        """Take the closing sample; call before the window end timestamp is taken."""
+        self.close()
+        if self.error is not None:
+            raise self.error
+        self.sample()
+        return {
+            "memoryBytes": max(item["bytes"] for item in self.samples),
+            "memorySource": MEMORY_CURRENT_SOURCE,
+            "memorySamples": self.samples,
+        }
+
+
 def wait_for_signal(path: Path, timeout_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
     while True:
@@ -841,6 +902,7 @@ def execute_idle(
     cpuset: str,
     model_load_completed_at: str,
     expected_provider: str = "CPUExecutionProvider",
+    memory_sampler: MemorySampler | None = None,
 ) -> dict[str, Any]:
     run_config = request["runConfig"]
     state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
@@ -870,6 +932,8 @@ def execute_idle(
     process_before = time.process_time()
     measurement_started_at = now()
     monotonic_started = time.monotonic()
+    if memory_sampler is not None:
+        memory_sampler.start()
     duration = measurement["durationSeconds"]
     while True:
         remaining = duration - (time.monotonic() - monotonic_started)
@@ -877,6 +941,7 @@ def execute_idle(
             break
         time.sleep(min(remaining, 0.1))
     measurement_elapsed = time.monotonic() - monotonic_started
+    memory = memory_sampler.stop() if memory_sampler is not None else {}
     measurement_ended_at = now()
     providers_at_end = session.get_providers()
     model_resident_at_end = bool(
@@ -918,6 +983,7 @@ def execute_idle(
             stat_after,
         ),
         "derivedExecutionContract": derived_contract(run_config),
+        **memory,
     }
     log(
         "result",
@@ -994,6 +1060,7 @@ def execute_loaded(
     before_measurement: Any = None,
     warmup_already_completed: bool = False,
     result_provider: str | None = None,
+    memory_sampler: MemorySampler | None = None,
 ) -> dict[str, Any]:
     """Measure a loaded CPU session; startup and warm-up stay outside the window."""
     run_config = request["runConfig"]
@@ -1034,6 +1101,8 @@ def execute_loaded(
     measurement_started_at = now()
     repetition_started_at = measurement_started_at
     monotonic_started = time.monotonic()
+    if memory_sampler is not None:
+        memory_sampler.start()
     samples: list[float] = []
     try:
         while True:
@@ -1052,6 +1121,7 @@ def execute_loaded(
     except Exception as error:
         raise ContractError(f"execute {state['runtimeFamily']} measurement: {error}") from error
     measurement_elapsed = time.monotonic() - monotonic_started
+    memory = memory_sampler.stop() if memory_sampler is not None else {}
     repetition_ended_at = now()
     measurement_ended_at = repetition_ended_at
     publish_immutable(Path(request["measurementEndPath"]), b"signal\n")
@@ -1119,6 +1189,7 @@ def execute_loaded(
         ),
         "power": None,
         "energyPerRequest": None,
+        **memory,
     }
     log(
         "result",

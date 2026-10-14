@@ -89,6 +89,15 @@ def memory_peak(root: Path = common.CGROUP_ROOT) -> tuple[int, str]:
     return peak, source + ":runtime-container-lifetime"
 
 
+def memory_sampler(run: dict[str, Any], root: Path = common.CGROUP_ROOT) -> common.MemorySampler | None:
+    """Prefer the kernel high-water mark; a v2 kernel without memory.peak is sampled in the window."""
+    if (root / "cpu.max").is_file() and not (root / "memory.peak").is_file():
+        interval = common.require_integer(run["metrics"]["intervalMilliseconds"], "metrics intervalMilliseconds", 1)
+        return common.MemorySampler(interval, root)
+    memory_peak(root)
+    return None
+
+
 def positive_ms(value: Any, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise common.ContractError(f"{name} must contain positive finite milliseconds")
@@ -324,7 +333,17 @@ def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, A
         raise common.ContractError("actual architecture differs from frozen Node")
     common.apply_cpu_affinity(run)
     cpu_max, affinity, cpuset = common.validate_cpu_contract(run)
-    memory_peak()
+    sampler = memory_sampler(run)
+    try:
+        return execute_sampled(request, numpy, workspace, run, model, architecture, cpu_max, affinity, cpuset, sampler)
+    finally:
+        if sampler is not None:
+            sampler.close()
+
+
+def execute_sampled(request: dict[str, Any], numpy: Any, workspace: Path, run: dict[str, Any], model: Path,
+                    architecture: str, cpu_max: Any, affinity: Any, cpuset: Any,
+                    sampler: common.MemorySampler | None) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="firstfloor-", dir=workspace) as directory:
         config_path = Path(directory) / "worker.json"
         delivery_path = Path(directory) / "delivery.json"
@@ -352,7 +371,8 @@ def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, A
             if measurement["workloadMode"] == common.IDLE_WORKLOAD:
                 session.baseline = session.counts()
                 result = common.execute_idle(request, actual["runtimeVersion"], session, actual.get("availableProviders", []),
-                                             architecture, cpu_max, affinity, cpuset, loaded_at, PROVIDERS[run["state"]["backend"]])
+                                             architecture, cpu_max, affinity, cpuset, loaded_at, PROVIDERS[run["state"]["backend"]],
+                                             memory_sampler=sampler)
                 executions = 0
             else:
                 feeds = common.generate_inputs(numpy, run["delivery"]["artifactCapability"]["tensors"],
@@ -361,7 +381,8 @@ def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, A
                 result = common.execute_loaded(request, session, numpy, actual["runtimeVersion"], actual.get("availableProviders", []),
                                                architecture, cpu_max, affinity, cpuset, feeds,
                                                session.begin_measurement, warmup_already_completed=True,
-                                               result_provider=PROVIDERS[run["state"]["backend"]])
+                                               result_provider=PROVIDERS[run["state"]["backend"]],
+                                               memory_sampler=sampler)
                 executions = result["inferenceCount"]
                 if len(session.samples) != executions or len(result["repetitionResults"][0]["latencyMs"]) != executions:
                     raise common.ContractError("native/client timing samples are not aligned")
@@ -383,7 +404,8 @@ def execute(request: dict[str, Any], numpy: Any, workspace: Path) -> dict[str, A
                                      "deadlinePolicy": deadline_policy(run["state"]["firstfloor"]),
                                      "executionCount": executions, "inferenceCount": executions * measurement["batch"],
                                      "batchExecutionCounts": {str(measurement["batch"]): executions} if executions else {}}
-            result["memoryBytes"], result["memorySource"] = memory_peak()
+            if sampler is None:
+                result["memoryBytes"], result["memorySource"] = memory_peak()
             result["derivedExecutionContract"] = common.derived_contract(run, PROVIDERS[run["state"]["backend"]])
             if run["state"]["backend"] == "rknnlite":
                 facts = actual["rknn"]

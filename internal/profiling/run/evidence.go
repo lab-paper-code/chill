@@ -56,8 +56,11 @@ type RuntimeResult struct {
 	// memory.max_usage_in_bytes) since runtime container creation, including
 	// server, backend, worker, and page cache.
 	// Zero is absent evidence, never artifact size or summed process peaks.
+	// On a kernel without memory.peak, MemoryBytes is instead the maximum of the
+	// retained whole-container memory.current samples inside the measurement window.
 	MemoryBytes              uint64             `json:"memoryBytes,omitempty"`
 	MemorySource             string             `json:"memorySource,omitempty"`
+	MemorySamples            []MemorySample     `json:"memorySamples,omitempty"`
 	MeasurementIterations    int                `json:"measurementIterations"`
 	TargetDurationSeconds    *float64           `json:"targetDurationSecondsPerRepetition"`
 	Latency                  map[string]float64 `json:"latencyMs"`
@@ -287,8 +290,9 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 		return errors.New("runtime actual CPU affinity differs from requested frozen CPU IDs")
 	}
 	if IsSupportedFirstfloorRunConfig(config) {
-		if result.MemoryBytes == 0 || !validRuntimeMemorySource(result.MemorySource) {
-			return errors.New("firstfloor cgroup lifetime memory evidence is missing")
+		if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
+			result.MeasurementWindow); err != nil {
+			return err
 		}
 		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
 			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
@@ -328,9 +332,52 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	return validateRKNNRuntimeEvidence(config, result.RKNN)
 }
 
-func validRuntimeMemorySource(source string) bool {
-	return source == memoryPeakCgroupV2 ||
-		source == memoryPeakCgroupV1
+// MemorySample is one actual whole-container memory.current reading.
+type MemorySample struct {
+	At    string `json:"at"`
+	Bytes uint64 `json:"bytes"`
+}
+
+// validateRuntimeMemory accepts a kernel high-water mark as is, or sampled
+// memory.current whose maximum, window and cadence are the frozen evidence.
+// validateRuntimeMemory admits the sampled maximum only as the observed maximum of the retained
+// timestamped samples. It can miss spikes between samples; actual cadence is the observed gaps in
+// the raw timestamps, not the frozen interval, a kernel high-water mark, or an absolute bound.
+func validateRuntimeMemory(bytes uint64, source string, samples []MemorySample,
+	window func() (time.Time, time.Time, error)) error {
+	switch source {
+	case memoryPeakCgroupV1, memoryPeakCgroupV2:
+		if bytes == 0 || len(samples) != 0 {
+			return errors.New("firstfloor cgroup lifetime memory evidence is invalid")
+		}
+		return nil
+	case memorySampledCgroupV2:
+	default:
+		return errors.New("firstfloor cgroup memory evidence is missing")
+	}
+	started, ended, err := window()
+	if err != nil {
+		return err
+	}
+	if len(samples) < 2 {
+		return errors.New("firstfloor sampled memory needs at least two boundary samples")
+	}
+	var peak uint64
+	var previous time.Time
+	for i, sample := range samples {
+		at, err := time.Parse(time.RFC3339Nano, sample.At)
+		if err != nil || sample.Bytes == 0 || at.Before(started) || at.After(ended) || (i > 0 && !at.After(previous)) {
+			return errors.New("firstfloor sampled memory is outside the measurement window or malformed")
+		}
+		previous = at
+		if sample.Bytes > peak {
+			peak = sample.Bytes
+		}
+	}
+	if bytes != peak {
+		return errors.New("firstfloor sampled memory maximum differs from retained samples")
+	}
+	return nil
 }
 
 func validateFirstfloorRuntimeEvidence(config RunConfig, evidence *FirstfloorRuntimeEvidence, executions uint64) error {

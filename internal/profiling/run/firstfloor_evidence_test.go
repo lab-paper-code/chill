@@ -98,6 +98,39 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 	}
 }
 
+func TestFirstfloorSampledMemoryIsBoundToWindowAndRetainedMaximum(t *testing.T) {
+	config := firstfloorRunConfig()
+	sampled := func() RuntimeResult {
+		result := firstfloorResult(config)
+		result.MemorySource = memorySampledCgroupV2
+		result.MemorySamples = []MemorySample{{"2026-01-01T00:00:01.5Z", 100}, {"2026-01-01T00:00:15Z", 300}, {"2026-01-01T00:00:30Z", 200}}
+		result.MemoryBytes = 300
+		return result
+	}
+	if err := ValidateRuntime(config, "pod-uid", sampled()); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*RuntimeResult)
+	}{
+		{"maximum not retained", func(r *RuntimeResult) { r.MemoryBytes = 400 }},
+		{"sample outside window", func(r *RuntimeResult) { r.MemorySamples[2].At = "2026-01-01T00:00:32Z" }},
+		{"unordered samples", func(r *RuntimeResult) { r.MemorySamples[1].At = r.MemorySamples[0].At }},
+		{"single sample", func(r *RuntimeResult) { r.MemorySamples = r.MemorySamples[:1] }},
+		{"peak source with samples", func(r *RuntimeResult) { r.MemorySource = memoryPeakCgroupV2 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := sampled()
+			test.mutate(&result)
+			if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+				t.Fatal("untruthful sampled memory evidence accepted")
+			}
+		})
+	}
+}
+
 func TestFirstfloorNativeSamplesRejectReusedBatchIdentity(t *testing.T) {
 	config := firstfloorRunConfig()
 	repetition := firstfloorResult(config).RepetitionResults[0]
