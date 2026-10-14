@@ -193,6 +193,10 @@ Runtime의 pending/assigned와 firstfloor 현재 queued/running·running elapsed
 physical instance/UID/definition에 연결한다. assignment와 실제 queue entry를
 구별하고 unknown ownership·관측 공백·오래된 자료는 판단의 입력 상태에 표시한다.
 현재와 목표의 Node UID·단일 POOL 소속·ready/capacity/resource 상태를 함께 캡처한다.
+완료/실패 Pod는 이미 제외하던 자원 예산 캡처와 steady source refresh에서
+Kubernetes field selector로 제외하여 종료된 profiling 이력의 반복 전송·해석을 피한다.
+source refresh의 최초/재시작 watch 복구는 전체 Pod를 읽고, 이후 빠진 retained
+executor는 기존 exact Pod GET과 UID/container 종료 확인을 유지한다.
 
 ### 5.2 후보 집합과 재현 가능한 replay
 

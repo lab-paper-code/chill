@@ -22,12 +22,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/watch"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -396,6 +399,50 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	}
 	if source := observer.sources[id]; source.ownerUID != uid || !source.stopped {
 		t.Fatal("serving label filter hid parent ownership or exact termination evidence")
+	}
+}
+
+func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) {
+	for _, watching := range []bool{false, true} {
+		for _, proof := range []string{"exact", "replacement Pod", "other container"} {
+			t.Run(fmt.Sprintf("watching=%v/%s", watching, proof), func(t *testing.T) {
+				pod, _, _, _ := observerSourceFixture()
+				id := physicalID(pod.UID, pod.Status.ContainerStatuses[0].ContainerID)
+				source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID}
+				pod.Labels = nil
+				pod.Status.Phase = corev1.PodSucceeded
+				status := &pod.Status.ContainerStatuses[0]
+				status.State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: status.ContainerID}}
+				switch proof {
+				case "replacement Pod":
+					pod.UID = "replacement"
+				case "other container":
+					status.State.Terminated.ContainerID = "containerd://other"
+				}
+				observer := newTestObserver(t)
+				observer.sources[id] = source
+				kube := kubefake.NewSimpleClientset(pod)
+				// The client-go fake otherwise ignores server-side field selection.
+				kube.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+					result := &corev1.PodList{}
+					selector := action.(ktesting.ListAction).GetListRestrictions().Fields
+					if selector.Matches(fields.Set{"status.phase": string(pod.Status.Phase)}) {
+						result.Items = append(result.Items, *pod)
+					}
+					return true, result, nil
+				})
+				observer.kube = kube
+				if watching {
+					observer.podWatch = watch.NewFake()
+				}
+				if err := observer.Refresh(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if source.stopped != (proof == "exact") {
+					t.Fatalf("retained physical executor termination = %v with %s", source.stopped, proof)
+				}
+			})
+		}
 	}
 }
 

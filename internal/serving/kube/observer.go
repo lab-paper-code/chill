@@ -44,6 +44,7 @@ const (
 	ServingSlotAnnotation    = "edge.dacs.io/serving-slot"
 	sourceFinalizer          = "edge.dacs.io/serving-source-termination"
 	firstfloorContainerName  = "firstfloor"
+	nonTerminalPodSelector   = "status.phase!=Succeeded,status.phase!=Failed"
 )
 
 type ObserverConfig struct {
@@ -154,7 +155,13 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	if err != nil {
 		return o.refreshFailure(err)
 	}
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{})
+	podOptions := metav1.ListOptions{}
+	if o.podWatch != nil {
+		// Restore every old executor on startup/watch restart. Afterwards the
+		// retained-source GET below still proves exact terminal containers.
+		podOptions.FieldSelector = nonTerminalPodSelector
+	}
+	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, podOptions)
 	if err != nil {
 		return o.refreshFailure(err)
 	}

@@ -292,7 +292,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return s, err
 	}
-	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{})
+	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
 	if err != nil {
 		return s, err
 	}
