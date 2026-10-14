@@ -96,6 +96,19 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 
 	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans.Resolve(ctx, parent)
 	if err != nil {
+		status := parent.Status
+		status.ObservedGeneration = parent.Generation
+		status.Phase = batchEnergyOptimizationPhaseFailed
+		status.Outcome = "CurvePlanResolutionFailed"
+		condition := metav1.Condition{
+			Type: batchEnergyOptimizationConditionDone, Status: metav1.ConditionFalse,
+			ObservedGeneration: parent.Generation, Reason: status.Outcome, Message: err.Error(),
+		}
+		condition.LastTransitionTime = conditionTransitionTime(parent.Status.Conditions, condition)
+		status.Conditions = []metav1.Condition{condition}
+		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
+			return ctrl.Result{}, errors.Join(err, patchErr)
+		}
 		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
 	}
 	runs, err := r.listRuns(ctx, parent)

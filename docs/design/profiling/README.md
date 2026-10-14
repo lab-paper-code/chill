@@ -27,6 +27,10 @@ Evidence Store and cannot be reloaded by the current readers. The L4 result is
 an archival scientific record, not current live or re-verifiable evidence, and
 does not establish a universal `b_sat=1` or statistical confirmation. Its old
 saturation outcome is not the contract of the current optimizer.
+Campaign curve-plan resolution failures are exposed as `Failed` with
+`MeasurementComplete=False`, reason `CurvePlanResolutionFailed`, and the actual
+resolver error. The controller still returns the error for retry; a later
+successful resolution resumes measurement rather than making this status sticky.
 Plan 9 is implemented: `NodeActuation` is a one-way transition independent of
 every Run, a `BatchEnergyOptimization` creates and owns the one transition that
 establishes its declared state, and a non-fixed Run executes only when the

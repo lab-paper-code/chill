@@ -22,10 +22,11 @@ import (
 )
 
 type fakeCurvePlanSource struct {
-	plan       profilederivation.CurvePlan
-	reference  batchenergyoptimization.StoredObjectReference
-	transition *batchcontroller.TransitionMaterial
-	calls      int
+	plan          profilederivation.CurvePlan
+	reference     batchenergyoptimization.StoredObjectReference
+	transition    *batchcontroller.TransitionMaterial
+	calls         int
+	unexpectedErr error
 }
 
 func (s *fakeCurvePlanSource) Resolve(
@@ -38,6 +39,9 @@ func (s *fakeCurvePlanSource) Resolve(
 	error,
 ) {
 	s.calls++
+	if s.unexpectedErr != nil {
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, s.unexpectedErr
+	}
 	if parent == nil || parent.UID == "" {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
 			fmt.Errorf("parent identity is missing")
@@ -96,6 +100,38 @@ func (w *fakeResultWriter) Write(
 	w.runs = append([]edgev1alpha1.ProfilingRun(nil), runs...)
 	w.result = result
 	return w.reference, w.unexpectedErr
+}
+
+func TestBatchEnergyOptimizationPlanFailureIsVisibleAndRetryable(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-plan-failure", 2)
+	plans, curves, results := completedBatchFakes(t)
+	plans.unexpectedErr = fmt.Errorf("device power mode is unavailable")
+	reconciler := newBatchReconciler(t, kube, plans, curves, results)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+	if _, err := reconciler.Reconcile(ctx, request); err == nil {
+		t.Fatal("plan failure did not remain retryable by the controller")
+	}
+	failed := getBatchEnergyOptimization(t, ctx, kube, request.NamespacedName)
+	if failed.Status.Phase != "Failed" || failed.Status.ObservedGeneration != parent.Generation ||
+		len(failed.Status.Conditions) != 1 || failed.Status.Conditions[0].Status != metav1.ConditionFalse ||
+		failed.Status.Conditions[0].Message != plans.unexpectedErr.Error() {
+		t.Fatalf("plan failure was not exposed through API status: %#v", failed.Status)
+	}
+	runs := &edgev1alpha1.ProfilingRunList{}
+	if err := kube.List(ctx, runs, client.InNamespace(parent.Namespace),
+		client.MatchingLabels{"edge.dacs.io/batch-energy-optimization": parent.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs.Items) != 0 {
+		t.Fatal("plan failure created measurement runs")
+	}
+	plans.unexpectedErr = nil
+	reconcileBatch(t, ctx, reconciler, request)
+	recovered := getBatchEnergyOptimization(t, ctx, kube, request.NamespacedName)
+	if recovered.Status.Phase != "Measuring" || recovered.Status.Conditions[0].Status != metav1.ConditionUnknown {
+		t.Fatalf("resolved plan did not resume measurement: %#v", recovered.Status)
+	}
 }
 
 func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRestart(t *testing.T) {

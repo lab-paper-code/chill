@@ -75,6 +75,9 @@
     대상·행동·완료 증거가 명확한 최소 단위를 맡기고 독립 단위만 병렬 실행한다.
 12. GPU 실행 프로파일을 우선한다. 예상 연산 전력 효율 순서는 가설로 구분하고
     동일 입력·실행 조건의 실측 에너지·처리량·지연으로 검증한다.
+13. 중간 보고·의도 확인은 진행 상태를 설명하는 작업이지 최종 목표의 완료가 아니다.
+    보고 뒤 같은 설명을 반복하지 않고 승인된 다음 핵심 작업을 실행한다. GPU 실행 환경
+    구축·프로파일 수집도 FULL 제어와 실제 Dashboard 연결을 위한 의존성으로만 다룬다.
 
 ## 실행 경계
 
@@ -158,9 +161,22 @@ Orin에 설치된 CUDA12.6/cuDNN9.20의 실제 runtime library를 이미지에 �
 배치1/2 실제 추론을 통과했다. 증거는
 `/tmp/chill-edge-orin-vendor-complete-image-actual-sdk-inference.json`이다.
 범용 ARM64 CUDA image `3dcc21dd..`의 실제 CUBLAS 실패는 보존하고 채택하지 않았다.
-host 호환 계층 없이 기존 실행 선언·정책 API로 등록한 뒤 Orin GPU CPU1 조건의 정식
-캠페인 `mobilenet-v2-050-orin-nano-cuda-q1`(UID `1fe633d1-5a43-4bae-a297-712c92e0dde8`)을
-시작했다. 배치1/2·반복3회이며 완료/채택은 아직 세지 않는다.
+host 호환 계층 없이 기존 실행 선언·정책 API로 등록했다. 최초 캠페인 UID `1fe633d1..`은
+Orin에 없는 `fixed` 전력모드로 계획 해석에 실패해 측정을 시작하지 못했다. 자기 객체를
+기록 후 교체한 `mobilenet-v2-050-orin-nano-cuda-q1`(UID
+`94446d2b-e24d-4c38-a4c1-63654a70485f`)은 현재 25W read-back과 60초 settling을
+확인했지만, loaded-idle 두 시도가 `memory.peak` 부재와 workload-observer의 API
+접속 timeout으로 실패했다. 실제 전력모드 변경·성공 프로파일·채택은 없었다. 근거:
+`/tmp/chill-edge-orin-current-mode-campaign-child-failure.json`.
+계획 해석 실패는 이제 실제 resolver 오류와 `Failed/CurvePlanResolutionFailed`로
+공개되며 오류 반환을 유지해 재시도할 수 있다. 로컬 API 서버의 실패→복구 회귀는
+통과했고, 실제 캠페인 `orin-gpu-plan-resolution-check`는 같은 오류 상태와 자식 0개를
+확인했다(`/tmp/chill-campaign-visible-plan-failure-live-proof.json`). 그러나 Dashboard
+result API는 결과 참조가 없으면 404로 실패 상태를 가려서 소비자 연결 수정이 남았다.
+profiler ConfigMap의 image를 `7771c693..`으로 바꿔 실제 rollout했다. Deployment만
+바꾼 첫 시도는 operator가 선언대로 되돌렸으며, Helm values에는 아직 반영되지 않았다.
+이번 `make lint`는 통과했지만 `make test`는 기존 timeout 응답 테스트가 기대한 504 대신
+408/RequestCanceled를 받은 것으로 실패했다(`artifact://898`). 이 실패를 숨기지 않는다.
 다른 작업을 중단하거나 전력 안전 허용 범위를 넓히지 않는다. baseline-fleet/fastdds가
 있으므로 전력모드 변경은 보류한다. GPU 기대 효율은 가설이며 실측으로 검증한다.
 목표는 그대로 실측 근거 → SLO 우선 판단 → 실제 FULL 적용 → 실제 Dashboard 종단 연결이다.
