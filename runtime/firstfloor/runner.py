@@ -193,7 +193,11 @@ def run(options, source, destination):
                 session = ort.InferenceSession(options.model, sess_options=settings, providers=providers)
                 session.disable_fallback()
                 selected = session.get_providers()
-                if selected != [provider]:
+                # ORT may register its default CPU EP even when CPU assignment is disabled.
+                cuda_without_fallback = (options.runtime == "ort-cuda" and
+                                         selected == [provider, "CPUExecutionProvider"] and
+                                         session.get_session_options().get_session_config_entry("session.disable_cpu_ep_fallback") == "1")
+                if selected != [provider] and not cuda_without_fallback:
                     raise ValueError(f"unexpected providers/fallback {selected}")
                 actual_inputs = session.get_inputs()
                 if len(actual_inputs) != len(inputs):

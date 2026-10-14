@@ -48,6 +48,9 @@ firstfloor는 model/input/runtime 조건이 고정된 한 runner를 유지한다
 물리 GPU 한 장을 사용하고 CPU fallback 조건을 실제 오류로 처리한다. SDK가
 지원하는 tensor·batch·layout 범위를 확인하여 범위 밖 입력은 오류로 반환한다.
 개발 echo mode는 explicit synthetic 실행으로 분리한다.
+ORT가 CPU fallback을 비활성화한 세션에도 default CPU EP를 등록할 수 있다.
+CUDA-first에 default CPU EP만 추가된 경우 실제 session 설정이 fallback disabled인지
+확인한다. 등록 provider 목록은 그대로 기록하며, CPU-only graph 실행은 계속 거부한다.
 
 IPC는 기존 bounded length-prefix header + binary payload를 재사용한다. tensor별
 name/datatype/shape/byte count와 outputs를 담아 여러 numeric/bool tensor를
