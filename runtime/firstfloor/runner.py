@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import struct
-import subprocess
+import uuid
 import sys
 import time
 
@@ -181,8 +181,18 @@ def run(options, source, destination):
                 if options.runtime == "ort-cuda":
                     if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
                         raise ValueError("CUDA_VISIBLE_DEVICES must pin the explicit physical GPU UUID")
-                    actual = subprocess.check_output(["nvidia-smi", "--id=" + options.gpu_uuid, "--query-gpu=uuid", "--format=csv,noheader"], text=True).splitlines()
-                    if actual != [options.gpu_uuid]:
+                    from cuda.bindings import driver as cu
+
+                    if cu.cuInit(0)[0] != cu.CUresult.CUDA_SUCCESS:
+                        raise ValueError("CUDA driver initialization failed")
+                    status, count = cu.cuDeviceGetCount()
+                    if status != cu.CUresult.CUDA_SUCCESS or count != 1:
+                        raise ValueError("explicit GPU allocation must expose exactly one CUDA device")
+                    status, device = cu.cuDeviceGet(0)
+                    if status != cu.CUresult.CUDA_SUCCESS:
+                        raise ValueError("selected CUDA device could not be obtained")
+                    status, actual = cu.cuDeviceGetUuid(device)
+                    if status != cu.CUresult.CUDA_SUCCESS or "GPU-" + str(uuid.UUID(bytes=bytes(actual.bytes))) != options.gpu_uuid:
                         raise ValueError("selected physical GPU UUID could not be verified")
                     settings.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
                     providers = [(provider, {"device_id": 0})]

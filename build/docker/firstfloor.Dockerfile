@@ -19,7 +19,9 @@ FROM ${RUNTIME_IMAGE}
 ARG NUMPY_VERSION=2.2.6
 ARG ONNXRUNTIME_VERSION=1.27.0
 ARG ORT_PACKAGE=onnxruntime
-RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION}
+ARG PIP_EXTRA_INDEX_URL
+ARG CUDA_DRIVER_PACKAGES
+RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${CUDA_DRIVER_PACKAGES}
 COPY --from=builder /out/serving-worker /opt/chill/bin/serving-worker
 COPY --from=builder /out/serving-entrypoint /opt/chill/bin/serving-entrypoint
 COPY --from=builder /out/measurement-worker /measurement-worker

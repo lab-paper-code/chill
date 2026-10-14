@@ -188,10 +188,16 @@ and ONNX Runtime 1.27.0. `make build` includes serving-worker and
 serving-operation; `make test-runtime` selects the firstfloor runtime suite.
 No published image digest or hardware qualification is implied.
 
-CUDA deployment requires an operator-selected NVIDIA CUDA/cuDNN base compatible
-with the exact ONNX Runtime GPU wheel and target architecture. Build with
-`RUNTIME_IMAGE` set to that base and `ORT_PACKAGE=onnxruntime-gpu`; use NVIDIA's
-device plugin/container runtime and the physical GPU UUID inventory. See
+CUDA deployment requires operator-selected CUDA/cuDNN libraries compatible with
+the exact ONNX Runtime GPU wheel and target architecture: use a suitable runtime
+base or the explicitly declared read-only host library mounts. Build with
+`RUNTIME_IMAGE` set to the Python-compatible base, `ORT_PACKAGE=onnxruntime-gpu`,
+and `CUDA_DRIVER_PACKAGES="cuda-bindings==12.9.7 cuda-pathfinder==1.8.3"`.
+Set `ONNXRUNTIME_VERSION`, `NUMPY_VERSION` and, for a vendor wheel index,
+`PIP_EXTRA_INDEX_URL` to the qualified target's installation inputs. The runner
+verifies the masked single GPU's physical UUID through the CUDA Driver API,
+not `nvidia-smi`, and rejects a missing driver or mismatched allocation.
+Use NVIDIA's device plugin/container runtime and the physical GPU UUID inventory. See
 [ONNX Runtime CUDA requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
 Do not install both CPU and GPU ORT distributions in one image. RKNN deployment
 requires a compatible ARM64 vendor base containing the exact Rockchip
