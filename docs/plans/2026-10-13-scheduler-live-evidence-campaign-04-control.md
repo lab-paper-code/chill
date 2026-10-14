@@ -142,3 +142,28 @@
   `/tmp/omp-sshots-15a599dd2aba5f6a.webp`.
 - 같은 실제 브라우저의 power query는 200이지만 scheduler history query는 504로
   실패했고 timeout 표시를 확인했다. 날짜 수정과 FULL/history 성공을 혼동하지 않는다.
+
+### Orin GPU 근거 채택과 journal 공간 소진 해소 — 2026-10-14
+
+- CPU1/2 캠페인은 각각 정식 9 trial을 완료했다. 실제 결과·순위:
+  `/tmp/chill-orin-q2-completed-dashboard-result.json`,
+  `/tmp/chill-orin-measured-gpu-allocation-ranking.json`. CPU2의 증분 에너지는
+  낮았지만 처리량·지연도 달랐다. 이 순위를 SLO·전체 POOL 총에너지 판정으로 대체하지 않는다.
+- PVC 실제 가용 공간 0 bytes를 확인하고 기존 StorageClass의 확장으로 1Gi→8Gi를
+  적용했다. 이전 raw directory는 보존했다. journal은 metadata와 stream header를
+  private staging에 만든 뒤 한 번의 rename으로 공개한다. 실패는 드러내고 이미
+  완료한 window의 완료 시각을 다시 쓰지 않는다. 호환 reader·recovery machine·test hook 없음.
+- 독립 ponytail/correctness 리뷰 후 완료 시각 덮어쓰기 회귀를 실패→통과로 확인했다.
+  focused serving tests와 `make lint`는 통과했다. 마지막 `make test`는
+  `TestExecutePublishesConfiguredCompositeMetricObservation`와
+  `TestObserverAdvancesAbsenceAndFreezesFirstPresence`에서 실패했다(`artifact://1029`).
+  이를 전체 gate 성공으로 보고하지 않는다.
+- owner `5d38d3ce..` rollout과 동일 최신 journal directory 재시작 후
+  readyz/scheduler HTTP200·제어 모두 OFF를 확인했다. 자기 이름 제한 Role의 get 목록에
+  두 새 캠페인만 추가했고 실제 can-i는 yes다. 근거:
+  `/tmp/chill-orin-gpu-owner-scoped-profile-read-proof.json`,
+  `/tmp/chill-atomic-journal-retained-restart-proof.json`.
+- 실제 owner가 생성한 GPU bundle은 CPU1 3009 bytes, CPU2 2523 bytes이며 해당
+  profileID·batch1/2 duration samples·실측 energy를 확인했다:
+  `/tmp/chill-orin-gpu-owner-materialized-bundles.json`. 최신 owner의 근거 채택 증거다.
+  실제 prepare/remove·Serving envelope·FULL Dashboard 연결은 다음 작업이며 아직 미완료다.

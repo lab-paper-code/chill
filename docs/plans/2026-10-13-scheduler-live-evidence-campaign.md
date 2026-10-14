@@ -213,8 +213,14 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 12/12 wall-power 관측을 확인했다. 근거:
 `/tmp/chill-orin-q1-completed-dashboard-result.json`,
 `/tmp/chill-orin-q1-actual-gpu-passport.json`.
-CPU2·affinity[2,3]의 다음 캠페인 UID `072cd67a-2f19-4efc-a6a1-6ab059ccce7f`를
-순차 실행 중이다. profile의 scheduler Catalog 채택과 FULL은 아직 완료 처리하지 않았다.
+CPU2·affinity[2,3]의 캠페인 UID `072cd67a-2f19-4efc-a6a1-6ab059ccce7f`도
+Complete/ResultWritten·9 trial로 완료했다. CPU1/2 합계 18 trial이다.
+최신 owner `5d38d3ce..`는 두 GPU profile의 실제 bundle(3009/2523 bytes)을 생성했다.
+실제 journal PVC 소진은 1Gi→8Gi 확장으로 해소했고 기존 raw directory는 삭제하지 않았다.
+에이전트의 atomic window publication·독립 리뷰를 통합했으며 같은 최신 directory의
+실제 재시작 후 readyz/scheduler HTTP200과 모든 제어 OFF를 확인했다.
+다음은 격리 측정 POOL에서 GPU prepare→remove 비용을 순차 측정하는 일이다.
+FULL·종단 SLO 검증은 아직 완료하지 않았다. 상세 근거는 진행 기록 04에 남겼다.
 `make gopls-check`는 PATH에 저장소 bin을 포함한 실행으로 통과했다. 최초 실패는
 그 PATH에 `rg`가 없었던 환경 문제이며 코드/검증을 우회하지 않았다.
 다른 작업을 중단하거나 전력 안전 허용 범위를 넓히지 않는다. baseline-fleet/fastdds가

@@ -2,9 +2,61 @@ package serving
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestRestartIgnoresUnpublishedWindowStaging(t *testing.T) {
+	config := JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
+	if err := os.Mkdir(filepath.Join(config.Directory, ".starting-interrupted"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	j, err := NewJournal(config)
+	if err != nil {
+		t.Fatalf("interrupted window creation blocked owner startup: %v", err)
+	}
+	if err = j.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailedRotationPreservesCompletedWindow(t *testing.T) {
+	config := JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
+	j, err := NewJournal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.finish(); err != nil {
+		t.Fatal(err)
+	}
+	closedAt := *j.Health().Windows[0].ClosedAt
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	j.config.Directory = blocked
+
+	if err := j.RequestEvent(RequestEvent{RequestID: "r", WorkloadUID: "uid", Kind: "received", At: time.Now().UTC()}); err == nil {
+		t.Fatal("failed window publication accepted an event")
+	}
+	if err := j.Flush(context.Background()); err == nil {
+		t.Fatal("failed window publication was not reported by flush")
+	}
+	for _, window := range j.Health().Windows {
+		if window.Incomplete {
+			t.Fatalf("finished window %s was flagged incomplete by a failed start", window.ID)
+		}
+	}
+	j.config.Directory = config.Directory
+	if err := j.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if window := j.Health().Windows[0]; window.ClosedAt == nil || !window.ClosedAt.Equal(closedAt) {
+		t.Fatalf("failed rotation changed completed window boundary: before=%v after=%v", closedAt, window.ClosedAt)
+	}
+}
 
 func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})

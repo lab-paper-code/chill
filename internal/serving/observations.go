@@ -89,7 +89,8 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 	}
 	j := &Journal{config: config, active: -1}
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		// Hidden directories are unpublished staging, never observation windows.
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(config.Directory, entry.Name(), "metadata.json"))
@@ -129,13 +130,16 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 	return j, nil
 }
 
-func (j *Journal) saveWindow(index int) (result error) {
+func (j *Journal) saveWindow(index int) error {
 	w := j.windows[index]
+	return writeWindowMetadata(filepath.Join(j.config.Directory, w.ID), w)
+}
+
+func writeWindowMetadata(directory string, w ObservationWindow) (result error) {
 	data, err := json.Marshal(w)
 	if err != nil {
 		return err
 	}
-	directory := filepath.Join(j.config.Directory, w.ID)
 	file, err := os.CreateTemp(directory, ".metadata-")
 	if err != nil {
 		return err
@@ -161,23 +165,32 @@ func (j *Journal) saveWindow(index int) (result error) {
 	return os.Rename(name, filepath.Join(directory, "metadata.json"))
 }
 
+// start builds a window under a hidden staging name and publishes the complete
+// directory with one rename. A window directory therefore never exists without
+// its metadata and streams, and NewJournal only ever sees complete windows.
 func (j *Journal) start(now time.Time) (result error) {
-	directory, err := os.MkdirTemp(j.config.Directory, now.Format("20060102T150405.000000000Z")+"-")
+	const staging = ".starting-"
+	directory, err := os.MkdirTemp(j.config.Directory, staging)
 	if err != nil {
 		return err
 	}
-	j.windows = append(j.windows, ObservationWindow{SchemaVersion: observationSchema, ID: filepath.Base(directory), StartedAt: now, EndsAt: now.Add(j.config.Window), Duration: j.config.Window, Definitions: j.config.Definitions, Outcomes: j.config.Outcomes})
-	j.active = len(j.windows) - 1
-	j.files = make(map[string]*os.File)
+	window := ObservationWindow{
+		SchemaVersion: observationSchema,
+		ID:            now.Format("20060102T150405.000000000Z") + "-" + strings.TrimPrefix(filepath.Base(directory), staging),
+		StartedAt:     now, EndsAt: now.Add(j.config.Window), Duration: j.config.Window,
+		Definitions: j.config.Definitions, Outcomes: j.config.Outcomes,
+	}
+	files := make(map[string]*os.File)
 	defer func() {
 		if result != nil {
-			for _, file := range j.files {
+			for _, file := range files {
 				result = errors.Join(result, file.Close())
 			}
-			j.files = nil
+			// Only this call's staging directory is removed; published windows stay visible.
+			result = errors.Join(result, os.RemoveAll(directory))
 		}
 	}()
-	if err := j.saveWindow(j.active); err != nil {
+	if err := writeWindowMetadata(directory, window); err != nil {
 		return err
 	}
 	for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
@@ -185,12 +198,18 @@ func (j *Journal) start(now time.Time) (result error) {
 		if err != nil {
 			return err
 		}
-		j.files[stream] = file
+		files[stream] = file
 		// Metadata is the first JSONL record, including in an otherwise empty stream.
-		if err := json.NewEncoder(file).Encode(j.windows[j.active]); err != nil {
+		if err := json.NewEncoder(file).Encode(window); err != nil {
 			return err
 		}
 	}
+	if err := os.Rename(directory, filepath.Join(j.config.Directory, window.ID)); err != nil {
+		return err
+	}
+	j.windows = append(j.windows, window)
+	j.active = len(j.windows) - 1
+	j.files = files
 	return nil
 }
 
@@ -246,6 +265,9 @@ func (j *Journal) ManagementEvent(event ManagementEvent) error {
 }
 
 func (j *Journal) finish() error {
+	if j.files == nil {
+		return nil
+	}
 	var result error
 	for _, file := range j.files {
 		result = errors.Join(result, file.Sync(), file.Close())
@@ -323,7 +345,8 @@ func (j *Journal) Flush(ctx context.Context) error {
 	}
 	if result != nil {
 		j.lastError = result
-		if j.active >= 0 {
+		// A failed start or finish leaves no open window; finish marks itself.
+		if j.files != nil && j.active >= 0 {
 			j.windows[j.active].Incomplete = true
 		}
 	}

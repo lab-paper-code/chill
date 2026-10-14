@@ -262,8 +262,9 @@ func TestJournalArchiveFailureDoesNotPoisonRetainedRecords(t *testing.T) {
 
 func TestJournalAppendFailurePublishesIncompleteWindow(t *testing.T) {
 	archive := &observationArchive{directory: t.TempDir()}
+	directory := t.TempDir()
 	journal, err := NewJournal(JournalConfig{
-		Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive,
+		Directory: directory, Store: "evidence", Window: time.Hour, Writer: archive,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +273,7 @@ func TestJournalAppendFailurePublishesIncompleteWindow(t *testing.T) {
 	if err := requests.Close(); err != nil {
 		t.Fatal(err)
 	}
-	journal.files["requests"], err = os.Open(requests.Name())
+	journal.files["requests"], err = os.Open(filepath.Join(directory, journal.Health().Windows[0].ID, "requests.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
