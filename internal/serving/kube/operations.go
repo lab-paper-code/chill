@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"maps"
 	"path"
 	"reflect"
 	"slices"
@@ -184,7 +184,12 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 			continue
 		}
 		id := physicalID(p.UID, status.ContainerID)
-		state, e := o.native.State(ctx, sdk.Spec{Endpoint: "http://" + net.JoinHostPort(p.Status.PodIP, "8080"), ModelName: "chill_model"})
+		endpoint, e := nativeInstanceEndpoint(ctx, o.kube, p)
+		if e != nil {
+			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
+			continue
+		}
+		state, e := o.native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: "chill_model"})
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
@@ -298,6 +303,18 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	}
 	return result, err
 }
+func samePreparedPod(actual, desired *core.Pod) bool {
+	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) {
+		return false
+	}
+	for i := range desired.Spec.InitContainers {
+		if !samePreparedContainer(actual.Spec.InitContainers[i], desired.Spec.InitContainers[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) error {
 	if err := validatePreparation(spec); err != nil {
 		return err
@@ -326,13 +343,16 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	}
 	requests := core.ResourceList{core.ResourceCPU: cpuRequest, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
 	limits := core.ResourceList{core.ResourceCPU: cpuLimit, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
+	initResources := core.ResourceRequirements{Requests: requests, Limits: limits}
 	if spec.Instance.Allocation.GPUUUID != "" {
+		requests = requests.DeepCopy()
+		limits = limits.DeepCopy()
 		requests["nvidia.com/gpu"] = resource.MustParse("1")
 		limits["nvidia.com/gpu"] = resource.MustParse("1")
 	}
 	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: spec.Config.Policy.DecisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
-		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", p.Condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(p.Condition.Artifact.Path))}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
-		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
+		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", p.Condition.Artifact.Path, path.Join("/chill-artifact", "model"+path.Ext(p.Condition.Artifact.Path))}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
+		{Name: "profile", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
 	}, Containers: []core.Container{{Name: "firstfloor", Image: p.Condition.RuntimeImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
@@ -342,10 +362,13 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 		if err = o.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, existing); err != nil {
 			return err
 		}
-		if existing.Annotations[ServingProfileAnnotation] != p.ID || existing.Annotations[ServingSlotAnnotation] != spec.Instance.ID || existing.Spec.NodeName != node.Name || len(existing.Spec.Containers) != 1 || !samePreparedContainer(existing.Spec.Containers[0], pod.Spec.Containers[0]) {
+		if !samePreparedPod(existing, pod) {
 			return errors.New("existing preparation Pod differs")
 		}
 		pod = existing
+	}
+	if err = o.ensureInstanceService(ctx, pod); err != nil {
+		return err
 	}
 	return o.wait(ctx, func() (bool, error) {
 		if err := o.observer.Refresh(ctx); err != nil {
@@ -505,7 +528,11 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 	o.observer.mu.Unlock()
 	if status.State.Terminated == nil {
 		if err = o.wait(ctx, func() (bool, error) {
-			state, e := o.native.State(ctx, sdk.Spec{Endpoint: "http://" + net.JoinHostPort(pod.Status.PodIP, "8080"), ModelName: "chill_model"})
+			endpoint, e := nativeInstanceEndpoint(ctx, o.kube, pod)
+			if e != nil {
+				return false, e
+			}
+			state, e := o.native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: "chill_model"})
 			if e != nil {
 				return false, e
 			}
@@ -556,6 +583,9 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, i
 		o.observer.mu.Unlock()
 		if !stopped || !podTerminated(current) {
 			return false, nil
+		}
+		if e = deleteInstanceService(ctx, o.kube, current); e != nil {
+			return false, e
 		}
 		before := current.DeepCopy()
 		current.Finalizers = slices.DeleteFunc(current.Finalizers, func(f string) bool { return f == sourceFinalizer })
@@ -755,7 +785,11 @@ func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy 
 		if !sameRunningContainer(selected, current) {
 			return false, errors.New("policy target physical executor changed")
 		}
-		state, e := o.native.State(ctx, sdk.Spec{Endpoint: "http://" + net.JoinHostPort(current.Status.PodIP, "8080"), ModelName: config.Model})
+		endpoint, e := nativeInstanceEndpoint(ctx, o.kube, current)
+		if e != nil {
+			return false, e
+		}
+		state, e := o.native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
 		if e != nil {
 			return false, e
 		}
@@ -778,7 +812,7 @@ func nodeClassMatches(node *core.Node, class *edge.DeviceClass) bool {
 	return true
 }
 func samePreparedContainer(actual, desired core.Container) bool {
-	return actual.Name == desired.Name && actual.Image == desired.Image && slices.Equal(actual.Command, desired.Command) && slices.Equal(actual.Args, desired.Args) && reflect.DeepEqual(actual.Resources.Requests, desired.Resources.Requests) && reflect.DeepEqual(actual.Resources.Limits, desired.Resources.Limits) && reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts)
+	return actual.Name == desired.Name && actual.Image == desired.Image && slices.Equal(actual.Command, desired.Command) && slices.Equal(actual.Args, desired.Args) && maps.EqualFunc(actual.Resources.Requests, desired.Resources.Requests, resource.Quantity.Equal) && maps.EqualFunc(actual.Resources.Limits, desired.Resources.Limits, resource.Quantity.Equal) && reflect.DeepEqual(actual.VolumeMounts, desired.VolumeMounts)
 }
 func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
 	if operation.Kind == operationRoute {

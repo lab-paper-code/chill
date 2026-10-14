@@ -107,7 +107,8 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	if err != nil {
 		return err
 	}
-	if err = validateMeasurementNode(ctx, kube, manifest); err != nil {
+	initialPool, err := validateMeasurementNode(ctx, kube, manifest)
+	if err != nil {
 		return err
 	}
 	objects, err := stores3.New(stores3.Config{
@@ -170,7 +171,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 		return readMeasurementIsolation(checkCtx, kube, direct,
 			manifest.Measurement.Operation.Node, expectedPool, models)
 	}
-	if _, err = readIsolation(ctx, manifest.IsolatedPool); err != nil {
+	if _, err = readIsolation(ctx, initialPool); err != nil {
 		return err
 	}
 	isolationCheck := func(checkCtx context.Context) (servingkube.MeasurementIsolation, error) {
@@ -234,24 +235,29 @@ func readManifest(path string) (commandManifest, error) {
 	return manifest, nil
 }
 
-func validateMeasurementNode(ctx context.Context, kube kubernetes.Interface, manifest commandManifest) error {
+func validateMeasurementNode(ctx context.Context, kube kubernetes.Interface, manifest commandManifest) (string, error) {
 	physical, err := kube.CoreV1().Nodes().Get(ctx, manifest.Measurement.Operation.Node.Name, metav1.GetOptions{})
 	if err != nil {
-		return err
+		return "", err
 	}
-	if string(physical.UID) != manifest.Measurement.Operation.Node.UID ||
-		physical.Labels[servingkube.ServingPoolLabel] != manifest.IsolatedPool {
-		return errors.New("actual physical Node must belong to explicitly isolated measurement pool")
+	pool := physical.Labels[servingkube.ServingPoolLabel]
+	if string(physical.UID) != manifest.Measurement.Operation.Node.UID {
+		return "", errors.New("actual physical Node identity differs from measurement")
+	}
+	if manifest.Measurement.Operation.Kind == "membership" {
+		target := manifest.Measurement.Operation.Pool
+		if pool == target || (pool != "" && pool != manifest.IsolatedPool) ||
+			(target != "" && target != manifest.IsolatedPool) {
+			return "", errors.New("measurement membership must change between detached and explicitly isolated pool states")
+		}
+	} else if pool != manifest.IsolatedPool {
+		return "", errors.New("actual physical Node must belong to explicitly isolated measurement pool")
 	}
 	if prepare := manifest.Measurement.Operation.Prepare; prepare != nil &&
 		prepare.Instance.Pool != manifest.IsolatedPool {
-		return errors.New("measurement preparation must remain in isolated pool")
+		return "", errors.New("measurement preparation must remain in isolated pool")
 	}
-	if manifest.Measurement.Operation.Kind == "membership" &&
-		!strings.HasPrefix(manifest.Measurement.Operation.Pool, "measurement-") {
-		return errors.New("measurement membership target must remain measurement-* isolated pool")
-	}
-	return nil
+	return pool, nil
 }
 
 func bindMeasurementProfile(prepare *servingkube.PrepareSpec, profiles []serving.Profile) error {

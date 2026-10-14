@@ -140,6 +140,12 @@ Guaranteed Pod와 정수 CPU 할당 등 플랫폼 조건이 필요하다. 프로
 관측 컨테이너를 포함한 Pod 자원 설정도 이 조건과 맞아야 한다. 실제 지원 여부와
 배정 결과는 배포 시 확인하며, 이 문서가 현재 클러스터의 격리를 입증하지는 않는다.
 
+Serving 준비 파드의 artifact/profile init 컨테이너도 선택한 프로파일의 CPU
+request/limit과 선택한 메모리 예산을 사용한다. GPU 장치 요청은 실행 컨테이너에만
+둔다. 모든 컨테이너의 CPU·메모리 request/limit이 양수이며 같으면 Guaranteed
+조건을 충족하지만, 분수 CPU도 Guaranteed가 될 수 있으므로 QoS만으로 전용 CPU
+배정을 입증하지 않는다. CPU 수량은 반올림하거나 request/limit을 강제로 맞추지 않는다.
+
 공유 인스턴스에서도 적용 정의, 유입 큐와 대기 및 실행 관측은 Workload UID로 구분한다.
 native custom batching API의 CHILL guard는 다른 UID를 같은 실행 배치에 넣지 않는다.
 CPU 스레드와 `instance_group.count: 1`은 frozen profiling/serving 계약에 맞춘다.
@@ -257,34 +263,59 @@ which all requests pass.
 An external consumer has no such node, so its request enters the cluster
 somewhere, and that entry is the one point every external request crosses.
 
-## 기존 전달 경로의 배경
+## 현재 인스턴스 전달 경로
 
-아래 전달 구조는 Workload cutover 전의 네트워크 설계 배경이다. 현재 고정 테이블이나
-모델-only 공개 proxy를 유지한다는 뜻은 아니다.
+고정 노드 테이블을 복원하지 않고, native physical instance의 현재 Kubernetes
+Pod를 단일 목적지 Service에 연결한다.
 
 Choosing a backend and reaching it pull in opposite directions: calling a shared
 Service hands the choice to EdgeMesh, which applies no weight, and calling a pod
 address directly does not resolve across the tunnel.
 
-Each serving node gets its own Service with a single endpoint. A Service with
-one endpoint leaves EdgeMesh nothing to select, so its transport applies and its
-policy does not.
+Each actual serving Pod gets `chill-native-<Pod UID>`, a ClusterIP Service owned
+by that Pod. Its selector is only `edge.dacs.io/serving-pod-uid=<actual Pod UID>`,
+installed after Kubernetes assigns the UID; its sole TCP port is named `http`,
+8080, targeting the isolated firstfloor container's named `http` port. The Service
+carries `service.edgemesh.kubeedge.io/service-proxy-name: ""`, matching the
+existing EdgeMesh proxy filter. One endpoint leaves EdgeMesh nothing to select:
+CHILL chooses the physical instance, EdgeMesh transports the request.
 
 ```
-entry point ── weighted choice of Service ──▶ chill-serving-<node>
+entry point ── physical-instance choice ──▶ chill-native-<Pod UID>:8080
                                                     │  EdgeMesh tunnel
                                                     ▼
-                                              the serving pod
+                                       that Pod's firstfloor container
 ```
 
 The decision is CHILL's and the transport is EdgeMesh's, which is the division
 that already governs power mode.
 
-현재 목적지는 노드 이름만이 아니라 실제 Pod UID와 container identity까지 구분한다.
-Kubernetes adapter가 현재 Node/Pod, native 모델 준비와 profile 조건을 관측하고
-core에 준비된 인스턴스 및 입력별 route를 공급한다. 같은 Node의 서로 다른 모델 파드를
-한 목적지로 합치거나 원하는 배포 설정만으로 준비된 용량으로 세지 않는다.
-정적 routing table과 이를 렌더하던 노드별 Service는 현재 공개 설정 경로가 아니다.
+목적지는 실제 Pod UID와 container identity를 구분한다. 생성 동작은 실제 UID label과
+소유권·selector·port가 일치하는 Service만 생성/재사용한다. 같은 이름의 다른 binding은
+수정하지 않고 거부한다. Observer와 Capture, policy read-back, native drain은 모두 이
+Service의 ClusterIP를 사용하며 직접 PodIP·정적 노드 route fallback은 없다.
+UID label은 실제 UID와 현재 label을 test하는 JSON Patch로 추가한다. CNI·kubelet의
+status/resourceVersion 갱신은 이 metadata-only binding을 막지 않는다. 다른 label 변경이나
+Pod 교체는 거부하며 재시도하지 않는다. 기존 preparation의 CPU·memory quantity는
+stdlib `maps.EqualFunc(resource.Quantity.Equal)`로 값만 비교한다. API의 quantity 표기나
+내부 문자열 cache 차이를 다른 자원 할당으로 취급하지 않는다.
+GET으로 현재 Service의 소유권·selector·EdgeMesh label·port를 검증하고, selector가
+현재 Pod/container 하나만 선택하는지 namespace Pod LIST로 확인한다. HTTP probe 뒤
+Pod/container를 다시 읽어 교체된 executor를 이전 인스턴스로 게시하지 않는다.
+Pod는 `RestartPolicyNever`여야 한다. 같은 Pod UID 뒤에서 container가 재시작하여
+이미 게시한 physical instance의 실행 목적지가 바뀌는 것을 허용하지 않는다.
+native model/state와 immutable profile/runtime evidence의 준비 검증은 그대로 유지한다.
+Pod Ready나 Service 생성만으로 추론 준비를 완료하지 않는다.
+
+제거는 native drain과 실제 container 종료 증거를 확인한 뒤 자기 Pod 소유의 Service를
+resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 해제한다.
+이때는 namespace·이름·Pod owner identity만 확인한다. 자기 Service의 selector나 proxy
+label drift가 종료된 Pod의 cleanup을 막게 하지 않는다. 다른 Pod 소유의 Service는
+삭제하지 않는다. Pod owner reference는 Kubernetes GC에도 같은 수명을 연결한다.
+Workload cleanup도 종료 증거 이후 자기 Pod의 Service를 해제한다.
+기존 EdgeMesh 설정이나 다른 workload는 변경하지 않는다.
+namespace owner Role에는 Service GET/DELETE를 기본으로 허용하며,
+scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 
 ## 구현 대응
 
@@ -299,6 +330,11 @@ core에 준비된 인스턴스 및 입력별 route를 공급한다. 같은 Node�
 
 외부 요청은 `/api/v1/workloads/{id}/infer`의 named tensor 독립 샘플 한 건이다.
 [Workload 관리 계약](workload-management.md)의 입력 검증과 SLO를 우회하는 alias는 없다.
+
+원자 동작 측정 command의 membership은 detached Node와 명시적으로 선택한
+`measurement-*` isolated POOL 사이의 이동만 허용한다. 다른 live POOL의 Node를
+편입하지 않으며 동일 Node UID, 선택된 Workload 없음, exclusive journal 조건을 유지한다.
+같은 출발·도착 상태의 no-op는 membership 비용으로 측정하지 않는다.
 
 ## 프로파일 기반 지연 계산과 검증
 

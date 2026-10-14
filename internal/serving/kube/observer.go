@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"path"
 	"reflect"
 	"slices"
@@ -274,7 +273,11 @@ func (o *Observer) refreshSource(ctx context.Context, pod *corev1.Pod, node *cor
 	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
 		return serving.ReadyInstance{}, false
 	}
-	spec, err := sourceSpec(pod, node, profile, classes, actuations)
+	endpoint, err := nativeInstanceEndpoint(ctx, o.kube, pod)
+	var spec firstfloor.Spec
+	if err == nil {
+		spec, err = sourceSpec(pod, node, profile, classes, actuations, endpoint)
+	}
 	if err == nil {
 		err = ownershipErr
 	}
@@ -337,7 +340,7 @@ func workloadOwner(owners []metav1.OwnerReference) string {
 	return ""
 }
 
-func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) (firstfloor.Spec, error) {
+func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation, endpoint string) (firstfloor.Spec, error) {
 	var empty firstfloor.Spec
 	if err := validateSourcePlacement(pod, node, profile, classes, actuations); err != nil {
 		return empty, err
@@ -355,20 +358,11 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 		return empty, err
 	}
 	status := firstfloorStatus(pod)
-	portOK := false
-	for _, port := range runtime.Ports {
-		if port.Name == "http" && port.ContainerPort == 8080 && port.HostPort == 0 && (port.Protocol == "" || port.Protocol == corev1.ProtocolTCP) {
-			portOK = true
-		}
-	}
-	if !portOK || net.ParseIP(pod.Status.PodIP) == nil {
-		return empty, errors.New("per-instance Pod IP and native http port 8080 unavailable")
-	}
 	expected := *profile.RuntimeMetadata
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
 	expected.ModelPath = path.Join("/model", "model"+path.Ext(condition.Artifact.Path))
-	return firstfloor.Spec{Endpoint: "http://" + net.JoinHostPort(pod.Status.PodIP, "8080"), ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
+	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: node.Labels[ServingPoolLabel], Profile: profile, Weight: int32(weight), Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, actuations []edgev1alpha1.NodeActuation) error {
@@ -695,6 +689,9 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 	}
 	for _, object := range objects {
 		if pod, ok := object.(*corev1.Pod); ok && podTerminated(pod) && slices.Contains(pod.Finalizers, sourceFinalizer) {
+			if err = deleteInstanceService(ctx, o.kube, pod); err != nil {
+				return false, err
+			}
 			before := pod.DeepCopy()
 			pod.Finalizers = slices.DeleteFunc(pod.Finalizers, func(f string) bool { return f == sourceFinalizer })
 			if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -872,7 +869,7 @@ func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeRefer
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if reference.Name == "" || reference.UID == "" || pool == "" || len(validation.IsValidLabelValue(pool)) != 0 {
+	if reference.Name == "" || reference.UID == "" || len(validation.IsValidLabelValue(pool)) != 0 {
 		return errors.New("exact Node identity and valid destination Pool are required")
 	}
 	if o.movingNodes[reference.UID] {
@@ -911,7 +908,11 @@ func (o *Observer) MoveNodePool(ctx context.Context, reference serving.NodeRefer
 	if string(node.UID) != reference.UID || node.DeletionTimestamp != nil || node.Labels[ServingPoolLabel] != previous {
 		return errors.New("Node membership changed during drain")
 	}
-	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": node.UID, "resourceVersion": node.ResourceVersion, "labels": map[string]string{ServingPoolLabel: pool}}})
+	labels := map[string]any{ServingPoolLabel: pool}
+	if pool == "" {
+		labels[ServingPoolLabel] = nil
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": node.UID, "resourceVersion": node.ResourceVersion, "labels": labels}})
 	if err != nil {
 		return err
 	}

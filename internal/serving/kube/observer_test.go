@@ -35,22 +35,30 @@ func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1
 	class := edgev1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: "cpu"}, Spec: edgev1alpha1.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"}, Architecture: "amd64", PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}}}}}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", Labels: map[string]string{ServingPoolLabel: "pool", "hardware": "cpu", corev1.LabelArchStable: "amd64"}}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{Architecture: "amd64"}, Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi"), corev1.ResourceCPU: resource.MustParse("4")}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{ServingProfileAnnotation: profile.ID, ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$1" "$2"`, "artifact-copy", "/artifact/model.onnx", "/chill-artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}, {Name: "profile", Image: image}}, Containers: []corev1.Container{{Name: "firstfloor", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1024")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "firstfloor", ImageID: image, ContainerID: "containerd://running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "profile", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}}}
+	pod.Labels[instancePodUIDLabel] = string(pod.UID)
+	pod.Spec.RestartPolicy = corev1.RestartPolicyNever
 	return pod, node, profile, class
+}
+
+func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
+	service := instanceService(pod)
+	service.Spec.ClusterIP = "10.96.0.10"
+	return service
 }
 
 func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, nil)
+	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.0.0.1:8080" || spec.Pool != "pool" || spec.Capacity != 4 {
+	if spec.InstanceID != "pod-uid/containerd://running" || spec.Endpoint != "http://10.96.0.10:8080" || spec.Pool != "pool" || spec.Capacity != 4 {
 		t.Fatalf("wrong physical source: %+v", spec)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
 	opaque.Status.InitContainerStatuses[0].ImageID = "opaque-artifact-image"
-	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, nil); err != nil {
+	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080"); err != nil {
 		t.Fatal("actual ImageID was incorrectly used as a digest admission gate", err)
 	}
 	cases := []struct {
@@ -83,14 +91,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, n, pr, c := observerSourceFixture()
 			tc.change(p, n, &pr)
-			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, nil); e == nil {
+			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, nil, "http://10.96.0.10:8080"); e == nil {
 				t.Fatal("unconfirmed source became eligible")
 			}
 		})
 	}
 	restarted := pod.DeepCopy()
 	restarted.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, nil)
+	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, nil, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,6 +460,26 @@ func TestObserverNodeMoveDrainsBeforeChangingNativeMembership(t *testing.T) {
 	}
 	if err = observer.MoveNodePool(ctx, serving.NodeReference{Name: node.Name, UID: "replacement"}, "other"); err == nil {
 		t.Fatal("stale Node identity changed membership")
+	}
+	if err = observer.MoveNodePool(ctx, assignment.Node, ""); err != nil {
+		t.Fatal(err)
+	}
+	requireObserverNodeDetached(t, ctx, observer, assignment.Node)
+}
+
+func requireObserverNodeDetached(t *testing.T, ctx context.Context, observer *Observer, node serving.NodeReference) {
+	t.Helper()
+	current, err := observer.kube.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, attached := current.Labels[ServingPoolLabel]; attached || current.Labels["hardware"] != "cpu" {
+		t.Fatal("detached node retains membership or lost unrelated labels")
+	}
+	for _, pool := range observer.runtime.Pools() {
+		if slices.Contains(pool.CurrentNodes, node) {
+			t.Fatal("detached node remains in actual Pool membership")
+		}
 	}
 }
 
