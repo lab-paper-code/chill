@@ -129,17 +129,42 @@
   이전 Service 제거 후 두 번째 서비스의 실제 추론 200/실행 완료를 확인했다.
   모델·준비 Pod 명칭 정리는 pending이며 과거 evidence는 원래 UID로 보존한다.
 
-## 다음 의존성 작업 — GPU 우선 실행 프로파일
+## 다음 의존성 작업 — genesis 제외, 비서버 GPU 경로 하나
 
-사용자의 최신 우선순위는 GPU 실행 프로파일 확보다. **먼저 활성 장치의 실제 GPU,
-지원 backend/실행 엔진과 다른 작업 점유를 조사하여 사용 가능한 경로를 확인한다.**
-예상 연산 전력 효율이 가장 높은 사용 가능 GPU부터 측정을 시작할 순서를 정하되,
-순위는 실측 사실이 아닌 기대임을 명시한다. 이후 동일 실행 조건의 실제 에너지·처리량·
-지연으로 기대를 검증한다. 아직 확인하지 않은 GPU 순위를 만들지 않는다.
-기존 CPU 결과는 보존하되 GPU evidence로 대체하지 않는다. Jetson 조율 blocker도 유지한다.
-완료 기준은 장치별 실제 GPU/경로/점유 근거와 사용 가능 여부·미충족 의존성,
-예상 효율 기준의 측정 순서를 기록하는 것이다.
-별도 pending 작업은 모델/준비 Pod 명칭 정정과 scheduler history 조회 504 추적이다.
+사용자 검토를 통과해 실행을 재개했다. **genesis1/2/3 측정·제어는 후순위로 보류한다.**
+진행 중이던 genesis2 자기 캠페인은 8 trial 상태를 보존한 뒤 종료했으며 완료로 세지 않는다.
+Orin Nano의 최초 GPU 컨테이너 생성은 Toolkit 1.20 CSV/CDI가 플러그인의 `tegra` ID를
+거부하여 실패했다. 사용자가 제한된 수정에 동의한 뒤, NVIDIA가 지원하는 index 방식으로
+**Orin의 플러그인만** `nvidia-device-plugin-orin-nano`에 분리했다. 공유
+`nvidia-device-plugin-jetson`은 Orin을 제외하고 `OnDelete`로 두어 다른 3노드 Pod의
+자동 롤링을 막았다. **공유 플러그인의 향후 자동 롤링도 꺼진 상태**이며 다음 운영 변경 때
+이 사실을 반영해야 한다. 호스트 패키지·containerd·전력은 변경하지 않았다.
+실제 GPU request 1의 컨테이너 생성과 CUDA Driver API 초기화가 성공했고,
+`NVIDIA_VISIBLE_DEVICES=0`, GPU UUID `GPU-31ec0c91-d383-5ca3-8772-28981cf737aa`,
+Driver API `12060`을 확인했다. 다른 3노드 플러그인과 기존 Orin baseline Pod의
+UID·container ID 보존은 `/tmp/chill-edge-orin-plugin-cutover-proof.json`에 기록했다.
+자기 테스트 Pod는 삭제했다. GPU 식별/할당만으로 프로파일 완료를 세지 않는다.
+Xavier NX도 실제 UUID/명시적 선택은 확인했으나 CPython3.8용 호환 GPU 컨테이너가
+`ImagePullBackOff`여서 추론하지 못했다. 불필요하게 이 경로를 확장하지 않는다.
+Orin의 같은 모델은 ONNX GPU 1.23/NumPy1.26.4에서 CUDA 노드만 실행하고 CPU fallback을
+차단한 실제 추론을 통과했다. 공유 runner의 SMI 조회는 실제 실패(exit6)했고, CUDA Driver
+API로 교체한 `1c59650`은 비-root UID65532에서 초기화와 배치1/2 binary 추론을 통과했다.
+잘못 지정한 다른 노드의 UUID는 오류로 거부했다. 증거:
+`/tmp/chill-edge-orin-sdk-actual-binary-inference.json`,
+`/tmp/chill-edge-orin-sdk-wrong-physical-gpu-rejection.json`.
+Ponytail 리뷰와 focused Go/Python7개 테스트, `make lint && make test`는 통과했다.
+Orin에 설치된 CUDA12.6/cuDNN9.20의 실제 runtime library를 이미지에 고정했다.
+최종 image `4b316e0b..`는 수동 host mount/pip 없이 UID65532에서 같은 SDK 초기화와
+배치1/2 실제 추론을 통과했다. 증거는
+`/tmp/chill-edge-orin-vendor-complete-image-actual-sdk-inference.json`이다.
+범용 ARM64 CUDA image `3dcc21dd..`의 실제 CUBLAS 실패는 보존하고 채택하지 않았다.
+host 호환 계층 없이 기존 실행 선언·정책 API로 등록한 뒤 Orin GPU CPU1 조건의 정식
+캠페인 `mobilenet-v2-050-orin-nano-cuda-q1`(UID `1fe633d1-5a43-4bae-a297-712c92e0dde8`)을
+시작했다. 배치1/2·반복3회이며 완료/채택은 아직 세지 않는다.
+다른 작업을 중단하거나 전력 안전 허용 범위를 넓히지 않는다. baseline-fleet/fastdds가
+있으므로 전력모드 변경은 보류한다. GPU 기대 효율은 가설이며 실측으로 검증한다.
+목표는 그대로 실측 근거 → SLO 우선 판단 → 실제 FULL 적용 → 실제 Dashboard 종단 연결이다.
+명칭·문서 확장 등 낮은 우선순위 작업은 그 핵심 경로를 막을 때만 진행한다.
 
 ## 진행 기록 찾아보기
 
