@@ -366,8 +366,8 @@ func TestCurveRequiresExactStateBaselinesAndIndependentEvidence(t *testing.T) {
 	baseline := mismatched[state]
 	baseline.EnvironmentIdentity = testEnvironmentIdentity("f")
 	mismatched[state] = baseline
-	if _, err := DeriveCurve([]Pass{pass}, plan, mismatched, pointPolicy("curve-point-v1")); err == nil {
-		t.Fatal("expected baseline environment mismatch rejection")
+	if _, err := DeriveCurve([]Pass{pass}, plan, mismatched, pointPolicy("curve-point-v1")); err != nil {
+		t.Fatalf("environment observations blocked curve calculation: %v", err)
 	}
 	duplicate := testPass(t, plan, []float64{1}, "same")
 	if _, err := DeriveCurve(

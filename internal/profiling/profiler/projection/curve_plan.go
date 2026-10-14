@@ -64,7 +64,7 @@ func ProjectCurvePlanSpec(
 	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active curve RunConfig disagrees: %w", err)
 	}
-	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
+	if err := validateCurvePlanSharedRunFacts(active, idle); err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, spec, spec.IdleProtocol); err != nil {
@@ -73,9 +73,9 @@ func ProjectCurvePlanSpec(
 	return spec, nil
 }
 
-// ProjectVerifiedCurveState consumes only evidence already sealed by the
-// active and idle Loader boundaries. Conversion, batch capability, and complete
-// tensor facts remain bound through the curve plan and frozen RunConfigs.
+// ProjectVerifiedCurveState binds Loader-verified execution conditions to the
+// frozen curve plan. Digest labels and external environments are provenance,
+// not validation gates; runtime validity belongs to the Loader.
 func ProjectVerifiedCurveState(
 	plan profilederivation.CurvePlan,
 	active profilerevidence.VerifiedEvidence,
@@ -85,17 +85,25 @@ func ProjectVerifiedCurveState(
 	if err != nil {
 		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified active evidence: %w", err)
 	}
-	idleExecution, idleRaw, err := idle.Records()
+	idleExecution, _, err := idle.Records()
 	if err != nil {
 		return profilederivation.VerifiedCurveState{}, fmt.Errorf("read verified idle evidence: %w", err)
 	}
-	activeTrial, err := projectTrial(activeExecution, activeRaw)
+	activeIdentities, err := ProjectRunIdentities(activeExecution.RunConfig, activeExecution.Terminal.Node.UID)
 	if err != nil {
-		return profilederivation.VerifiedCurveState{}, fmt.Errorf("project verified active trial: %w", err)
+		return profilederivation.VerifiedCurveState{}, err
 	}
-	idleObservation, err := projectIdleObservation(idleExecution, idleRaw)
+	idleIdentities, err := ProjectRunIdentities(idleExecution.RunConfig, idleExecution.Terminal.Node.UID)
 	if err != nil {
-		return profilederivation.VerifiedCurveState{}, fmt.Errorf("project verified idle observation: %w", err)
+		return profilederivation.VerifiedCurveState{}, err
+	}
+	start, end, err := activeRaw.Runtime.MeasurementWindow()
+	if err != nil {
+		return profilederivation.VerifiedCurveState{}, err
+	}
+	workload, err := projectWorkloadWindow(activeRaw.Workload, start, end)
+	if err != nil {
+		return profilederivation.VerifiedCurveState{}, err
 	}
 	spec := plan.Shared()
 	if err := validateCurvePlanRunConfigs(
@@ -105,16 +113,12 @@ func ProjectVerifiedCurveState(
 	); err != nil {
 		return profilederivation.VerifiedCurveState{}, err
 	}
-	if activeTrial.StateIdentity != idleObservation.StateIdentity ||
-		activeTrial.EnvironmentIdentity != idleObservation.EnvironmentIdentity {
-		return profilederivation.VerifiedCurveState{}, errors.New("active and idle evidence do not share exact state and environment identities")
-	}
 	return profilederivation.VerifiedCurveState{
 		Shared:                 spec,
-		StateIdentity:          activeTrial.StateIdentity,
-		EnvironmentIdentity:    activeTrial.EnvironmentIdentity,
-		ActiveProtocolIdentity: activeTrial.MeasurementProtocolIdentity,
-		IdleProtocolIdentity:   idleObservation.MeasurementProtocolIdentity,
+		StateIdentity:          activeIdentities.StateIdentity,
+		EnvironmentIdentity:    workload.EnvironmentIdentity,
+		ActiveProtocolIdentity: activeIdentities.MeasurementProtocolIdentity,
+		IdleProtocolIdentity:   idleIdentities.MeasurementProtocolIdentity,
 	}, nil
 }
 
@@ -123,7 +127,7 @@ func validateCurvePlanRunConfigs(
 	activeNodeUID, idleNodeUID string,
 	spec profilederivation.CurvePlanSpec,
 ) error {
-	if err := validateCurvePlanNodeFacts(active, idle); err != nil {
+	if err := validateCurvePlanSharedRunFacts(active, idle); err != nil {
 		return err
 	}
 	if len(spec.PlannedBatchSizes) == 0 {
@@ -155,10 +159,25 @@ func validateCurvePlanRunConfigs(
 	return nil
 }
 
-func validateCurvePlanNodeFacts(active, idle profilingrun.RunConfig) error {
+func validateCurvePlanSharedRunFacts(active, idle profilingrun.RunConfig) error {
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
 		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
 		return errors.New("active and idle recorded candidate or Node snapshots disagree")
+	}
+	if active.Candidate.Inputs.ModelSpec.UID != idle.Candidate.Inputs.ModelSpec.UID ||
+		active.Candidate.Inputs.DeviceClass.UID != idle.Candidate.Inputs.DeviceClass.UID {
+		return errors.New("active and idle model or device-class identities disagree")
+	}
+	if !reflect.DeepEqual(active.State.HostContract, idle.State.HostContract) ||
+		!reflect.DeepEqual(active.Delivery.HostContract, idle.Delivery.HostContract) ||
+		!reflect.DeepEqual(active.Delivery.RuntimePackages, idle.Delivery.RuntimePackages) {
+		return errors.New("active and idle runtime delivery conditions disagree")
+	}
+	if !reflect.DeepEqual(active.Actuation, idle.Actuation) {
+		return errors.New("active and idle power actuation conditions disagree")
+	}
+	if !maps.Equal(active.Metrics.MetricLabels, idle.Metrics.MetricLabels) {
+		return errors.New("active and idle wall-power metric labels disagree")
 	}
 	return nil
 }

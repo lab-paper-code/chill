@@ -40,6 +40,7 @@ func (d *Deriver) Derive(
 ) (profilederivation.IdleBaseline, idlebaseline.FinalEvidence, error) {
 	trials := make([]profilederivation.IdleTrial, 0, len(runs))
 	references := make(idlebaseline.FinalEvidence, len(runs))
+	var reference profilerevidence.VerifiedIdleEvidence
 	for index := range runs {
 		run := &runs[index]
 		if run.Status.Evidence == nil {
@@ -53,7 +54,10 @@ func (d *Deriver) Derive(
 		if err != nil {
 			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("load ProfilingRun %q idle evidence: %w", run.Name, err)
 		}
-		trial, err := profilerprojection.IdleTrial(verified)
+		if index == 0 {
+			reference = verified
+		}
+		trial, err := profilerprojection.IdleTrial(verified, reference)
 		if err != nil {
 			return profilederivation.IdleBaseline{}, nil, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}

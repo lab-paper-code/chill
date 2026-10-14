@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,89 @@ func TestCurveDeriverRejectsBatchesThatAreNotTheRecordedPrefix(t *testing.T) {
 	}
 }
 
-func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
+func TestCurveDeriverAcceptsObservedVariationAndRejectsNonWitnessConditionDrift(t *testing.T) {
+	fixture := newCurveDeriverFixture(t)
+	for index, run := range fixture.activeRuns {
+		execution, _, err := fixture.evidence.active[run.Name].Records()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := curveFixtureActiveRaw(execution.RunConfig, execution.Terminal.Pod.UID, float64(6+index))
+		raw.Runtime.MemoryBytes = uint64(1000 + index)
+		duration := 30*time.Second + time.Duration(index)*100*time.Millisecond
+		raw.Runtime.MeasurementEndedAt = raw.Metrics.StartedAt.Add(duration).Format(time.RFC3339Nano)
+		raw.Runtime.MeasurementElapsedSeconds = duration.Seconds()
+		raw.Runtime.RepetitionResults[0].MeasurementEndedAt = raw.Runtime.MeasurementEndedAt
+		if index%3 != 1 {
+			pod := workloadobserver.Pod{
+				Namespace: "baseline-fleet", Name: "fleet", UID: "fleet-pod",
+				Phase: "Running", Images: []string{"registry.example/fleet:measured"},
+			}
+			if index%3 == 0 {
+				raw.Workload.InitialActivePods = append(raw.Workload.InitialActivePods, pod)
+			} else {
+				pending := pod
+				pending.Phase = "Pending"
+				raw.Workload.Events = []workloadobserver.Event{
+					{Kind: workloadobserver.EventEntered, ObservedAt: raw.Metrics.StartedAt.Add(-50 * time.Millisecond), ResourceVersion: "11", Pod: pending},
+					{Kind: workloadobserver.EventUpdated, ObservedAt: raw.Metrics.StartedAt.Add(6 * time.Second), ResourceVersion: "12", Pod: pod},
+				}
+				raw.Workload.LastResourceVersion = "12"
+			}
+			raw.Workload.FinalActivePods = append(raw.Workload.FinalActivePods, pod)
+		}
+		for _, pods := range [][]workloadobserver.Pod{raw.Workload.InitialActivePods, raw.Workload.FinalActivePods} {
+			sort.Slice(pods, func(i, j int) bool {
+				left := pods[i].Namespace + "\x00" + pods[i].Name + "\x00" + pods[i].UID
+				right := pods[j].Namespace + "\x00" + pods[j].Name + "\x00" + pods[j].UID
+				return left < right
+			})
+		}
+		fixture.evidence.active[run.Name] = curveFixtureVerifiedActiveRaw(t, raw)
+	}
+	if _, err := fixture.deriver.Derive(
+		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns, []int{1, 2}, fixture.policy,
+	); err != nil {
+		t.Fatalf("observed memory, duration, energy, or environment variation blocked derivation: %v", err)
+	}
+	for _, idle := range []bool{false, true} {
+		t.Run(fmt.Sprintf("idle=%t", idle), func(t *testing.T) {
+			drifted := newCurveDeriverFixture(t)
+			runs := drifted.activeRuns
+			if idle {
+				runs = drifted.idleRuns
+			}
+			run := runs[1]
+			var config profilingrun.RunConfig
+			if idle {
+				execution, _, err := drifted.evidence.idle[run.Name].Records()
+				if err != nil {
+					t.Fatal(err)
+				}
+				config = execution.RunConfig
+			} else {
+				execution, _, err := drifted.evidence.active[run.Name].Records()
+				if err != nil {
+					t.Fatal(err)
+				}
+				config = execution.RunConfig
+			}
+			config.Images.Runtime = "registry.example/different-sdk@sha256:" + strings.Repeat("f", 64)
+			if idle {
+				drifted.evidence.idle[run.Name] = curveFixtureIdleEvidence(t, config, "different-sdk-pod", 4)
+			} else {
+				drifted.evidence.active[run.Name] = curveFixtureActiveEvidence(t, config, "different-sdk-pod", 6)
+			}
+			if _, err := drifted.deriver.Derive(
+				context.Background(), drifted.plan, drifted.activeRuns, drifted.idleRuns, []int{1, 2}, drifted.policy,
+			); err == nil {
+				t.Fatal("non-witness SDK condition drift was accepted")
+			}
+		})
+	}
+}
+
+func TestCurveDeriverCollectorsPreserveEvidenceOrder(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 	activeRuns := []edgev1alpha1.ProfilingRun{
 		fixture.activeRuns[1], fixture.activeRuns[0], fixture.activeRuns[5], fixture.activeRuns[4],
@@ -114,7 +197,7 @@ func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
 			t.Fatalf("batch %d trial order = %v, want %v", batchIndex, got, wantActiveTrials[batchIndex])
 		}
 	}
-	activeExecution, _, err := activeWitness.Records()
+	activeExecution, _, err := activeWitness[0].Records()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +213,7 @@ func TestCurveDeriverCollectorsPreserveOrderAndFirstWitness(t *testing.T) {
 	if len(idleTrials) != 2 || idleTrials[0].TrialID != "idle-t2-pod" || idleTrials[1].TrialID != "idle-t1-pod" {
 		t.Fatalf("idle trials = %+v", idleTrials)
 	}
-	idleExecution, _, err := idleWitness.Records()
+	idleExecution, _, err := idleWitness[0].Records()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,12 +497,16 @@ func curveFixtureActiveEvidence(
 	watts float64,
 ) profilerevidence.VerifiedEvidence {
 	t.Helper()
-	raw := curveFixtureActiveRaw(config, podUID, watts)
+	return curveFixtureVerifiedActiveRaw(t, curveFixtureActiveRaw(config, podUID, watts))
+}
+
+func curveFixtureVerifiedActiveRaw(t *testing.T, raw profilerevidence.RawMeasurement) profilerevidence.VerifiedEvidence {
+	t.Helper()
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := curveFixtureExecution(t, config, podUID, rawBytes)
+	execution := curveFixtureExecution(t, raw.RunConfig, raw.PodUID, rawBytes)
 	executionBytes, err := execution.CanonicalJSON(raw)
 	if err != nil {
 		t.Fatal(err)

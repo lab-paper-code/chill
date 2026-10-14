@@ -74,7 +74,7 @@ func DeriveMinimumEnergyBatch(
 		PolicyVersion:        policy.Version,
 		TrialsPerBatch:       policy.TrialsPerBatch,
 		CurvePlanName:        curve.PlanName(),
-		IdleBaselinesByState: make(map[string]IdleBaseline),
+		IdleBaselinesByState: curve.IdleBaselinesByState(),
 	}
 	best := math.Inf(1)
 	bestBatch := 0
@@ -90,11 +90,6 @@ func DeriveMinimumEnergyBatch(
 		result.IncrementalWorkByBatch = append(result.IncrementalWorkByBatch, BatchEnergyMean{
 			Batch: point.Batch, IncrementalWorkJoulesPerItem: point.MeanIncrementalWorkJoulesPerItem,
 		})
-		if baseline, exists := curve.baselines[point.StateIdentity]; exists {
-			result.IdleBaselinesByState[point.StateIdentity] = cloneIdleBaseline(baseline)
-		} else {
-			return EnergyOptimizationResult{}, errors.New("search point lost its exact-state idle baseline")
-		}
 
 		value := point.MeanIncrementalWorkJoulesPerItem
 		if value < best {

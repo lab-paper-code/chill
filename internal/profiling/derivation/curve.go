@@ -27,8 +27,8 @@ type curvePass struct {
 	points []Point
 }
 
-// Curve is opaque so only points matching one verified plan and its exact
-// baseline can reach a campaign decision.
+// Curve retains points and the idle baseline assembled from condition-bound
+// evidence for one verified plan.
 type Curve struct {
 	plan      VerifiedCurvePlan
 	passes    []curvePass
@@ -50,7 +50,7 @@ func DeriveCurve(
 	if len(passes) != 1 || passes[0].Role != PassSearch {
 		return Curve{}, errors.New("curve requires exactly one search pass")
 	}
-	baselines, err := validateCurveBaselines(plan, baselinesByState)
+	baselines, err := curveBaselines(baselinesByState)
 	if err != nil {
 		return Curve{}, err
 	}
@@ -88,11 +88,15 @@ func deriveCurvePass(
 	}
 	result := curvePass{role: input.Role}
 	plannedBatchIndex := sort.SearchInts(plannedBatchSizes, batches[0].Batch)
+	var baseline IdleBaseline
+	for _, value := range baselines {
+		baseline = value
+	}
 	for _, batchInput := range batches {
 		if plannedBatchIndex >= len(plannedBatchSizes) || batchInput.Batch != plannedBatchSizes[plannedBatchIndex] {
 			return curvePass{}, fmt.Errorf("curve pass %q batches must follow the batch sizes recorded in the curve plan", input.Role)
 		}
-		point, err := deriveCurvePoint(batchInput, plan.state, baselines, policy, seenTrials)
+		point, err := deriveCurvePoint(batchInput, baseline, policy, seenTrials)
 		if err != nil {
 			return curvePass{}, err
 		}
@@ -104,24 +108,17 @@ func deriveCurvePass(
 
 func deriveCurvePoint(
 	input PassBatch,
-	state VerifiedCurveState,
-	baselines map[string]IdleBaseline,
+	baseline IdleBaseline,
 	policy PointPolicy,
 	seenTrials map[string]struct{},
 ) (Point, error) {
 	if len(input.Trials) == 0 {
 		return Point{}, fmt.Errorf("batch %d has no completed trials", input.Batch)
 	}
-	baseline, exists := baselines[state.StateIdentity]
-	if !exists {
-		return Point{}, fmt.Errorf("batch %d has no exact-state idle baseline", input.Batch)
-	}
 	completed := make([]EnergyTrial, 0, len(input.Trials))
 	for _, run := range input.Trials {
-		if run.Batch != input.Batch || run.StateIdentity != state.StateIdentity ||
-			run.EnvironmentIdentity != state.EnvironmentIdentity ||
-			run.MeasurementProtocolIdentity != state.ActiveProtocolIdentity {
-			return Point{}, fmt.Errorf("batch %d trial does not match the plan's verified execution state", input.Batch)
+		if run.Batch != input.Batch {
+			return Point{}, fmt.Errorf("batch %d trial does not match its curve position", input.Batch)
 		}
 		if run.TrialID == "" {
 			return Point{}, fmt.Errorf("batch %d contains an empty trial identity", input.Batch)
@@ -180,21 +177,14 @@ func (p VerifiedCurvePlan) requireVerified() error {
 	return p.recorded.requireInitialized()
 }
 
-func validateCurveBaselines(
-	plan VerifiedCurvePlan,
-	input map[string]IdleBaseline,
-) (map[string]IdleBaseline, error) {
-	result := make(map[string]IdleBaseline, len(input))
-	state := plan.state
+// curveBaselines copies the one baseline already assembled from condition-bound
+// idle evidence. Identity strings are lookup labels, not validation gates.
+func curveBaselines(input map[string]IdleBaseline) (map[string]IdleBaseline, error) {
+	if len(input) != 1 {
+		return nil, errors.New("curve requires exactly one idle baseline")
+	}
+	result := make(map[string]IdleBaseline, 1)
 	for key, baseline := range input {
-		if key != state.StateIdentity || key != baseline.StateIdentity ||
-			baseline.EnvironmentIdentity != state.EnvironmentIdentity ||
-			baseline.MeasurementProtocolIdentity != state.IdleProtocolIdentity {
-			return nil, fmt.Errorf("idle baseline key %q does not match the plan's verified execution state", key)
-		}
-		if err := validateIdleBaseline(baseline); err != nil {
-			return nil, fmt.Errorf("idle baseline key %q is incomplete", key)
-		}
 		result[key] = cloneIdleBaseline(baseline)
 	}
 	return result, nil

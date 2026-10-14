@@ -281,7 +281,7 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, active[0], verified); err != nil {
 			return serving.Profile{}, nil, err
 		}
-		idleTrials[index], err = profilerprojection.IdleTrial(verified)
+		idleTrials[index], err = profilerprojection.IdleTrial(verified, idle[0])
 		if err != nil {
 			return serving.Profile{}, nil, err
 		}

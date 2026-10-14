@@ -72,22 +72,36 @@ func (d *CurveDeriver) Derive(
 		ConfidenceLevel: energyObjectivePointConfidenceLevel,
 	}
 
-	passBatches, activeWitness, err := d.collectActiveTrials(ctx, activeRuns, batches)
+	passBatches, activeEvidence, err := d.collectActiveTrials(ctx, activeRuns, batches)
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, err
 	}
-	idleTrials, idleWitness, err := d.collectIdleTrials(ctx, idleRuns)
+	idleTrials, idleEvidence, err := d.collectIdleTrials(ctx, idleRuns)
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, err
 	}
 
+	if len(activeEvidence) == 0 || len(idleEvidence) == 0 {
+		return batchenergyoptimization.CurveResult{}, errors.New("curve requires active and idle evidence")
+	}
+	var state profilederivation.VerifiedCurveState
+	for index, active := range activeEvidence {
+		projected, err := profilerprojection.ProjectVerifiedCurveState(plan, active, idleEvidence[0])
+		if err != nil {
+			return batchenergyoptimization.CurveResult{}, fmt.Errorf("project active curve condition: %w", err)
+		}
+		if index == 0 {
+			state = projected
+		}
+	}
+	for _, idle := range idleEvidence[1:] {
+		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, activeEvidence[0], idle); err != nil {
+			return batchenergyoptimization.CurveResult{}, fmt.Errorf("project idle curve condition: %w", err)
+		}
+	}
 	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, pointPolicy)
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive idle baseline: %w", err)
-	}
-	state, err := profilerprojection.ProjectVerifiedCurveState(plan, activeWitness, idleWitness)
-	if err != nil {
-		return batchenergyoptimization.CurveResult{}, fmt.Errorf("project verified curve state: %w", err)
 	}
 	verifiedPlan, err := profilederivation.VerifyCurvePlan(plan, state)
 	if err != nil {
@@ -113,7 +127,7 @@ func (d *CurveDeriver) collectActiveTrials(
 	ctx context.Context,
 	runs []edgev1alpha1.ProfilingRun,
 	batches []int,
-) ([]profilederivation.PassBatch, profilerevidence.VerifiedEvidence, error) {
+) ([]profilederivation.PassBatch, []profilerevidence.VerifiedEvidence, error) {
 	passBatches := make([]profilederivation.PassBatch, len(batches))
 	batchIndexes := make(map[int]int, len(batches))
 	for index, batch := range batches {
@@ -121,54 +135,50 @@ func (d *CurveDeriver) collectActiveTrials(
 		batchIndexes[batch] = index
 	}
 
-	var witness profilerevidence.VerifiedEvidence
+	evidence := make([]profilerevidence.VerifiedEvidence, 0, len(runs))
 	for index := range runs {
 		run := &runs[index]
 		batchIndex, exists := batchIndexes[int(run.Spec.Measurement.Batch)]
 		if !exists {
-			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"ProfilingRun %q batch %d is outside the requested curve prefix",
 				run.Name, run.Spec.Measurement.Batch,
 			)
 		}
 		verified, err := d.loadActive(ctx, run)
 		if err != nil {
-			return nil, profilerevidence.VerifiedEvidence{}, err
+			return nil, nil, err
 		}
 		trial, err := profilerprojection.Trial(verified)
 		if err != nil {
-			return nil, profilerevidence.VerifiedEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
+			return nil, nil, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
 		passBatches[batchIndex].Trials = append(passBatches[batchIndex].Trials, trial)
-		if index == 0 {
-			witness = verified
-		}
+		evidence = append(evidence, verified)
 	}
-	return passBatches, witness, nil
+	return passBatches, evidence, nil
 }
 
 func (d *CurveDeriver) collectIdleTrials(
 	ctx context.Context,
 	runs []edgev1alpha1.ProfilingRun,
-) ([]profilederivation.IdleTrial, profilerevidence.VerifiedIdleEvidence, error) {
+) ([]profilederivation.IdleTrial, []profilerevidence.VerifiedIdleEvidence, error) {
 	trials := make([]profilederivation.IdleTrial, 0, len(runs))
-	var witness profilerevidence.VerifiedIdleEvidence
+	evidence := make([]profilerevidence.VerifiedIdleEvidence, 0, len(runs))
 	for index := range runs {
 		run := &runs[index]
 		verified, err := d.loadIdle(ctx, run)
 		if err != nil {
-			return nil, profilerevidence.VerifiedIdleEvidence{}, err
+			return nil, nil, err
 		}
-		trial, err := profilerprojection.IdleTrial(verified)
+		evidence = append(evidence, verified)
+		trial, err := profilerprojection.IdleTrial(verified, evidence[0])
 		if err != nil {
-			return nil, profilerevidence.VerifiedIdleEvidence{}, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
+			return nil, nil, fmt.Errorf("evaluate ProfilingRun %q: %w", run.Name, err)
 		}
 		trials = append(trials, trial)
-		if index == 0 {
-			witness = verified
-		}
 	}
-	return trials, witness, nil
+	return trials, evidence, nil
 }
 
 func (d *CurveDeriver) loadActive(

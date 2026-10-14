@@ -26,7 +26,7 @@ func TestProjectionRequiresVerifiedEvidence(t *testing.T) {
 	if _, err := Trial(profilerevidence.VerifiedEvidence{}); err == nil {
 		t.Fatal("empty active evidence was accepted")
 	}
-	if _, err := IdleTrial(profilerevidence.VerifiedIdleEvidence{}); err == nil {
+	if _, err := IdleTrial(profilerevidence.VerifiedIdleEvidence{}, profilerevidence.VerifiedIdleEvidence{}); err == nil {
 		t.Fatal("empty idle evidence was accepted")
 	}
 }

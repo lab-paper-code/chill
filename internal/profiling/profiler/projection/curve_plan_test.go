@@ -166,6 +166,18 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 				idle.TargetNode.AllocatableCPU = "different-allocatable-cpu"
 			},
 		},
+		{
+			name: "wall-power labels",
+			mutate: func(idle *profilingrun.RunConfig) {
+				idle.Metrics.MetricLabels = map[string]string{"meter": "different"}
+			},
+		},
+		{
+			name: "model identity",
+			mutate: func(idle *profilingrun.RunConfig) {
+				idle.Candidate.Inputs.ModelSpec.UID = "different-model-uid"
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

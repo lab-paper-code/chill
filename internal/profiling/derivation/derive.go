@@ -7,6 +7,8 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+// DeriveIdleBaseline summarizes idle trials whose execution conditions have
+// already been bound by the evidence projection boundary.
 func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, error) {
 	if err := validatePointPolicy(policy); err != nil || len(trials) < policy.MinimumTrials {
 		return IdleBaseline{}, errors.New("idle trial count or policy is insufficient")
@@ -22,10 +24,7 @@ func DeriveIdleBaseline(trials []IdleTrial, policy PointPolicy) (IdleBaseline, e
 	seen := map[string]struct{}{}
 	seenEvidence := map[string]struct{}{}
 	for index, trial := range trials {
-		if trial.StateIdentity != baseline.StateIdentity ||
-			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
-			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
-			trial.TrialID == "" ||
+		if trial.TrialID == "" ||
 			!validRawEvidenceIdentity(trial.RawEvidence) ||
 			trial.ModelLoadedIdleMeanWallWatts < 0 ||
 			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
@@ -74,10 +73,8 @@ func validateIdleBaseline(baseline IdleBaseline) error {
 	seenTrials := make(map[string]struct{}, len(baseline.Trials))
 	seenEvidence := make(map[string]struct{}, len(baseline.Trials))
 	for _, trial := range baseline.Trials {
-		if trial.StateIdentity != baseline.StateIdentity ||
-			trial.EnvironmentIdentity != baseline.EnvironmentIdentity ||
-			trial.MeasurementProtocolIdentity != baseline.MeasurementProtocolIdentity ||
-			trial.TrialID == "" ||
+		if trial.StateIdentity == "" || trial.EnvironmentIdentity == "" ||
+			trial.MeasurementProtocolIdentity == "" || trial.TrialID == "" ||
 			!validRawEvidenceIdentity(trial.RawEvidence) || trial.ModelLoadedIdleMeanWallWatts < 0 ||
 			math.IsNaN(trial.ModelLoadedIdleMeanWallWatts) ||
 			math.IsInf(trial.ModelLoadedIdleMeanWallWatts, 0) {
@@ -115,10 +112,10 @@ func validateIdleBaselineSummary(baseline IdleBaseline) error {
 	return nil
 }
 
+// IncrementalWorkTrial computes measurements after the projection boundary
+// has bound active and idle execution conditions. Provenance labels are not
+// compared here, and differing external environments remain observations.
 func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, error) {
-	if baseline.StateIdentity != trial.StateIdentity || baseline.EnvironmentIdentity != trial.EnvironmentIdentity || baseline.MeasurementProtocolIdentity == "" {
-		return EnergyTrial{}, errors.New("idle baseline does not match the measured state and environment")
-	}
 	joules, err := measureTrial(trial)
 	if err != nil {
 		return EnergyTrial{}, err
@@ -133,7 +130,7 @@ func IncrementalWorkTrial(trial Trial, baseline IdleBaseline) (EnergyTrial, erro
 	completedItems := float64(trial.CompletedItems)
 	activeWindowWallJoulesPerItem := joules / completedItems
 	idleBaselineSecondsPerItem := windowSeconds / completedItems
-	estimatorIdentity := "state=" + trial.StateIdentity + "|environment=" + trial.EnvironmentIdentity +
+	estimatorIdentity := "state=" + baseline.StateIdentity +
 		"|activeProtocol=" + trial.MeasurementProtocolIdentity +
 		"|idleProtocol=" + baseline.MeasurementProtocolIdentity + "|idlePoint=" + baseline.PolicyVersion
 	return EnergyTrial{
@@ -212,14 +209,10 @@ func Aggregate(trials []EnergyTrial, policy PointPolicy) (Point, error) {
 }
 
 func validateEnergyTrialIdentity(trial EnergyTrial, point Point) error {
-	if trial.StateIdentity != point.StateIdentity ||
-		trial.EnvironmentIdentity != point.EnvironmentIdentity ||
-		trial.MeasurementProtocolIdentity != point.MeasurementProtocolIdentity ||
-		trial.EstimatorIdentity != point.EstimatorIdentity || point.EstimatorIdentity == "" ||
-		trial.Batch != point.Batch ||
+	if trial.Batch != point.Batch ||
 		math.IsNaN(trial.IncrementalWorkJoulesPerItem) ||
 		math.IsInf(trial.IncrementalWorkJoulesPerItem, 0) {
-		return errors.New("trial state, environment, protocol, estimator, or batch mismatch")
+		return errors.New("trial batch or value mismatch")
 	}
 	return nil
 }

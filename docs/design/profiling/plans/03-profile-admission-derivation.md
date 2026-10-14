@@ -35,6 +35,17 @@ remain stored for inspection. Missing or adverse environmental observations do
 not block a successful Run or its numeric derivation. Scientific interpretation
 and exclusions belong to the experimenter.
 
+Curve assembly binds every Loader-verified active and idle execution to the
+frozen plan's Node, artifact, SDK image, backend, input, power, CPU allocation,
+affinity, and mode-specific protocol facts before numeric derivation. Repeated
+standalone idle trials bind to their first frozen execution condition.
+State/protocol digests are retained provenance labels, not validation gates.
+External-environment identities and changes remain per-trial observations;
+different snapshots do not exclude trials or select a different baseline.
+Aggregate environment labels describe the first retained trial, not a claim
+that all environments were identical. Raw memory, duration, latency, power,
+and energy remain measured quantities, not execution identity.
+
 ## Consumers and stored contracts
 
 Idle-baseline aggregation and batch-energy search consume completed Runs with
