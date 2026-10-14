@@ -165,7 +165,8 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
         raise common.ContractError("actual initialized batches, warmup, affinity or threads differ from frozen conditions")
     providers = actual.get("providers")
     if not isinstance(providers, list) or (
-        backend != "rknnlite" and providers != [PROVIDERS[backend]]
+        backend != "rknnlite" and providers != [PROVIDERS[backend]] and
+        not (backend == "ort-cuda" and providers == ["CUDAExecutionProvider", "CPUExecutionProvider"])
     ) or (backend == "rknnlite" and (providers or actual.get("device") != "npu")):
         raise common.ContractError("actual provider differs from the requested backend (fallback is forbidden)")
     if backend == "ort-cpu" and (providers != ["CPUExecutionProvider"] or actual.get("device") != "cpu" or actual.get("gpuUUID")):

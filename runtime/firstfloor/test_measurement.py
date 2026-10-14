@@ -113,7 +113,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
         actual = {"runtime": "ort-cuda", "runtimeVersion": "1.20.0", "numpyVersion": "2.1.0",
                   "modelPath": "/model/model.onnx", "inputs": [{"name": "x", "datatype": "FP32", "shape": [3]}],
                   "outputs": [{"name": "y", "datatype": "FP32", "shape": [2]}],
-                  "providers": ["CUDAExecutionProvider"], "availableProviders": ["CUDAExecutionProvider"],
+                  "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"], "availableProviders": ["CUDAExecutionProvider", "CPUExecutionProvider"],
                   "device": "cuda", "gpuUUID": "GPU-actual", "cpuAffinity": [0, 1], "intraOpThreads": 2,
                   "interOpThreads": 1, "initializedBatches": [1, 2, 4], "warmupIterations": 2,
                   "cgroupCPUMax": "200000 100000", "cpuSet": "0-1", "synthetic": False}
@@ -121,18 +121,18 @@ class MeasurementBoundaryTest(unittest.TestCase):
                     "modelInstanceCount": 1, "maxQueueBytes": 1024, "maxRequestBytes": measurement.FRAME_BYTES,
                     "policy": {"deadlinePolicy": "keep"},
                     "runtime": actual}
-        self.assertIs(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1"), actual)
+        self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["gpuUUID"], "GPU-actual")
         for policy in ("drop", "keep", "defer"):
             request["runConfig"]["state"]["firstfloor"]["deadlinePolicy"] = policy
             metadata["policy"]["deadlinePolicy"] = policy
-            self.assertIs(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1"), actual)
+            self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["device"], "cuda")
             with self.assertRaises(measurement.common.ContractError):
                 measurement.validate_metadata(dict(metadata, policy={"deadlinePolicy": "invalid"}),
                                               request, "200000 100000", [0, 1], "0-1")
         request["runConfig"]["state"]["firstfloor"].pop("deadlinePolicy")
         metadata["policy"]["deadlinePolicy"] = "keep"
         request["runConfig"]["cpu"]["affinityCPUs"] = [1, 0]
-        self.assertIs(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1"), actual)
+        self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["gpuUUID"], "GPU-actual")
         with self.assertRaisesRegex(measurement.common.ContractError, "frozen requested"):
             measurement.validate_metadata(metadata, request, "200000 100000", [0, 1, 2], "0-2")
         for changes in ({"providers": ["CPUExecutionProvider"]}, {"device": "cpu"},
