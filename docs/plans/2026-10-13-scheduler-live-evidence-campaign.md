@@ -171,8 +171,15 @@ Orin에 없는 `fixed` 전력모드로 계획 해석에 실패해 측정을 시�
 계획 해석 실패는 이제 실제 resolver 오류와 `Failed/CurvePlanResolutionFailed`로
 공개되며 오류 반환을 유지해 재시도할 수 있다. 로컬 API 서버의 실패→복구 회귀는
 통과했고, 실제 캠페인 `orin-gpu-plan-resolution-check`는 같은 오류 상태와 자식 0개를
-확인했다(`/tmp/chill-campaign-visible-plan-failure-live-proof.json`). 그러나 Dashboard
-result API는 결과 참조가 없으면 404로 실패 상태를 가려서 소비자 연결 수정이 남았다.
+확인했다(`/tmp/chill-campaign-visible-plan-failure-live-proof.json`). Dashboard result
+API는 결과 참조가 없다는 이유로 404를 반환했으나, 현재는 실제 캠페인 상태와 조건을
+200으로 제공하고 아직 없는 storedResult/result는 null로 구분한다. 실제 Dashboard에서
+인증 후 `Failed`, 완료 0건, 실제 power-mode 해석 오류, 완료 결과 없음을 확인했다.
+API 증거: `/tmp/chill-campaign-visible-plan-failure-dashboard-api-proof.json`;
+화면: `/tmp/omp-sshots-15a6197993ee87ba.webp`. console image `73bace12..`,
+Dashboard image `4e0c0d7b..`를 실제 rollout했다. 이는 실패 공개 경로의 검증이며
+GPU 측정 성공이나 FULL 제어 검증이 아니다. focused `go test ./internal/operatorconsole/...`,
+Dashboard `pnpm typecheck && pnpm lint`, 두 image build는 통과했다.
 profiler ConfigMap의 image를 `7771c693..`으로 바꿔 실제 rollout했다. Deployment만
 바꾼 첫 시도는 operator가 선언대로 되돌렸으며, Helm values에는 아직 반영되지 않았다.
 이번 `make lint`는 통과했지만 `make test`는 기존 timeout 응답 테스트가 기대한 504 대신

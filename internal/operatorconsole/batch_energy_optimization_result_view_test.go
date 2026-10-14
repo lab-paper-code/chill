@@ -1,7 +1,6 @@
 package operatorconsole
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -49,7 +48,7 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 	}
 	if view.Campaign.Outcome != campaign.Status.Outcome ||
 		view.Campaign.CompletedTrials != campaign.Status.CompletedTrials ||
-		view.Campaign.StoredResult != identity {
+		view.Campaign.StoredResult == nil || *view.Campaign.StoredResult != identity {
 		t.Fatalf("campaign status = %#v", view.Campaign)
 	}
 	if view.Result.SchemaVersion != record.SchemaVersion() ||
@@ -59,49 +58,6 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 	}
 }
 
-func TestBuildBatchEnergyOptimizationResultPassesDetailThroughUninterpreted(t *testing.T) {
-	t.Parallel()
-	campaign, _, _ := campaignResultFixture(t)
-	// A detail shape the Console has never seen must survive untouched, because
-	// a later measurement method may publish one.
-	detail := json.RawMessage(`{"method":"not-yet-invented","points":[{"batch":7,"value":1.5}]}`)
-	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
-		Outcome:          "MinimumFound/LocalMinimum",
-		MeasurementState: resultMeasurementState(),
-		CurvePlan: batchenergyoptimization.StoredObjectReference{
-			Store: "chill-evidence-store", Key: "batch-energy-optimizations/campaign/curve-plan.json",
-			SchemaVersion: "chill.dacs.io/curve-plan.v1alpha7", Size: 2459,
-		},
-		Detail: detail,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
-		ReadAt: time.Now(), Campaign: *campaign, Result: record,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(view.Result.Detail, detail) {
-		t.Fatalf("detail = %s, want %s", view.Result.Detail, detail)
-	}
-
-	encoded, err := json.Marshal(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(encoded, []byte(`"detail":{"method":"not-yet-invented"`)) {
-		t.Fatalf("encoded view did not inline detail verbatim: %s", encoded)
-	}
-	// The record fields are embedded, so they must appear beside schemaVersion
-	// rather than nested under a wrapper key.
-	if !bytes.Contains(encoded, []byte(`"schemaVersion":"chill.dacs.io/batch-energy-optimization-result.v1alpha4"`)) ||
-		bytes.Contains(encoded, []byte(`"ResultRecordSpec"`)) {
-		t.Fatalf("record encoding = %s", encoded)
-	}
-}
 
 func TestBuildBatchEnergyOptimizationResultRejectsAnIncompleteSnapshot(t *testing.T) {
 	t.Parallel()

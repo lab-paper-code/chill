@@ -55,6 +55,11 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	if err := q.reader.Get(ctx, key, campaign); err != nil {
 		return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
+	if campaign.Status.Result == nil {
+		return operatorconsole.BatchEnergyOptimizationResultSnapshot{
+			ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(),
+		}, nil
+	}
 	identity, err := terminalResultIdentity(campaign.Status.Result)
 	if err != nil {
 		return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("read BatchEnergyOptimization %s result reference: %w", key, err)
@@ -100,9 +105,6 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) readResult(
 func terminalResultIdentity(
 	reference *edgev1alpha1.ProfilingRunEvidenceReference,
 ) (evidencestore.ObjectIdentity, error) {
-	if reference == nil {
-		return evidencestore.ObjectIdentity{}, operatorconsole.ErrBatchEnergyOptimizationResultUnavailable
-	}
 	identity := evidencestore.ObjectIdentity{
 		Store: reference.Store, Key: reference.Key, Size: reference.Size,
 	}

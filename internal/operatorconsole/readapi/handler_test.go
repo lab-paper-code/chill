@@ -278,12 +278,9 @@ func TestHandlerMapsReadFailuresWithoutLeakingDetails(t *testing.T) {
 		err  error
 		want int
 	}{
-		// Nothing is broken when a campaign has not published a result yet, so
-		// it must not report the Bad Gateway a failing store earns.
-		"no result published": {err: operatorconsole.ErrBatchEnergyOptimizationResultUnavailable, want: http.StatusNotFound},
-		"object missing":      {err: notFound, want: http.StatusNotFound},
-		"forbidden":           {err: apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied")), want: http.StatusForbidden},
-		"store unreachable":   {err: errors.New("dial evidence store: connection refused"), want: http.StatusBadGateway},
+		"object missing":    {err: notFound, want: http.StatusNotFound},
+		"forbidden":         {err: apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied")), want: http.StatusForbidden},
+		"store unreachable": {err: errors.New("dial evidence store: connection refused"), want: http.StatusBadGateway},
 	}
 	for name, test := range tests {
 		test := test

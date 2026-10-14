@@ -19,22 +19,16 @@ type BatchEnergyOptimizationResultSnapshot struct {
 	Result   batchenergyoptimization.ResultRecord
 }
 
-// ErrBatchEnergyOptimizationResultUnavailable indicates that a campaign has not
-// published its terminal result reference.
-var ErrBatchEnergyOptimizationResultUnavailable = errors.New("terminal result is not available")
-
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
 
-// BatchEnergyOptimizationResult is the bounded read model for one finished campaign.
-// The stored result names the trials and carries the derived curve; only the
-// campaign object names the state those trials were measured in. Joining the
-// two is what lets one read answer what a campaign measured and what it found.
+// BatchEnergyOptimizationResult exposes actual campaign progress and failure,
+// with the sealed result only after the campaign publishes its reference.
 type BatchEnergyOptimizationResult struct {
 	APIVersion string                                `json:"apiVersion"`
 	Kind       string                                `json:"kind"`
 	ReadAt     time.Time                             `json:"readAt"`
 	Campaign   BatchEnergyOptimizationResultCampaign `json:"campaign"`
-	Result     BatchEnergyOptimizationResultRecord   `json:"result"`
+	Result     *BatchEnergyOptimizationResultRecord  `json:"result"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -48,7 +42,7 @@ type BatchEnergyOptimizationResultCampaign struct {
 	Outcome         string                                   `json:"outcome,omitempty"`
 	CompletedTrials int32                                    `json:"completedTrials"`
 	Conditions      []metav1.Condition                       `json:"conditions,omitempty"`
-	StoredResult    evidencestore.ObjectIdentity             `json:"storedResult"`
+	StoredResult    *evidencestore.ObjectIdentity            `json:"storedResult"`
 }
 
 // BatchEnergyOptimizationResultRecord republishes the stored record as it was sealed.
@@ -60,14 +54,24 @@ type BatchEnergyOptimizationResultRecord struct {
 }
 
 func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSnapshot) (BatchEnergyOptimizationResult, error) {
-	if snapshot.Campaign.Status.Result == nil {
+	if snapshot.Campaign.Status.Result == nil && snapshot.Result.SchemaVersion() != "" {
 		return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot has no stored result reference")
 	}
-	schemaVersion := snapshot.Result.SchemaVersion()
-	if schemaVersion == "" {
-		return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot carries an uninitialized result record")
-	}
+	var storedResult *evidencestore.ObjectIdentity
+	var result *BatchEnergyOptimizationResultRecord
 	campaign := snapshot.Campaign.DeepCopy()
+	if campaign.Status.Result != nil {
+		schemaVersion := snapshot.Result.SchemaVersion()
+		if schemaVersion == "" {
+			return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot carries an uninitialized result record")
+		}
+		storedResult = &evidencestore.ObjectIdentity{
+			Store: campaign.Status.Result.Store, Key: campaign.Status.Result.Key, Size: campaign.Status.Result.Size,
+		}
+		result = &BatchEnergyOptimizationResultRecord{
+			SchemaVersion: schemaVersion, ResultRecordSpec: snapshot.Result.Spec(),
+		}
+	}
 	return BatchEnergyOptimizationResult{
 		APIVersion: BatchEnergyOptimizationResultAPIVersion,
 		Kind:       "BatchEnergyOptimizationResult",
@@ -79,14 +83,8 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			Phase: campaign.Status.Phase, Outcome: campaign.Status.Outcome,
 			CompletedTrials: campaign.Status.CompletedTrials,
 			Conditions:      append([]metav1.Condition(nil), campaign.Status.Conditions...),
-			StoredResult: evidencestore.ObjectIdentity{
-				Store: campaign.Status.Result.Store,
-				Key:   campaign.Status.Result.Key,
-				Size:  campaign.Status.Result.Size,
-			},
+			StoredResult:    storedResult,
 		},
-		Result: BatchEnergyOptimizationResultRecord{
-			SchemaVersion: schemaVersion, ResultRecordSpec: snapshot.Result.Spec(),
-		},
+		Result: result,
 	}, nil
 }

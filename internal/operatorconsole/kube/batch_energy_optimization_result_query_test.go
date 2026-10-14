@@ -57,6 +57,36 @@ func TestBatchEnergyOptimizationResultQueryFollowsCampaignReferenceAndPreservesS
 	}
 }
 
+func TestCampaignWithoutResultStillExposesFailureAndDoesNotReadStore(t *testing.T) {
+	campaign, _, _, _ := campaignResultFixture(t)
+	campaign.Status.Result = nil
+	campaign.Status.Phase = "Failed"
+	campaign.Status.Conditions = []metav1.Condition{{
+		Type: "MeasurementComplete", Status: metav1.ConditionFalse,
+		Reason: "CurvePlanResolutionFailed", Message: "declared power mode is unavailable",
+	}}
+	objects := &recordingObjectReader{err: errors.New("store must not be needed before a result exists")}
+	query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(), objects,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := operatorconsole.BuildBatchEnergyOptimizationResult(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objects.calls != 0 || view.Result != nil || view.Campaign.StoredResult != nil ||
+		view.Campaign.Phase != "Failed" || len(view.Campaign.Conditions) != 1 ||
+		view.Campaign.Conditions[0].Reason != "CurvePlanResolutionFailed" {
+		t.Fatalf("missing result hid the actual campaign failure: %#v", view)
+	}
+}
+
 func TestBatchEnergyOptimizationResultQueryRejectsUnusableResultReference(t *testing.T) {
 	t.Parallel()
 	validCampaign, _, _, _ := campaignResultFixture(t)
@@ -66,14 +96,6 @@ func TestBatchEnergyOptimizationResultQueryRejectsUnusableResultReference(t *tes
 		match  string
 		is     error
 	}{
-		{
-			name: "missing result reference",
-			mutate: func(campaign *edgev1alpha1.BatchEnergyOptimization) {
-				campaign.Status.Result = nil
-			},
-			match: "terminal result is not available",
-			is:    operatorconsole.ErrBatchEnergyOptimizationResultUnavailable,
-		},
 		{
 			name: "empty key",
 			mutate: func(campaign *edgev1alpha1.BatchEnergyOptimization) {

@@ -117,12 +117,10 @@ func NewHandler(
 	return mux, nil
 }
 
-// queryStatus classifies a read failure. A campaign that has not published its
-// terminal result is a missing sub-resource, not a failing dependency, so it
-// answers Not Found rather than the Bad Gateway a store failure earns.
+// queryStatus distinguishes a missing object from forbidden access or a failing dependency.
 func queryStatus(err error) int {
 	switch {
-	case apierrors.IsNotFound(err), errors.Is(err, operatorconsole.ErrBatchEnergyOptimizationResultUnavailable):
+	case apierrors.IsNotFound(err):
 		return http.StatusNotFound
 	case apierrors.IsForbidden(err):
 		return http.StatusForbidden
