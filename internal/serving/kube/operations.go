@@ -548,12 +548,8 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 			return err
 		}
 	}
-	if !slices.Contains(pod.Finalizers, sourceFinalizer) {
-		before := pod.DeepCopy()
-		pod.Finalizers = append(pod.Finalizers, sourceFinalizer)
-		if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-			return err
-		}
+	if err = patchSourceFinalizer(ctx, o.store.client, pod, true); err != nil {
+		return err
 	}
 	if pod.DeletionTimestamp == nil {
 		u := pod.UID
@@ -588,9 +584,7 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, i
 		if e = deleteInstanceService(ctx, o.kube, current); e != nil {
 			return false, e
 		}
-		before := current.DeepCopy()
-		current.Finalizers = slices.DeleteFunc(current.Finalizers, func(f string) bool { return f == sourceFinalizer })
-		if e = o.store.client.Patch(ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); e != nil {
+		if e = patchSourceFinalizer(ctx, o.store.client, current, false); e != nil {
 			return false, e
 		}
 		if e = o.wait(ctx, func() (bool, error) {
@@ -606,6 +600,27 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod, i
 		return true, nil
 	})
 }
+
+// patchSourceFinalizer changes only our primitive-list member. The API server
+// rejects a different immutable UID, but unrelated status/RV and other
+// finalizer updates do not invalidate this metadata-only delta.
+func patchSourceFinalizer(ctx context.Context, c client.Client, pod *core.Pod, present bool) error {
+	if pod.UID == "" {
+		return errors.New("physical Pod UID required for source finalizer")
+	}
+	metadata := map[string]any{"uid": pod.UID}
+	if present {
+		metadata["finalizers"] = []string{sourceFinalizer}
+	} else {
+		metadata["$deleteFromPrimitiveList/finalizers"] = []string{sourceFinalizer}
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": metadata})
+	if err != nil {
+		return err
+	}
+	return c.Patch(ctx, pod, client.RawPatch(types.StrategicMergePatchType, patch))
+}
+
 func eIfNotFound(err error) error {
 	if apierrors.IsNotFound(err) {
 		return nil

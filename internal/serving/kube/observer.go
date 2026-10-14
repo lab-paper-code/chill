@@ -679,9 +679,7 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 				return false, fmt.Errorf("Pod %s termination unconfirmed before deletion", pod.Name)
 			}
 			if pod.DeletionTimestamp == nil {
-				before := pod.DeepCopy()
-				pod.Finalizers = append(pod.Finalizers, sourceFinalizer)
-				if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+				if err = patchSourceFinalizer(ctx, o.store.client, pod, true); err != nil {
 					return false, err
 				}
 			}
@@ -692,9 +690,7 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 			if err = deleteInstanceService(ctx, o.kube, pod); err != nil {
 				return false, err
 			}
-			before := pod.DeepCopy()
-			pod.Finalizers = slices.DeleteFunc(pod.Finalizers, func(f string) bool { return f == sourceFinalizer })
-			if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			if err = patchSourceFinalizer(ctx, o.store.client, pod, false); err != nil {
 				return false, err
 			}
 		}

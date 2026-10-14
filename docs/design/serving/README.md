@@ -318,6 +318,11 @@ resourceVersion/UID precondition으로 삭제하고 Pod finalizer 및 config를 
 label drift가 종료된 Pod의 cleanup을 막게 하지 않는다. 다른 Pod 소유의 Service는
 삭제하지 않는다. Pod owner reference는 Kubernetes GC에도 같은 수명을 연결한다.
 Workload cleanup도 종료 증거 이후 자기 Pod의 Service를 해제한다.
+Pod source finalizer의 추가/해제는 immutable Pod UID를 포함한 Kubernetes
+strategic-merge primitive-list delta로 자기 항목만 변경한다. 다른 finalizer를
+보존하며 unrelated kubelet status/resourceVersion 갱신은 충돌 원인이 아니다.
+UID 변경이나 API의 실제 metadata 제약 오류는 그대로 반환한다. 해제 전
+UID/container-bound 실제 종료 증거와 Pod 종료 확인은 유지한다.
 기존 EdgeMesh 설정이나 다른 workload는 변경하지 않는다.
 namespace owner Role에는 Service GET/DELETE를 기본으로 허용하며,
 scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.

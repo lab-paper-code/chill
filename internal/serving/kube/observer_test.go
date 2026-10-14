@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -19,12 +20,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 const newTestResourceName = "new"
@@ -168,6 +174,88 @@ func TestObserverTerminationRequiresExactContainerEvidence(t *testing.T) {
 	observer.observeTermination(pod)
 	if !observer.sources[id].stopped {
 		t.Fatal("native previous-container termination was lost")
+	}
+}
+
+func TestSourceFinalizerDeltaSurvivesStatusRace(t *testing.T) {
+	for _, present := range []bool{true, false} {
+		for _, replacement := range []bool{false, true} {
+			t.Run(fmt.Sprintf("present=%v/replacement=%v", present, replacement), func(t *testing.T) {
+				ctx := context.Background()
+				pod, _, _, _ := observerSourceFixture()
+				if !present {
+					pod.Finalizers = []string{sourceFinalizer}
+				}
+				scheme := runtime.NewScheme()
+				if err := corev1.AddToScheme(scheme); err != nil {
+					t.Fatal(err)
+				}
+				c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(pod).
+					WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						current := &corev1.Pod{}
+						if err := c.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+							return err
+						}
+						// A real status-subresource write lands after the caller's read.
+						current.Status.Message = "kubelet status advanced"
+						if err := c.Status().Update(ctx, current); err != nil {
+							return err
+						}
+						current.Finalizers = append(current.Finalizers, "other.example/protection")
+						if replacement {
+							current.UID = "replacement-pod"
+						}
+						if err := c.Update(ctx, current); err != nil {
+							return err
+						}
+						// The fake client applies strategic patches but omits immutable
+						// UID validation. Exercise Kubernetes' actual validation too.
+						before, err := json.Marshal(current)
+						if err != nil {
+							return err
+						}
+						delta, err := patch.Data(object)
+						if err != nil {
+							return err
+						}
+						merged, err := strategicpatch.StrategicMergePatch(before, delta, corev1.Pod{})
+						if err != nil {
+							return err
+						}
+						updated := &corev1.Pod{}
+						if err := json.Unmarshal(merged, updated); err != nil {
+							return err
+						}
+						if errs := apivalidation.ValidateObjectMetaUpdate(&updated.ObjectMeta, &current.ObjectMeta, field.NewPath("metadata")); len(errs) != 0 {
+							return apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, current.Name, errs)
+						}
+						return c.Patch(ctx, object, patch, opts...)
+					}}).Build()
+				if err := c.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
+					t.Fatal(err)
+				}
+				err := patchSourceFinalizer(ctx, c, pod, present)
+				if replacement && !apierrors.IsInvalid(err) {
+					t.Fatalf("replacement UID was not rejected: %v", err)
+				}
+				if !replacement && err != nil {
+					t.Fatal(err)
+				}
+				current := &corev1.Pod{}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(pod), current); err != nil {
+					t.Fatal(err)
+				}
+				if current.Status.Message != "kubelet status advanced" || !slices.Contains(current.Finalizers, "other.example/protection") {
+					t.Fatal("metadata delta overwrote status or another finalizer")
+				}
+				if !replacement && slices.Contains(current.Finalizers, sourceFinalizer) != present {
+					t.Fatalf("source finalizer presence = %v, want %v", current.Finalizers, present)
+				}
+				if replacement && (current.UID != "replacement-pod" || slices.Contains(current.Finalizers, sourceFinalizer) == present) {
+					t.Fatal("failed UID precondition mutated replacement Pod")
+				}
+			})
+		}
 	}
 }
 
