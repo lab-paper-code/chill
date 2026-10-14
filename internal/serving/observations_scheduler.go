@@ -206,7 +206,7 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
 	for _, window := range j.windows {
-		if window.Incomplete && window.StartedAt.Before(to) && window.EndsAt.After(from) {
+		if window.Incomplete && window.overlaps(from, to) {
 			result.IncompleteWindows = append(result.IncompleteWindows, window.ID)
 		}
 	}
@@ -288,7 +288,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 	}
 	// The scan marks a newly detected torn tail; judge windows only afterwards.
 	for _, window := range j.windows {
-		if window.Incomplete && window.StartedAt.Before(to) && window.EndsAt.After(from) {
+		if window.Incomplete && window.overlaps(from, to) {
 			return nil, failure("IncompleteObservation", "overhead window overlaps incomplete observation window %s", window.ID)
 		}
 	}

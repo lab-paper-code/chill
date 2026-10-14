@@ -107,8 +107,13 @@ same action IDs with different node/start times are not merged. `/scheduler/hist
 selects A/B decisions, `/scheduler/compare` restores those exact records and queries
 owner whole-window request cohorts by UID/definition/input window. It does not
 recompute percentiles, sum energy or assign experimental scores.
-`/scheduler/power` shows individual node/meter/scope records and one-record W charts.
-Absent J, failed coverage, 0 J and zero samples remain distinct. `/changes` keeps
+`/scheduler/power` requests owner-calculated whole/active POOL joules and mean watts
+from `GET /api/v1/observations/power?from=…&to=…` over the exact selected interval.
+The owner integrates retained raw samples with recorded coverage policies, includes
+configured inactive Nodes, counts each Node once, and uses historical actual
+Serving membership for the active subtotal. Missing samples/history remain null
+with explicit reasons; measured 0 is not missing. Raw node/meter/scope records and
+one-record W charts remain separate from these totals. `/changes` keeps
 Workload history by default; `scope=scheduler` selects settings actor/before/after
 and runtime results. Kind/node filters apply only to the fetched page; an empty
 filtered page can still advance. Exports name the selected-record/current-page
@@ -125,6 +130,6 @@ remain exact, including seconds and fractional precision. Empty, partial or inva
 date edits stay unsubmitted and show the existing range validation on apply without
 replacing the submitted interval or its records.
 
-Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, nodal power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers, measurement writers/options and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

@@ -50,6 +50,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/pools(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (/^v1\/observations\/workloads\/[^/]+$/.test(route)) { methods = ["GET"]; query = "observations" }
   else if (route === "v1/observations/load") { methods = ["GET"]; query = "load" }
+  else if (route === "v1/observations/power") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]

@@ -302,6 +302,18 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 	return nil
 }
 
+func (o *schedulerOwner) operatingPower(from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+	o.lock.Lock()
+	meters := make([]serving.OperatingPowerMeter, len(o.configuration.Meters))
+	for index, meter := range o.configuration.Meters {
+		meters[index] = serving.OperatingPowerMeter{
+			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
+		}
+	}
+	o.lock.Unlock()
+	return o.journal.OperatingPower(from, to, meters, limit)
+}
+
 func (o *schedulerOwner) recordDecision(decision serving.SchedulerDecision) error {
 	snapshot := o.controller.State().Snapshot
 	return o.journal.SchedulerRecord(serving.SchedulerObservation{

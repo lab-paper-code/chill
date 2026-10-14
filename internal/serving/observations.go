@@ -44,6 +44,15 @@ type ObservationWindow struct {
 	Objects       []evidencestore.ObjectIdentity `json:"objects,omitempty"`
 }
 
+// overlaps uses the actual retained interval, not a closed window's planned end.
+func (w ObservationWindow) overlaps(from, to time.Time) bool {
+	end := w.EndsAt
+	if w.ClosedAt != nil && w.ClosedAt.Before(end) {
+		end = *w.ClosedAt
+	}
+	return w.StartedAt.Before(to) && end.After(from)
+}
+
 type DefinitionObservation struct {
 	Identity   string      `json:"identity"`
 	Definition *Definition `json:"definition"`

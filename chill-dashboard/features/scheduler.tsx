@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { LoadWindow, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
+import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { localDateTime, utcDateTime } from "@/lib/date-time"
@@ -125,6 +125,25 @@ function CandidateWorkbench({view,initial,pool}:{view:SchedulerView;initial:stri
       </div>
     </div>
   </section>
+}
+
+export function PowerInterval({from,to}:{from:string;to:string}) {
+  const query=useChillQuery<OperatingPower>(`v1/observations/power?${new URLSearchParams({from,to})}`,{decoder:parseSchedulerJSON})
+  const data=query.data,measuredEnergy=(value:number|null)=>value==null?"측정값 없음":joules(value),watts=(value:number|null)=>value==null?"측정값 없음":`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} W`
+  return <ReadRegion title="선택 구간의 POOL 실측 소비" query={query}>{data&&<div className="space-y-4">
+    <p>정확한 집계 구간 {data.from} ~ {data.to} / 범위 {data.scope}</p><StatusBadge tone={data.complete?"ok":"warn"}>{data.complete?"계측 집계 완료":"관측 공백 있음"}</StatusBadge><p className="text-sm text-muted-foreground">owner가 같은 구간의 노드 벽전력을 한 번씩 적분한 실측값입니다. 현재 설정, 후보의 예상 에너지 또는 Serving 참여 여부만으로 소비를 계산하지 않습니다.</p>
+    <dl className="grid gap-3 sm:grid-cols-2"><div><dt>전체 POOL (서빙 비참여 노드 포함)</dt><dd>{measuredEnergy(data.wholePoolJoules)} / 평균 {watts(data.wholePoolMeanWatts)}</dd></div><div><dt>활성 POOL (구간 중 실제 Serving 참여)</dt><dd>{measuredEnergy(data.activePoolJoules)} / 평균 {watts(data.activePoolMeanWatts)}</dd></div></dl>
+    {data.reasons?.length>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={data.reasons}/></div>}{data.incompleteWindows?.length>0&&<div role="status"><h3>보관 관측 불완전 구간</h3><Lines values={data.incompleteWindows}/></div>}
+    <DataTable data={data.nodes??[]} columns={[
+      {key:"node",label:"기대 노드",value:row=><span>{row.node.name}<small className="block break-all">{row.node.uid}</small></span>},
+      {key:"scope",label:"계측기와 범위",value:row=><span>{row.meter||"계측기 없음"}<small className="block">{row.scope}</small></span>},
+      {key:"energy",label:"실측 에너지",value:row=>measuredEnergy(row.joules)},
+      {key:"power",label:"평균 전력",value:row=>watts(row.meanWatts)},
+      {key:"samples",label:"표본 수",value:row=>row.samples},
+      {key:"coverage",label:"관측 상태와 사유",value:row=><><p>{row.sourceTimestampAbsent?"원본 시각 없음 (수집 시각 사용; 신선도 증거 아님)":"원본 시각 부재 보고 없음"}</p>{row.reasons?.length>0?<Lines values={row.reasons}/>:<p>보고된 공백 사유 없음</p>}</>},
+    ]}/>{!data.nodes?.length&&<p>기대 노드와 계측 범위가 제공되지 않았습니다. 전체 소비를 0으로 대체하지 않습니다.</p>}
+    <SourceExport filename="chill-operating-power.json" value={{source:"v1/observations/power",conditions:{from,to},result:data}}/><SourceJSON title="정확한 구간의 집계 원본" value={data}/>
+  </div>}</ReadRegion>
 }
 
 function ActionsSummary({view}:{view:SchedulerView}) {

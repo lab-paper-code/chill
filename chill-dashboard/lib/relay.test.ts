@@ -84,15 +84,18 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
     path: "/api/v1/scheduler/settings", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true,
   })
   assert.throws(() => plan("PUT", "v1/scheduler/settings", "?from=now"), /DashboardQueryInvalid/)
-  for (const path of ["v1/scheduler/other", "v1/scheduler/settings/extra", "v1/observations/load/extra", "v1/observations/scheduler/extra"]) {
+  for (const path of ["v1/scheduler/other", "v1/scheduler/settings/extra", "v1/observations/load/extra", "v1/observations/power/extra", "v1/observations/scheduler/extra"]) {
     assert.throws(() => plan("GET", path), /DashboardRouteNotAllowed/)
   }
 
   assert.equal(plan("GET", "v1/observations/load", `?${window}`).path, `/api/v1/observations/load?${window}`)
+  assert.deepEqual(plan("GET", "v1/observations/power", `?${window}`), {
+    path: `/api/v1/observations/power?${window}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false,
+  })
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7`)
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`).path,
     `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`)
-  for (const path of ["v1/observations/load", "v1/observations/scheduler"]) {
+  for (const path of ["v1/observations/load", "v1/observations/power", "v1/observations/scheduler"]) {
     for (const method of ["POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
       assert.throws(() => plan(method, path, `?${window}`), /DashboardMethodNotAllowed/)
     }
@@ -105,8 +108,10 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
       `?from=${from}&to=2026-01-01T01:00:00.000000002Z`,
     ]) assert.throws(() => plan("GET", path, search), /DashboardQueryInvalid/)
   }
-  for (const search of ["limit=1", "cursor=0", "offset=0"]) {
-    assert.throws(() => plan("GET", "v1/observations/load", `?${window}&${search}`), /DashboardQueryInvalid/)
+  for (const path of ["v1/observations/load", "v1/observations/power"]) {
+    for (const search of ["limit=1", "cursor=0", "offset=0"]) {
+      assert.throws(() => plan("GET", path, `?${window}&${search}`), /DashboardQueryInvalid/)
+    }
   }
   for (const search of [
     "limit=0", "limit=21", "limit=1&limit=2", "cursor=-1", "cursor=1.5",

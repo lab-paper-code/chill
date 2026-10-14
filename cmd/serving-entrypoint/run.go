@@ -116,6 +116,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
 		handlerConfig.SchedulerLock = &scheduler.lock
+		handlerConfig.OperatingPower = scheduler.operatingPower
 	}
 	authorizer := &servingkube.Authorizer{Client: kube}
 	handler, err := entrypoint.NewHandler(manager, execution, authorizer, journal, observer, handlerConfig)

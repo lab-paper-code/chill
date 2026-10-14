@@ -314,6 +314,17 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `PUT /api/v1/scheduler` 또는 `/settings` | 직접 `SchedulerSettings`를 검증하고 named ConfigMap에 저장·적용 |
 | `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
+| `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
+
+전력 collector의 짧은 기록 구간별 적분 verdict는 원시 기록에 그대로 보존하되,
+조회 구간의 coverage 판정으로 재사용하지 않는다. 조회 경계 밖의 실제 표본은 기록된
+boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·meter identity·보관 완전성과
+조회 구간의 coverage를 검사한다. 조회 중 실제 source 실패와 OOM/재시작 공백은
+누락으로 남기며, 이전 구간의 오래된 표본 때문에 정상적인 닫힌 구간을 무효화하지 않는다.
+닫힌 Journal window의 겹침은 예정 `EndsAt`보다 이른 실제 `ClosedAt`에서 끝난다.
+전력·membership·arrival·완료 overhead 조회가 같은 경계를 사용한다. boundary 표본은
+현재 선언의 Node·meter·scope와 source kind/endpoint/metric/labels가 일치한 뒤에만
+선택하며, source가 없거나 바뀐 과거 기록을 현재 meter의 실측으로 재해석하지 않는다.
 
 설정 변경은 검증된 identity의 groups/extra까지 사용하여 해당 namespace/name의
 `configmaps/update` Resource SAR를 추가 확인한다. decision과 snapshot을 journal에

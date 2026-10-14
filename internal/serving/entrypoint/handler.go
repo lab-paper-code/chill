@@ -29,6 +29,7 @@ type HandlerConfig struct {
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
+	OperatingPower                                             func(time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
 }
 type Handler struct {
 	manager    *servingkube.Manager
@@ -84,6 +85,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
+	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
