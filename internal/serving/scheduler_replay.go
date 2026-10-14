@@ -98,7 +98,7 @@ func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) S
 		c.Assumptions = append(c.Assumptions, "incremental batch joules attributed uniformly over empirical service occupancy; only overlap with [0,horizon) counted, SLO completions may extend beyond horizon")
 		c.Reasons = append(c.Reasons, snapshot.Reasons...)
 		c.Assumptions = append(c.Assumptions, "explicit frozen lifetimes expire pending/queued work independently of frozen drop/keep/defer SLO policy; running work remains nonpreemptive; percentile population excludes predicted lifetime failures and SLO timeouts")
-		c.Assumptions = append(c.Assumptions, "forward/return use captured fixed policy envelopes; queued sender/elapsed are actor witnesses; native wait rate uses last two worker arrivals and oldest-time history eviction, equal forecast timestamps tie by UID")
+		c.Assumptions = append(c.Assumptions, "completion overhead reserves only the remainder after actual frozen sender elapsed and never delays native arrival (not a measured one-way claim); queued/running sender elapsed is an actor witness; native wait rate uses last two worker arrivals and oldest-time history eviction, equal forecast timestamps tie by UID")
 		c.Reasons = append(c.Reasons, snapshotReasons...)
 		c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
 		if !c.Keep {
@@ -351,7 +351,10 @@ func schedulerValidateRequest(r SchedulerRequest, ids map[string]bool, reasons [
 	if r.RemainingLifetime != nil && *r.RemainingLifetime < 0 {
 		reasons = appendUnique(reasons, "InvalidRequestLifetime:"+r.ID)
 	}
-	if (r.Phase == phaseQueued || r.Phase == phaseDeferred) && (r.NativeSenderElapsedMS == nil || !schedulerFinite(*r.NativeSenderElapsedMS) || *r.NativeSenderElapsedMS < 0) {
+	if r.Phase == phaseReturning && (r.ExchangeResidual == nil || *r.ExchangeResidual < 0 || r.ReturnElapsed < 0) {
+		reasons = appendUnique(reasons, "MissingReturningCompletionEvidence:"+r.ID)
+	}
+	if (r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning) && (r.NativeSenderElapsedMS == nil || !schedulerFinite(*r.NativeSenderElapsedMS) || *r.NativeSenderElapsedMS < 0) {
 		reasons = appendUnique(reasons, "MissingNativeSenderContext:"+r.ID)
 	}
 	return reasons
@@ -407,8 +410,11 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 			reasons = appendUnique(reasons, "MeasuredAffinityMismatch:"+i.ID)
 		}
 	}
-	if i.EnvelopeSource == "" || i.Forward < 0 || i.Return < 0 || i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
+	if i.EnvelopeSource == "" || i.CompletionOverhead < 0 || i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
 		reasons = appendUnique(reasons, "MissingQueueOrTransportEvidence:"+i.ID)
+	}
+	if !i.CompletionObserved {
+		reasons = appendUnique(reasons, "CompletionOverheadUnobserved:"+i.ID)
 	}
 	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" || len(i.Profile.Evidence) == 0 {
 		reasons = appendUnique(reasons, "MissingProfileEvidence:"+i.ID)
@@ -506,7 +512,7 @@ func schedulerValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocat
 }
 
 func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
-	p := firstfloor.Policy{ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, TransportEnvelopeMS: float64(i.Forward) / 1e6, ReturnEnvelopeMS: float64(i.Return) / 1e6, EnvelopeSource: i.EnvelopeSource, MaxBatchWaitMS: float64(i.MaxWait) / 1e6}
+	p := firstfloor.Policy{ProfileID: i.Profile.ID, MaxBatchSize: i.MaxBatch, CompletionOverheadMS: float64(i.CompletionOverhead) / 1e6, EnvelopeSource: i.EnvelopeSource, MaxBatchWaitMS: float64(i.MaxWait) / 1e6}
 	if i.Profile.Condition.Firstfloor != nil {
 		p.DeadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
 	}
@@ -720,7 +726,8 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				i.batch = append(i.batch, x)
 			case phaseReturning:
 				x.returning = true
-				x.completion = math.Max(0, float64(i.config.Return-r.ReturnElapsed))
+				// Disjoint receipt-to-exchange non-native time and post-exchange response age are already elapsed.
+				x.completion = math.Max(0, float64(i.config.CompletionOverhead)-float64(*r.ExchangeResidual)-float64(r.ReturnElapsed))
 			}
 		}
 	}
@@ -852,9 +859,9 @@ func (s *schedulerReplayState) expireRequests() {
 					}
 				}
 				i.queue = kept
-				r.completion = s.now + float64(i.config.Return)
+				r.completion = s.now + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
 				if !math.IsInf(r.native, 1) {
-					r.completion = math.Max(s.now, r.native) + float64(i.config.Return)
+					r.completion = math.Max(s.now, r.native) + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
 				}
 				r.native = math.Inf(1)
 			}
@@ -868,7 +875,7 @@ func (s *schedulerReplayState) completeExecution() {
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
-				r.completion = s.now + float64(i.config.Return)
+				r.completion = s.now + math.Max(0, float64(i.config.CompletionOverhead)-r.senderMS*1e6)
 			}
 			i.batch = nil
 			i.finish = math.Inf(1)
@@ -959,8 +966,7 @@ func (s *schedulerReplayState) applyRoute() bool {
 				i.config = v
 				i.policy.MaxBatchSize = v.MaxBatch
 				i.policy.MaxBatchWaitMS = float64(v.MaxWait) / 1e6
-				i.policy.TransportEnvelopeMS = float64(v.Forward) / 1e6
-				i.policy.ReturnEnvelopeMS = float64(v.Return) / 1e6
+				i.policy.CompletionOverheadMS = float64(v.CompletionOverhead) / 1e6
 				i.policy.EnvelopeSource = v.EnvelopeSource
 				i.stopped = false
 			}
@@ -1222,7 +1228,7 @@ func (s *schedulerReplayState) routeRequests() {
 		r.dispatched = true
 		r.source.Instance = i.config.ID
 		r.senderMS = math.Max(0, float64(r.source.Elapsed)+s.now-r.arrival) / 1e6
-		r.native = s.now + float64(i.config.Forward)
+		r.native = s.now
 		i.outstanding++
 	}
 }

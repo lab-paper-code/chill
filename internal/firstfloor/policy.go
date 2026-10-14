@@ -19,8 +19,11 @@ func RemainingSLOMS(r RequestState) float64 {
 	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
 }
 func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
+func remainingCompletionOverheadMS(p Policy, senderElapsedMS float64) float64 {
+	return math.Max(0, p.CompletionOverheadMS-senderElapsedMS)
+}
 func requestSlack(p Policy, r RequestState, b BatchProfile) float64 {
-	return RemainingSLOMS(r) - p.TransportEnvelopeMS - p.ReturnEnvelopeMS - serviceCost(b, r.Context.SLO.Percentile)
+	return RemainingSLOMS(r) - remainingCompletionOverheadMS(p, r.Context.SenderElapsedMS) - serviceCost(b, r.Context.SLO.Percentile)
 }
 func allowedBatch(p Policy, size int) bool {
 	return p.MaxBatchSize >= 0 && (p.MaxBatchSize == 0 || size <= p.MaxBatchSize)

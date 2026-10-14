@@ -61,10 +61,24 @@ name/datatype/shape/byte count와 outputs를 담아 여러 numeric/bool tensor�
 ### 3.2 시간과 수명
 
 원래 receipt와 sender의 monotonic elapsed를 보존한다. 서로 다른 호스트의 UTC를
-그대로 빼서 요청 나이를 확정하지 않는다. 측정·설정된 전달/반환 envelope와
-그 출처를 정책에 고정하고, worker의 local monotonic queue/service 경과 시간을
-더해 추가 대기 여유를 판단한다. 정확한 관측 span, 설정된 상한, 예상값을 구분한다.
-실제 caller/native span과 envelope의 출처를 raw request context에 연결한다.
+그대로 빼서 요청 나이를 확정하지 않는다. Serving의 완료 오버헤드는
+`(exchange finish − receipt − native elapsed) + (response finish − exchange finish)`의 관측 최댓값이다.
+단방향 전달 시간이나 미래 지연의 보장 상한이 아니며 완료 시점에 한 번만 반영한다.
+최근 관측은 같은 노드·프로파일·모델/입력 실행 조건의 호환 정의에 재사용하며,
+측정 인스턴스의 제거나 SLO가 다른 Workload UID만으로 근거를 버리지 않는다.
+해당 조건의 관측이 없으면 후보 평가는 Pending이고 실제 Serving 측정이 선행해야 한다.
+도착 시각 예측은 owner 분배 시점이라는 가정으로 명시하며 측정값으로 포장하지 않는다.
+인증·업로드·decode·accept·dispatch를 포함한 모든 non-native receipt→response 시간을 포함한다.
+queued/running의 예상 완료 및 worker의 SLO slack/수명 예약에는
+`max(0, observed joint overhead − actual frozen sender elapsed)`만 남겨 둔다.
+이미 소모한 dispatch 이전 시간은 원래 receipt 경과와 sender context에 포함되어 있으므로
+다시 더하지 않는다. running에도 실제 sender witness가 없으면 평가를 Pending으로 둔다.
+returning 요청은 receipt→exchange의 non-native 잔여 span과 실제 exchange finish 이후
+응답 시간을 각각 한 번 빼고 남은 시간만 더한다. SDK finished callback은 exchange finish가
+아니므로 exchange milestone 전에는 returning으로 전환하지 않으며 native finished 확인은 보존한다.
+필요한 실제 milestone이 없거나 잘못됐으면 Pending이다.
+worker의 local monotonic queue/service 경과 시간과 원래 receipt 이후 경과 시간을
+사용해 추가 대기 여유를 판단하며 실제 span과 예상값의 출처를 raw context에 연결한다.
 
 SLO 위반은 모델의 `deadlinePolicy`(drop/keep/defer, 기본 keep)에 따른다. drop은
 expired queued 요청을 active 실행 중에도 제거하고 idle 시 infeasible head를 408로
@@ -107,7 +121,7 @@ raw repetition은 기존 client call `latencyMs`와 별도로 runner service dur
 backend call duration, 실제 K·item/execution 수를 유지한다. 같은 반복의 sample을
 상관시키며, warmup 제외·원래 metric/workload 관측·cgroup peak memory·CPU/thread·
 실제 image/provider/device 조건을 보존한다. Serving queue 점유 계산에는 runner
-service 분포를 사용하고, 전달/반환에는 해당 별도 span/envelope를 사용한다.
+service 분포를 사용하고, 완료 오버헤드에는 해당 관측 span을 사용한다.
 
 실제 측정 entrypoint는 `python3 /opt/chill/runtime/firstfloor/measurement.py
 --result-file /workspace/runtime-result.json`이며 stdin으로 frozen request를 받는다.
@@ -364,7 +378,7 @@ exclusive lock으로 소유하며, live Serving traffic과의 병행 측정은 �
 
 | 명령·surface | 관측 결과 |
 |---|---|
-| `go test ./internal/firstfloor -run TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange` | 변경한 forward envelope와 독립된 원래 accepted deadline 유지 |
+| `go test ./internal/firstfloor -run TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange` | 변경한 완료 오버헤드와 독립된 원래 accepted deadline 유지 |
 | `make lint test` | lint·vet·전체 non-e2e Go·envtest integration 통과 |
 | `make manifests generate` | deepcopy·CRD·Helm CRD/RBAC 동기화; envtest에 실제 CRD 설치 성공 |
 | runtime suites (`make test`에 포함) | ORT CPU 23, RKNNLite 20, firstfloor 6, artifact tool 6 tests 통과 |

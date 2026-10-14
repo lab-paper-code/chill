@@ -108,7 +108,7 @@ func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 		return errors.New("profile changes require restart")
 	}
 	// Samples are already sorted and immutable; do not mutate them on updates.
-	if !durationOK(next.Policy.TransportEnvelopeMS) || !durationOK(next.Policy.ReturnEnvelopeMS) || !durationOK(next.Policy.MaxBatchWaitMS) || !identity(next.Policy.DecisionID) || next.Policy.EnvelopeSource == "" || len(next.Policy.EnvelopeSource) > 256 {
+	if !durationOK(next.Policy.CompletionOverheadMS) || !durationOK(next.Policy.MaxBatchWaitMS) || !identity(next.Policy.DecisionID) || next.Policy.EnvelopeSource == "" || len(next.Policy.EnvelopeSource) > 256 {
 		return errors.New("invalid mutable policy")
 	}
 	if err := validateBatchCap(next.Policy, current.BatchSizes); err != nil {

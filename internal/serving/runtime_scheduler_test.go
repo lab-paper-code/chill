@@ -10,6 +10,53 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
+func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.Controls.Enabled = false
+	snapshot.Instances[0].CompletionOverhead = 100 * time.Millisecond
+	d := snapshot.Workloads[0]
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	received := time.Now().Add(-10 * time.Millisecond)
+	deadline := received.Add(time.Second)
+	call := &Call{receipt: Receipt{ID: "early-sdk", UID: d.UID, ReceivedAt: received, Deadline: deadline}, definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1"}, backendContext: context.Background()}
+	r.calls[call.receipt.ID] = call
+	progress := BackendProgress{RequestID: call.receipt.ID, WorkloadUID: d.UID, Definition: d.Identity(), Phase: "finished", At: time.Now(), ExecutionComplete: true, NativeElapsedMS: 6}
+	r.execute(call, func(context.Context, Dispatch) (BackendResult, error) {
+		started := time.Now()
+		if err := r.ObserveBackend("i1", progress); err != nil {
+			t.Fatal(err)
+		}
+		pending := r.SchedulerOutstanding(time.Now())
+		if len(pending) != 1 || pending[0].ExchangeResidual != nil || pending[0].Phase == phaseReturning || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
+			t.Fatalf("early SDK completion must preserve native confirmation without claiming exchange completion: %+v", pending)
+		}
+		// The SDK callback can precede HTTP completion by a material return leg.
+		time.Sleep(20 * time.Millisecond)
+		return BackendResult{Finished: true, Progress: &progress, ClientSpan: time.Since(started)}, nil
+	}, Dispatch{})
+	snapshot.At = call.exchangeFinishedAt.Add(2 * time.Millisecond)
+	snapshot.Nodes[0].ObservedAt = snapshot.At
+	snapshot.Instances[0].ObservedAt = snapshot.At
+	snapshot.Outstanding = r.SchedulerOutstanding(snapshot.At)
+	decision := EvaluateScheduler(settings, snapshot)
+	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
+	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(106*time.Millisecond) {
+		t.Fatalf("SDK-to-exchange leg must not be subtracted twice from the response tail: %+v", estimate)
+	}
+	if call.receipt.Deadline != deadline || snapshot.Outstanding[0].RemainingLifetime == nil || *snapshot.Outstanding[0].RemainingLifetime != deadline.Sub(snapshot.At) {
+		t.Fatal("exchange accounting changed the original accepted deadline")
+	}
+}
+
 func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]

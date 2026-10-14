@@ -37,7 +37,7 @@ type Call struct {
 	instance                                     *runtimeInstance
 	phase                                        string
 	progress                                     *BackendProgress
-	backendFinishedAt                            time.Time
+	exchangeFinishedAt                           time.Time
 	clientSpan                                   time.Duration
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
@@ -395,12 +395,12 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		c.cancelBackend = nil
 	}
 	c.clientSpan = result.ClientSpan
+	c.exchangeFinishedAt = finishedAt
 	if result.Progress != nil {
 		c.progress = result.Progress
 	}
 	if result.Finished && !c.backendDone {
 		c.backendDone = true
-		c.backendFinishedAt = finishedAt
 		if eventErr := r.eventAt(c, "backend_finished", "", "", finishedAt); eventErr != nil {
 			err = failure("ObservationUnavailable", "cannot persist native completion")
 		}
@@ -463,7 +463,6 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) erro
 			if progress.Phase == phaseFinished && progress.ExecutionComplete {
 				c.phase = phaseFinished
 				c.backendDone = true
-				c.backendFinishedAt = time.Now()
 			}
 		}
 	}
@@ -491,7 +490,6 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) error {
 	for _, c := range r.calls {
 		if c.assignment != nil && c.assignment.Instance == instance && !c.backendDone {
 			c.backendDone = true
-			c.backendFinishedAt = time.Now()
 			c.phase = phaseFinished
 			if err := r.event(c, "backend_finished", "error", "InstanceStopped"); err != nil {
 				return err

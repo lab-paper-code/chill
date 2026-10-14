@@ -59,25 +59,29 @@ type SchedulerNode struct {
 	Reason      string                `json:"reason,omitempty"`
 }
 type SchedulerInstance struct {
-	ID             string                     `json:"id"`
-	Node           NodeReference              `json:"node"`
-	Pool           string                     `json:"pool"`
-	Profile        *Profile                   `json:"profile"`
-	WorkloadUIDs   []string                   `json:"workloadUIDs"`
-	Allocation     SchedulerAllocation        `json:"allocation"`
-	Ready          bool                       `json:"ready"`
-	Stopped        bool                       `json:"stopped"`
-	Capacity       int                        `json:"capacity"`
-	Weight         int32                      `json:"weight"`
-	MaxBatch       int                        `json:"maxBatch"`
-	MaxWait        time.Duration              `json:"maxWaitNanos"`
-	Forward        time.Duration              `json:"forwardNanos"`
-	Return         time.Duration              `json:"returnNanos"`
-	EnvelopeSource string                     `json:"envelopeSource"`
-	ObservedAt     time.Time                  `json:"observedAt"`
-	ArrivalAges    map[string][]time.Duration `json:"arrivalAgesNanos"`
-	IdleMeter      string                     `json:"idleMeter"`
-	IdleScope      string                     `json:"idleScope"`
+	ID                 string              `json:"id"`
+	Node               NodeReference       `json:"node"`
+	Pool               string              `json:"pool"`
+	Profile            *Profile            `json:"profile"`
+	WorkloadUIDs       []string            `json:"workloadUIDs"`
+	Allocation         SchedulerAllocation `json:"allocation"`
+	Ready              bool                `json:"ready"`
+	Stopped            bool                `json:"stopped"`
+	Capacity           int                 `json:"capacity"`
+	Weight             int32               `json:"weight"`
+	MaxBatch           int                 `json:"maxBatch"`
+	MaxWait            time.Duration       `json:"maxWaitNanos"`
+	CompletionOverhead time.Duration       `json:"completionOverheadNanos"`
+	EnvelopeSource     string              `json:"envelopeSource"`
+	// CompletionObserved is true only when CompletionOverhead is a Serving
+	// observation for the same measured execution condition and compatible
+	// definitions. A configured bootstrap value keeps the instance servable but
+	// is not SLO evidence, whatever its value.
+	CompletionObserved bool                       `json:"completionObserved"`
+	ObservedAt         time.Time                  `json:"observedAt"`
+	ArrivalAges        map[string][]time.Duration `json:"arrivalAgesNanos"`
+	IdleMeter          string                     `json:"idleMeter"`
+	IdleScope          string                     `json:"idleScope"`
 }
 
 // Options are evidence-bound placements supplied by the catalog, not invented
@@ -101,6 +105,7 @@ type SchedulerRequest struct {
 	BatchID               string         `json:"batchID,omitempty"`
 	RunningElapsed        time.Duration  `json:"runningElapsedNanos"`
 	ReturnElapsed         time.Duration  `json:"returnElapsedNanos"`
+	ExchangeResidual      *time.Duration `json:"exchangeResidualNanos,omitempty"`
 	ArrivalRate           float64        `json:"arrivalRate"`
 	NativeSenderElapsedMS *float64       `json:"nativeSenderElapsedMS,omitempty"`
 	NativeOutcome         string         `json:"nativeOutcome,omitempty"`

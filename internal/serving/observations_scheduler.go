@@ -2,6 +2,8 @@ package serving
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -209,6 +211,125 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 		}
 	}
 	return result, nil
+}
+
+// ObservedOverhead is the joint completion overhead the Serving entry point
+// measured on its own monotonic clock for completed requests received in
+// [from,to), keyed by Serving instance ID. Each request contributes (receipt to
+// exchange finish - native elapsed) + (response delivery - exchange finish):
+// all non-native receipt-to-response time, including ingress and dispatch.
+// The one-way delivery and return legs are not observable without cross-host
+// timestamps, so no one-way value is derived. Completion is the observed maximum,
+// not a future bound. The frozen assignment and definitions identify the measured
+// execution condition independently of the physical instance's continued presence.
+type ObservedOverhead struct {
+	Completion    time.Duration
+	Node          NodeReference
+	Profile       string
+	Artifact      string
+	ExecutionPath string
+	Definitions   map[string]*Definition
+	Requests      int
+	Source        string
+}
+
+type overheadFact struct {
+	assignment                   *Assignment
+	workload, definition         string
+	exchange, response, residual int64
+	haveExchange, haveResponse   bool
+}
+
+func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverhead, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if from.IsZero() || !from.Before(to) {
+		return nil, failure("InvalidQuery", "positive explicit overhead window is required")
+	}
+	definitions := map[string]*Definition{}
+	if err := j.scan("definitions", func(record observationRecord) {
+		if record.Definition != nil {
+			definitions[record.Definition.Identity] = record.Definition.Definition
+		}
+	}); err != nil {
+		j.lastError = err
+		return nil, err
+	}
+	facts := map[string]*overheadFact{}
+	if err := j.scan("requests", func(record observationRecord) {
+		event := record.Request
+		if event == nil || event.Outcome != outcomeCompleted || !observationInInterval(event.ReceivedAt, from, to) {
+			return
+		}
+		fact := facts[event.RequestID]
+		if fact == nil {
+			fact = &overheadFact{}
+			facts[event.RequestID] = fact
+		}
+		switch event.Kind {
+		case "backend_exchange_finished":
+			p := event.NativeProgress
+			a := event.Assignment
+			if a == nil || p == nil || p.ProfileID != a.Profile || p.Phase != phaseFinished || !p.ExecutionComplete || event.ClientSpanNanos <= 0 || event.ClientSpanNanos > event.ElapsedNanos || !schedulerFinite(p.NativeElapsedMS) || p.NativeElapsedMS < 0 || p.NativeElapsedMS*float64(time.Millisecond) > float64(event.ClientSpanNanos) {
+				return
+			}
+			fact.assignment = a
+			fact.workload, fact.definition = event.WorkloadUID, event.Definition
+			fact.exchange = event.ElapsedNanos
+			fact.residual = event.ElapsedNanos - int64(p.NativeElapsedMS*float64(time.Millisecond))
+			fact.haveExchange = true
+		case eventResponseFinished:
+			fact.response = event.ElapsedNanos
+			fact.haveResponse = true
+		}
+	}); err != nil {
+		j.lastError = err
+		return nil, err
+	}
+	// The scan marks a newly detected torn tail; judge windows only afterwards.
+	for _, window := range j.windows {
+		if window.Incomplete && window.StartedAt.Before(to) && window.EndsAt.After(from) {
+			return nil, failure("IncompleteObservation", "overhead window overlaps incomplete observation window %s", window.ID)
+		}
+	}
+	result := completedOverheads(facts, definitions)
+	source := fmt.Sprintf("serving-observed window=%s/%s completion overhead=max(receipt to exchange finish - native elapsed + response delivery - exchange finish) applied once at completion; one-way delivery not observed", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	for id, o := range result {
+		o.Source = fmt.Sprintf("%s requests=%d", source, o.Requests)
+		result[id] = o
+	}
+	return result, nil
+}
+
+// completedOverheads joins completed spans with their frozen model/input identity
+// and takes the measured maximum for each immutable physical executor.
+func completedOverheads(facts map[string]*overheadFact, definitions map[string]*Definition) map[string]ObservedOverhead {
+	result := map[string]ObservedOverhead{}
+	invalid := map[string]bool{}
+	for _, fact := range facts {
+		returned := fact.response - fact.exchange
+		a, d := fact.assignment, definitions[fact.definition]
+		if !fact.haveExchange || !fact.haveResponse || a == nil || a.Instance == "" || a.Node.Name == "" || a.Node.UID == "" || a.Profile == "" || a.Artifact == "" || a.ExecutionPath == "" || fact.workload == "" || d == nil || d.UID != fact.workload || fact.residual < 0 || returned < 0 || invalid[a.Instance] {
+			continue
+		}
+		if !slices.ContainsFunc(d.Model.Paths, func(path ModelPath) bool { return path.Name == a.ExecutionPath && path.Artifact == a.Artifact }) {
+			continue
+		}
+		o := result[a.Instance]
+		if o.Definitions == nil {
+			o = ObservedOverhead{Node: a.Node, Profile: a.Profile, Artifact: a.Artifact, ExecutionPath: a.ExecutionPath, Definitions: map[string]*Definition{}}
+		} else if o.Node != a.Node || o.Profile != a.Profile || o.Artifact != a.Artifact || o.ExecutionPath != a.ExecutionPath {
+			// A physical executor cannot change its immutable execution identity.
+			delete(result, a.Instance)
+			invalid[a.Instance] = true
+			continue
+		}
+		o.Completion = max(o.Completion, time.Duration(fact.residual+returned))
+		o.Definitions[fact.definition] = d
+		o.Requests++
+		result[a.Instance] = o
+	}
+	return result
 }
 
 func (j *Journal) SchedulerArrivals(from, to time.Time) ([]SchedulerArrival, error) {

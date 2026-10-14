@@ -205,7 +205,7 @@ func prepareInference(w http.ResponseWriter, ctx context.Context, decoder *json.
 	r.bytes = n
 	r.context = inference.Context
 	if r.context.LifetimeMS > 0 {
-		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - cfg.Policy.TransportEnvelopeMS
+		remaining := r.context.LifetimeMS - r.context.SenderElapsedMS - remainingCompletionOverheadMS(cfg.Policy, r.context.SenderElapsedMS)
 		if remaining <= 0 {
 			writeError(w, http.StatusRequestTimeout, context.DeadlineExceeded, true)
 			return false

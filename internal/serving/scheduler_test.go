@@ -34,7 +34,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
 	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Tensor: derivation.CurveTensorContract{Tensors: inputs}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Path: "/model", Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelPath: "/model", Inputs: []firstfloor.InputSpec{{Name: "x", Datatype: "FP32", Shape: []int{-1, 1}}}, Outputs: []firstfloor.InputSpec{{Name: "y", Datatype: "FP32", Shape: []int{-1, 1}}}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, EnvelopeSource: "measured transport", ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Pool: node.Pool, Profile: p, WorkloadUIDs: []string{d.UID}, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Capacity: 100, Weight: 1, MaxBatch: 1, EnvelopeSource: "measured transport", CompletionObserved: true, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -118,6 +118,7 @@ func TestSchedulerSharedUIDNonpreemptiveBlockingAndResidual(t *testing.T) {
 	snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
 	snap.Outstanding = []SchedulerRequest{{ID: "running-a", Definition: a, ReceivedAt: snap.At.Add(-40 * time.Millisecond), Elapsed: 40 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "native-7", RunningElapsed: 40 * time.Millisecond}, {ID: "queued-b", Definition: &b, ReceivedAt: snap.At, Phase: "queued", Instance: "i1"}}
 	zero := 0.0
+	snap.Outstanding[0].NativeSenderElapsedMS = &zero
 	snap.Outstanding[1].NativeSenderElapsedMS = &zero
 	decision := EvaluateScheduler(s, snap)
 	e := schedulerRequireEstimate(t, decision.Keep, b.UID)
@@ -303,14 +304,40 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	}
 	schedulerRequireReason(t, pending.Keep.Reasons, "NativeOwnershipPending")
 	s.Controls.Enabled = false
-	snap.Instances[0].Return = 5 * time.Millisecond
-	snap.Outstanding[0].Phase = "returning"
-	snap.Outstanding[0].Elapsed = 12 * time.Millisecond
-	snap.Outstanding[0].ReturnElapsed = 2 * time.Millisecond
+	snap.Instances[0].CompletionOverhead = 5 * time.Millisecond
+	call := &Call{
+		receipt:            Receipt{ID: "returning", UID: snap.Workloads[0].UID, ReceivedAt: snap.At.Add(-10 * time.Millisecond)},
+		definition:         snap.Workloads[0],
+		assignment:         &Assignment{Instance: "i1"},
+		backendDone:        true,
+		exchangeFinishedAt: snap.At.Add(-2 * time.Millisecond),
+		clientSpan:         8 * time.Millisecond,
+		progress:           &BackendProgress{Phase: "finished", ExecutionComplete: true, NativeElapsedMS: 6},
+	}
+	runtime := &Runtime{calls: map[string]*Call{"returning": call}}
+	snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
 	returned := EvaluateScheduler(s, snap)
 	e := schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
-	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(15*time.Millisecond) {
-		t.Fatalf("return phase kept original age and remaining delivery: %+v", e)
+	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(11*time.Millisecond) {
+		t.Fatalf("original age already includes 2ms receipt-to-exchange residual and 2ms response tail; only 1ms of joint 5ms remains: %+v", e)
+	}
+	// A measured zero residual is evidence, not a missing observation.
+	call.progress.NativeElapsedMS = 8
+	snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
+	zero := EvaluateScheduler(s, snap)
+	e = schedulerRequireEstimate(t, zero.Keep, snap.Workloads[0].UID)
+	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(13*time.Millisecond) {
+		t.Fatalf("zero exchange residual must retain the remaining response tail: %+v", e)
+	}
+	call.progress.NativeElapsedMS = 6
+	for _, clientSpan := range []time.Duration{0, 5 * time.Millisecond} {
+		call.clientSpan = clientSpan
+		snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
+		missing := EvaluateScheduler(s, snap)
+		if missing.Target != nil || snap.Outstanding[0].ExchangeResidual != nil {
+			t.Fatalf("missing or negative exchange residual must not become completion evidence: %+v", missing)
+		}
+		schedulerRequireReason(t, missing.Keep.Reasons, "MissingReturningCompletionEvidence")
 	}
 }
 
@@ -525,7 +552,9 @@ func TestSchedulerFiniteHorizonEnergyClipsExecutionAndOperation(t *testing.T) {
 	}
 	snap.Arrivals = nil
 	s.Horizon = time.Millisecond
+	zeroSender := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: phaseRunning, Definition: d, ReceivedAt: snap.At.Add(-7 * time.Millisecond), Elapsed: 7 * time.Millisecond, RunningElapsed: 7 * time.Millisecond, Phase: phaseRunning, Instance: "i1", BatchID: "actual"}}
+	snap.Outstanding[0].NativeSenderElapsedMS = &zeroSender
 	running := EvaluateScheduler(s, snap)
 	if running.Keep.ExpectedJoules == nil || math.Abs(*running.Keep.ExpectedJoules-0.112) > 1e-9 {
 		t.Fatalf("running execution overlap is 1/10 batch plus 1ms baseline: %+v", running.Keep)
@@ -645,4 +674,24 @@ func TestSchedulerEnergyOverflowRemainsUnknownNotJSONInfinity(t *testing.T) {
 		t.Fatalf("unrepresentable expected energy must remain ineligible: %+v", decision)
 	}
 	schedulerRequireReason(t, decision.Keep.Reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
+}
+
+func TestSchedulerUnobservedCompletionOverheadIsNotSLOQualified(t *testing.T) {
+	s, snap := schedulerFixture()
+	snap.Instances[0].CompletionObserved = false
+	decision := EvaluateScheduler(s, snap)
+	if decision.Keep.ExpectedJoules != nil || decision.Target != nil || decision.Keep.Status != schedulerStatusPending {
+		t.Fatalf("bootstrap completion overhead must not qualify SLO evaluation: %+v", decision)
+	}
+	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved:i1")
+	snap.Instances[0].CompletionObserved = true
+	decision = EvaluateScheduler(s, snap)
+	for _, r := range decision.Keep.Reasons {
+		if strings.HasPrefix(r, "CompletionOverheadUnobserved") {
+			t.Fatalf("observed completion overhead still unqualified: %v", decision.Keep.Reasons)
+		}
+	}
+	if decision.Keep.ExpectedJoules == nil {
+		t.Fatalf("observed instance must be evaluable: %+v", decision.Keep.Reasons)
+	}
 }

@@ -260,3 +260,81 @@ func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
 		t.Fatal("overflowing effective memory requests became an available node")
 	}
 }
+
+func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
+	manager, _ := newManagerHarness(t)
+	d := &serving.Definition{Name: "original", UID: "original-uid", Generation: 1, Model: serving.Model{Name: "model", UID: "model-uid", Generation: 1, Paths: []serving.ModelPath{{Name: "native", Artifact: "onnx", Path: "/model.onnx"}}}, SLO: serving.SLO{Percentile: 95, TargetLatency: time.Second}}
+	profile := managerProfile(d)
+	profile.NodeName, profile.Condition.NodeUID = "node", "node-uid"
+	profile.RuntimeMetadata = &native.RuntimeMetadata{CPUAffinity: []int{0}, IntraOpThreads: 1}
+	node := serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}
+	physical := serving.ReadyInstance{State: serving.InstanceState{ID: "removed-pod/container", Node: node, Pool: "pool", Profile: profile.ID, Ready: true}, Profile: &profile, Capacity: 4, Weight: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
+		panic("regression only observes physical state")
+	}}
+	if err := manager.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.journal.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	for _, event := range []serving.RequestEvent{
+		{RequestID: "measured", WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_exchange_finished", Outcome: "completed", At: at, ReceivedAt: at, Assignment: &serving.Assignment{Instance: physical.State.ID, Node: node, Profile: profile.ID, Artifact: "onnx", ExecutionPath: "native"}, NativeProgress: &serving.BackendProgress{Phase: "finished", ProfileID: profile.ID, ExecutionComplete: true, NativeElapsedMS: 6}, ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20 * time.Millisecond)},
+		{RequestID: "measured", Kind: "response_finished", Outcome: "completed", At: at, ReceivedAt: at, ElapsedNanos: int64(23 * time.Millisecond)},
+	} {
+		if err := manager.journal.RequestEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.runtime.InstallInstances(nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range manager.runtime.Pools() {
+		if len(pool.Instances) != 0 {
+			t.Fatal("measured physical executor remains present", pool)
+		}
+	}
+	overheads, err := manager.journal.ObservedOverhead(at.Add(-time.Second), at.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *d
+	other.Name, other.UID, other.SLO = "compatible", "compatible-uid", serving.SLO{Percentile: 99, TargetLatency: 500 * time.Millisecond}
+	if !serving.MatchesProfile(&other, &profile) {
+		t.Fatal("regression requires a compatible but separately unmeasured SLO UID")
+	}
+	target := serving.SchedulerInstance{ID: "future-slot", Node: node, Pool: "pool", Profile: &profile, Allocation: serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1}, WorkloadUIDs: []string{d.UID, other.UID}, CompletionOverhead: 99 * time.Millisecond, EnvelopeSource: "configured bootstrap"}
+	observeOverhead(&target, overheads)
+	if !target.CompletionObserved || target.CompletionOverhead != 17*time.Millisecond || !strings.Contains(target.EnvelopeSource, physical.State.ID) {
+		t.Fatalf("removed measured condition was not reused across compatible SLO UIDs: %+v", target)
+	}
+	for _, name := range []string{"different node", "different profile", "different runtime", "different CPU", "different GPU", "expired window"} {
+		t.Run(name, func(t *testing.T) {
+			instance := target
+			p := profile
+			instance.Profile = &p
+			observations := overheads
+			switch name {
+			case "different node":
+				instance.Node.UID = "replacement-node-uid"
+			case "different profile":
+				p.ID = "unmeasured-profile"
+			case "different runtime":
+				p.Condition.Backend = "different-backend"
+			case "different CPU":
+				instance.Allocation.CPUs = []int{1}
+			case "different GPU":
+				instance.Allocation.GPUUUID = "unmeasured-gpu"
+			case "expired window":
+				observations, err = manager.journal.ObservedOverhead(at.Add(time.Second), at.Add(2*time.Second))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			observeOverhead(&instance, observations)
+			if instance.CompletionObserved {
+				t.Fatalf("unmeasured Node/runtime condition reused an observation: %+v", instance)
+			}
+		})
+	}
+}

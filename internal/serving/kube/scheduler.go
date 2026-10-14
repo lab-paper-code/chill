@@ -363,8 +363,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
+	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
+	if err != nil {
+		return s, err
+	}
 	for index := range s.Instances {
 		instance := &s.Instances[index]
+		observeOverhead(instance, overheads)
 		state := physical[instance.ID]
 		instance.ArrivalAges = map[string][]time.Duration{}
 		if state.Native != nil {
@@ -377,6 +382,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		bindProfileMeter(instance, config.Meters)
 	}
 	for index := range s.Options {
+		observeOverhead(&s.Options[index].Instance, overheads)
 		bindProfileMeter(&s.Options[index].Instance, config.Meters)
 	}
 	return s, nil
@@ -431,7 +437,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			m := state.Native.Metadata
 			allocation := serving.SchedulerAllocation{CPUs: slices.Clone(m.Runtime.CPUAffinity), GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
-			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond)), Forward: time.Duration(m.Policy.TransportEnvelopeMS * float64(time.Millisecond)), Return: time.Duration(m.Policy.ReturnEnvelopeMS * float64(time.Millisecond)), EnvelopeSource: m.Policy.EnvelopeSource}
+			instance := serving.SchedulerInstance{ID: state.ID, Node: state.Node, Pool: state.Pool, Profile: profile, Allocation: allocation, Ready: state.Ready && state.Native.Ready, Capacity: m.MaxQueueRequests, Weight: 1, MaxBatch: m.MaxBatchSize, ObservedAt: state.ObservedAt, MaxWait: time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond)), CompletionOverhead: time.Duration(m.Policy.CompletionOverheadMS * float64(time.Millisecond)), EnvelopeSource: m.Policy.EnvelopeSource}
 			instance.Stopped = state.Stopped
 			if m.Policy.MaxBatchSize > 0 {
 				instance.MaxBatch = m.Policy.MaxBatchSize
@@ -586,8 +592,7 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
 					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
 					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond),
-					TransportEnvelopeMS: float64(i.Forward) / float64(time.Millisecond),
-					ReturnEnvelopeMS:    float64(i.Return) / float64(time.Millisecond), EnvelopeSource: i.EnvelopeSource}
+					CompletionOverheadMS: float64(i.CompletionOverhead) / float64(time.Millisecond), EnvelopeSource: i.EnvelopeSource}
 				operation.Prepare = &template
 				break
 			}
@@ -597,6 +602,46 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 		operation.Actuation = config.PowerRequests[action.Node.UID+"/"+action.To]
 	}
 	return operation
+}
+
+// observeOverhead uses recent completed requests on the exact physical Node and
+// immutable measured profile, including executors that no longer exist. Frozen
+// model/input definitions establish compatibility; workload UID and SLO are not
+// execution conditions. No matching measurement leaves the bootstrap unobserved.
+func observeOverhead(instance *serving.SchedulerInstance, overheads map[string]serving.ObservedOverhead) {
+	instance.CompletionObserved = false
+	if instance.Profile == nil || instance.Profile.RuntimeMetadata == nil {
+		return
+	}
+	runtime := instance.Profile.RuntimeMetadata
+	if !slices.Equal(instance.Allocation.CPUs, runtime.CPUAffinity) || instance.Allocation.Threads != runtime.IntraOpThreads || instance.Allocation.GPUUUID != runtime.GPUUUID {
+		return
+	}
+	observedID := ""
+	for id, o := range overheads {
+		if o.Requests <= 0 || o.Completion < 0 || o.Source == "" || o.Node != instance.Node || o.Profile != instance.Profile.ID || o.Artifact != instance.Profile.Condition.Artifact.Name || o.ExecutionPath != instance.Profile.Condition.Artifact.ExecutionPath {
+			continue
+		}
+		compatible := len(o.Definitions) > 0
+		for _, d := range o.Definitions {
+			if d == nil || !serving.MatchesProfile(d, instance.Profile) {
+				compatible = false
+				break
+			}
+		}
+		if !compatible {
+			continue
+		}
+		if instance.CompletionObserved && (o.Completion < instance.CompletionOverhead || o.Completion == instance.CompletionOverhead && id >= observedID) {
+			continue
+		}
+		source := o.Source
+		if id != instance.ID {
+			source = "inherited from " + id + ": " + source
+		}
+		instance.CompletionOverhead, instance.EnvelopeSource, instance.CompletionObserved = o.Completion, source, true
+		observedID = id
+	}
 }
 func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {
 	if instance.Profile == nil {

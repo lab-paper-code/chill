@@ -711,8 +711,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
 			DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),
 			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond),
-			TransportEnvelopeMS: float64(instance.Forward) / float64(time.Millisecond),
-			ReturnEnvelopeMS:    float64(instance.Return) / float64(time.Millisecond), EnvelopeSource: instance.EnvelopeSource}
+			CompletionOverheadMS: float64(instance.CompletionOverhead) / float64(time.Millisecond), EnvelopeSource: instance.EnvelopeSource}
 		if err := o.ApplyPolicy(ctx, instance.ID, policy); err != nil {
 			return err
 		}

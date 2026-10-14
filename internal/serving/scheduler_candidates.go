@@ -3,6 +3,7 @@ package serving
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 )
 
@@ -187,6 +188,9 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			if !used[old.ID] && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
+				if old.CompletionObserved && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
+					c.Instances[j].CompletionOverhead, c.Instances[j].EnvelopeSource, c.Instances[j].CompletionObserved = old.CompletionOverhead, old.EnvelopeSource, true
+				}
 				used[old.ID] = true
 				break
 			}
@@ -260,7 +264,7 @@ func schedulerOptionCondition(o SchedulerOption) string {
 		return ""
 	}
 	p := i.Profile
-	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Tensor, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.Forward, i.Return, i.EnvelopeSource)
+	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Tensor, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
 }
 func schedulerConfigKey(c SchedulerCandidate) string {
 	parts := []string{}
@@ -275,7 +279,7 @@ func schedulerConfigKey(c SchedulerCandidate) string {
 			}
 			weights = append(weights, weight)
 		}
-		parts = append(parts, fmt.Sprint(i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.MaxBatch, i.MaxWait, i.Forward, i.Return, i.EnvelopeSource))
+		parts = append(parts, fmt.Sprint(i.Node.UID, i.Pool, schedulerState(i), uids, weights, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved))
 	}
 	sort.Strings(parts)
 	for _, n := range c.Nodes {

@@ -256,12 +256,22 @@ func (r *Runtime) SchedulerOutstanding(now time.Time) []SchedulerRequest {
 			r.extendNativeOutstandingLocked(&request, call, now)
 		}
 		if call.backendDone {
-			request.Phase = phaseReturning
+			if !call.exchangeFinishedAt.IsZero() {
+				request.Phase = phaseReturning
+			}
 			if call.progress != nil {
 				request.NativeOutcome = call.progress.Outcome
 			}
-			if !call.backendFinishedAt.IsZero() {
-				request.ReturnElapsed = now.Sub(call.backendFinishedAt)
+			if !call.exchangeFinishedAt.IsZero() {
+				request.ReturnElapsed = now.Sub(call.exchangeFinishedAt)
+				exchangeElapsed := call.exchangeFinishedAt.Sub(call.receipt.ReceivedAt)
+				if p := call.progress; p != nil && p.Phase == "finished" && p.ExecutionComplete && call.clientSpan > 0 && call.clientSpan <= exchangeElapsed && schedulerFinite(p.NativeElapsedMS) && p.NativeElapsedMS >= 0 {
+					nativeNanos := p.NativeElapsedMS * float64(time.Millisecond)
+					if nativeNanos <= float64(call.clientSpan) && request.ReturnElapsed >= 0 {
+						residual := exchangeElapsed - time.Duration(nativeNanos)
+						request.ExchangeResidual = &residual
+					}
+				}
 			}
 		}
 		result = append(result, request)

@@ -87,10 +87,40 @@ func TestMeasuredSelector(t *testing.T) {
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SenderElapsedMS = 25
 	q[0].ElapsedMS = 10
-	p.TransportEnvelopeMS = 3
-	p.ReturnEnvelopeMS = 3
+	p.CompletionOverheadMS = 6
 	if c := ChooseBatch(p, q); c.WaitMS != 0 {
 		t.Fatalf("sender, local and envelopes all consume original slack: %+v", c)
+	}
+}
+func TestConsumedSenderOverheadPreservesFeasibleDeadlineAndLifetime(t *testing.T) {
+	p := testPolicy()
+	p.DeadlinePolicy = DeadlineDrop
+	p.CompletionOverheadMS = 407
+	p.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{100}, EnergyPerItemJ: 1}}
+	q := testState("uid", 507, 0)
+	q.Context.SenderElapsedMS = 400
+	if slack := requestSlack(p, q, p.Batches[0]); slack != 0 {
+		t.Fatalf("400ms already consumed + 100ms service + 7ms residual must fit 507ms: %v", slack)
+	}
+	if c := ChooseBatch(p, []RequestState{q}); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
+		t.Fatalf("feasible deadline must execute: %+v", c)
+	}
+	for _, sender := range []float64{400, 500} {
+		wire := Request{ID: "wire", Context: RequestContext{RequestID: "wire", WorkloadUID: "uid", Definition: "uid/1", ReceivedAt: time.Now().Add(time.Hour).UTC(), SenderElapsedMS: sender, LifetimeMS: 507, SLO: SLO{Percentile: 95, TargetMS: 507}}, Inputs: typedInputs(1)}
+		body, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := &Config{Mode: modeServing, Inputs: []InputSpec{{"large", "UINT64", []int{1}}, {"mask", "BOOL", []int{1}}, {"half", "FP16", []int{1}}}, Policy: p}
+		r := &request{received: time.Now()}
+		w := httptest.NewRecorder()
+		if !prepareInference(w, context.Background(), json.NewDecoder(bytes.NewReader(body)), cfg, r) {
+			t.Fatalf("feasible lifetime rejected: %d %s", w.Code, w.Body.String())
+		}
+		want := time.Duration(507-sender-remainingCompletionOverheadMS(p, sender)) * time.Millisecond
+		if got := r.lifetime.Sub(r.received); got != want {
+			t.Fatalf("lifetime must reserve only unconsumed overhead: got %s want %s", got, want)
+		}
 	}
 }
 func startTestActor(t *testing.T, mode string, delay string, deadlinePolicy ...string) (*Scheduler, *Config) {
@@ -168,7 +198,7 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
 	next := *cfg
 	next.Policy.DecisionID = "decision-2"
-	next.Policy.ReturnEnvelopeMS = 5
+	next.Policy.CompletionOverheadMS = 5
 	next.Policy.MaxBatchSize = 1
 	if e := s.Update(context.Background(), &next); e != nil {
 		t.Fatal(e)
@@ -330,7 +360,7 @@ func TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange(t *testing
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
 	next := *cfg
 	next.Policy.DecisionID = "changed-envelope"
-	next.Policy.TransportEnvelopeMS = 1000
+	next.Policy.CompletionOverheadMS = 1000
 	if err := s.Update(context.Background(), &next); err != nil {
 		t.Fatal(err)
 	}

@@ -91,15 +91,14 @@ type ProfileBundle struct {
 	Batches   []BatchProfile `json:"batches"`
 }
 type Policy struct {
-	DecisionID          string         `json:"decisionID"`
-	ProfileID           string         `json:"profileID"`
-	TransportEnvelopeMS float64        `json:"transportEnvelopeMS"`
-	ReturnEnvelopeMS    float64        `json:"returnEnvelopeMS"`
-	EnvelopeSource      string         `json:"envelopeSource"`
-	MaxBatchWaitMS      float64        `json:"maxBatchWaitMS"`
-	MaxBatchSize        int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
-	DeadlinePolicy      string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
-	Batches             []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
+	DecisionID           string         `json:"decisionID"`
+	ProfileID            string         `json:"profileID"`
+	CompletionOverheadMS float64        `json:"completionOverheadMS"`
+	EnvelopeSource       string         `json:"envelopeSource"`
+	MaxBatchWaitMS       float64        `json:"maxBatchWaitMS"`
+	MaxBatchSize         int            `json:"maxBatchSize,omitempty"`   // Zero permits every initialized measured batch.
+	DeadlinePolicy       string         `json:"deadlinePolicy,omitempty"` // Frozen for the instance; omitted means keep.
+	Batches              []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
 type Config struct {
 	Model            string      `json:"model"`
