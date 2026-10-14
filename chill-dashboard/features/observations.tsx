@@ -11,14 +11,11 @@ import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { Button } from "@/components/ui/button"
 import { parseSchedulerJSON, stringifySchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
+import { localDateTime, utcDateTime } from "@/lib/date-time"
 
 type UIDChoice={desired:{metadata:{name:string;uid:string}}}
 const outcomes=["completed","error","rejected","timeout","canceled","incomplete","delivery_failed"]
 const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패"}
-function localDateTime(value:string) {
-  const date=new Date(value)
-  return Number.isFinite(date.getTime())?new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16):""
-}
 export function ObservationsPage({changes=false}:{changes?:boolean}) {
   const params=useSearchParams(),router=useRouter();const {config}=useSession()
   const [uid,setUID]=React.useState(params.get("uid")??"")
@@ -58,10 +55,10 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
     const index=definitions.findIndex(item=>item.identity===identity)
     return index<0?"이전 적용 설정":`적용 설정 ${index+1}`
   }
-  return <div className="page"><h1>{changes?"서비스 변경 이력":"요청 기록"}</h1>{changes&&<nav className="subnav" aria-label="변경 이력 종류"><Link href="/changes" aria-current="page">서비스 변경</Link><Link href={`/changes?scope=scheduler&${new URLSearchParams({...(params.get("from")?{from:params.get("from")!}:{}),...(params.get("to")?{to:params.get("to")!}:{})})}`}>운영 설정 변경</Link></nav>}<form className="toolbar" onSubmit={event=>{event.preventDefault();selectWindow()}}>
+  return <div className="page"><h1>{changes?"서비스 변경 이력":"요청 기록"}</h1>{changes&&<nav className="subnav" aria-label="변경 이력 종류"><Link href="/changes" aria-current="page">서비스 변경</Link><Link href={`/changes?scope=scheduler&${new URLSearchParams({...(params.get("from")?{from:params.get("from")!}:{}),...(params.get("to")?{to:params.get("to")!}:{})})}`}>운영 설정 변경</Link></nav>}<form noValidate className="toolbar" onSubmit={event=>{event.preventDefault();selectWindow()}}>
     <label>서비스<select aria-label="서비스" value={uid} onChange={event=>setUID(event.target.value)} required><option value="">서비스 선택</option>{uid&&!workloads.data?.some(row=>row.desired.metadata.uid===uid)&&<option value={uid}>이전 등록 서비스</option>}{workloads.data?.map(row=><option key={row.desired.metadata.uid} value={row.desired.metadata.uid}>{row.desired.metadata.name}</option>)}</select></label>
     <label>조회 기간<select value={preset} onChange={event=>setPreset(event.target.value)}><option value="15m">최근 15분</option><option value="1h">최근 1시간</option><option value="24h">최근 24시간</option><option value="custom">직접 선택</option></select></label>
-    {preset==="custom"&&<DetailsDialog label="기간 선택" title="조회 기간"><p>현재 기기의 시간대 기준입니다. 최대 {config.maxWindowHours}시간까지 조회할 수 있습니다.</p><label>시작<input type="datetime-local" value={localDateTime(from)} onChange={event=>{if(event.target.value)setFrom(new Date(event.target.value).toISOString())}}/></label><label>종료<input type="datetime-local" value={localDateTime(to)} onChange={event=>{if(event.target.value)setTo(new Date(event.target.value).toISOString())}}/></label></DetailsDialog>}
+    {preset==="custom"&&<DetailsDialog label="기간 선택" title="조회 기간"><p>현재 기기의 시간대 기준입니다. 최대 {config.maxWindowHours}시간까지 조회할 수 있습니다.</p><label>시작<input type="datetime-local" value={localDateTime(from)} onChange={event=>setFrom(utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:""))}/></label><label>종료<input type="datetime-local" value={localDateTime(to)} onChange={event=>setTo(utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:""))}/></label></DetailsDialog>}
     {!changes&&<DetailsDialog label="결과 필터" title="조회 조건"><fieldset><legend>처리 결과</legend>{outcomes.map(value=><label key={value}><input type="checkbox" checked={outcome.includes(value)} onChange={event=>setOutcome(current=>event.target.checked?[...current,value]:current.filter(item=>item!==value))}/>{outcomeLabels[value]}</label>)}{outcome.filter(value=>!outcomes.includes(value)).map(value=><label key={value}><input type="checkbox" checked onChange={()=>setOutcome(current=>current.filter(item=>item!==value))}/>이전 상세 조건</label>)}</fieldset><fieldset><legend>적용 설정</legend>{definitions.length?definitions.map((item,index)=><label key={item.identity}><input type="checkbox" checked={definition.includes(item.identity)} onChange={event=>setDefinition(current=>event.target.checked?[...current,item.identity]:current.filter(value=>value!==item.identity))}/>적용 설정 {index+1}<SourceJSON title="설정 자세히" value={item}/></label>):<p>서비스의 결과를 먼저 조회하면 실제 적용 설정을 선택할 수 있습니다.</p>}{definition.filter(value=>!definitions.some(item=>item.identity===value)).map(value=><label key={value}><input type="checkbox" checked onChange={()=>setDefinition(current=>current.filter(item=>item!==value))}/>이전 적용 설정</label>)}</fieldset></DetailsDialog>}
     <DetailsDialog label="조회 설정" title="조회 설정"><label>한 번에 볼 기록 수<input type="number" min="1" max={config.maxPageSize} value={limit} onChange={event=>setLimit(Number(event.target.value))}/></label><label><input type="checkbox" checked={poll} onChange={event=>setPoll(event.target.checked)}/> 자동 새로고침</label></DetailsDialog><Button type="submit">조회</Button></form>
     {(workloads.isPending || workloads.error || workloads.data?.length === 0) && <ReadRegion title="서비스 선택" query={workloads}>{workloads.data&&!workloads.data.length&&<p>선택할 서비스가 없습니다.</p>}</ReadRegion>}{validation&&<p role="alert">{validation}</p>}

@@ -119,6 +119,12 @@ Each page has one task: list, detail, create, edit, inference, or one read view.
 
 Model authoring and applied workload definitions use `firstfloor` settings with positive int32 `maxBatchSize` and per-workload-UID `maxQueueSize` bounds. Native backends are `ort-cpu` / `ort-cuda` for ONNX and `rknnlite` for RKNN. The API validates artifact/backend compatibility, requires these settings for the `firstfloor` family and rejects them for other families; the editor preserves custom native declarations and existing numeric/bool multi-tensor input behavior.
 
+History, load and custom observation dates use the device's local time zone.
+Only edited fields are converted to UTC; untouched submitted RFC3339Nano strings
+remain exact, including seconds and fractional precision. Empty, partial or invalid
+date edits stay unsubmitted and show the existing range validation on apply without
+replacing the submitted interval or its records.
+
 Resource policy/maintenance writers, measurement writers/options, full operating POOL energy aggregation and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, nodal power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

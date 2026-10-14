@@ -8,6 +8,7 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { localDateTime, utcDateTime } from "@/lib/date-time"
 import { SnapshotDetails, CandidateDetails, judgmentLabels } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
 import { ReadRegion, SourceJSON, SourceExport } from "@/components/read-region"
@@ -24,7 +25,6 @@ export type SchedulerHistoryQuery={
   limit:number;setLimit:React.Dispatch<React.SetStateAction<number>>;validation:string;maxPageSize:number;apply:()=>void;page:(cursor?:string)=>void
 }
 const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 관측",other:"기타 기록"}
-function localDateTime(value:string){const date=new Date(value);return Number.isFinite(date.getTime())?new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16):""}
 
 export function useSchedulerHistory():SchedulerHistoryQuery {
   const params=useSearchParams(),router=useRouter(),pathname=usePathname(),{config}=useSession()
@@ -47,7 +47,7 @@ export function useSchedulerHistory():SchedulerHistoryQuery {
 }
 
 export function HistoryControls({history}:{history:SchedulerHistoryQuery}){
-  return <><form className="toolbar" onSubmit={event=>{event.preventDefault();history.apply()}}><label>시작<Input type="datetime-local" value={localDateTime(history.draft.from)} onChange={event=>history.setDraft(current=>({...current,from:event.target.value?new Date(event.target.value).toISOString():""}))}/></label><label>종료<Input type="datetime-local" value={localDateTime(history.draft.to)} onChange={event=>history.setDraft(current=>({...current,to:event.target.value?new Date(event.target.value).toISOString():""}))}/></label><label>표시 개수<Input type="number" min={1} max={history.maxPageSize} value={Number.isFinite(history.limit)?history.limit:""} onChange={event=>history.setLimit(Number(event.target.value))}/></label><Button type="submit">구간 적용</Button></form>{history.validation&&<p role="alert">{history.validation}</p>}<p className="break-all">제출된 구간 {history.submitted.from} ~ {history.submitted.to} [from, to)</p></>
+  return <><form noValidate className="toolbar" onSubmit={event=>{event.preventDefault();history.apply()}}><label>시작<Input type="datetime-local" value={localDateTime(history.draft.from)} onChange={event=>{const from=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,from}))}}/></label><label>종료<Input type="datetime-local" value={localDateTime(history.draft.to)} onChange={event=>{const to=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,to}))}}/></label><label>표시 개수<Input type="number" min={1} max={history.maxPageSize} value={Number.isFinite(history.limit)?history.limit:""} onChange={event=>history.setLimit(Number(event.target.value))}/></label><Button type="submit">구간 적용</Button></form>{history.validation&&<p role="alert">{history.validation}</p>}<p className="break-all">제출된 구간 {history.submitted.from} ~ {history.submitted.to} [from, to)</p></>
 }
 export function HistoryPaging({history}:{history:SchedulerHistoryQuery}){
   return <><p>현재 가져온 원본 기록 {history.rows.length}개 / 시작 offset {history.cursor}. 보관 중인 append 순서이며 전체 구간의 건수와 완전성은 제공하지 않습니다.</p><div className="toolbar"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>첫 기록</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록</Button></div></>
