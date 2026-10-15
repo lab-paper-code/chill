@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -105,6 +106,23 @@ type Profile struct {
 	MeasuredAt        time.Time                     `json:"measuredAt"`
 	RuntimeMetadata   *firstfloor.RuntimeMetadata   `json:"runtimeMetadata,omitempty"`
 	MetricSource      metricobserver.SourceIdentity `json:"metricSource"`
+}
+
+// NativeBundle projects this catalog-verified profile for immutable startup
+// delivery. Both the publisher and consumer derive identity from this producer.
+func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
+	bundle := firstfloor.ProfileBundle{ProfileID: p.ID, Batches: make([]firstfloor.BatchProfile, len(p.Batches))}
+	for i, batch := range p.Batches {
+		samples := make([]float64, len(batch.DurationNanos))
+		for j, value := range batch.DurationNanos {
+			samples[j] = value / float64(time.Millisecond)
+		}
+		slices.Sort(samples)
+		bundle.Batches[i] = firstfloor.BatchProfile{
+			Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
+		}
+	}
+	return bundle
 }
 
 type NodeReference struct {

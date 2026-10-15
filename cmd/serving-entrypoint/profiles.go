@@ -572,24 +572,9 @@ func (o *schedulerOwner) measuredPreparation(ctx context.Context, p serving.Prof
 	// Validate against the same measured bundle the owner publishes, then retain
 	// only the immutable startup reference in the persisted preparation.
 	checked := spec.Config
-	checked.Policy.Batches = measuredProfileBundle(p).Batches
+	checked.Policy.Batches = p.NativeBundle().Batches
 	if err = native.ValidateConfig(&checked); err != nil {
 		return servingkube.PrepareSpec{}, err
 	}
 	return spec, nil
-}
-
-func measuredProfileBundle(profile serving.Profile) native.ProfileBundle {
-	bundle := native.ProfileBundle{ProfileID: profile.ID, Batches: make([]native.BatchProfile, len(profile.Batches))}
-	for i, batch := range profile.Batches {
-		samples := make([]float64, len(batch.DurationNanos))
-		for j, value := range batch.DurationNanos {
-			samples[j] = value / float64(time.Millisecond)
-		}
-		slices.Sort(samples)
-		bundle.Batches[i] = native.BatchProfile{
-			Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
-		}
-	}
-	return bundle
 }

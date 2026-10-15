@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -547,6 +548,55 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
 	}
 }
+
+// ValidatePreparationCapacity admits coexistence using fresh physical Pod
+// requests and the owner's configured inventory/reservations, not CPU isolation.
+// It never moves membership or retires an existing serving instance.
+func ValidatePreparationCapacity(
+	node *core.Node, pods *core.PodList, inventory serving.SchedulerNode, wanted serving.SchedulerInstance,
+) error {
+	if inventory.Node != wanted.Node || inventory.Pool != wanted.Pool ||
+		string(node.UID) != wanted.Node.UID || node.Name != wanted.Node.Name ||
+		node.Labels[ServingPoolLabel] != wanted.Pool {
+		return errors.New("preparation inventory differs from the current physical Node/pool")
+	}
+	ready := false
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == core.NodeMemoryPressure && condition.Status == core.ConditionTrue {
+			return errors.New("preparation target has actual Node memory pressure")
+		}
+		ready = ready || condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
+	}
+	memory := node.Status.Allocatable.Memory().Value()
+	gpus := node.Status.Allocatable["nvidia.com/gpu"]
+	if !ready || len(inventory.CPUs) == 0 || int64(len(inventory.CPUs)) > node.Status.Allocatable.Cpu().Value() ||
+		memory <= 0 || int64(len(inventory.GPUUUIDs)) > gpus.Value() {
+		return errors.New("preparation requires current Node readiness and bounded physical CPU/memory inventory")
+	}
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == node.Name && pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed &&
+			pod.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
+			return errors.New("preparation target already has an active serving Pod")
+		}
+	}
+	// Discard the older aggregate; the same capture path recomputes all current
+	// foreign/system Pod requests, init/sidecar maxima and overhead exactly once.
+	inventory.NonServing = nil
+	inventory.Ready = ready
+	inventory.MemoryBytes = uint64(memory)
+	var snapshot serving.SchedulerSnapshot
+	captureNodePods(&snapshot, &inventory, node, pods, nil, nil)
+	if !inventory.Ready {
+		return fmt.Errorf("preparation non-serving admission: %s", inventory.Reason)
+	}
+	allocations := append([]serving.SchedulerAllocation{inventory.Reserved}, inventory.NonServing...)
+	allocations = append(allocations, wanted.Allocation)
+	if reasons := serving.ValidateNodeBudget(inventory, allocations, nil); len(reasons) != 0 {
+		return fmt.Errorf("preparation declared Node budget: %s", strings.Join(reasons, "; "))
+	}
+	return nil
+}
+
 func actionEquivalent(a, b serving.Action) bool {
 	return a.Kind == b.Kind && a.Node == b.Node && a.Instance == b.Instance && a.From == b.From && a.To == b.To
 }

@@ -395,7 +395,7 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 			reasons = schedulerValidateInstance(settings, n, i, reasons)
 			allocations = append(allocations, i.Allocation)
 		}
-		reasons = schedulerValidateNodeBudget(n, allocations, reasons)
+		reasons = ValidateNodeBudget(n, allocations, reasons)
 	}
 	for _, i := range instances {
 		if !seen[i.Node.UID] {
@@ -466,7 +466,9 @@ func schedulerValidateService(settings SchedulerSettings, i SchedulerInstance, r
 	return reasons
 }
 
-func schedulerValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reasons []string) []string {
+// ValidateNodeBudget applies the shared configured CPU/GPU/memory admission
+// contract. Reserved CPU coverage is not observed physical CPU isolation.
+func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reasons []string) []string {
 	cpus := map[int]bool{}
 	gpu := map[string]bool{}
 	var memory uint64

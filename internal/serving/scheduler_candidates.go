@@ -929,7 +929,7 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 			}
 		}
 		allocations = append(allocations, wanted.Allocation)
-		return len(schedulerValidateNodeBudget(node, allocations, nil)) == 0
+		return len(ValidateNodeBudget(node, allocations, nil)) == 0
 	}
 	return false
 }

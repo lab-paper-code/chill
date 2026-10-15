@@ -329,7 +329,7 @@ func (o *schedulerOwner) refreshLocked(ctx context.Context) (err error) {
 		if err = preparation.Store.Validate(); err != nil {
 			return err
 		}
-		bundle := measuredProfileBundle(profile)
+		bundle := profile.NativeBundle()
 		raw, err := json.Marshal(bundle)
 		if err != nil {
 			return err

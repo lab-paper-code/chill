@@ -105,7 +105,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "), "--runtime ort-cuda") {
 		t.Fatal("measured GPU/runtime allocation changed")
 	}
-	bundle := measuredProfileBundle(profile)
+	bundle := profile.NativeBundle()
 	if !reflect.DeepEqual(bundle.Batches[0].ServiceSamplesMS, []float64{1, 2}) ||
 		profile.Batches[0].DurationNanos[0] != 2e6 {
 		t.Fatal("shared bundle producer changed raw distribution")

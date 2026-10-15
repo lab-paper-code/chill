@@ -143,6 +143,9 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	return record, receipt, errors.Join(operationErr, observeErr, writeErr)
 }
 func validateMeasurementRequest(request MeasurementRequest, source metricobserver.Source, writer evidencestore.ImmutableWriter) error {
+	if len(request.Operation.ExcludedPodNamespaces) != 0 {
+		return errors.New("manual Pod exclusions cannot be used as operation-cost measurement isolation")
+	}
 	if writer == nil || source == nil {
 		return errors.New("actual metric source and immutable writer required")
 	}

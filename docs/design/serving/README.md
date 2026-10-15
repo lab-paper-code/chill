@@ -346,6 +346,95 @@ scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 편입하지 않으며 동일 Node UID, 선택된 Workload 없음, exclusive journal 조건을 유지한다.
 같은 출발·도착 상태의 no-op는 membership 비용으로 측정하지 않는다.
 
+`serving-operation --execute-config FILE`은 측정과 별개의 수동 원자 실행 경계다.
+`--measurement-config`와 함께 사용하지 않으며, catalog 검증·현재 owner에 Loaded인
+CPU profile의 기존 `preparations[profileID]`만 준비한다. inline `PrepareSpec`,
+route/power/resize 동작, 임의 runner 명령을 실행 manifest로 받지 않는다.
+입력은 `operation`(기존 `Operation`의 id/kind/node, remove의 정확한
+podUID/containerID instance 또는 membership의 pool), `profileID`, `namespace`,
+선택 `actuationNamespace`, 독점
+`journalDirectory`, 별도 HTTPS 신뢰·caller 인증의 `ownerURL`/`ownerCAFile`/
+`ownerTokenFile`, `schedulerConfigMap`/`schedulerConfigKey`/`sourceConfigRV`,
+`expectedPool`, 명시 history 시작 시각 `routingHistoryFrom`이다. store는 별도 입력 없이
+owner-loaded preparation의 binding에서 가져온다. 선택 `operation.excludedPodNamespaces`는
+`["baseline-fleet","fastdds-test"]`의 승인 namespace 중 operation별 제외할 목록이다.
+사용자가 승인한 7개 Node에서만 현재 해당 class Pod를 admission/interference blocker에서
+제외하며 기본 namespace ignore는 없다. Node UID는 계속 실제 검증하고 재생성된 Pod도 같은
+class 정책을 따른다. 다른 namespace/Node와 실제 serving-instance 제외는 거절한다.
+policy는 결과 operation에 보존하며 `before.pods`/`actual.pods`, observer와 raw power/latency는
+현재 외부 Pod의 실제 identity와 소비를 계속 포함한다.
+Kubernetes credential은 Kubernetes 작업에만 사용하며 owner로 자동 전달하지 않는다.
+owner는 명시한 CA 파일과 caller token을 모두 요구하며 ambient trust로 대체하지 않는다.
+verified HTTPS origin 하나만 허용하고 redirect를 따르지 않는다.
+startup bundle은 catalog 검증 profile의 공통 `Profile.NativeBundle()` producer에서
+owner와 CLI가 같은 key/declared size를 도출한다. owner만 immutable publisher이며 CLI는
+저장된 payload를 다시 읽어 size를 자가 증명하거나 bytes/digest 비교 gate를 추가하지 않는다.
+기존 materializer가 producer-declared size를 확인한 뒤 native startup 파일을 게시한다.
+이 trusted publisher 계약을 같은 크기의 임의 변조에 대한 암호학적 증명으로 해석하지 않는다.
+선택된 `completionCalibration`이 있으면 기존 immutable raw loader로 다시 읽고
+동일 profile/Node/allocation 조건의 검증된 최대 completion 관측과 전체 출처를 native
+policy에 연결한다. 선택이 없으면 configured bootstrap policy를 그대로 유지한다.
+planner의 calibration 선택과 기존 인스턴스에 실제 적용된 native policy를 혼동하지 않는다.
+
+실행 전에 desired/current controls OFF, 진행 중 owner action 없음, 같은 native
+ConfigMap resourceVersion의 전체 `staticRouting` 성공 acknowledgement와 실제
+route readback 일치를 요구한다. owner snapshot은 해당 완료보다 늦고 최근 control
+interval 이내여야 한다. remove는 그 전체 경로에서 이미 제외된 정확한 configured
+source만 허용하며 owner `snapshot.outstanding`에서 execution·transport·response
+소유권이 모두 사라진 뒤 기존 native drain/termination/removal을 호출한다.
+ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/scheduler`의
+`action.actual`에서 exact source revision의 최신 manual result를 찾는다. 명시
+`routingHistoryFrom`부터 고정 query 종료 시각까지 기존 cursor/limit으로 조회하고,
+그 뒤 새 owner snapshot을 읽는다. 보관 기간을 늘리거나 시작 이후 전체 history를 조회하지 않는다.
+`/pools`의 waiting/running/assignedUnknown 0이나 native queue empty만으로 이를
+대체하지 않는다. prepare/membership target은 owner instance가 없어야 한다.
+prepare는 fresh Node/비제외 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로
+다시 합산하고 owner의 inventory/reserved와 공통 `ValidateNodeBudget`으로 admission한다.
+기존 serving Pod, 비제외 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와
+실제 Node MemoryPressure는 거절한다. 오래된 owner aggregate의 Ready는 재사용하지 않는다.
+이는 설정 reservation/operator exclusion 기반 admission이지 실제 CPU 격리·외부 Pod의
+성능 불변·SLO·에너지 절감 보장이 아니다. membership도 비제외 active non-DaemonSet
+Pod가 없어야 하고 실제 serving-instance DaemonSet은 거절한다. 제외 Pod는 그대로 두며
+physical absence로 보고하지 않는다. `--measurement-config`에서는 이 exclusion을 허용하지 않는다.
+membership은 detached와 해당 configured preparation POOL 사이의 실제 변경만 허용하고
+기존 sole writer `MoveNodePool`의 UID/resourceVersion patch/readback을 사용한다.
+원복도 새 현재 revision·expectedPool witness로 같은 경계를 호출한다. CLI는 완전한
+`OperationResult`를 stdout에 출력한다. 부모 실행자는 원래 두 Workload/SLO/model과
+전체 route map을 보존하고, 기존 owner `staticRouting`으로 한 UID만 바꾼 뒤 실제
+새 instance 완료를 관측하며, 전체 원래 route를 복구·ack·완전 drain한 다음 제거한다.
+이는 manual execution 근거이며 automatic scheduler judgment나 power 측정 근거가 아니다.
+
+prepare 입력은 부모가 캡처한 현재 ConfigMap JSON(`$CM_CAPTURE`)에서 생성한다.
+`PROFILE_ID`는 해당 revision에서 owner가 Loaded라고 확인한 기존 CPU profile ID이며,
+그 외 환경 변수는 부모가 확인한 namespace/HTTPS trust/caller token/독점 journal이다.
+이 예시는 manifest 생성만 하며 Workload·SLO·model·route map을 변경하지 않는다.
+
+```sh
+jq --arg key "$SCHEDULER_KEY" --arg profile "$PROFILE_ID" \
+  --arg operation "$OPERATION_ID" --arg journal "$JOURNAL_DIRECTORY" \
+  --arg owner "$OWNER_URL" --arg ca "$OWNER_CA_FILE" --arg token "$OWNER_TOKEN_FILE" \
+  --arg history "$ROUTING_HISTORY_FROM" \
+  '. as $cm | ($cm.data[$key] | fromjson) as $config |
+   $config.preparations[$profile] as $prepare |
+   {operation: {id: $operation, kind: "prepare", node: $prepare.instance.node},
+    profileID: $profile, namespace: $cm.metadata.namespace,
+    journalDirectory: $journal, ownerURL: $owner, ownerCAFile: $ca,
+    ownerTokenFile: $token, schedulerConfigMap: $cm.metadata.name,
+    schedulerConfigKey: $key, sourceConfigRV: $cm.metadata.resourceVersion,
+    expectedPool: $prepare.instance.pool, routingHistoryFrom: $history}' "$CM_CAPTURE"
+```
+
+출력을 보존한 JSON 파일로 `serving-operation --execute-config FILE`을 호출한다.
+remove는 같은 current-config binding에 `operation.kind="remove"`와 실제 관측한
+정확한 `operation.instance`를 사용한다. membership은 `kind="membership"`와
+실제 목적지 `operation.pool`(detach는 빈 문자열), 현재 실제 `expectedPool`을 사용한다.
+각 단계마다 현재 revision·ack·snapshot을 새로 캡처하며, route는 이 CLI로 변경하지 않는다.
+실행 flags는 `--execute-config FILE --timeout 10m`와 별도 native Kubernetes 연결의
+`--kube-api-server URL --kube-token-file FILE --kube-ca-file FILE`이다.
+API server를 생략하면 기존 `rest.InClusterConfig()`만 사용하며 로컬 kubeconfig는
+읽지 않는다. 명시 API server에서 token/CA flags를 생략하면 표준 service-account
+token/CA 경로를 사용한다. owner CA/token은 manifest의 별도 명시 파일이며 자동 전달하지 않는다.
+
 ## 프로파일 기반 지연 계산과 검증
 
 프로파일은 frozen 자원, 전력모드와 native batch 조건별 raw 실행시간 분포,
