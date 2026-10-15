@@ -310,6 +310,7 @@ desired 및 applied version은 해당 생산자의 계약을 사용하고 전환
 | `/workloads/[name]/infer` | 입력 선택 → 확인 → 결과. 실행 batch는 보내지 않는다. |
 | `/scheduler` | 지금 판단. 현재 구성과 선택 후보의 예상 에너지와 이유. 예상 J와 SLO를 실측으로 표시하지 않는다. |
 | `/scheduler/candidates`, `/scheduler/estimates` | 후보 목록과 서비스별 응답 목표 예상. 상세는 고른 시점의 응답을 유지하는 Dialog다. |
+| `/scheduler/profiles` | 운영 판단이 쓰는 측정 프로파일 목록. 채택은 측정 계획 결과 화면에서 확인 후 명시적으로 `POST /api/v1/scheduler/profiles`로 한다. HTTP 200이어도 `Persisted`가 아니면 채택이 아니며, `loaded`는 판단 반영일 뿐 GPU 서빙·실제 서빙·자동 제어 완료가 아니다. |
 | `/scheduler/load` | 명시한 구간의 사건 시각 부하. 조건은 Dialog에서 고르고 원래 nano 구간을 URL에 보존한다. |
 | `/transitions`, `/transitions/[id]` | 현재 변경 동작 목록과 동작 하나의 상세. 노드·시작 identity로 읽고 계획·before/actual·실패·부분 적용을 표시한다. 취소/재시도는 관측 정보다. |
 | `/resources`, `/pools`, `/pools/[id]` | 장비 목록, 실행 그룹 목록, 그룹 하나. 장비 사양은 실행 적합성·가용 용량 보장이 아니다. |
