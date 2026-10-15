@@ -643,3 +643,24 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   `owner-recovered-after-edgemesh.json`, `healthy-network-owner-cpu-one-{plan,results,observations}.json`,
   `latte-fresh-serving-{plan,results,observations}.json`, `latte-fresh-calibration-{prepare,remove}-output.json`,
   `fresh-cpu-pair-adoption-readback.json`, `healthy-cpu-pair-calibrations-config.json`.
+
+## 190건 기준선과 저장·owner 자원 한계 복구 — 2026-10-15
+
+- Rpi CPU2/controls OFF의 150초 short·sustained·repeated trace 190건이 모두 완료됐다.
+  각 UID 95건의 relaxed p90 362.045322ms, tight p95 360.037347ms였고 고정 같은 구간의
+  전체 10노드 wall energy는 36968.953392J, complete=true였다.
+  `closed-loop-off-{plan,results,observations,power}.json`에 보존한다.
+- 측정 프로파일상 Rpi CPU2가 Latte CPU1보다 빠르고 건당 추가 에너지도 낮았다
+  (batch1: 0.342430J 대 0.454214J). 실제 자동 전환은 초기 상태를 한 Latte로 맞춘 별도
+  OFF/fixed/projected 동일 trace로 검증한다. 앞선 Rpi 기준선을 다른 초기 조건과 직접 비교하지 않는다.
+- Latte 준비는 complete였지만 종료 시 publication이 QuotaExceeded로 실패했다.
+  실제 evidence-store 전용 PVC 2Gi가 100%여서 기존 operator config의 storageSize를 8Gi로
+  변경했다. CSI 온라인 확장 후 25% 사용과 실제 S3 쓰기·읽기를 확인했다. 기존 근거는 삭제하지 않았다.
+  같은 journal의 다음 동작에서 이전 pending prepare 근거도 정상 publication됐음을 확인했다.
+- owner는 기존 256Mi limit에서 OOMKilled(exit137)됐다. 호스트 여유 약18GB를 확인한 뒤
+  CPU1은 유지하고 limit만 512Mi로 변경했다. 새 Pod ready와 restart0, 약87Mi의 한 시점 사용량을
+  확인했으며 peak/누수 없음의 증거로 해석하지 않는다. 아직 자동제어는 전부 OFF다.
+- 현재 한 Latte로 전체 UID를 분배한 뒤 원래 Rpi exact source를 drain/remove했고
+  13:22:46.046–50.511Z complete와 native Pod 부재를 확인했다. 이 상태에서 세 비교 arm을 시작한다.
+  근거: `evidence-volume-expansion-smoke.json`, `evidence-store-config-expanded.json`,
+  `rpi-latte-comparison-initial-remove-result.json`, `closed-loop-owner-resource-envelope.json`.

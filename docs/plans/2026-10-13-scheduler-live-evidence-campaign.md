@@ -54,7 +54,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 ## 작업 순서
 
 **현재 우선:** 검증된 Rpi CPU2↔Latte CPU1의 최신 Serving 보정값을 채택하고 실제 폐루프 비교를 진행한다.
-공유 통신·owner HTTPS는 복구됐고 owner CPU limit 1코어에서 두 실행기 각각 24건이 모두 완료됐다.
+공유 통신·owner HTTPS는 복구됐다. 현재 owner limit은 CPU1/512Mi, evidence-store PVC는 8Gi다.
 실제 CPU 제어와 판단 알고리즘 구현은 완료했지만 폐루프 비교·FULL 통과는 미완료다.
 자동제어는 아직 모두 OFF이며 지속 부하 입력 freshness·SLO·전체 POOL 전력을 함께 확인한다.
 Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
