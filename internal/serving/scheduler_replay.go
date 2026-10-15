@@ -82,6 +82,10 @@ type schedulerReplayResult struct {
 }
 
 func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerDecision {
+	if snapshot.InProgressTarget != nil {
+		current := schedulerCurrentTarget(snapshot, *snapshot.InProgressTarget)
+		snapshot.InProgressTarget = &current
+	}
 	candidates, search := EnumerateScheduler(settings, snapshot)
 	decision := SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: search, References: append([]string(nil), snapshot.References...)}
 	if err := settings.Validate(); err != nil {
@@ -119,6 +123,10 @@ func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) S
 	decision.Keep = candidates[0]
 	if best >= 0 {
 		target := candidates[best]
+		if target.Keep && settings.Controls.Enabled && snapshot.InProgressTarget != nil {
+			goal := snapshot.InProgressTarget
+			target.ID, target.Nodes, target.Instances, target.Routing = goal.ID, goal.Nodes, goal.Instances, goal.Routing
+		}
 		decision.Target = &target
 		decision.Status = target.Status
 		if target.Keep {
@@ -648,6 +656,20 @@ func (s *schedulerReplayState) initializeInstances() {
 	for _, i := range s.snap.Instances {
 		addInstance(i, true)
 	}
+	for _, actual := range s.snap.Instances {
+		if actual.TargetID == "" {
+			continue
+		}
+		for _, wanted := range s.goal.Instances {
+			if schedulerSamePhysicalTarget(actual, wanted) && (actual.OwnerWorkloadUID == "" || (len(wanted.WorkloadUIDs) == 1 && wanted.WorkloadUIDs[0] == actual.OwnerWorkloadUID)) {
+				if previous := s.byID[actual.TargetID]; previous != nil && previous != s.byID[actual.ID] {
+					s.out.reasons = appendUnique(s.out.reasons, "AmbiguousPreparedPhysicalTarget:"+actual.TargetID)
+				} else {
+					s.byID[actual.TargetID] = s.byID[actual.ID]
+				}
+			}
+		}
+	}
 	for _, i := range s.goal.Instances {
 		if s.byID[i.ID] == nil {
 			addInstance(i, false)
@@ -670,7 +692,7 @@ func (s *schedulerReplayState) initializeActions() {
 	}
 	if s.c.Keep {
 		for _, a := range s.snap.Actions {
-			if a.Status == schedulerActionComplete || a.Status == schedulerActionCancel {
+			if a.Status == schedulerActionComplete || a.Status == schedulerActionCancel || s.actionByID[a.ID] != nil {
 				continue
 			}
 			x := &schedulerReplayAction{action: a, finish: math.Inf(1)}
@@ -792,7 +814,27 @@ func (s *schedulerReplayState) retainedIngress(i *schedulerReplayInstance) bool 
 		return false
 	}
 	for _, r := range s.requests {
-		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerRequestMatches(r.source.Definition, r.source.InputPath, i.config.Profile) && !s.targetHandles(r) {
+		if r.observed && !r.expired && !r.dispatched && !r.completed && schedulerHas(i.config.WorkloadUIDs, r.source.Definition.UID) && schedulerRequestMatches(r.source.Definition, r.source.InputPath, i.config.Profile) && !s.hasRoutedAlternative(r, i) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *schedulerReplayState) hasRoutedAlternative(r *schedulerReplayRequest, retiring *schedulerReplayInstance) bool {
+	routing := s.snap.Routing
+	if s.routingApplied {
+		routing = s.goal.Routing
+	}
+	for _, other := range s.instances {
+		if other == retiring || !other.loaded || !other.ready || other.stopped || !schedulerHas(other.config.WorkloadUIDs, r.source.Definition.UID) || !schedulerRequestMatches(r.source.Definition, r.source.InputPath, other.config.Profile) {
+			continue
+		}
+		weight := other.config.Weight
+		if weights, explicit := routing[r.source.Definition.UID]; explicit {
+			weight = weights[other.config.ID]
+		}
+		if weight > 0 {
 			return true
 		}
 	}
@@ -963,7 +1005,15 @@ func (s *schedulerReplayState) applyRoute() bool {
 	}
 	for _, i := range s.instances {
 		for _, v := range s.goal.Instances {
-			if v.ID == i.config.ID {
+			if s.byID[v.ID] == i {
+				if !i.loaded || !i.ready {
+					s.out.reasons = appendUnique(s.out.reasons, "NoReadyCapacityOrTransitionPrerequisite")
+					return false
+				}
+				if i.config.OwnerWorkloadUID != "" && (len(v.WorkloadUIDs) != 1 || v.WorkloadUIDs[0] != i.config.OwnerWorkloadUID) {
+					s.out.reasons = appendUnique(s.out.reasons, "IncompatiblePreparedOwner:"+i.config.ID)
+					return false
+				}
 				if i.config.Profile == nil || v.Profile == nil || i.config.Profile.ID != v.Profile.ID {
 					s.out.reasons = append(s.out.reasons, "ImmutableNativeProfileMismatch:"+v.ID)
 					return false
@@ -1003,6 +1053,10 @@ func (s *schedulerReplayState) startActions() bool {
 		}
 		switch a.action.Kind {
 		case schedulerActionRoute:
+			if a.action.Status == phaseRunning {
+				s.out.reasons = appendUnique(s.out.reasons, "InProgressRoutingAcknowledgementUnobserved:"+a.action.ID)
+				return false
+			}
 			if !s.applyRoute() {
 				return false
 			}
@@ -1038,9 +1092,14 @@ func (s *schedulerReplayState) startOperation(a *schedulerReplayAction) bool {
 		return false
 	}
 	if a.action.Kind == schedulerActionPrepare {
+		target := s.byID[a.action.Instance]
+		if target.config.Node != a.action.Node || schedulerState(target.config) != a.action.To {
+			s.out.reasons = appendUnique(s.out.reasons, "PreparationTargetStateMismatch:"+a.action.ID)
+			return false
+		}
 		active := []SchedulerInstance{}
 		for _, i := range s.instances {
-			if i.loaded || i.config.ID == a.action.Instance {
+			if i.loaded || i == s.byID[a.action.Instance] {
 				active = append(active, i.config)
 			}
 		}
@@ -1139,7 +1198,7 @@ func (s *schedulerReplayState) adjustOperationBackground(a *schedulerReplayActio
 		}
 	}
 	for _, i := range s.instances {
-		if i.loaded && i.config.Node == a.action.Node && ((a.action.Kind != schedulerActionPrepare && a.action.Kind != schedulerActionRemove) || i.config.ID != a.action.Instance) {
+		if i.loaded && i.config.Node == a.action.Node && ((a.action.Kind != schedulerActionPrepare && a.action.Kind != schedulerActionRemove) || i != s.byID[a.action.Instance]) {
 			state = append(state, schedulerState(i.config))
 			active = append(active, i.config)
 		}

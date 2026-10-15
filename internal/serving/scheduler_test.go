@@ -295,7 +295,7 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	snap.Nodes[0].Reserved.CPUs = []int{0}
 	reasons := schedulerValidateResources(s, snap.Nodes, snap.Instances)
 	schedulerRequireReason(t, reasons, "ExclusiveCPUInfeasible")
-	// Final resources fit, but old+new overlap while preparing does not.
+	// An overlapping replacement needs the measured removal before preparation.
 	snap.Nodes[0].Reserved.CPUs = nil
 	c = SchedulerCandidate{ID: "resize", Nodes: snap.Nodes, Instances: []SchedulerInstance{old}}
 	c.Instances[0].ID = "resize-new"
@@ -303,7 +303,7 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	snap.Costs = []OperationCost{{ID: "prep", Node: old.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(old), Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, PowerMode: "fixed"}}
 	c.Actions = schedulerPlan(snap, c)
 	result := schedulerReplayForTest(s, snap, c)
-	schedulerRequireReason(t, result.reasons, "TemporaryReadinessResourceInfeasible")
+	schedulerRequireReason(t, result.reasons, "MissingOperationCost")
 }
 
 func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {

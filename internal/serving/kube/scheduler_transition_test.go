@@ -172,3 +172,135 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 		t.Fatalf("scheduler capture inferred ownerlessness from empty bindings: %+v", snapshot.Instances)
 	}
 }
+
+func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(t *testing.T) {
+	controller, target, _ := acknowledgedHandoffFixture(t)
+	var existing *actionRun
+	for _, run := range controller.runs {
+		existing = run
+	}
+	existing.action.Status, existing.action.To = nativeOperationRunning, "frozen-route-effect"
+	existing.started = time.Now()
+	frozen := existing.result.Operation.Target
+	frozen.Actions = []serving.Action{existing.action}
+	target.Actions[0].To = "different-route-effect"
+	controller.goal = frozen
+	controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
+	if controller.goal != frozen {
+		t.Fatal("Keep erased the unfinished operation target")
+	}
+	controller.launch(target, SchedulerControllerConfig{})
+	if _, launched := controller.runs[target.Actions[0].ID]; launched {
+		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
+	}
+	snapshot := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, time.Now(), time.Minute)
+	if snapshot.InProgressTarget != frozen || snapshot.InProgressTarget.ID == target.ID {
+		t.Fatalf("actual running route was relabeled as the newly selected goal: %+v", snapshot.InProgressTarget)
+	}
+	controller.goal = nil
+	snapshot = controller.reconcileSnapshot(controller.state.Snapshot, nil, time.Now(), time.Minute)
+	if snapshot.InProgressTarget != frozen {
+		t.Fatal("available frozen operation target was lost when the selected goal was absent")
+	}
+}
+
+func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRoute(t *testing.T) {
+	controller, target, _ := acknowledgedHandoffFixture(t)
+	for _, run := range controller.runs {
+		run.action.Status = nativeOperationRunning
+		run.started = time.Now()
+		run.result.Operation.Target.Actions = []serving.Action{run.action}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controller.ctx = ctx
+	preparation := serving.Action{ID: "independent-node-prepare", Kind: operationPrepare, Node: target.Instances[0].Node, Instance: target.Instances[0].ID}
+	target.Actions = []serving.Action{preparation}
+	started := make(chan OperationResult, 1)
+	release := make(chan struct{})
+	config := SchedulerControllerConfig{OnAction: func(result OperationResult) error {
+		if result.Status == "starting" {
+			started <- result
+			<-release
+			return context.Canceled // Exercise the real pre-execution journal failure path.
+		}
+		return nil
+	}}
+	controller.launch(target, config)
+	var initial OperationResult
+	select {
+	case initial = <-started:
+	case <-time.After(5 * time.Second):
+		close(release)
+		controller.wg.Wait()
+		t.Fatal("global route unnecessarily serialized an independent Node preparation")
+	}
+	controller.mu.Lock()
+	run := controller.runs[preparation.ID]
+	frozen := run.result.Operation.Target
+	recorded := run.result.Status == "starting" && frozen != nil && frozen.ID == target.ID &&
+		initial.Operation.Target == frozen && run.action.Status == nativeOperationRunning
+	controller.mu.Unlock()
+	close(release)
+	controller.wg.Wait()
+	if !recorded {
+		t.Fatal("active preparation lacked its actual frozen target until terminal completion")
+	}
+}
+
+func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *testing.T) {
+	controller, failedGoal, _ := acknowledgedHandoffFixture(t)
+	now := time.Now().UTC()
+	var frozen *serving.SchedulerCandidate
+	for _, run := range controller.runs {
+		frozen = run.result.Operation.Target
+	}
+	removed := serving.Action{
+		ID: "aged-route-prerequisite", Kind: operationRemove, Node: frozen.Instances[0].Node,
+		Instance: "retired-physical-source", Status: nativeOperationComplete,
+	}
+	routing := serving.Action{
+		ID: "still-running-frozen-route", Kind: operationRoute, Status: nativeOperationRunning,
+		DependsOn: []string{removed.ID},
+	}
+	failed := serving.Action{
+		ID: "failed-preparation-journal", Kind: operationPrepare, Status: nativeOperationFailed,
+		Node: failedGoal.Instances[0].Node, Instance: failedGoal.Instances[0].ID,
+	}
+	frozen.Actions = []serving.Action{removed, routing}
+	failedGoal.Actions = []serving.Action{failed}
+	frozen.Actions[1].Status = "planned"
+	failedGoal.Actions[0].Status = "planned"
+	controller.goal = &failedGoal
+	controller.runs = map[string]*actionRun{
+		removed.ID: {
+			action: removed, started: now.Add(-3 * time.Minute),
+			result: &OperationResult{
+				Operation: Operation{ID: removed.ID, Kind: removed.Kind, Node: removed.Node, Instance: removed.Instance},
+				Status:    nativeOperationComplete, StartedAt: now.Add(-3 * time.Minute), EndedAt: now.Add(-2 * time.Minute),
+			},
+		},
+		routing.ID: {
+			action: routing, started: now.Add(-10 * time.Second),
+			result: &OperationResult{
+				Operation: Operation{ID: routing.ID, Kind: routing.Kind, Target: frozen},
+				Status:    "starting", StartedAt: now.Add(-10 * time.Second),
+			},
+		},
+		failed.ID: {
+			action: failed, started: now.Add(-5 * time.Second),
+			result: &OperationResult{
+				Operation: Operation{ID: failed.ID, Kind: failed.Kind, Node: failed.Node, Instance: failed.Instance, Target: &failedGoal},
+				Status:    nativeOperationFailed, StartedAt: now.Add(-5 * time.Second), EndedAt: now.Add(-4 * time.Second),
+				Error: "pre-execution preparation journal unavailable",
+			},
+		},
+	}
+	snapshot := controller.reconcileSnapshot(controller.state.Snapshot, controller.goal, now, time.Minute)
+	if controller.goal != nil || snapshot.InProgressTarget != frozen {
+		t.Fatalf("failed selected goal erased or relabeled the actual running route: %+v", snapshot.InProgressTarget)
+	}
+	if controller.runs[removed.ID] == nil || controller.runs[routing.ID].action.Status != nativeOperationRunning {
+		t.Fatal("terminal cleanup discarded the live route's aged prerequisite or completed its running operation")
+	}
+}

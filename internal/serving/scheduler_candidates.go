@@ -17,6 +17,10 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 		search.Examined = 1
 		return result, search
 	}
+	if snapshot.InProgressTarget != nil {
+		keep.Actions = schedulerPlan(snapshot, *snapshot.InProgressTarget)
+		result[0] = keep
+	}
 	workloads := append([]*Definition(nil), snapshot.Workloads...)
 	for _, d := range workloads {
 		if d == nil {
@@ -26,8 +30,9 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
 	e := schedulerEnumeration{settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep, true): true}, result: result}
+	e.controlBase = schedulerUnroutedTransition(snapshot)
 	if !settings.Controls.Sharing {
-		e.groups = schedulerExistingWorkloadGroups(workloads, snapshot.Instances)
+		e.groups = schedulerExistingWorkloadGroups(workloads, e.controlInstances())
 	}
 	e.visit(0, nil)
 	e.search.Examined = len(e.result)
@@ -167,15 +172,59 @@ func schedulerExistingWorkloadGroups(workloads []*Definition, instances []Schedu
 }
 
 type schedulerEnumeration struct {
-	settings  SchedulerSettings
-	snapshot  SchedulerSnapshot
-	search    SchedulerSearch
-	workloads []*Definition
-	groups    [][]*Definition
-	sources   map[string]int
-	options   []SchedulerOption
-	seen      map[string]bool
-	result    []SchedulerCandidate
+	settings    SchedulerSettings
+	snapshot    SchedulerSnapshot
+	search      SchedulerSearch
+	controlBase *SchedulerCandidate
+	workloads   []*Definition
+	groups      [][]*Definition
+	sources     map[string]int
+	options     []SchedulerOption
+	seen        map[string]bool
+	result      []SchedulerCandidate
+}
+
+// A drained routing gap does not change the selected cohort, replica count or
+// per-UID weights. Resource occupancy and physical reuse still use the snapshot.
+func schedulerUnroutedTransition(snapshot SchedulerSnapshot) *SchedulerCandidate {
+	goal := snapshot.InProgressTarget
+	if goal == nil || len(goal.Routing) != len(snapshot.Workloads) {
+		return nil
+	}
+	missing := false
+	for _, d := range snapshot.Workloads {
+		if d == nil || !schedulerPositiveRouting(goal.Routing[d.UID]) {
+			return nil
+		}
+		missing = missing || !schedulerPositiveRouting(snapshot.Routing[d.UID])
+	}
+	if missing {
+		return goal
+	}
+	return nil
+}
+
+func schedulerPositiveRouting(weights map[string]int32) bool {
+	for _, weight := range weights {
+		if weight > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *schedulerEnumeration) controlInstances() []SchedulerInstance {
+	if e.controlBase != nil {
+		return e.controlBase.Instances
+	}
+	return e.snapshot.Instances
+}
+
+func (e *schedulerEnumeration) controlRouting() map[string]map[string]int32 {
+	if e.controlBase != nil {
+		return e.controlBase.Routing
+	}
+	return e.snapshot.Routing
 }
 
 func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
@@ -207,7 +256,7 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 		}
 	}
 	count := 0
-	for _, i := range e.snapshot.Instances {
+	for _, i := range e.controlInstances() {
 		if e.sameGroup(i, group) {
 			count++
 		}
@@ -265,7 +314,7 @@ func (e *schedulerEnumeration) sourceIndex(group []*Definition, chosen []Schedul
 			ordinal++
 		}
 	}
-	for index, instance := range e.snapshot.Instances {
+	for index, instance := range e.controlInstances() {
 		if e.sameGroup(instance, group) {
 			if ordinal == 0 {
 				return index
@@ -304,9 +353,8 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
 				c.Instances[j].TargetID, c.Instances[j].OwnerWorkloadUID = old.TargetID, old.OwnerWorkloadUID
-				if old.CompletionObserved && old.CompletionMeasurement.Valid() && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
-					c.Instances[j].CompletionOverhead, c.Instances[j].EnvelopeSource, c.Instances[j].CompletionObserved = old.CompletionOverhead, old.EnvelopeSource, true
-					c.Instances[j].CompletionMeasurement = old.CompletionMeasurement
+				if old.CompletionObserved && old.CompletionMeasurement.Valid() && old.CompletionOverhead == old.CompletionMeasurement.Completion && old.CompletionMeasurement.Matches(c.Instances[j]) {
+					schedulerCopyCompletion(&c.Instances[j], old)
 				}
 				used[old.ID] = old.WorkloadUIDs
 				break
@@ -348,7 +396,7 @@ func (e *schedulerEnumeration) canReuseSlot(old SchedulerInstance, source int, a
 	if old.OwnerWorkloadUID != "" && (len(uids) != 1 || uids[0] != old.OwnerWorkloadUID) {
 		return false
 	}
-	if !anchored || old.ID == e.snapshot.Instances[source].ID {
+	if !anchored || old.ID == e.controlInstances()[source].ID {
 		return true
 	}
 	// The routing origin is not a physical fence: an already prepared, unbound
@@ -365,7 +413,7 @@ func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, us
 		oldUIDs, preserved := used[instance.ID]
 		sourceID := instance.ID
 		if source, anchored := e.sources[chosen[index].ID]; anchored {
-			old := e.snapshot.Instances[source]
+			old := e.controlInstances()[source]
 			oldUIDs, preserved, sourceID = old.WorkloadUIDs, true, old.ID
 		}
 		if !preserved {
@@ -375,7 +423,7 @@ func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, us
 			if !schedulerHas(oldUIDs, uid) {
 				continue
 			}
-			if route, ok := e.snapshot.Routing[uid]; ok {
+			if route, ok := e.controlRouting()[uid]; ok {
 				delete(routing[uid], instance.ID)
 				if route[sourceID] > 0 {
 					routing[uid][instance.ID] = route[sourceID]
@@ -507,7 +555,7 @@ func (e *schedulerEnumeration) optionAllowed(d *Definition, o SchedulerOption, g
 			}
 		}
 	}
-	for index, old := range snap.Instances {
+	for index, old := range e.controlInstances() {
 		if !schedulerHas(old.WorkloadUIDs, d.UID) || (e.groups != nil && (!e.sameGroup(old, group) || (source >= 0 && index != source))) {
 			continue
 		}
@@ -544,6 +592,56 @@ func schedulerProfileMatches(d *Definition, p *Profile) bool {
 func schedulerRequestMatches(d *Definition, path int, p *Profile) bool {
 	return d != nil && p != nil && path >= 0 && path < len(d.Model.Paths) && sameInputs(d.Model.Paths[path].Tensors, p.Condition.Tensor.Tensors) && schedulerProfileMatches(d, p)
 }
+
+// Refresh forecast facts without mutating an executing operation's frozen target.
+// Only a known ready slot supplies physical identity; missing proof stays missing.
+func schedulerCurrentTarget(snapshot SchedulerSnapshot, target SchedulerCandidate) SchedulerCandidate {
+	target.Instances = append([]SchedulerInstance(nil), target.Instances...)
+	target.Routing = maps.Clone(target.Routing)
+	for index, wanted := range target.Instances {
+		current := wanted
+		current.CompletionObserved, current.CompletionMeasurement = false, nil
+		for _, option := range snapshot.Options {
+			observed := option.Instance
+			if observed.Node == wanted.Node && observed.Pool == wanted.Pool && schedulerState(observed) == schedulerState(wanted) {
+				schedulerCopyCompletion(&current, observed)
+				break
+			}
+		}
+		for _, actual := range snapshot.Instances {
+			if !actual.Ready || actual.Stopped || !schedulerSamePhysicalTarget(actual, wanted) {
+				continue
+			}
+			if actual.OwnerWorkloadUID != "" && (len(wanted.WorkloadUIDs) != 1 || wanted.WorkloadUIDs[0] != actual.OwnerWorkloadUID) {
+				continue
+			}
+			current.ID, current.TargetID, current.OwnerWorkloadUID = actual.ID, actual.TargetID, actual.OwnerWorkloadUID
+			current.Ready = true
+			schedulerCopyCompletion(&current, actual)
+			if current.ID != wanted.ID {
+				for _, uid := range wanted.WorkloadUIDs {
+					weights := maps.Clone(target.Routing[uid])
+					if weight, ok := weights[wanted.ID]; ok {
+						delete(weights, wanted.ID)
+						weights[current.ID] = weight
+						target.Routing[uid] = weights
+					}
+				}
+			}
+			break
+		}
+		target.Instances[index] = current
+	}
+	return target
+}
+
+func schedulerCopyCompletion(target *SchedulerInstance, observed SchedulerInstance) {
+	target.CompletionOverhead = observed.CompletionOverhead
+	target.CompletionObserved = observed.CompletionObserved
+	target.CompletionMeasurement = observed.CompletionMeasurement
+	target.EnvelopeSource = observed.EnvelopeSource
+}
+
 func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)
@@ -577,6 +675,7 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 			}
 		}
 	}
+	p.addRunningPrerequisites(&a)
 	for _, old := range p.snap.Actions {
 		if old.Kind == kind && old.Node == node && old.Instance == id && old.From == from && old.To == to && (old.Status == schedulerActionPlanned || old.Status == phaseRunning || old.Status == schedulerActionComplete) {
 			if old.Status == schedulerActionComplete && !p.completedEffectPresent(old) {
@@ -598,6 +697,19 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 	}
 	p.actions = append(p.actions, a)
 	return a.ID
+}
+
+func (p *schedulerPlanState) addRunningPrerequisites(action *Action) {
+	for _, old := range p.snap.Actions {
+		if old.Status != phaseRunning || (old.Kind == action.Kind && old.Node == action.Node && old.Instance == action.Instance && old.From == action.From && old.To == action.To) {
+			continue
+		}
+		sameNode := action.Node.UID != "" && old.Node == action.Node
+		routing := old.Kind == schedulerActionRoute && (action.Kind == schedulerActionRoute || action.Kind == schedulerActionStop)
+		if (sameNode || routing) && !schedulerHas(action.DependsOn, old.ID) {
+			action.DependsOn = append(action.DependsOn, old.ID)
+		}
+	}
 }
 
 func (p *schedulerPlanState) completedEffectPresent(action Action) bool {
@@ -732,25 +844,115 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 }
 
 func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
-	for _, i := range c.Instances {
+	for _, wanted := range c.Instances {
+		if running := p.runningPreparation(wanted); running != "" {
+			p.prepares = append(p.prepares, running)
+			continue
+		}
 		exists := false
-		for _, old := range p.snap.Instances {
-			if old.ID == i.ID {
+		for _, actual := range p.snap.Instances {
+			if schedulerSamePhysicalTarget(actual, wanted) {
 				exists = true
 			}
 		}
-		if !exists {
-			id := p.add(schedulerActionPrepare, i.Node, i.ID, "unloaded", schedulerState(i), nil)
-			p.prepares = append(p.prepares, id)
+		if exists {
+			continue
+		}
+		p.freePreparationResources(wanted)
+		id := p.add(schedulerActionPrepare, wanted.Node, wanted.ID, "unloaded", schedulerState(wanted), nil)
+		p.prepares = append(p.prepares, id)
+	}
+}
+
+func (p *schedulerPlanState) runningPreparation(wanted SchedulerInstance) string {
+	for _, action := range p.snap.Actions {
+		if action.Kind != schedulerActionPrepare || action.Status != phaseRunning || action.Node != wanted.Node || action.To != schedulerState(wanted) {
+			continue
+		}
+		if action.Instance == wanted.ID || slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
+			return actual.ID == wanted.ID && actual.TargetID == action.Instance
+		}) {
+			return action.ID
 		}
 	}
+	return ""
+}
+
+func schedulerSamePhysicalTarget(actual, wanted SchedulerInstance) bool {
+	return (actual.ID == wanted.ID || (actual.TargetID != "" && actual.TargetID == wanted.ID)) &&
+		actual.Node == wanted.Node && actual.Pool == wanted.Pool && schedulerState(actual) == schedulerState(wanted)
+}
+
+// Keep make-before-break whenever it fits. Otherwise release only obsolete
+// allocations on this Node through the existing stop/drain/remove primitives.
+func (p *schedulerPlanState) freePreparationResources(wanted SchedulerInstance) {
+	if p.preparationFits(wanted) {
+		return
+	}
+	for phase := range 2 {
+		for _, actual := range p.snap.Instances {
+			if actual.Node != wanted.Node || p.stops[actual.ID] != "" || slices.ContainsFunc(p.target.Instances, func(target SchedulerInstance) bool { return schedulerSamePhysicalTarget(actual, target) }) {
+				continue
+			}
+			overlap := (actual.Allocation.GPUUUID != "" && actual.Allocation.GPUUUID == wanted.Allocation.GPUUUID) ||
+				slices.ContainsFunc(actual.Allocation.CPUs, func(cpu int) bool { return slices.Contains(wanted.Allocation.CPUs, cpu) })
+			if phase == 0 && !overlap {
+				continue
+			}
+			p.retirePreparationBlocker(actual)
+			if p.preparationFits(wanted) {
+				return
+			}
+		}
+	}
+}
+
+func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
+	for _, node := range p.snap.Nodes {
+		if node.Node != wanted.Node {
+			continue
+		}
+		allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
+		for _, actual := range p.snap.Instances {
+			if actual.Node == wanted.Node && p.stops[actual.ID] == "" {
+				allocations = append(allocations, actual.Allocation)
+			}
+		}
+		for _, action := range p.actions {
+			if action.Kind != schedulerActionPrepare || action.Node != wanted.Node {
+				continue
+			}
+			for _, prepared := range p.target.Instances {
+				if prepared.ID == action.Instance {
+					allocations = append(allocations, prepared.Allocation)
+				}
+			}
+		}
+		allocations = append(allocations, wanted.Allocation)
+		return len(schedulerValidateNodeBudget(node, allocations, nil)) == 0
+	}
+	return false
+}
+
+func (p *schedulerPlanState) retirePreparationBlocker(actual SchedulerInstance) {
+	for _, old := range p.snap.Actions {
+		if old.Kind == schedulerActionRemove && old.Instance == actual.ID && old.Node == actual.Node && old.Status == phaseRunning {
+			p.stops[actual.ID] = old.ID
+			p.add(old.Kind, old.Node, old.Instance, old.From, old.To, old.DependsOn)
+			return
+		}
+	}
+	stop := p.add(schedulerActionStop, actual.Node, actual.ID, "", "", nil)
+	drain := p.add(schedulerActionDrain, actual.Node, actual.ID, "", "", []string{stop})
+	p.add(schedulerActionRemove, actual.Node, actual.ID, schedulerState(actual), "unloaded", []string{drain})
+	p.stops[actual.ID] = stop
 }
 
 func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 	for _, i := range p.snap.Instances {
 		exists := false
 		for _, target := range c.Instances {
-			if i.ID == target.ID {
+			if schedulerSamePhysicalTarget(i, target) {
 				exists = true
 			}
 		}

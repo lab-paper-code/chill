@@ -161,3 +161,35 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 		})
 	}
 }
+
+func TestManualStaticRoutingJournalsPendingWithoutOverwritingRunningGlobalRoute(t *testing.T) {
+	controller, target, _ := acknowledgedHandoffFixture(t)
+	for _, run := range controller.runs {
+		run.action.Status = nativeOperationRunning
+	}
+	var recorded []OperationResult
+	controller.config.OnAction = func(result OperationResult) error {
+		recorded = append(recorded, result)
+		return nil
+	}
+	wanted := map[string]map[string]int{}
+	for uid, weights := range target.Routing {
+		wanted[uid] = map[string]int{}
+		for id, weight := range weights {
+			wanted[uid][id] = int(weight)
+		}
+	}
+	err := controller.ApplyStaticRouting(context.Background(), wanted, "pending-owner-rv")
+	if err == nil || !strings.Contains(err.Error(), "running global route") {
+		t.Fatalf("manual write did not wait for the existing native ACK: %v", err)
+	}
+	if len(recorded) != 1 || recorded[0].Status != nativeOperationFailed ||
+		recorded[0].Operation.SourceConfigRV != "pending-owner-rv" || len(recorded[0].Actual.Routing) == 0 {
+		t.Fatalf("pending manual configuration lost its actual readback/provenance: %+v", recorded)
+	}
+	for _, run := range controller.runs {
+		if run.action.Status != nativeOperationRunning {
+			t.Fatal("manual pending configuration canceled or completed the existing route")
+		}
+	}
+}

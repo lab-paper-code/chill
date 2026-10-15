@@ -239,6 +239,11 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 }
 func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, observationWindow time.Duration) serving.SchedulerSnapshot {
 	c.mu.Lock()
+	snapshot.InProgressTarget = nil
+	if goal == nil {
+		goal = c.activeTargetLocked("")
+		c.goal = goal
+	}
 	if goal != nil {
 		for _, desired := range goal.Actions {
 			if run := c.runs[desired.ID]; run != nil && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.Status != nativeOperationComplete {
@@ -269,7 +274,12 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		}
 		if pending {
 			snapshot.InProgressTarget = goal
+		} else {
+			c.goal = nil
 		}
+	}
+	if routing := c.activeTargetLocked(operationRoute); routing != nil {
+		snapshot.InProgressTarget = routing
 	}
 	cutoff := now.Add(-observationWindow)
 	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
@@ -279,7 +289,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		}
 		needed := false
 		if snapshot.InProgressTarget != nil {
-			for _, a := range goal.Actions {
+			for _, a := range snapshot.InProgressTarget.Actions {
 				if a.ID == id {
 					needed = true
 					break
@@ -292,6 +302,22 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	}
 	c.mu.Unlock()
 	return snapshot
+}
+
+func (c *SchedulerController) activeTargetLocked(kind string) *serving.SchedulerCandidate {
+	var active *actionRun
+	for _, run := range c.runs {
+		if run.action.Status != nativeOperationRunning || (kind != "" && run.action.Kind != kind) || run.result == nil || run.result.Operation.Target == nil {
+			continue
+		}
+		if active == nil || run.started.Before(active.started) {
+			active = run
+		}
+	}
+	if active == nil {
+		return nil
+	}
+	return active.result.Operation.Target
 }
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
 	arrivals, err := c.journal.SchedulerArrivals(now.Add(-config.Settings.ObservationWindow), now)
@@ -527,6 +553,9 @@ func slotName(slot string) string {
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if target.Keep && len(target.Actions) == 0 {
+		return
+	}
 	c.goal = &target
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
@@ -559,9 +588,10 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			if !ready {
 				continue
 			}
-			// Independent Nodes run concurrently; one mutation per Node stays serialized.
+			// Global policy writes share one ConfigMap/ACK path. Independent Node
+			// preparations remain concurrent; one mutation per Node stays serialized.
 			for _, r := range c.runs {
-				if action.Node.UID != "" && r.action.Node == action.Node && r.action.Status == nativeOperationRunning {
+				if r.action.Status == nativeOperationRunning && ((action.Node.UID != "" && r.action.Node == action.Node) || (action.Kind == operationRoute && r.action.Kind == operationRoute)) {
 					ready = false
 				}
 			}
@@ -572,12 +602,14 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 			runCtx, cancel := context.WithCancel(c.ctx)
 			action.Status = nativeOperationRunning
 			action.Cancelable = action.Kind == operationPrepare
-			run := &actionRun{action: action, cancel: cancel, started: time.Now()}
+			started := time.Now()
+			initial := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
+			run := &actionRun{action: action, result: &initial, cancel: cancel, started: started}
 			c.runs[action.ID] = run
 			c.wg.Add(1)
 			go func(operation Operation, run *actionRun) {
 				defer c.wg.Done()
-				result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: "starting"}
+				result := initial
 				var err error
 				if config.OnAction != nil {
 					err = config.OnAction(result)

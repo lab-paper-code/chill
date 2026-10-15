@@ -280,8 +280,14 @@ Serving 부가 예산은 feasible 제약이다. Pod마다 한 prepared runner와
 ### 5.3 전환·에너지·선택
 
 모든 affected UID의 최종 상태와 전환 중 ready capacity를 같은 시간축으로 replay한다.
-node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을 준다. 신규 준비
-완료 전에는 기존 ready capacity를 유지하고, 실제 routing 적용 뒤 기존 것을 drain한다.
+node mode 변경·제거는 해당 노드의 모든 instance와 UID에 영향을 준다. 새 allocation을
+동시에 수용할 수 있으면 prepare→route 뒤 기존 source를 stop/drain/remove한다.
+exclusive CPU/GPU 또는 실제 예산 때문에 동시 점유가 불가능하면 최종 target에 없는
+blocking source만 기존 stop→drain→remove→prepare→route 의존성으로 교체한다.
+accepted ingress는 미래 target의 호환성만으로 포기하지 않는다. 현재 Ready이며 실제
+routing된 대체 source가 없으면 기존 source에서 먼저 dispatch하고 원래 identity로
+drain한다. 측정된 remove/prepare 시간·joules와 그동안의 실제 capacity, 대기 및 SLO를
+동일하게 replay하므로 합법적 DAG도 Pending/Overload일 수 있다.
 독립 Node의 안전한 동작은 병렬로, 같은 Node의 비용 구간은 의존 순서대로 반영한다.
 
 기존 logical cohort의 routing origin은 weight 보존 근거이며 새 physical slot을
@@ -303,6 +309,22 @@ Ready·profile·allocation·native policy ACK와 새 target의 typed completion 
 actual routing이 모두 일치할 때만 기존 handoff로 stop 의존성을 충족한다. 처음
 handoff와 대상 변경은 원래 route 완료를 기다리고 accepted-context stop/drain/removal
 검사는 그대로 유지한다.
+
+break-before-make에서 routing/bindings가 잠시 비어도 기존 실행의 frozen
+`Operation.Target`이 가진 UID cohort·replica 수·UID별 weight를 전환 의도의 근거로
+사용한다. actual 점유·ownership·Ready는 계속 현재 snapshot에서만 가져온다.
+Keep는 미완료 goal을 지우지 않고 남은 DAG를 진행하며 다른 일반 후보도 계속 평가한다.
+관측된 `TargetID`가 같은 실제 physical slot은 중복 prepare하지 않는다. 새 완료 proof와
+소비 수치는 현재 capture를 사용하고, 원래 실행의 frozen target을 덮어쓰거나 사라진
+proof를 복원하지 않는다.
+
+global route는 같은 policy ConfigMap/ACK 경로를 쓰므로 기존 running run을 통해
+직렬화한다. source release는 이전 global route 완료를 기다리되 독립 Node의 합법적
+준비를 전역 lock으로 막지 않는다. 진행 중 route는 자신의 frozen target으로 표시하며
+관측하지 못한 native ACK/남은 시간을 새 goal의 즉시 적용으로 replay하지 않고 Pending으로
+남긴다. running/native noncancelable 작업을 강제로 취소하지 않는다.
+controls OFF의 manual `staticRouting`도 기존 running route가 있으면 덮어쓰지 않고
+같은 journal에 sourceConfigRV·대기 이유·actual readback을 남긴다.
 
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
@@ -336,9 +358,9 @@ metadata/progress에서 profile·policy 적용과 readiness를 확인한다.
 
 전환 기록은 desired/start/progress/complete/failed/partial과 prerequisite를 가진다.
 실제 준비 Pod, NodeActuation, routing 적용, drain·remove·membership 완료를 확인하여
-다음 동작을 시작한다. resource resize는 검증된 새 resource Pod를 준비하는 동일한
-prepare→route→drain→remove 동작 조합이다. 기존 독립 writer를 중복 생성하는 대신
-NodeActuation을 생성해 sole host actuator를 사용한다.
+다음 동작을 시작한다. resource 변경 후보는 같은 기존 원자 동작을 조합하되 실제
+동시 allocation 예산에 따라 prepare-first 또는 drain/remove-first DAG를 사용한다.
+기존 독립 writer를 중복 생성하는 대신 NodeActuation을 생성해 sole host actuator를 사용한다.
 
 부하·Workload 관리 상태가 바뀌면 같은 snapshot/candidate 로직으로 재판단한다.
 이미 수행된 결과는 실제 현재 상태이며, 진행 중 동일 동작은 재사용한다. cancel은

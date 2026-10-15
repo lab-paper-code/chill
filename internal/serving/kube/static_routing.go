@@ -17,6 +17,13 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 	defer c.tickMu.Unlock()
 	c.mu.Lock()
 	config := c.config
+	pendingRoute := ""
+	for id, run := range c.runs {
+		if run.action.Kind == operationRoute && run.action.Status == nativeOperationRunning {
+			pendingRoute = id
+			break
+		}
+	}
 	c.mu.Unlock()
 	if config.Settings.Controls.Enabled || sourceRV == "" {
 		return errors.New("manual staticRouting requires controls OFF and a source ConfigMap resourceVersion")
@@ -36,6 +43,10 @@ func (c *SchedulerController) ApplyStaticRouting(ctx context.Context, routing ma
 		actual, _ := c.runtime.SchedulerRouting()
 		err = c.finishStaticRouting(result, actual, err, config.OnAction)
 	}()
+	if pendingRoute != "" {
+		result.Progress = append(result.Progress, "manual staticRouting waiting for existing global route "+pendingRoute)
+		return fmt.Errorf("manual staticRouting waits for running global route %s native acknowledgement", pendingRoute)
+	}
 	snapshot, err := c.capture(ctx, time.Now().UTC(), config)
 	if err != nil {
 		return err

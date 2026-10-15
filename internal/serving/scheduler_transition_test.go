@@ -2,6 +2,7 @@ package serving
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"testing"
 	"time"
@@ -314,5 +315,243 @@ func TestResumedExecutorCannotReuseHistoricalDrainBeforeNewStopAndHandoff(t *tes
 	if !slices.Contains(stop.DependsOn, route.ID) || !slices.Contains(drain.DependsOn, stop.ID) ||
 		!slices.Contains(remove.DependsOn, drain.ID) {
 		t.Fatalf("resumed source removal bypassed its fresh handoff/stop/drain chain: route=%+v stop=%+v drain=%+v remove=%+v", route, stop, drain, remove)
+	}
+}
+
+func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate) {
+	t.Helper()
+	settings, snapshot := placementOnlyFixture()
+	settings.Controls = SchedulerControls{Enabled: true, Resources: true}
+	snapshot.Nodes, snapshot.Options = snapshot.Nodes[:1], snapshot.Options[:2]
+	source := snapshot.Instances[0]
+	snapshot.Routing[snapshot.Workloads[0].UID][source.ID] = 3
+	snapshot.Routing[snapshot.Workloads[1].UID][source.ID] = 7
+	candidates, _ := EnumerateScheduler(settings, snapshot)
+	for _, candidate := range candidates {
+		if candidate.Keep || len(candidate.Instances) != 1 || len(candidate.Instances[0].Allocation.CPUs) != 2 {
+			continue
+		}
+		wanted := candidate.Instances[0]
+		snapshot.Costs = []OperationCost{
+			{ID: "overlap-remove", Node: source.Node, Kind: schedulerActionRemove, From: schedulerState(source), To: "unloaded",
+				PowerMode: "fixed", BeforeState: []string{schedulerState(source)}, Trials: []OperationTrial{{Duration: 28 * time.Millisecond, Joules: 1}},
+				EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope,
+				Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "overlap-remove", Size: 1}},
+			{ID: "overlap-prepare", Node: wanted.Node, Kind: schedulerActionPrepare, From: "unloaded", To: schedulerState(wanted),
+				PowerMode: "fixed", Trials: []OperationTrial{{Duration: 9 * time.Millisecond, Joules: 1}},
+				EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope,
+				Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "overlap-prepare", Size: 1}},
+		}
+		candidate.Actions = schedulerPlan(snapshot, candidate)
+		return settings, snapshot, candidate
+	}
+	t.Fatal("resources-only omitted the measured overlapping CPU2 profile")
+	return settings, snapshot, SchedulerCandidate{}
+}
+
+func TestOverlappingResourceChangeDrainsAcceptedIngressBeforeMeasuredBreak(t *testing.T) {
+	settings, snapshot, target := overlappingResourceFixture(t)
+	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
+	drain := requireTransitionAction(t, target.Actions, schedulerActionDrain)
+	remove := requireTransitionAction(t, target.Actions, schedulerActionRemove)
+	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
+	route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
+	if slices.Contains(stop.DependsOn, route.ID) || !slices.Contains(drain.DependsOn, stop.ID) ||
+		!slices.Contains(remove.DependsOn, drain.ID) || !slices.Contains(prepare.DependsOn, remove.ID) ||
+		!slices.Contains(route.DependsOn, prepare.ID) {
+		t.Fatalf("exclusive allocation replacement is not stop/drain/remove/prepare/route: %+v", target.Actions)
+	}
+	for _, d := range snapshot.Workloads {
+		snapshot.Outstanding = append(snapshot.Outstanding, SchedulerRequest{
+			ID: "accepted-" + d.UID, Definition: d, ReceivedAt: snapshot.At, Phase: "pending",
+		})
+	}
+	result := schedulerReplayForTest(settings, snapshot, target)
+	if len(result.reasons) != 0 {
+		t.Fatalf("legal measured replacement failed: %+v", result)
+	}
+	for _, d := range snapshot.Workloads {
+		if len(result.samples[d.Identity()]) != 1 || result.outcomes[d.Identity()]["completed"] != 1 {
+			t.Fatalf("accepted UID did not complete exactly once: uid=%s result=%+v", d.UID, result)
+		}
+	}
+	for _, cost := range snapshot.Costs {
+		if !slices.Contains(result.sources, cost.ID) {
+			t.Fatalf("replacement omitted the real removal/preparation trial: %+v", result)
+		}
+	}
+}
+
+func TestOverlappingResourceChangeWaitsForAcceptedResponseBeforeRemoval(t *testing.T) {
+	settings, snapshot, target := overlappingResourceFixture(t)
+	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
+	drain := requireTransitionAction(t, target.Actions, schedulerActionDrain)
+	remove := requireTransitionAction(t, target.Actions, schedulerActionRemove)
+	for _, d := range snapshot.Workloads {
+		snapshot.Outstanding = append(snapshot.Outstanding, SchedulerRequest{
+			ID: "accepted-" + d.UID, Definition: d, ReceivedAt: snapshot.At, Phase: "pending",
+		})
+	}
+	state := schedulerReplayState{
+		settings: settings, snap: snapshot, c: target, horizon: float64(settings.Horizon),
+		rng: rand.New(rand.NewPCG(uint64(settings.Seed), 0)),
+		out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}},
+	}
+	state.initializeInstances()
+	state.initializeActions()
+	state.initializeOutstanding()
+	state.routeCredits = map[schedulerRouteKey][]int64{}
+	state.weights, state.available = make([]int32, len(state.instances)), make([]bool, len(state.instances))
+	if !state.startActions() || state.actionByID[stop.ID].done || state.actionByID[remove.ID].started {
+		t.Fatalf("future compatible target bypassed the actual accepted-ingress stop guard: %+v", state.out)
+	}
+	state.routeRequests()
+	for _, request := range state.requests {
+		if !request.dispatched || request.source.Instance != snapshot.Instances[0].ID {
+			t.Fatalf("accepted input moved to the future CPU2 actor instead of its actual CPU1 route: %+v", request)
+		}
+		for _, accepted := range snapshot.Outstanding {
+			if request.source.ID == accepted.ID && request.source.Definition != accepted.Definition {
+				t.Fatal("accepted input lost its original frozen definition")
+			}
+		}
+	}
+	state.receiveNative()
+	if !state.chooseBatches() || !state.startActions() || state.actionByID[drain.ID].done {
+		t.Fatalf("stop did not retain the actual nonpreemptive native work until drain: %+v", state.out)
+	}
+	source := state.byID[snapshot.Instances[0].ID]
+	for range len(snapshot.Outstanding) {
+		if source.outstanding == 0 {
+			break
+		}
+		if !schedulerFinite(source.finish) || state.actionByID[remove.ID].started {
+			t.Fatal("source removal bypassed accepted native completion")
+		}
+		state.now = source.finish
+		state.completeExecution()
+		if !state.startActions() || !state.chooseBatches() {
+			t.Fatalf("accepted native queue could not finish nonpreemptively: %+v", state.out)
+		}
+	}
+	removal := state.actionByID[remove.ID]
+	if source.outstanding != 0 || !removal.started {
+		t.Fatal("measured removal did not start after actual accepted drain")
+	}
+	for _, request := range state.requests {
+		if !request.completed || request.source.Instance != source.config.ID || removal.start < request.completion {
+			t.Fatalf("retirement lost original assignment or ran before accepted response completion: %+v", request)
+		}
+	}
+}
+
+func TestLegalOverlappingResourceDAGStillReportsMeasuredOutageOverload(t *testing.T) {
+	settings, snapshot, target := overlappingResourceFixture(t)
+	snapshot.Costs[0].Trials[0] = OperationTrial{Duration: 28 * time.Second, Joules: 560}
+	snapshot.Costs[1].Trials[0] = OperationTrial{Duration: 9 * time.Second, Joules: 180}
+	for _, d := range snapshot.Workloads {
+		snapshot.Arrivals = append(snapshot.Arrivals, SchedulerArrival{
+			ID: "arrival-" + d.UID, Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond),
+		})
+	}
+	schedulerEvaluateCandidate(settings, snapshot, &target)
+	if !slices.Equal(target.Reasons, []string{"SLOCapacityExceeded"}) || target.ExpectedJoules == nil || target.Status != schedulerStatusOverload {
+		t.Fatalf("legal break must retain measured outage/SLO evaluation, not force feasibility: %+v", target)
+	}
+	for _, d := range snapshot.Workloads {
+		estimate := schedulerRequireEstimate(t, target, d.UID)
+		if estimate.NormalizedExceedance <= 0 || estimate.ExpectedNanos == nil ||
+			*estimate.ExpectedNanos < float64(snapshot.Costs[0].Trials[0].Duration+snapshot.Costs[1].Trials[0].Duration-time.Millisecond) {
+			t.Fatalf("unchanged SLO did not expose the measured 37s outage: %+v", estimate)
+		}
+	}
+}
+
+func TestResourceTransitionResumesAcrossActualZeroBindingInterval(t *testing.T) {
+	settings, snapshot, target := overlappingResourceFixture(t)
+	snapshot.InProgressTarget = &target
+	snapshot.Instances = nil
+	for _, d := range snapshot.Workloads {
+		snapshot.Routing[d.UID] = map[string]int32{}
+		snapshot.Arrivals = append(snapshot.Arrivals, SchedulerArrival{
+			ID: "resume-" + d.UID, Definition: d, Compute: true, At: snapshot.At.Add(-settings.ObservationWindow + time.Millisecond),
+		})
+	}
+	for _, action := range target.Actions {
+		if action.Kind == schedulerActionStop || action.Kind == schedulerActionDrain || action.Kind == schedulerActionRemove {
+			action.Status = schedulerActionComplete
+			snapshot.Actions = append(snapshot.Actions, action)
+		}
+	}
+	decision := EvaluateScheduler(settings, snapshot)
+	if decision.Target == nil || !decision.Target.Keep || len(decision.Keep.Instances) != 0 {
+		t.Fatalf("actual empty interval lost its existing measured continuation: %+v", decision)
+	}
+	if len(decision.Target.Instances) != 1 || !slices.Equal(decision.Target.Instances[0].WorkloadUIDs, target.Instances[0].WorkloadUIDs) {
+		t.Fatalf("zero bindings changed the original shared UID cohort: %+v", decision.Target)
+	}
+	requireTransitionAction(t, decision.Target.Actions, schedulerActionPrepare)
+	if !slices.ContainsFunc(decision.Candidates, func(candidate SchedulerCandidate) bool {
+		return !candidate.Keep && len(candidate.Instances) == 1 && candidate.Instances[0].Profile.ID == snapshot.Options[0].Instance.Profile.ID
+	}) {
+		t.Fatal("continuation pinned its selected profile instead of evaluating ordinary resource alternatives")
+	}
+	// The native preparation has now completed, but the physical actor is not
+	// routed or bound to either UID yet. Its observed slot is not a second actor.
+	prepared := target.Instances[0]
+	prepared.TargetID, prepared.ID, prepared.WorkloadUIDs = prepared.ID, preparedPhysicalID, nil
+	prepared.Ready = true
+	prepared = schedulerMeasuredInstance(prepared, snapshot.Workloads[0], time.Millisecond)
+	snapshot.Instances = []SchedulerInstance{prepared}
+	prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
+	prepare.Status = schedulerActionComplete
+	snapshot.Actions = append(snapshot.Actions, prepare)
+	decision = EvaluateScheduler(settings, snapshot)
+	if decision.Target == nil || len(decision.Target.Instances) != 1 || decision.Target.Instances[0].ID != prepared.ID {
+		t.Fatalf("ready physical slot did not continue the existing target: %+v", decision)
+	}
+	if slices.ContainsFunc(decision.Target.Actions, func(action Action) bool {
+		return action.Kind == schedulerActionPrepare || action.Kind == schedulerActionRemove
+	}) {
+		t.Fatalf("continuation duplicated preparation or removed its own ready actor: %+v", decision.Target.Actions)
+	}
+	for index, d := range snapshot.Workloads {
+		weight := int32(3 + 4*index)
+		if len(decision.Target.Routing[d.UID]) != 1 || decision.Target.Routing[d.UID][prepared.ID] != weight || len(decision.Keep.Routing[d.UID]) != 0 {
+			t.Fatalf("actual readback or declared original UID weights changed: keep=%v target=%v", decision.Keep.Routing, decision.Target.Routing)
+		}
+	}
+	if target.Instances[0].ID == prepared.ID || target.Routing[snapshot.Workloads[0].UID][prepared.ID] != 0 {
+		t.Fatal("continuation mutated the executing operation's frozen target")
+	}
+	if decision.Target.Instances[0].CompletionOverhead != time.Millisecond {
+		t.Fatalf("continuation ignored the current consumed completion quantity: %+v", decision.Target.Instances[0])
+	}
+	snapshot.Instances[0].CompletionObserved = false
+	snapshot.Instances[0].CompletionMeasurement = nil
+	decision = EvaluateScheduler(settings, snapshot)
+	if decision.Target != nil {
+		t.Fatalf("continuation resurrected a frozen proof after the actual consumer reset: %+v", decision)
+	}
+	schedulerRequireReason(t, decision.Keep.Reasons, "CompletionOverheadUnobserved")
+}
+
+func TestRunningGlobalRouteIsNotReplayedAsInstantAcknowledgementOfNewGoal(t *testing.T) {
+	settings, snapshot, target := overlappingResourceFixture(t)
+	current := SchedulerCandidate{ID: "in-progress-current", Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
+	running := Action{ID: "in-progress-global-route", Kind: schedulerActionRoute, Status: phaseRunning, To: schedulerConfigKey(current, false), Elapsed: time.Second}
+	current.Actions = []Action{running}
+	snapshot.InProgressTarget, snapshot.Actions = &current, []Action{running}
+	target.Actions = schedulerPlan(snapshot, target)
+	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
+	route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
+	if !slices.Contains(stop.DependsOn, running.ID) || !slices.Contains(route.DependsOn, running.ID) {
+		t.Fatalf("new routing/source release bypassed the actual running global mutation: %+v", target.Actions)
+	}
+	result := schedulerReplayForTest(settings, snapshot, target)
+	schedulerRequireReason(t, result.reasons, "InProgressRoutingAcknowledgementUnobserved")
+	decision := EvaluateScheduler(settings, snapshot)
+	if decision.Target != nil || decision.Status != schedulerStatusPending {
+		t.Fatalf("unobserved existing ACK was invented as the new target or zero ETA: %+v", decision)
 	}
 }
