@@ -39,11 +39,14 @@ export function statusLabel(value?: string): string {
     Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
     completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
     canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
-    pending: "미배정", assigned: "실행 단계 확인 대기", queued: "실행기 큐 대기", running: "실행 중", returning: "응답 반환 중",
-    deferred: "SLO 위반 후 후순위 대기",
+    pending: "배정 대기", assigned: "배정됨", queued: "실행 대기", running: "실행 중", returning: "응답 보내는 중",
+    deferred: "목표 시간을 넘겨 뒤로 미뤄짐",
     request_received: "요청 도착", response_finished: "응답 완료",
+    AppliedSnapshotUnavailable: "적용 결과 확인 대기",
+    Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Planned: "계획됨",
   }
-  return value ? labels[value] ?? value : "정보 없음"
+  // Internal codes (CamelCase or "Code: detail") never reach the main screen; the raw value stays in 자세히.
+  return !value ? "정보 없음" : labels[value] ?? (/^[A-Z][A-Za-z]+(:|$)/.test(value) ? "확인이 필요해요" : value)
 }
 export function DetailsDialog({ label, title, children, description, icon }: {
   label: string; title: string; children: React.ReactNode; description?: string; icon?: React.ReactNode
@@ -55,19 +58,20 @@ export function DetailsDialog({ label, title, children, description, icon }: {
     </DialogContent>
   </Dialog>
 }
-export function ReadRegion({title,query,children,inlineSource=false,hero=false,id}: {title:string;query:{data?:unknown;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown};children:React.ReactNode;inlineSource?:boolean;hero?:boolean;id?:string}) {
+type GateQuery = {data?:unknown;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown}
+function QueryState({query,children,inlineSource=false}:{query:GateQuery;children:React.ReactNode;inlineSource?:boolean}) {
   const {token} = useSession()
   const denied = query.error?.status === 401 || query.error?.status === 403
   const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data ? query.error.data.code : undefined
-  return <section id={id} className={hero ? "read-region judgment" : "read-region"} aria-label={title}>
-    <div className="read-region-heading"><h2>{title}</h2><div className="read-region-meta">
-      {query.isFetching && query.data !== undefined ? <span role="status">새로운 정보를 확인하고 있어요</span> : query.dataUpdatedAt > 0 && <span>확인 {new Date(query.dataUpdatedAt).toLocaleTimeString("ko-KR", {timeZone:"UTC",hour:"2-digit",minute:"2-digit"})} UTC</span>}
-      <Button type="button" variant="ghost" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />새로고침</Button>
-    </div></div>
+  return <>
     {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <div className="skeleton" role="status"><span className="sr-only">불러오고 있어요.</span><span /><span /><span /></div> : null}
-    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} />{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
+    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "SchedulerUnavailable" ? "운영 판단 API는 배포 설정에서 연결합니다. 현재는 스케줄러 설정이 연결되지 않았습니다." : code === "DashboardPrecisionUnsupported" ? query.error.body : errorLabels[query.error.status] ?? "정보를 불러오지 못했어요."}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />다시 불러오기</Button><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} /></div>{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
     {token && !denied && query.data !== undefined && children}
-  </section>
+  </>
+}
+// One screen, one query state: loading, error and denial without panel chrome.
+export function QueryGate({query,children}:{query:GateQuery;children:React.ReactNode}) {
+  return <div className="query-gate"><QueryState query={query}>{children}</QueryState></div>
 }
 export function SourceJSON({value,title="원본 자료 보기",inline=false}:{value:unknown;title?:string;inline?:boolean}) {
   const body=<pre className="source-json">{stringifySchedulerJSON(safeSource(value),2)}</pre>
@@ -78,7 +82,4 @@ export function SourceExport({value,filename}:{value:unknown;filename:string}) {
     const url = URL.createObjectURL(new Blob([stringifySchedulerJSON(safeSource(value),2)],{type:"application/json"}))
     const link = document.createElement("a"); link.href=url; link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_"); link.click(); URL.revokeObjectURL(url)
   }}><Download aria-hidden="true" />자료 다운로드</Button>
-}
-export function PendingFeature({title,description}:{title:string;description:string}) {
-  return <section className="empty-state"><StatusBadge tone="idle">연결 준비 중</StatusBadge><h2>{title}</h2><p>{description}</p><Button disabled>아직 사용할 수 없어요</Button></section>
 }

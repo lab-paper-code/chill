@@ -15,7 +15,7 @@ The demo records, accounts/avatars, revenue/time series, marketing links, drag-a
 
 ## Visual system
 
-Tokens live in `app/globals.css`: a cool frost canvas, coolant blue for actions and focus, and heat amber for energy and caution. Status is never color-only: `StatusBadge` pairs each tone with an icon and text. The overview puts the attention queue first, then the operator judgment (expected energy of the kept configuration and the selected candidate on one scale; the larger reads as heat), then one strip of system, service, node and request counts. Related screens use `SubNav` tabs, the model editor shows its five steps as a stepper, and signed-out visitors see only the sign-in screen. Light, dark and 390 px layouts were reviewed against fixture-backed owner responses; no live owner was written.
+Tokens live in `app/globals.css`: a cool frost canvas, coolant blue for actions and focus, and heat amber for energy and caution. Status is never color-only: `StatusBadge` pairs each tone with an icon and text. Every screen does one function, built from `components/screen.tsx`: a back link, one plain-Korean conclusion as the headline, one key value or list, `›` rows that open the next screen or a dialog, and at most one primary action pinned at the bottom of a narrow centered column. Multi-field input is a step funnel; the scheduler settings are rows edited one value per dialog and applied after one review. Internal codes, UIDs and nanoseconds appear only in 원본 자료 dialogs; times display in local time. Signed-out visitors see only the sign-in screen. Light, dark and 390 px layouts were reviewed against fixture-backed owner responses; no live owner was written.
 
 ## Runtime
 
@@ -72,9 +72,9 @@ retain integer literals while removing credentials.
 
 ## Public routes and current core
 
-`/`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/edit`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/resources`, `/pools`, `/pools/[id]`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/configuration`, `/scheduler`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/transitions`, `/transitions/[id]`, `/observations`, `/experiments`, `/experiments/[id]`, `/changes`. The former `/scheduler/candidates` and `/scheduler/load` redirect to `/scheduler#candidates` and `/scheduler#load` with their query (window and service) preserved.
+`/`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/{definition,evidence,placement,operation,changes}`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/{files,services}`, `/models/[name]/edit`, `/scheduler`, `/scheduler/candidates`, `/scheduler/estimates`, `/scheduler/load`, `/transitions`, `/transitions/[id]`, `/resources`, `/pools`, `/pools/[id]`, `/records`, `/observations`, `/changes`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/measurements`, `/measurements/check`, `/measurements/[kind]/[namespace]/[name]`, `/experiments`, `/settings`, `/configuration`.
 
-Structure follows the operator's job rather than one page per object. The home page lists what needs attention first (services not admitting with their reason, unready nodes, predicted SLO exceedance, failed or open changes), each linked to the exact section that resolves it. `/workloads/[name]` is the service hub: an ordered lifecycle rail (definition, evidence, placement, admission, response target) over inline sections fed by the workload view, `v1/pools`, `v1/scheduler` and one bounded last-hour `v1/observations/workloads/{uid}` query whose window is shown and reset explicitly. Model details show connected services inline.
+The menu has five sections: 홈, 서비스, 운영, 기록, 설정. Home is only the list of things to check now (services not admitting, unready nodes, predicted SLO exceedance, failed or open changes), each row opening the screen that resolves it. A service page states its readiness and offers the next step; its definition, evidence, placement, last-hour operation and changes are separate screens.
 
 Real Model/Workload CRUD and version preconditions, one independent named-tensor inference, current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management journal; absence of a broader feed is disclosed.
 
@@ -85,9 +85,9 @@ update. Deferred requests remain waiting, not running or completed. The actual
 local editor was exercised with all three values and existing limits preserved;
 the browser used an isolated owner-contract fixture and performed no live writes.
 
-`/scheduler` is one decision workspace: the current judgment, per-service keep/target
-estimates, the current actions, event-time load and a candidate workbench whose
-selection freezes the response it was made on and announces newer decisions.
+`/scheduler` shows only the current judgment; candidates, per-service estimates,
+event-time load and actions are separate screens. A candidate detail dialog
+freezes the response it was opened on and announces newer decisions.
 Automatic application and evaluated judgment are separate; keep/target J and SLO are
 predictions, not measurements. Load preserves the submitted window in the page URL
 independently of the draft. The owner omits arrivals from load responses, so load
@@ -119,8 +119,14 @@ and runtime results. Kind/node filters apply only to the fetched page; an empty
 filtered page can still advance. Exports name the selected-record/current-page
 scope. Identity changes clear selections; first login retains bookmarked records.
 
+History, load and custom observation dates use the device's local time zone.
+Only edited fields are converted to UTC; untouched submitted RFC3339Nano strings
+remain exact, including seconds and fractional precision. Empty, partial or invalid
+date edits stay unsubmitted and show the existing range validation on apply without
+replacing the submitted interval or its records.
 
-Each page has one task: list, detail, create, edit, inference, or one read view. Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are selected by name; dependencies, impact confirmation, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
+
+Workloads are displayed as 서비스, POOLs as 실행 그룹. Existing native model/service records are picked from lists; dependencies, impact confirmation, filters, advanced input and exact source identities open in accessible dialogs. First-time artifact registration still requires its real source because no artifact catalog producer exists. Login is a dedicated screen; connected identity changes and logout are in 접속 관리.
 
 POOL list and detail views accept the current API's null collections as empty
 node, workload or instance lists. An idle POOL or an executor awaiting policy
@@ -128,12 +134,6 @@ acknowledgement must not crash the page; its actual readiness remains visible.
 
 Model authoring and applied workload definitions use `firstfloor` settings with positive int32 `maxBatchSize` and per-workload-UID `maxQueueSize` bounds. Native backends are `ort-cpu` / `ort-cuda` for ONNX and `rknnlite` for RKNN. The API validates artifact/backend compatibility, requires these settings for the `firstfloor` family and rejects them for other families; the editor preserves custom native declarations and existing numeric/bool multi-tensor input behavior.
 
-History, load and custom observation dates use the device's local time zone.
-Only edited fields are converted to UTC; untouched submitted RFC3339Nano strings
-remain exact, including seconds and fractional precision. Empty, partial or invalid
-date edits stay unsubmitted and show the existing range validation on apply without
-replacing the submitted interval or its records.
-
-Resource policy/maintenance writers, measurement writers/options and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power and A/B comparison are connected to existing producers. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
+Resource policy/maintenance writers, measurement writers/options and experiment producers remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power and A/B comparison are connected to existing producers. FULL labels enabled plus all eight controls, not successful physical application or SLO satisfaction; the compact control section links measured candidate evidence, current observations, actual transitions and the same input-window request/power results. Experiments link to judgment comparison without claiming an experiment lifecycle. Missing Console owner configuration is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
 Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS owner gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS owner origin and validates the native CA.

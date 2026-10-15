@@ -9,11 +9,10 @@ import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { localDateTime, utcDateTime } from "@/lib/date-time"
-import { SnapshotDetails, CandidateDetails, judgmentLabels } from "@/features/scheduler"
+import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
-import { ReadRegion, SourceJSON, SourceExport } from "@/components/read-region"
-import { DataTable } from "@/components/data-table"
-import { SubNav } from "@/components/sub-nav"
+import { QueryGate, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
+import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -22,9 +21,12 @@ export type SchedulerHistoryRow={event:SchedulerObservation;ref:SchedulerRecordR
 export type SchedulerHistoryQuery={
   query:QueryObserverBaseResult<SchedulerObservationPage,ApiError>;rows:SchedulerHistoryRow[];params:ReadonlyURLSearchParams
   submitted:{from:string;to:string};cursor:string;draft:{from:string;to:string};setDraft:React.Dispatch<React.SetStateAction<{from:string;to:string}>>
-  limit:number;setLimit:React.Dispatch<React.SetStateAction<number>>;validation:string;maxPageSize:number;apply:()=>void;page:(cursor?:string)=>void
+  limit:number;setLimit:React.Dispatch<React.SetStateAction<number>>;validation:string;maxPageSize:number;apply:()=>boolean;page:(cursor?:string)=>void
 }
-const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 관측",other:"기타 기록"}
+const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 측정",other:"기타 기록"}
+// Shared by the record screens: readable local time, and a person instead of a service account path.
+export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":new Date(value).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
 export function useSchedulerHistory():SchedulerHistoryQuery {
   const params=useSearchParams(),router=useRouter(),pathname=usePathname(),{config}=useSession()
@@ -39,30 +41,67 @@ export function useSchedulerHistory():SchedulerHistoryQuery {
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
   function apply(){
     const from=Date.parse(draft.from),to=Date.parse(draft.to)
-    if(!Number.isFinite(from)||!Number.isFinite(to)||from>to||draft.from===draft.to||to-from>config.maxWindowHours*3600000||!Number.isInteger(limit)||limit<1||limit>config.maxPageSize){setValidation(`조회 구간은 최대 ${config.maxWindowHours}시간, 표시 개수는 1~${config.maxPageSize}로 선택합니다.`);return}
+    if(!Number.isFinite(from)||!Number.isFinite(to)||from>to||draft.from===draft.to||to-from>config.maxWindowHours*3600000||!Number.isInteger(limit)||limit<1||limit>config.maxPageSize){setValidation(`기간은 최대 ${config.maxWindowHours}시간, 한 번에 1~${config.maxPageSize}건까지 볼 수 있어요.`);return false}
     const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("from",draft.from);next.set("to",draft.to);next.set("limit",String(limit));setValidation("");router.replace(`${pathname}?${next}`)
+    return true
   }
   function page(nextCursor?:string){router.replace(`${pathname}?${schedulerPageParams(new URLSearchParams(params.toString()),nextCursor)}`)}
   return {query,rows,params,submitted,cursor,draft,setDraft,limit,setLimit,validation,maxPageSize:config.maxPageSize,apply,page}
 }
 
-export function HistoryControls({history}:{history:SchedulerHistoryQuery}){
-  return <><form noValidate className="toolbar" onSubmit={event=>{event.preventDefault();history.apply()}}><label>시작<Input type="datetime-local" value={localDateTime(history.draft.from)} onChange={event=>{const from=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,from}))}}/></label><label>종료<Input type="datetime-local" value={localDateTime(history.draft.to)} onChange={event=>{const to=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,to}))}}/></label><label>표시 개수<Input type="number" min={1} max={history.maxPageSize} value={Number.isFinite(history.limit)?history.limit:""} onChange={event=>history.setLimit(Number(event.target.value))}/></label><Button type="submit">구간 적용</Button></form>{history.validation&&<p role="alert">{history.validation}</p>}<p className="break-all">제출된 구간 {history.submitted.from} ~ {history.submitted.to} [from, to)</p></>
+// The window filter as one row; extra filter rows of the same screen go in `children`.
+export function HistoryControls({history,children}:{history:SchedulerHistoryQuery;children?:React.ReactNode}){
+  const [open,setOpen]=React.useState(false)
+  return <Rows label="조회 조건">
+    <RowDialog open={open} onOpenChange={next=>{setOpen(next);if(next)history.setDraft(history.submitted)}} label="기간" value={`${when(history.submitted.from)} – ${when(history.submitted.to)}`} title="조회 기간" description="시작 시각부터 끝 시각 직전까지의 기록을 보여드려요.">
+      <form noValidate className="grid gap-4" onSubmit={event=>{event.preventDefault();if(history.apply())setOpen(false)}}>
+        <label className="grid gap-1.5">시작<Input type="datetime-local" value={localDateTime(history.draft.from)} onChange={event=>{const from=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,from}))}}/></label>
+        <label className="grid gap-1.5">종료<Input type="datetime-local" value={localDateTime(history.draft.to)} onChange={event=>{const to=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,to}))}}/></label>
+        <label className="grid gap-1.5">한 번에 볼 기록 수<Input type="number" min={1} max={history.maxPageSize} value={Number.isFinite(history.limit)?history.limit:""} onChange={event=>history.setLimit(Number(event.target.value))}/></label>
+        {history.validation&&<p role="alert">{history.validation}</p>}
+        <Button type="submit">이 기간으로 보기</Button>
+      </form>
+    </RowDialog>
+    {children}
+  </Rows>
 }
 export function HistoryPaging({history}:{history:SchedulerHistoryQuery}){
-  return <><p>현재 가져온 원본 기록 {history.rows.length}개 / 시작 offset {history.cursor}. 보관 중인 append 순서이며 전체 구간의 건수와 완전성은 제공하지 않습니다.</p><div className="toolbar"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>첫 기록</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록</Button></div></>
+  return <div className="grid gap-2"><p className="text-sm text-muted-foreground">기록을 {history.rows.length}건 불러왔어요. 기간 전체 건수는 아니에요.</p><div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
 function RecordDetails({row}:{row:SchedulerHistoryRow}){
   const event=row.event,decision=event.decision,snapshot=event.snapshot
   const view=decision&&snapshot?{settings:decision.settings,state:{decision,snapshot,actions:snapshot.actions,results:null}}:null
-  return <><p>{kinds[row.ref.kind]??row.ref.kind} / 사건 {event.at} / offset {row.ref.offset}</p>{decision&&<><h3>판단 {judgmentLabels[decision.status] ?? decision.status}</h3><p>판단 시각 {decision.at} / 자동 적용 {decision.settings.controls.enabled?"사용":"미사용"}</p><p>입력 관측 {decision.search.windowStart} ~ {decision.search.windowEnd}, 모집단 {decision.search.population}, 미래 예상 기간 {nanosToMilliseconds(decision.settings.horizonNanos)} ms</p><p>{decision.reasons?.join(", ")||"제공된 판단 사유 없음"}</p>{view?<><details><summary>기록의 유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>기록의 선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성 snapshot이 제공되지 않았습니다. 후보 원본은 아래에서 확인합니다.</p>}</>}{snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}{event.settings&&<><h3>설정 변경</h3><p>행위자 {event.settings.actorUsername} / {event.settings.actorUID}</p><p>검증 {event.settings.validatedAt} / Runtime 적용 {event.settings.appliedAt??"제공 없음"}</p><p>마지막 관측 노드 {event.settings.affected?.map(node=>`${node.name} (${node.uid})`).join(", ")||"없음"}</p>{event.settings.error&&<p role="alert">{event.settings.error}</p>}<SettingChanges before={event.settings.before} after={event.settings.after} stored/><p>설정 저장과 실제 물리 전환은 별도입니다.</p></>}{event.action&&<><p>{event.action.kind} / {event.action.node.name} / {event.action.phase} / 시작 {event.action.startedAt} / 완료 {event.action.completedAt??"제공 없음"}</p><Link href={`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(row.ref)}`}>이 변경 동작 상세</Link></>}{(event.power||event.powerError||event.powerJoules!==undefined)&&<Link href={`/scheduler/power?${schedulerRecordParams(row.ref)}`}>이 전력 관측 상세</Link>}<SourceJSON inline title="선택 기록 원본" value={event}/><SourceExport value={{conditions:row.ref,population:decision?.search.population??null,source:event}} filename="chill-scheduler-selected-record.json"/></>
+  return <div className="space-y-4 [&_dd]:break-all">
+    <Facts items={[["종류",kinds[row.ref.kind]??row.ref.kind],["사건 시각",event.at],["보관 순서",row.ref.offset]]}/>
+    {decision&&<>
+      <h3 className="font-semibold">판단: {judgmentLabels[decision.status]??statusLabel(decision.status)}</h3>
+      <Facts items={[["판단 시각",decision.at],["자동 적용",decision.settings.controls.enabled?"사용":"미사용"],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["미래 예상 기간",`${nanosToMilliseconds(decision.settings.horizonNanos)} ms`]]}/>
+      <p>{decision.reasons?.join(", ")||"제공된 판단 사유가 없어요."}</p>
+      {view?<><details><summary>유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
+    </>}
+    {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}
+    {event.settings&&<>
+      <h3 className="font-semibold">설정 변경</h3>
+      <Facts items={[["담당자",`${event.settings.actorUsername} / ${event.settings.actorUID}`],["검증",event.settings.validatedAt],["실행 환경 적용",event.settings.appliedAt??"제공 없음"],["마지막 관측 노드",event.settings.affected?.map(node=>`${node.name} (${node.uid})`).join(", ")||"없음"]]}/>
+      {event.settings.error&&<p role="alert">{event.settings.error}</p>}
+      <SettingChanges before={event.settings.before} after={event.settings.after} stored/>
+      <p className="text-sm text-muted-foreground">설정 저장과 실제 물리 전환은 따로 일어나요.</p>
+    </>}
+    {event.action&&<>
+      <Facts items={[["동작",actionKinds[event.action.kind]??event.action.kind],["노드",event.action.node.name],["단계",actionStatuses[event.action.phase]??event.action.phase],["시작",event.action.startedAt],["완료",event.action.completedAt??"제공 없음"]]}/>
+      <Link href={`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(row.ref)}`}>이 변경 동작 자세히 보기</Link>
+    </>}
+    {(event.power||event.powerError||event.powerJoules!==undefined)&&<Link href={`/scheduler/power?${schedulerRecordParams(row.ref)}`}>이 전력 측정 자세히 보기</Link>}
+    <SourceJSON inline title="선택 기록 원본" value={event}/>
+    <SourceExport value={{conditions:row.ref,population:decision?.search.population??null,source:event}} filename="chill-scheduler-selected-record.json"/>
+  </div>
 }
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
   const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
   const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>filter==="all"||row.ref.kind===filter)
-  const opener=React.useRef<HTMLButtonElement|null>(null),heading=React.useRef<HTMLHeadingElement|null>(null)
+  const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
   const requested=["offset","kind","at","id","node","startedAt"].some(key=>params.has(key))
   const record=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(selected),{decoder:parseSchedulerJSON,enabled:requested&&!!selected})
@@ -78,43 +117,45 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const compare=new URLSearchParams()
   if(a)for(const [key,value] of schedulerRecordParams(a,"a"))compare.set(key,value)
   if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
-  return <div className="page">
-    <h1 ref={heading} tabIndex={-1}>{settingsOnly?"운영 설정 변경 기록":"운영 판단 기록"}</h1>
-    <SubNav label="운영 기록 관련 화면" links={[...(settingsOnly?[["/changes","서비스 변경"] as [string,string]]:[]),["/changes?scope=scheduler","운영 설정 변경"],...(settingsOnly?[]:[["/scheduler/history","운영 판단 기록"] as [string,string]]),["/scheduler","현재 운영 판단"],["/scheduler/power","전력 기록"],["/transitions?view=history","변경 동작 기록"]]}/>
-    <HistoryControls history={history}/>
-    {!settingsOnly&&<label>현재 가져온 기록에서 종류<select value={filter} onChange={event=>{
-      const next=new URLSearchParams(params.toString());next.set("filter",event.target.value);router.replace(`${pathname}?${next}`)
-    }}><option value="all">모든 종류</option>{Object.entries(kinds).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
-    <ReadRegion title="현재 페이지의 보관 기록" query={history.query}>{history.query.data&&<>
-      <p>조회된 페이지 일부이며 구간 전체 집계가 아닙니다.</p>
-      <DataTable data={rows} columns={[
-        {key:"at",label:"사건 시각",value:row=>row.event.at},
-        {key:"kind",label:"종류",value:row=>kinds[row.ref.kind]??row.ref.kind},
-        {key:"subject",label:settingsOnly?"행위자와 적용":"대상",value:row=>row.event.settings?`${row.event.settings.actorUsername} / ${row.event.settings.appliedAt??row.event.settings.error??"검증된 의도"}`:row.event.action?`${row.event.action.node.name} / ${row.event.action.kind} / ${row.event.action.phase}`:(row.event.decision ? judgmentLabels[row.event.decision.status] ?? row.event.decision.status : row.event.node?.name) ?? "제공 없음"},
-        {key:"detail",label:"선택",value:row=><div className="toolbar">
-          <Button variant="ghost" onClick={event=>{opener.current=event.currentTarget;select(row)}}>상세</Button>
-          {row.event.decision&&!settingsOnly&&<><Button variant="ghost" onClick={()=>select(row,"a")}>A로 선택</Button><Button variant="ghost" onClick={()=>select(row,"b")}>B로 선택</Button></>}
-        </div>},
-      ]}/>
+  const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
+  const loaded=!!history.query.data
+  const title=settingsOnly?(!loaded?"운영 설정 변경 이력":rows.length?`운영 설정 변경 ${rows.length}건을 찾았어요`:"이 기간에는 운영 설정 변경이 없어요"):(!loaded?"운영 판단 기록":rows.length?`운영 기록 ${rows.length}건을 불러왔어요`:"이 기간에는 운영 기록이 없어요")
+  return <Screen back={["/records","기록"]} title={title} lede={settingsOnly?"누가 언제 운영 설정을 바꿨는지 보여드려요.":"기록을 열어 비교할 판단 두 개(A, B)를 고를 수 있어요."}
+    action={!settingsOnly&&(a||b)?<><p className="text-sm text-muted-foreground">A {a?when(a.at):"아직 고르지 않았어요"} · B {b?when(b.at):"아직 고르지 않았어요"}</p>{a&&b?<Button asChild><Link href={`/scheduler/compare?${compare}`}>두 기록 비교하기</Link></Button>:<Button disabled>두 기록 비교하기</Button>}</>:undefined}>
+    <HistoryControls history={history}>
+      {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={filter==="all"?"모든 종류":kinds[filter]??"이전 조건"} title="기록 종류" description="불러온 기록 중에서 골라 보여드려요.">
+        <fieldset className="grid gap-2">{[["all","모든 종류"],...Object.entries(kinds)].map(([key,label])=><label key={key} className="flex items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=new URLSearchParams(params.toString());next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
+      </RowDialog>}
+      {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
+        <SourceExport value={{conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
+      </RowDialog>}
+    </HistoryControls>
+    <QueryGate query={history.query}>{loaded&&<>
+      {rows.length?<Rows label="기록">{rows.map(row=>{
+        const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
+        return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
+          hint={`${when(ev.at)}${ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${ev.action.node.name}`:ev.node?` · ${ev.node.name}`:""}`}
+          value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
+          onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
+      })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}
       <HistoryPaging history={history}/>
-      <SourceExport value={{conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
-    </>}</ReadRegion>
-    {!settingsOnly&&<section aria-label="비교할 판단 선택">
-      <p>A {a?`${a.at} / offset ${a.offset}`:"판단 목록에서 선택"}</p><p>B {b?`${b.at} / offset ${b.offset}`:"판단 목록에서 선택"}</p>
-      {a&&b?<Link href={`/scheduler/compare?${compare}`}>선택한 두 판단 비교</Link>:<p>판단 기록에서 A와 B를 각각 선택합니다.</p>}
-    </section>}
+    </>}</QueryGate>
     <Dialog open={requested} onOpenChange={open=>{if(!open)close()}}>
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl" onCloseAutoFocus={event=>{
-        event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else heading.current?.focus()
+        event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}
       }}>
-        <DialogHeader><DialogTitle>선택 기록 상세</DialogTitle><DialogDescription>원래 조회 구간의 append offset과 종류, 대상 및 사건 시각으로 기록을 확인합니다.</DialogDescription></DialogHeader>
-        {!selected?<p role="alert">선택한 기록 확인 필요. 구간과 offset, 예상 종류 및 시각을 함께 확인합니다.</p>:
-          <ReadRegion inlineSource title="선택한 단일 기록" query={record}>{record.isSuccess&&(matches&&event?
-            <RecordDetails row={{event,ref:selected}}/>:<p role="alert">선택한 기록 확인 필요. 보관 범위나 사건 identity가 달라졌습니다. 같은 시각의 다른 기록으로 대체하지 않습니다.</p>
-          )}</ReadRegion>
+        <DialogHeader><DialogTitle>기록 자세히</DialogTitle><DialogDescription>고른 기록을 원래 기간과 순서 그대로 확인해요.</DialogDescription></DialogHeader>
+        {!selected?<p role="alert">기록을 확인하지 못했어요. 기간과 순서, 종류와 시각이 모두 필요해요.</p>:
+          <QueryGate query={record}>{record.isSuccess&&(matches&&event?<>
+            <RecordDetails row={{event,ref:selected}}/>
+            {event.decision&&!settingsOnly&&<div className="flex flex-wrap gap-2">
+              <Button variant="outline" disabled={same(a,{event,ref:selected})} onClick={()=>select({event,ref:selected},"a")}>{same(a,{event,ref:selected})?"A로 골랐어요":"A로 고르기"}</Button>
+              <Button variant="outline" disabled={same(b,{event,ref:selected})} onClick={()=>select({event,ref:selected},"b")}>{same(b,{event,ref:selected})?"B로 골랐어요":"B로 고르기"}</Button>
+            </div>}
+          </>:<p role="alert">기록을 확인하지 못했어요. 보관 범위나 기록이 바뀌었어요. 같은 시각의 다른 기록으로 대신하지 않아요.</p>)}</QueryGate>
         }
-        <Button variant="outline" onClick={close}>해당 구간 기록으로 돌아가기</Button>
+        <Button variant="outline" onClick={close}>목록으로 돌아가기</Button>
       </DialogContent>
     </Dialog>
-  </div>
+  </Screen>
 }
