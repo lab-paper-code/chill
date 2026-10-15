@@ -72,13 +72,14 @@ type schedulerReplayAction struct {
 	wallRate float64
 }
 type schedulerReplayResult struct {
-	energy      float64
-	samples     map[string][]float64
-	definitions map[string]*Definition
-	reasons     []string
-	assumptions []string
-	sources     []string
-	outcomes    map[string]map[string]int
+	energy             float64
+	samples            map[string][]float64
+	definitions        map[string]*Definition
+	reasons            []string
+	assumptions        []string
+	sources            []string
+	outcomes           map[string]map[string]int
+	transitionComplete bool
 }
 
 func EvaluateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerDecision {
@@ -580,10 +581,18 @@ type schedulerReplayState struct {
 	weights        []int32
 	available      []bool
 	now            float64
+	projection     bool
 }
 
 func schedulerReplay(settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand) schedulerReplayResult {
+	return schedulerReplayModel(settings, snap, c, rng, false)
+}
+
+// schedulerReplayModel shares the physical accounting engine; projection stops
+// at the receipt interval boundary rather than forecasting SLO completions.
+func schedulerReplayModel(settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, projection bool) schedulerReplayResult {
 	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.Horizon), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	s.projection = projection
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()
@@ -608,6 +617,10 @@ func schedulerReplay(settings SchedulerSettings, snap SchedulerSnapshot, c Sched
 		if !s.startActions() {
 			return s.out
 		}
+		if s.projection && s.now >= s.horizon {
+			s.out.transitionComplete = s.transitionComplete()
+			return s.out
+		}
 		// Native queue entries never move when the desired configuration changes.
 		s.routeRequests()
 		s.receiveNative()
@@ -629,7 +642,11 @@ func schedulerReplay(settings SchedulerSettings, snap SchedulerSnapshot, c Sched
 		if !s.accumulateEnergy(math.Min(next, s.horizon)) {
 			return s.out
 		}
-		if !remaining && next >= s.horizon {
+		if s.projection && next > s.horizon {
+			s.out.transitionComplete = s.transitionComplete()
+			return s.out
+		}
+		if !s.projection && !remaining && next >= s.horizon {
 			break
 		}
 		if next <= s.now {
@@ -642,6 +659,18 @@ func schedulerReplay(settings SchedulerSettings, snap SchedulerSnapshot, c Sched
 		s.out.reasons = append(s.out.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 	}
 	return s.out
+}
+
+func (s *schedulerReplayState) transitionComplete() bool {
+	if !s.routingApplied {
+		return false
+	}
+	for _, a := range s.actions {
+		if !a.done {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *schedulerReplayState) initializeInstances() {
