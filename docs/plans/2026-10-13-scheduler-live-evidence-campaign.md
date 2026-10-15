@@ -53,7 +53,7 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** GPU 수동 CLI 리뷰·gate 후 real CUDA 서빙과 대상 Jetson의 실제 제어를 검증한다.
+**현재 우선:** 구 CUDA 실행기의 설정 계약 불일치를 최신 SDK로 정리하고 새 근거로 실제 GPU 서빙을 검증한다.
 CPU OFF/`fixed-horizon`/`projected-work-history` 동일 150초 trace는 arm별 190건 전부 완료·SLO 통과다.
 자동 Latte → Rpi prepare·route·stop·drain·remove와 이전 Pod 소멸, 비중첩 두 구간의
 min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 둔다.
@@ -63,9 +63,11 @@ min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제�
    이어져 세 arm 모두 무부하 tail을 포함한 210초 공통 구간을 **사후 선언**했다.
    10개 meter의 전체 wall energy는 완전하지만 에너지 절감·통계적·인과적 주장은 하지 않는다.
    queue-reset projection은 실제 queue 이력이나 고전 WFA 보장이 아니다.
-2. **GPU·Jetson:** GPU CLI 리뷰·gate·real CUDA 준비/요청/정리를 먼저 확인한다.
-   Jetson은 단일 허용 power mode와 Xavier의 외부 Workload 안전 조건을 지키며 실제 제어를 검증한다.
-   현재 power 왕복 완료를 주장하지 않는다. 미검증 동작은 자동 후보로 통과시키지 않는다.
+2. **GPU·Jetson:** GPU CLI는 리뷰·gate·커밋 완료. 실제 준비는 기존 CUDA 이미지의
+   `completionOverheadMS` 미지원으로 실패해 생성 자원을 정리했다. 과거 측정은 수정하지 않는다.
+   Jetson 3대의 현재 물리 모드는 확인했지만 단일 허용 모드·외부 Pod 안전 차단으로 전력 왕복은 미검증이다.
+   별도 제어 OFF 16건 동시 요청은 모두 완료했으나 p90/p95 3325/3421ms로 SLO 초과했다.
+   이는 앞선 trace 성공과 구분하며 자동 과부하 대응 통과로 세지 않는다.
 3. **FULL·Dashboard:** 남은 제어의 실제 완료와 통합 시나리오를 검증한 뒤 실제 Dashboard
    e2e를 수행한다. Dashboard 수정·배포는 별도 Main 세션에 인계했으나 완료 통지는 받지 못했다.
    CPU 부분집합 성공은 FULL·Dashboard 완료가 아니다.
