@@ -328,7 +328,7 @@ function Funnel({ namespace, from, context, more, refetchPlans, checking }: { na
       <Facts items={[
         ["모델", d.model],
         ["장비", `${d.node} · ${d.deviceClass}`],
-        ["실행 방식", `${d.path} · 전력 모드 ${v.powerMode}`],
+        ["실행 방식", `${pathLabel(d.path)} · 전력 모드 ${v.powerMode}`],
         ["크기별 반복", `한 번에 ${sizes.join(", ")}건씩 · 크기마다 ${v.trials}번`],
         ["CPU", `${v.cpu}개${v.affinity.length ? ` · 코어 ${v.affinity.join(", ")}` : ""}`],
         ["측정 방식", v.protocol.from ? "이전 측정과 같아요" : "직접 정했어요"],
