@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
@@ -202,9 +203,18 @@ func TestObserverDoesNotGeneralizePreApplyFailures(t *testing.T) {
 func TestObserverDoesNotUseSettlingFailureAsCompletion(t *testing.T) {
 	pod := readyPod("serving", "containerd://same", 0)
 	kubeClient := newClient(t, service(), pod)
-	request := testRequest()
-	request.ObservationTimeout = 8 * time.Millisecond
-	observer := newObserver(t, kubeClient, request)
+	ready, postReadBackProbe := false, false
+	reader := interceptor.NewClient(kubeClient, interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if ready {
+				// Expire the post-read-back readiness probe, not the native bootstrap.
+				postReadBackProbe = true
+				return context.DeadlineExceeded
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
+	observer := newObserver(t, reader, testRequest())
 	times := actuationTimes()
 	failed := successfulActuation(times)
 	failed.Status.Phase = edgev1alpha1.NodeActuationPhaseFailed
@@ -218,9 +228,13 @@ func TestObserverDoesNotUseSettlingFailureAsCompletion(t *testing.T) {
 		if err := kubeClient.Delete(context.Background(), pod.DeepCopy()); err != nil {
 			t.Fatalf("delete serving Pod: %v", err)
 		}
+		ready = true
 	})
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Observe() error = %v, want deadline", err)
+	}
+	if !postReadBackProbe {
+		t.Fatal("observer did not probe serving readiness after retaining the settling failure")
 	}
 	if raw.TargetReadBack == nil || raw.PostTransitionProcess != nil ||
 		raw.ActuationFailure != nil || raw.TargetReadBackFailure != nil {
@@ -415,7 +429,7 @@ func newObserver(t *testing.T, reader client.Reader, request transitionkube.Requ
 	return observer
 }
 
-func newClient(t *testing.T, objects ...client.Object) client.Client {
+func newClient(t *testing.T, objects ...client.Object) client.WithWatch {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
