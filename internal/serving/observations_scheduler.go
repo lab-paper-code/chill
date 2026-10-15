@@ -119,17 +119,16 @@ func (fact *windowLoadFact) add(event *RequestEvent) {
 
 // LoadWindow uses event-time [from,to), independently of archive rotation and
 // result cohort filters. Completed counts completion events, not received cohort.
-// ponytail: scan retained byte prefixes without an index; decode outside the
-// writer lock. Request fact allocation is limited to this receipt window.
 func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 	result := LoadWindow{From: from, To: to, Duration: to.Sub(from), Population: "all ingress receipt events; computable demand separately marked after authorization and input validation; event-time [from,to); one request = one input"}
 	if from.IsZero() || !from.Before(to) {
 		return result, failure("InvalidQuery", "positive explicit load window is required")
 	}
-	snapshot, err := j.snapshot("definitions", "requests")
+	snapshot, err := j.snapshot("definitions", observationRequestStream)
 	if err != nil {
 		return result, err
 	}
+	snapshot.selectLoadWindow(from, to)
 	definitions := map[string]*Definition{}
 	if err := snapshot.scan("definitions", func(record observationRecord) {
 		if record.Definition != nil {
@@ -140,7 +139,7 @@ func (j *Journal) LoadWindow(from, to time.Time) (LoadWindow, error) {
 	}
 	loads := map[string]*WorkloadLoad{}
 	facts := map[string]*windowLoadFact{}
-	if err := snapshot.scan("requests", func(record observationRecord) {
+	if err := snapshot.scan(observationRequestStream, func(record observationRecord) {
 		event := record.Request
 		if event == nil {
 			return
@@ -283,10 +282,17 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 	if from.IsZero() || !from.Before(to) {
 		return nil, failure("InvalidQuery", "positive explicit overhead window is required")
 	}
-	snapshot, err := j.snapshot("definitions", "requests")
+	snapshot, err := j.snapshot("definitions", observationRequestStream)
 	if err != nil {
 		return nil, err
 	}
+	prefixes := snapshot.streams[observationRequestStream][:0]
+	for _, prefix := range snapshot.streams[observationRequestStream] {
+		if !prefix.requestCensus.trusted || prefix.requestCensus.receivedAt.intersects(from, to) {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	snapshot.streams[observationRequestStream] = prefixes
 	definitions := map[string]*Definition{}
 	if err := snapshot.scan("definitions", func(record observationRecord) {
 		if record.Definition != nil {
@@ -296,7 +302,7 @@ func (j *Journal) ObservedOverhead(from, to time.Time) (map[string]ObservedOverh
 		return nil, err
 	}
 	facts := map[string]*overheadFact{}
-	if err := snapshot.scan("requests", func(record observationRecord) {
+	if err := snapshot.scan(observationRequestStream, func(record observationRecord) {
 		event := record.Request
 		if event == nil || event.Outcome != outcomeCompleted || !observationInInterval(event.ReceivedAt, from, to) {
 			return

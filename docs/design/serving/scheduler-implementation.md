@@ -277,6 +277,16 @@ GPU UUID와 whole-device exclusive allocation을 확인한다. measured peak mem
 Serving 부가 예산은 feasible 제약이다. Pod마다 한 prepared runner와 순차 batch를
 사용하며 replica는 Pod 수로 나타낸다.
 
+비서빙 Pod의 effective CPU request는 Node별 millicore 합계를 먼저 구한 뒤
+한 번만 올림하여 quota 수량 예산으로 기록하고, effective memory request도 합산한다.
+이 quota 합계는 OS affinity/exclusivity 관측의 증거가 아니다. 명시적 exclusive CPU
+예약이 전체 millicore 합계를 덮지 못하면 Node는 ready가 아니며, 비서빙 Pod의
+물리 GPU 소유권 미관측도 계속 차단한다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
+GPU 소유권의 미관측은 해당 Node의 `ready=false`와 사유로 남기며 그 Node를
+사용하는 후보를 Pending으로 둔다. 다른 확인된 CPU Node의 후보를 전역 오류로
+막지 않는다. 격리된 Node도 전체 POOL 에너지·meter 범위에서 제외하지 않고,
+실제 자원 예산 및 전역 native/profile 관측 공백의 차단은 유지한다.
+
 ### 5.3 전환·에너지·선택
 
 모든 affected UID의 최종 상태와 전환 중 ready capacity를 같은 시간축으로 replay한다.
@@ -329,16 +339,6 @@ controls OFF의 manual `staticRouting`도 기존 running route가 있으면 덮�
 동일 comparison horizon에서 모든 POOL Node의 baseline을 한 번 적분한다.
 active/inactive/temporary Node를 포함한다. 원자 동작 구간의 wall joules는 그 구간의
 baseline 소비를 **대체**하고, 실제 serving execution의 incremental energy만 더한다.
-비서빙 Pod의 effective CPU request는 Node별 millicore 합계를 먼저 구한 뒤
-한 번만 올림하여 quota 수량 예산으로 기록하고, effective memory request도 합산한다.
-이 quota 합계는 OS affinity/exclusivity 관측의 증거가 아니다. 명시적 exclusive CPU
-예약이 전체 millicore 합계를 덮지 못하면 Node는 ready가 아니며, 비서빙 Pod의
-물리 GPU 소유권 미관측도 계속 차단한다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
-GPU 소유권의 미관측은 해당 Node의 `ready=false`와 사유로 남기며 그 Node를
-사용하는 후보를 Pending으로 둔다. 다른 확인된 CPU Node의 후보를 전역 오류로
-막지 않는다. 격리된 Node도 전체 POOL 에너지·meter 범위에서 제외하지 않고,
-실제 자원 예산 및 전역 native/profile 관측 공백의 차단은 유지한다.
-
 전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
 서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.
 
@@ -458,7 +458,7 @@ Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte
 완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
 진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
 incomplete 상태에 그대로 남는다. 기존 시작 시 전체 stream 검증·decode pass와 성공한
-scheduler append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
+scheduler/request append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
 검증된 prefix byte 수를 캡처한다. 별도 저장 index나 decoded history cache는 없다.
 실제 파일 길이가 census prefix와 다르거나 census를 신뢰할 수 없으면 해당 prefix
 전체를 보수적으로 읽는다. window metadata 전체는 gap·완전성 판정용으로 유지한다.
@@ -472,6 +472,12 @@ sample 시각 범위, 모든 nil-policy window, membership transition과 최신 
 정확한 Node·meter·scope·source와 가장 가까운 유효 표본 선택은 기존 reducer가 담당하며,
 서로 다른 series의 전역 최근접 표본으로 nil-policy window를 제거하지 않는다.
 결정·profile 분포 대신 집계에 필요한 실제 표본·meter·coverage·membership만 decode한다.
+capture의 arrivals/load는 receipt 사건의 실제 `ReceivedAt`(없으면 `At`)와 나머지 사건의
+`At` 범위로 request prefix를 선택한다. 선택될 receipt가 있을 수 있는 최초 prefix 뒤는
+`ReceivedAt` 없는 늦은 definition/accepted/outcome 사실도 합치도록 끝까지 유지한다.
+완료 overhead는 모든 request의 실제 `ReceivedAt` 범위를 사용하며 실행 조건 검증과
+누락 제외는 기존 reducer에 둔다. 두 조회 모두 전체 definitions와 window metadata를
+보존하고, 오래된 append window·역순 시각·알 수 없는 prefix를 빈 성공으로 바꾸지 않는다.
 두 작은 projection은 기존 jsoniter 의존성으로 읽되, 건너뛴 subtree의 잘못된
 숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
 측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·

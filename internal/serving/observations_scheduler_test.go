@@ -437,3 +437,155 @@ func TestSchedulerRawPageRejectsMalformedIgnoredSubtrees(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestCensusKeepsLateFactsAcrossWindows(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	rotate := func() {
+		t.Helper()
+		if err := j.finish(); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.start(time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendEvents := func(events ...RequestEvent) {
+		t.Helper()
+		for _, event := range events {
+			if err := j.RequestEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := from.Add(time.Minute)
+	d := &Definition{UID: "workload", Generation: 1}
+	if err := j.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	rotate() // Definition and receipt must not need the same append window.
+	appendEvents(RequestEvent{RequestID: "old", Kind: phaseReceived, At: from.Add(-time.Hour)})
+	rotate()
+	appendEvents(RequestEvent{RequestID: "arrival", Kind: phaseReceived, At: to.Add(time.Hour), ReceivedAt: from})
+	rotate()
+	appendEvents(
+		RequestEvent{RequestID: "arrival", Kind: "validated", At: to.Add(2 * time.Hour), WorkloadUID: d.UID, Definition: d.Identity()},
+		RequestEvent{RequestID: "arrival", Kind: phaseAccepted, At: to.Add(2 * time.Hour), LifetimeNanos: int64(time.Second)},
+	)
+	rotate()
+	appendEvents(RequestEvent{RequestID: "arrival", Kind: eventResponseFinished, At: from.Add(-time.Hour), Outcome: outcomeCompleted})
+	check := func() {
+		t.Helper()
+		arrivals, err := j.SchedulerArrivals(from, to)
+		if err != nil || len(arrivals) != 1 {
+			t.Fatalf("receipt-time selection lost arrival: %+v %v", arrivals, err)
+		}
+		if a := arrivals[0]; a.ID != "arrival" || !a.At.Equal(from) || a.Definition == nil || a.Definition.Identity() != d.Identity() ||
+			!a.Compute || !a.Accepted || a.Outcome != outcomeCompleted || a.Lifetime != time.Second {
+			t.Fatalf("later facts without ReceivedAt or older definition were pruned: %+v", a)
+		}
+	}
+	check()
+	if err := j.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	j, err = NewJournal(j.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check()
+}
+
+func TestRequestCensusUsesReceiptTimeForOverhead(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := from.Add(time.Minute)
+	d := &Definition{UID: "workload", Generation: 1, Model: Model{UID: "model", Generation: 1, Paths: []ModelPath{{Name: "native", Artifact: "artifact"}}}}
+	if err := j.DefinitionRecord(d); err != nil {
+		t.Fatal(err)
+	}
+	assignment := &Assignment{Instance: "physical", Node: NodeReference{Name: "node", UID: "node-uid"}, Profile: "profile", Artifact: "artifact", ExecutionPath: "native"}
+	exchange := RequestEvent{
+		RequestID: "measured", Kind: eventBackendExchangeFinished, At: to.Add(3 * time.Hour), ReceivedAt: from,
+		Outcome: outcomeCompleted, WorkloadUID: d.UID, Definition: d.Identity(), Assignment: assignment,
+		NativeProgress:  &BackendProgress{Phase: phaseFinished, ProfileID: "profile", ExecutionComplete: true, NativeElapsedMS: 6},
+		ClientSpanNanos: int64(10 * time.Millisecond), ElapsedNanos: int64(20 * time.Millisecond),
+	}
+	if err := j.RequestEvent(exchange); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.start(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequestEvent(RequestEvent{RequestID: exchange.RequestID, Kind: eventResponseFinished, At: from.Add(-2 * time.Hour), ReceivedAt: from, Outcome: outcomeCompleted, ElapsedNanos: int64(23 * time.Millisecond)}); err != nil {
+		t.Fatal(err)
+	}
+	overheads, err := j.ObservedOverhead(from, to)
+	if err != nil || len(overheads) != 1 || overheads[assignment.Instance].Completion != 17*time.Millisecond || overheads[assignment.Instance].Requests != 1 {
+		t.Fatalf("receipt-based overhead changed across append windows: %+v %v", overheads, err)
+	}
+	if overheads, err := j.ObservedOverhead(to.Add(4*time.Hour), to.Add(5*time.Hour)); err != nil || len(overheads) != 0 {
+		t.Fatalf("missing overhead became a fabricated zero measurement: %+v %v", overheads, err)
+	}
+}
+
+func TestRequestCensusKeepsUnknownPrefixesAndIncompleteMetadata(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := from.Add(time.Minute)
+	if err := j.RequestEvent(RequestEvent{RequestID: "old", Kind: phaseReceived, At: from.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if arrivals, err := j.SchedulerArrivals(from, to); err != nil || len(arrivals) != 0 {
+		t.Fatalf("old facts became current arrivals: %+v %v", arrivals, err)
+	}
+	// An empty pruned stream must not hide overlapping incomplete metadata.
+	current := j.windows[j.active].StartedAt
+	j.windows[j.active].Incomplete = true
+	if load, err := j.LoadWindow(current, current.Add(time.Second)); err != nil || len(load.Arrivals) != 0 || len(load.IncompleteWindows) != 1 {
+		t.Fatalf("pruned metadata completeness was lost: %+v %v", load, err)
+	}
+	if _, err := j.ObservedOverhead(current, current.Add(time.Second)); err == nil {
+		t.Fatal("empty pruned overhead ignored incomplete window metadata")
+	}
+	// Direct writes bypass counted appends: changed prefixes must be scanned
+	// even when their known bounds say the query is empty.
+	event := RequestEvent{RequestID: "uncounted", Kind: phaseReceived, At: from.Add(-time.Hour), ReceivedAt: from}
+	if err := json.NewEncoder(j.files[observationRequestStream]).Encode(observationRecord{SchemaVersion: observationSchema, Window: j.windows[j.active].ID, Request: &event}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.start(time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequestEvent(RequestEvent{RequestID: event.RequestID, Kind: eventResponseFinished, At: from.Add(-time.Hour), Outcome: outcomeIncomplete}); err != nil {
+		t.Fatal(err)
+	}
+	arrivals, err := j.SchedulerArrivals(from, to)
+	if err != nil || len(arrivals) != 1 || arrivals[0].ID != event.RequestID || arrivals[0].Outcome != outcomeIncomplete {
+		t.Fatalf("unknown prefix or its later facts became an empty success: %+v %v", arrivals, err)
+	}
+	if _, err := j.files[observationRequestStream].WriteString("{not-json}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.ObservedOverhead(from, to); err == nil {
+		t.Fatal("unknown corrupt prefix became an empty overhead success")
+	}
+}

@@ -23,8 +23,8 @@ func observationJSONSyntaxError(raw []byte) error {
 	return json.Unmarshal(raw, &invalid)
 }
 
-// Scheduler census bounds describe actual event times, never append-window
-// wall times. They summarize only the validated/counted byte prefix.
+// Census bounds describe actual event times, never append-window wall times.
+// They summarize only the validated/counted byte prefix.
 type observationTimeBounds struct {
 	min, max time.Time
 	set      bool
@@ -81,6 +81,27 @@ func (c *schedulerWindowCensus) add(event *SchedulerObservation) {
 	}
 }
 
+type requestWindowCensus struct {
+	prefixBytes                    int64
+	trusted                        bool
+	eventAt, receiptAt, receivedAt observationTimeBounds
+}
+
+func (c *requestWindowCensus) add(event *RequestEvent) {
+	if event == nil {
+		return
+	}
+	at := event.At
+	if event.Kind == phaseReceived {
+		if !event.ReceivedAt.IsZero() {
+			at = event.ReceivedAt
+		}
+		c.receiptAt.add(at)
+	}
+	c.eventAt.add(at)
+	c.receivedAt.add(event.ReceivedAt)
+}
+
 // observationSnapshot pins complete append prefixes, not decoded history. All
 // streams in one query share a single capture boundary; readers never hold the
 // writer mutex while reading bytes, decoding records or reducing observations.
@@ -91,10 +112,11 @@ type observationSnapshot struct {
 }
 
 type observationStreamPrefix struct {
-	window int
-	path   string
-	bytes  int64
-	census schedulerWindowCensus
+	window        int
+	path          string
+	bytes         int64
+	census        schedulerWindowCensus
+	requestCensus requestWindowCensus
 }
 
 func (j *Journal) snapshot(streams ...string) (*observationSnapshot, error) {
@@ -118,11 +140,32 @@ func (j *Journal) snapshot(streams ...string) (*observationSnapshot, error) {
 				prefix.census = j.schedulerCensus[window.ID]
 				prefix.census.trusted = prefix.census.trusted && prefix.bytes == prefix.census.prefixBytes
 			}
+			if stream == observationRequestStream {
+				prefix.requestCensus = j.requestCensus[window.ID]
+				prefix.requestCensus.trusted = prefix.requestCensus.trusted && prefix.bytes == prefix.requestCensus.prefixBytes
+			}
 			prefixes = append(prefixes, prefix)
 		}
 		s.streams[stream] = prefixes
 	}
 	return s, nil
+}
+
+// Keep all later facts after any possible selected receipt: frozen context and
+// outcomes may arrive in later windows without ReceivedAt.
+func (s *observationSnapshot) selectLoadWindow(from, to time.Time) {
+	prefixes := s.streams[observationRequestStream][:0]
+	keepFollowingFacts := false
+	for _, prefix := range s.streams[observationRequestStream] {
+		census := prefix.requestCensus
+		if !census.trusted || census.receiptAt.intersects(from, to) {
+			keepFollowingFacts = true
+		}
+		if keepFollowingFacts || census.eventAt.intersects(from, to) {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	s.streams[observationRequestStream] = prefixes
 }
 
 func (s *observationSnapshot) scan(stream string, visit func(observationRecord)) error {

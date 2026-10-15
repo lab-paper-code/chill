@@ -19,6 +19,7 @@ import (
 
 const observationSchema = "chill.dacs.io/serving-observations.v1alpha2"
 const observationSchedulerStream = "scheduler"
+const observationRequestStream = "requests"
 
 type JournalConfig struct {
 	Directory   string
@@ -72,7 +73,7 @@ type JournalHealth struct {
 	Windows []ObservationWindow `json:"windows"`
 }
 
-// Journal keeps raw facts in files and a bounded, per-window scheduler census;
+// Journal keeps raw facts in files and bounded, per-window event censuses;
 // queries capture both under the writer lock and scan selected prefixes outside it.
 type Journal struct {
 	mu              sync.Mutex
@@ -81,19 +82,21 @@ type Journal struct {
 	active          int
 	files           map[string]*os.File
 	schedulerCensus map[string]schedulerWindowCensus
-	schedulerWriter schedulerCountingWriter
+	schedulerWriter observationCountingWriter
+	requestCensus   map[string]requestWindowCensus
+	requestWriter   observationCountingWriter
 	closed          bool
 	lastError       error
 }
 
 // Counting the existing encoder writes avoids encoding or retaining records a
 // second time. Direct file rewrites do not advance this count and force a scan.
-type schedulerCountingWriter struct {
+type observationCountingWriter struct {
 	*os.File
 	bytes int64
 }
 
-func (w *schedulerCountingWriter) Write(data []byte) (int, error) {
+func (w *observationCountingWriter) Write(data []byte) (int, error) {
 	n, err := w.File.Write(data)
 	w.bytes += int64(n)
 	return n, err
@@ -110,7 +113,11 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{config: config, active: -1, schedulerCensus: map[string]schedulerWindowCensus{}}
+	j := &Journal{
+		config: config, active: -1,
+		schedulerCensus: map[string]schedulerWindowCensus{},
+		requestCensus:   map[string]requestWindowCensus{},
+	}
 	for _, entry := range entries {
 		// Hidden directories are unpublished staging, never observation windows.
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
@@ -134,7 +141,7 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 		}
 		j.windows = append(j.windows, window)
 	}
-	streams := []string{"definitions", "requests", "management", observationSchedulerStream}
+	streams := []string{"definitions", observationRequestStream, "management", observationSchedulerStream}
 	read, err := j.snapshot(streams...)
 	if err != nil {
 		return nil, err
@@ -146,6 +153,11 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 				census.add(record.Scheduler)
 				j.schedulerCensus[record.Window] = census
 			}
+			if stream == observationRequestStream {
+				census := j.requestCensus[record.Window]
+				census.add(record.Request)
+				j.requestCensus[record.Window] = census
+			}
 		}); err != nil {
 			return nil, err
 		}
@@ -155,6 +167,16 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 				census := j.schedulerCensus[window.ID]
 				census.prefixBytes, census.trusted = prefix.bytes, !window.Incomplete
 				j.schedulerCensus[window.ID] = census
+			}
+		}
+		if stream == observationRequestStream {
+			for _, prefix := range read.streams[stream] {
+				window := read.windows[prefix.window]
+				census := j.requestCensus[window.ID]
+				// Bounds cover accepted newline-framed facts even when metadata
+				// already marks a crash or ignored torn tail incomplete.
+				census.prefixBytes, census.trusted = prefix.bytes, true
+				j.requestCensus[window.ID] = census
 			}
 		}
 	}
@@ -235,7 +257,7 @@ func (j *Journal) start(now time.Time) (result error) {
 	if err := writeWindowMetadata(directory, window); err != nil {
 		return err
 	}
-	for _, stream := range []string{"definitions", "requests", "management", observationSchedulerStream} {
+	for _, stream := range []string{"definitions", observationRequestStream, "management", observationSchedulerStream} {
 		file, err := os.OpenFile(filepath.Join(directory, stream+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
@@ -250,6 +272,10 @@ func (j *Journal) start(now time.Time) (result error) {
 	if err != nil {
 		return err
 	}
+	requestInfo, err := files[observationRequestStream].Stat()
+	if err != nil {
+		return err
+	}
 	if err := os.Rename(directory, filepath.Join(j.config.Directory, window.ID)); err != nil {
 		return err
 	}
@@ -257,7 +283,9 @@ func (j *Journal) start(now time.Time) (result error) {
 	j.active = len(j.windows) - 1
 	j.files = files
 	j.schedulerCensus[window.ID] = schedulerWindowCensus{prefixBytes: info.Size(), trusted: true}
-	j.schedulerWriter = schedulerCountingWriter{File: files[observationSchedulerStream], bytes: info.Size()}
+	j.schedulerWriter = observationCountingWriter{File: files[observationSchedulerStream], bytes: info.Size()}
+	j.requestCensus[window.ID] = requestWindowCensus{prefixBytes: requestInfo.Size(), trusted: true}
+	j.requestWriter = observationCountingWriter{File: files[observationRequestStream], bytes: requestInfo.Size()}
 	return nil
 }
 
@@ -292,6 +320,16 @@ func (j *Journal) append(stream string, record observationRecord) error {
 			census.trusted = false
 		}
 		j.schedulerCensus[record.Window] = census
+	} else if stream == observationRequestStream {
+		err = json.NewEncoder(&j.requestWriter).Encode(record)
+		census := j.requestCensus[record.Window]
+		if err == nil {
+			census.add(record.Request)
+			census.prefixBytes = j.requestWriter.bytes
+		} else {
+			census.trusted = false
+		}
+		j.requestCensus[record.Window] = census
 	} else {
 		err = json.NewEncoder(j.files[stream]).Encode(record)
 	}
@@ -314,7 +352,7 @@ func (j *Journal) RequestEvent(event RequestEvent) error {
 		return errors.New("request identity and event time are required")
 	}
 	// Producers supply classified codes, never transport bodies or credentials.
-	return j.append("requests", observationRecord{Request: &event})
+	return j.append(observationRequestStream, observationRecord{Request: &event})
 }
 
 func (j *Journal) ManagementEvent(event ManagementEvent) error {
@@ -537,7 +575,7 @@ func (read *observationSnapshot) collectObservationFacts(
 		return nil, nil, err
 	}
 	requests := make(map[string]*requestFacts)
-	if err := read.scan("requests", func(r observationRecord) {
+	if err := read.scan(observationRequestStream, func(r observationRecord) {
 		e := r.Request
 		if e == nil || e.WorkloadUID != result.UID {
 			return
@@ -668,7 +706,7 @@ func (j *Journal) Query(uid string, from, to time.Time, definitions, outcomes []
 		}
 		offset = n
 	}
-	read, err := j.snapshot("definitions", "requests", "management")
+	read, err := j.snapshot("definitions", observationRequestStream, "management")
 	if err != nil {
 		return result, err
 	}
@@ -707,7 +745,7 @@ type unfinishedBackend struct {
 // Startup reads existing facts only. It does not replay inference or resume an
 // interrupted management operation.
 func (j *Journal) runtimeFacts() (map[string]*Definition, []unfinishedBackend, error) {
-	read, err := j.snapshot("definitions", "requests")
+	read, err := j.snapshot("definitions", observationRequestStream)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -722,7 +760,7 @@ func (j *Journal) runtimeFacts() (map[string]*Definition, []unfinishedBackend, e
 	assigned := map[string]*unfinishedBackend{}
 	responded := map[string]bool{}
 	ended := map[string]bool{}
-	if err := read.scan("requests", func(record observationRecord) {
+	if err := read.scan(observationRequestStream, func(record observationRecord) {
 		e := record.Request
 		if e == nil {
 			return
