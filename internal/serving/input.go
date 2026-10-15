@@ -12,6 +12,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
+const tensorDataCountMismatch = "input tensor %q data count does not match its sample shape"
+
 // InferenceInput is one sample. The batch axis is added only by the backend
 // adapter; external callers cannot override the registered model or SLO.
 type InferenceInput struct {
@@ -85,6 +87,9 @@ func inputMatches(input *InferenceInput, contract []modelcompat.InputTensor) boo
 }
 
 func validateTensorData(input TensorInput, expected int) error {
+	if input.Datatype != "BOOL" && input.Datatype != "BYTES" {
+		return validateNumericTensorData(input, expected)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(input.Data))
 	decoder.UseNumber()
 	start, err := decoder.Token()
@@ -97,17 +102,17 @@ func validateTensorData(input TensorInput, expected int) error {
 		if err != nil {
 			return failure("InvalidInput", "input tensor %q contains invalid JSON data", input.Name)
 		}
-		if !validDatum(input.Datatype, value) {
+		if !validNonNumericDatum(input.Datatype, value) {
 			return failure("InvalidInput", "input tensor %q data is outside the supported %s value range", input.Name, input.Datatype)
 		}
 		count++
 		if count > expected {
-			return failure("InvalidInput", "input tensor %q data count does not match its sample shape", input.Name)
+			return failure("InvalidInput", tensorDataCountMismatch, input.Name)
 		}
 	}
 	end, err := decoder.Token()
 	if err != nil || end != json.Delim(']') || count != expected {
-		return failure("InvalidInput", "input tensor %q data count does not match its sample shape", input.Name)
+		return failure("InvalidInput", tensorDataCountMismatch, input.Name)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return failure("InvalidInput", "input tensor %q data contains a trailing JSON value", input.Name)
@@ -115,7 +120,34 @@ func validateTensorData(input TensorInput, expected int) error {
 	return nil
 }
 
-func validDatum(datatype string, value any) bool {
+func validateNumericTensorData(input TensorInput, expected int) error {
+	if !json.Valid(input.Data) {
+		return failure("InvalidInput", "input tensor %q contains invalid JSON data", input.Name)
+	}
+	data := bytes.TrimSpace(input.Data)
+	if len(data) < 2 || data[0] != '[' || data[len(data)-1] != ']' {
+		return failure("InvalidInput", "input tensor %q data must be a flat JSON array", input.Name)
+	}
+	data = bytes.TrimSpace(data[1 : len(data)-1])
+	count := 0
+	for len(data) > 0 {
+		value, rest, _ := bytes.Cut(data, []byte(","))
+		if !validNumber(input.Datatype, string(bytes.TrimSpace(value))) {
+			return failure("InvalidInput", "input tensor %q data is outside the supported %s value range", input.Name, input.Datatype)
+		}
+		count++
+		if count > expected {
+			return failure("InvalidInput", tensorDataCountMismatch, input.Name)
+		}
+		data = rest
+	}
+	if count != expected {
+		return failure("InvalidInput", tensorDataCountMismatch, input.Name)
+	}
+	return nil
+}
+
+func validNonNumericDatum(datatype string, value any) bool {
 	if datatype == "BOOL" {
 		_, ok := value.(bool)
 		return ok
@@ -124,10 +156,10 @@ func validDatum(datatype string, value any) bool {
 		_, ok := value.(string)
 		return ok
 	}
-	number, ok := value.(json.Number)
-	if !ok {
-		return false
-	}
+	return false
+}
+
+func validNumber(datatype, number string) bool {
 	var bits int
 	switch datatype {
 	case "INT8", "UINT8":
@@ -143,16 +175,16 @@ func validDatum(datatype string, value any) bool {
 		if datatype == "FP32" {
 			bits = 32
 		}
-		parsed, err := strconv.ParseFloat(string(number), bits)
+		parsed, err := strconv.ParseFloat(number, bits)
 		return err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) && (datatype != "FP16" || math.Abs(parsed) <= 65504)
 	default:
 		// The numeric/bool JSON contract covers the initialized runner's types.
 		return false
 	}
 	if datatype[0] == 'U' {
-		_, err := strconv.ParseUint(string(number), 10, bits)
+		_, err := strconv.ParseUint(number, 10, bits)
 		return err == nil
 	}
-	_, err := strconv.ParseInt(string(number), 10, bits)
+	_, err := strconv.ParseInt(number, 10, bits)
 	return err == nil
 }
