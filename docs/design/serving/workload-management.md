@@ -574,7 +574,20 @@ SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 schedu
 | `observationStorage.size:1Gi`, `storageClassName:null` | `/data`의 유지되는 private RWO PVC; null은 cluster default, 빈 문자열은 no StorageClass |
 | `observationStorage.directory:/data` | `--observation-directory`; stored-contract cutover는 같은 PVC의 새 경로를 선택하고 이전 raw 기록은 보존 |
 | `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
+| `kubeAPI.qps:50`, `kubeAPI.burst:100` | 항상 명시하는 `--kube-api-qps`, `--kube-api-burst`; owner 시작 경계에서 양수·유한 float32 범위를 검증 |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
+
+Owner의 Kubernetes API client budget은 `rest.Config`에 두 client 생성 전에 적용한다.
+양수 QPS를 받은 typed clientset은 TokenReview·SAR와 다른 typed API group 사이에
+하나의 limiter를 공유하지만, 별도로 생성한 uncached Store client는 독립된 limiter를
+사용하므로 50 QPS가 owner 전체 API 요청의 합산 상한은 아니다. 기본 50/100은
+후보 운영 budget이며 측정된 최적값이나 API server/APF 처리 용량 보장이 아니다.
+요청마다 기존 TokenReview와 SAR를 수행하며 인증 cache나 fail-closed 완화는 없다.
+향후 각 실험에는 두 flag를 포함한 실제 실행 인자를 고정·보존한다.
+
+실제 8 requests/s 실행에서 기본 5/10 limiter의 TokenReview 대기가 약 5초에 달해
+명시적 budget을 추가했다. 실패 집계·미해명 decision 공백·재검증 결과는
+[실클러스터 제어 기록](../../plans/2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
 
 측정·프로파일 변경의 caller 권한은 owner ServiceAccount와 별개다.
 차트의 unbound `FULLNAME-serving-manager` ClusterRole은 허용 namespace별 정확한

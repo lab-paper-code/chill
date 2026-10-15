@@ -379,6 +379,8 @@ servingEntrypoint:
     apiServer: ""
     tokenFile: ""
     caFile: ""
+    qps: 50
+    burst: 100
   service:
     type: ClusterIP
   nodeSelector: {}

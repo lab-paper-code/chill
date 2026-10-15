@@ -65,6 +65,7 @@ func TestMaterializerFlagsBypassOwnerRequirements(t *testing.T) {
 		"--materialize-profile", "--store-name=profiles", "--store-endpoint=http://store:9000",
 		"--store-bucket=profiles", "--store-region=region", "--profile-object-key=bundle",
 		"--profile-object-size=3", "--profile-output=" + output,
+		"--kube-api-qps=NaN", "--kube-api-burst=0",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,5 +80,28 @@ func TestMaterializerFlagsBypassOwnerRequirements(t *testing.T) {
 	opts.materializeProfile = false
 	if err := opts.validate(); err == nil {
 		t.Fatal("normal owner mode unexpectedly bypassed validation")
+	}
+}
+
+func TestOwnerRejectsInvalidKubernetesBudget(t *testing.T) {
+	for _, args := range [][]string{
+		{"--kube-api-qps=0"}, {"--kube-api-qps=NaN"}, {"--kube-api-qps=+Inf"},
+		{"--kube-api-qps=1e100"}, {"--kube-api-qps=1e-100"}, {"--kube-api-burst=0"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var opts options
+			flags := flag.NewFlagSet("owner", flag.ContinueOnError)
+			opts.bindFlags(flags)
+			base := []string{
+				"--serving-namespace=serving", "--tls-cert=/cert", "--tls-key=/key",
+				"--observation-directory=/observations",
+			}
+			if err := flags.Parse(append(base, args...)); err != nil {
+				t.Fatal(err)
+			}
+			if err := opts.validate(); err == nil {
+				t.Fatal("invalid Kubernetes client budget accepted")
+			}
+		})
 	}
 }

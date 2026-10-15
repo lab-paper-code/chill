@@ -110,6 +110,8 @@ spec:
             {{- range $profileNamespaces }}
             - {{ printf "--profile-namespace=%s" . | quote }}
             {{- end }}
+            - {{ printf "--kube-api-qps=%v" .Values.servingEntrypoint.kubeAPI.qps | quote }}
+            - {{ printf "--kube-api-burst=%v" .Values.servingEntrypoint.kubeAPI.burst | quote }}
             {{- with .Values.servingEntrypoint.kubeAPI.apiServer }}
             - {{ printf "--kube-api-server=%s" . | quote }}
             {{- end }}

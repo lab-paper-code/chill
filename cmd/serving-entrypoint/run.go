@@ -27,6 +27,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
+	config.QPS = float32(opts.kubeAPIQPS)
+	config.Burst = opts.kubeAPIBurst
 	kube, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
