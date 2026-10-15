@@ -12,6 +12,8 @@ firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 동일 실행 경�
 연결했다. 실제 큐·batch·policy 증거, 후보 replay와 원자 전환 및 측정은
 [스케줄러 구현 설계](scheduler-implementation.md)에 기록한다.
 검증 결과는 [Workload 계약](workload-management.md)과 SRS 대조의 검증 상태에서 구분한다.
+Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을 받으며, 전처리 module이 runner
+안에서 모델 입력을 만든다. 설계와 검증 기록은 [이기종 워크로드 구현 설계](heterogeneous-workloads.md)에 있다.
 
 ## 구현 계획
 
@@ -482,3 +484,5 @@ cgroup memory peak와 root RAPL 읽기도 smoke로 확인했다.
 ARM/RKNN hardware와 live testbed는 검증하지 않았다. 이전 test나 Helm 실행을 최신 refactor의
 모든 gate 통과로 설명하지 않는다. 정확한 배포 값과 변경 기록은
 [Workload 관리 계약 12장](workload-management.md#12-배포와-구현-검증-경계)을 따른다.
+원시 표본 경로는 runtime image의 CPU runner smoke까지 확인했고 live cluster, Jetson과 RKNN 실행,
+혼합 부하 평가는 [이기종 워크로드 9.1절](heterogeneous-workloads.md#91-검증-기록)의 미검증 범위다.

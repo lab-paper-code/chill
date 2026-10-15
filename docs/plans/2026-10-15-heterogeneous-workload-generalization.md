@@ -70,7 +70,12 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 - 1단계 spec, 2단계 SRS, 3단계 구현 설계와 ADR 0021을 독립 검수 후 커밋했다.
 - worktree의 `docs/spec/00_measurement.md`에 측정 조건, 표본 추출, 원시 trial 보존을 반영했다.
   이 파일은 추적되지 않으므로 병합 시 main 사본에 수동으로 옮긴다.
-- 4단계 구현은 [구현 설계](../design/serving/heterogeneous-workloads.md) 9장의 커밋 단위로 진행한다.
-  병렬 단위는 별도 worktree(`../chill-hetero-u*`)에서 구현하고 이 브랜치로 합친다.
-- 병합 시 기존 ModelSpec, Workload, 측정 객체와 Evidence Store 객체, serving journal을 삭제하고
-  다시 등록하고 측정한다(구현 설계 8장).
+- 4단계 구현은 [구현 설계](../design/serving/heterogeneous-workloads.md) 9장의 단위 1-8로 이 브랜치에
+  들어왔다. 검증 기록과 미검증 범위는 구현 설계 9.1절에 있다.
+- 병합 시 절차:
+  1. worktree의 `docs/spec/00_measurement.md`를 main 사본에 옮긴다.
+  2. 구현 설계 8장의 정리 대상(ModelSpec, Workload, 측정 객체, Evidence Store 객체, serving journal)을 삭제한다.
+  3. ModelSpec, Preprocessor, Dataset, Workload를 다시 등록한다.
+  4. 모델, 전처리, 데이터셋 carrier와 firstfloor runtime image를 빌드하고 push한다.
+  5. 다시 측정하고 scheduler 설정의 campaign과 profile을 다시 선택한다.
+  6. live cluster, Jetson과 RKNN 장비, 실제 Node의 profiling Job, 혼합 부하 평가를 검증한다.

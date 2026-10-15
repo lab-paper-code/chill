@@ -87,6 +87,8 @@ spec:
 
 - `format`은 `JPEG` 또는 `UTF8`이다. `maxBytes`는 입력 필드에 필수이고 1 이상이다.
   출력 필드는 이름과 형식만 가진다. 필드 이름은 계약 안에서 유일하다.
+- 입력, 출력, 레코드 필드 이름은 runtime이 파일 이름과 key로 쓰므로 경로 요소 하나이며(`/`, `\`를 담지
+  않고 `.`, `..`가 아님) 256 bytes 이하다. CRD pattern과 `MaxLength`가 이를 확인한다.
 - `artifacts`는 CRD marker `MinItems=1`로 하나 이상이다. `artifacts[].target`은 `DP-02`의 대상 모델과
   모델 산출물이며 같은 대상을 가진 항목은 하나다.
 - `source`는 `ModelArtifactSource`와 같은 의미의 carrier image, Kubernetes 아키텍처, clean absolute
@@ -135,10 +137,12 @@ spec:
 ```
 
 - `files`는 1개 이상의 clean absolute 경로이고 basename이 서로 다르다. 실행 위치에는
-  `/model/<basename>`으로 전달한다.
+  `/model/<basename>`으로 전달한다. session key인 확장자를 뺀 이름(stem)도 서로 달라야 하고,
+  RKNN 산출물은 `.rknn` 파일 하나다(`modelcompat.ValidateModelFileNames`).
 - runtime은 모든 파일을 함께 적재한다. ORT는 파일마다 session 하나, RKNNLite는 파일 하나를 사용한다.
-- `input`은 RKNN 산출물에만 선언한다. RKNN delivery capability와 runner 검사가 이 선언을 사용하고
-  (`catalog.go:110-113`, `runner.py:248-256`), ONNX 산출물의 모델 입력은 전처리 산출물이 정한다.
+- `input`은 RKNN 산출물에만 있고 다른 형식의 산출물에서는 거부한다. RKNN delivery capability와 runner
+  검사가 이 선언을 사용하고(`catalog.go:110-113`, `runner.py:248-256`), ONNX 산출물의 모델 입력은 전처리
+  산출물이 정한다.
 - 실행 경로의 runtime family는 `firstfloor`다(5.6절). `validateExecutionRuntime`의 직접
   `rknnlite`, `onnxruntime` family 분기를 삭제한다(`catalog.go:103-131`).
 
@@ -271,6 +275,7 @@ base64 크기를 담을 수 있게 운영 설정으로 정한다(`handler.go:138
 (`runtime.go:225`). 원시 계약은 Workload의 모든 실행 경로에 공통이므로 경로 index,
 `RequestEvent.InputPath`, `SchedulerRequest.InputPath`, `SchedulerArrival.InputPath`, 경로별 route를
 삭제하고 Workload별 route 하나로 분배한다. `ModelPath.Tensors`와 `sameInputs`도 삭제한다.
+scheduler snapshot의 `routingCredits`는 Workload UID와 인스턴스 ID를 key로 가진다.
 
 ### 4.2 firstfloor 전달
 
@@ -342,7 +347,7 @@ runner는 module 호출 결과를 검사하는 유일한 경계다.
 
 `finishBatch`(`scheduler.go:544-583`)는 `items`로 성공 요청과 실패 요청을 나누고 `splitOutputs`는 성공
 요청에만 출력 원소를 나눈다. serving adapter는 `422`를 gateway 오류 코드 `PreprocessFailed`로,
-`batch_error`를 기존 backend 실패 결과로 기록하고 요청 응답에 사유를 담는다(`WM-29`).
+`batch_error`를 `BackendError`(HTTP `502`)로 기록하고 요청 응답에 사유를 담는다(`WM-29`).
 
 ### 4.5 생성형 실행
 
@@ -416,14 +421,13 @@ Workload를 선택한 측정 요청은 Dashboard가 Workload의 모델, 전처�
 |---|---|
 | `RunConfig.State`(`internal/profiling/run/types.go:96-106`) | `ArtifactPath`를 `ArtifactFiles []string`으로 바꾸고 `Preprocessor{Name, UID, Image, Architecture, Path, MaxNewTokens, Inputs, Outputs}` 추가 |
 | `RunConfig.Measurement`(`types.go:161-170`) | `InputGenerator`, `OutputValidation` 삭제. 활성 측정에 `Dataset{Name, UID, Image, Path}` 추가 |
-| `CurvePlanSpec`(`internal/profiling/derivation/curve_plan.go:94-113`) | `Artifact.Path`를 `Files`로 바꾸고 `Preprocessor{Name, Image, Architecture, Path, MaxNewTokens, Inputs, Outputs}` 추가 |
+| `CurvePlanSpec`(`internal/profiling/derivation/curve_plan.go:94-113`) | `Artifact.Path`를 `Files`로 바꾸고 `Tensor`를 삭제하며 `Preprocessor{Name, Image, Architecture, Path, MaxNewTokens, Inputs, Outputs}` 추가 |
 | `CurveProtocolContract`(`curve_plan.go:58-71`) | `InputGenerator`, `OutputValidation` 삭제. 활성 프로토콜에 `Dataset{Name, UID}` 추가 |
 
-Run 고정(`internal/profiling/profiler/preparation.go`)은 resolver가 읽은 Preprocessor와 Dataset으로
-다음을 확인한다. 선택한 모델 산출물을 대상으로 하는 전처리 산출물이 있고, 그 아키텍처가 대상 Node와
-같고, 데이터셋과 전처리가 `Compatible`이다. 데이터셋 수정은 이후 고정하는 Run부터 반영된다(`DP-10`).
-`KubernetesCandidateResolver`(`internal/profiling/profiler/kube/candidate_resolver.go:16-21`)는 두 객체를
-같은 cluster-scoped 읽기로 가져온다.
+`KubernetesCandidateResolver`(`internal/profiling/profiler/kube/candidate_resolver.go:16-21`)는 Preprocessor와
+Dataset을 같은 cluster-scoped 읽기로 가져오고, 선택한 모델 산출물을 대상으로 하는 전처리 산출물을
+고른다. Run 고정(`internal/profiling/profiler/preparation.go`)은 그 산출물의 아키텍처가 대상 Node와 같고
+데이터셋과 전처리가 `Compatible`인지 확인한다. 데이터셋 수정은 이후 고정하는 Run부터 반영된다(`DP-10`).
 
 ### 5.3 Job 전달
 
@@ -450,7 +454,8 @@ warmup은 runner의 `WARMUP_SAMPLE` 실행이고 측정 표본은 데이터셋�
 (`internal/profiling/derivation/types.go:31-37`)에 `recordIDs []string`, `units []int`,
 `preprocessMs`, `postprocessMs`, 생성형의 `firstTokenMs`를 더한다. `native_sample`
 (`measurement.py:107-124`)이 이 값을 채우고, 런타임 결과 검증은 두 배열 길이가 batch 크기와 같은지
-확인한다. projection과 derivation은 값을 복사해 보존한다. 측정량은 기존 n별 배치 실행시간 분포이며
+확인한다. 출력 계약 검사는 runner가 소유한다(4.4절).
+projection과 derivation은 값을 복사해 보존한다. 측정량은 기존 n별 배치 실행시간 분포이며
 단위 수는 분석용 관측값이다.
 
 ### 5.6 직접 runner 실행 경로 삭제
@@ -501,7 +506,7 @@ Serving Pod는 `serving-worker`만 실행하고(`operations.go:362`) 직접 runn
 |---|---|
 | carrier Dockerfile | `build/docker/derived-model-artifact.Dockerfile`을 build context의 `artifact/` 디렉터리 전체를 `/artifact/`로 복사하는 형태로 바꾸고 모델, 전처리, 데이터셋 carrier에 공통 사용. 데이터셋 carrier는 multi-arch로 빌드 |
 | SmolVLM ONNX 산출물 | HF `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`의 고정 revision에서 `onnx/vision_encoder*.onnx`, `onnx/embed_tokens*.onnx`, `onnx/decoder_model_merged*.onnx` 중 한 변형 세 파일. 산출물 하나, 실행 경로 `firstfloor-ort-cpu` |
-| mobilenet 전처리 | Preprocessor `mobilenet-imagenet` 하나의 두 산출물 디렉터리 `build/model-artifacts/preprocessors/mobilenet-nchw/`(`canonical-onnx` 대상), `mobilenet-nhwc/`(`mobilenet-v2-050-rk3588` 대상). JPEG 복호, 짧은 변 256 resize, 224 center crop, ImageNet 정규화. 단위 수 1, 출력 `label`(UTF8 class index), `WARMUP_SAMPLE`은 같은 디렉터리의 작은 JPEG |
+| mobilenet 전처리 | Preprocessor `mobilenet-imagenet` 하나의 두 산출물 디렉터리 `build/model-artifacts/preprocessors/mobilenet-nchw/`(`canonical-onnx` 대상), `mobilenet-nhwc/`(`mobilenet-v2-050-rk3588` 대상). JPEG 복호, 짧은 변 256 resize, 224 center crop, ImageNet 정규화. 단위 수 1, 출력 `label`(UTF8 class index), `WARMUP_SAMPLE`은 module이 import 시 메모리에서 만드는 작은 JPEG |
 | SmolVLM 전처리 | Preprocessor `smolvlm2-vqa`의 산출물 디렉터리 `build/model-artifacts/preprocessors/smolvlm2-vqa/`. `SmolVLMProcessor`(이미지 분할, longest edge 2048, 타일 512, 타일당 64 토큰)와 chat template, 4.5절의 decode loop, tokenizer와 processor 설정 파일. 단위 수는 타일 수, 출력 `answer` |
 | VQAv2 부분집합 | `build/model-artifacts/vqav2/build_subset.py`가 `lmms-lab-encoder/VQAv2` validation split의 고정 revision에서 고정 seed로 레코드를 골라 `question_id`로 나누어 `profiling/<question_id>/{image,question}`, `evaluation/<question_id>/{image,question}`을 만든다. 부분집합은 고정한 shard 하나(`validation-00000-of-00068`)에서만 뽑아 전체 split을 내려받지 않는다. 단위 테스트가 두 디렉터리의 `question_id` 분리를 확인한다. 같은 Dataset이 두 Workload에 쓰이며 mobilenet 전처리는 `image` 필드만 사용 |
 | runtime image | `build/docker/firstfloor.Dockerfile:18-31`에 `pillow`와 SmolVLM 지원 transformers 고정 버전을 더한다. 로컬 환경의 transformers는 4.46.3이므로 SmolVLM processor를 처음 포함한 release 이상으로 고정한다 |
@@ -551,10 +556,12 @@ load generator, sample)를 함께 바꾼다.
 | 2 | `feat(catalog): add preprocessor and dataset kinds` | `api/v1alpha1/{preprocessor,dataset}_types.go`(`artifacts` `MinItems=1`), 생성 deepcopy와 CRD, `config/crd/kustomization.yaml`, chart CRD, `internal/modelcatalog/preprocessor.go`(`ValidatePreprocessor`, `ValidateDataset`, `Compatible`, `PreprocessorArtifact`) | 없음 | `DP-01`, `DP-02`, `DP-03`, `DP-06`, `DP-07` | `make manifests generate`와 생성 drift 확인, `go test ./api/... ./internal/modelcatalog/...`, `make helm-lint helm-template` |
 | 3 | `feat(serving): manage preprocessors and datasets` | `internal/serving/kube/{store,manager}.go`의 두 kind CRUD와 `DP-09`, ModelSpec 수정과 삭제의 `DP-12` 거부, `internal/serving/entrypoint/handler.go`, owner와 manager RBAC, Dashboard relay와 두 kind 관리 화면, `config/samples/catalog/README.md`의 등록 안내 | 2 | `DP-08`, `DP-09`, `DP-12`, `DB-FR-28` | `go test ./internal/serving/...`, `make helm-lint helm-template`(default와 Profiler), `make deployment-graph-check`, `make dashboard-check` |
 | 4 | `feat(serving): bind workloads to preprocessors and datasets` | Workload API와 CRD(`preprocessorRef`, `datasetRef`, 적용 참조, `targetCatalog*`, `PreprocessorUpdate`), `validatedReferences`, `serving.Definition`의 전처리와 데이터셋 identity, 경로별 전처리 산출물 선택, 즉시 적용 조건, `PreprocessorUpdate` barrier, Dataset 수정 호환성, `DP-11` 거부, `MissingDataset`, observation schema `v1alpha3`, Dashboard Workload 편집과 도메인 타입 | 3 | `WM-02`, `WM-06`, `WM-07`, `WM-09`, `WM-16`, `WM-18`, `DP-10`, `DP-11`, `DB-FR-05`, `DB-FR-06`, `DB-FR-07` | `make manifests generate`, `go test ./api/... ./internal/serving/...`, `make dashboard-check` |
-| 5 | `feat(serving): serve and profile raw samples through preprocessor modules` | ModelSpec `source.files`와 RKNN 전용 `input`. `internal/firstfloor`의 BYTES framing, IPC, 항목 결과, 배치 오류, 진행과 profile 응답 필드, `Executions` 삭제와 `runtime/firstfloor/runner.py`의 module 실행, 파일별 session, 첫 토큰 검사(synthetic module fixture 테스트). gateway 원시 입력 검증, route 단일화와 `InputPath` 삭제(scheduler replay와 관측 포함), `validated` 경과 시간, serving adapter 원시 필드와 `422`, Pod init container와 observer, `profilePath`, `schedulerOptionCondition`, `SupportedInput`, `cmd/serving-entrypoint/profiles.go`. 측정 API와 CRD, campaign child Run, resolver와 preparation, Profiler RBAC 읽기, RunConfig, candidate report, curve plan, 두 identity, Job init container, measurement worker 요청, `measurement.py` 표본 추출, RuntimeResult와 idle 결과, projection과 derivation. Dashboard 모델 files, 측정 요청, 단일 추론, 단계 시간 표시. load generator `infer` 본문. mobilenet ModelSpec sample의 `files` | 1, 4 | `DP-03`, `DP-04`, `DP-05`, `WM-04`, `WM-08`, `WM-26`, `WM-27`, `WM-28`, `WM-29`, `SCH-03`, `SCH-06`, `SCH-09`, `SCH-AC-23`, `DB-FR-04`, `DB-FR-08`, `DB-FR-09`, `DB-FR-12`, `DB-FR-22`, 측정의 단위 | `make manifests generate`, focused `go test ./internal/firstfloor/... ./internal/serving/... ./internal/profiling/... ./cmd/...`, `make gopls-check`, `make helm-lint helm-template`(default와 Profiler), `make deployment-graph-check`, `make dashboard-check`, `python3 -m unittest discover -s load-generator/tests` |
+| 5 | `feat(serving): serve and profile raw samples through preprocessor modules` | ModelSpec `source.files`와 RKNN 전용 `input`. `internal/firstfloor`의 BYTES framing, IPC, 항목 결과, 배치 오류, 진행과 profile 응답 필드, `Executions` 삭제와 `runtime/firstfloor/runner.py`의 module 실행, 파일별 session, 첫 토큰 검사(synthetic module fixture 테스트). gateway 원시 입력 검증, route 단일화와 `InputPath` 삭제(scheduler replay와 관측 포함), `validated` 경과 시간, serving adapter 원시 필드와 `422`, Pod init container와 observer, `profilePath`, `schedulerOptionCondition`, `SupportedInput`, `cmd/serving-entrypoint/profiles.go`. 측정 API와 CRD, campaign child Run, resolver와 preparation, Profiler RBAC 읽기, RunConfig, candidate report, curve plan, 두 identity, Job init container, measurement worker 요청, `measurement.py` 표본 추출, RuntimeResult와 idle 결과, projection과 derivation. Dashboard 모델 files, 측정 요청, 단일 추론, 단계 시간 표시. load generator `infer` 본문. mobilenet ModelSpec sample의 `files` | 1, 4 | `DP-03`, `DP-04`, `DP-05`, `WM-04`, `WM-08`, `WM-26`, `WM-27`, `WM-28`, `WM-29`, `SCH-03`, `SCH-06`, `SCH-09`, `SCH-AC-23`, `DB-FR-04`, `DB-FR-08`, `DB-FR-09`, `DB-FR-12`, `DB-FR-22`, 측정의 단위 | `make manifests generate`, focused `go test ./internal/firstfloor/... ./internal/serving/... ./internal/profiling/... ./cmd/...`, `make gopls-check`, `make helm-lint helm-template`(default와 Profiler), `make deployment-graph-check`, `make dashboard-check`, `make test-loadgen` |
+| 5a | `fix(serving): check applied preprocessors on dataset updates` | Dataset 수정 시 적용 정의가 참조하는 Preprocessor와의 `Compatible` 검사 | 5 | `DP-10` | `go test ./internal/serving/...` |
 | 6 | `feat(loadgen): replay dataset evaluation subsets` | `load-generator/src/chill_loadgen/cli.py`의 `replay`, 테스트, README, `Makefile`의 `test-loadgen` | 5 | 이기종 혼합 부하, `SCH-AC-23` | `make test-loadgen` |
 | 7 | `feat(assets): build mobilenet and SmolVLM carriers with a VQAv2 subset` | `build/model-artifacts/preprocessors/{mobilenet-nchw,mobilenet-nhwc,smolvlm2-vqa}`(ONNX graph에서 고정한 입출력 이름 포함), `build/model-artifacts/vqav2/`와 분리 단위 테스트, `test-artifact-tools` 대상 확장, carrier Dockerfile, runtime image 의존성, 두 Preprocessor, Dataset, SmolVLM ModelSpec, 두 Workload sample | 5 | `DP-03`, `DP-04`, `DP-06`, `WM-26`, Mobilenet 원시 JPEG 전환 | `make test-artifact-tools`, 로컬 `docker buildx build`(push 없이)로 carrier와 runtime image 확인 |
-| 8 | `docs(design): record heterogeneous workload verification` | `docs/design/serving/workload-management.md` 6장과 11장, `docs/design/serving/README.md`, `docs/design/profiling/README.md`의 입력 계약 절 | 6, 7 | 전체 | 문서 링크 확인 |
+| 7a | `fix(catalog): reject file and field names the runtime cannot load` | 3.1절과 3.3절의 필드 이름과 모델 파일 이름 규칙(`internal/modelcompat/files.go`, CRD pattern), RunConfig와 Dashboard 관측의 같은 규칙 | 7 | `DP-01`, `DP-03`, `DP-06` | `make manifests generate`, `go test ./internal/modelcatalog/... ./internal/modelcompat/... ./internal/profiling/run/...` |
+| 8 | `docs(design): record heterogeneous workload verification` | 9.1절, `docs/design/serving/workload-management.md`의 입력 계약과 검증 경계, `docs/design/serving/README.md`, `docs/design/profiling/README.md`의 입력 계약 절, 구현 계획의 현재 상태 | 6, 7a | 전체 | 문서 링크 확인 |
 
 5는 firstfloor native 요청과 IPC, 프로파일 frozen 조건을 serving과 profiling이 함께 사용하므로 하나의
 commit이다. [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)와 이 설계의 단일 경로 결정에
@@ -565,6 +572,17 @@ Dashboard와 load generator 영역으로 나누어 동시에 진행하고 한 in
 `preprocessor.go`를 바꾼다). 2, 3, 4는 같은 manager와 생성 파일을 바꾸므로 순서대로 진행한다. 5는 1과 4 뒤에
 진행한다. 6과 7은 5 뒤에 동시에 진행한다. 생성 파일(`zz_generated.deepcopy.go`, CRD)을 바꾸는 commit은 각 merge
 뒤 `make manifests generate`를 다시 실행한다.
+
+### 9.1 검증 기록
+
+| 실행 경계 | 결과 |
+|---|---|
+| 로컬 unit과 contract test | 각 단위의 추가 검사 통과. Go package test, runner synthetic module fixture, `make test-loadgen`, `make test-artifact-tools`(전처리 module과 VQAv2 분리) |
+| runtime image의 통합 runner smoke(CPU), mobilenet | 4개 batch 중 잘린 JPEG 1개가 항목 오류가 되고 나머지 3개가 `label`을 반환, runner 유지, `service_ms` 72 |
+| 같은 smoke의 SmolVLM | 3개 batch의 단위 수 17, 17, 13, 답 `Up.`, `Watching.`, `Http://foodiebaker.com.`, `first_token_ms` 50404, `backend_ms` 53974(8 CPU) |
+
+다음은 검증하지 않았다: live cluster의 등록, serving과 관측, Jetson과 RKNN 장비의 실행, 실제 Node의
+profiling Job, 이기종 혼합 부하 평가. 이 검증은 merge 시점 절차(8장)의 재등록과 재측정 뒤에 수행한다.
 
 ## 10. 범위 밖
 

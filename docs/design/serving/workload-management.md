@@ -318,18 +318,13 @@ idle baseline confidence는 `profileConfidenceLevel`로 설정하며 선택 prof
 
 ### 구현된 입력 계약
 
-ModelSpec, campaign frozen 조건, worker, evidence와 sample은 모두 named tensor 계약을 사용한다.
-이름이나 FP32를 추정해 보충하지 않고 shape-only 호환 decoder나 alias를 두지 않는다.
-
-산출물 입력 계약은 `tensors[]`의 `name`, `datatype`, `sampleShape`로 표현한다.
-입력 이름은 유일하고 shape는 batch 축을 제외한다. 지원 입력 조회는 이 계약과 실행 근거를 연결해 제공한다.
-서로 다른 산출물의 계약을 한 모델의 단일 shape로 합치지 않는다.
-
-외부 추론 본문은 named tensor의 `name/datatype/shape/data`를 사용하며, 각 tensor는 독립 샘플 하나다.
-클라이언트의 batch 축이나 내부 실행 배치 크기는 받지 않는다.
-입력 이름, 자료형, sample shape와 실제 데이터 수 및 자료형 범위를 경계에서 확인한다.
-자료형과 입력 형태는 실제 측정 및 실행 경로가 지원하는 범위만 허용하고, 지원하지 않는 인코딩은 명시적으로 거부한다.
-backend 전달 시 같은 native 실행 계약의 batch 축과 모델 경로, frozen UID·정의·개별 SLO·elapsed를 연결한다.
+Workload는 Preprocessor와 Dataset을 참조하고, 외부 추론 본문은 Preprocessor 원시 입력 계약의 필드
+(`JPEG`, `UTF8`)를 base64로 담은 표본 하나다. 실행 배치는 CHILL 내부에서 요청들로 구성한다.
+gateway는 필드 이름 집합, 크기 상한, JPEG 헤더와 UTF-8을 경계에서 확인하고, 화소 복호와 모델 입력 생성은
+경로별 전처리 산출물의 module이 runner 안에서 수행한다. 모델 입력 tensor 계약은 RKNN 산출물의 `input`에만
+있다. 전처리 실패 항목은 `422 PreprocessFailed`, 배치 실행 오류는 `502 BackendError`다.
+backend 전달 시 native 실행 계약의 batch 축과 모델 파일, frozen UID와 정의, 개별 SLO와 elapsed를 연결한다.
+계약 전체는 [이기종 워크로드 구현 설계](heterogeneous-workloads.md) 3장과 4장이 원본이다.
 
 API, campaign frozen 조건, worker와 evidence는 같은 계약을 사용한다.
 [저장 계약 ADR](../../adr/0019-durable-stored-contract-compatibility.md)에 따라 읽을 수 없는
@@ -623,7 +618,8 @@ writable scratch를 사용하고, 원시 Journal은 retained PVC에 기록한다
 ### 이전 serving cutover의 검증 기록
 
 아래 표는 firstfloor scheduler 통합 이전 작업 단위의 실행 기록이다.
-현재 firstfloor 구현의 검증 결과는 scheduler 구현 문서의 최종 실행 기록으로 구분한다.
+현재 firstfloor 구현의 검증 결과는 scheduler 구현 문서의 최종 실행 기록으로 구분한다. 원시 표본과
+전처리 module 경로의 검증 기록은 [이기종 워크로드 구현 설계 9.1절](heterogeneous-workloads.md#91-검증-기록)에 있다.
 
 | 실행 경계 | 관측된 결과 |
 |---|---|
