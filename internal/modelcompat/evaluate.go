@@ -3,10 +3,10 @@ package modelcompat
 import "strings"
 
 const (
-	runtimeFamilyRKNNLite   = "rknnlite"
-	runtimeFamilyFirstfloor = "firstfloor"
-	artifactFormatRKNN      = "rknn"
-	firstfloorORTCPUBackend = "ort-cpu"
+	firstfloorRKNNLiteBackend = "rknnlite"
+	runtimeFamilyFirstfloor   = "firstfloor"
+	artifactFormatRKNN        = "rknn"
+	firstfloorORTCPUBackend   = "ort-cpu"
 )
 
 // Evaluate compares one artifact/path requirement with stable DeviceClass and
@@ -73,12 +73,9 @@ func Evaluate(input Input) Result {
 }
 
 func knownArtifactRuntimeRelation(format, runtimeFamily, backend string) bool {
-	if runtimeFamily == runtimeFamilyFirstfloor {
-		return (format == "onnx" && (backend == firstfloorORTCPUBackend || backend == "ort-cuda")) ||
-			(format == artifactFormatRKNN && backend == runtimeFamilyRKNNLite)
-	}
-	return (format == "onnx" && runtimeFamily == "onnxruntime") ||
-		(format == artifactFormatRKNN && runtimeFamily == runtimeFamilyRKNNLite)
+	return runtimeFamily == runtimeFamilyFirstfloor &&
+		((format == "onnx" && (backend == firstfloorORTCPUBackend || backend == "ort-cuda")) ||
+			(format == artifactFormatRKNN && backend == firstfloorRKNNLiteBackend))
 }
 
 func contains(values []string, expected string) bool {

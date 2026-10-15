@@ -93,9 +93,8 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	if modelPath.Runtime.Family == profilingrun.RKNNLiteRuntimeFamily ||
-		(modelPath.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
-			modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend) {
+	if modelPath.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
+		modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend {
 		if declaration.Host == nil || declaration.Host.Platform == nil || declaration.Access == nil ||
 			len(declaration.Runtime.Packages) != 1 || declaration.Runtime.Packages[0].Name != rknnLitePackage {
 			return profiler.ResolvedCandidate{}, errors.New("RKNNLite requires declared host, platform, runtime access, and rknn-toolkit-lite2 package")

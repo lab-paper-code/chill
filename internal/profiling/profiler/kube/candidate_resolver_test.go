@@ -121,8 +121,8 @@ func TestKubernetesCandidateResolverRejectsAmbiguousRuntimeDeclarations(t *testi
 	config := objects[2].(*corev1.ConfigMap)
 	payload := strings.Replace(
 		validRuntimeDeclaration(),
-		`"backends":["CPUExecutionProvider"]`,
-		`"backends":["CPUExecutionProvider","CUDAExecutionProvider"]`,
+		`"backends":["ort-cpu"]`,
+		`"backends":["ort-cpu","rknnlite"]`,
 		1,
 	)
 	config.Data["execution-facts.yaml"] += `  - deviceClass: lattepanda-3-delta-8g
@@ -372,8 +372,8 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 				config := objects[2].(*corev1.ConfigMap)
 				replaceRuntimeDeclaration(
 					config,
-					`"backends":["CPUExecutionProvider"]`,
-					`"backends":["CUDAExecutionProvider"]`,
+					`"backends":["ort-cpu"]`,
+					`"backends":["rknnlite"]`,
 				)
 			},
 			match: "no trusted execution declaration",
@@ -584,7 +584,8 @@ func validCandidateObjects() []client.Object {
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 				Name: "ort-cpu", Artifact: "canonical-onnx",
 				Runtime: edgev1alpha1.ModelRuntimeRequirement{
-					Family: "onnxruntime", Backend: "CPUExecutionProvider",
+					Family: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorORTCPUBackend,
+					Settings: testFirstfloorRuntimeSettings(),
 				},
 			}},
 		},
@@ -626,7 +627,10 @@ func validRKNNCandidateObjects() []client.Object {
 	})
 	model.Spec.ExecutionPaths = append(model.Spec.ExecutionPaths, edgev1alpha1.ModelExecutionPath{
 		Name: "rknnlite", Artifact: "mobilenet-v2-050-rk3588-bs1",
-		Runtime: edgev1alpha1.ModelRuntimeRequirement{Family: "rknnlite", Backend: "not-applicable"},
+		Runtime: edgev1alpha1.ModelRuntimeRequirement{
+			Family: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorRKNNLiteBackend,
+			Settings: testFirstfloorRuntimeSettings(),
+		},
 	})
 	class := objects[1].(*edgev1alpha1.DeviceClass)
 	class.Name = "orangepi-5-plus-16g"
@@ -686,11 +690,17 @@ declarations:
 }
 
 func validRuntimeDeclaration() string {
-	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"amd64","runtime":{"family":"onnxruntime","backends":["CPUExecutionProvider"]},"verification":"exact-image-runtime-inspection-v1"}`
+	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"amd64","runtime":{"family":"firstfloor","backends":["ort-cpu"]},"verification":"exact-image-runtime-inspection-v1"}`
 }
 
 func validRKNNRuntimeDeclaration() string {
-	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"` + testARM64Architecture + `","runtime":{"family":"rknnlite","backends":["not-applicable"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}`
+	return `{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"` + testRuntimeImage + `","architecture":"` + testARM64Architecture + `","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}`
+}
+
+func testFirstfloorRuntimeSettings() *edgev1alpha1.ModelRuntimeSettings {
+	return &edgev1alpha1.ModelRuntimeSettings{
+		Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32},
+	}
 }
 
 func replaceRuntimeDeclaration(config *corev1.ConfigMap, old, replacement string) {

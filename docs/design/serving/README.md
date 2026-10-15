@@ -47,7 +47,7 @@ immutable measured bundle과 작은 mutable policy를 제공하며, actor와 후
 
 ORT CPU/CUDA는 numeric/bool named multi-tensor 입력과 named 출력, RKNNLite는
 실제 전달 capability가 제공한 입력·배치 domain을 따른다. batch 1과 실제 초기화·
-측정된 sparse batch domain을 사용하며 standalone reference evidence는 별도 조건이다.
+측정된 sparse batch domain을 사용한다.
 SLO 위반은 모델의 `deadlinePolicy=drop|keep|defer`로 처리한다. 명시적인 요청 수명과
 caller 취소는 세 모드 모두 별도로 적용한다.
 

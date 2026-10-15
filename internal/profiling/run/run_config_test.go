@@ -35,15 +35,7 @@ func TestCurrentRunConfigBindsOptionalHostContract(t *testing.T) {
 }
 
 func TestCurrentRKNNLiteRunConfigOmitsORTThreadSettings(t *testing.T) {
-	config := validRunConfig()
-	config.Candidate.ExecutionPath = "rknnlite-bs2"
-	config.State.RuntimeFamily = RKNNLiteRuntimeFamily
-	config.State.Backend = RKNNLiteBackend
-	contract := rknnHostContractForTest()
-	config.State.HostContract = &contract
-	config.Delivery = rknnDeliveryForTest(1, &contract)
-	config.CPU.ORTIntraOpThreads = 0
-	config.CPU.ORTInterOpThreads = 0
+	config := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -54,13 +46,6 @@ func TestCurrentRKNNLiteRunConfigOmitsORTThreadSettings(t *testing.T) {
 	if strings.Contains(string(payload), "ortIntraOpThreads") || strings.Contains(string(payload), "ortInterOpThreads") {
 		t.Fatalf("RKNNLite config retained ORT-only CPU settings: %s", payload)
 	}
-	if IsSupportedCPUORTRunConfig(config) {
-		t.Fatal("RKNNLite config was classified as CPU ORT")
-	}
-	if !IsSupportedRKNNLiteRunConfig(config) {
-		t.Fatal("current host-bound RKNNLite config was not classified as supported")
-	}
-
 	withORTSettings := config
 	withORTSettings.CPU.ORTIntraOpThreads = 4
 	withORTSettings.CPU.ORTInterOpThreads = 1
@@ -139,17 +124,6 @@ func TestCurrentRunConfigValidatesTypedActuation(t *testing.T) {
 	}
 }
 
-func TestSupportedCPUORTRunConfigUsesRuntimeContractNotCatalogPathName(t *testing.T) {
-	config := validRunConfig()
-	config.Candidate.ExecutionPath = "ort-cpu-derived"
-	if err := config.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if !IsSupportedCPUORTRunConfig(config) || IsSupportedRKNNLiteRunConfig(config) {
-		t.Fatal("CPU ORT adapter selection did not follow the RunConfig runtime contract")
-	}
-}
-
 func TestRunConfigAcceptsConfiguredImageReference(t *testing.T) {
 	config := validRunConfig()
 	config.Images.Runtime = "registry/runtime:latest"
@@ -205,15 +179,7 @@ func TestCurrentRunConfigValidatesModelLoadedIdleProtocol(t *testing.T) {
 }
 
 func TestCurrentRKNNLiteRunConfigAllowsArtifactBatchForIdle(t *testing.T) {
-	idle := validRunConfig()
-	idle.Candidate.ExecutionPath = "rknnlite-bs2"
-	idle.State.RuntimeFamily = RKNNLiteRuntimeFamily
-	idle.State.Backend = RKNNLiteBackend
-	contract := rknnHostContractForTest()
-	idle.State.HostContract = &contract
-	idle.Delivery = rknnDeliveryForTest(2, &contract)
-	idle.CPU.ORTIntraOpThreads = 0
-	idle.CPU.ORTInterOpThreads = 0
+	idle := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
 	idle.Measurement = MeasurementContract{
 		Batch: 2, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
@@ -437,7 +403,7 @@ func validRunConfig() RunConfig {
 			Model:         "mobilenet-v2-050",
 			Artifact:      "canonical-onnx",
 			ArtifactPath:  "/artifact/mobilenet-v2-050.onnx",
-			RuntimeFamily: cpuORTRuntimeFamily,
+			RuntimeFamily: "onnxruntime",
 			Backend:       cpuExecutionProvider,
 			PowerMode:     "fixed",
 		},

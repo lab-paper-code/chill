@@ -12,8 +12,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-const ortCPURequestSchemaVersion = "chill.dacs.io/ort-cpu-runtime-request.v1alpha15"
-
 type CPURuntimeConfig struct {
 	Command                 []string
 	ModelPath               string
@@ -55,10 +53,6 @@ type cpuRuntimeRequest struct {
 	MaxLatencySamples                int                    `json:"maxLatencySamples"`
 	MaxInputBytes                    int64                  `json:"maxInputBytes"`
 	MaxResultBytes                   int64                  `json:"maxResultBytes"`
-}
-
-func NewORTCPURuntime(config CPURuntimeConfig) (*CPURuntime, error) {
-	return newCPURuntime(config, "CPU ORT", "onnxruntime", "CPUExecutionProvider", ortCPURequestSchemaVersion)
 }
 
 func newCPURuntime(config CPURuntimeConfig, runtimeName, family, backend, requestSchema string) (*CPURuntime, error) {

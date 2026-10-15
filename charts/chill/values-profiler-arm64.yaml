@@ -1,5 +1,5 @@
 # Opt-in Profiler facts for the current CHILL testbed arm64 execution paths.
-# The runtime, artifact, and observer images are runnable arm64 child manifests;
+# The observer images are runnable arm64 child manifests;
 # Node-specific metric sources remain explicit entries in the same frozen facts.
 #
 # The Operator image is pinned here even though this file is about Profiler
@@ -74,42 +74,6 @@ profiler:
 profiling:
   metricObserverImage: "155.230.35.213:5000/chill/chill-metric-observer-arm64@sha256:ea0295b9089c3699338a8fae0c62e0abda27cb485488f87efefe06fe4ba0f7b6"
   workloadObserverImage: "155.230.35.213:5000/chill/chill-workload-observer-arm64@sha256:e458f6c0239ee9b0413300e974cf73025b610b65e9f8828d3d605f9eadca2d81"
-  executionDeclarations:
-    - deviceClass: raspberry-pi-5-8g
-      runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:15634841be795cfa6227de3241a68d84cf198b78ed134b04c491854e72a0ccb5","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
-    - deviceClass: orangepi-5-plus-16g
-      runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:15634841be795cfa6227de3241a68d84cf198b78ed134b04c491854e72a0ccb5","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
-    - deviceClass: jetson-agx-orin-64g
-      runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-measurement-worker@sha256:15634841be795cfa6227de3241a68d84cf198b78ed134b04c491854e72a0ccb5","runtime":{"backends":["CPUExecutionProvider"],"family":"onnxruntime"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
-    - deviceClass: orangepi-5-plus-16g
-      runtime:
-        payload: '{"architecture":"arm64","image":"155.230.35.213:5000/chill/chill-rknnlite-measurement-worker-arm64@sha256:ad93e2e669c9caffaa05bf6624c45ed2ed73f5dd27a0254c82a3b50e3af68aba","packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"runtime":{"backends":["not-applicable"],"family":"rknnlite"},"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","verification":"exact-image-runtime-inspection-v1"}'
-      host:
-        libraries:
-          - name: librknnrt
-            hostPath: /usr/lib/librknnrt.so
-            containerPath: /usr/lib/librknnrt.so
-        driver:
-          name: rknpu
-          versionPath: /sys/module/rknpu/version
-          version: 0.9.6
-        devices:
-          - path: /dev/dri/card0
-          - path: /dev/dri/card1
-          - path: /dev/dri/renderD128
-          - path: /dev/dri/renderD129
-        platform:
-          compatiblePath: /proc/device-tree/compatible
-          compatibleToken: rockchip,rk3588
-        allocation:
-          resourceName: ""
-          exclusivityClaimed: false
-      access:
-        privileged: true
-        supplementalGroups: [44, 110]
   metricSources:
     - node: rasp5
       kind: edge-metrics

@@ -26,20 +26,16 @@ type runtimeJobProjection struct {
 func projectRuntimeJob(
 	config profilingrun.RunConfig,
 ) (runtimeJobProjection, error) {
-	firstfloor := profilingrun.IsSupportedFirstfloorRunConfig(config)
-	if profilingrun.IsSupportedCPUORTRunConfig(config) ||
-		(firstfloor && config.State.Backend == profilingrun.FirstfloorORTCPUBackend) {
+	if !profilingrun.IsSupportedFirstfloorRunConfig(config) {
+		return runtimeJobProjection{}, errors.New("no Job projection exists for the resolved RunConfig")
+	}
+	if config.State.Backend == profilingrun.FirstfloorORTCPUBackend {
 		return runtimeJobProjection{
 			ArtifactDestination: cpuORTModelDestination,
 			SecurityContext:     restrictedContainerSecurityContext(),
 		}, nil
 	}
-	cuda := firstfloor && config.State.Backend == profilingrun.FirstfloorORTCUDABackend
-	rknn := profilingrun.IsSupportedRKNNLiteRunConfig(config) ||
-		(firstfloor && config.State.Backend == profilingrun.FirstfloorRKNNLiteBackend)
-	if !cuda && !rknn {
-		return runtimeJobProjection{}, errors.New("no Job projection exists for the resolved RunConfig")
-	}
+	cuda := config.State.Backend == profilingrun.FirstfloorORTCUDABackend
 	delivery := config.Delivery
 	if delivery.ArtifactCapability == nil || delivery.RuntimeAccess == nil {
 		return runtimeJobProjection{}, errors.New("verified accelerator delivery contract is incomplete")

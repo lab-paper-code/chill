@@ -108,15 +108,6 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 	}
 }
 
-func TestCatalogNeverUsesStandaloneReferenceExecutionAsServingEvidence(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixtureMode(t, 4096, false)
-	view, err := catalog.Refresh(context.Background(), []types.NamespacedName{source})
-	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
-		!strings.Contains(view.Insufficiencies[0].Reason, "standalone") {
-		t.Fatalf("reference execution became firstfloor service evidence: %+v %v", view, err)
-	}
-}
-
 func TestCatalogRejectsRunAffinityChangedFromCampaignSource(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	run := &edgev1alpha1.ProfilingRun{}
@@ -147,11 +138,6 @@ func (objects catalogEvidenceObjects) OpenLocation(_ context.Context, location e
 
 func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
-	return catalogEvidenceFixtureMode(t, memory, true)
-}
-
-func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
-	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -160,14 +146,10 @@ func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Cata
 	if err := json.Unmarshal(payload, &active); err != nil {
 		t.Fatal(err)
 	}
-	if native {
-		active.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
-		active.State.Backend = profilingrun.FirstfloorORTCPUBackend
-		active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
-		active.CPU.Policy, active.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
-		active.CPU.ORTIntraOpThreads = 2
-		active.CPU.AffinityCPUs = []int{0, 1}
-	}
+	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
+	active.CPU.Policy, active.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
+	active.CPU.ORTIntraOpThreads = 2
+	active.CPU.AffinityCPUs = []int{0, 1}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode, InputGenerator: "none", OutputValidation: "none"}
@@ -216,10 +198,8 @@ func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Cata
 	for _, cpu := range active.CPU.AffinityCPUs {
 		campaign.Spec.CPUAffinity = append(campaign.Spec.CPUAffinity, int32(cpu))
 	}
-	if native {
-		quota := resource.MustParse("2")
-		campaign.Spec.CPUQuota = &quota
-	}
+	quota := resource.MustParse("2")
+	campaign.Spec.CPUQuota = &quota
 	apiObjects := []client.Object{campaign}
 	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, 6)
 	for index := range 6 {

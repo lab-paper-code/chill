@@ -135,6 +135,7 @@ yq -o=json '.' preprocessor.yaml |
 
 Structural validation does not prove image access, runtime support or hardware
 compatibility. Those facts and measured evidence are resolved by profiling and
-native admission. The sample declares matching firstfloor ORT CPU/RKNN paths;
-standalone ORT/RKNN references remain separate. Native serving consumes a
-completed firstfloor campaign with every initialized measured batch size.
+native admission. The sample declares matching firstfloor ORT CPU/RKNN paths,
+and profiling measures through the same firstfloor paths. Native serving
+consumes a completed firstfloor campaign with every initialized measured batch
+size.

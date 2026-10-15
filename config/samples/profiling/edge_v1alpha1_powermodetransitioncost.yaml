@@ -7,7 +7,7 @@ spec:
   targetNode: example-transition-node
   deviceClass: example-transition-device-class
   modelSpec: mobilenet-v2-050
-  executionPath: ort-cpu
+  executionPath: firstfloor-ort-cpu
   modes:
     - powerMode: MAXN
     - powerMode: MODE_15W

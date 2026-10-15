@@ -612,6 +612,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
 		Continuous: true,
 	}
+	applyFirstfloorRuntime(config, &raw.Runtime)
 	return raw
 }
 
@@ -633,7 +634,7 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 	t.Helper()
 	activeShape := validRaw(t, config)
 	started := activeShape.Metrics.StartedAt
-	return IdleRawMeasurement{
+	idle := IdleRawMeasurement{
 		SchemaVersion: IdleRawMeasurementSchemaVersion,
 		RunConfig:     config,
 		PodUID:        activeShape.PodUID,
@@ -664,6 +665,8 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 		Metrics:  activeShape.Metrics,
 		Workload: activeShape.Workload,
 	}
+	applyFirstfloorIdleRuntime(config, &idle.Runtime)
+	return idle
 }
 
 func validExecutionEvidence(

@@ -55,13 +55,3 @@ spec:
           maxBatchSize: 16
           maxQueueSize: 256
           deadlinePolicy: defer
-  - name: ort-cpu
-    artifact: canonical-onnx
-    runtime:
-      family: onnxruntime
-      backend: CPUExecutionProvider
-  - name: rknnlite
-    artifact: mobilenet-v2-050-rk3588
-    runtime:
-      family: rknnlite
-      backend: not-applicable

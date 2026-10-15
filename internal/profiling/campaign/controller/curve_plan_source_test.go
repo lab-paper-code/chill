@@ -670,7 +670,8 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		State: profilingrun.ExecutionState{
 			DeviceClass: request.Candidate.DeviceClass, Model: request.Candidate.ModelSpec,
 			Artifact: artifact, ArtifactPath: p.report.ArtifactSupply.Path,
-			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: request.Candidate.PowerMode,
+			RuntimeFamily: "firstfloor", Backend: "ort-cpu", PowerMode: request.Candidate.PowerMode,
+			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
 		},
 		Images: profilingrun.Images{
 			Runtime: p.report.Inputs.RuntimeDeclaration.Image, Artifact: p.report.ArtifactSupply.Image,

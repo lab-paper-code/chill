@@ -11,11 +11,9 @@ PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
-MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-measurement-worker:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
 FIRSTFLOOR_IMG ?= $(IMAGE_NAMESPACE)/chill-firstfloor:$(IMAGE_TAG)
 DASHBOARD_IMG ?= $(IMAGE_NAMESPACE)/chill-dashboard:$(IMAGE_TAG)
-RKNNLITE_MEASUREMENT_WORKER_IMG ?= $(IMAGE_NAMESPACE)/chill-rknnlite-measurement-worker-arm64:$(IMAGE_TAG)
 RKNN_CONVERTER_PYTHON ?= python3
 RKNN_SOURCE_ONNX ?=
 RKNN_TOOL_WHEEL ?=
@@ -356,10 +354,6 @@ docker-build-console: ## Build the Console API image.
 docker-build-metric-observer: ## Build the MetricObserver image.
 	$(CONTAINER_TOOL) build -f build/docker/metric-observer.Dockerfile -t $(METRIC_OBSERVER_IMG) .
 
-.PHONY: docker-build-measurement-worker
-docker-build-measurement-worker: ## Build the CPU ORT measurement worker image.
-	$(CONTAINER_TOOL) build -f build/docker/measurement-worker.Dockerfile -t $(MEASUREMENT_WORKER_IMG) .
-
 .PHONY: docker-build-serving-entrypoint
 docker-build-serving-entrypoint: ## Build the inference entry point image.
 	$(CONTAINER_TOOL) build -f build/docker/serving-entrypoint.Dockerfile -t $(SERVING_ENTRYPOINT_IMG) .
@@ -383,7 +377,7 @@ docker-build-dashboard: ## Build the independent Dashboard image.
 	$(CONTAINER_TOOL) build -f build/docker/dashboard.Dockerfile -t $(DASHBOARD_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer docker-build-measurement-worker ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-discovery docker-build-node-actuator docker-build-profiler docker-build-console docker-build-metric-observer ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -416,12 +410,8 @@ docker-push-dashboard: ## Push the independent Dashboard image.
 docker-push-metric-observer: ## Push the MetricObserver image.
 	$(CONTAINER_TOOL) push $(METRIC_OBSERVER_IMG)
 
-.PHONY: docker-push-measurement-worker
-docker-push-measurement-worker: ## Push the CPU ORT measurement worker image.
-	$(CONTAINER_TOOL) push $(MEASUREMENT_WORKER_IMG)
-
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer docker-push-measurement-worker ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-discovery docker-push-node-actuator docker-push-profiler docker-push-console docker-push-metric-observer ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_DISCOVERY_IMG=myregistry/chill/node-discovery:0.0.1). To use this option you need to:
@@ -430,8 +420,6 @@ docker-push-all: docker-push-operator docker-push-node-discovery docker-push-nod
 # - be able to push the images to your registry
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64
-MEASUREMENT_WORKER_PLATFORMS ?= $(PLATFORMS)
-RKNNLITE_MEASUREMENT_WORKER_PLATFORM ?= linux/arm64
 .PHONY: docker-buildx
 docker-buildx: docker-buildx-operator ## Build and push the operator image for cross-platform support.
 
@@ -471,18 +459,6 @@ docker-buildx-metric-observer: ## Build and push the MetricObserver image for cr
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/metric-observer.Dockerfile --tag $(METRIC_OBSERVER_IMG) .
 
-.PHONY: docker-buildx-measurement-worker
-docker-buildx-measurement-worker: ## Build and push the verified CPU ORT measurement worker platform.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(MEASUREMENT_WORKER_PLATFORMS) -f build/docker/measurement-worker.Dockerfile --tag $(MEASUREMENT_WORKER_IMG) .
-
-.PHONY: docker-buildx-rknnlite-measurement-worker
-docker-buildx-rknnlite-measurement-worker: ## Build and push the verified arm64 RKNNLite measurement worker.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --provenance=false --platform=$(RKNNLITE_MEASUREMENT_WORKER_PLATFORM) -f build/docker/rknnlite-measurement-worker.Dockerfile --tag $(RKNNLITE_MEASUREMENT_WORKER_IMG) .
-
 .PHONY: docker-buildx-workload-observer
 docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver helper image.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
@@ -502,7 +478,7 @@ docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platfor
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer docker-buildx-measurement-worker ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-discovery docker-buildx-node-actuator docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

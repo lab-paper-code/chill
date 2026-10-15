@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Execute one executable CHILL CPU ONNX Runtime measurement."""
+"""CPU measurement contract helpers shared by the firstfloor measurement."""
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ import argparse
 import json
 import math
 import os
-import platform
 import stat
 import sys
 import tempfile
@@ -18,7 +16,6 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-REQUEST_SCHEMA = "chill.dacs.io/ort-cpu-runtime-request.v1alpha15"
 RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha16"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha7"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
@@ -204,9 +201,8 @@ def validate_actuation(run_config: dict[str, Any], state: dict[str, Any]) -> Non
 
 def validate_request(
     request: dict[str, Any],
-    request_schema: str = REQUEST_SCHEMA,
-    runtime_family: str = "onnxruntime",
-    backend: str = "CPUExecutionProvider",
+    request_schema: str,
+    backend: str,
 ) -> None:
     require_fields(
         request,
@@ -292,12 +288,12 @@ def validate_request(
             "runtimeFamily",
             "backend",
             "powerMode",
-        } | ({"firstfloor"} if runtime_family == "firstfloor" else set())
-        | ({"hostContract"} if runtime_family == "firstfloor" and backend == "rknnlite" else set()),
+            "firstfloor",
+        } | ({"hostContract"} if backend == "rknnlite" else set()),
         "run_config.state",
     )
     if (
-        state["runtimeFamily"] != runtime_family
+        state["runtimeFamily"] != "firstfloor"
         or state["backend"] != backend
     ):
         raise ContractError("unsupported runtime family or backend")
@@ -331,7 +327,7 @@ def validate_request(
     )
     if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
         raise ContractError("unsupported CPU policy")
-    rknn = runtime_family == "firstfloor" and backend == "rknnlite"
+    rknn = backend == "rknnlite"
     require_integer(cpu["ortIntraOpThreads"], "run_config.cpu.ortIntraOpThreads", 0 if rknn else 1)
     if cpu["ortInterOpThreads"] != (0 if rknn else 1) or (
         rknn and cpu["ortIntraOpThreads"] != 0
@@ -400,15 +396,12 @@ def validate_request(
         or measurement["outputValidation"] != SUPPORTED_OUTPUT_VALIDATION
     ):
         raise ContractError("unsupported measurement implementation contract")
-    validate_candidate(run_config["delivery"], runtime_family)
+    validate_candidate(run_config["delivery"])
 
 
-def validate_candidate(value: Any, runtime_family: str = "onnxruntime") -> None:
+def validate_candidate(value: Any) -> None:
     candidate = require_object(value, "run_config.delivery")
-    optional_fields = (
-        {"runtimePackages", "hostContract", "runtimeAccess"} & set(candidate)
-        if runtime_family == "firstfloor" else set()
-    )
+    optional_fields = {"runtimePackages", "hostContract", "runtimeAccess"} & set(candidate)
     require_fields(candidate, {"artifactCapability"} | optional_fields, "run_config.delivery")
     if "runtimePackages" in candidate:
         packages = candidate["runtimePackages"]
@@ -460,33 +453,6 @@ def validate_candidate(value: Any, runtime_family: str = "onnxruntime") -> None:
             require_integer(dimension, f"tensor {name} sampleShape item", 1)
             if dimension > 2147483647:
                 raise ContractError(f"tensor {name} sampleShape item exceeds int32")
-
-
-def validate_runtime_inputs(
-    inputs: list[Any], tensors: list[dict[str, Any]], batch: int
-) -> None:
-    observed = {item.name: item for item in inputs}
-    if len(observed) != len(inputs) or set(observed) != {t["name"] for t in tensors}:
-        raise ContractError("runtime input names do not match declared tensors")
-    for tensor in tensors:
-        name = tensor["name"]
-        metadata = observed[name]
-        if metadata.type != INPUT_DATATYPES[tensor["datatype"]][0]:
-            raise ContractError(f"runtime input {name} datatype does not match declaration")
-        shape = metadata.shape
-        if not isinstance(shape, (list, tuple)) or len(shape) != len(tensor["sampleShape"]) + 1:
-            raise ContractError(f"runtime input {name} rank does not match declaration")
-        leading = shape[0]
-        if isinstance(leading, int):
-            if isinstance(leading, bool) or leading != batch:
-                raise ContractError(f"runtime input {name} batch does not match selected batch")
-        elif leading is not None and not isinstance(leading, str):
-            raise ContractError(f"runtime input {name} has unsupported batch metadata")
-        if any(
-            isinstance(actual, bool) or not isinstance(actual, int) or actual != declared
-            for actual, declared in zip(shape[1:], tensor["sampleShape"])
-        ):
-            raise ContractError(f"runtime input {name} sampleShape does not match declaration")
 
 
 def validate_model_file(path: Path) -> None:
@@ -901,7 +867,7 @@ def execute_idle(
     affinity: list[int],
     cpuset: str,
     model_load_completed_at: str,
-    expected_provider: str = "CPUExecutionProvider",
+    expected_provider: str,
     memory_sampler: MemorySampler | None = None,
 ) -> dict[str, Any]:
     run_config = request["runConfig"]
@@ -993,99 +959,30 @@ def execute_idle(
     return result
 
 
-def execute(request: dict[str, Any], ort: Any, numpy: Any) -> dict[str, Any]:
-    validate_request(request)
-    run_config = request["runConfig"]
-    state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
-    model_path = Path(request["modelPath"])
-
-    validate_model_file(model_path)
-    architecture = platform.machine()
-    if normalize_architecture(architecture) != normalize_architecture(
-        run_config["targetNode"]["architecture"]
-    ):
-        raise ContractError("runtime architecture does not match the RunConfig Node")
-    apply_cpu_affinity(run_config)
-    cpu_max, affinity, cpuset = validate_cpu_contract(run_config)
-
-    available_providers = ort.get_available_providers()
-    if state["backend"] not in available_providers:
-        raise ContractError("configured ONNX Runtime provider is unavailable")
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = cpu["ortIntraOpThreads"]
-    options.inter_op_num_threads = cpu["ortInterOpThreads"]
-    try:
-        session = ort.InferenceSession(
-            str(model_path), sess_options=options, providers=[state["backend"]]
-        )
-    except (
-        Exception
-    ) as error:  # runtime-specific failure is normalized at this boundary
-        raise ContractError(f"load ONNX model: {error}") from error
-    if not session.get_providers() or session.get_providers()[0] != state["backend"]:
-        raise ContractError(
-            "actual ONNX Runtime provider does not match the configured backend"
-        )
-    tensors = run_config["delivery"]["artifactCapability"]["tensors"]
-    validate_runtime_inputs(session.get_inputs(), tensors, measurement["batch"])
-    if measurement["workloadMode"] == IDLE_WORKLOAD:
-        return execute_idle(
-            request,
-            ort.__version__,
-            session,
-            available_providers,
-            architecture,
-            cpu_max,
-            affinity,
-            cpuset,
-            now(),
-        )
-    return execute_loaded(
-        request, session, numpy, ort.__version__, available_providers,
-        architecture, cpu_max, affinity, cpuset,
-    )
-
-
 def execute_loaded(
     request: dict[str, Any],
     session: Any,
-    numpy: Any,
     runtime_version: str,
     available_providers: list[str],
     architecture: str,
     cpu_max: str,
     affinity: list[int],
     cpuset: str,
-    feeds: dict[str, Any] | None = None,
-    before_measurement: Any = None,
-    warmup_already_completed: bool = False,
-    result_provider: str | None = None,
+    feeds: dict[str, Any],
+    before_measurement: Any,
+    result_provider: str,
     memory_sampler: MemorySampler | None = None,
 ) -> dict[str, Any]:
-    """Measure a loaded CPU session; startup and warm-up stay outside the window."""
+    """Measure a loaded session whose startup and warm-up completed before the window."""
     run_config = request["runConfig"]
     state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
     tensors = run_config["delivery"]["artifactCapability"]["tensors"]
-    if feeds is None:
-        feeds = generate_inputs(numpy, tensors, measurement["batch"], request["maxInputBytes"])
 
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
             Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
         )
-    log(
-        "warmup",
-        "starting configured warm-up",
-        iterations=measurement["warmupIterations"],
-        inputs=tensors,
-    )
     output_shapes: list[list[int]] | None = None
-    try:
-        for _ in range(0 if warmup_already_completed else measurement["warmupIterations"]):
-            outputs = session.run(None, feeds)
-            output_shapes = validate_outputs(outputs, measurement["batch"])
-    except Exception as error:
-        raise ContractError(f"execute {state['runtimeFamily']} warm-up: {error}") from error
     warmup_completed_at = now()
 
     publish_immutable(Path(request["workloadWindowStartPath"]), b"signal\n")
@@ -1093,8 +990,7 @@ def execute_loaded(
         Path(request["workloadWindowReadyPath"]),
         request["observerReadyTimeoutMilliseconds"] / 1000.0,
     )
-    if before_measurement is not None:
-        before_measurement()
+    before_measurement()
     publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
     stat_before = cpu_stat()
     process_before = time.process_time()
@@ -1141,7 +1037,7 @@ def execute_loaded(
         "runtime": state["runtimeFamily"],
         "runtimeVersion": runtime_version,
         "backend": state["backend"],
-        "provider": session.get_providers()[0] if result_provider is None else result_provider,
+        "provider": result_provider,
         "availableProviders": available_providers,
         "batchSize": measurement["batch"],
         "warmupIterations": measurement["warmupIterations"],
@@ -1204,26 +1100,3 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--result-file", required=True, type=Path)
     return parser.parse_args()
-
-
-def main() -> None:
-    arguments = parse_args()
-    try:
-        result_path = require_absolute_file_path(
-            str(arguments.result_file), "result-file"
-        )
-        request = decode_request(sys.stdin.buffer)
-        validate_request(request)
-        apply_cpu_affinity(request["runConfig"])
-        import numpy  # imported only after the bounded process contract is decoded
-        import onnxruntime as ort
-
-        result = execute(request, ort, numpy)
-        payload = encode_result(result, request["maxResultBytes"])
-        publish_immutable(result_path, payload)
-    except (ContractError, ImportError, ValueError, TypeError) as error:
-        fail(str(error))
-
-
-if __name__ == "__main__":
-    main()

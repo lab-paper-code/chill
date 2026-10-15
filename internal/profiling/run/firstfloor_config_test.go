@@ -77,8 +77,8 @@ func TestFirstfloorFrozenBackendRequirements(t *testing.T) {
 			if err := config.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			if !IsSupportedFirstfloorRunConfig(config) || IsSupportedCPUORTRunConfig(config) || IsSupportedRKNNLiteRunConfig(config) {
-				t.Fatal("native execution was confused with standalone execution")
+			if !IsSupportedFirstfloorRunConfig(config) {
+				t.Fatal("native execution was not supported")
 			}
 		})
 	}

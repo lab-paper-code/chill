@@ -176,6 +176,7 @@ func deriverIdleEvidence(
 			Continuous: true,
 		},
 	}
+	applyFirstfloorIdleRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

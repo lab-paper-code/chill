@@ -289,47 +289,24 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
 		return errors.New("runtime actual CPU affinity differs from requested frozen CPU IDs")
 	}
-	if IsSupportedFirstfloorRunConfig(config) {
-		if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
-			result.MeasurementWindow); err != nil {
-			return err
-		}
-		if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
-			result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
-			return err
-		}
-		if result.DerivedContract.Provider != result.Provider {
-			return errors.New("firstfloor derived provider mismatch")
-		}
-		if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
-			return err
-		}
-		return validateNativeSamples(config, result.RepetitionResults)
+	if !IsSupportedFirstfloorRunConfig(config) {
+		return errors.New("runtime result requires a supported firstfloor RunConfig")
 	}
-	for _, repetition := range result.RepetitionResults {
-		if len(repetition.NativeSamples) != 0 {
-			return errors.New("standalone reference runtime cannot assert firstfloor native spans")
-		}
+	if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
+		result.MeasurementWindow); err != nil {
+		return err
 	}
-	if IsSupportedCPUORTRunConfig(config) {
-		if result.RKNN != nil || result.Firstfloor != nil || result.Provider != config.State.Backend ||
-			!contains(result.AvailableProviders, config.State.Backend) ||
-			(result.SchemaVersion == RuntimeResultSchemaVersion &&
-				result.DerivedContract.Provider != config.State.Backend) {
-			return errors.New("CPU ONNX Runtime backend evidence mismatch")
-		}
-		if result.CPUContract.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads ||
-			result.CPUContract.ORTInterOpThreads != config.CPU.ORTInterOpThreads ||
-			result.CPUContract.AffinityCPUCount < config.CPU.ORTIntraOpThreads {
-			return errors.New("ORT thread evidence mismatch")
-		}
-		return nil
+	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
+		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+		return err
 	}
-	if !IsSupportedRKNNLiteRunConfig(config) || result.SchemaVersion != RuntimeResultSchemaVersion ||
-		result.Firstfloor != nil || result.Provider != "" || result.DerivedContract.Provider != "" || len(result.AvailableProviders) != 0 {
-		return errors.New("runtime result does not match an explicit supported path")
+	if result.DerivedContract.Provider != result.Provider {
+		return errors.New("firstfloor derived provider mismatch")
 	}
-	return validateRKNNRuntimeEvidence(config, result.RKNN)
+	if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
+		return err
+	}
+	return validateNativeSamples(config, result.RepetitionResults)
 }
 
 // MemorySample is one actual whole-container memory.current reading.

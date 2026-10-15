@@ -141,7 +141,8 @@ func projectionRunConfig() profilingrun.RunConfig {
 	return profilingrun.RunConfig{
 		State: profilingrun.ExecutionState{
 			DeviceClass: "lattepanda", Model: "mobilenet",
-			RuntimeFamily: "onnxruntime", Backend: "CPUExecutionProvider", PowerMode: "fixed",
+			RuntimeFamily: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorORTCPUBackend,
+			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}, PowerMode: "fixed",
 		},
 		Images: profilingrun.Images{Runtime: "runtime", Artifact: "artifact", MetricObserver: "observer"},
 		Delivery: profilingrun.CandidateRuntimeDelivery{
@@ -316,6 +317,7 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 		},
 		Workload: &workload,
 	}
+	applyFirstfloorRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)

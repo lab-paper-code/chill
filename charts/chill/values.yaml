@@ -148,27 +148,19 @@ profiling:
   executionPolicies:
     - name: cpu-ort-active-v1
       deviceClass: "*"
-      executionPath: ort-cpu
+      executionPath: firstfloor-ort-cpu
       workloadMode: saturated-serial-fixed-batch
     - name: cpu-ort-idle-v1
       deviceClass: "*"
-      executionPath: ort-cpu
+      executionPath: firstfloor-ort-cpu
       workloadMode: idle-model-loaded
     - name: rknnlite-active-v1
       deviceClass: orangepi-5-plus-16g
-      executionPath: rknnlite
+      executionPath: firstfloor-rknnlite
       workloadMode: saturated-serial-fixed-batch
     - name: rknnlite-idle-v1
       deviceClass: orangepi-5-plus-16g
-      executionPath: rknnlite
-      workloadMode: idle-model-loaded
-    - name: rknnlite-bs2-active-v1
-      deviceClass: orangepi-5-plus-16g
-      executionPath: rknnlite-bs2
-      workloadMode: saturated-serial-fixed-batch
-    - name: rknnlite-bs2-idle-v1
-      deviceClass: orangepi-5-plus-16g
-      executionPath: rknnlite-bs2
+      executionPath: firstfloor-rknnlite
       workloadMode: idle-model-loaded
 
 powerActuation:

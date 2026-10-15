@@ -29,8 +29,9 @@
     "model": "mobilenet-v2-050",
     "artifact": "canonical-onnx",
     "artifactPath": "/artifact/mobilenet-v2-050.onnx",
-    "runtimeFamily": "onnxruntime",
-    "backend": "CPUExecutionProvider",
+    "runtimeFamily": "firstfloor",
+    "backend": "ort-cpu",
+    "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 32},
     "powerMode": "fixed"
   },
   "delivery": {

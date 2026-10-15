@@ -119,7 +119,7 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 		t.Fatalf("prepared RKNNLite config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
 	if prepared.RunConfig.CPU.ORTIntraOpThreads != 0 || prepared.RunConfig.CPU.ORTInterOpThreads != 0 ||
-		!profilingrun.IsSupportedRKNNLiteRunConfig(prepared.RunConfig) {
+		!profilingrun.IsSupportedFirstfloorRunConfig(prepared.RunConfig) {
 		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.RunConfig.CPU)
 	}
 	if prepared.RunConfig.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.RunConfig.Measurement.Batch != 2 {
@@ -581,8 +581,9 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	config.State.DeviceClass = "orangepi-5-plus-16g"
 	config.State.Artifact = "mobilenet-v2-050-rk3588-bs2"
 	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs2.rknn"
-	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	config.State.Backend = profilingrun.RKNNLiteBackend
+	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	config.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
+	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
 	config.TargetNode.Name = "orangepi5plus"
 	config.TargetNode.Architecture = "arm64"
 	config.TargetNode.AllocatableCPU = "8"

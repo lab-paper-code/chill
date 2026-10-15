@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	runtimeFamilyRKNNLite = "rknnlite"
-	artifactFormatRKNN    = "rknn"
+	runtimeBackendRKNNLite = "rknnlite"
+	artifactFormatRKNN     = "rknn"
 )
 
 var artifactPath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
@@ -101,31 +101,28 @@ func Validate(model *edgev1alpha1.ModelSpec) error {
 }
 
 func validateExecutionRuntime(runtime edgev1alpha1.ModelRuntimeRequirement, artifact edgev1alpha1.ModelArtifact) error {
-	isRKNN := runtime.Family == runtimeFamilyRKNNLite ||
-		(runtime.Family == "firstfloor" && runtime.Backend == runtimeFamilyRKNNLite)
-	if isRKNN && (artifact.Format != artifactFormatRKNN || artifact.Derivation == nil ||
+	if runtime.Family != "firstfloor" {
+		return errors.New("execution path runtime family must be firstfloor")
+	}
+	if !((artifact.Format == "onnx" && (runtime.Backend == "ort-cpu" || runtime.Backend == "ort-cuda")) ||
+		(artifact.Format == artifactFormatRKNN && runtime.Backend == runtimeBackendRKNNLite)) {
+		return errors.New("firstfloor requires ONNX with ort-cpu/ort-cuda or RKNN with rknnlite")
+	}
+	if runtime.Backend == runtimeBackendRKNNLite && (artifact.Derivation == nil ||
 		artifact.Derivation.TargetPlatform == "" || len(artifact.Derivation.DeclaredBatchSizes) == 0) {
 		return errors.New("RKNNLite artifact requires RKNN format, target platform, inputs, and declared batch sizes")
 	}
-	if isRKNN && (len(artifact.Input.Tensors) != 1 || artifact.Input.Tensors[0].Datatype != "FP32" ||
+	if runtime.Backend == runtimeBackendRKNNLite && (len(artifact.Input.Tensors) != 1 || artifact.Input.Tensors[0].Datatype != "FP32" ||
 		len(artifact.Input.Tensors[0].SampleShape) != 3 || artifact.Derivation.TargetPlatform != "rk3588") {
 		return errors.New("RKNNLite requires one FP32 rank-3 NHWC sample input for rk3588")
 	}
-	if runtime.Family == "firstfloor" {
-		if !((artifact.Format == "onnx" && (runtime.Backend == "ort-cpu" || runtime.Backend == "ort-cuda")) ||
-			(artifact.Format == artifactFormatRKNN && runtime.Backend == runtimeFamilyRKNNLite)) {
-			return errors.New("firstfloor requires ONNX with ort-cpu/ort-cuda or RKNN with rknnlite")
+	if err := modelcompat.ValidateFirstfloorRuntimeSettings(FirstfloorSettings(runtime)); err != nil {
+		return err
+	}
+	for _, tensor := range artifact.Input.Tensors {
+		if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
+			return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
 		}
-		if err := modelcompat.ValidateFirstfloorRuntimeSettings(FirstfloorSettings(runtime)); err != nil {
-			return err
-		}
-		for _, tensor := range artifact.Input.Tensors {
-			if tensor.Datatype == "BYTES" || tensor.Datatype == "BF16" {
-				return errors.New("firstfloor requires supported numeric or bool tensor datatypes")
-			}
-		}
-	} else if runtime.Settings != nil && runtime.Settings.Firstfloor != nil {
-		return errors.New("non-firstfloor execution path cannot contain firstfloor settings")
 	}
 	return nil
 }

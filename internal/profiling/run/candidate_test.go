@@ -245,7 +245,8 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
 			Artifact:     report.Selection.Artifact,
 			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
-			RuntimeFamily: "rknnlite", HostContract: cloneCandidateHostContract(report.HostContract),
+			RuntimeFamily: FirstfloorRuntimeFamily, Backend: FirstfloorRKNNLiteBackend,
+			HostContract: cloneCandidateHostContract(report.HostContract),
 		},
 		Images: Images{
 			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,
@@ -346,7 +347,8 @@ func verifyRKNNCandidateAtBatch(
 			DeviceClass: report.Inputs.DeviceClass.Name, Model: report.Inputs.ModelSpec.Name,
 			Artifact:     report.Selection.Artifact,
 			ArtifactPath: report.ArtifactSupply.Path, PowerMode: report.Selection.PowerMode,
-			RuntimeFamily: "rknnlite", HostContract: cloneCandidateHostContract(report.HostContract),
+			RuntimeFamily: FirstfloorRuntimeFamily, Backend: FirstfloorRKNNLiteBackend,
+			HostContract: cloneCandidateHostContract(report.HostContract),
 		},
 		Images: Images{
 			Runtime: report.Inputs.RuntimeDeclaration.Image, Artifact: report.ArtifactSupply.Image,

@@ -14,11 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const (
-	firstExecutionPath  = "ort-cpu"
-	firstRuntimeFamily  = "onnxruntime"
-	firstRuntimeBackend = "CPUExecutionProvider"
-)
+const firstExecutionPath = "ort-cpu"
 
 var ErrCPURequestExceedsAllocatable = errors.New("CPU request exceeds selected Node allocatable CPU")
 var ErrCPUQuotaExceedsAllocatable = errors.New("CPU quota exceeds selected Node allocatable CPU")
@@ -330,13 +326,8 @@ func freezeCPUContract(
 			return profilingrun.CPUContract{}, errors.New("CPU affinity IDs must be nonnegative and unique")
 		}
 	}
-	if len(contract.AffinityCPUs) > 0 && candidate.State.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
-		return profilingrun.CPUContract{}, errors.New("explicit CPU affinity requires firstfloor execution")
-	}
-	if (candidate.State.RuntimeFamily == firstRuntimeFamily && candidate.State.Backend == firstRuntimeBackend) ||
-		(candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
-			(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
-				candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend)) {
+	if candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
+		candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend {
 		contract.ORTIntraOpThreads = threadCount
 		contract.ORTInterOpThreads = 1
 	}
@@ -399,18 +390,11 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	if candidate.State.PowerMode != request.PowerMode {
 		return errors.New("resolved candidate power mode does not match request")
 	}
-	switch {
-	case candidate.State.RuntimeFamily == firstRuntimeFamily &&
-		candidate.State.Backend == firstRuntimeBackend:
-	case candidate.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily &&
-		(candidate.State.Backend == profilingrun.FirstfloorORTCPUBackend ||
-			candidate.State.Backend == profilingrun.FirstfloorORTCUDABackend ||
-			candidate.State.Backend == profilingrun.FirstfloorRKNNLiteBackend) &&
-		candidate.State.Firstfloor != nil:
-	case candidate.State.RuntimeFamily == profilingrun.RKNNLiteRuntimeFamily &&
-		candidate.State.Backend == profilingrun.RKNNLiteBackend &&
-		candidate.State.HostContract != nil:
-	default:
+	if candidate.State.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily ||
+		(candidate.State.Backend != profilingrun.FirstfloorORTCPUBackend &&
+			candidate.State.Backend != profilingrun.FirstfloorORTCUDABackend &&
+			candidate.State.Backend != profilingrun.FirstfloorRKNNLiteBackend) ||
+		candidate.State.Firstfloor == nil {
 		return errors.New("resolved candidate runtime/backend contract is not supported")
 	}
 	if strings.TrimSpace(candidate.DeviceArchitecture) == "" || len(candidate.DeviceNodeSelector) == 0 {

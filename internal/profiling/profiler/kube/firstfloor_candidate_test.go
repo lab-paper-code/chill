@@ -24,13 +24,8 @@ func TestFirstfloorCUDAResolverRequiresDeclaredPhysicalGPU(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			objects := validCandidateObjects()
 			model := objects[0].(*edgev1alpha1.ModelSpec)
-			model.Spec.ExecutionPaths[0].Runtime = edgev1alpha1.ModelRuntimeRequirement{
-				Family: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorORTCUDABackend,
-				Settings: &edgev1alpha1.ModelRuntimeSettings{Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32}},
-			}
-			facts := validExecutionFacts()
-			facts = strings.Replace(facts, `"family":"onnxruntime"`, `"family":"firstfloor"`, 1)
-			facts = strings.Replace(facts, `"backends":["CPUExecutionProvider"]`, `"backends":["ort-cuda"]`, 1)
+			model.Spec.ExecutionPaths[0].Runtime.Backend = profilingrun.FirstfloorORTCUDABackend
+			facts := strings.Replace(validExecutionFacts(), `"backends":["ort-cpu"]`, `"backends":["ort-cuda"]`, 1)
 			objects[2].(*corev1.ConfigMap).Data["execution-facts.yaml"] = facts + test.access
 			candidate, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
 			if (err != nil) != test.wantError {

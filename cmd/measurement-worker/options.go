@@ -42,7 +42,6 @@ type options struct {
 	metricResultPath         string
 	workloadResultPath       string
 	terminationMessagePath   string
-	runtimeCommand           []string
 	firstfloorRuntimeCommand []string
 	attemptTimeout           time.Duration
 	observerReadyTimeout     time.Duration
@@ -74,7 +73,6 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.metricResultPath = defaultMetricResultPath
 	o.workloadResultPath = defaultWorkloadResultPath
 	o.terminationMessagePath = defaultTerminationMessagePath
-	o.runtimeCommand = []string{"python3", "/opt/chill/runtime/ortcpu/runner.py"}
 	o.firstfloorRuntimeCommand = []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"}
 	o.podUID = os.Getenv("POD_UID")
 	o.scheduledNodeName = os.Getenv("NODE_NAME")

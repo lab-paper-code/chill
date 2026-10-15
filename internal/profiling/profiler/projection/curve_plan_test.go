@@ -226,6 +226,7 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
+		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
@@ -264,8 +265,8 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
 	active.State.ArtifactPath = "/artifact/model.onnx"
-	active.State.RuntimeFamily = "onnxruntime"
-	active.State.Backend = "CPUExecutionProvider"
+	active.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	active.State.Backend = profilingrun.FirstfloorORTCPUBackend
 	active.State.HostContract = nil
 	active.Measurement.Batch = 2
 	idle := active
@@ -286,6 +287,7 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
+		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
 		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,

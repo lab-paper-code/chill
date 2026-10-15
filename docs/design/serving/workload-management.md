@@ -49,7 +49,7 @@ native typed tensor·persistent runner의 동일 실행 경로로 Serving과 Pro
 현재 입력 계약은 `tensors[].name`, `datatype`, `sampleShape`이며 여러 numeric/bool tensor를
 하나의 독립 샘플로 검증한다. 모델별 고정 테이블과 shape-only reader는 남기지 않는다.
 `DeviceProfile`을 새 profile DB로 사용하지 않고 선택된 완료 campaign의 메모리 view를 사용한다.
-standalone ORT 및 RKNNLite reference 결과와 firstfloor native 측정은 각각의 frozen 실행 조건으로 관리한다.
+프로파일링은 firstfloor native 경로로만 측정하고 각 측정은 frozen 실행 조건으로 관리한다.
 
 ## 3. 데이터 모델과 원본
 

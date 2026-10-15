@@ -175,8 +175,11 @@ func validModelSpec(name string) *edgev1alpha1.ModelSpec {
 					Name:     "ort-cpu",
 					Artifact: "canonical-onnx",
 					Runtime: edgev1alpha1.ModelRuntimeRequirement{
-						Family:  "onnxruntime",
-						Backend: "CPUExecutionProvider",
+						Family:  "firstfloor",
+						Backend: "ort-cpu",
+						Settings: &edgev1alpha1.ModelRuntimeSettings{
+							Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 4, MaxQueueSize: 32},
+						},
 					},
 				},
 			},

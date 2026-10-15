@@ -52,7 +52,7 @@ func TestFirstfloorExecutionRequiresSelectedNativeCondition(t *testing.T) {
 	model.Spec.Artifacts[0].Format = "onnx"
 	model.Spec.ExecutionPaths[0].Runtime.Family = "onnxruntime"
 	if err := Validate(model); err == nil {
-		t.Fatal("native settings were silently ignored by standalone ORT")
+		t.Fatal("non-firstfloor runtime family accepted")
 	}
 }
 

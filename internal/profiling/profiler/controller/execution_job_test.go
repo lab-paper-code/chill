@@ -491,8 +491,9 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	config.State.DeviceClass = "orangepi-5-plus-16g"
 	config.State.Artifact = "mobilenet-v2-050-rk3588-bs1"
 	config.State.ArtifactPath = "/artifact/mobilenet-v2-050-rk3588-bs1.rknn"
-	config.State.RuntimeFamily = profilingrun.RKNNLiteRuntimeFamily
-	config.State.Backend = profilingrun.RKNNLiteBackend
+	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
+	config.State.Backend = profilingrun.FirstfloorRKNNLiteBackend
+	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
 	config.TargetNode.Name = "orangepi5plus"
 	config.TargetNode.Architecture = testARM64Architecture
 	config.TargetNode.AllocatableCPU = "8"

@@ -8,8 +8,8 @@ import (
 )
 
 func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
-	config := validRunConfig()
-	valid := validRuntimeResult(config)
+	config := firstfloorRunConfig()
+	valid := firstfloorResult(config)
 	if err := ValidateRuntime(config, "pod-uid", valid); err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +47,8 @@ func TestValidateRuntimeRejectsMaterialAndOutputDrift(t *testing.T) {
 func TestRuntimeEvidenceRejectsNamedInputDrift(t *testing.T) {
 	for _, field := range []string{"name", testDatatypeField, testShapeField, "missing"} {
 		t.Run(field, func(t *testing.T) {
-			config := validRunConfig()
-			result := validRuntimeResult(config)
+			config := firstfloorRunConfig()
+			result := firstfloorResult(config)
 			switch field {
 			case "name":
 				result.Inputs[0].Name = testDifferentIdentity
@@ -67,8 +67,8 @@ func TestRuntimeEvidenceRejectsNamedInputDrift(t *testing.T) {
 }
 
 func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
-	config := validRunConfig()
-	base := validRuntimeResult(config)
+	config := firstfloorRunConfig()
+	base := firstfloorResult(config)
 
 	for _, test := range []struct {
 		name   string
@@ -134,8 +134,8 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 }
 
 func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
-	config := validRunConfig()
-	base := validRuntimeResult(config)
+	config := firstfloorRunConfig()
+	base := firstfloorResult(config)
 	for _, test := range []struct {
 		name   string
 		mutate func(*RuntimeResult)
@@ -162,15 +162,23 @@ func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
 }
 
 func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
-	config := validRKNNRunConfig(false)
-	result := validRuntimeResult(config)
+	config := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
+	config.TargetNode.Architecture = testARM64Architecture
+	config.Measurement.Batch = 1
+	config.Delivery = rknnDeliveryForTest(1, config.State.HostContract)
+	result := firstfloorResult(config)
 	result.Architecture = "aarch64"
+	result.RuntimeVersion = "2.3.2"
 	result.Provider = ""
 	result.AvailableProviders = nil
 	result.CPUContract.ORTIntraOpThreads = 0
 	result.CPUContract.ORTInterOpThreads = 0
 	result.DerivedContract.Provider = ""
 	result.RKNN = validRKNNRuntimeEvidence(config.Measurement.Batch)
+	native := &result.Firstfloor.Runtime
+	native.Runtime, native.RuntimeVersion, native.ModelPath = FirstfloorRKNNLiteBackend, "2.3.2", "/model/model.rknn"
+	native.Providers, native.AvailableProviders, native.Device = nil, nil, "npu"
+	native.IntraOpThreads, native.InterOpThreads = 0, 0
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
@@ -201,29 +209,28 @@ func TestNormalizeRuntimeArchitecture(t *testing.T) {
 }
 
 func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
-	config := validRunConfig()
+	config := firstfloorRunConfig()
+	active := firstfloorResult(config)
 	config.Measurement = MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
 		OutputValidation: NoOutputValidation,
 	}
+	native := *active.Firstfloor
+	native.ExecutionCount, native.InferenceCount = 0, 0
+	native.BatchExecutionCounts = map[string]uint64{}
 	result := IdleRuntimeResult{
 		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
 		PodUID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
 		Architecture: "x86_64",
-		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "1", Backend: config.State.Backend, Provider: config.State.Backend,
-		AvailableProviders:   []string{config.State.Backend},
+		Runtime:      config.State.RuntimeFamily, RuntimeVersion: active.RuntimeVersion, Backend: config.State.Backend,
+		Provider: active.Provider, AvailableProviders: active.AvailableProviders,
 		Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
 		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
 		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
 		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
-		ModelResidentAtEnd: true,
-		CPUContract: RuntimeCPU{CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 4,
-			ORTInterOpThreads: 1, AffinityCPUCount: 4, CPUSetEffective: "0-3"},
-		DerivedContract: DerivedContract{
-			Backend: config.State.Backend, Provider: config.State.Backend,
-			NodeSnapshot: config.TargetNode,
-		},
+		ModelResidentAtEnd: true, CPUContract: active.CPUContract, DerivedContract: active.DerivedContract,
+		MemoryBytes: active.MemoryBytes, MemorySource: active.MemorySource, Firstfloor: &native,
 	}
 	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
@@ -240,55 +247,6 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 			t.Fatal("invalid idle runtime evidence was accepted")
 		}
 	}
-}
-
-func TestValidateIdleRuntimeAcceptsModelResidentRKNNLite(t *testing.T) {
-	config := validRKNNRunConfig(true)
-	result := IdleRuntimeResult{
-		SchemaVersion: IdleRuntimeResultSchemaVersion, Status: "Succeeded",
-		PodUID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
-		Architecture: "aarch64",
-		Runtime:      config.State.RuntimeFamily, RuntimeVersion: "2.3.2", Backend: config.State.Backend,
-		RKNN:                 validRKNNRuntimeEvidence(1),
-		Inputs:               modelcompat.CloneInputTensors(config.Delivery.ArtifactCapability.Tensors),
-		ModelLoadCompletedAt: "2026-01-01T00:00:00Z", SettlingStartedAt: "2026-01-01T00:00:01Z",
-		SettlingCompletedAt: "2026-01-01T00:01:01Z", MeasurementStartedAt: "2026-01-01T00:01:01Z",
-		MeasurementEndedAt: "2026-01-01T00:01:31Z", MeasurementElapsedSeconds: 30,
-		ModelResidentAtEnd: true,
-		CPUContract:        RuntimeCPU{CgroupCPUMax: "400000 100000", AffinityCPUCount: 4, CPUSetEffective: "0-3"},
-		DerivedContract: DerivedContract{
-			Backend: config.State.Backend, NodeSnapshot: config.TargetNode,
-		},
-	}
-	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
-		t.Fatal(err)
-	}
-	result.RKNN.LoadSucceeded = false
-	if err := ValidateIdleRuntime(config, "pod-uid", result); err == nil {
-		t.Fatal("idle RKNNLite result without a loaded model was accepted")
-	}
-}
-
-func validRKNNRunConfig(idle bool) RunConfig {
-	config := validRunConfig()
-	config.Candidate.ExecutionPath = RKNNLiteExecutionPath
-	config.State.Artifact = "model-rk3588-bs1"
-	config.State.ArtifactPath = "/artifact/model.rknn"
-	config.State.RuntimeFamily = RKNNLiteRuntimeFamily
-	config.State.Backend = RKNNLiteBackend
-	contract := rknnHostContractForTest()
-	config.State.HostContract = &contract
-	config.TargetNode.Architecture = testARM64Architecture
-	config.CPU.ORTIntraOpThreads = 0
-	config.CPU.ORTInterOpThreads = 0
-	if idle {
-		config.Measurement = MeasurementContract{
-			Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-			WorkloadMode: IdleModelLoadedWorkloadMode, InputGenerator: NoInputGenerator,
-			OutputValidation: NoOutputValidation,
-		}
-	}
-	return config
 }
 
 func validRKNNRuntimeEvidence(batch int) *RKNNRuntimeEvidence {

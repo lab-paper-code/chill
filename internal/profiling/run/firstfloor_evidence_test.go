@@ -72,7 +72,7 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 		name   string
 		mutate func(*RuntimeResult)
 	}{
-		{"standalone family", func(r *RuntimeResult) { r.Runtime = cpuORTRuntimeFamily }},
+		{"other family", func(r *RuntimeResult) { r.Runtime = "onnxruntime" }},
 		{"synthetic runner", func(r *RuntimeResult) { r.Firstfloor.Runtime.Synthetic = true }},
 		{"missing memory", func(r *RuntimeResult) { r.MemoryBytes = 0 }},
 		{"wrong memory scope", func(r *RuntimeResult) { r.MemorySource = "process-rss" }},
@@ -175,15 +175,6 @@ func TestFirstfloorCUDARejectsCPUFallbackAndWrongWholeGPU(t *testing.T) {
 	result.Firstfloor.Runtime.GPUUUID = "GPU-a"
 	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStandaloneEvidenceCannotAssertActorSpans(t *testing.T) {
-	config := validRunConfig()
-	result := validRuntimeResult(config)
-	result.RepetitionResults[0].NativeSamples = firstfloorResult(firstfloorRunConfig()).RepetitionResults[0].NativeSamples
-	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
-		t.Fatal("reference result asserted native actor execution")
 	}
 }
 

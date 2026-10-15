@@ -552,6 +552,7 @@ func curveFixtureIdleEvidence(
 		},
 		Metrics: activeShape.Metrics, Workload: activeShape.Workload,
 	}
+	applyFirstfloorIdleRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -590,7 +591,7 @@ func curveFixtureActiveRaw(
 		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID,
 		Phase: "Running", Images: []string{config.Images.Runtime},
 	}
-	return profilerevidence.RawMeasurement{
+	raw := profilerevidence.RawMeasurement{
 		SchemaVersion: profilerevidence.RawMeasurementSchemaVersion,
 		RunConfig:     config,
 		PodUID:        podUID,
@@ -657,6 +658,8 @@ func curveFixtureActiveRaw(
 			FinalActivePods:   []workloadobserver.Pod{workloadPod}, Continuous: true,
 		},
 	}
+	applyFirstfloorRuntime(config, &raw.Runtime)
+	return raw
 }
 
 func curveFixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {

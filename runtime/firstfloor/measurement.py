@@ -49,7 +49,11 @@ def validate_request(request: dict[str, Any]) -> None:
     backend = state.get("backend")
     if backend not in PROVIDERS:
         raise common.ContractError("unsupported firstfloor backend")
-    common.validate_request(request, REQUEST_SCHEMA, "firstfloor", backend)
+    if backend == "rknnlite" and isinstance(run.get("cpu"), dict):
+        # Go omits zero ORT thread counts for RKNN RunConfigs.
+        run["cpu"].setdefault("ortIntraOpThreads", 0)
+        run["cpu"].setdefault("ortInterOpThreads", 0)
+    common.validate_request(request, REQUEST_SCHEMA, backend)
     settings = common.require_object(state["firstfloor"], "state.firstfloor")
     common.require_fields(settings, {"maxBatchSize", "maxQueueSize"} |
                           ({"deadlinePolicy"} if "deadlinePolicy" in settings else set()), "state.firstfloor")
@@ -378,10 +382,9 @@ def execute_sampled(request: dict[str, Any], numpy: Any, workspace: Path, run: d
                 feeds = common.generate_inputs(numpy, run["delivery"]["artifactCapability"]["tensors"],
                                                measurement["batch"], request["maxInputBytes"])
                 session.prepare_inputs(feeds)
-                result = common.execute_loaded(request, session, numpy, actual["runtimeVersion"], actual.get("availableProviders", []),
+                result = common.execute_loaded(request, session, actual["runtimeVersion"], actual.get("availableProviders", []),
                                                architecture, cpu_max, affinity, cpuset, feeds,
-                                               session.begin_measurement, warmup_already_completed=True,
-                                               result_provider=PROVIDERS[run["state"]["backend"]],
+                                               session.begin_measurement, PROVIDERS[run["state"]["backend"]],
                                                memory_sampler=sampler)
                 executions = result["inferenceCount"]
                 if len(session.samples) != executions or len(result["repetitionResults"][0]["latencyMs"]) != executions:

@@ -43,6 +43,7 @@
   "artifactCapability": {
     "tensors": [{"name": "input", "datatype": "FP32", "sampleShape": [3, 224, 224]}]
   },
+  "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 32},
   "metricObserverImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "verdict": "Compatible",
   "reasons": []

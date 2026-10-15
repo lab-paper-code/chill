@@ -262,37 +262,8 @@ func (i RunConfig) validateMeasurementMode() error {
 	return nil
 }
 
-// IsSupportedActiveRunConfig reports whether the CPU ORT active worker can
-// execute the current RunConfig. Callers must validate the config separately.
-func IsSupportedActiveRunConfig(i RunConfig) bool {
-	return supportedCPUORTRunConfigSchema(i.SchemaVersion) &&
-		i.Measurement.WorkloadMode != IdleModelLoadedWorkloadMode &&
-		isCPUORTExecution(i)
-}
-
-// IsSupportedCPUORTRunConfig covers the active and model-loaded-idle paths
-// implemented by the explicit CPU ORT worker.
-func IsSupportedCPUORTRunConfig(i RunConfig) bool {
-	return IsSupportedActiveRunConfig(i) ||
-		(supportedCPUORTIdleRunConfigSchema(i.SchemaVersion) &&
-			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode &&
-			isCPUORTExecution(i))
-}
-
-// IsSupportedRKNNLiteRunConfig covers the current active and model-loaded-idle
-// contracts implemented by the explicit host-bound RKNNLite worker.
-func IsSupportedRKNNLiteRunConfig(i RunConfig) bool {
-	return i.SchemaVersion == RunConfigSchemaVersion &&
-		hasExecutionPath(i) &&
-		i.State.RuntimeFamily == RKNNLiteRuntimeFamily &&
-		i.State.Backend == RKNNLiteBackend &&
-		i.State.HostContract != nil &&
-		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
-			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
-}
-
-// IsSupportedFirstfloorRunConfig covers native firstfloor execution only;
-// standalone ORT and RKNNLite measurements retain independent identities.
+// IsSupportedFirstfloorRunConfig reports whether the measurement worker can
+// execute the RunConfig; firstfloor is the only measurement path.
 // Callers must validate the frozen config separately.
 func IsSupportedFirstfloorRunConfig(i RunConfig) bool {
 	return i.SchemaVersion == RunConfigSchemaVersion && hasExecutionPath(i) &&
@@ -305,27 +276,12 @@ func IsSupportedFirstfloorRunConfig(i RunConfig) bool {
 }
 
 func isRKNNExecution(i RunConfig) bool {
-	return i.State.RuntimeFamily == RKNNLiteRuntimeFamily ||
-		(i.State.RuntimeFamily == FirstfloorRuntimeFamily && i.State.Backend == FirstfloorRKNNLiteBackend)
-}
-
-func isCPUORTExecution(i RunConfig) bool {
-	return hasExecutionPath(i) &&
-		i.State.RuntimeFamily == cpuORTRuntimeFamily &&
-		i.State.Backend == cpuExecutionProvider
+	return i.State.RuntimeFamily == FirstfloorRuntimeFamily && i.State.Backend == FirstfloorRKNNLiteBackend
 }
 
 func hasExecutionPath(i RunConfig) bool {
 	return i.Candidate.ExecutionPath != "" &&
 		strings.TrimSpace(i.Candidate.ExecutionPath) == i.Candidate.ExecutionPath
-}
-
-func supportedCPUORTRunConfigSchema(schemaVersion string) bool {
-	return schemaVersion == RunConfigSchemaVersion
-}
-
-func supportedCPUORTIdleRunConfigSchema(schemaVersion string) bool {
-	return schemaVersion == RunConfigSchemaVersion
 }
 
 func (i RunConfig) validateCPUContract() error {
