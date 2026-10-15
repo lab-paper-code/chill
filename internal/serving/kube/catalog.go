@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -30,9 +31,11 @@ import (
 
 const invalidEvidenceCode = "InvalidEvidence"
 const measurementPhaseFailed = "Failed"
+const catalogCompletePhase = "Complete"
 
-// Catalog is a refresh-only storage boundary. Its returned view is retained by
-// the coordinator; inference never reads campaigns or downloads evidence.
+// Catalog reads fresh native Campaign metadata and retains one verified terminal
+// profile per selected name/UID/resourceVersion. Inference never reads campaigns
+// or downloads evidence; callers own the mutable parts of each returned view.
 // Loader verification proves stored structure and binding, not admission.
 // Batch distributions retain every raw RUNNER SERVICE sample in nanoseconds,
 // never client roundtrip or backend-call time. Energy uses the existing exact
@@ -43,6 +46,13 @@ type Catalog struct {
 	loader          *profilerevidence.Loader
 	maxObjectBytes  int64
 	confidenceLevel float64
+	current         map[types.NamespacedName]catalogProfile
+}
+
+type catalogProfile struct {
+	uid     types.UID
+	version string
+	profile serving.Profile
 }
 
 type CatalogIssue struct {
@@ -67,7 +77,10 @@ func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectByt
 	if err != nil {
 		return nil, err
 	}
-	return &Catalog{store: store, objects: objects, loader: loader, maxObjectBytes: maxObjectBytes, confidenceLevel: confidenceLevel}, nil
+	return &Catalog{
+		store: store, objects: objects, loader: loader, maxObjectBytes: maxObjectBytes, confidenceLevel: confidenceLevel,
+		current: make(map[types.NamespacedName]catalogProfile),
+	}, nil
 }
 
 // Refresh follows only explicitly selected terminal campaigns. A bad source
@@ -99,6 +112,11 @@ func (c *Catalog) Refresh(ctx context.Context, selections []types.NamespacedName
 				continue
 			}
 			view.Profiles = append(view.Profiles, profile)
+		}
+	}
+	for source := range c.current {
+		if _, selected := seen[source]; !selected {
+			delete(c.current, source)
 		}
 	}
 	var err error
@@ -169,9 +187,11 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	}
 	campaign := &edgev1alpha1.BatchEnergyOptimization{}
 	if err := c.store.client.Get(ctx, source, campaign); err != nil {
+		delete(c.current, source)
 		return serving.Profile{}, nil, fmt.Errorf("get campaign %s: %w", source, err)
 	}
-	if campaign.DeletionTimestamp != nil || campaign.Status.Phase != "Complete" || campaign.Status.ObservedGeneration != campaign.Generation {
+	if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
+		delete(c.current, source)
 		code := "MeasurementPending"
 		if campaign.DeletionTimestamp != nil || campaign.Status.Phase == measurementPhaseFailed {
 			code = "MeasurementRejected"
@@ -183,8 +203,16 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: code, Reason: reason}}, nil
 	}
 	if campaign.Status.Result == nil {
+		delete(c.current, source)
 		return serving.Profile{}, nil, errors.New("completed campaign has no terminal result reference")
 	}
+	if admitted, found := c.current[source]; found &&
+		admitted.uid == campaign.UID && admitted.version == campaign.ResourceVersion {
+		return cloneCatalogProfile(admitted.profile), nil, nil
+	}
+	// A new native identity/version must pass the full evidence boundary.
+	// Never retain the old success if that new admission fails.
+	delete(c.current, source)
 	resultReference := apiObjectIdentity(campaign.Status.Result)
 	payload, err := c.readObject(ctx, resultReference)
 	if err != nil {
@@ -399,7 +427,44 @@ func (c *Catalog) readProfile(ctx context.Context, source types.NamespacedName) 
 	if !completeNativeProfile(profile) {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
 	}
+	c.current[source] = catalogProfile{
+		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile),
+	}
 	return profile, issues, nil
+}
+
+// Only mutable ownership is copied; source facts are not decoded or validated
+// again. Callers cannot mutate the admitted entry through returned slices/maps.
+func cloneCatalogProfile(profile serving.Profile) serving.Profile {
+	profile.Evidence = slices.Clone(profile.Evidence)
+	profile.Batches = slices.Clone(profile.Batches)
+	for i := range profile.Batches {
+		profile.Batches[i].DurationNanos = slices.Clone(profile.Batches[i].DurationNanos)
+	}
+	profile.Condition = profilederivation.CloneCurvePlanSpec(profile.Condition)
+	if profile.RuntimeMetadata != nil {
+		metadata := *profile.RuntimeMetadata
+		metadata.Inputs = slices.Clone(metadata.Inputs)
+		for i := range metadata.Inputs {
+			metadata.Inputs[i].Shape = slices.Clone(metadata.Inputs[i].Shape)
+		}
+		metadata.Outputs = slices.Clone(metadata.Outputs)
+		for i := range metadata.Outputs {
+			metadata.Outputs[i].Shape = slices.Clone(metadata.Outputs[i].Shape)
+		}
+		metadata.Providers = slices.Clone(metadata.Providers)
+		metadata.AvailableProviders = slices.Clone(metadata.AvailableProviders)
+		metadata.CPUAffinity = slices.Clone(metadata.CPUAffinity)
+		metadata.InitializedBatches = slices.Clone(metadata.InitializedBatches)
+		metadata.RKNN = slices.Clone(metadata.RKNN)
+		profile.RuntimeMetadata = &metadata
+	}
+	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
+	if profile.MetricSource.ThermalMetrics != nil {
+		thermal := *profile.MetricSource.ThermalMetrics
+		profile.MetricSource.ThermalMetrics = &thermal
+	}
+	return profile
 }
 
 type catalogBatch struct {

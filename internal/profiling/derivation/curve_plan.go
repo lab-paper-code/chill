@@ -124,7 +124,7 @@ type CurvePlan struct {
 }
 
 func NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error) {
-	spec = cloneCurvePlanSpec(spec)
+	spec = CloneCurvePlanSpec(spec)
 	sort.Ints(spec.PlannedBatchSizes)
 	sort.Ints(spec.CPU.AffinityCPUs)
 	if err := validateCurvePlanSpec(spec); err != nil {
@@ -173,7 +173,7 @@ func (c CurvePlan) SchemaVersion() string {
 }
 
 func (c CurvePlan) Shared() CurvePlanSpec {
-	return cloneCurvePlanSpec(c.record.Shared)
+	return CloneCurvePlanSpec(c.record.Shared)
 }
 
 func (c CurvePlan) PlannedBatchSizes() []int {
@@ -220,7 +220,7 @@ func VerifyCurvePlan(
 		!cleanCurveValue(verified.ActiveProtocolIdentity) || !cleanCurveValue(verified.IdleProtocolIdentity) {
 		return VerifiedCurvePlan{}, errors.New("verified curve state has an invalid derivation identity")
 	}
-	verified.Shared = cloneCurvePlanSpec(verified.Shared)
+	verified.Shared = CloneCurvePlanSpec(verified.Shared)
 	return VerifiedCurvePlan{recorded: plan, state: verified}, nil
 }
 
@@ -395,7 +395,8 @@ func cleanCurveValue(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
 }
 
-func cloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
+// CloneCurvePlanSpec separates caller-owned mutable execution conditions.
+func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
 	shared.CPU.AffinityCPUs = slices.Clone(shared.CPU.AffinityCPUs)
 	shared.Tensor.Tensors = modelcompat.CloneInputTensors(shared.Tensor.Tensors)

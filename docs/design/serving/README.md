@@ -440,6 +440,13 @@ token/CA 경로를 사용한다. owner CA/token은 manifest의 별도 명시 파
 프로파일은 frozen 자원, 전력모드와 native batch 조건별 raw 실행시간 분포,
 incremental energy/item과 실제 memory peak를 제공한다. 완료 campaign과 원시 evidence의
 identity 및 조건을 검증하고 idle-baseline confidence 설정을 profile과 배정 기록에 유지한다.
+Catalog는 매 refresh에서 현재 Campaign의 native UID/resourceVersion·terminal 적격성을
+읽고 선택된 이름마다 현재 검증 entry 하나만 유지한다. 같은 source의 immutable profile은
+재다운로드·재도출하지 않으며 caller가 바꿀 수 있는 slice/map/pointer는 분리해서 반환한다.
+UID/RV 변경·pending·삭제·선택 해제는 기존 entry를 버리고 필요한 경우 원래 전체 evidence
+검증을 다시 수행한다. 새 검증 오류에서 이전 success로 돌아가지 않는다. 이 lifecycle 재사용은
+control tick/profile ticker/profile GET의 반복 raw reload를 제거하지만 native 관측은 계속
+실제로 갱신하며 snapshot 시각이나 freshness 기준을 바꾸지 않는다.
 공유 selector의 요청별 replay가 현재 실행·도착·transition readiness와 원래 경과 시간을 반영한다.
 
 profiling과 serving은 같은 [실행 계약](../../spec/00_measurement.md#측정의-단위)을 사용한다.

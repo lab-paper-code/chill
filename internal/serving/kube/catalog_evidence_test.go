@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"strings"
@@ -75,6 +76,16 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 				t.Fatal("artifact mutation must preserve payload length")
 			}
 			objects[planReference.Location()] = payload
+			// A changed native source revision opens a new admission boundary;
+			// unchanged terminal sources retain their already-verified facts.
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(context.Background(), source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			campaign.Annotations = map[string]string{"catalog-test-revision": "changed"}
+			if err := catalog.store.client.Update(context.Background(), campaign); err != nil {
+				t.Fatal(err)
+			}
 			view, err = catalog.Refresh(context.Background(), []types.NamespacedName{source})
 			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
 				t.Fatalf("artifact mismatch remained a candidate: %+v, %v", view, err)
@@ -198,7 +209,9 @@ func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Cata
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
 			TrialsPerBatch: 3,
 		},
-		Status: edgev1alpha1.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1, Outcome: "MinimumFound"},
+		Status: edgev1alpha1.BatchEnergyOptimizationStatus{
+			Phase: catalogCompletePhase, ObservedGeneration: 1, Outcome: "MinimumFound",
+		},
 	}
 	for _, cpu := range active.CPU.AffinityCPUs {
 		campaign.Spec.CPUAffinity = append(campaign.Spec.CPUAffinity, int32(cpu))
@@ -273,7 +286,8 @@ func catalogEvidenceFixtureMode(t *testing.T, memory uint64, native bool) (*Cata
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(apiObjects...).Build()}
+	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&edgev1alpha1.BatchEnergyOptimization{}).WithObjects(apiObjects...).Build()}
 	catalog, err := NewCatalog(store, objects, 1<<20, 0.95)
 	if err != nil {
 		t.Fatal(err)
@@ -361,4 +375,109 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 			Reason: "Completed", StartedAt: start, FinishedAt: completed.Add(-time.Second)})
 	}
 	return raw, idle, execution
+}
+
+func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
+	const callerMutation = "caller-mutated"
+	catalog, source, objects, plan := catalogEvidenceFixture(t, 4096)
+	ctx := context.Background()
+	view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("initial admission failed: %+v %v", view, err)
+	}
+	profile := &view.Profiles[0]
+	inputDimension := profile.RuntimeMetadata.Inputs[0].Shape[0]
+	tensorDimension := profile.Condition.Tensor.Tensors[0].SampleShape[0]
+	profile.Evidence[0].Key = callerMutation
+	profile.Batches[0].DurationNanos[0] = 999
+	profile.Condition.Firstfloor.MaxBatchSize = 999
+	profile.Condition.CPU.AffinityCPUs[0] = 999
+	profile.Condition.PlannedBatchSizes[0] = 999
+	profile.Condition.Tensor.Tensors[0].SampleShape[0] = 999
+	profile.RuntimeMetadata.CPUAffinity[0] = 999
+	profile.RuntimeMetadata.Inputs[0].Shape[0] = 999
+	profile.MetricSource.MetricLabels[callerMutation] = "yes"
+	// Previously admitted immutable facts remain usable during backing-object
+	// unavailability; current native Campaign metadata must still be read.
+	clear(objects)
+	for range 2 {
+		view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
+		if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+			t.Fatalf("unchanged terminal admission was lost: %+v %v", view, err)
+		}
+		profile = &view.Profiles[0]
+		assertCatalogRawProfile(t, *profile)
+		if profile.Evidence[0] != plan || profile.Condition.Firstfloor.MaxBatchSize != 1 ||
+			profile.Condition.PlannedBatchSizes[0] != 1 ||
+			profile.Condition.Tensor.Tensors[0].SampleShape[0] != tensorDimension ||
+			profile.RuntimeMetadata.Inputs[0].Shape[0] != inputDimension ||
+			profile.MetricSource.MetricLabels[callerMutation] != "" {
+			t.Fatalf("caller mutation reached retained admission: %+v", profile)
+		}
+		profile.Batches[0].DurationNanos[0] = 999
+		profile.Condition.Firstfloor.MaxBatchSize = 999
+	}
+}
+
+func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T) {
+	const recreatedSource = "recreated"
+	for _, change := range []string{"version", "pending", "unselected", "deleted", recreatedSource} {
+		t.Run(change, func(t *testing.T) {
+			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+			ctx := context.Background()
+			view, err := catalog.Refresh(ctx, []types.NamespacedName{source})
+			if err != nil || len(view.Profiles) != 1 {
+				t.Fatalf("initial admission failed: %+v %v", view, err)
+			}
+			retainedObjects := maps.Clone(objects)
+			clear(objects)
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "version":
+				campaign.Annotations = map[string]string{"catalog-test-revision": "changed"}
+				err = catalog.store.client.Update(ctx, campaign)
+			case "pending":
+				campaign.Status.Phase = "Measuring"
+				err = catalog.store.client.Status().Update(ctx, campaign)
+			case "unselected":
+				_, err = catalog.Refresh(ctx, nil)
+			case "deleted", recreatedSource:
+				err = catalog.store.client.Delete(ctx, campaign)
+				if err == nil && change == recreatedSource {
+					campaign.UID, campaign.ResourceVersion = "replacement-uid", ""
+					err = catalog.store.client.Create(ctx, campaign)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
+				if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 {
+					t.Fatalf("changed source reused an old success: %+v %v", view, err)
+				}
+			}
+			if change == "deleted" || change == recreatedSource {
+				return
+			}
+			maps.Copy(objects, retainedObjects)
+			if change == "pending" {
+				if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+					t.Fatal(err)
+				}
+				campaign.Status.Phase = catalogCompletePhase
+				if err := catalog.store.client.Status().Update(ctx, campaign); err != nil {
+					t.Fatal(err)
+				}
+			}
+			view, err = catalog.Refresh(ctx, []types.NamespacedName{source})
+			if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+				t.Fatalf("fresh evidence did not restore admission: %+v %v", view, err)
+			}
+			assertCatalogRawProfile(t, view.Profiles[0])
+		})
+	}
 }
