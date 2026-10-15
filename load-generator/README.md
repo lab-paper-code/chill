@@ -1,7 +1,37 @@
 # CHILL Load Generator
 
-A dependency-free Python client and open-loop scheduling helpers for CHILL.
-The CLI currently prints help; it does not generate traffic.
+A dependency-free Python client and open-loop dataset replay CLI for CHILL.
+
+## Dataset replay
+
+`chill-loadgen replay` sends a Dataset's `evaluation` subset to one registered
+Workload. Each record is a directory `<dataset-dir>/<recordID>/` holding one
+file per input field; `--fields` names the Workload preprocessor's input fields.
+Records are read once, ordered by record ID and cycled. Requests follow a fixed
+open-loop schedule of `--rate` per second for `--duration` seconds, spread
+round-robin over `--workers` connections (default 8), so slow responses do not
+slow the offered load until every connection is busy.
+
+```sh
+chill-loadgen replay \
+  --endpoint https://chill.example:8443 --token-file "$CHILL_TOKEN_FILE" \
+  --ca-file "$CHILL_CA_FILE" --workload vqa-service \
+  --dataset-dir vqav2/evaluation --fields image,question \
+  --rate 5 --duration 60 > vqa.jsonl
+```
+
+Each request prints one JSON line on stdout:
+
+```json
+{"workload": "vqa-service", "record": "262148000", "scheduledOffsetNs": 200000000, "delayed": false, "status": 200, "requestID": "…", "workloadUID": "…", "latencyMs": 812.4}
+```
+
+`latencyMs` is client-observed time from send to response. `delayed` marks a
+request sent more than 10 ms after its scheduled time; it means the replay fell
+behind the schedule. A transport, TLS or timeout failure replaces `status`,
+`requestID` and `workloadUID` with `error`, the exception class name.
+Response bodies and tokens are never printed. For a heterogeneous mix, run one
+`replay` process per Workload concurrently.
 
 ## Workload inference
 
@@ -58,8 +88,8 @@ python -m pip install .
 chill-loadgen
 ```
 
-Run the dependency-free test suite with:
+Run the dependency-free test suite from the repository root with:
 
 ```sh
-PYTHONPATH=src python -m unittest discover -s tests -v
+make test-loadgen
 ```

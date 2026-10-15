@@ -116,12 +116,16 @@ test-runtime: ## Run production runtime contract tests.
 test-artifact-tools: ## Run model-artifact build-tool tests.
 	python3 -m unittest discover -s build/model-artifacts/rknn -p 'test_*.py'
 
+.PHONY: test-loadgen
+test-loadgen: ## Run load-generator tests.
+	PYTHONPATH=load-generator/src python3 -m unittest discover -s load-generator/tests
+
 .PHONY: test-helm-release-flow
 test-helm-release-flow: ## Verify values-file and explicit image precedence in the Helm release flow.
 	./hack/helm-release-flow-test.sh
 
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-helm-release-flow ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
