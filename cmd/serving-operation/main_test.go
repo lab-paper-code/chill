@@ -370,7 +370,8 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 	for _, name := range []string{
 		"fits", "stale aggregate", "stale readiness", foreignMembership, servingMembership,
 		"missing inventory", "missing reservation", "overlap", "CPU overbudget", "memory overbudget",
-		"foreign GPU", "serving Pod", "Node unready", "actual memory pressure", foreignComponentCase,
+		"foreign GPU", "GPU fits", "GPU occupied", "GPU outside inventory",
+		"serving Pod", "Node unready", "actual memory pressure", foreignComponentCase,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ref := serving.NodeReference{Name: "worker", UID: "node-uid"}
@@ -417,6 +418,11 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 				Node: ref, Pool: "live", Ready: true, CPUs: []int{0, 1, 2, 3},
 				Reserved: serving.SchedulerAllocation{CPUs: []int{0, 1}},
 			}}
+			if name == "GPU fits" || name == "GPU occupied" || name == "GPU outside inventory" {
+				node.Status.Allocatable["nvidia.com/gpu"] = resource.MustParse("1")
+				inventory[0].GPUUUIDs = []string{"GPU-measured"}
+				spec.Instance.Allocation.GPUUUID = "GPU-measured"
+			}
 			switch name {
 			case "stale aggregate":
 				inventory[0].NonServing = []serving.SchedulerAllocation{{CPUCount: 100, MemoryBytes: 1 << 40}}
@@ -440,8 +446,10 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 				foreign.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("2100m")
 			case "memory overbudget":
 				node.Status.Allocatable[corev1.ResourceMemory] = resource.MustParse("2Gi")
-			case "foreign GPU":
+			case "foreign GPU", "GPU occupied":
 				foreign.Spec.Containers[0].Resources.Requests["nvidia.com/gpu"] = resource.MustParse("1")
+			case "GPU outside inventory":
+				inventory[0].GPUUUIDs = []string{"GPU-other"}
 			case foreignComponentCase:
 				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "serving Pod":
@@ -457,7 +465,7 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 			kube := fake.NewSimpleClientset(node, foreign, other, system)
 			err := validateExecutionNode(context.Background(), kube, m, spec, inventory)
 			allowed := name == "fits" || name == "stale aggregate" || name == "stale readiness" ||
-				name == foreignMembership || name == foreignComponentCase
+				name == foreignMembership || name == foreignComponentCase || name == "GPU fits"
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected fresh preparation/membership admission: %v", err)
 			}

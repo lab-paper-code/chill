@@ -788,8 +788,9 @@ func bindExecutionCatalog(
 	}
 	profile := spec.Instance.Profile
 	if profile.NodeName != m.Operation.Node.Name || profile.Condition.NodeUID != m.Operation.Node.UID ||
-		profile.Condition.Backend != "ort-cpu" || profile.RuntimeMetadata == nil || profile.RuntimeMetadata.GPUUUID != "" {
-		return nil, errors.New("execute mode requires the configured measured CPU profile on the exact physical Node")
+		(profile.Condition.Backend != "ort-cpu" && profile.Condition.Backend != "ort-cuda") ||
+		profile.RuntimeMetadata == nil || (profile.Condition.Backend == "ort-cpu" && profile.RuntimeMetadata.GPUUUID != "") {
+		return nil, errors.New("execute requires a configured measured ort-cpu or ort-cuda profile on the exact Node")
 	}
 	return view.Profiles, nil
 }

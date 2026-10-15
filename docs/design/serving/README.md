@@ -348,8 +348,10 @@ scheduler/native operation 경로가 켜진 경우 CREATE를 추가한다.
 
 `serving-operation --execute-config FILE`은 측정과 별개의 수동 원자 실행 경계다.
 `--measurement-config`와 함께 사용하지 않으며, catalog 검증·현재 owner에 Loaded인
-CPU profile의 기존 `preparations[profileID]`만 준비한다. inline `PrepareSpec`,
-route/power/resize 동작, 임의 runner 명령을 실행 manifest로 받지 않는다.
+`ort-cpu` 또는 `ort-cuda` profile의 기존 `preparations[profileID]`만 준비한다.
+GPU prepare/remove도 기존 측정 profile 검증·정확한 physical Node·GPU UUID·whole-device
+자원 예산·native runtime 일치 경계를 재사용하며 CPU fallback이나 GPU UUID 재매핑을 허용하지 않는다.
+inline `PrepareSpec`, route/power/resize 동작, 임의 runner 명령을 실행 manifest로 받지 않는다.
 입력은 `operation`(기존 `Operation`의 id/kind/node, remove의 정확한
 podUID/containerID instance 또는 membership의 pool), `profileID`, `namespace`,
 선택 `actuationNamespace`, 독점
@@ -404,7 +406,7 @@ membership은 detached와 해당 configured preparation POOL 사이의 실제 �
 이는 manual execution 근거이며 automatic scheduler judgment나 power 측정 근거가 아니다.
 
 prepare 입력은 부모가 캡처한 현재 ConfigMap JSON(`$CM_CAPTURE`)에서 생성한다.
-`PROFILE_ID`는 해당 revision에서 owner가 Loaded라고 확인한 기존 CPU profile ID이며,
+`PROFILE_ID`는 해당 revision에서 owner가 Loaded라고 확인한 기존 CPU/GPU profile ID이며,
 그 외 환경 변수는 부모가 확인한 namespace/HTTPS trust/caller token/독점 journal이다.
 이 예시는 manifest 생성만 하며 Workload·SLO·model·route map을 변경하지 않는다.
 
