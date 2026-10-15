@@ -26,6 +26,9 @@ func EnumerateScheduler(settings SchedulerSettings, snapshot SchedulerSnapshot) 
 	}
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].UID < workloads[j].UID })
 	e := schedulerEnumeration{settings: settings, snapshot: snapshot, search: search, workloads: workloads, options: schedulerMeasuredOptions(settings, snapshot), seen: map[string]bool{schedulerConfigKey(keep): true}, result: result}
+	if !settings.Controls.Sharing {
+		e.groups = schedulerExistingWorkloadGroups(workloads, snapshot.Instances)
+	}
 	e.visit(0, nil)
 	e.search.Examined = len(e.result)
 	return e.result, e.search
@@ -134,11 +137,42 @@ func schedulerMeasuredOptions(settings SchedulerSettings, snapshot SchedulerSnap
 	return options
 }
 
+// Sharing OFF preserves the existing physical UID cohorts, not singleton UIDs.
+func schedulerExistingWorkloadGroups(workloads []*Definition, instances []SchedulerInstance) [][]*Definition {
+	groups := make([][]*Definition, 0, len(instances))
+	seen := map[string]bool{}
+	assigned := map[string]bool{}
+	for _, instance := range instances {
+		group := []*Definition{}
+		uids := []string{}
+		for _, d := range workloads {
+			if schedulerHas(instance.WorkloadUIDs, d.UID) {
+				group = append(group, d)
+				uids = append(uids, d.UID)
+				assigned[d.UID] = true
+			}
+		}
+		key := fmt.Sprint(uids)
+		if len(group) > 0 && !seen[key] {
+			groups = append(groups, group)
+			seen[key] = true
+		}
+	}
+	for _, d := range workloads {
+		if !assigned[d.UID] {
+			groups = append(groups, []*Definition{d})
+		}
+	}
+	return groups
+}
+
 type schedulerEnumeration struct {
 	settings  SchedulerSettings
 	snapshot  SchedulerSnapshot
 	search    SchedulerSearch
 	workloads []*Definition
+	groups    [][]*Definition
+	sources   map[string]int
 	options   []SchedulerOption
 	seen      map[string]bool
 	result    []SchedulerCandidate
@@ -149,11 +183,16 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 		e.search.Truncated = true
 		return
 	}
-	if w == len(e.workloads) {
+	countGroups := len(e.workloads)
+	if e.groups != nil {
+		countGroups = len(e.groups)
+	}
+	if w == countGroups {
 		e.emit(chosen)
 		return
 	}
-	d := e.workloads[w]
+	group := e.group(w)
+	d := group[0]
 	// A sharing alternative attaches the UID to one compatible physical runner.
 	if e.settings.Controls.Sharing {
 		for j, i := range chosen {
@@ -169,16 +208,72 @@ func (e *schedulerEnumeration) visit(w int, chosen []SchedulerInstance) {
 	}
 	count := 0
 	for _, i := range e.snapshot.Instances {
-		if schedulerHas(i.WorkloadUIDs, d.UID) {
+		if e.sameGroup(i, group) {
 			count++
 		}
 	}
-	for n := 1; n <= e.settings.MaxReplicas; n++ {
+	limit := e.replicaLimit(group, chosen)
+	for n := 1; n <= limit; n++ {
 		if !e.settings.Controls.Replicas && n != count {
 			continue
 		}
 		e.place(w, 0, n, chosen)
 	}
+}
+
+func (e *schedulerEnumeration) group(w int) []*Definition {
+	if e.groups != nil {
+		return e.groups[w]
+	}
+	return e.workloads[w : w+1]
+}
+
+func (e *schedulerEnumeration) sameGroup(instance SchedulerInstance, group []*Definition) bool {
+	if e.groups == nil {
+		return schedulerHas(instance.WorkloadUIDs, group[0].UID)
+	}
+	count := 0
+	for _, d := range e.workloads {
+		if schedulerHas(instance.WorkloadUIDs, d.UID) {
+			if !slices.Contains(group, d) {
+				return false
+			}
+			count++
+		}
+	}
+	return count == len(group)
+}
+
+func (e *schedulerEnumeration) replicaLimit(group []*Definition, chosen []SchedulerInstance) int {
+	limit := e.settings.MaxReplicas
+	for _, d := range group {
+		count := 0
+		for _, instance := range chosen {
+			if schedulerHas(instance.WorkloadUIDs, d.UID) {
+				count++
+			}
+		}
+		limit = min(limit, e.settings.MaxReplicas-count)
+	}
+	return limit
+}
+
+func (e *schedulerEnumeration) sourceIndex(group []*Definition, chosen []SchedulerInstance) int {
+	ordinal := 0
+	for _, instance := range chosen {
+		if e.sameGroup(instance, group) {
+			ordinal++
+		}
+	}
+	for index, instance := range e.snapshot.Instances {
+		if e.sameGroup(instance, group) {
+			if ordinal == 0 {
+				return index
+			}
+			ordinal--
+		}
+	}
+	return -1
 }
 
 func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
@@ -203,8 +298,9 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	// Preserve physical identity only when the complete measured allocation matches.
 	used := map[string][]string{}
 	for j := range c.Instances {
+		source, anchored := e.sources[c.Instances[j].ID]
 		for _, old := range e.snapshot.Instances {
-			if _, preserved := used[old.ID]; !preserved && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
+			if _, preserved := used[old.ID]; !preserved && (!anchored || e.snapshot.Instances[source].ID == old.ID) && old.Node == c.Instances[j].Node && old.Pool == c.Instances[j].Pool && schedulerState(old) == schedulerState(c.Instances[j]) && schedulerNodeMode(e.snapshot.Nodes, old.Node) == schedulerNodeMode(nodes, old.Node) {
 				c.Instances[j].ID = old.ID
 				c.Instances[j].Ready = old.Ready
 				if old.CompletionObserved && old.CompletionMeasurement.Valid() && !slices.ContainsFunc(c.Instances[j].WorkloadUIDs, func(uid string) bool { return !schedulerHas(old.WorkloadUIDs, uid) }) {
@@ -216,26 +312,7 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 			}
 		}
 	}
-	c.Routing = schedulerInstanceRouting(e.workloads, c.Instances)
-	if !e.settings.Controls.Routing {
-		for _, i := range c.Instances {
-			oldUIDs, preserved := used[i.ID]
-			if !preserved {
-				continue
-			}
-			for _, uid := range i.WorkloadUIDs {
-				if !schedulerHas(oldUIDs, uid) {
-					continue
-				}
-				if route, ok := e.snapshot.Routing[uid]; ok {
-					delete(c.Routing[uid], i.ID)
-					if route[i.ID] > 0 {
-						c.Routing[uid][i.ID] = route[i.ID]
-					}
-				}
-			}
-		}
-	}
+	c.Routing = e.routing(c.Instances, chosen, used)
 	add := func(c SchedulerCandidate) {
 		key := schedulerConfigKey(c)
 		if e.seen[key] {
@@ -266,8 +343,39 @@ func (e *schedulerEnumeration) emit(chosen []SchedulerInstance) {
 	}
 }
 
+func (e *schedulerEnumeration) routing(instances, chosen []SchedulerInstance, used map[string][]string) map[string]map[string]int32 {
+	routing := schedulerInstanceRouting(e.workloads, instances)
+	if e.settings.Controls.Routing {
+		return routing
+	}
+	for index, instance := range instances {
+		oldUIDs, preserved := used[instance.ID]
+		sourceID := instance.ID
+		if source, anchored := e.sources[chosen[index].ID]; anchored {
+			old := e.snapshot.Instances[source]
+			oldUIDs, preserved, sourceID = old.WorkloadUIDs, true, old.ID
+		}
+		if !preserved {
+			continue
+		}
+		for _, uid := range instance.WorkloadUIDs {
+			if !schedulerHas(oldUIDs, uid) {
+				continue
+			}
+			if route, ok := e.snapshot.Routing[uid]; ok {
+				delete(routing[uid], instance.ID)
+				if route[sourceID] > 0 {
+					routing[uid][instance.ID] = route[sourceID]
+				}
+			}
+		}
+	}
+	return routing
+}
+
 func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance) {
-	d := e.workloads[w]
+	group := e.group(w)
+	d := group[0]
 	if left == 0 {
 		e.visit(w+1, xs)
 		return
@@ -275,15 +383,34 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 	if len(xs) >= e.settings.MaxInstances {
 		return
 	}
+	source := -1
+	if e.groups != nil {
+		source = e.sourceIndex(group, xs)
+	}
 	for k := start; k < len(e.options); k++ {
 		o := e.options[k]
-		if !schedulerHas(o.CompatibleUIDs, d.UID) || !schedulerOptionAllowed(e.settings, e.snapshot, d, o) {
+		if slices.ContainsFunc(group, func(d *Definition) bool {
+			return !schedulerHas(o.CompatibleUIDs, d.UID) || !e.optionAllowed(d, o, group, source)
+		}) {
 			continue
 		}
 		i := o.Instance
-		i.WorkloadUIDs = []string{d.UID}
+		i.WorkloadUIDs = make([]string, len(group))
+		for index, d := range group {
+			i.WorkloadUIDs[index] = d.UID
+		}
 		i.ID = fmt.Sprintf("target-%s-%d-%d", d.UID, k, len(xs))
 		i.Ready = true
+		if e.groups != nil {
+			if e.sources == nil {
+				e.sources = map[string]int{}
+			}
+			if source >= 0 {
+				e.sources[i.ID] = source
+			} else {
+				delete(e.sources, i.ID)
+			}
+		}
 		conflict := false
 		for _, old := range xs {
 			if old.Node.UID == i.Node.UID && (old.Pool != i.Pool || old.Profile.Condition.PowerMode != i.Profile.Condition.PowerMode) {
@@ -293,7 +420,11 @@ func (e *schedulerEnumeration) place(w, start, left int, xs []SchedulerInstance)
 		if conflict {
 			continue
 		}
-		e.place(w, k, left-1, append(append([]SchedulerInstance(nil), xs...), i))
+		next := k
+		if e.groups != nil {
+			next = 0
+		}
+		e.place(w, next, left-1, append(append([]SchedulerInstance(nil), xs...), i))
 	}
 }
 func schedulerOptionKey(o SchedulerOption) string {
@@ -336,7 +467,8 @@ func schedulerNodeMode(nodes []SchedulerNode, node NodeReference) string {
 	}
 	return ""
 }
-func schedulerOptionAllowed(s SchedulerSettings, snap SchedulerSnapshot, d *Definition, o SchedulerOption) bool {
+func (e *schedulerEnumeration) optionAllowed(d *Definition, o SchedulerOption, group []*Definition, source int) bool {
+	s, snap := e.settings, e.snapshot
 	i := o.Instance
 	if len(i.Allocation.CPUs) > s.MaxCPUs {
 		return false
@@ -354,17 +486,14 @@ func schedulerOptionAllowed(s SchedulerSettings, snap SchedulerSnapshot, d *Defi
 			}
 		}
 	}
-	current := []SchedulerInstance{}
-	for _, old := range snap.Instances {
-		if schedulerHas(old.WorkloadUIDs, d.UID) {
-			current = append(current, old)
+	for index, old := range snap.Instances {
+		if !schedulerHas(old.WorkloadUIDs, d.UID) || (e.groups != nil && (!e.sameGroup(old, group) || (source >= 0 && index != source))) {
+			continue
 		}
-	}
-	for _, old := range current {
 		if !s.Controls.Placement && old.Node != i.Node {
 			continue
 		}
-		if !s.Controls.Resources && !reflect.DeepEqual(old.Allocation, i.Allocation) {
+		if !s.Controls.Resources && !schedulerSameResourceChoice(old, i) {
 			continue
 		}
 		if !s.Controls.Batching && (old.MaxBatch != i.MaxBatch || old.MaxWait != i.MaxWait) {
@@ -373,6 +502,20 @@ func schedulerOptionAllowed(s SchedulerSettings, snap SchedulerSnapshot, d *Defi
 		return true
 	}
 	return s.Controls.Placement && s.Controls.Resources && s.Controls.Batching
+}
+
+func schedulerSameResourceChoice(old, target SchedulerInstance) bool {
+	a, b := old.Allocation, target.Allocation
+	// Memory is a measured placement constraint, not a resource control knob.
+	a.MemoryBytes, b.MemoryBytes = 0, 0
+	if old.Node != target.Node {
+		// Physical CPU IDs and GPU UUIDs are scoped to the selected Node.
+		if len(a.CPUs) != len(b.CPUs) || (a.GPUUUID == "") != (b.GPUUUID == "") {
+			return false
+		}
+		b.CPUs, b.GPUUUID = a.CPUs, a.GPUUUID
+	}
+	return reflect.DeepEqual(a, b)
 }
 func schedulerProfileMatches(d *Definition, p *Profile) bool {
 	return d != nil && profilePath(d, p) != nil

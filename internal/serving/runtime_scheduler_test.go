@@ -243,7 +243,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	second := *snapshot.Workloads[0]
-	second.Name, second.UID = "second", "w2"
+	second.Name, second.UID = "second-workload", "w2"
 	snapshot.Workloads = append(snapshot.Workloads, &second)
 	first := snapshot.Instances[0]
 	first.WorkloadUIDs = []string{snapshot.Workloads[0].UID, second.UID}

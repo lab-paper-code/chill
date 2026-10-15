@@ -229,6 +229,20 @@ node/pool 배치·power mode·분배를 구성한다. 설정된 bounded candidat
 검색 범위를 결과에 고정한다. 제한 도달은 검토 범위로 표시한다. 현재 선택이 이
 범위에서 가장 유리한 선택이라는 의미로 사용한다.
 
+Sharing 제어가 OFF이면 현재 physical instance의 active UID 집합을 그대로 후보의
+단위로 사용한다. placement/resources/replicas를 바꾸더라도 기존 UID 집합을
+합치거나 쪼개지 않으며, replicas ON의 복제도 같은 UID 집합의 복제다. replicas
+OFF는 집합별 현재 물리 인스턴스 수를 보존하고 ON에서도 UID별 replica 상한을
+넘지 않는다. Resources OFF의 실행 자원 비교에서 프로파일 유래 memory request는
+제외하되, 선택한 대상의 실제 measured memory request와 전체 Node 예산 검증은
+그대로 유지한다. 메모리를 source 값으로 바꿔 붙이거나 독립 조절 변수로 삼지 않는다.
+다른 Node로의 placement는 Node-local CPU IDs·GPU UUIDs 대신 같은 CPU 수·스레드와
+GPU 할당 종류를 유지하며, 같은 Node에서는 기존 physical allocation을 그대로 비교한다.
+OFF 제어 비교는 같은 active UID 집합의 기존 인스턴스에만 연결한다. 중첩된
+singleton의 다른 배치·자원·위치를 공유 집합의 변경 허가로 사용하지 않는다.
+Routing OFF의 논리 replacement는 대응하는 기존 cohort replica의 UID별 실제
+weight를 이전하며, preparation option의 scalar weight로 바꾸지 않는다.
+
 현재 queued/running 요청에서 시작해 observation window의 실제 arrival sequence를
 comparison horizon에 반복한다. arrival 재사용 가정·raw service sample draws·seed·반복 수를 기록한다.
 현재 ingress는 실제 Workload queue 순서, native queued 요청은 actor state의 FIFO
