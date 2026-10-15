@@ -457,11 +457,21 @@ Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte
 상태를 한 번 함께 캡처하고, 파일 읽기·JSON decode·집계는 잠금을 푼 뒤 수행한다.
 완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
 진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
-incomplete 상태에 그대로 남는다. scheduler history는 사건 시각 envelope로 먼저
-선택하여 요청 page만 전체 decode하고 다음 일치 record 하나로 continuation을 확인한다.
-window 시각은 append 시각이지 사건 시각의 범위가 아니므로 backfill·역순 사건을
-버리는 window 필터는 쓰지 않는다. power 조회도 결정·profile 분포 대신 기존 집계에
-필요한 실제 표본·meter·coverage·membership만 읽으며 경계와 전체 POOL 범위를 유지한다.
+incomplete 상태에 그대로 남는다. 기존 시작 시 전체 stream 검증·decode pass와 성공한
+scheduler append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
+검증된 prefix byte 수를 캡처한다. 별도 저장 index나 decoded history cache는 없다.
+실제 파일 길이가 census prefix와 다르거나 census를 신뢰할 수 없으면 해당 prefix
+전체를 보수적으로 읽는다. window metadata 전체는 gap·완전성 판정용으로 유지한다.
+scheduler history는 실제 `SchedulerObservation.At` min/max가 `[from,to)`와 만날 수
+있는 window를 append 순서로 읽고, 사건 시각 envelope로 요청 page만 전체 decode한다.
+다음 일치 record 하나로 continuation을 확인하며 matching-offset cursor 의미를 유지한다.
+window wall time은 append 시각이지 사건 시각의 범위가 아니므로 필터에 쓰지 않는다.
+power는 실제 기록 구간의 겹침(표본 0개 포함), coverage boundary 거리로 확장한 실제
+sample 시각 범위, 모든 nil-policy window, membership transition과 최신 prior baseline의
+후보 window를 합쳐 읽는다. baseline 동률·시각 범위를 가로지르는 window도 보존한다.
+정확한 Node·meter·scope·source와 가장 가까운 유효 표본 선택은 기존 reducer가 담당하며,
+서로 다른 series의 전역 최근접 표본으로 nil-policy window를 제거하지 않는다.
+결정·profile 분포 대신 집계에 필요한 실제 표본·meter·coverage·membership만 decode한다.
 두 작은 projection은 기존 jsoniter 의존성으로 읽되, 건너뛴 subtree의 잘못된
 숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
 측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·

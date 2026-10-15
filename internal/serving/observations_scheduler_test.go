@@ -217,8 +217,9 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 	// Event time is deliberately older than every append window's metadata.
 	from := time.Now().UTC().Add(-2 * time.Hour)
 	to := from.Add(time.Second)
-	for i, event := range []SchedulerObservation{
+	for _, event := range []SchedulerObservation{
 		{At: from.Add(-time.Nanosecond), Action: &SchedulerActionObservation{ID: "outside"}},
+		{At: from.Add(-24 * time.Hour), Action: &SchedulerActionObservation{ID: "distant"}},
 		{At: from.Add(time.Millisecond), Action: &SchedulerActionObservation{ID: "first"}},
 		{At: from, Action: &SchedulerActionObservation{ID: laterActionID}},
 		{At: to, Action: &SchedulerActionObservation{ID: "boundary"}},
@@ -226,30 +227,40 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 		if err = j.SchedulerRecord(event); err != nil {
 			t.Fatal(err)
 		}
-		if i == 1 {
-			if err := j.finish(); err != nil {
-				t.Fatal(err)
-			}
-			if err := j.start(time.Now().UTC()); err != nil {
-				t.Fatal(err)
-			}
+		if err := j.finish(); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.start(time.Now().UTC()); err != nil {
+			t.Fatal(err)
 		}
 	}
-	first, next, err := j.SchedulerObservationPage(from, to, 1, 0)
-	if err != nil || len(first) != 1 || first[0].Action.ID != "first" || next != 1 {
-		t.Fatalf("first bounded append page: %+v %d %v", first, next, err)
+	check := func() {
+		t.Helper()
+		first, next, err := j.SchedulerObservationPage(from, to, 1, 0)
+		if err != nil || len(first) != 1 || first[0].Action.ID != "first" || next != 1 {
+			t.Fatalf("first bounded append page: %+v %d %v", first, next, err)
+		}
+		second, next, err := j.SchedulerObservationPage(from, to, 1, next)
+		if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
+			t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
+		}
+		end, next, err := j.SchedulerObservationPage(from, to, 1, 2)
+		if err != nil || len(end) != 0 || next != -1 {
+			t.Fatalf("cursor at selected count must return an empty terminal page: %+v %d %v", end, next, err)
+		}
+		if _, _, err = j.SchedulerObservationPage(from, to, 1, 3); err == nil {
+			t.Fatal("out-of-range cursor accepted")
+		}
 	}
-	second, next, err := j.SchedulerObservationPage(from, to, 1, next)
-	if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
-		t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
+	check()
+	if err := j.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	end, next, err := j.SchedulerObservationPage(from, to, 1, 2)
-	if err != nil || len(end) != 0 || next != -1 {
-		t.Fatalf("cursor at selected count must return an empty terminal page: %+v %d %v", end, next, err)
+	j, err = NewJournal(j.config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, _, err = j.SchedulerObservationPage(from, to, 1, 3); err == nil {
-		t.Fatal("out-of-range cursor accepted")
-	}
+	check()
 }
 
 func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {

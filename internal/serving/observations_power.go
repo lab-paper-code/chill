@@ -126,23 +126,60 @@ func operatingPowerRecord(window string, raw []byte) (observationRecord, error) 
 	return record, nil
 }
 
+// Keep a conservative union of power/support and membership candidates. Bounds
+// are per window, not per series: the reducer alone chooses exact physical
+// neighbors. In particular, every nil-policy window must remain readable.
+func (s *observationSnapshot) selectOperatingPower(from, to time.Time) {
+	var baselineBound time.Time
+	hasBaselineBound := false
+	for _, prefix := range s.streams[observationSchedulerStream] {
+		bounds := prefix.census.snapshotAt
+		if !prefix.census.trusted || !bounds.set || bounds.min.After(from) {
+			continue
+		}
+		candidate := bounds.max
+		if candidate.After(from) {
+			candidate = bounds.min // Straddlers can hide the latest prior snapshot.
+		}
+		if !hasBaselineBound || candidate.After(baselineBound) {
+			baselineBound, hasBaselineBound = candidate, true
+		}
+	}
+	prefixes := s.streams[observationSchedulerStream][:0]
+	for _, prefix := range s.streams[observationSchedulerStream] {
+		c := prefix.census
+		membership := c.snapshotAt.intersects(from, to) ||
+			c.snapshotAt.set && !c.snapshotAt.min.After(from) &&
+				(!hasBaselineBound || !c.snapshotAt.max.Before(baselineBound))
+		power := c.hasPower && (!c.minStarted.After(to) && !c.maxEnded.Before(from) ||
+			c.unboundedPower || c.sampleAt.set &&
+			!c.sampleAt.max.Before(from.Add(-c.maxBoundaryDistance)) &&
+			!c.sampleAt.min.After(to.Add(c.maxBoundaryDistance)))
+		if !c.trusted || power || membership {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	s.streams[observationSchedulerStream] = prefixes
+}
+
 // OperatingPower integrates raw samples over one interval, never record totals.
 func (j *Journal) OperatingPower(from, to time.Time, meters []OperatingPowerMeter, limit int) (OperatingPowerWindow, error) {
 	result := OperatingPowerWindow{From: from, To: to, Scope: "whole-pool-wall", Nodes: []OperatingNodePower{}, Reasons: []string{}, IncompleteWindows: []string{}}
 	if from.IsZero() || !from.Before(to) || limit <= 0 {
 		return result, failure("InvalidQuery", "positive explicit power interval and observation bound are required")
 	}
-	snapshot, err := j.snapshot("scheduler")
+	snapshot, err := j.snapshot(observationSchedulerStream)
 	if err != nil {
 		return result, err
 	}
+	snapshot.selectOperatingPower(from, to)
 	byUID, history := configuredOperatingMeters(&result, meters)
 	var snapshots []SchedulerSnapshot
 	var baseline *SchedulerSnapshot
 	baselineWindow := ""
 	rawWindows := map[string]bool{}
 	matched := 0
-	err = snapshot.scanRaw("scheduler", func(window string, raw []byte) (bool, error) {
+	err = snapshot.scanRaw(observationSchedulerStream, func(window string, raw []byte) (bool, error) {
 		record, err := operatingPowerRecord(window, raw)
 		if err != nil {
 			return false, err

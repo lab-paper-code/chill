@@ -18,6 +18,7 @@ import (
 )
 
 const observationSchema = "chill.dacs.io/serving-observations.v1alpha2"
+const observationSchedulerStream = "scheduler"
 
 type JournalConfig struct {
 	Directory   string
@@ -71,16 +72,31 @@ type JournalHealth struct {
 	Windows []ObservationWindow `json:"windows"`
 }
 
-// Journal uses a single lock and file scans: research-scale event volume does
-// not justify a second database or an index maintained alongside the raw facts.
+// Journal keeps raw facts in files and a bounded, per-window scheduler census;
+// queries capture both under the writer lock and scan selected prefixes outside it.
 type Journal struct {
-	mu        sync.Mutex
-	config    JournalConfig
-	windows   []ObservationWindow
-	active    int
-	files     map[string]*os.File
-	closed    bool
-	lastError error
+	mu              sync.Mutex
+	config          JournalConfig
+	windows         []ObservationWindow
+	active          int
+	files           map[string]*os.File
+	schedulerCensus map[string]schedulerWindowCensus
+	schedulerWriter schedulerCountingWriter
+	closed          bool
+	lastError       error
+}
+
+// Counting the existing encoder writes avoids encoding or retaining records a
+// second time. Direct file rewrites do not advance this count and force a scan.
+type schedulerCountingWriter struct {
+	*os.File
+	bytes int64
+}
+
+func (w *schedulerCountingWriter) Write(data []byte) (int, error) {
+	n, err := w.File.Write(data)
+	w.bytes += int64(n)
+	return n, err
 }
 
 func NewJournal(config JournalConfig) (*Journal, error) {
@@ -94,7 +110,7 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &Journal{config: config, active: -1}
+	j := &Journal{config: config, active: -1, schedulerCensus: map[string]schedulerWindowCensus{}}
 	for _, entry := range entries {
 		// Hidden directories are unpublished staging, never observation windows.
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
@@ -118,14 +134,28 @@ func NewJournal(config JournalConfig) (*Journal, error) {
 		}
 		j.windows = append(j.windows, window)
 	}
-	streams := []string{"definitions", "requests", "management", "scheduler"}
+	streams := []string{"definitions", "requests", "management", observationSchedulerStream}
 	read, err := j.snapshot(streams...)
 	if err != nil {
 		return nil, err
 	}
 	for _, stream := range streams {
-		if err := read.scan(stream, func(observationRecord) {}); err != nil {
+		if err := read.scan(stream, func(record observationRecord) {
+			if stream == observationSchedulerStream {
+				census := j.schedulerCensus[record.Window]
+				census.add(record.Scheduler)
+				j.schedulerCensus[record.Window] = census
+			}
+		}); err != nil {
 			return nil, err
+		}
+		if stream == observationSchedulerStream {
+			for _, prefix := range read.streams[stream] {
+				window := read.windows[prefix.window]
+				census := j.schedulerCensus[window.ID]
+				census.prefixBytes, census.trusted = prefix.bytes, !window.Incomplete
+				j.schedulerCensus[window.ID] = census
+			}
 		}
 	}
 	for i := range j.windows {
@@ -205,7 +235,7 @@ func (j *Journal) start(now time.Time) (result error) {
 	if err := writeWindowMetadata(directory, window); err != nil {
 		return err
 	}
-	for _, stream := range []string{"definitions", "requests", "management", "scheduler"} {
+	for _, stream := range []string{"definitions", "requests", "management", observationSchedulerStream} {
 		file, err := os.OpenFile(filepath.Join(directory, stream+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
@@ -216,12 +246,18 @@ func (j *Journal) start(now time.Time) (result error) {
 			return err
 		}
 	}
+	info, err := files[observationSchedulerStream].Stat()
+	if err != nil {
+		return err
+	}
 	if err := os.Rename(directory, filepath.Join(j.config.Directory, window.ID)); err != nil {
 		return err
 	}
 	j.windows = append(j.windows, window)
 	j.active = len(j.windows) - 1
 	j.files = files
+	j.schedulerCensus[window.ID] = schedulerWindowCensus{prefixBytes: info.Size(), trusted: true}
+	j.schedulerWriter = schedulerCountingWriter{File: files[observationSchedulerStream], bytes: info.Size()}
 	return nil
 }
 
@@ -245,7 +281,20 @@ func (j *Journal) append(stream string, record observationRecord) error {
 	}
 	record.SchemaVersion = observationSchema
 	record.Window = j.windows[j.active].ID
-	err := json.NewEncoder(j.files[stream]).Encode(record)
+	var err error
+	if stream == observationSchedulerStream {
+		err = json.NewEncoder(&j.schedulerWriter).Encode(record)
+		census := j.schedulerCensus[record.Window]
+		if err == nil {
+			census.add(record.Scheduler)
+			census.prefixBytes = j.schedulerWriter.bytes
+		} else {
+			census.trusted = false
+		}
+		j.schedulerCensus[record.Window] = census
+	} else {
+		err = json.NewEncoder(j.files[stream]).Encode(record)
+	}
 	if err != nil {
 		j.lastError = err
 		j.windows[j.active].Incomplete = true

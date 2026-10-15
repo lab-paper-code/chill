@@ -244,7 +244,16 @@ func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
 		}
 		selected = lines[index]
 	}
-	if err := os.WriteFile(path, bytes.Join(lines, []byte{'\n'}), 0600); err != nil {
+	// Move the rewritten facts entirely outside the counted census bounds.
+	// The changed byte prefix must fall back to scanning, not silently prune.
+	rewritten := bytes.Join(lines, []byte{'\n'})
+	for _, offset := range []time.Duration{-time.Second, 0, 3 * time.Second, 4 * time.Second, 6 * time.Second, 10 * time.Second} {
+		at := from.Add(offset)
+		rewritten = bytes.ReplaceAll(rewritten, []byte(at.Format(time.RFC3339Nano)), []byte(at.Add(2*time.Hour).Format(time.RFC3339Nano)))
+	}
+	from, to = from.Add(2*time.Hour), to.Add(2*time.Hour)
+	want.From, want.To = from, to
+	if err := os.WriteFile(path, rewritten, 0600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := j.OperatingPower(from, to, meters, 20)
@@ -562,5 +571,90 @@ func TestOperatingPowerProjectionRejectsMalformedIgnoredSubtrees(t *testing.T) {
 		if _, err := operatingPowerRecord("syntax-window", []byte(raw)); err == nil {
 			t.Fatalf("malformed skipped power JSON accepted: %s", invalid)
 		}
+	}
+}
+
+func TestOperatingPowerCensusKeepsPhysicalNeighborsAndLatestMembership(t *testing.T) {
+	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close(context.Background()) })
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	to := from.Add(10 * time.Second)
+	node := NodeReference{Name: "metered", UID: "physical-node"}
+	meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
+	policy := powerwindow.Policy{MaximumBoundaryDistance: 2 * time.Second, MinimumCoverage: 1, MaximumGap: 20 * time.Second}
+	// Every append window is distant from the actual facts. Rotate each group
+	// so the census must retain ties, straddlers and sample-only candidates.
+	appendWindow := func(events ...SchedulerObservation) {
+		t.Helper()
+		for _, event := range events {
+			if err := j.SchedulerRecord(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := j.finish(); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.start(time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	membership := func(at time.Time, active bool) SchedulerObservation {
+		snapshot := &SchedulerSnapshot{At: at}
+		if active {
+			snapshot.Instances = []SchedulerInstance{{Node: node, Ready: true, WorkloadUIDs: []string{"w"}}}
+		}
+		return SchedulerObservation{At: from.Add(48 * time.Hour), Snapshot: snapshot}
+	}
+	power := func(interval, sample time.Time, source metricobserver.SourceIdentity, coverage *powerwindow.Policy) SchedulerObservation {
+		result := &metricobserver.Result{Source: source, StartedAt: interval, EndedAt: interval}
+		if !sample.IsZero() {
+			result.Samples = []metricobserver.Sample{{ObservedAt: sample, Watts: 10}}
+		}
+		return SchedulerObservation{At: interval, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: result, PowerCoverage: coverage}
+	}
+	appendWindow(membership(from.Add(-time.Hour), true))
+	appendWindow(membership(from.Add(-time.Second), true))
+	appendWindow(membership(from.Add(-2*time.Second), true), membership(to.Add(time.Hour), true))
+	appendWindow(membership(from.Add(-time.Second), false)) // Last append wins the baseline tie.
+	appendWindow(membership(from.Add(5*time.Second), true))
+	appendWindow(power(from.Add(-time.Hour), from.Add(-time.Second), operatingTestSource, &policy))
+	appendWindow(power(to.Add(time.Hour), to.Add(time.Second), operatingTestSource, &policy))
+	wrongSource := operatingTestSource
+	wrongSource.Endpoint = "http://wrong-series/metrics"
+	appendWindow(power(from.Add(-2*time.Hour), from.Add(-100*time.Millisecond), wrongSource, nil))
+	appendWindow(power(to.Add(2*time.Hour), to.Add(100*time.Millisecond), wrongSource, nil))
+	got, err := j.OperatingPower(from, to, meters, 20)
+	if err != nil || !got.Complete || got.WholePoolJoules == nil || math.Abs(*got.WholePoolJoules-100) > 1e-9 ||
+		got.ActivePoolJoules == nil || math.Abs(*got.ActivePoolJoules-50) > 1e-9 || got.Nodes[0].Samples != 2 {
+		t.Fatalf("actual timestamps, physical support or latest baseline tie lost: %+v %v", got, err)
+	}
+	if err := j.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	j, err = NewJournal(j.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := j.OperatingPower(from, to, meters, 20)
+	if err != nil || !reflect.DeepEqual(restored, got) {
+		t.Fatalf("startup census changed retained power: %+v %v", restored, err)
+	}
+	// Zero-sample overlapping records still consume the query bound.
+	appendWindow(power(from.Add(time.Second), time.Time{}, operatingTestSource, &policy))
+	bounded, err := j.OperatingPower(from, to, meters, 3)
+	if err != nil || bounded.Complete || bounded.WholePoolJoules != nil ||
+		!strings.Contains(strings.Join(bounded.Reasons, " "), "exceeds query bound") {
+		t.Fatalf("empty power interval escaped the observation bound: %+v %v", bounded, err)
+	}
+	// A matching nil-policy neighbor is required even though a wrong physical
+	// series has a closer sample and neither record interval overlaps.
+	appendWindow(power(from.Add(-3*time.Hour), from.Add(-500*time.Millisecond), operatingTestSource, nil))
+	unbounded, err := j.OperatingPower(from, to, meters, 20)
+	if err != nil || unbounded.Complete || unbounded.WholePoolJoules != nil ||
+		!strings.Contains(strings.Join(unbounded.Nodes[0].Reasons, " "), "no recorded coverage policy") {
+		t.Fatalf("nil-policy physical neighbor was pruned: %+v %v", unbounded, err)
 	}
 }

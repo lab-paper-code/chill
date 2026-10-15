@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var errObservationRecordIdentity = errors.New("invalid observation record identity")
@@ -20,6 +21,64 @@ func observationJSONSyntaxError(raw []byte) error {
 	}
 	var invalid json.RawMessage
 	return json.Unmarshal(raw, &invalid)
+}
+
+// Scheduler census bounds describe actual event times, never append-window
+// wall times. They summarize only the validated/counted byte prefix.
+type observationTimeBounds struct {
+	min, max time.Time
+	set      bool
+}
+
+func (b *observationTimeBounds) add(at time.Time) {
+	if !b.set || at.Before(b.min) {
+		b.min = at
+	}
+	if !b.set || at.After(b.max) {
+		b.max = at
+	}
+	b.set = true
+}
+
+func (b observationTimeBounds) intersects(from, to time.Time) bool {
+	return b.set && !b.max.Before(from) && b.min.Before(to)
+}
+
+type schedulerWindowCensus struct {
+	prefixBytes              int64
+	trusted                  bool
+	schedulerAt, snapshotAt  observationTimeBounds
+	sampleAt                 observationTimeBounds
+	minStarted, maxEnded     time.Time
+	maxBoundaryDistance      time.Duration
+	hasPower, unboundedPower bool
+}
+
+func (c *schedulerWindowCensus) add(event *SchedulerObservation) {
+	if event == nil {
+		return
+	}
+	c.schedulerAt.add(event.At)
+	if event.Snapshot != nil && !event.Snapshot.At.IsZero() {
+		c.snapshotAt.add(event.Snapshot.At)
+	}
+	if power := event.Power; power != nil {
+		if !c.hasPower || power.StartedAt.Before(c.minStarted) {
+			c.minStarted = power.StartedAt
+		}
+		if !c.hasPower || power.EndedAt.After(c.maxEnded) {
+			c.maxEnded = power.EndedAt
+		}
+		c.hasPower = true
+		if event.PowerCoverage == nil {
+			c.unboundedPower = true
+		} else {
+			c.maxBoundaryDistance = max(c.maxBoundaryDistance, event.PowerCoverage.MaximumBoundaryDistance)
+		}
+		for _, sample := range power.Samples {
+			c.sampleAt.add(sample.ObservedAt)
+		}
+	}
 }
 
 // observationSnapshot pins complete append prefixes, not decoded history. All
@@ -35,6 +94,7 @@ type observationStreamPrefix struct {
 	window int
 	path   string
 	bytes  int64
+	census schedulerWindowCensus
 }
 
 func (j *Journal) snapshot(streams ...string) (*observationSnapshot, error) {
@@ -53,7 +113,12 @@ func (j *Journal) snapshot(streams ...string) (*observationSnapshot, error) {
 				j.lastError = err
 				return nil, err
 			}
-			prefixes = append(prefixes, observationStreamPrefix{window: index, path: name, bytes: info.Size()})
+			prefix := observationStreamPrefix{window: index, path: name, bytes: info.Size()}
+			if stream == observationSchedulerStream {
+				prefix.census = j.schedulerCensus[window.ID]
+				prefix.census.trusted = prefix.census.trusted && prefix.bytes == prefix.census.prefixBytes
+			}
+			prefixes = append(prefixes, prefix)
 		}
 		s.streams[stream] = prefixes
 	}

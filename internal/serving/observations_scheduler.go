@@ -59,7 +59,7 @@ func (j *Journal) SchedulerRecord(event SchedulerObservation) error {
 	if event.At.IsZero() {
 		return failure("InvalidObservation", "scheduler observation time is required")
 	}
-	return j.append("scheduler", observationRecord{Scheduler: &event})
+	return j.append(observationSchedulerStream, observationRecord{Scheduler: &event})
 }
 
 type WorkloadLoad struct {
@@ -367,13 +367,20 @@ func (j *Journal) SchedulerObservationPage(from, to time.Time, limit, offset int
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
 		return nil, -1, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
 	}
-	snapshot, err := j.snapshot("scheduler")
+	snapshot, err := j.snapshot(observationSchedulerStream)
 	if err != nil {
 		return nil, -1, err
 	}
+	prefixes := snapshot.streams[observationSchedulerStream][:0]
+	for _, prefix := range snapshot.streams[observationSchedulerStream] {
+		if !prefix.census.trusted || prefix.census.schedulerAt.intersects(from, to) {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	snapshot.streams[observationSchedulerStream] = prefixes
 	records := make([]SchedulerObservation, 0, limit)
 	matched, next := 0, -1
-	err = snapshot.scanRaw("scheduler", func(window string, raw []byte) (bool, error) {
+	err = snapshot.scanRaw(observationSchedulerStream, func(window string, raw []byte) (bool, error) {
 		var envelope struct {
 			SchemaVersion string `json:"schemaVersion"`
 			Window        string `json:"window"`
