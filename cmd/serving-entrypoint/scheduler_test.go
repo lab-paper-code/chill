@@ -3,10 +3,21 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	corev1 "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) {
@@ -67,15 +78,128 @@ func TestStaticRoutingAcknowledgementDoesNotReapplyOrRunWithControlsOn(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			owner := &schedulerOwner{resourceVersion: "42", staticAppliedRV: test.appliedRV}
-			owner.configuration.Settings.Controls.Enabled = test.enabled
+			config := &schedulerConfiguration{}
+			config.Settings.Controls.Enabled = test.enabled
 			if test.declared {
-				owner.configuration.StaticRouting = map[string]map[string]int{"current": {"physical": 1}}
+				config.StaticRouting = map[string]map[string]int{"current": {"physical": 1}}
 			}
+			owner.configuration.Store(config)
 			// No controller is installed: these cases must not attempt application.
 			owner.applyStaticRouting(context.Background())
 			if owner.staticAppliedRV != test.wantAppliedRV {
 				t.Fatalf("static application acknowledgement = %q, want %q", owner.staticAppliedRV, test.wantAppliedRV)
 			}
 		})
+	}
+}
+
+type schedulerPowerArchive struct{ directory string }
+
+func (a schedulerPowerArchive) PutImmutable(
+	_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader,
+) (evidencestore.Receipt, error) {
+	output := filepath.Join(a.directory, identity.Key)
+	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	n, err := io.Copy(file, input)
+	err = errors.Join(err, file.Sync(), file.Close())
+	if err != nil || n != identity.Size {
+		return evidencestore.Receipt{}, errors.Join(err, errors.New("archive incomplete"))
+	}
+	return evidencestore.Receipt{
+		SchemaVersion: evidencestore.ReceiptSchemaVersion,
+		Object:        identity, Outcome: evidencestore.CreateOutcomeCreated,
+	}, nil
+}
+
+func TestOperatingPowerReadsAcceptedConfigurationWhileOwnerIsBusy(t *testing.T) {
+	journal, err := serving.NewJournal(serving.JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: schedulerPowerArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := journal.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	from := time.Now().UTC()
+	to := from.Add(time.Second)
+	if err = journal.SchedulerRecord(serving.SchedulerObservation{
+		At: from, Snapshot: &serving.SchedulerSnapshot{At: from},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MaximumGap: time.Second, MinimumCoverage: 1}
+	configurations := make([]*schedulerConfiguration, 0, 2)
+	for index, name := range []string{"first", "replacement"} {
+		node := serving.NodeReference{Name: name, UID: name + "-uid"}
+		source := metricobserver.SourceIdentity{
+			Kind: "edge-metrics", Endpoint: "http://meter/" + name, Metric: "wall_watts", NodeName: name,
+		}
+		meter := servingkube.MeterDeclaration{Node: node, ID: name + "-wall", Scope: "node-exclusive-wall", Source: source}
+		watts := float64((index + 1) * 10)
+		power := metricobserver.Result{Source: source, StartedAt: from, EndedAt: to,
+			Samples: []metricobserver.Sample{{ObservedAt: from, Watts: watts}, {ObservedAt: to, Watts: watts}},
+		}
+		if err = journal.SchedulerRecord(serving.SchedulerObservation{
+			At: to, Power: &power, PowerCoverage: &policy, Node: &node, Meter: meter.ID, PowerScope: meter.Scope,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		configurations = append(configurations, &schedulerConfiguration{Meters: []servingkube.MeterDeclaration{meter}})
+	}
+	owner := &schedulerOwner{journal: journal}
+	// Model a refresh or control Tick holding the owner lock throughout this read.
+	owner.lock.Lock()
+	defer owner.lock.Unlock()
+	for index, config := range configurations {
+		owner.configuration.Store(config)
+		type response struct {
+			result serving.OperatingPowerWindow
+			err    error
+		}
+		done := make(chan response, 1)
+		go func() { result, err := owner.operatingPower(from, to, 10); done <- response{result: result, err: err} }()
+		select {
+		case got := <-done:
+			wantJoules := float64((index + 1) * 10)
+			if got.err != nil || !got.result.Complete || len(got.result.Nodes) != 1 ||
+				got.result.Nodes[0].Node != config.Meters[0].Node || got.result.WholePoolJoules == nil ||
+				*got.result.WholePoolJoules != wantJoules {
+				t.Fatalf("power query lost accepted meter snapshot while owner busy: %+v %v", got.result, got.err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("power query waited behind the owner refresh/control lock")
+		}
+	}
+}
+
+func TestRejectedSchedulerRefreshPreservesPublishedConfiguration(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Namespace: "scheduler", Name: "configuration", ResourceVersion: "replacement"},
+		Data:       map[string]string{"configuration": "{"},
+	})
+	owner := &schedulerOwner{
+		kube: client, observer: &servingkube.Observer{}, resourceVersion: "accepted",
+		opts: options{
+			servingNamespace: "scheduler", schedulerConfigMap: "configuration",
+			schedulerConfigKey: "configuration", maxRequestBytes: 1024,
+		},
+	}
+	accepted := &schedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "accepted-meter"}}}
+	owner.configuration.Store(accepted)
+	if err := owner.refresh(context.Background()); err == nil {
+		t.Fatal("malformed replacement configuration was accepted")
+	}
+	if owner.configuration.Load() != accepted || owner.resourceVersion != "accepted" {
+		t.Fatal("rejected refresh changed the published configuration")
 	}
 }

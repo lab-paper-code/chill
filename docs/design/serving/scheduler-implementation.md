@@ -449,6 +449,10 @@ inventory·적용 affinity를 raw에 연결하며 quota와 mask의 의미를 각
 | `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
+power 조회는 controller가 수락한 owner configuration 하나를 atomic하게 읽어 meter
+구성을 고정한다. 긴 refresh·control Tick의 owner mutex를 기다리지 않으며, 새 설정은
+controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
+
 Journal 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte 길이와 window
 상태를 한 번 함께 캡처하고, 파일 읽기·JSON decode·집계는 잠금을 푼 뒤 수행한다.
 완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나

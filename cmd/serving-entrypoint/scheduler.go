@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -61,7 +62,7 @@ type schedulerOwner struct {
 	opts                      options
 	resourceVersion, profiles string
 	staticAppliedRV           string
-	configuration             schedulerConfiguration
+	configuration             atomic.Pointer[schedulerConfiguration]
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	powerCancel               context.CancelFunc
@@ -353,7 +354,8 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.configuration = config
+	// Publish the complete configuration only after the controller accepted it.
+	o.configuration.Store(&config)
 	o.resourceVersion = cm.ResourceVersion
 	o.profiles = signature
 	o.restartPower(config)
@@ -364,14 +366,15 @@ func (o *schedulerOwner) refresh(ctx context.Context) error {
 // An acknowledged configuration can await actual physical readiness. The normal
 // refresh cadence applies its manual baseline once, never while controls are ON.
 func (o *schedulerOwner) applyStaticRouting(ctx context.Context) {
-	if o.configuration.StaticRouting == nil {
+	config := o.configuration.Load()
+	if config.StaticRouting == nil {
 		o.staticAppliedRV = ""
 		return
 	}
-	if o.configuration.Settings.Controls.Enabled || o.staticAppliedRV == o.resourceVersion {
+	if config.Settings.Controls.Enabled || o.staticAppliedRV == o.resourceVersion {
 		return
 	}
-	if err := o.controller.ApplyStaticRouting(ctx, o.configuration.StaticRouting, o.resourceVersion); err != nil {
+	if err := o.controller.ApplyStaticRouting(ctx, config.StaticRouting, o.resourceVersion); err != nil {
 		ctrl.Log.Error(err, "manual staticRouting remains unapplied", "sourceConfigRV", o.resourceVersion)
 		return
 	}
@@ -379,14 +382,14 @@ func (o *schedulerOwner) applyStaticRouting(ctx context.Context) {
 }
 
 func (o *schedulerOwner) operatingPower(from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
-	o.lock.Lock()
-	meters := make([]serving.OperatingPowerMeter, len(o.configuration.Meters))
-	for index, meter := range o.configuration.Meters {
+	// Capture one accepted configuration without waiting behind refresh or Tick.
+	config := o.configuration.Load()
+	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
+	for index, meter := range config.Meters {
 		meters[index] = serving.OperatingPowerMeter{
 			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
 		}
 	}
-	o.lock.Unlock()
 	return o.journal.OperatingPower(from, to, meters, limit)
 }
 
