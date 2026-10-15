@@ -127,6 +127,13 @@ cutoff 이후 접수되어 아직 남은 요청은 현재 outstanding에 포함�
 현재 평가 입력에는 명시 `observationEnd`가 필수이며 zero→at fallback은 없다.
 필드가 없는 과거 raw 기록은 기존 이력 reader로 보존·조회하되 현재 평가 입력으로 재해석하지 않는다.
 
+projected history interval·arrival·completion reducer를 먼저 끝낸 뒤 같은 capture 경로에서
+Observer의 authoritative native/instance refresh와 uncached Node·Pod 읽기를 수행한다.
+Node `ObservedAt`는 실제 `Nodes.List` 요청 직전의 local 시각(보수적 read 시작 하한)이다.
+Observer가 native probe 응답에서 기록한 local receipt 시각은 그대로 보존한다.
+어느 source도 historical cutoff나 최종 `at`로 재표시하지 않으며, live HTTP 자체가 느리면
+그 시간은 source age에 남아 기존 freshness gate에서 Pending이 된다.
+
 SLO 위반은 모델의 `deadlinePolicy`(drop/keep/defer, 기본 keep)에 따른다. drop은
 expired queued 요청을 active 실행 중에도 제거하고 idle 시 infeasible head를 408로
 종료한다. keep은 late 결과를 반환하고 defer는 normal 우선의 후순위 FIFO에서 처리한다.
@@ -377,7 +384,7 @@ baseline 소비를 **대체**하고, 실제 serving execution의 incremental ene
 `projected-work-history`는 첫 실제 logical 구성의 work를 0으로 시작한다. 이후 첫 control
 tick에서 완성된 observation window가 있으면 cursor 이후 `[Through, ObservationEnd)`를
 한 번 소비한다. 지연된 tick도 전체 차이를 읽으며 rolling-H를 다시 누적하지 않는다.
-추가 journal 읽기는 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
+추가 journal 읽기는 authoritative Observer refresh와 최종 `SchedulerInputs(time.Now)` 이전에 끝낸다. interval과 선택 receipt/
 definition dependency의 불완전 근거는 cursor를 진행시키지 않는다. 관련 없는 오래된 incomplete
 metadata는 제외하되 실제 겹침·필수 dependency·불명 prefix를 무시하지 않는다.
 선택 receipt의 validated/accepted 근거나 terminal outcome이 아직 없으면 history만 Pending으로

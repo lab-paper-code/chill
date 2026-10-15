@@ -233,9 +233,6 @@ func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.SchedulerDecision, error) {
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
-	if err := c.observer.Refresh(ctx); err != nil {
-		return serving.SchedulerDecision{}, err
-	}
 	c.mu.Lock()
 	config := c.config
 	goal := c.goal
@@ -457,6 +454,16 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		return serving.SchedulerSnapshot{}, err
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
+	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
+	if err != nil {
+		return s, err
+	}
+	// Historical reads must finish before refreshing authoritative live sources.
+	if err = c.observer.Refresh(ctx); err != nil {
+		return s, err
+	}
+	// Request start is a conservative lower bound; slow live I/O still ages it.
+	nodesObservedAt := time.Now().UTC()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return s, err
@@ -486,7 +493,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		if pool == "" {
 			continue
 		}
-		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Pool: pool, CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: slices.Clone(config.GPUInventory[n.Name]), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: now}
+		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Pool: pool, CPUs: slices.Clone(config.CPUInventory[n.Name]), GPUUUIDs: slices.Clone(config.GPUInventory[n.Name]), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue
@@ -505,10 +512,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
-	}
-	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
-	if err != nil {
-		return s, err
 	}
 	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding

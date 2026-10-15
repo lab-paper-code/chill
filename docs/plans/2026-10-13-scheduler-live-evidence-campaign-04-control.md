@@ -664,3 +664,22 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   13:22:46.046–50.511Z complete와 native Pod 부재를 확인했다. 이 상태에서 세 비교 arm을 시작한다.
   근거: `evidence-volume-expansion-smoke.json`, `evidence-store-config-expanded.json`,
   `rpi-latte-comparison-initial-remove-result.json`, `closed-loop-owner-resource-envelope.json`.
+
+## 자동 준비 이후 freshness 정지의 live read 경계 수정 — 2026-10-15
+
+- 고정 190건 trace `13:28:16.837–13:30:46.837Z`는 모두 완료됐으나, 실제 Rpi CPU2
+  prepare `13:28:37.810–52.674Z` 이후 capture lag 12.127초·7.651초와
+  `UnknownOrStaleNode`로 다음 동작이 Pending이었다. 두 replica가 Ready여도 두 UID는
+  Latte에 남았으며 자동 handoff 완료로 세지 않는다. 부모는 `13:32:37.468Z` canonical
+  settings PUT HTTP200으로 자동제어 9개를 모두 OFF로 동결했다.
+- 원인은 historical cutoff를 새 Node 관측 시각으로 사용하고, native refresh 뒤에 journal
+  arrival·completion 읽기를 수행한 순서였다. 기존 projected interval·arrival·overhead
+  reducer를 모두 먼저 읽고 shared capture에서 Observer refresh를 수행하도록 수정했다.
+  Node 시각은 실제 List 요청 시작 하한, native instance 시각은 기존 probe receipt를 보존한다.
+  고정 history from/to·최종 Runtime mutex의 현재 요청/정의/routing/credits read·판정 영속화
+  선행 순서와 5초 freshness 정책은 바꾸지 않았다. 느린 live HTTP는 계속 실제 age로 Pending이다.
+- 기존 kube scheduler 테스트에 실제 journal publication lock 지연 뒤 새 Node/native 관측을
+  소비하는 회귀와 느린 live Node HTTP의 stale/Pending 회귀를 추가했다. 원래 receipt의
+  elapsed/lifetime·half-open history 구간·native timestamp 보존을 함께 확인하도록 작성했다.
+  자식은 build/test/lint/format·배포·live action을 실행하지 않았다. 부모의 freeze 이후 gate와
+  같은 실제 trace 재측정 전이며, 이 소스 수정은 live 전환·SLO·에너지 비교 성공 증거가 아니다.

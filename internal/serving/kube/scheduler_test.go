@@ -3,14 +3,20 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -19,6 +25,186 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+type schedulerBlockedArchive struct {
+	managerArchive
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (a *schedulerBlockedArchive) PutImmutable(ctx context.Context, identity evidencestore.ObjectIdentity, input io.Reader) (evidencestore.Receipt, error) {
+	a.once.Do(func() {
+		close(a.entered)
+		<-a.release
+	})
+	return a.managerArchive.PutImmutable(ctx, identity, input)
+}
+
+func schedulerCaptureClockController(t *testing.T, slowLive bool) *SchedulerController {
+	t.Helper()
+	manager, _ := newManagerHarness(t)
+	pod, node, profile, class := observerSourceFixture()
+	profile.RuntimeMetadata.RuntimeVersion = "test-runtime"
+	profile.RuntimeMetadata.Inputs = []native.InputSpec{}
+	profile.RuntimeMetadata.InitializedBatches = []int{1}
+	if err := manager.store.client.Create(context.Background(), &class); err != nil {
+		t.Fatal(err)
+	}
+	manager.observer.SetProfiles([]serving.Profile{profile})
+	service := observerServiceFixture(pod)
+	maxAge := time.Second
+	var nodeReads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("watch") == "true" || strings.HasSuffix(r.URL.Path, "/log") {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		var response any
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/state"):
+			actual := *profile.RuntimeMetadata
+			actual.ModelPath = "/model/model.onnx"
+			response = native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
+				Model: "chill_model", Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
+				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
+			}}
+		case r.URL.Path == "/api/v1/nodes":
+			if nodeReads.Add(1) == 2 && slowLive {
+				time.Sleep(2 * maxAge)
+			}
+			response = core.NodeList{TypeMeta: meta.TypeMeta{Kind: "NodeList", APIVersion: "v1"}, Items: []core.Node{*node}}
+		case strings.HasSuffix(r.URL.Path, "/pods"):
+			response = core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}, Items: []core.Pod{*pod}}
+		case strings.HasSuffix(r.URL.Path, "/pods/"+pod.Name):
+			response = pod
+		case strings.Contains(r.URL.Path, "/services/"):
+			response = service
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = manager.observer.Close()
+		server.CloseClientConnections()
+		server.Close()
+	})
+	kube, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.observer.kube = kube
+	proxy, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	return &SchedulerController{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, journal: manager.journal,
+		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
+			Settings:     serving.SchedulerSettings{Algorithm: serving.SchedulerAlgorithmFixedHorizon, ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: maxAge, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 10, MaxCPUs: 4},
+			CPUInventory: map[string][]int{node.Name: {0, 1, 2, 3}},
+		}}
+}
+
+func schedulerCaptureClockState(t *testing.T, controller *SchedulerController) SchedulerControllerState {
+	t.Helper()
+	state := controller.State()
+	snapshot := state.Snapshot
+	if len(snapshot.Nodes) != 1 || len(snapshot.Instances) != 1 || !snapshot.Instances[0].Ready {
+		t.Fatalf("missing authoritative physical sources: %+v; issues=%+v", snapshot, controller.observer.Issues())
+	}
+	instance := snapshot.Instances[0]
+	if !snapshot.Nodes[0].ObservedAt.Before(snapshot.At) || !instance.ObservedAt.Before(snapshot.At) ||
+		!instance.ObservedAt.Equal(controller.runtime.Pools()[0].Instances[0].ObservedAt) {
+		t.Fatalf("capture restamped source observations: node=%s instance=%s at=%s", snapshot.Nodes[0].ObservedAt, instance.ObservedAt, snapshot.At)
+	}
+	return state
+}
+
+func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testing.T) {
+	controller := schedulerCaptureClockController(t, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cutoff := time.Now().Add(-10 * time.Second)
+	from := cutoff.Add(-controller.config.Settings.ObservationWindow)
+	archive := &schedulerBlockedArchive{managerArchive: managerArchive{t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
+	history, err := serving.NewJournal(serving.JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: archive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var release sync.Once
+	releaseHistory := func() { release.Do(func() { close(archive.release) }) }
+	t.Cleanup(func() {
+		releaseHistory()
+		_ = history.Close(context.Background())
+	})
+	for index, at := range []time.Time{from.Add(-time.Nanosecond), from, cutoff.Add(-time.Nanosecond), cutoff} {
+		if err = history.RequestEvent(serving.RequestEvent{RequestID: strconv.Itoa(index), WorkloadUID: "clock-history", Kind: "received", At: at, ReceivedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archived := make(chan error, 1)
+	go func() { archived <- history.Close(ctx) }()
+	<-archive.entered // Close holds the real journal lock while publication waits.
+	controller.journal = history
+	ticked := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := controller.Tick(ctx, cutoff)
+		ticked <- err
+	}()
+	<-started
+	time.Sleep(2 * controller.config.Settings.MaxObservationAge)
+	historyReleasedAt := time.Now()
+	releaseHistory()
+	if err = <-archived; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-ticked; err != nil {
+		t.Fatal(err)
+	}
+	state := schedulerCaptureClockState(t, controller)
+	snapshot, decision := state.Snapshot, state.Decision
+	if !snapshot.ObservationEnd.Equal(cutoff) || !decision.Search.WindowStart.Equal(from) || !decision.Search.WindowEnd.Equal(cutoff) || decision.Search.Received != 2 {
+		t.Fatalf("live reads moved the original half-open history interval: snapshot=%+v search=%+v", snapshot, decision.Search)
+	}
+	node, instance := snapshot.Nodes[0], snapshot.Instances[0]
+	if node.ObservedAt.Before(historyReleasedAt) || instance.ObservedAt.Before(historyReleasedAt) {
+		t.Fatalf("live sources were refreshed before delayed history completed: node=%s instance=%s released=%s", node.ObservedAt, instance.ObservedAt, historyReleasedAt)
+	}
+	if slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
+		slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
+		t.Fatalf("consumer falsely aged new authoritative sources: %+v", decision.Keep)
+	}
+}
+
+func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
+	controller := schedulerCaptureClockController(t, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state := schedulerCaptureClockState(t, controller)
+	snapshot, decision := state.Snapshot, state.Decision
+	node, instance := snapshot.Nodes[0], snapshot.Instances[0]
+	maxAge := controller.config.Settings.MaxObservationAge
+	if snapshot.At.Sub(node.ObservedAt) <= maxAge || snapshot.At.Sub(instance.ObservedAt) <= maxAge {
+		t.Fatalf("slow live HTTP latency disappeared from source age: node=%s instance=%s at=%s", node.ObservedAt, instance.ObservedAt, snapshot.At)
+	}
+	if decision.Keep.Status != "Pending" || !slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
+		!slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
+		t.Fatalf("consumer accepted genuinely stale live observations: %+v", decision.Keep)
+	}
+}
 
 func TestPreparedPodRequiresMeasuredGPUEnvironment(t *testing.T) {
 	desired := &core.Pod{Spec: core.PodSpec{Containers: []core.Container{{
