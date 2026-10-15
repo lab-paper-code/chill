@@ -551,8 +551,10 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 
 // ValidatePreparationCapacity admits coexistence using fresh physical Pod
 // requests and the owner's configured inventory/reservations, not CPU isolation.
+// Only serving-namespace Pods establish serving ownership; all Pod requests count.
 // It never moves membership or retires an existing serving instance.
 func ValidatePreparationCapacity(
+	servingNamespace string,
 	node *core.Node, pods *core.PodList, inventory serving.SchedulerNode, wanted serving.SchedulerInstance,
 ) error {
 	if inventory.Node != wanted.Node || inventory.Pool != wanted.Pool ||
@@ -574,7 +576,8 @@ func ValidatePreparationCapacity(
 		return errors.New("preparation requires current Node readiness and bounded physical CPU/memory inventory")
 	}
 	for _, pod := range pods.Items {
-		if pod.Spec.NodeName == node.Name && pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed &&
+		if pod.Namespace == servingNamespace && pod.Spec.NodeName == node.Name &&
+			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed &&
 			pod.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
 			return errors.New("preparation target already has an active serving Pod")
 		}

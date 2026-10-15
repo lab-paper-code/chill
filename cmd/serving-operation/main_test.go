@@ -143,9 +143,10 @@ func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 	const servingDaemonCase = "serving daemon"
 	const foreignRemoveCase = "foreign remove"
 	const changedContainerCase = "changed container"
+	const foreignComponentCase = "foreign component collision"
 	for _, name := range []string{
 		"empty join", "empty rollback", "foreign namespace", daemonCase, servingDaemonCase, "changed UID",
-		"changed pool", "foreign destination", exactRemoveCase, foreignRemoveCase, changedContainerCase,
+		"changed pool", "foreign destination", exactRemoveCase, foreignRemoveCase, changedContainerCase, foreignComponentCase,
 	} {
 		t.Run(name, func(t *testing.T) {
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "target", UID: "node-uid"}}
@@ -168,10 +169,13 @@ func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 				node.Labels = map[string]string{servingkube.ServingPoolLabel: "other"}
 			case "foreign destination":
 				m.Operation.Pool = "other"
+			case foreignComponentCase:
+				pod.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case daemonCase, servingDaemonCase:
 				controller := true
 				pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "DaemonSet", Controller: &controller}}
 				if name == servingDaemonCase {
+					pod.Namespace = m.Namespace
 					pod.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 				}
 			case exactRemoveCase, foreignRemoveCase, changedContainerCase:
@@ -192,7 +196,8 @@ func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 			}
 			kube := fake.NewSimpleClientset(node)
 			if name == "foreign namespace" || name == daemonCase || name == servingDaemonCase ||
-				name == exactRemoveCase || name == foreignRemoveCase || name == changedContainerCase {
+				name == exactRemoveCase || name == foreignRemoveCase ||
+				name == changedContainerCase || name == foreignComponentCase {
 				_, err := kube.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
 				if err != nil {
 					t.Fatal(err)
@@ -200,7 +205,7 @@ func TestExecuteNodeProtectsServingMembershipAndExactSource(t *testing.T) {
 			}
 			err := validateExecutionNode(context.Background(), kube, m, spec, nil)
 			allowed := name == "empty join" || name == "empty rollback" || name == "foreign namespace" ||
-				name == daemonCase || name == exactRemoveCase
+				name == daemonCase || name == exactRemoveCase || name == foreignComponentCase
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected physical safety verdict: %v", err)
 			}
@@ -334,10 +339,11 @@ func TestExecuteBundleUsesCatalogDeclarationAndValidatesNativePolicy(t *testing.
 func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 	const foreignMembership = "membership with foreign Pods"
 	const servingMembership = "membership with serving Pod"
+	const foreignComponentCase = "foreign component collision"
 	for _, name := range []string{
 		"fits", "stale aggregate", "stale readiness", foreignMembership, servingMembership,
 		"missing inventory", "missing reservation", "overlap", "CPU overbudget", "memory overbudget",
-		"foreign GPU", "serving Pod", "Node unready", "actual memory pressure",
+		"foreign GPU", "serving Pod", "Node unready", "actual memory pressure", foreignComponentCase,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ref := serving.NodeReference{Name: "worker", UID: "node-uid"}
@@ -377,6 +383,7 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 				},
 			}}
 			m := executionManifest{
+				Namespace: "own",
 				Operation: servingkube.Operation{Kind: operationPrepare, Node: ref}, ExpectedPool: "live",
 			}
 			inventory := []serving.SchedulerNode{{
@@ -390,8 +397,10 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 				inventory[0].Ready = false
 			case foreignMembership:
 				m.Operation.Kind = operationMembership
+				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case servingMembership:
 				m.Operation.Kind = operationMembership
+				foreign.Namespace = m.Namespace
 				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "missing inventory":
 				inventory = nil
@@ -400,12 +409,16 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 			case "overlap":
 				inventory[0].Reserved.CPUs = []int{0, 3}
 			case "CPU overbudget":
+				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 				foreign.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("2100m")
 			case "memory overbudget":
 				node.Status.Allocatable[corev1.ResourceMemory] = resource.MustParse("2Gi")
 			case "foreign GPU":
 				foreign.Spec.Containers[0].Resources.Requests["nvidia.com/gpu"] = resource.MustParse("1")
+			case foreignComponentCase:
+				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "serving Pod":
+				foreign.Namespace = m.Namespace
 				foreign.Labels = map[string]string{"app.kubernetes.io/component": "serving-instance"}
 			case "Node unready":
 				node.Status.Conditions[0].Status = corev1.ConditionFalse
@@ -417,7 +430,7 @@ func TestExecutePrepareBudgetAndServingOnlyMembership(t *testing.T) {
 			kube := fake.NewSimpleClientset(node, foreign, other, system)
 			err := validateExecutionNode(context.Background(), kube, m, spec, inventory)
 			allowed := name == "fits" || name == "stale aggregate" || name == "stale readiness" ||
-				name == foreignMembership
+				name == foreignMembership || name == foreignComponentCase
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected fresh preparation/membership admission: %v", err)
 			}

@@ -573,7 +573,7 @@ func validateExecutionNode(
 	if m.Operation.Kind == operationPrepare {
 		for _, nodeInventory := range inventory {
 			if nodeInventory.Node == spec.Instance.Node && nodeInventory.Pool == spec.Instance.Pool {
-				return servingkube.ValidatePreparationCapacity(node, pods, nodeInventory, spec.Instance)
+				return servingkube.ValidatePreparationCapacity(m.Namespace, node, pods, nodeInventory, spec.Instance)
 			}
 		}
 		return errors.New("preparation Node inventory is absent from the acknowledged fresh owner snapshot")
@@ -585,7 +585,7 @@ func validateExecutionNode(
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		if pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
+		if pod.Namespace == m.Namespace && pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
 			return fmt.Errorf("membership target has an active serving Pod: %s/%s", pod.Namespace, pod.Name)
 		}
 	}

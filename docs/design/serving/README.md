@@ -385,11 +385,12 @@ ack은 일시적인 `state.results`가 아니라 기존 `/api/v1/observations/sc
 대체하지 않는다. prepare/membership target은 owner instance가 없어야 한다.
 prepare는 fresh Node/모든 active Pod 요청·init/sidecar/overhead를 기존 capture 경로로
 다시 합산하고 owner의 inventory/reserved와 공통 `ValidateNodeBudget`으로 admission한다.
-기존 serving Pod, 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와 실제 Node
+설정된 serving namespace의 기존 serving Pod, 미확인 GPU 소유권, CPU overlap/예약 부족, memory 초과와 실제 Node
 MemoryPressure는 거절한다. 오래된 owner aggregate의 Ready는 재사용하지 않는다.
 이는 설정 reservation 기반 admission이지 실제 CPU 격리·외부 Pod의 성능 불변·SLO·에너지
-절감 보장이 아니다. membership은 CHILL serving/accepted-work 소유권과 drain을 확인하는
-serving-pool label 변경이며, 다른 외부 Pod의 존재 자체를 금지하거나 그 Pod를 변경하지 않는다.
+절감 보장이 아니다. membership은 설정된 serving namespace의 CHILL serving/accepted-work
+소유권과 drain을 확인하는 serving-pool label 변경이다. 다른 namespace의 동일 component label은
+CHILL 소유권이 아니며, 모든 외부 Pod의 요청은 prepare 예산에 포함하고 그 Pod를 변경하지 않는다.
 membership은 detached와 해당 configured preparation POOL 사이의 실제 변경만 허용하고
 기존 sole writer `MoveNodePool`의 UID/resourceVersion patch/readback을 사용한다.
 원복도 새 현재 revision·expectedPool witness로 같은 경계를 호출한다. CLI는 완전한
