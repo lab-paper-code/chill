@@ -240,6 +240,75 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	}
 }
 
+func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	d := snapshot.Workloads[0]
+	p := snapshot.Instances[0].Profile
+	tensors := []modelcompat.InputTensor{{Name: "input", Datatype: "FP32", SampleShape: []int32{1}}}
+	d.Model.Paths[0].Path, d.Model.Paths[0].Tensors = p.Condition.Artifact.Path, tensors
+	p.Condition.LogicalModel, p.Condition.Tensor.Tensors = d.Model.Name, tensors
+	j, err := NewJournal(JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 1, Journal: j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	r.SetProfiles([]Profile{*p})
+	if err = r.Publish(d); err != nil {
+		t.Fatal(err)
+	}
+	instance := ReadyInstance{
+		State: InstanceState{
+			ID: "excluded", Node: snapshot.Nodes[0].Node, Pool: "pool", Profile: p.ID, Ready: true,
+		},
+		Profile: p, Weight: 1, Capacity: 1,
+		Execute: func(context.Context, Dispatch) (BackendResult, error) { return BackendResult{Finished: true}, nil },
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
+		t.Fatal(err)
+	}
+	next := *d
+	next.Name, next.UID = "new-workload", "new-uid"
+	if err = r.Publish(&next); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := r.Receive(next.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := &InferenceInput{
+		Inputs: []TensorInput{{Name: "input", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}},
+	}
+	call, err := r.Accept(receipt, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := r.SchedulerOutstanding(time.Now())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = call.Wait(ctx)
+	if err = r.Response(receipt, "canceled", "RequestCanceled"); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].ID != receipt.ID ||
+		pending[0].Instance != "" || pending[0].Phase != phasePending {
+		t.Fatalf("publication or rediscovery reopened excluded controlled ingress: %+v", pending)
+	}
+}
+
 func TestSchedulerCandidatesApplyReplayedMultiWorkloadDistribution(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	second := *snapshot.Workloads[0]

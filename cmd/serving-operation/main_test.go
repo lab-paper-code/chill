@@ -94,13 +94,15 @@ func executionOwnerFixture() (executionManifest, executionConfiguration, executi
 
 func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 	for _, name := range []string{
-		"safe", "returning", "assigned", "routed", "stale", "before acknowledgement", "wrong revision",
+		"safe", "returning", "assigned", "routed", "pre-ack snapshot", "before acknowledgement", "wrong revision",
 		"wrong actual", "missing UID", "desired controls", "live controls", "running",
-		"failed acknowledgement", "occupied membership",
+		"failed acknowledgement", "occupied membership", "future snapshot",
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, config, owner, now := executionOwnerFixture()
 			acknowledged := owner.State.Results[0]
+			acknowledged.EndedAt = now.Add(-3 * time.Second)
+			owner.State.Snapshot.At = now.Add(-2 * time.Second)
 			// Runtime result retention can expire; the durable record remains the authority.
 			owner.State.Results = nil
 			switch name {
@@ -108,10 +110,12 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 				owner.State.Snapshot.Outstanding = []serving.SchedulerRequest{{Instance: "replica", Phase: name}}
 			case "routed":
 				m.Operation.Instance = "source"
-			case "stale":
-				owner.State.Snapshot.At = now.Add(-2 * time.Second)
+			case "pre-ack snapshot":
+				owner.State.Snapshot.At = acknowledged.EndedAt.Add(-time.Millisecond)
 			case "before acknowledgement":
 				owner.State.Snapshot.At = acknowledged.EndedAt
+			case "future snapshot":
+				owner.State.Snapshot.At = now.Add(time.Millisecond)
 			case "wrong revision":
 				m.SourceConfigRV = "11"
 			case "wrong actual":
@@ -137,7 +141,7 @@ func TestExecuteRequiresOwnerAcknowledgementAndFullResponseDrain(t *testing.T) {
 	}
 }
 
-func TestExecuteOwnerSnapshotAgeFollowsOperationDependency(t *testing.T) {
+func TestExecuteOwnerAllowsAgedPostAckSnapshot(t *testing.T) {
 	for _, kind := range []string{operationPrepare, operationMembership, operationRemove} {
 		t.Run(kind, func(t *testing.T) {
 			m, config, owner, now := executionOwnerFixture()
@@ -151,8 +155,8 @@ func TestExecuteOwnerSnapshotAgeFollowsOperationDependency(t *testing.T) {
 			acknowledged.EndedAt = now.Add(-3 * time.Second)
 			owner.State.Snapshot.At = now.Add(-2 * time.Second)
 			err := validateExecutionOwner(m, config, owner, &acknowledged, now)
-			if (err == nil) != (kind != operationRemove) {
-				t.Fatalf("unexpected aged post-ack snapshot dependency verdict: %v", err)
+			if err != nil {
+				t.Fatalf("aged closed-ingress post-ack snapshot refused: %v", err)
 			}
 		})
 	}
