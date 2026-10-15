@@ -810,3 +810,29 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 - 실제 Dashboard의 같은 FULL 이력 기본 limit50 요청은 owner200/19447961B지만
   BFF502 `DashboardResponseTooLarge`다. 후보마다 반복된 실행기 자료를 포함해 단일 판단이 약9.68MB다.
   `dashboard-default-page-size-proof.json`에 크기 근거를 남겼다. 최종 Dashboard 종단은 이 차단 해소 전 미완료다.
+
+## FULL 조회 크기 차단과 실제 UI 추론 — 2026-10-15
+
+- `785c944c`·`9365f9ae`는 현재/상태/프로파일/판단 이력 GET의 `view=compact`를 제공한다.
+  응답 안에서 반복된 profile·completion 측정만 사전과 참조로 공유한다.
+  전체 원본 객체·서로 다른 같은-ID 값·후보 순서·SLO·설정·사유·동작 ACK를 보존하며
+  기본 raw API와 journal/archive는 그대로다. 별도 cache·호환 reader·digest 검증은 없다.
+  과구현 리뷰 후 임시 fixture size 테스트·단순 forwarding assertions를 제거했다.
+  focused entrypoint와 전체 `make lint test arch-check gopls-check`가 통과했다(`artifact://3597`, `artifact://3609`).
+- owner `9365f9ae` / image `sha256:063d4a3714b20792553787ec2197079bcb922a53ad568ad180b31bb9c3fc8a79`
+  실제 readyz를 확인했다. CPU2/512Mi·PVC·Model/SLO·Workload UID·Rpi 실제 route를 보존했다.
+  위 FULL 구간의 compact limit50 전체 11페이지·523건의 최대 응답은 5330711B였다.
+  17판단을 limit1로 각각 조회했고 최대 2831999B, 원본 값·순서 대조도 통과했다.
+  잘못되거나 중복된 view 8요청은 모두 HTTP400이었다. 모든 미래 구간의 크기를 보장하지는 않는다.
+  근거: `compact-scheduler-read-cutover/final-9365f9ae/result.json`.
+- Main에는 4경로 query 허용과 기존 화면 파싱 전 공통 참조 복원 프롬프트를 전달했다.
+  Dashboard 자체는 수정·배포하지 않았다. 실제 BFF/UI 연결 완료 통지와 최종 FULL 화면 대조는 남아 있다.
+- 실제 Dashboard에서 채택된 CUDA 측정의 batch1·6회차·1.79J 증분 에너지와 Loaded 의미를 확인했다.
+  이어 built-in ARM 입력 예시를 전송해 실제 요청 `f20ecf92a988d141f020e64e720cd085`의
+  HTTP200, Rpi 실제 할당·native finished(batch143/1)·응답 완료 128.359063ms를 화면에서 연결했다.
+  당시 9개 controls는 OFF, 판단 ID는 `manual-static-routing:353571935`였다.
+  따라서 실제 UI 추론 증거이지 FULL ON 자동 판단으로 보낸 요청이라는 주장은 아니다.
+  근거: `integrated-three-profile-cpu2-rootfixed/dashboard-ui-serving-proof.json`과 연결 텍스트·screenshot.
+- 이번 세션 도구 기록 1159 Eval·745 Bash와 `/tmp` 흐름 회고에서 남은 핵심은 위 반복 응답이었다.
+  측정 CRUD·채택·bounded CLI·native OnDelete 지원을 다시 만들 필요는 없었다.
+  일반 명령 wrapper를 추가하지 않고 실제 실패가 확인된 조회 계약만 고쳤다.
