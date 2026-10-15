@@ -29,7 +29,7 @@ func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 		t.Fatal("actual unloaded idle rejected", err)
 	}
 	recreated := before
-	recreated.Node.UID = "replacement"
+	recreated.Node.UID = node.UID + "-recreated"
 	if err := stableIdle(before, recreated); err == nil {
 		t.Fatal("Node identity change accepted as idle stability")
 	}

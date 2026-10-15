@@ -198,6 +198,7 @@ func TestObservedOverheadRequiresFrozenExecutionIdentity(t *testing.T) {
 }
 
 func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
+	const laterActionID = "second"
 	j, err := NewJournal(JournalConfig{Directory: t.TempDir(), Store: "evidence", Window: time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +213,7 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 	for _, event := range []SchedulerObservation{
 		{At: from.Add(-time.Nanosecond), Action: &SchedulerActionObservation{ID: "outside"}},
 		{At: from.Add(time.Millisecond), Action: &SchedulerActionObservation{ID: "first"}},
-		{At: from, Action: &SchedulerActionObservation{ID: "second"}},
+		{At: from, Action: &SchedulerActionObservation{ID: laterActionID}},
 		{At: to, Action: &SchedulerActionObservation{ID: "boundary"}},
 	} {
 		if err = j.SchedulerRecord(event); err != nil {
@@ -224,7 +225,7 @@ func TestSchedulerRawCursorBoundsAppendOrderAcrossWindow(t *testing.T) {
 		t.Fatalf("first bounded append page: %+v %d %v", first, next, err)
 	}
 	second, next, err := j.SchedulerObservationPage(from, to, 1, next)
-	if err != nil || len(second) != 1 || second[0].Action.ID != "second" || next != -1 {
+	if err != nil || len(second) != 1 || second[0].Action.ID != laterActionID || next != -1 {
 		t.Fatalf("raw cursor reordered/backfilled events: %+v %d %v", second, next, err)
 	}
 	if _, _, err = j.SchedulerObservationPage(from, to, 1, 3); err == nil {

@@ -218,8 +218,9 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 				appendPower(0, 10)
 			}
 			if scenario.adjacent {
+				const nodeIdentityDimension = "node"
 				// A closer neighbor from another series must not displace valid support.
-				for _, wrong := range []string{"meter", "scope", "source", "unknown-source", "node"} {
+				for _, wrong := range []string{"meter", "scope", "source", "unknown-source", nodeIdentityDimension} {
 					source, otherNode, meter, scope := operatingTestSource, node, "ramp-wall", "node-exclusive-wall"
 					switch wrong {
 					case "meter":
@@ -230,7 +231,7 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 						source.Endpoint = "http://replacement/metrics"
 					case "unknown-source":
 						source = metricobserver.SourceIdentity{}
-					case "node":
+					case nodeIdentityDimension:
 						otherNode.Name = schedulerTestOther
 					}
 					power := metricobserver.Result{Source: source, StartedAt: base.Add(4400 * time.Millisecond), EndedAt: base.Add(5600 * time.Millisecond), Samples: []metricobserver.Sample{{ObservedAt: base.Add(4400 * time.Millisecond), Watts: 999}, {ObservedAt: base.Add(5600 * time.Millisecond), Watts: 999}}}
