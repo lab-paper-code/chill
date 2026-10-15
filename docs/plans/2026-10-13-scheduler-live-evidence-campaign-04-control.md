@@ -683,3 +683,39 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   elapsed/lifetime·half-open history 구간·native timestamp 보존을 함께 확인하도록 작성했다.
   자식은 build/test/lint/format·배포·live action을 실행하지 않았다. 부모의 freeze 이후 gate와
   같은 실제 trace 재측정 전이며, 이 소스 수정은 live 전환·SLO·에너지 비교 성공 증거가 아니다.
+
+## CPU 세 arm 폐루프 완료와 사후 공통 정리 구간 — 2026-10-15
+
+- 동일 Latte 초기 상태·동일 150초 유입 trace의 OFF/`fixed-horizon`/`projected-work-history`는
+  각각 190건 전부 완료했다. relaxed p90 목표 1500ms·tight p95 목표 1000ms를 모두 충족했다.
+  앞선 실패·Rpi 초기 기준선과 구분하며 원래 계획·150초 결과는 그대로 보존한다.
+
+|arm|완료 요청|relaxed p90 ms|tight p95 ms|원래 150초 전체 wall J|공통 210초 전체 wall J|
+|---|---:|---:|---:|---:|---:|
+|OFF|190/190|240.308122|330.160767|37128.978887644975|50836.0479995581|
+|fixed-horizon|190/190|369.484564|360.629529|38491.37120872878|52270.85701988178|
+|projected-work-history|190/190|276.391084|317.793699|37064.469521596126|50974.11639520777|
+
+- 실제 자동 Latte → Rpi prepare·route·stop·drain·remove가 완료됐고 이전 Latte Pod가
+  사라졌다. projected drain은 시작 후 150.063초에 완료됐으며, 이미 시작된 cleanup은
+  예정된 controls OFF 이후에도 계속됐다. 따라서 150초만으로 전체 전환 완료 에너지를 주장하지 않는다.
+- 세 arm에 동일한 추가 60초 무유입 tail을 붙인 210초 비교는 **사후 선언**이다(`predeclared=false`).
+  OFF `14:23:35.364–14:27:05.364Z`, fixed `14:28:29.182–14:31:59.182Z`,
+  projected `14:40:46.870–14:44:16.870Z`를 사용했다. 요청·source 제외 없이 전체 10개 meter
+  에너지가 complete다. 다른 작업을 포함한 whole-pool wall energy이며 CHILL 증분 에너지나
+  에너지 절감·통계적 유의성·인과적 효과를 주장하지 않는다.
+- policy-summary는 실제 min-plus history의 연속 비중첩 두 interval
+  `[14:40:48.930960883Z,14:41:57.338345347Z)`와
+  `[14:41:57.338345347Z,14:43:01.935011579Z)`의 전진을 보인다.
+  kernelRows는 1→2, finiteStates는 2→4다. 단순 설정 smoke가 아닌 history 소비 증거지만,
+  중간 `Pending:NoFullyEvaluableCandidateWithinReportedBounds`도 보존한다.
+  queue-reset projection을 실제 queue 이력·고전 WFA 보장으로 해석하지 않는다.
+- 현재 모든 controls는 OFF이고 Rpi가 서빙한다. 다음은 GPU CLI 리뷰·gate·real CUDA와
+  Jetson 실제 제어다. 단일 허용 power mode 정책과 Xavier 외부 Workload 안전 제한 때문에
+  power 왕복 완료를 주장하지 않는다. FULL·최종 실제 Dashboard e2e는 미완료이며 별도 Main의
+  Dashboard 완료 통지는 받지 못했다.
+- 근거 루트 `/tmp/chill-completion-cpu-cost-assembly/`:
+  `final-comparison-summary.json`, `final-comparison-common-settling-analysis.json`,
+  `final-comparison-common-settling-power.json`, `final-comparison-projected-policy-summary.json`,
+  `final-comparison-projected-full-completion-history.json`.
+  위 freshness 실패와 기존 raw·한계는 남기되 현재 다음 작업으로 재사용하지 않는다.

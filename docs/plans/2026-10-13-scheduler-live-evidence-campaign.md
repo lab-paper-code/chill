@@ -53,27 +53,22 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 검증된 Rpi CPU2↔Latte CPU1의 최신 Serving 보정값을 채택하고 실제 폐루프 비교를 진행한다.
-공유 통신·owner HTTPS는 복구됐다. 현재 owner limit은 CPU1/512Mi, evidence-store PVC는 8Gi다.
-실제 CPU 제어와 판단 알고리즘 구현은 완료했지만 폐루프 비교·FULL 통과는 미완료다.
-자동제어는 아직 모두 OFF이며 지속 부하 입력 freshness·SLO·전체 POOL 전력을 함께 확인한다.
-Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
+**현재 우선:** GPU 수동 CLI 리뷰·gate 후 real CUDA 서빙과 대상 Jetson의 실제 제어를 검증한다.
+CPU OFF/`fixed-horizon`/`projected-work-history` 동일 150초 trace는 arm별 190건 전부 완료·SLO 통과다.
+자동 Latte → Rpi prepare·route·stop·drain·remove와 이전 Pod 소멸, 비중첩 두 구간의
+min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 둔다.
+현재 제어는 모두 OFF이며 Rpi가 서빙한다. owner limit CPU1/512Mi·evidence-store PVC 8Gi를 유지한다.
 
-1. **판단 알고리즘 — 구현·배포 완료, 폐루프 비교 미완료:** 검증된 Latte/Rpi CPU 노드·동작으로 구현했다.
-   전 노드나 외부 조율 중인 power/GPU 완료를 기다리지 않으며 미검증 동작은 후보에서 제외한다.
-   조사 문헌과 현재 구현을 대조해 워크로드/SLO·부하/큐·evidence·가용 자원·실제 전환 상태
-   입력에서 유지/목표 구성·제어 동작·실행 시점과 계속/취소/재선택 규칙을 확정한다.
-   비중첩 receipt interval의 실제 방향별 measured DAG kernel과 min-plus history를
-   `projected-work-history`로 연결했다. 고정 H는 `fixed-horizon` 비교 기준으로 유지하며,
-   queue-reset projection은 실제 queue 이력/고전 WFA 보장이 아니다. 구현과 live 비교 통과를 구분한다.
-2. **자동 실행 gate:** decision origin에서 실제 source freshness ≤5초는 live 한 iteration을
-   통과했다. 지속 부하 중 freshness·SLO feasibility와 fresh observed energy는 계속 검증해야 한다.
-   무부하 KeepFeasible·부분 전력 누락을 통과로 대체하지 않으며, gate 전까지 자동 제어는 OFF다.
-   복구 후 owner CPU 1코어에서 Rpi p90/p95는 560/316ms, Latte는 335/357ms로 각각
-   원래 1500/1000ms SLO를 충족했다. 이전 실패·장애와 구분하며 미래 지연 보장으로 해석하지 않는다.
-3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
-   SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
-4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.
+1. **CPU 비교 완료의 경계:** 원래 150초 trace를 보존했다. projected 정리가 150초 뒤까지
+   이어져 세 arm 모두 무부하 tail을 포함한 210초 공통 구간을 **사후 선언**했다.
+   10개 meter의 전체 wall energy는 완전하지만 에너지 절감·통계적·인과적 주장은 하지 않는다.
+   queue-reset projection은 실제 queue 이력이나 고전 WFA 보장이 아니다.
+2. **GPU·Jetson:** GPU CLI 리뷰·gate·real CUDA 준비/요청/정리를 먼저 확인한다.
+   Jetson은 단일 허용 power mode와 Xavier의 외부 Workload 안전 조건을 지키며 실제 제어를 검증한다.
+   현재 power 왕복 완료를 주장하지 않는다. 미검증 동작은 자동 후보로 통과시키지 않는다.
+3. **FULL·Dashboard:** 남은 제어의 실제 완료와 통합 시나리오를 검증한 뒤 실제 Dashboard
+   e2e를 수행한다. Dashboard 수정·배포는 별도 Main 세션에 인계했으나 완료 통지는 받지 못했다.
+   CPU 부분집합 성공은 FULL·Dashboard 완료가 아니다.
 
 ### 단계 경계의 운영 API·UX 고도화
 
@@ -104,32 +99,16 @@ Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 
 
 ## 현재 상태·다음 작업
 
-- owner 측정 목록·preflight/server dry-run·프로파일 채택 해제·귀속 근거 영구 삭제를 실검증했다.
-  폐기 측정의 owned key 21개와 native BEO·소유 Run 9개가 제거됐고 현재 5개 profile·Rpi CPU2 서빙은 유지됐다.
-  신규 실측·정상 제출 `202`는 실행하지 않았다. 세부 근거는 [운영 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 있다.
-- placement는 실제 요청 30건과 Latte → Rpi 이동·이전 Pod 제거·Dashboard 연결을 확인했다.
-- resources 제어 실행은 기존 API·원자 동작의 remove → prepare로 Rpi CPU1 → CPU2를 실제 적용했고,
-  같은 모델·SLO로 복원한 두 Workload의 요청 4건이 완료됐다. 자동 선택·무중단 resize 성공은 아니다.
-- replicas/routing/sharing/membership 수동 검증을 완료했다. 원래 Rpi CPU2와 두 Workload UID·모델·SLO를
-  유지한 채 Latte replica로 relaxed만 분배했고, 전체 경로 원복·정확한 replica 제거·membership
-  detach/join 후 두 UID가 같은 원래 Rpi CPU2 instance를 공유하며 요청 4건을 완료했다.
-  세부 근거는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 있다.
-- firstfloor의 실제 in-flight SLO/원래 receivedAt/lifetime 문맥과 현재 적용 calibration policy를
-  확인했다. batch2 실행·자동 선택·SLO 개선·에너지 절감은 입증하지 않았다. 자동 제어는 모두 OFF다.
-- 다음은 검증된 CPU 부분집합의 알고리즘 설계·구현이다. 이전 minimum-loop gate의 최근 60초
-  도착 0건 KeepFeasible은 부하 증거가 아니다. 시간 계약 수정 후 live 한 iteration의 source
-  freshness는 통과했고 기존 두 UID/Rpi CPU2 요청 4건도 완료됐다. 지속 부하 freshness·SLO·
-  fresh energy gate는 남아 있으며, 마지막 whole-power 검증의 Jetsonx timeout은 숨기지 않는다.
-- genesis2 GPU 배치 1/2의 기존 9회 결과를 새 `profiles adopt`로 채택했고 기존 4개와 모두 로드됐다.
-  미허용 GPU 거절·설정 무변경, 명시적 허용 후 채택, 반복 채택 무변경과 측정 dry-run 미생성을 확인했다.
-  실제 GPU 인스턴스 준비·자동 선택·SLO/에너지 개선의 증거는 아니다.
-- scheduler census 배포(`63521317b5bb`) 후 같은 과거 60초 전력 조회는 28.997초→0.307초,
-  이전 기본 1시간 이력 축은 owner 직접 조회 200·0.181초·50건/nextCursor로 개선됐다.
-  전력은 실제 gap 사유·10개 노드 각 79표본·`complete=false`·전체/활성 합계 null을 유지한다.
-  BFF·브라우저 재검증은 별도 Main 완료를 기다리며, 원시 전력 품질·FULL 성공으로 세지 않는다.
-- 기존 AGX Orin 차단은 FULL 범위 밖이다. 대상 Jetson의 전력 안전 조건은 별도 확인한다.
-  power와 자동 판단·FULL 종단은 미완료이나 알고리즘 착수의 전 노드 대기 조건은 아니다.
-- `/pools` 오류는 수정·배포·실제 브라우저 검증을 마쳤다. 이것은 FULL Dashboard 완료가 아니다.
+- CPU 세 arm의 동일 초기 Latte·동일 trace 비교와 실제 Rpi 전환을 완료했다. 모든 제어는 OFF다.
+- placement/resources/replicas/routing/sharing/membership의 개별 수동 실적과 측정 운영 API·CLI,
+  기존 GPU profile 채택 근거는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
+  GPU profile 채택은 실제 CUDA 준비·자동 선택 증거가 아니며 batch2 자동 선택도 미입증이다.
+- 이전 통신 장애·OOM·freshness 정지·SLO 초과·전력 누락은 원시 기록과 함께 남긴다.
+  최신 비교의 완전한 전력 구간으로 과거 실패를 덮지 않으며 연구적 개선을 주장하지 않는다.
+- GPU CLI 리뷰·gate·real CUDA, Jetson 실제 제어와 남은 FULL 시나리오가 다음 의존성이다.
+  단일 허용 power mode·Xavier 외부 Workload 안전 제한을 우회하지 않는다.
+- `/pools` 오류 수정·브라우저 확인과 census owner 조회 개선은 완료했지만 최종 FULL Dashboard
+  e2e는 미완료다. 별도 Main의 Dashboard 완료 통지는 아직 받지 못했다.
 
 ## 진행 기록 찾아보기
 
