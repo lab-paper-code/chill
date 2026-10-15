@@ -432,3 +432,50 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   목록·빈 그룹 상세/관계 팝업·미준비 실행기 행을 검증했다. FULL Dashboard 검증은 아니다.
 - 개별 제어는 placement 실적용을 확인했다. 나머지 7개 제어, FULL 5개 시나리오와 최종 Dashboard 종단 검증은 미완료다.
 
+
+## 합법적 자원 전환과 손 검증 — 2026-10-15
+
+- `d8a1d30`: 겹치는 CPU/GPU 할당은 stop/drain/remove 후 prepare/route, 나머지는 prepare-first다.
+  global route 직렬화와 진행 목표 보존을 포함한다. 리뷰에서 찾은 partial-failure nil panic은
+  수정 전 독립 snapshot에서 재현하고 수정 후 회귀로 확인했다(`artifact://2145`).
+  focused·독립 staged snapshot, make lint/test/gopls-check 및 serving/kube race 검사가 통과했다.
+- owner 이미지 `f1d0b1f4..` 배포 후 CPU1 실제 추론 4건이 완료됐다. 실제 resources-only 후보에서
+  합법적 DAG를 확인했지만 최신 판단은 `ExplicitRequestLifetimeCapacityExceeded`로 변경을
+  탈락시키고 Keep를 선택했다. 모델·SLO·비교 기간을 완화하지 않았고 이후 controls 모두 OFF다.
+- 손 검증은 기존 API로 이번 캠페인의 두 Workload만 정상 close/drain한 뒤 CPU1 source를
+  원자 remove했다. 실제 이전 Pod가 없어진 후에만 기존 CPU2 profile로 prepare했다.
+  두 원자 동작은 Accepted/complete였다. 다른 dashboard-validation Workload는 보존했다.
+- 같은 spec으로 두 Workload를 복원해 CPU2 `[2,3]`·threads2·Pod CPU request/limit2와
+  실제 routing을 확인했다. 두 UID에서 총 4건이 HTTP200·executionComplete였고 q2 profile을 사용했다.
+  이는 수동 원자 동작 조합의 실적이며 자동 선택·무중단 resize의 증거가 아니다.
+- 현재 물리 source UID는 `86336df7-573b-4728-9d70-6bbe9d5128c7`다.
+  Workload UID는 relaxed `0718c1f3-ca2d-4912-a446-20a603354609`,
+  tight `9ec18029-00e2-4987-a323-b5af36b46e10`으로 바뀌었으며 모델 UID·generation2는 유지했다.
+- 증거는 `/tmp/chill-completion-cpu-cost-assembly/resources-hand-*` 및
+  `legal-resource-planner-fresh-loaded-state.json`에 있다.
+- cross-window reader 배포 후 같은 과거 구간 이력은 200·3.382초·776022 bytes였다.
+  전력 조회는 여전히 15초 timeout이다(`cross-window-buffer-live-smoke.json`).
+
+## 측정 운영 API·CLI와 기존 GPU 결과 채택 — 2026-10-15
+
+- `/tmp` 임시 exporter·Eval/Bash의 제출/조회/설정 조립을 기존 비동기 측정 API와
+  `measurements submit/list/show`, `profiles list/adopt`로 연결했다. 새 측정은 실행하지 않았다.
+- `52efda0`은 owner GET/POST `/api/v1/scheduler/profiles`, ConfigMap 선택, 읽기 namespace
+  제한과 권한을 추가했다. `90c8e1a`는 CLI와 검증된 HTTPS·caller bearer 전송을 추가했다.
+  startup `--profile-campaign`은 제거했고 선택 권한은 `profileCampaigns` 한 곳에만 둔다.
+- 기존 genesis2 결과 UID `5fdb92da-6c7b-4deb-b598-7052b85255c2`로 실제 검증했다.
+  미허용 GPU는 ConfigurationRequired·exit1·ConfigMap RV 무변경이었다. 운영자가 측정된 GPU
+  하나를 명시적으로 허용한 뒤 채택은 Persisted·exit0, 후속 조회는 기존 4개와 모두 Loaded였다.
+  반복 채택도 exit0·RV 무변경이며 기존 지정 설정·준비 설정을 보존했다.
+- `measurements list/show`로 실제 Complete·9 trial 결과를 조회했다. 서버 dry-run은
+  NOT_SUBMITTED였고 해당 이름의 측정 객체는 NotFound였다. GPU 물리 준비·자동 선택은 미검증이고
+  모든 자동 제어는 OFF다. 기존 서빙 경로의 실제 요청 4건도 실행·결과를 보존했다.
+- 리뷰의 부분 profile publication, 미지원 runtime access 누락, GPU Env가 다른 Pod 재사용,
+  결과 크기 상한 오류를 수정했다. 전체 lint/test, arch-check/gopls-check, 관련 race와
+  기본/owner/Profiler 별도 Helm 검증을 통과했다. 독립 snapshot 전체 lint의 기존 무관한
+  operatorconsole 테스트 포맷 문제는 보존하고 변경 패키지 lint·테스트로 분리 확인했다.
+- owner 이미지 `aff40940cbb8b197b9081bc59536c0785a401c3cf25621458a9a88410d5fc771`로 배포하고
+  실제 readyz를 확인했다. Dashboard 소스·배포는 별도 Main 세션에 맡기고 사용자에게 연결 프롬프트를 전달한다.
+- 증거: `/tmp/chill-completion-cpu-cost-assembly/profile-cli-*.json`,
+  `measurement-cli-show-live.json`; gate 출력 `artifact://2293`, `artifact://2300`.
+
