@@ -280,6 +280,80 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	}
 }
 
+func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
+	ctx := context.Background()
+	config := profileRemovalConfiguration()
+	config.Settings.Controls = serving.SchedulerControls{
+		Enabled: true, Placement: true, Resources: true, Replicas: true, Sharing: true,
+		Routing: true, Batching: true, Power: true, Membership: true,
+	}
+	owner := profileRemovalOwner(t, config)
+	profile := measuredAdoptionProfile()
+	profile.Condition.LogicalModel = "model"
+	profile.Condition.Tensor.Tensors = []modelcompat.InputTensor{{
+		Name: "input", Datatype: "FP32", SampleShape: []int32{1},
+	}}
+	owner.observer.SetProfiles([]serving.Profile{profile})
+	definition := &serving.Definition{
+		Name: "restored", UID: "original-workload-uid", Generation: 1,
+		SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second},
+		Model: serving.Model{Name: "model", UID: "original-model-uid", Generation: 1, Paths: []serving.ModelPath{{
+			Path: profile.Condition.Artifact.Path, Backend: profile.Condition.Backend,
+			Firstfloor: profile.Condition.Firstfloor, Tensors: profile.Condition.Tensor.Tensors,
+		}}},
+	}
+	// These are the actual runtime inputs restored by Observer and Manager.
+	if err := owner.execution.Publish(definition); err != nil {
+		t.Fatal(err)
+	}
+	dispatched := make(chan serving.Dispatch, 1)
+	instance := serving.ReadyInstance{
+		State: serving.InstanceState{ID: "original-pod/container", Pool: "pool",
+			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Profile: profile.ID, Ready: true},
+		Profile: &profile, Weight: 1, Capacity: 1,
+		Execute: func(_ context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
+			dispatched <- dispatch
+			return serving.BackendResult{StatusCode: http.StatusOK, Finished: true}, nil
+		},
+	}
+	if err := owner.execution.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
+		t.Fatal(err)
+	}
+	owner.execution.EnableSchedulerRouting()
+	// A later observation rebuild must retain the restored baseline, not an
+	// empty constructor-time freeze, and must not admit newly discovered routes.
+	extra := instance
+	extra.State.ID = "new-pod/container"
+	if err := owner.execution.InstallInstances([]serving.ReadyInstance{instance, extra}); err != nil {
+		t.Fatal(err)
+	}
+	actual := owner.execution.SchedulerInputs(time.Now).Routing[definition.UID]
+	if len(actual) != 1 || actual[instance.State.ID] != 1 {
+		t.Fatalf("startup actual distribution did not retain the physical baseline: %+v", actual)
+	}
+	receipt, err := owner.execution.Receive(definition.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := owner.execution.Accept(receipt, &serving.InferenceInput{Inputs: []serving.TensorInput{{
+		Name: "input", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]"),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, err := call.Wait(waitCtx); err != nil {
+		t.Fatal(err)
+	}
+	if dispatch := <-dispatched; dispatch.Assignment.Instance != instance.State.ID {
+		t.Fatalf("restored inference used another physical route: %+v", dispatch.Assignment)
+	}
+	if err := owner.execution.Response(receipt, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func profileRemovalConfiguration() schedulerConfiguration {
 	config := schedulerConfiguration{
 		Settings: serving.SchedulerSettings{

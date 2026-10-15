@@ -84,6 +84,8 @@ type SchedulerController struct {
 	wg              sync.WaitGroup
 }
 
+// NewSchedulerController configures control without taking ownership of routing.
+// The composition root freezes routing after restoring the actual baseline.
 func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, journal *serving.Journal, config SchedulerControllerConfig) (*SchedulerController, error) {
 	if store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || journal == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and journal owners")
@@ -92,9 +94,6 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if config.Settings.Controls.Enabled {
-		runtime.EnableSchedulerRouting()
-	}
 	return &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, journal: journal, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}, nil
 }
 func (c *SchedulerController) Settings() serving.SchedulerSettings {

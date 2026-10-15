@@ -464,6 +464,14 @@ HTTPS owner는 `--serving-scheduler-configmap=<name>`과
 빈 ConfigMap 이름은 기존 Workload owner만 실행하며, scheduler 구성에서
 `settings.controls.enabled=false`를 선택하면 동일 관측·후보 기록으로 정적 실험을 실행한다.
 
+시작 시 profile catalog와 scheduler 설정은 먼저 읽어 Observer에 제공하지만,
+`NewSchedulerController` 생성자는 routing을 freeze하지 않는다. composition root는
+첫 `observer.Refresh`와 `manager.Initialize`가 성공해 실제 ready instance와 기존
+Workload 정의를 복원한 뒤, controls ON일 때만 기존 `EnableSchedulerRouting`으로
+현재 분포를 freeze한다. 이 경계는 첫 scheduler Tick과 HTTPS serving보다 앞선다.
+따라서 9개 controls ON 재시작도 빈 fresh runtime이 아니라 복원된 actual routing에서
+시작한다. 기본 controls OFF와 live `SetConfiguration`의 OFF→ON freeze는 그대로다.
+
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
 | `settings` | nanosecond duration의 observation/control/horizon, search/replay/resource bounds·seed·제어 활성 상태 |

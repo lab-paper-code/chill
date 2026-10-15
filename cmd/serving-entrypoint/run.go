@@ -100,6 +100,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("initialize Workload owner: %w", err)
 	}
+	if scheduler != nil && scheduler.controller.Settings().Controls.Enabled {
+		execution.EnableSchedulerRouting()
+	}
 	handlerConfig := entrypoint.HandlerConfig{
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout,
 		MaxQueryEvents: opts.maxQueryEvents, ObservationWindow: opts.observationWindow,
