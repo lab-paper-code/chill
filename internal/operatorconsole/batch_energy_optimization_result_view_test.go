@@ -58,7 +58,6 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 	}
 }
 
-
 func TestBuildBatchEnergyOptimizationResultRejectsAnIncompleteSnapshot(t *testing.T) {
 	t.Parallel()
 	campaign, _, record := campaignResultFixture(t)
