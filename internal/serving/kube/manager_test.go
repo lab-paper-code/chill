@@ -617,6 +617,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	}
 	changed := managerPreprocessorSpec()
 	changed.Artifacts[0].Source.Path = "/artifact/changed"
+	changed.Input.Fields[0].MaxBytes = 4096
 	pre, accepted, err := m.UpdatePreprocessor(ctx, "pre", pre.ResourceVersion, changed)
 	if err != nil || !accepted {
 		t.Fatalf("referenced preprocessor update = %v, %v", accepted, err)
@@ -634,6 +635,17 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	if state, _ := m.runtime.State("first"); state.Applied.Preprocessor.Generation == pre.Generation {
 		t.Fatal("published before accepted requests drained")
 	}
+	// The draining workload still applies the old 1024-byte contract, so a dataset
+	// that only the new preprocessor accepts must wait for the barrier.
+	larger := managerDatasetSpec()
+	larger.Fields[0].MaxBytes = 2048
+	dataset, err := m.GetDataset(ctx, "data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateDataset(ctx, "data", dataset.ResourceVersion, larger); managerCode(err) != "IncompatibleDataset" {
+		t.Fatalf("dataset update breaking the applied preprocessor = %v", err)
+	}
 	finish <- struct{}{}
 	completeManagerResponses(t, m, receipts, calls)
 	if err := m.Advance(ctx); err != nil {
@@ -645,5 +657,11 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	}
 	if dispatched["first"].Definition.Preprocessor.Generation == pre.Generation {
 		t.Fatal("accepted request lost its preprocessor definition")
+	}
+	if _, err := m.UpdateDataset(ctx, "data", dataset.ResourceVersion, larger); err != nil {
+		t.Fatalf("dataset update after the new preprocessor applied = %v", err)
+	}
+	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != operationCompleted || view.Operation.Kind != operationPreprocessorUpdate {
+		t.Fatalf("dataset update started an operation: %+v, %v", view.Operation, err)
 	}
 }

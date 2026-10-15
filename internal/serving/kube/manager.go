@@ -1375,21 +1375,41 @@ func (m *Manager) UpdateDataset(ctx context.Context, name, resourceVersion strin
 	}
 	// DP-10: the Serving applied definition keeps the dataset identity; later
 	// measurements freeze the new declaration, which must still serve every
-	// preprocessor named together with it.
-	list, err := m.store.ListWorkloads(ctx)
+	// preprocessor paired with it, desired or still applied during a drain.
+	list, err := m.referenceWorkloads(ctx)
 	if err != nil {
 		return d, err
 	}
-	for _, w := range list.Items {
-		if w.Spec.DatasetRef == nil || w.Spec.DatasetRef.Name != d.Name {
-			continue
+	checked := map[string]bool{}
+	check := func(w *api.Workload, p *api.Preprocessor) error {
+		key := fmt.Sprintf("%s/%d", p.UID, p.Generation)
+		if checked[key] {
+			return nil
 		}
-		p, err := m.store.GetPreprocessor(ctx, w.Spec.PreprocessorRef.Name)
-		if err != nil {
-			return d, err
-		}
+		checked[key] = true
 		if mismatched := modelcatalog.Compatible(proposed, p); len(mismatched) != 0 {
-			return d, managementError("IncompatibleDataset", fmt.Sprintf("Workload %s preprocessor %s input fields %v are not satisfied", w.Name, p.Name, mismatched), "spec.fields")
+			return managementError("IncompatibleDataset", fmt.Sprintf("Workload %s preprocessor %s input fields %v are not satisfied", w.Name, p.Name, mismatched), "spec.fields")
+		}
+		return nil
+	}
+	for _, w := range m.referencing(list, holdsDataset(d)) {
+		if w.Spec.DatasetRef != nil && w.Spec.DatasetRef.Name == d.Name {
+			p, err := m.store.GetPreprocessor(ctx, w.Spec.PreprocessorRef.Name)
+			if err != nil {
+				return d, err
+			}
+			if err := check(w, p); err != nil {
+				return d, err
+			}
+		}
+		if a := m.applied(w); a != nil && a.Dataset != nil && a.Dataset.UID == string(d.UID) {
+			p := &api.Preprocessor{ObjectMeta: metav1.ObjectMeta{Name: a.Preprocessor.Name, UID: types.UID(a.Preprocessor.UID), Generation: a.Preprocessor.Generation}}
+			for _, field := range a.Preprocessor.Input {
+				p.Spec.Input.Fields = append(p.Spec.Input.Fields, api.RawField{Name: field.Name, Format: field.Format, MaxBytes: field.MaxBytes})
+			}
+			if err := check(w, p); err != nil {
+				return d, err
+			}
 		}
 	}
 	if err := m.store.UpdateDataset(ctx, proposed); err != nil {
