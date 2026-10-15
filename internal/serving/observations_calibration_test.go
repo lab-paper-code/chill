@@ -88,6 +88,7 @@ func prepareCalibrationTrial(t *testing.T, condition string) (
 	}
 	at := time.Now().UTC()
 	snapshot.At = at
+	snapshot.ObservationEnd = at
 	p := &BackendProgress{RequestID: "trial", WorkloadUID: d.UID, Definition: d.Identity(),
 		Phase: phaseFinished, ProfileID: instance.Profile.ID, ExecutionComplete: true, NativeElapsedMS: 6}
 	outcome := outcomeCompleted

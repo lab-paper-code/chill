@@ -226,7 +226,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	snapshot = c.reconcileSnapshot(snapshot, goal, now, config.Settings.ObservationWindow)
+	snapshot = c.reconcileSnapshot(snapshot, goal, snapshot.At, config.Settings.ObservationWindow)
 	decision := serving.EvaluateScheduler(config.Settings, snapshot)
 	c.mu.Lock()
 	c.state.Snapshot = snapshot
@@ -329,8 +329,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
-	s := serving.SchedulerSnapshot{At: now, Workloads: c.runtime.SchedulerDefinitions(), Outstanding: c.runtime.SchedulerOutstanding(now), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
-	s.Routing, s.RoutingCredits = c.runtime.SchedulerRouting()
+	s := serving.SchedulerSnapshot{ObservationEnd: now, Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines}
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return s, err
@@ -380,6 +379,13 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		captureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
 	}
+	overheads, err := c.journal.ObservedOverhead(now.Add(-config.Settings.ObservationWindow), now)
+	if err != nil {
+		return s, err
+	}
+	current := c.runtime.SchedulerInputs(time.Now)
+	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
+	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
 	for _, profile := range profiles {
 		template, ok := config.Preparations[profile.ID]
 		if !ok {
@@ -406,19 +412,14 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	if err = c.captureCompletionOverhead(&s, physical, config); err != nil {
-		return s, err
-	}
+	bindCompletionOverhead(&s, physical, config, overheads)
 	return s, nil
 }
 
-func (c *SchedulerController) captureCompletionOverhead(
+func bindCompletionOverhead(
 	s *serving.SchedulerSnapshot, physical map[string]serving.InstanceState, config SchedulerControllerConfig,
-) error {
-	overheads, err := c.journal.ObservedOverhead(s.At.Add(-config.Settings.ObservationWindow), s.At)
-	if err != nil {
-		return err
-	}
+	overheads map[string]serving.ObservedOverhead,
+) {
 	for profile, facts := range config.CompletionCalibrations {
 		for id, fact := range facts {
 			overheads["calibration/"+profile+"/"+id] = fact
@@ -449,7 +450,6 @@ func (c *SchedulerController) captureCompletionOverhead(
 		}
 		bindProfileMeter(&s.Options[index].Instance, config.Meters)
 	}
-	return nil
 }
 func (c *SchedulerController) captureNodePower(ctx context.Context, s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, acts *edge.NodeActuationList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var latest *edge.NodeActuation

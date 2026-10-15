@@ -10,6 +10,182 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
+func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.Controls.Enabled = false
+	settings.MaxObservationAge = 5 * time.Second
+	d := snapshot.Workloads[0]
+	d.SLO.TargetLatency = time.Second
+	cutoff := snapshot.At
+	readAt := cutoff.Add(3 * time.Second)
+	clock := func() time.Time { return readAt }
+	receivedAt := cutoff.Add(-500 * time.Millisecond)
+	call := &Call{
+		receipt: Receipt{
+			ID: "capture-io", UID: d.UID, ReceivedAt: receivedAt, Deadline: receivedAt.Add(5 * time.Second),
+		},
+		definition: d, identity: d.Identity(),
+	}
+	runtime := &Runtime{calls: map[string]*Call{call.receipt.ID: call}}
+	current := runtime.SchedulerInputs(clock)
+	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
+	request := snapshot.Outstanding[0]
+	wantElapsed := clock().Sub(receivedAt)
+	wantRemaining := call.receipt.Deadline.Sub(clock())
+	if request.Elapsed != wantElapsed || request.RemainingLifetime == nil ||
+		*request.RemainingLifetime != wantRemaining {
+		t.Errorf("capture I/O was omitted from request age/lifetime: elapsed=%s remaining=%v; want %s/%s",
+			request.Elapsed, request.RemainingLifetime, wantElapsed, wantRemaining)
+	}
+	decision := EvaluateScheduler(settings, snapshot)
+	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
+	wantCompletion := float64(wantElapsed) + snapshot.Instances[0].Profile.Batches[0].DurationNanos[0]
+	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != wantCompletion ||
+		estimate.NormalizedExceedance <= 0 {
+		t.Fatalf("decision concealed already elapsed SLO time: %+v; want completion=%g", estimate, wantCompletion)
+	}
+}
+
+func TestReplayArrivalHistoryAgesFromNativeObservation(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	d := snapshot.Workloads[0]
+	snapshot.At = snapshot.At.Add(3 * time.Second)
+	snapshot.Instances[0].ArrivalAges = map[string][]time.Duration{
+		d.UID: {10 * time.Millisecond, 20 * time.Millisecond},
+	}
+	arrival := &schedulerReplayRequest{
+		source: SchedulerRequest{
+			ID: "after-capture", Definition: d, Instance: "i1", ReceivedAt: snapshot.At,
+		},
+		dispatched: true,
+	}
+	state := schedulerReplayState{
+		snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances},
+		requests: []*schedulerReplayRequest{arrival},
+	}
+	state.initializeInstances()
+	state.receiveNative()
+	rate := state.nativeRequestState(state.byID["i1"], arrival).ArrivalRate
+	wantRate := float64(time.Second) / float64(3*time.Second+10*time.Millisecond)
+	if rate != wantRate {
+		t.Fatalf("policy arrival rate omitted native observation age: got %g, want %g", rate, wantRate)
+	}
+}
+
+func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	snapshot.At = time.Now()
+	snapshot.ObservationEnd = snapshot.At
+	snapshot.Nodes[0].ObservedAt = snapshot.At
+	snapshot.Instances[0].ObservedAt = snapshot.At
+	d := snapshot.Workloads[0]
+	second := schedulerTestCPU(snapshot.Instances[0])
+	second.ID, second.Weight = "i2", 2
+	snapshot.Instances = append(snapshot.Instances, second)
+	j, err := NewJournal(JournalConfig{
+		Directory: t.TempDir(), Store: "evidence", Window: time.Hour,
+		Writer: &observationArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close(context.Background()) }()
+	r, err := NewRuntime(context.Background(), RuntimeConfig{QueueLimit: 4, Journal: j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.cancel()
+	r.SetProfiles([]Profile{*snapshot.Instances[0].Profile, *second.Profile})
+	if err = r.Publish(d); err != nil {
+		t.Fatal(err)
+	}
+	instances := make([]ReadyInstance, 0, len(snapshot.Instances))
+	dispatched := make(chan Dispatch, 2)
+	for _, wanted := range snapshot.Instances {
+		instances = append(instances, ReadyInstance{
+			State: InstanceState{
+				ID: wanted.ID, Node: wanted.Node, Pool: wanted.Pool, Profile: wanted.Profile.ID, Ready: true,
+			},
+			Profile: wanted.Profile, Weight: wanted.Weight, Capacity: wanted.Capacity,
+			Execute: func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+				started := time.Now()
+				dispatched <- dispatch
+				progress := &BackendProgress{
+					RequestID: dispatch.RequestID, WorkloadUID: dispatch.Definition.UID,
+					Definition: dispatch.Definition.Identity(), Phase: phaseFinished, ExecutionComplete: true,
+				}
+				return BackendResult{Finished: true, Progress: progress, ClientSpan: time.Since(started)}, nil
+			},
+		})
+	}
+	if err = r.InstallInstances(instances); err != nil {
+		t.Fatal(err)
+	}
+	target := SchedulerCandidate{
+		Instances: snapshot.Instances, Routing: map[string]map[string]int32{d.UID: {"i1": 1, "i2": 2}},
+	}
+	if err = r.ApplySchedulerTarget(target); err != nil {
+		t.Fatal(err)
+	}
+	early := r.SchedulerInputs(time.Now)
+	// Publication and assignment happen between earlier observations and the final read.
+	late := *d
+	late.Name, late.UID = "after-io-workload", "after-io-uid"
+	if err = r.Publish(&late); err != nil {
+		t.Fatal(err)
+	}
+	input := &InferenceInput{
+		Inputs: []TensorInput{{Name: "x", Datatype: "FP32", Shape: []int32{1}, Data: []byte("[1]")}},
+	}
+	var current SchedulerSnapshot
+	actualNext := ""
+	for turn := range 2 {
+		receipt, receiveErr := r.Receive(d.Name, time.Now())
+		if receiveErr != nil {
+			t.Fatal(receiveErr)
+		}
+		call, acceptErr := r.Accept(receipt, input)
+		if acceptErr != nil {
+			t.Fatal(acceptErr)
+		}
+		if _, waitErr := call.Wait(context.Background()); waitErr != nil {
+			t.Fatal(waitErr)
+		}
+		dispatch := <-dispatched
+		if dispatch.RequestID != receipt.ID {
+			t.Fatal("real dispatch did not belong to the accepted request")
+		}
+		if turn == 0 {
+			current = r.SchedulerInputs(time.Now)
+		} else {
+			actualNext = dispatch.Assignment.Instance
+		}
+		if err = r.Response(receipt, outcomeCompleted, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(current.Workloads) != len(early.Workloads)+1 || len(current.Outstanding) != 1 ||
+		current.Outstanding[0].Phase != phaseReturning {
+		t.Fatalf("final read missed publication or retained dispatched ownership: %+v", current)
+	}
+	snapshot.At, snapshot.Workloads, snapshot.Outstanding = current.At, current.Workloads, current.Outstanding
+	snapshot.Routing, snapshot.RoutingCredits = current.Routing, current.RoutingCredits
+	state := schedulerReplayState{
+		snap: snapshot, c: SchedulerCandidate{Keep: true, Instances: snapshot.Instances},
+		routeCredits: map[schedulerRouteKey][]int64{},
+		weights:      make([]int32, len(instances)), available: make([]bool, len(instances)),
+		out: schedulerReplayResult{definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}},
+	}
+	state.initializeInstances()
+	state.initializeOutstanding()
+	next := &schedulerReplayRequest{source: SchedulerRequest{ID: "next", Definition: d}}
+	state.requests = append(state.requests, next)
+	state.routeRequests()
+	if actualNext == "" || !next.dispatched || next.source.Instance != actualNext {
+		t.Fatalf("post-capture credits predicted %s, next real dispatch was %s", next.source.Instance, actualNext)
+	}
+}
+
 func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.Controls.Enabled = false
@@ -35,7 +211,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 		if err := r.ObserveBackend("i1", progress); err != nil {
 			t.Fatal(err)
 		}
-		pending := r.SchedulerOutstanding(time.Now())
+		pending := r.SchedulerInputs(time.Now).Outstanding
 		if len(pending) != 1 || pending[0].ExchangeResidual != nil || pending[0].Phase == phaseReturning || !call.backendDone || call.progress == nil || call.progress.Phase != "finished" || !call.progress.ExecutionComplete {
 			t.Fatalf("early SDK completion must preserve native confirmation without claiming exchange completion: %+v", pending)
 		}
@@ -44,9 +220,11 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 		return BackendResult{Finished: true, Progress: &progress, ClientSpan: time.Since(started)}, nil
 	}, Dispatch{})
 	snapshot.At = call.exchangeFinishedAt.Add(2 * time.Millisecond)
+	snapshot.ObservationEnd = snapshot.At
 	snapshot.Nodes[0].ObservedAt = snapshot.At
 	snapshot.Instances[0].ObservedAt = snapshot.At
-	snapshot.Outstanding = r.SchedulerOutstanding(snapshot.At)
+	current := r.SchedulerInputs(func() time.Time { return snapshot.At })
+	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
 	decision := EvaluateScheduler(settings, snapshot)
 	estimate := schedulerRequireEstimate(t, decision.Keep, d.UID)
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(106*time.Millisecond) {
@@ -296,7 +474,7 @@ func TestControlledRoutingKeepsNewWorkloadQueuedAfterInstanceRediscovery(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := r.SchedulerOutstanding(time.Now())
+	pending := r.SchedulerInputs(time.Now).Outstanding
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _ = call.Wait(ctx)

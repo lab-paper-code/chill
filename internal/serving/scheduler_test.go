@@ -39,7 +39,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
-	snap := SchedulerSnapshot{At: at, Workloads: []*Definition{d}, Nodes: []SchedulerNode{node}, Instances: []SchedulerInstance{i}, Options: []SchedulerOption{{Instance: i, CompatibleUIDs: []string{d.UID}}}, Baselines: []NodeBaseline{b}}
+	snap := SchedulerSnapshot{At: at, ObservationEnd: at, Workloads: []*Definition{d}, Nodes: []SchedulerNode{node}, Instances: []SchedulerInstance{i}, Options: []SchedulerOption{{Instance: i, CompatibleUIDs: []string{d.UID}}}, Baselines: []NodeBaseline{b}}
 	return s, snap
 }
 func schedulerRequireEstimate(t *testing.T, c SchedulerCandidate, uid string) SchedulerEstimate {
@@ -99,15 +99,22 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.Controls.Enabled = false
 	d := snap.Workloads[0]
-	start := snap.At.Add(-s.ObservationWindow)
-	snap.Arrivals = []SchedulerArrival{{At: start.Add(-time.Nanosecond), Definition: d, Accepted: true}, {At: start, Definition: d, Accepted: true}, {At: start.Add(time.Millisecond), Outcome: "malformed"}, {At: snap.At, Definition: d, Accepted: true}}
-	snap.Outstanding = []SchedulerRequest{{ID: "old", Definition: d, ReceivedAt: start.Add(-time.Second), Elapsed: time.Second, Phase: "pending"}}
+	start := snap.ObservationEnd.Add(-s.ObservationWindow)
+	snap.Arrivals = []SchedulerArrival{{At: start.Add(-time.Nanosecond), Definition: d, Accepted: true}, {At: start, Definition: d, Accepted: true}, {At: start.Add(time.Millisecond), Outcome: "malformed"}, {At: snap.ObservationEnd, Definition: d, Accepted: true}}
+	snap.At = snap.At.Add(20 * time.Millisecond)
+	late := snap.ObservationEnd.Add(time.Millisecond)
+	snap.Outstanding = []SchedulerRequest{
+		{ID: "old", Definition: d, ReceivedAt: start.Add(-time.Second),
+			Elapsed: snap.At.Sub(start.Add(-time.Second)), Phase: phasePending},
+		{ID: "after-cutoff", Definition: d, QueueOrder: 1, ReceivedAt: late,
+			Elapsed: snap.At.Sub(late), Phase: phasePending},
+	}
 	decision := EvaluateScheduler(s, snap)
 	if decision.Search.Received != 2 || decision.Search.Accepted != 1 || decision.Search.ComputeInputs != 1 {
 		t.Fatalf("wrong population %+v", decision.Search)
 	}
 	e := schedulerRequireEstimate(t, decision.Keep, d.UID)
-	if e.Samples != 2*s.Replays || e.ExpectedNanos == nil || *e.ExpectedNanos < float64(time.Second) {
+	if e.Samples != 3*s.Replays || e.ExpectedNanos == nil || *e.ExpectedNanos < float64(time.Second) {
 		t.Fatalf("outstanding frozen timing lost: %+v", e)
 	}
 	snap.Arrivals = nil
@@ -119,6 +126,40 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 	}
 	if empty.Keep.ExpectedJoules == nil || math.Abs(*empty.Keep.ExpectedJoules-1.2) > 1e-9 {
 		t.Fatalf("empty serving still consumes physical idle: %+v", empty.Keep)
+	}
+}
+
+func TestSchedulerObservationTimeBounds(t *testing.T) {
+	for _, source := range []string{
+		"missing cutoff", "future cutoff", "future node", "stale node", "future instance", "stale instance",
+	} {
+		t.Run(source, func(t *testing.T) {
+			settings, snapshot := schedulerFixture()
+			reason := "UnknownOrFutureObservationWindow"
+			switch source {
+			case "missing cutoff":
+				snapshot.ObservationEnd = time.Time{}
+			case "future cutoff":
+				snapshot.ObservationEnd = snapshot.At.Add(time.Nanosecond)
+			case "future node", "stale node":
+				snapshot.Nodes[0].ObservedAt = snapshot.At.Add(time.Nanosecond)
+				if source == "stale node" {
+					snapshot.Nodes[0].ObservedAt = snapshot.At.Add(-settings.MaxObservationAge - time.Nanosecond)
+				}
+				reason = "UnknownOrStaleNode:" + snapshot.Nodes[0].Node.Name
+			case "future instance", "stale instance":
+				snapshot.Instances[0].ObservedAt = snapshot.At.Add(time.Nanosecond)
+				if source == "stale instance" {
+					snapshot.Instances[0].ObservedAt = snapshot.At.Add(-settings.MaxObservationAge - time.Nanosecond)
+				}
+				reason = "UnknownOrStaleInstance:" + snapshot.Instances[0].ID
+			}
+			decision := EvaluateScheduler(settings, snapshot)
+			schedulerRequireReason(t, decision.Keep.Reasons, reason)
+			if decision.Target != nil || decision.Keep.ExpectedJoules != nil {
+				t.Fatalf("unknown, future or stale observation became actionable: %+v", decision)
+			}
+		})
 	}
 }
 
@@ -334,7 +375,9 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 		progress:           &BackendProgress{Phase: "finished", ExecutionComplete: true, NativeElapsedMS: 6},
 	}
 	runtime := &Runtime{calls: map[string]*Call{"returning": call}}
-	snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
+	clock := func() time.Time { return snap.At }
+	current := runtime.SchedulerInputs(clock)
+	snap.At, snap.Outstanding = current.At, current.Outstanding
 	returned := EvaluateScheduler(s, snap)
 	e := schedulerRequireEstimate(t, returned.Keep, snap.Workloads[0].UID)
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(11*time.Millisecond) {
@@ -342,7 +385,8 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	}
 	// A measured zero residual is evidence, not a missing observation.
 	call.progress.NativeElapsedMS = 8
-	snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
+	current = runtime.SchedulerInputs(clock)
+	snap.At, snap.Outstanding = current.At, current.Outstanding
 	zero := EvaluateScheduler(s, snap)
 	e = schedulerRequireEstimate(t, zero.Keep, snap.Workloads[0].UID)
 	if e.ExpectedNanos == nil || *e.ExpectedNanos != float64(13*time.Millisecond) {
@@ -351,7 +395,8 @@ func TestSchedulerBoundsSeedUnknownOwnershipAndReturnPopulation(t *testing.T) {
 	call.progress.NativeElapsedMS = 6
 	for _, clientSpan := range []time.Duration{0, 5 * time.Millisecond} {
 		call.clientSpan = clientSpan
-		snap.Outstanding = runtime.SchedulerOutstanding(snap.At)
+		current = runtime.SchedulerInputs(clock)
+		snap.At, snap.Outstanding = current.At, current.Outstanding
 		missing := EvaluateScheduler(s, snap)
 		if missing.Target != nil || snap.Outstanding[0].ExchangeResidual != nil {
 			t.Fatalf("missing or negative exchange residual must not become completion evidence: %+v", missing)

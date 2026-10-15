@@ -104,6 +104,22 @@ returning 요청은 receipt→exchange의 non-native 잔여 span과 실제 excha
 worker의 local monotonic queue/service 경과 시간과 원래 receipt 이후 경과 시간을
 사용해 추가 대기 여유를 판단하며 실제 span과 예상값의 출처를 raw context에 연결한다.
 
+Scheduler snapshot의 `observationEnd`는 Tick에 전달한 고정 historical cutoff다.
+arrival·completion 관측 구간은 `[observationEnd−observationWindow, observationEnd)`이며
+현재 시각으로 끝을 바꾸거나 구간을 늘리지 않는다. `at`는 blocking capture I/O가 끝난 뒤
+기존 Runtime mutex 안에서 현재 outstanding·Workload 정의·routing/credits와 함께 읽은 decision origin이다.
+`SchedulerInputs`는 이 in-process 필드만 같은 read로 동결하며, owner는 그 뒤 blocking I/O 없이
+현재 정의로 option 호환성과 이미 읽은 완료 근거를 연결한다. 요청의
+Elapsed·remaining lifetime·native queue/service/return age는 이 같은 시각에 맞추고 원래
+ReceivedAt·불변 SLO·native sender elapsed·실제 source ObservedAt은 덮어쓰지 않는다.
+native arrival history는 원래 source의 age를 유지한 채 replay origin으로 환산한다.
+physical source freshness는 `0 ≤ at−ObservedAt ≤ maxObservationAge`이며 미래 source도
+거절한다. HTTP GET 시점의 snapshot age를 이 gate로 대체하지 않는다.
+cutoff 이후 접수되어 아직 남은 요청은 현재 outstanding에 포함되지만 그 사이 완료된 요청까지
+과거 arrival 구간에 포함했다고 주장하지 않는다. 이는 전역 atomic snapshot 계약이 아니다.
+현재 평가 입력에는 명시 `observationEnd`가 필수이며 zero→at fallback은 없다.
+필드가 없는 과거 raw 기록은 기존 이력 reader로 보존·조회하되 현재 평가 입력으로 재해석하지 않는다.
+
 SLO 위반은 모델의 `deadlinePolicy`(drop/keep/defer, 기본 keep)에 따른다. drop은
 expired queued 요청을 active 실행 중에도 제거하고 idle 시 infeasible head를 408로
 종료한다. keep은 late 결과를 반환하고 defer는 normal 우선의 후순위 FIFO에서 처리한다.

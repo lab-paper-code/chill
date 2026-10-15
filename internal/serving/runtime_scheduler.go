@@ -265,9 +265,20 @@ func (r *Runtime) DetachInstance(id string) (bool, error) {
 	return true, nil
 }
 
-func (r *Runtime) SchedulerDefinitions() []*Definition {
+// SchedulerInputs captures only coupled in-process request and routing state.
+// Physical observations and historical windows are collected separately.
+func (r *Runtime) SchedulerInputs(clock func() time.Time) SchedulerSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := clock()
+	routing, credits := r.schedulerRoutingLocked()
+	return SchedulerSnapshot{
+		At: now, Workloads: r.schedulerDefinitionsLocked(), Outstanding: r.schedulerOutstandingLocked(now),
+		Routing: routing, RoutingCredits: credits,
+	}
+}
+
+func (r *Runtime) schedulerDefinitionsLocked() []*Definition {
 	definitions := make([]*Definition, 0, len(r.workloads))
 	for _, workload := range r.workloads {
 		if !workload.detached {
@@ -278,11 +289,7 @@ func (r *Runtime) SchedulerDefinitions() []*Definition {
 	return definitions
 }
 
-// SchedulerOutstanding captures original contexts and uses local observation
-// receipt time only for extending worker-reported monotonic durations.
-func (r *Runtime) SchedulerOutstanding(now time.Time) []SchedulerRequest {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 	queueOrder := make(map[*Call]int)
 	for _, workload := range r.workloads {
 		for order, call := range workload.queue {
@@ -386,6 +393,10 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 func (r *Runtime) SchedulerRouting() (map[string]map[string]int32, map[string]map[int]map[string]int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.schedulerRoutingLocked()
+}
+
+func (r *Runtime) schedulerRoutingLocked() (map[string]map[string]int32, map[string]map[int]map[string]int64) {
 	weights := map[string]map[string]int32{}
 	credits := map[string]map[int]map[string]int64{}
 	for uid, workload := range r.workloads {

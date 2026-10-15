@@ -163,7 +163,7 @@ func runMeasurement(ctx context.Context, manifest commandManifest,
 	if err != nil {
 		return err
 	}
-	if len(execution.SchedulerOutstanding(time.Now())) != 0 {
+	if current := execution.SchedulerInputs(time.Now); len(current.Outstanding) != 0 {
 		return errors.New("measurement observation directory contains accepted outstanding traffic")
 	}
 	native := &sdk.Client{HTTPClient: &http.Client{Timeout: timeout}}
@@ -684,7 +684,7 @@ func runExecution(
 	if err != nil {
 		return err
 	}
-	if len(execution.SchedulerOutstanding(time.Now())) != 0 {
+	if current := execution.SchedulerInputs(time.Now); len(current.Outstanding) != 0 {
 		return errors.New("execute journal contains outstanding traffic; use an exclusive clean observation directory")
 	}
 	nativeClient := &sdk.Client{HTTPClient: &http.Client{Timeout: timeout}}

@@ -115,7 +115,7 @@ func TestStaticRoutingPreflightFailuresRemainVisibleAndUnapplied(t *testing.T) {
 			if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
 				t.Fatal(err)
 			}
-			definitions := manager.runtime.SchedulerDefinitions()
+			definitions := manager.runtime.SchedulerInputs(time.Now).Workloads
 			if len(definitions) != 1 {
 				t.Fatalf("expected one current Workload, got %v", definitions)
 			}

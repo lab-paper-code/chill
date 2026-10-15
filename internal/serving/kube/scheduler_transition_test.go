@@ -63,7 +63,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if _, err := manager.CreateWorkload(ctx, "workload", managerWorkloadSpec()); err != nil {
 		t.Fatal(err)
 	}
-	d := manager.runtime.SchedulerDefinitions()[0]
+	d := manager.runtime.SchedulerInputs(time.Now).Workloads[0]
 	profile := managerProfile(d)
 	profile.NodeName, profile.Condition.NodeUID = "handoff-destination", "destination-uid"
 	profile.RuntimeMetadata = &native.RuntimeMetadata{CPUAffinity: []int{0}, IntraOpThreads: 1}

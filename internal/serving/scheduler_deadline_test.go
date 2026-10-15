@@ -181,14 +181,14 @@ func TestSchedulerOutstandingExtendsDeferredNativeWitness(t *testing.T) {
 	native := firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: "deferred", WorkloadUID: d.UID, Definition: d.Identity(), SenderElapsedMS: 7, LifetimeMS: 50}, Phase: phaseDeferred, QueueMS: 3, RemainingLifetimeMS: &remaining}
 	call := &Call{receipt: Receipt{ID: "deferred", UID: d.UID, ReceivedAt: snap.At}, definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1"}}
 	runtime := &Runtime{calls: map[string]*Call{"deferred": call}, instances: map[string]*runtimeInstance{"i1": {ReadyInstance: ReadyInstance{State: InstanceState{ID: "i1", ObservedAt: snap.At, Native: &firstfloor.State{Requests: []firstfloor.RequestState{native}}}}}}}
-	requests := runtime.SchedulerOutstanding(snap.At.Add(2 * time.Millisecond))
+	requests := runtime.SchedulerInputs(func() time.Time { return snap.At.Add(2 * time.Millisecond) }).Outstanding
 	if len(requests) != 1 || requests[0].Phase != phaseDeferred || requests[0].QueueAge != 5*time.Millisecond || requests[0].NativeSenderElapsedMS == nil || *requests[0].NativeSenderElapsedMS != 7 || requests[0].RemainingLifetime == nil || *requests[0].RemainingLifetime != 28*time.Millisecond {
 		t.Fatalf("deferred witness must retain native sender, FIFO and caller lifetime: %+v", requests)
 	}
 	call.backendDone = true
 	call.exchangeFinishedAt = snap.At
 	call.progress = &BackendProgress{Outcome: "deadline_drop"}
-	requests = runtime.SchedulerOutstanding(snap.At)
+	requests = runtime.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 	if requests[0].Phase != phaseReturning || requests[0].NativeOutcome != "deadline_drop" {
 		t.Fatalf("returning drop must retain native outcome: %+v", requests)
 	}

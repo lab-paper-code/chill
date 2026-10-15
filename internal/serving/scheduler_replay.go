@@ -290,24 +290,16 @@ func appendUnique(xs []string, more ...string) []string {
 	return xs
 }
 func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
-	reasons := []string{}
+	reasons := schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)
 	if len(snapshot.Nodes) == 0 {
 		reasons = append(reasons, "MissingPoolInventory")
 	}
 	if len(snapshot.Outstanding) > settings.MaxReplayRequests {
 		reasons = append(reasons, "ReplayRequestBoundExceeded")
 	}
-	for _, n := range snapshot.Nodes {
-		if n.Node.UID == "" || n.Pool == "" || n.ObservedAt.IsZero() || snapshot.At.Sub(n.ObservedAt) > settings.MaxObservationAge {
-			reasons = appendUnique(reasons, "UnknownOrStaleNode:"+n.Node.Name)
-		}
-	}
 	ids := map[string]bool{}
 	for _, i := range snapshot.Instances {
 		ids[i.ID] = true
-		if i.ObservedAt.IsZero() || snapshot.At.Sub(i.ObservedAt) > settings.MaxObservationAge {
-			reasons = appendUnique(reasons, "UnknownOrStaleInstance:"+i.ID)
-		}
 	}
 	for _, r := range snapshot.Outstanding {
 		reasons = schedulerValidateRequest(r, ids, reasons)
@@ -338,6 +330,24 @@ func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSna
 		}
 		if d.SLO.Percentile <= 0 || d.SLO.Percentile > 100 || !schedulerFinite(d.SLO.Percentile) || d.SLO.TargetLatency <= 0 {
 			reasons = appendUnique(reasons, "InvalidSLO:"+d.UID)
+		}
+	}
+	return reasons
+}
+func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot, maxAge time.Duration) []string {
+	reasons := []string{}
+	if snapshot.At.IsZero() || snapshot.ObservationEnd.IsZero() || snapshot.ObservationEnd.After(snapshot.At) {
+		reasons = append(reasons, "UnknownOrFutureObservationWindow")
+	}
+	for _, n := range snapshot.Nodes {
+		if n.Node.UID == "" || n.Pool == "" || n.ObservedAt.IsZero() || n.ObservedAt.After(snapshot.At) ||
+			snapshot.At.Sub(n.ObservedAt) > maxAge {
+			reasons = appendUnique(reasons, "UnknownOrStaleNode:"+n.Node.Name)
+		}
+	}
+	for _, i := range snapshot.Instances {
+		if i.ObservedAt.IsZero() || i.ObservedAt.After(snapshot.At) || snapshot.At.Sub(i.ObservedAt) > maxAge {
+			reasons = appendUnique(reasons, "UnknownOrStaleInstance:"+i.ID)
 		}
 	}
 	return reasons
@@ -644,9 +654,12 @@ func (s *schedulerReplayState) initializeInstances() {
 	}
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
-		for uid, ages := range i.ArrivalAges {
-			for _, age := range ages {
-				x.arrivalTimes[uid] = append(x.arrivalTimes[uid], -float64(age))
+		if len(i.ArrivalAges) != 0 {
+			observationAge := s.snap.At.Sub(i.ObservedAt)
+			for uid, ages := range i.ArrivalAges {
+				for _, age := range ages {
+					x.arrivalTimes[uid] = append(x.arrivalTimes[uid], -float64(age)-float64(observationAge))
+				}
 			}
 		}
 		if i.Profile != nil {
@@ -767,10 +780,10 @@ func (s *schedulerReplayState) initializeOutstanding() {
 
 func (s *schedulerReplayState) initializeArrivals() bool {
 	window := float64(s.settings.ObservationWindow)
-	start := s.snap.At.Add(-s.settings.ObservationWindow)
+	start := s.snap.ObservationEnd.Add(-s.settings.ObservationWindow)
 	arrivals := []SchedulerArrival{}
 	for _, a := range s.snap.Arrivals {
-		if !a.At.Before(start) && a.At.Before(s.snap.At) && (a.Compute || a.Accepted) && a.Definition != nil {
+		if !a.At.Before(start) && a.At.Before(s.snap.ObservationEnd) && (a.Compute || a.Accepted) && a.Definition != nil {
 			arrivals = append(arrivals, a)
 		}
 	}

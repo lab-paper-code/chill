@@ -57,7 +57,7 @@ func schedulerInstanceRouting(workloads []*Definition, instances []SchedulerInst
 }
 
 func schedulerSearchPopulation(settings SchedulerSettings, snapshot SchedulerSnapshot) SchedulerSearch {
-	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.At.Add(-settings.ObservationWindow), WindowEnd: snapshot.At, Population: "received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
+	search := SchedulerSearch{Bounds: settings, WindowStart: snapshot.ObservationEnd.Add(-settings.ObservationWindow), WindowEnd: snapshot.ObservationEnd, Population: "received events in [windowStart,windowEnd); validated compute arrivals (including capacity/evidence rejections) replayed; outstanding retained independently"}
 	loads := map[string]*SchedulerLoad{}
 	for _, a := range snapshot.Arrivals {
 		if a.At.Before(search.WindowStart) || !a.At.Before(search.WindowEnd) {
@@ -499,6 +499,78 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	p := i.Profile
 	return fmt.Sprint(i.Node, i.Pool, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Tensor, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait, i.CompletionOverhead, i.EnvelopeSource, i.CompletionObserved)
 }
+
+// SchedulerLogicalConfigKey identifies configuration semantics, not a physical
+// executor or a particular observation. Replica records retain joint routing.
+func SchedulerLogicalConfigKey(snapshot SchedulerSnapshot, candidate SchedulerCandidate) (string, error) {
+	nodes := make([]string, 0, len(candidate.Nodes))
+	nodeIDs := map[string]bool{}
+	for _, node := range candidate.Nodes {
+		if node.Node.UID == "" || nodeIDs[node.Node.UID] {
+			return "", fmt.Errorf("logical configuration has missing or duplicate Node UID %q", node.Node.UID)
+		}
+		nodeIDs[node.Node.UID] = true
+		nodes = append(nodes, fmt.Sprintf("%q/%q/%q", node.Node.UID, node.Pool, node.PowerMode))
+	}
+	definitions := map[string]*Definition{}
+	for _, definition := range snapshot.Workloads {
+		if definition == nil || definition.UID == "" || definitions[definition.UID] != nil {
+			return "", fmt.Errorf("logical configuration requires unique immutable workload definitions")
+		}
+		definitions[definition.UID] = definition
+	}
+	instances := make([]string, 0, len(candidate.Instances))
+	instanceIDs := map[string]bool{}
+	for _, instance := range candidate.Instances {
+		if instance.ID == "" || instanceIDs[instance.ID] || !nodeIDs[instance.Node.UID] || instance.Profile == nil || instance.Profile.ID == "" {
+			return "", fmt.Errorf("logical configuration has unidentified instance %q", instance.ID)
+		}
+		instanceIDs[instance.ID] = true
+		uids := slices.Clone(instance.WorkloadUIDs)
+		sort.Strings(uids)
+		for index, uid := range uids {
+			if definitions[uid] == nil || (index > 0 && uids[index-1] == uid) {
+				return "", fmt.Errorf("instance %q has unknown or duplicate workload %q", instance.ID, uid)
+			}
+		}
+		deadlinePolicy := ""
+		if instance.Profile.Condition.Firstfloor != nil {
+			deadlinePolicy = instance.Profile.Condition.Firstfloor.DeadlinePolicy
+		}
+		routes := make([]string, 0, len(definitions))
+		for uid := range definitions {
+			weight := int32(0)
+			if schedulerHas(instance.WorkloadUIDs, uid) {
+				weight = instance.Weight
+			}
+			if routing, explicit := candidate.Routing[uid]; explicit {
+				weight = routing[instance.ID]
+			}
+			routes = append(routes, fmt.Sprintf("%q/%d", uid, weight))
+		}
+		sort.Strings(routes)
+		instances = append(instances, fmt.Sprintf("%q/%q/%q/%q/%d/%t/%d/%d/%d/%q/%q", instance.Node.UID, instance.Pool, schedulerState(instance), uids, instance.Allocation.CPUCount, instance.Allocation.CPUReserved, instance.Capacity, instance.MaxBatch, instance.MaxWait, deadlinePolicy, routes))
+	}
+	for uid, routing := range candidate.Routing {
+		if definitions[uid] == nil {
+			return "", fmt.Errorf("routing references unknown workload %q", uid)
+		}
+		for target := range routing {
+			if !instanceIDs[target] {
+				return "", fmt.Errorf("routing references unknown instance %q", target)
+			}
+		}
+	}
+	workloads := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		workloads = append(workloads, fmt.Sprintf("%q/%g/%d", definition.Identity(), definition.SLO.Percentile, definition.SLO.TargetLatency))
+	}
+	sort.Strings(nodes)
+	sort.Strings(instances)
+	sort.Strings(workloads)
+	return fmt.Sprintf("%q", [][]string{nodes, instances, workloads}), nil
+}
+
 func schedulerConfigKey(c SchedulerCandidate, includeObservation bool) string {
 	parts := []string{}
 	for _, i := range c.Instances {

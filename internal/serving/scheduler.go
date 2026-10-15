@@ -171,7 +171,10 @@ type Action struct {
 	Reason     string        `json:"reason,omitempty"`
 }
 type SchedulerSnapshot struct {
-	At               time.Time                           `json:"at"`
+	// At is the current request read and decision origin, after capture I/O.
+	At time.Time `json:"at"`
+	// ObservationEnd is the fixed historical arrival/calibration cutoff.
+	ObservationEnd   time.Time                           `json:"observationEnd"`
 	Workloads        []*Definition                       `json:"workloads"`
 	Nodes            []SchedulerNode                     `json:"nodes"`
 	Instances        []SchedulerInstance                 `json:"instances"`
