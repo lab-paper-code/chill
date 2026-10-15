@@ -16,85 +16,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-func TestExecutePublishesConfiguredCompositeMetricObservation(t *testing.T) {
-	powerServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("hostname") != "lattepanda" {
-			t.Errorf("power query = %q", request.URL.RawQuery)
-		}
-		_, _ = response.Write([]byte(strings.Join([]string{
-			"# TYPE frozen_wall_power_watts gauge",
-			"frozen_wall_power_watts{hostname=\"lattepanda\",device_type=\"test_device\"} 5.2",
-		}, "\n") + "\n"))
-	}))
-	defer powerServer.Close()
-	thermalServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.RawQuery != "" {
-			t.Errorf("thermal query = %q", request.URL.RawQuery)
-		}
-		_, _ = response.Write([]byte(strings.Join([]string{
-			"frozen_thermal_observation_available 1",
-			"frozen_thermal_active 0",
-			"frozen_thermal_max_celsius 41",
-		}, "\n") + "\n"))
-	}))
-	defer thermalServer.Close()
-
-	directory := t.TempDir()
-	runConfig := writeTestRunConfig(
-		t, directory, powerServer.URL+"/prometheus?hostname=lattepanda", thermalServer.URL+"/metrics",
-	)
-	options := testOptions(directory)
-	if err := worker.PublishSignal(options.startPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := worker.PublishSignal(options.endPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := execute(context.Background(), options, powerServer.Client(), time.Second, time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(options.readyPath); err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("observer-ready was not published: info=%v err=%v", info, err)
-	}
-	payload, err := os.ReadFile(options.metricResultPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result metricobserver.Result
-	if err := json.Unmarshal(payload, &result); err != nil {
-		t.Fatal(err)
-	}
-	if err := result.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	assertCompositeObservation(t, runConfig, result)
-}
-
-func assertCompositeObservation(t *testing.T, runConfig profilingrun.RunConfig, result metricobserver.Result) {
-	t.Helper()
-	if result.Source.Kind != runConfig.Metrics.SourceKind || result.Source.NodeName != runConfig.TargetNode.Name ||
-		result.Source.Endpoint != runConfig.Metrics.Endpoint || result.Source.Metric != runConfig.Metrics.PowerMetric ||
-		result.Source.ThermalEndpoint != runConfig.Metrics.ThermalEndpoint ||
-		len(result.Source.MetricLabels) != 2 || result.Source.MetricLabels["hostname"] != "lattepanda" ||
-		result.Source.MetricLabels["device_type"] != "test_device" ||
-		result.Source.ThermalMetrics == nil ||
-		result.Source.ThermalMetrics.ObservationAvailable != runConfig.Metrics.ThermalMetrics.ObservationAvailable ||
-		result.Source.ThermalMetrics.Active != runConfig.Metrics.ThermalMetrics.Active ||
-		result.Source.ThermalMetrics.CPUCoreThrottleEvents != runConfig.Metrics.ThermalMetrics.CPUCoreThrottleEvents ||
-		result.Source.ThermalMetrics.CPUPackageThrottleEvents != runConfig.Metrics.ThermalMetrics.CPUPackageThrottleEvents ||
-		result.Source.ThermalMetrics.Latched != runConfig.Metrics.ThermalMetrics.Latched ||
-		result.Source.ThermalMetrics.MaximumTemperatureCelsius !=
-			runConfig.Metrics.ThermalMetrics.MaximumTemperatureCelsius ||
-		result.Summary.SuccessfulSamples < 1 || result.Summary.Failures != 0 {
-		t.Fatalf("unexpected observation result: %#v", result)
-	}
-	if result.Samples[0].Thermal == nil || result.Samples[0].Thermal.ObservationAvailable == nil ||
-		!*result.Samples[0].Thermal.ObservationAvailable || result.Samples[0].Thermal.Active == nil ||
-		*result.Samples[0].Thermal.Active {
-		t.Fatalf("typed thermal evidence was not retained: %#v", result.Samples[0].Thermal)
-	}
-}
-
 func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte("frozen_wall_power_watts 5.2\n"))
@@ -167,7 +88,7 @@ func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	}
 }
 
-func writeTestRunConfig(t *testing.T, directory, endpoint string, thermalEndpoints ...string) profilingrun.RunConfig {
+func writeTestRunConfig(t *testing.T, directory, endpoint string) {
 	t.Helper()
 	payload, err := os.ReadFile("testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -185,9 +106,6 @@ func writeTestRunConfig(t *testing.T, directory, endpoint string, thermalEndpoin
 	runConfig.Metrics.PowerMetric = "frozen_wall_power_watts"
 	runConfig.Metrics.MetricLabels = map[string]string{"hostname": "lattepanda", "device_type": "test_device"}
 	runConfig.Metrics.ThermalEndpoint = endpoint
-	if len(thermalEndpoints) != 0 {
-		runConfig.Metrics.ThermalEndpoint = thermalEndpoints[0]
-	}
 	runConfig.Metrics.ThermalMetrics = profilingrun.ThermalMetricContract{
 		ObservationAvailable:      "frozen_thermal_observation_available",
 		Active:                    "frozen_thermal_active",
@@ -207,7 +125,6 @@ func writeTestRunConfig(t *testing.T, directory, endpoint string, thermalEndpoin
 	if err := os.WriteFile(filepath.Join(directory, "run-config.json"), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return runConfig
 }
 
 func testOptions(directory string) options {

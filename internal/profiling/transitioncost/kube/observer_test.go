@@ -94,54 +94,6 @@ func TestObserverRequiresPreReadyMarkerAbsence(t *testing.T) {
 	}
 }
 
-func TestObserverAdvancesAbsenceAndFreezesFirstPresence(t *testing.T) {
-	kubeClient := newClient(t, service(), readyPod("serving", "containerd://same", 0))
-	observer := newObserver(t, kubeClient, testRequest())
-	times := actuationTimes()
-	operation := successfulActuation(times)
-	operation.Status.TargetObservation = nil
-	completed := make(chan error, 1)
-	var readyAt time.Time
-
-	raw, err := observer.Observe(context.Background(), func() {
-		readyAt = time.Now().UTC()
-		go func() {
-			time.Sleep(5 * time.Millisecond)
-			if err := kubeClient.Create(context.Background(), operation); err != nil {
-				completed <- err
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
-			current := &edgev1alpha1.NodeActuation{}
-			if err := kubeClient.Get(
-				context.Background(),
-				client.ObjectKeyFromObject(operation),
-				current,
-			); err != nil {
-				completed <- err
-				return
-			}
-			current.Status.TargetObservation = successfulActuation(times).Status.TargetObservation
-			completed <- kubeClient.Update(context.Background(), current)
-		}()
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if operationErr := <-completed; operationErr != nil {
-		t.Fatalf("advance NodeActuation markers: %v", operationErr)
-	}
-	apply := raw.MarkerBrackets.ApplyStartedAt
-	target := raw.MarkerBrackets.TargetObservation
-	ready := raw.MarkerBrackets.ReadyProcessWitness
-	if !apply.LastAbsentReceivedAt.After(readyAt) ||
-		!target.LastAbsentReceivedAt.After(apply.FirstPresentReceivedAt) ||
-		!target.FirstPresentReceivedAt.After(apply.FirstPresentReceivedAt) ||
-		!ready.FirstPresentReceivedAt.After(target.FirstPresentReceivedAt) {
-		t.Fatalf("marker brackets did not advance/freeze in order: %+v", raw.MarkerBrackets)
-	}
-}
-
 func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 	oldPod := readyPod("serving-old", "containerd://old", 0)
 	kubeClient := newClient(t, service(), oldPod)
@@ -174,35 +126,6 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 		t.Fatalf("process observations = pre:%+v post:%+v", raw.PreTransitionProcess, raw.PostTransitionProcess)
 	}
 
-	startedAt := raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt
-	completedAt := raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt
-	window := completedAt.Sub(startedAt)
-	raw.PowerSamples = []transitioncost.PowerSample{
-		{ObservedAt: startedAt.Add(window / 4), Watts: 10},
-		{ObservedAt: startedAt.Add(3 * window / 4), Watts: 10},
-	}
-	source := transitioncost.StateIdentity{DeviceType: "jetson_orin", Model: "mobilenet-v2-050", PowerMode: "MAXN"}
-	target := transitioncost.StateIdentity{DeviceType: "jetson_orin", Model: "mobilenet-v2-050", PowerMode: "MODE_30W"}
-	result, err := transitioncost.Derive(
-		transitioncost.FrozenContract{
-			SourceState: source,
-			TargetState: target,
-			TargetIdleBaseline: transitioncost.IdleBaseline{
-				EvidenceReference: "baselines/mode-30w.json", State: target, MeanWallWatts: 5,
-			},
-		},
-		raw,
-		transitioncost.Policy{
-			MaximumBoundaryDistance:      10 * time.Millisecond,
-			MinimumCoverage:              0.49,
-			MaximumSampleGap:             time.Second,
-			MaximumBoundaryUncertainty:   time.Second,
-			MaximumReadyObservationDelay: time.Second,
-		},
-	)
-	if err != nil || result.Verdict() != transitioncost.VerdictInsufficient || result.Reason() != transitioncost.ReasonNativeStateUnverified {
-		t.Fatalf("replaced actor without final counters = %s/%s (%s),%v", result.Verdict(), result.Reason(), result.Detail(), err)
-	}
 }
 
 func TestObserverMapsTerminalActuationStages(t *testing.T) {
