@@ -67,4 +67,10 @@ worktree에는 main 작업 디렉토리의 사본을 두고 편집한다. 병합
 
 ## 현재 상태
 
-- 1단계 spec 갱신 진행 중.
+- 1단계 spec, 2단계 SRS, 3단계 구현 설계와 ADR 0021을 독립 검수 후 커밋했다.
+- worktree의 `docs/spec/00_measurement.md`에 측정 조건, 표본 추출, 원시 trial 보존을 반영했다.
+  이 파일은 추적되지 않으므로 병합 시 main 사본에 수동으로 옮긴다.
+- 4단계 구현은 [구현 설계](../design/serving/heterogeneous-workloads.md) 9장의 커밋 단위로 진행한다.
+  병렬 단위는 별도 worktree(`../chill-hetero-u*`)에서 구현하고 이 브랜치로 합친다.
+- 병합 시 기존 ModelSpec, Workload, 측정 객체와 Evidence Store 객체, serving journal을 삭제하고
+  다시 등록하고 측정한다(구현 설계 8장).
