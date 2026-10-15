@@ -479,3 +479,26 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
 - 증거: `/tmp/chill-completion-cpu-cost-assembly/profile-cli-*.json`,
   `measurement-cli-show-live.json`; gate 출력 `artifact://2293`, `artifact://2300`.
 
+
+## Owner 측정 운영 네 흐름 종단 검증 — 2026-10-15
+
+- 부모 통합에서 `9b4a008`(terminal writer), `e23dc82`(owner), `7356e97`(CLI)를 커밋했다.
+  owner `1b8dc604…`와 profiler `2ce68f81…` 이미지를 함께 배포해 Ready를 확인했다.
+  전체 lint/test/arch-check/gopls-check와 관련 7패키지 race가 통과했다(`artifact://2423`).
+  기본/owner/Profiler Helm 검증도 통과했다(`artifact://2402`).
+- 실제 목록 25개의 Complete/Failed 상태를 조회했다. 유효 manifest POST는 native server dry-run
+  `200 / NOT_SUBMITTED`이며 CR을 만들지 않았다. 존재하지 않는 Model의 production preflight는
+  `400`으로 거절됐고 CR도 없었다. 신규 측정 실행이나 정상 제출 `202`를 실검증했다고 주장하지 않는다.
+- 물리 Rpi profile 채택 해제는 `409 ProfileInUse`, stale version은 `409`로 거절됐다.
+  미사용 GPU는 `200 Removed / persisted=false / loaded=false`였고 나머지 4개는 Loaded를 유지했다.
+  재채택 후 5개가 다시 Loaded였으며 해당 GPU raw 7449 bytes는 그대로 보존됐다.
+- 폐기 대상 `retired-native-genesis2-q2-current`의 귀속 key 21개가 삭제 전에 모두 존재함을 확인했다.
+  DELETE는 `202 / evidenceDeleted=true`와 21개 key를 반환했고, 독립 S3 조회에서 모두 `NoSuchKey`였다.
+  `kubectl wait`로 native BEO와 소유 Run 9개의 소멸을 확인했다. stale/선택된 측정 삭제는 `409`였다.
+- 다른 측정 UID, 현재 5개 profile, 새 GPU raw 7449 bytes와 Rpi CPU2 Pod UID는 변경되지 않았다.
+  두 Workload UID의 실제 요청 4건이 `HTTP200 / executionComplete`였고 controls는 모두 OFF다.
+  부분 실패·공유 참조 거절은 회귀검사로 확인했으며 live fault injection은 하지 않았다.
+  이는 운영 계약 검증이며 자동 선택·SLO 개선·에너지 절감이나 FULL 제어 완료의 증거가 아니다.
+- 증거 루트: `/tmp/chill-completion-cpu-cost-assembly/`.
+  `owner-extension-{live-list,submit-smoke,profile-removal-smoke,delete-smoke,delete-readback,final-serving}.json`,
+  `owner-delete-owned-evidence-before.json`. Dashboard 소스·배포는 별도 Main 세션에 인계한다.
