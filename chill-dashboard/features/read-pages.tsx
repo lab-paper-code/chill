@@ -15,24 +15,61 @@ function runCandidate(row:ProfilingRun,key:string) {
   const candidate=row.spec.candidate
   return candidate&&typeof candidate==="object"&&key in candidate?String((candidate as Record<string,unknown>)[key]):"정보 없음"
 }
-function runStatus(row:ProfilingRun) {
-  const evidence=row.status.conditions?.find(item=>item.type==="EvidenceVerified")
-  const execution=row.status.conditions?.find(item=>item.type==="ExecutionComplete")
-  return evidence?.status==="True"?<StatusBadge tone="ok">근거 검증 완료</StatusBadge>:execution?.status==="True"?<StatusBadge tone="warn">실행 완료 · 근거 미검증</StatusBadge>:execution?.status==="False"?<StatusBadge tone="fail">실행 미완료</StatusBadge>:<StatusBadge tone="idle">상태 확인 중</StatusBadge>
+type RunListSpec = {targetNode?:string;measurement?:{batch?:number;cpuQuota?:string;workloadMode?:string}}
+const listSpec=(row:ProfilingRun)=>row.spec as RunListSpec
+// Execution path names are declarations such as cuda-amd64 or firstfloor-ort-cpu-arm64; unknown names stay as written.
+function pathLabel(path:string) {
+  const unit=/cuda|tensorrt/.test(path)?"GPU (CUDA)":/rknn/.test(path)?"NPU (RKNN)":/cpu/.test(path)?"CPU":path
+  return /firstfloor/.test(path)&&unit!==path?`${unit} · firstfloor`:unit
+}
+// Only problems are worth a badge; a verified run is the normal case.
+function runProblem(row:ProfilingRun):"failed"|"unverified"|"pending"|null {
+  const evidence=row.status.conditions?.find(item=>item.type==="EvidenceVerified")?.status
+  const execution=row.status.conditions?.find(item=>item.type==="ExecutionComplete")?.status
+  return evidence==="True"?null:execution==="False"?"failed":execution==="True"?"unverified":"pending"
+}
+const problemBadge={failed:<StatusBadge tone="fail">실행 실패</StatusBadge>,unverified:<StatusBadge tone="warn">근거 미검증</StatusBadge>,pending:<StatusBadge tone="info">진행 중</StatusBadge>}
+function problemSummary(rows:ProfilingRun[]) {
+  const failed=rows.filter(row=>runProblem(row)==="failed").length,other=rows.filter(row=>runProblem(row)&&runProblem(row)!=="failed").length
+  return failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:other?<StatusBadge tone="warn">확인 필요 {other}건</StatusBadge>:null
+}
+const day=(at:string)=>new Date(at).toLocaleDateString("ko-KR",{month:"long",day:"numeric"})
+const groupKey=(row:ProfilingRun)=>[runCandidate(row,"modelSpec"),listSpec(row).targetNode??"정보 없음",runCandidate(row,"executionPath")] as const
+
+// The list groups runs by what was measured: model, node and execution path.
+function useRunList() {
+  const {config}=useSession(),params=useSearchParams()
+  const namespace=params.get("namespace")??config.namespace
+  const allowed=new URLSearchParams();["q","offset","condition"].forEach(key=>{const value=params.get(key);if(value!==null)allowed.set(key,value)});allowed.set("limit",String(config.maxPageSize))
+  return {namespace,allowed,query:useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${allowed}`)}
 }
 
 export function MeasurementsPage() {
-  const {config}=useSession(),params=useSearchParams(),router=useRouter(),[filterOpen,setFilterOpen]=React.useState(false)
-  const namespace=params.get("namespace")??config.namespace
-  const allowed=new URLSearchParams();["q","offset","limit","condition"].forEach(key=>{const value=params.get(key);if(value!==null)allowed.set(key,value)});if(!allowed.has("limit"))allowed.set("limit",String(config.pageSize))
-  const query=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${allowed}`)
+  const params=useSearchParams(),router=useRouter(),[filterOpen,setFilterOpen]=React.useState(false)
+  const {namespace,allowed,query}=useRunList()
   const data=query.data,page=data?.page,runs=data?.runs??[],condition=params.get("condition")??""
   function go(offset:number) {
     const next=new URLSearchParams(params.toString());next.set("offset",String(offset));router.replace(`/measurements?${next}`)
   }
-  const total=page?.total??runs.length
-  return <Screen back={["/records","기록"]} title={!data?"측정 결과":total?`측정 ${total}건이 있어요`:"조건에 맞는 측정이 없어요"} lede="모델을 장비에서 실행해 잰 결과와 근거예요.">
-    <Rows label="찾기 조건">
+  const groups=new Map<string,ProfilingRun[]>()
+  for(const row of runs){const key=JSON.stringify(groupKey(row));groups.set(key,[...(groups.get(key)??[]),row])}
+  const models=[...new Set(runs.map(row=>runCandidate(row,"modelSpec")))].sort()
+  const total=page?.total??runs.length,failed=runs.filter(row=>runProblem(row)==="failed").length
+  const shared=new URLSearchParams(allowed);shared.delete("limit");shared.set("namespace",namespace)
+  return <Screen back={["/records","기록"]} status={failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:undefined}
+    title={!data?"측정 결과":total?`측정 ${total.toLocaleString("ko-KR")}건이 있어요`:"조건에 맞는 측정이 없어요"}
+    lede={data&&runs.length?`모델 ${models.length}개를 장비와 실행 방식 ${groups.size}가지로 쟀어요.`:"모델을 장비에서 실행해 잰 결과와 근거예요."}>
+    <QueryGate query={query}>{data&&<>
+      {models.map(model=><Rows key={model} label={model}>{[...groups].filter(([key])=>JSON.parse(key)[0]===model).sort(([a],[b])=>a.localeCompare(b)).map(([key,rows])=>{
+        const [, node, path]=JSON.parse(key) as string[]
+        const dates=rows.map(row=>row.creationTimestamp).sort(),first=day(dates[0]),last=day(dates[dates.length-1])
+        const href=`/measurements/group?${new URLSearchParams([...shared,["model",model],["node",node],["path",path]])}`
+        return <Row key={key} href={href} label={`${node} · ${pathLabel(path)}`} hint={`${rows.length}번 측정 · ${first===last?first:`${first} – ${last}`}`} value={problemSummary(rows)}/>
+      })}</Rows>)}
+      {!runs.length&&<Empty title="조건에 맞는 측정이 없어요"/>}
+      {page&&(page.offset>0||page.nextOffset!==undefined)&&<div className="grid gap-2"><p className="text-sm text-muted-foreground">한 번에 {page.limit}건씩 묶어 보여줘요. 지금은 {page.offset+1}–{page.offset+runs.length}번째예요.</p><div className="flex gap-2"><Button variant="outline" disabled={page.offset===0} onClick={()=>go(Math.max(0,page.offset-page.limit))}>이전 측정</Button><Button variant="outline" disabled={page.nextOffset===undefined} onClick={()=>go(page.nextOffset??0)}>다음 측정</Button></div></div>}
+    </>}</QueryGate>
+    <Rows label="더 하기">
       <RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="찾기 조건" value={[params.get("q"),condition&&(runFilters.find(([value])=>value===condition)?.[1]??"이전 상세 조건")].filter(Boolean).join(" · ")||"전체"} title="찾기 조건" description="이름과 상태로 측정을 찾아요.">
         <RunFilterForm done={()=>setFilterOpen(false)}/>
       </RowDialog>
@@ -40,26 +77,46 @@ export function MeasurementsPage() {
       <Row href="/measurements/check" label="측정 계획 확인" hint="기존 계획의 조건만 검사해요"/>
       {data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 보이는 측정 목록을 파일로 받아요."><SourceExport value={{conditions:{namespace,...Object.fromEntries(allowed)},source:data}} filename="chill-profiling-runs.json"/><SourceJSON inline value={data}/></RowDialog>}
     </Rows>
-    <QueryGate query={query}>{data&&<>
-      {runs.length?<Rows label="측정">{runs.map(row=><Row key={row.uid} href={`/measurements/profiling-runs/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`} label={row.name} hint={`${runCandidate(row,"modelSpec")} · ${runCandidate(row,"deviceClass")}`} value={runStatus(row)}/>)}</Rows>:<Empty title="조건에 맞는 측정이 없어요"/>}
-      {page&&(page.offset>0||page.nextOffset!==undefined)&&<div className="flex gap-2"><Button variant="outline" disabled={page.offset===0} onClick={()=>go(Math.max(0,page.offset-page.limit))}>이전</Button><Button variant="outline" disabled={page.nextOffset===undefined} onClick={()=>go(page.nextOffset??0)}>다음</Button></div>}
-    </>}</QueryGate>
+  </Screen>
+}
+
+// One measured condition: the individual runs, split into loaded and idle-baseline runs.
+export function MeasurementGroupPage() {
+  const params=useSearchParams(),{query}=useRunList()
+  const model=params.get("model")??"",node=params.get("node")??"",path=params.get("path")??""
+  const back=new URLSearchParams(params.toString());["model","node","path"].forEach(key=>back.delete(key))
+  const rows=(query.data?.runs??[]).filter(row=>{const [m,n,p]=groupKey(row);return m===model&&n===node&&p===path})
+    .sort((a,b)=>(listSpec(a).measurement?.batch??0)-(listSpec(b).measurement?.batch??0)||Number(listSpec(a).measurement?.cpuQuota??0)-Number(listSpec(b).measurement?.cpuQuota??0)||a.creationTimestamp.localeCompare(b.creationTimestamp))
+  const idle=(row:ProfilingRun)=>listSpec(row).measurement?.workloadMode==="idle-model-loaded"
+  const section=(label:string,items:ProfilingRun[])=>items.length>0&&<Rows label={label}>{items.map(row=>{
+    const m=listSpec(row).measurement,same=items.filter(other=>listSpec(other).measurement?.batch===m?.batch&&listSpec(other).measurement?.cpuQuota===m?.cpuQuota)
+    return <Row key={row.uid} href={`/measurements/profiling-runs/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}
+      label={[m?.batch!==undefined&&!idle(row)?`한 번에 ${m.batch}건`:null,m?.cpuQuota?`CPU ${m.cpuQuota}개`:null].filter(Boolean).join(" · ")||row.name}
+      hint={`${same.indexOf(row)+1}회차 · ${new Date(row.creationTimestamp).toLocaleString("ko-KR",{month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"})}`}
+      value={(()=>{const problem=runProblem(row);return problem?problemBadge[problem]:null})()}/>
+  })}</Rows>
+  return <Screen back={[`/measurements?${back}`,"측정 결과"]} status={problemSummary(rows)??undefined}
+    title={query.data?rows.length?`${node}에서 ${pathLabel(path)}로 ${rows.length}번 쟀어요`:"이 조건의 측정을 찾지 못했어요":"측정 결과"} lede={model}>
+    <QueryGate query={query}>
+      {section("부하를 걸고 잰 측정",rows.filter(row=>!idle(row)))}
+      {section("모델만 올려두고 잰 기준 전력",rows.filter(idle))}
+      {query.data?.page?.nextOffset!==undefined&&<p className="text-sm text-muted-foreground">측정이 많아 일부만 불러왔어요. 측정 결과 목록에서 다음 측정을 넘겨 보세요.</p>}
+    </QueryGate>
   </Screen>
 }
 
 // Mounted only while its dialog is open, so it always starts from the submitted URL.
 function RunFilterForm({done}:{done:()=>void}) {
-  const params=useSearchParams(),router=useRouter(),{config}=useSession()
-  const [q,setQ]=React.useState(params.get("q")??""),[condition,setCondition]=React.useState(params.get("condition")??""),[limit,setLimit]=React.useState(params.get("limit")??String(config.pageSize))
+  const params=useSearchParams(),router=useRouter()
+  const [q,setQ]=React.useState(params.get("q")??""),[condition,setCondition]=React.useState(params.get("condition")??"")
   const choices=runFilters.some(([value])=>value===condition)?runFilters:[...runFilters,[condition,"이전 상세 조건"] as [string,string]]
   return <form className="grid gap-5" onSubmit={event=>{
     event.preventDefault()
-    const next=new URLSearchParams(params.toString());next.set("q",q);next.set("limit",limit);next.set("offset","0");if(condition)next.set("condition",condition);else next.delete("condition")
+    const next=new URLSearchParams(params.toString());next.set("q",q);next.delete("limit");next.set("offset","0");if(condition)next.set("condition",condition);else next.delete("condition")
     router.replace(`/measurements?${next}`);done()
   }}>
     <label className="grid gap-1.5">이름<Input value={q} onChange={event=>setQ(event.target.value)} maxLength={256}/></label>
     <fieldset className="grid gap-2"><legend className="mb-1">상태</legend>{choices.map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="condition" checked={condition===value} onChange={()=>setCondition(value)}/>{label}</label>)}</fieldset>
-    <label className="grid gap-1.5">한 번에 볼 개수<Input type="number" min={1} max={config.maxPageSize} value={limit} onChange={event=>setLimit(event.target.value)} required/></label>
     <Button type="submit">이 조건으로 찾기</Button>
   </form>
 }

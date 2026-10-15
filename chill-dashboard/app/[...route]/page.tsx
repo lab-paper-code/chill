@@ -3,7 +3,7 @@ import { notFound } from "next/navigation"
 import { ServicesPage, ServicePage, ServiceSectionPage, ResourceEditor, ModelsPage, ModelPage, ModelSectionPage } from "@/features/management"
 import { InferencePage } from "@/features/inference"
 import { ObservationsPage } from "@/features/observations"
-import { MeasurementsPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
+import { MeasurementsPage, MeasurementGroupPage, MeasurementCheckPage, MeasurementDetail, ExperimentsPage } from "@/features/read-pages"
 import { ResourcesPage, PoolsPage, PoolPage } from "@/features/resources"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerEstimatesPage, SchedulerLoadPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
@@ -39,6 +39,7 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "pools" && route.length === 2) page = <PoolPage id={name} />
   else if (head === "measurements" && route.length === 1) page = <MeasurementsPage />
   else if (head === "measurements" && route.length === 2 && name === "check") page = <MeasurementCheckPage />
+  else if (head === "measurements" && route.length === 2 && name === "group") page = <MeasurementGroupPage />
   else if (head === "measurements" && route.length === 4) page = <MeasurementDetail kind={route[1]} namespace={route[2]} name={route[3]} />
   else if (head === "observations" && route.length === 1) page = <ObservationsPage />
   else if (head === "changes" && route.length === 1) page = search.scope === "scheduler" ? <SchedulerHistoryPage settingsOnly /> : <ObservationsPage changes />
