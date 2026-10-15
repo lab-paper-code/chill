@@ -87,19 +87,6 @@ func (c *SchedulerController) Settings() serving.SchedulerSettings {
 	defer c.mu.Unlock()
 	return c.config.Settings
 }
-func (c *SchedulerController) SetSettings(settings serving.SchedulerSettings) error {
-	if err := settings.Validate(); err != nil {
-		return err
-	}
-	c.tickMu.Lock()
-	defer c.tickMu.Unlock()
-	c.mu.Lock()
-	before := c.config.Settings.Controls.Enabled
-	c.config.Settings = settings
-	c.mu.Unlock()
-	c.setRoutingControl(before, settings.Controls.Enabled)
-	return nil
-}
 func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig) error {
 	if err := validateSchedulerConfiguration(config); err != nil {
 		return err
@@ -185,6 +172,23 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	result.Actions = c.actionsLocked(time.Now())
 	result.Results = append([]OperationResult(nil), c.state.Results...)
 	return result
+}
+
+// CatalogRemovalBlocker reports live execution ownership, not prospective
+// snapshot Options or evaluated candidates. The coordinator serializes this
+// check and its catalog mutation with Tick using its existing owner lock.
+func (c *SchedulerController) CatalogRemovalBlocker() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.goal != nil {
+		return "scheduler target " + c.goal.ID + " remains frozen"
+	}
+	for _, run := range c.runs {
+		if run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel {
+			return "scheduler operation " + run.action.ID + " remains in progress"
+		}
+	}
+	return ""
 }
 func (c *SchedulerController) Close() { c.cancel(); c.wg.Wait() }
 func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {

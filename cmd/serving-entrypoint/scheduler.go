@@ -267,6 +267,12 @@ func (o *schedulerOwner) loadCompletionCalibrations(
 func (o *schedulerOwner) refresh(ctx context.Context) (err error) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
+	return o.refreshLocked(ctx)
+}
+
+// refreshLocked publishes the complete accepted configuration while the owner
+// excludes Tick and operator mutations.
+func (o *schedulerOwner) refreshLocked(ctx context.Context) (err error) {
 	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
 	defer func() {
 		o.profileLoadError = ""

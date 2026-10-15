@@ -1,0 +1,275 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"slices"
+	"sort"
+	"strings"
+
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// The measurement owner removes only source-proven, unreferenced measurement
+// evidence before requesting native deletion. Native GC/finalizers stay native.
+type measurementOwner struct {
+	client    client.Client
+	scheduler *schedulerOwner
+	kube      kubernetes.Interface
+	objects   *stores3.Store
+	opts      options
+	console   *url.URL
+	http      *http.Client
+}
+
+func newMeasurementOwner(
+	native client.Client, kube kubernetes.Interface, scheduler *schedulerOwner, objects *stores3.Store, opts options,
+) (*measurementOwner, error) {
+	origin, err := privateOrigin(opts.consoleURL)
+	if err != nil {
+		return nil, err
+	}
+	return &measurementOwner{
+		client: native, kube: kube, scheduler: scheduler, objects: objects, opts: opts, console: origin,
+		http: &http.Client{
+			Timeout:       opts.requestTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}, nil
+}
+
+func (o *measurementOwner) namespace(namespace string) error {
+	if len(validation.IsDNS1123Label(namespace)) != 0 {
+		return &serving.Error{Code: "InvalidInput", Message: "valid measurement namespace is required"}
+	}
+	allowed := namespace == o.opts.servingNamespace
+	if len(o.opts.profileNamespaces) != 0 {
+		allowed = slices.Contains(o.opts.profileNamespaces, namespace)
+	}
+	if !allowed {
+		return servingkube.ErrForbidden
+	}
+	return nil
+}
+
+func (o *measurementOwner) list(ctx context.Context, namespace string) (api.BatchEnergyOptimizationList, error) {
+	result := api.BatchEnergyOptimizationList{}
+	if err := o.namespace(namespace); err != nil {
+		return result, err
+	}
+	if err := o.client.List(ctx, &result, client.InNamespace(namespace)); err != nil {
+		return result, err
+	}
+	result.APIVersion, result.Kind = api.GroupVersion.String(), "BatchEnergyOptimizationList"
+	if result.Items == nil {
+		result.Items = []api.BatchEnergyOptimization{}
+	}
+	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
+	return result, nil
+}
+
+func (o *measurementOwner) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {
+	unavailable := &serving.Error{
+		Code: "MeasurementPreflightUnavailable", Message: "production Console preflight is unavailable",
+	}
+	if o.console == nil {
+		return unavailable
+	}
+	body, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	target := *o.console
+	target.Path = "/api/v1/namespaces/" + task.Namespace + "/batch-energy-optimizations/preflight"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := o.http.Do(req)
+	if err != nil {
+		return unavailable
+	}
+	const maximumPreflightBytes = 4 << 20
+	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maximumPreflightBytes+1))
+	closeErr := response.Body.Close()
+	if errors.Join(readErr, closeErr) != nil ||
+		response.StatusCode != http.StatusOK || len(payload) > maximumPreflightBytes {
+		return unavailable
+	}
+	var result operatorconsole.BatchEnergyOptimizationPreflight
+	if json.Unmarshal(payload, &result) != nil ||
+		result.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
+		result.Kind != "BatchEnergyOptimizationPreflight" ||
+		result.Campaign.Namespace != task.Namespace || result.Campaign.Name != task.Name {
+		return unavailable
+	}
+	if !result.Resolves {
+		return &serving.Error{Code: "MeasurementPreflightRejected", Message: result.Reason}
+	}
+	return nil
+}
+
+func (o *measurementOwner) submit(
+	ctx context.Context, task api.BatchEnergyOptimization, dryRun bool,
+) (entrypoint.MeasurementMutationResult, error) {
+	result := entrypoint.MeasurementMutationResult{}
+	if err := o.namespace(task.Namespace); err != nil {
+		return result, err
+	}
+	if err := o.preflight(ctx, &task); err != nil {
+		return result, err
+	}
+	options := &client.CreateOptions{}
+	result.Request = "Accepted"
+	if dryRun {
+		options.DryRun = []string{meta.DryRunAll}
+		result.Request = "NOT_SUBMITTED"
+	}
+	if err := o.client.Create(ctx, &task, options); err != nil {
+		return entrypoint.MeasurementMutationResult{}, err
+	}
+	result.Task = &task
+	return result, nil
+}
+
+func (o *measurementOwner) delete(
+	ctx context.Context, namespace, name, uid, version string,
+) (entrypoint.MeasurementMutationResult, error) {
+	result := entrypoint.MeasurementMutationResult{}
+	if err := o.namespace(namespace); err != nil {
+		return result, err
+	}
+	if uid == "" || version == "" {
+		return result, &serving.Error{Code: "ResourceVersionRequired", Message: "native UID and resourceVersion are required"}
+	}
+	if o.scheduler != nil {
+		o.scheduler.lock.Lock()
+		defer o.scheduler.lock.Unlock()
+	}
+	task := &api.BatchEnergyOptimization{}
+	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, task); err != nil {
+		return result, err
+	}
+	result.Task = task
+	if string(task.UID) != uid || task.ResourceVersion != version {
+		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
+		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
+	}
+	if task.Status.Phase == "Measuring" {
+		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
+	}
+	if o.scheduler != nil {
+		if err := o.deletionReferences(ctx, namespace, name); err != nil {
+			return result, err
+		}
+	}
+	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		return result, err
+	}
+	prefix := namespace + "/" + name + "/"
+	for _, pod := range pods.Items {
+		if strings.HasPrefix(pod.Annotations[servingkube.ServingProfileAnnotation], prefix) &&
+			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
+			return result, measurementInUse("a physical serving Pod still references the measurement")
+		}
+	}
+	locations, err := o.measurementEvidence(ctx, task)
+	if err != nil {
+		return result, err
+	}
+	if err := o.checkSharedEvidence(ctx, task, locations); err != nil {
+		return result, err
+	}
+	result.DeletedEvidence = make([]entrypoint.MeasurementEvidenceLocation, 0, len(locations))
+	for _, location := range locations {
+		if err := o.objects.Delete(ctx, location); err != nil {
+			return result, &serving.Error{
+				Code: "MeasurementEvidenceDeletionIncomplete",
+				Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
+					"the native measurement is retained, and retry with its UID/resourceVersion is required",
+			}
+		}
+		result.DeletedEvidence = append(result.DeletedEvidence, entrypoint.MeasurementEvidenceLocation{
+			Store: location.Store, Key: location.Key,
+		})
+	}
+	result.EvidenceDeleted = true
+	policy := meta.DeletePropagationBackground
+	deletion := &client.DeleteOptions{
+		Preconditions:     &meta.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion},
+		PropagationPolicy: &policy,
+	}
+	if err := o.client.Delete(ctx, task, deletion); err != nil {
+		if apierrors.IsConflict(err) {
+			return result, &serving.Error{
+				Code: "MeasurementDeletionIncomplete", Field: "If-Match",
+				Message: "owned evidence cleanup completed, but a native UID/resourceVersion conflict " +
+					"prevented measurement deletion; query its identity before retrying",
+			}
+		}
+		return result, &serving.Error{
+			Code: "MeasurementDeletionIncomplete",
+			Message: "owned evidence cleanup completed but native deletion was not confirmed; " +
+				"the native object may remain or have changed; query its identity before retrying",
+		}
+	}
+	result.Request = "DeletionRequested"
+	return result, nil
+}
+
+// Called with the same owner lock used for selection and catalog refresh.
+func (o *measurementOwner) deletionReferences(ctx context.Context, namespace, name string) error {
+	scheduler := o.scheduler
+	cm, err := scheduler.kube.CoreV1().ConfigMaps(scheduler.opts.servingNamespace).
+		Get(ctx, scheduler.opts.schedulerConfigMap, meta.GetOptions{})
+	if err != nil {
+		return err
+	}
+	config, err := decodeSchedulerConfiguration(cm.Data[scheduler.opts.schedulerConfigKey], scheduler.opts.maxRequestBytes)
+	if err != nil {
+		return err
+	}
+	selection := entrypoint.ProfileCampaign{Namespace: namespace, Name: name}
+	inUse := measurementInUse("measurement is selected or remains a scheduler profile source; " +
+		"unadopt and wait for catalog refresh before deleting")
+	if slices.Contains(config.ProfileCampaigns, selection) {
+		return inUse
+	}
+	prefix := namespace + "/" + name + "/"
+	for profile := range config.Preparations {
+		if strings.HasPrefix(profile, prefix) {
+			return inUse
+		}
+	}
+	if scheduler.observer != nil {
+		for _, profile := range scheduler.observer.Profiles() {
+			if strings.HasPrefix(profile.ID, prefix) {
+				return inUse
+			}
+		}
+	}
+	if _, reason := scheduler.profileRemovalReference(selection); reason != "" {
+		return &serving.Error{Code: "MeasurementInUse", Message: reason}
+	}
+	return nil
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
@@ -88,6 +89,25 @@ func (s *Store) OpenLocation(
 		return nil, fmt.Errorf("%w: S3 returned an empty response body", evidencestore.ErrTransport)
 	}
 	return &translatedReadCloser{body: output.Body}, nil
+}
+
+// Delete removes one exact object location. Ownership and shared-reference
+// checks belong to the measurement owner; a missing key is idempotent success.
+func (s *Store) Delete(ctx context.Context, location evidencestore.ObjectLocation) error {
+	if err := location.Validate(); err != nil {
+		return err
+	}
+	if err := s.validateLocation(location); err != nil {
+		return err
+	}
+	_, err := s.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(location.Key),
+	})
+	var missing smithy.APIError
+	if errors.As(err, &missing) && missing.ErrorCode() == "NoSuchKey" {
+		return nil
+	}
+	return translate("delete evidence object", err)
 }
 
 func (s *Store) validateLocation(location evidencestore.ObjectLocation) error {

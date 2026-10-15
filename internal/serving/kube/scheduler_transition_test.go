@@ -10,6 +10,49 @@ import (
 	core "k8s.io/api/core/v1"
 )
 
+func TestCatalogRemovalDistinguishesCandidatesFromFrozenExecution(t *testing.T) {
+	profile := &serving.Profile{ID: "chill-system/unused-gpu/uid"}
+	candidate := serving.SchedulerCandidate{
+		ID: "prospective-gpu", Instances: []serving.SchedulerInstance{{ID: "gpu-slot", Profile: profile}},
+		Actions: []serving.Action{{ID: "prepare-gpu", Kind: operationPrepare, Status: "planned"}},
+	}
+	controller := &SchedulerController{
+		state: SchedulerControllerState{
+			Snapshot: serving.SchedulerSnapshot{Options: []serving.SchedulerOption{{
+				Instance: candidate.Instances[0],
+			}}},
+			Decision: serving.SchedulerDecision{Target: &candidate, Candidates: []serving.SchedulerCandidate{candidate}},
+		},
+		runs: map[string]*actionRun{},
+	}
+	if reason := controller.CatalogRemovalBlocker(); reason != "" {
+		t.Fatalf("prospective catalog placement blocked removal: %s", reason)
+	}
+	// A goal can be frozen before its dependencies permit any action to start.
+	controller.goal = &candidate
+	if reason := controller.CatalogRemovalBlocker(); reason == "" {
+		t.Fatal("pending frozen goal permitted catalog removal")
+	}
+	controller.goal = nil
+	// Live run targets precede the next snapshot and final Results publication.
+	action := candidate.Actions[0]
+	action.Status = nativeOperationRunning
+	controller.runs[action.ID] = &actionRun{
+		action: action, result: &OperationResult{Operation: Operation{Target: &candidate}, Status: "starting"},
+	}
+	if reason := controller.CatalogRemovalBlocker(); reason == "" {
+		t.Fatal("running frozen operation permitted catalog removal before its next snapshot")
+	}
+	controller.runs[action.ID].action.Status = nativeOperationCancel
+	if reason := controller.CatalogRemovalBlocker(); reason == "" {
+		t.Fatal("canceling preparation permitted catalog removal before termination")
+	}
+	controller.runs[action.ID].action.Status = nativeOperationComplete
+	if reason := controller.CatalogRemovalBlocker(); reason != "" {
+		t.Fatalf("completed historical operation blocked removal: %s", reason)
+	}
+}
+
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
 	t.Helper()
 	ctx := context.Background()

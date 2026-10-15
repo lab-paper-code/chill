@@ -29,8 +29,13 @@ type HandlerConfig struct {
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
+	RefreshScheduler                                           func(context.Context) error
 	ProfileSelections                                          func(context.Context) (ProfileSelectionsView, error)
 	SelectProfile                                              func(context.Context, ProfileSelectionRequest, servingkube.Principal) (ProfileSelectionResult, error)
+	RemoveProfile                                              func(context.Context, ProfileCampaign, string, servingkube.Principal) (ProfileSelectionResult, error)
+	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
+	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
+	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
 	OperatingPower                                             func(time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
 }
 type Handler struct {
@@ -87,6 +92,10 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
 	h.mux.HandleFunc("POST /api/v1/scheduler/profiles", h.schedulerProfiles)
+	h.mux.HandleFunc("DELETE /api/v1/scheduler/profiles/{namespace}/{name}", h.removeSchedulerProfile)
+	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
+	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
+	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
@@ -472,9 +481,9 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusForbidden
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "ModelIdentityConflict", "DefinitionChanged", "WorkloadChanged":
+	case "AlreadyExists", "ModelReferenced", "ModelDeleting", "ResourceVersionConflict", "OperationConflict", "RegistrationConflict", "ModelIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse", "ProfileInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests

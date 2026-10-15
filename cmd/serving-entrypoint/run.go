@@ -108,11 +108,20 @@ func run(ctx context.Context, opts options) (retErr error) {
 		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
 		handlerConfig.SchedulerLock = &scheduler.lock
+		handlerConfig.RefreshScheduler = scheduler.refreshLocked
 		handlerConfig.OperatingPower = scheduler.operatingPower
 		handlerConfig.ProfileSelections = scheduler.profileSelections
 		handlerConfig.SelectProfile = scheduler.selectProfile
+		handlerConfig.RemoveProfile = scheduler.removeProfile
 	}
 	authorizer := &servingkube.Authorizer{Client: kube}
+	measurements, err := newMeasurementOwner(store.Client(), kube, scheduler, objects, opts)
+	if err != nil {
+		return err
+	}
+	handlerConfig.ListMeasurements = measurements.list
+	handlerConfig.SubmitMeasurement = measurements.submit
+	handlerConfig.DeleteMeasurement = measurements.delete
 	handler, err := entrypoint.NewHandler(manager, execution, authorizer, journal, observer, handlerConfig)
 	if err != nil {
 		return err

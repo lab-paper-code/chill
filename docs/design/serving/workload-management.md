@@ -558,14 +558,14 @@ TLS Secret은 release namespace에 미리 존재해야 한다. Serving namespace
 먼저 만들어야 한다. CA 검증을 끄지 않고 certificate의
 SAN과 맞는 HTTPS 주소를 사용한다. 프로파일 선택은 외부 scheduler ConfigMap의
 `profileCampaigns` 배열(`{namespace,name}` 항목)이 소유하며, Helm 값은 선택하지 않는다.
-`profileNamespaces`는 측정 작업 조회를 허용할 namespace의 read-only 범위이고, 빈 목록은
-serving namespace를 사용한다. owner chart는 capacity나 측정 작업을 자동 생성하지 않는다.
+`profileNamespaces`는 측정 조회·제출·객체 삭제와 프로파일 선택을 허용할 namespace 범위이며,
+빈 목록은 serving namespace를 사용한다. owner chart는 capacity나 측정 작업을 자동 생성하지 않는다.
 
 | Helm 값 | 실제 flag 또는 배포 계약 |
 |---|---|
 | `enabled`, `tls.secretName`, `port:8080` | HTTPS owner 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
-| `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace로 해석하며 BEO/ProfilingRun `get`만 부여 |
+| `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. Owner에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
 | `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |
 | `sourceInterval:1s`, `profileInterval:1m`, `observationWindow:1m` | 현재 상태, profile refresh와 immutable window 주기 |
@@ -575,6 +575,29 @@ serving namespace를 사용한다. owner chart는 capacity나 측정 작업을 �
 | `observationStorage.directory:/data` | `--observation-directory`; stored-contract cutover는 같은 PVC의 새 경로를 선택하고 이전 raw 기록은 보존 |
 | `kubeAPI.apiServer/tokenFile/caFile` | 명시적 `--kube-api-server`, `--kube-token-file`, `--kube-ca-file`; 기본 in-cluster |
 | `terminationGracePeriodSeconds:150` | `drainTimeout`과 HTTP 종료 여유보다 커야 함 |
+
+측정·프로파일 변경의 caller 권한은 owner ServiceAccount와 별개다.
+차트의 unbound `FULLNAME-serving-manager` ClusterRole은 허용 namespace별 정확한
+`/chill/api/v1/namespaces/NS/batch-energy-optimizations` 및 해당 하위 경로에
+`get/post/delete`를 제공한다. 같은 이름의 namespace Role은 BEO `get/list/create/delete`만
+제공한다. 관리자가 선택한 caller에 필요한 ClusterRole과 namespace Role을 각각 binding한다.
+프로파일 adopt/unadopt는 unbound `FULLNAME-scheduler-editor` ClusterRole의 profile POST와
+namespace별 profile DELETE 및 serving namespace의 같은 이름 Role이 허용하는 설정 ConfigMap
+하나의 `update`가 모두 필요하다. owner는 TokenReview 후 `/chill` nonresource SAR와
+native resource SAR를 수행한다. Dashboard SA나 모든 사용자에 자동 binding하지 않는다.
+측정 삭제는 UID와 `If-Match` resourceVersion을 모두 요구하며 귀속된 Evidence Store 원본·결과를
+**영구 삭제**한다. 공유·현재 참조는 보호하며 S3와 native 객체 삭제 사이의 부분 실패를 명시한다.
+owner만 공유 근거 참조 검사를 위해 전체 namespace의 BEO·ProfilingRun·ModelLoadedIdleBaseline·
+PowerModeTransitionCost에 `list`를 갖는다. 이 조회 권한은 caller에 부여하지 않으며, 허용 범위 밖의
+native 측정/child 객체 create/update/delete 권한이나 별도 child 삭제 권한을 추가하지 않는다.
+허용 profiling namespace에서는 owner에 Job `get/list`와 Pod `list`만 추가해 owned Run Job의
+UID/owner·종료 상태와 실제 Pod 참조를 검사한다. Job 생성 전 실패는 native Run 소유·생산자 이름의
+Job이 없음을 조회로 확인한다. caller에는 Job/Pod 권한을 추가하지 않는다.
+기존 owner Evidence Store credential에는 해당 bucket의 귀속 key에 대한 S3 `DeleteObject`가
+필요하다. 차트는 외부 S3/IAM 정책을 자동 확대하지 않으며 credential을 caller에 전달하지 않는다.
+근거 삭제를 사용하기 전에는 owner뿐 아니라 profiler/controller 이미지도 함께 갱신한다.
+현재 terminal BEO의 재실행 방지와 BEO·Run의 uncached typed 조회가 반영되어야 삭제 직후
+stale-cache reconcile이 근거를 다시 쓰는 창을 닫을 수 있다.
 
 `requestTimeout`은 요청 처리와 body 읽기의 상한이다. 처리가 만료된 뒤 오류 응답을 전달할 수 있도록
 같은 길이의 유한한 delivery 구간을 별도로 예약한다. body drain과 최종 flush 전에 connection deadline을

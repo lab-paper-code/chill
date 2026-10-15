@@ -16,6 +16,8 @@ evidenceStore:
     endpoint: ""
     bucket: ""
     region: us-east-1
+  # Owner measurement cleanup requires DeleteObject on owned evidence keys in this bucket.
+  # The chart does not modify S3/IAM policies or expose these credentials to callers.
   credentialsSecret:
     name: ""
     accessKeyKey: access-key
@@ -343,7 +345,8 @@ servingEntrypoint:
     # Read grants for actual retained PowerModeTransitionCost objects and their
     # immutable preparation ConfigMaps; entries are {namespace: ..., name: ...}.
     powerCostSources: []
-  # Namespaces allowed for read-only measurement lookups; empty uses the serving namespace.
+  # Namespaces allowed for measurement list/create/delete and profile operations;
+  # empty uses the serving namespace. Measurement deletion also removes owned evidence.
   profileNamespaces: []
   tls:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.

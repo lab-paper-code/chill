@@ -17,12 +17,20 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-const profileConfigurationRequired = "ConfigurationRequired"
+const (
+	profileConfigurationRequired = "ConfigurationRequired"
+	profileSelectionRejected     = "Rejected"
+	profileSelectionPending      = "Pending"
+	profileInUse                 = "ProfileInUse"
+)
 
 func (o *schedulerOwner) allowedProfileNamespace(namespace string) bool {
 	if len(o.opts.profileNamespaces) == 0 {
@@ -58,7 +66,7 @@ func profileSelection(
 	selection entrypoint.ProfileCampaign, view servingkube.CatalogView,
 ) entrypoint.ProfileSelectionResult {
 	result := entrypoint.ProfileSelectionResult{
-		Campaign: selection, Status: "Rejected", Code: "ProfileUnavailable",
+		Campaign: selection, Status: profileSelectionRejected, Code: "ProfileUnavailable",
 		Reason: "measurement contributes no eligible profile in the selected catalog",
 	}
 	prefix := selection.Namespace + "/" + selection.Name + "/"
@@ -76,7 +84,7 @@ func profileSelection(
 			result.Code = issue.Code
 			result.Reason = issue.Reason
 			if issue.Code == "MeasurementPending" {
-				result.Status = "Pending"
+				result.Status = profileSelectionPending
 			}
 			return result
 		}
@@ -131,7 +139,7 @@ func (o *schedulerOwner) selectProfile(
 	ctx context.Context, request entrypoint.ProfileSelectionRequest, principal servingkube.Principal,
 ) (entrypoint.ProfileSelectionResult, error) {
 	selection := request.Campaign
-	result := entrypoint.ProfileSelectionResult{Campaign: selection, Status: "Rejected"}
+	result := entrypoint.ProfileSelectionResult{Campaign: selection, Status: profileSelectionRejected}
 	if len(validation.IsDNS1123Label(selection.Namespace)) != 0 ||
 		len(validation.IsDNS1123Subdomain(selection.Name)) != 0 {
 		return result, &serving.Error{
@@ -174,7 +182,7 @@ func (o *schedulerOwner) selectProfile(
 		}
 	}
 	if err = o.checkProfileInventory(config, profile); err != nil {
-		result.Status = "Rejected"
+		result.Status = profileSelectionRejected
 		result.Code = profileConfigurationRequired
 		result.Reason = err.Error()
 		return result, nil
@@ -183,7 +191,7 @@ func (o *schedulerOwner) selectProfile(
 	if !exists {
 		preparation, err = o.measuredPreparation(ctx, profile)
 		if err != nil {
-			result.Status = "Rejected"
+			result.Status = profileSelectionRejected
 			result.Code = profileConfigurationRequired
 			result.Reason = err.Error()
 			return result, nil
@@ -258,6 +266,197 @@ func (o *schedulerOwner) selectProfile(
 		return result, err
 	}
 	return result, recordErr
+}
+
+// profileRemovalReference reads actual instances and frozen execution, never
+// prospective Options or decision candidates. The caller holds o.lock, which
+// also serializes Tick and catalog publication.
+func (o *schedulerOwner) profileRemovalReference(selection entrypoint.ProfileCampaign) (string, string) {
+	prefix := selection.Namespace + "/" + selection.Name + "/"
+	if o.execution != nil {
+		for _, pool := range o.execution.Pools() {
+			for _, instance := range pool.Instances {
+				if strings.HasPrefix(instance.Profile, prefix) {
+					return instance.Profile, "physical serving instance " + instance.ID + " still references the profile"
+				}
+			}
+		}
+	}
+	if o.controller != nil {
+		if reason := o.controller.CatalogRemovalBlocker(); reason != "" {
+			return "", reason
+		}
+	}
+	return "", ""
+}
+
+func (o *schedulerOwner) removeProfile(
+	ctx context.Context, selection entrypoint.ProfileCampaign, version string, principal servingkube.Principal,
+) (entrypoint.ProfileSelectionResult, error) {
+	result := entrypoint.ProfileSelectionResult{Campaign: selection, Status: profileSelectionRejected}
+	if len(validation.IsDNS1123Label(selection.Namespace)) != 0 ||
+		len(validation.IsDNS1123Subdomain(selection.Name)) != 0 {
+		return result, &serving.Error{
+			Code: "InvalidBody", Message: "valid campaign namespace and name are required", Field: "campaign",
+		}
+	}
+	if !o.allowedProfileNamespace(selection.Namespace) {
+		result.Code = "ProfileNamespaceNotAllowed"
+		result.Reason = "measurement namespace is outside --profile-namespace allowlist"
+		return result, nil
+	}
+	if version == "" {
+		return result, &serving.Error{
+			Code: "ResourceVersionRequired", Message: "queried scheduler ConfigMap resourceVersion is required",
+			Field: "If-Match",
+		}
+	}
+	o.lock.Lock()
+	defer o.lock.Unlock()
+	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
+	if err != nil {
+		return result, err
+	}
+	result.ConfigVersion = cm.ResourceVersion
+	if cm.ResourceVersion != version {
+		return result, apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, cm.Name,
+			fmt.Errorf("scheduler configuration changed; query profiles again before removal"))
+	}
+	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
+	if err != nil {
+		return result, err
+	}
+	prefix := selection.Namespace + "/" + selection.Name + "/"
+	result.Persisted = slices.Contains(config.ProfileCampaigns, selection)
+	for _, id := range strings.Split(o.profiles, "\x00") {
+		if strings.HasPrefix(id, prefix) {
+			result.ProfileID, result.Loaded = id, true
+			break
+		}
+	}
+	if id, reason := o.profileRemovalReference(selection); reason != "" {
+		result.Code, result.Reason = profileInUse, reason
+		if id != "" {
+			result.ProfileID = id
+		}
+		return result, nil
+	}
+	// A failed refresh must not let a previously queued Tick launch an old
+	// catalog. Pause automatic controls before changing selection ownership.
+	if config.Settings.Controls.Enabled || (o.controller != nil && o.controller.Settings().Controls.Enabled) {
+		result.Code = "ProfileControlsEnabled"
+		result.Reason = "pause automatic scheduler controls before removing a profile"
+		return result, nil
+	}
+	// Native Pods remain authoritative even when the observer has not discovered
+	// a starting instance, or has lost its current runtime observation.
+	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})
+	if err != nil {
+		return result, err
+	}
+	for _, pod := range pods.Items {
+		id := pod.Annotations[servingkube.ServingProfileAnnotation]
+		if strings.HasPrefix(id, prefix) && pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
+			result.ProfileID, result.Code = id, profileInUse
+			result.Reason = "physical serving Pod " + pod.Namespace + "/" + pod.Name + " still references the profile"
+			return result, nil
+		}
+	}
+	encoded, changed, err := removeProfileConfiguration(cm.Data[o.opts.schedulerConfigKey], config, selection)
+	if err != nil {
+		return result, err
+	}
+	if !changed {
+		result.Status = "Unselected"
+		result.Code = "ProfileUnselected"
+		result.Reason = "campaign has no explicit profile selection or associated preparation"
+		if result.Loaded {
+			result.Code = "ProfileUnloadPending"
+			result.Reason = "campaign is unselected; its previously loaded profile awaits scheduler refresh"
+		}
+		return result, nil
+	}
+	cm.Data[o.opts.schedulerConfigKey] = encoded
+	username, uid := principal.Actor()
+	expected, _ := json.Marshal(struct {
+		Campaign      entrypoint.ProfileCampaign `json:"campaign"`
+		ConfigVersion string                     `json:"configVersion"`
+		ActorUsername string                     `json:"actorUsername"`
+		ActorUID      string                     `json:"actorUID"`
+	}{selection, version, username, uid})
+	audit := serving.SchedulerActionObservation{
+		ID:   "profile-removal/" + selection.Namespace + "/" + selection.Name + "/" + version,
+		Kind: "profile-removal", Phase: "validated", StartedAt: time.Now().UTC(), Expected: expected,
+	}
+	if err = o.journal.SchedulerRecord(serving.SchedulerObservation{At: audit.StartedAt, Action: &audit}); err != nil {
+		return result, err
+	}
+	cm, err = o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Update(ctx, cm, meta.UpdateOptions{})
+	if err != nil {
+		audit.Phase, audit.Error = "failed", err.Error()
+	} else {
+		result.Status, result.Persisted, result.ConfigVersion = "Removed", false, cm.ResourceVersion
+		if refreshErr := o.refreshLocked(ctx); refreshErr != nil {
+			result.Code = "ProfileUnloadFailed"
+			result.Status = profileSelectionPending
+			result.Reason = "selection and unused preparation removed, but scheduler refresh failed: " + refreshErr.Error()
+		}
+		result.Loaded = false
+		for _, id := range strings.Split(o.profiles, "\x00") {
+			if strings.HasPrefix(id, prefix) {
+				result.ProfileID, result.Loaded = id, true
+				break
+			}
+		}
+		audit.Phase = "persisted"
+		audit.Actual, _ = json.Marshal(result)
+	}
+	now := time.Now().UTC()
+	audit.CompletedAt = &now
+	recordErr := o.journal.SchedulerRecord(serving.SchedulerObservation{At: now, Action: &audit})
+	if err != nil {
+		return result, err
+	}
+	return result, recordErr
+}
+
+func removeProfileConfiguration(
+	value string, config schedulerConfiguration, selection entrypoint.ProfileCampaign,
+) (string, bool, error) {
+	selected := slices.Contains(config.ProfileCampaigns, selection)
+	changed := selected
+	prefix := selection.Namespace + "/" + selection.Name + "/"
+	for id := range config.Preparations {
+		if strings.HasPrefix(id, prefix) {
+			delete(config.Preparations, id)
+			changed = true
+		}
+	}
+	if !changed {
+		return value, false, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		return "", false, err
+	}
+	var err error
+	if selected {
+		config.ProfileCampaigns = slices.DeleteFunc(config.ProfileCampaigns, func(item entrypoint.ProfileCampaign) bool {
+			return item == selection
+		})
+		raw["profileCampaigns"], err = json.Marshal(config.ProfileCampaigns)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if len(raw["preparations"]) != 0 {
+		raw["preparations"], err = json.Marshal(config.Preparations)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	encoded, err := json.Marshal(raw)
+	return string(encoded), true, err
 }
 func (o *schedulerOwner) checkProfileInventory(config schedulerConfiguration, p serving.Profile) error {
 	if p.RuntimeMetadata == nil {

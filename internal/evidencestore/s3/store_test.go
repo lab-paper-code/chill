@@ -278,6 +278,7 @@ func stringValue(value *string) string {
 type fakeClient struct {
 	put          func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error)
 	get          func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error)
+	deleteObject func(context.Context, *awss3.DeleteObjectInput) (*awss3.DeleteObjectOutput, error)
 	headBucket   func(context.Context, *awss3.HeadBucketInput) (*awss3.HeadBucketOutput, error)
 	createBucket func(context.Context, *awss3.CreateBucketInput) (*awss3.CreateBucketOutput, error)
 }
@@ -324,6 +325,56 @@ func (c *fakeClient) GetObject(
 		return nil, errors.New("unexpected GetObject call")
 	}
 	return c.get(ctx, input)
+}
+
+func (c *fakeClient) DeleteObject(ctx context.Context, input *awss3.DeleteObjectInput, _ ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
+	if c.deleteObject == nil {
+		return nil, errors.New("unexpected DeleteObject call")
+	}
+	return c.deleteObject(ctx, input)
+}
+
+func TestDeleteExactLocationAndRejectForeignStore(t *testing.T) {
+	objects := map[string]bool{"owned/raw.json": true, "unrelated/raw.json": true}
+	calls := 0
+	store := testObjectStore(&fakeClient{deleteObject: func(_ context.Context, input *awss3.DeleteObjectInput) (*awss3.DeleteObjectOutput, error) {
+		calls++
+		if stringValue(input.Bucket) != testPhysicalBucket {
+			t.Fatal("delete escaped configured physical bucket")
+		}
+		delete(objects, stringValue(input.Key))
+		return &awss3.DeleteObjectOutput{}, nil
+	}}, t.TempDir())
+	for _, location := range []evidencestore.ObjectLocation{{Store: "foreign", Key: "owned/raw.json"}, {Store: "chill-evidence-store", Key: ""}} {
+		if err := store.Delete(context.Background(), location); !errors.Is(err, evidencestore.ErrInvalidIdentity) || calls != 0 {
+			t.Fatal("invalid logical ownership reached S3")
+		}
+	}
+	for range 2 {
+		if err := store.Delete(context.Background(), evidencestore.ObjectLocation{Store: "chill-evidence-store", Key: "owned/raw.json"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 2 || objects["owned/raw.json"] || !objects["unrelated/raw.json"] {
+		t.Fatal("exact deletion or missing-key idempotence failed")
+	}
+}
+
+func TestDeleteReportsAuthenticationAndTransportFailure(t *testing.T) {
+	for _, failure := range []struct{ err, want error }{
+		{&smithy.GenericAPIError{Code: "AccessDenied"}, evidencestore.ErrAuthentication},
+		{context.DeadlineExceeded, evidencestore.ErrTimeout},
+		{errors.New("transport lost"), evidencestore.ErrTransport},
+		{&smithy.GenericAPIError{Code: "NoSuchKey"}, nil},
+		{&smithy.GenericAPIError{Code: "NoSuchBucket"}, evidencestore.ErrNotFound},
+	} {
+		store := testObjectStore(&fakeClient{deleteObject: func(context.Context, *awss3.DeleteObjectInput) (*awss3.DeleteObjectOutput, error) {
+			return nil, failure.err
+		}}, t.TempDir())
+		if err := store.Delete(context.Background(), evidencestore.ObjectLocation{Store: "chill-evidence-store", Key: "owned/raw.json"}); !errors.Is(err, failure.want) {
+			t.Fatalf("delete error=%v want %v", err, failure.want)
+		}
+	}
 }
 
 type errorReader struct {

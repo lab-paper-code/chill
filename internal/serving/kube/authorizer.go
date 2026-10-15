@@ -108,6 +108,14 @@ func (p Principal) Actor() (string, string) { return p.username, p.uid }
 // AuthorizeConfigMapUpdate requires a separate resource grant for the exact
 // scheduler configuration, preserving TokenReview groups and extras.
 func (a *Authorizer) AuthorizeConfigMapUpdate(ctx context.Context, principal Principal, namespace, name string) error {
+	return a.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
+		Namespace: namespace, Verb: "update", Resource: "configmaps", Name: name,
+	})
+}
+
+// AuthorizeResource checks native permissions as the verified caller, never the
+// owner's service account.
+func (a *Authorizer) AuthorizeResource(ctx context.Context, principal Principal, resource authorizationv1.ResourceAttributes) error {
 	if principal.identity == nil || principal.username == "" {
 		return ErrUnauthenticated
 	}
@@ -121,7 +129,7 @@ func (a *Authorizer) AuthorizeConfigMapUpdate(ctx context.Context, principal Pri
 	access, err := a.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
 		Spec: authorizationv1.SubjectAccessReviewSpec{
 			User: principal.username, UID: principal.uid, Groups: principal.identity.Groups, Extra: extra,
-			ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: namespace, Verb: "update", Group: "", Resource: "configmaps", Name: name},
+			ResourceAttributes: &resource,
 		},
 	}, metav1.CreateOptions{})
 	if err != nil || access == nil || access.Status.EvaluationError != "" {

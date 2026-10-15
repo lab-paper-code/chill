@@ -11,6 +11,11 @@ metadata:
     app.kubernetes.io/component: serving-entrypoint
     {{- include "chill.labels" . | nindent 4 }}
 rules:
+  # Check cross-namespace shared evidence references before destructive cleanup.
+  # This owner-only grant never permits mutation outside profileNamespaces.
+  - apiGroups: [edge.dacs.io]
+    resources: [batchenergyoptimizations, profilingruns, modelloadedidlebaselines, powermodetransitioncosts]
+    verbs: [list]
   - apiGroups: [edge.dacs.io]
     resources: [modelspecs]
     verbs: [get, list, create, update, delete]
@@ -152,8 +157,17 @@ metadata:
     {{- include "chill.labels" $ | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations, profilingruns]
+    resources: [batchenergyoptimizations]
+    verbs: [get, list, create, delete]
+  - apiGroups: [edge.dacs.io]
+    resources: [profilingruns]
     verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -184,13 +198,40 @@ rules:
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/namespaces/*"]
+  - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles"]
     verbs: [get]
+  {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
   - nonResourceURLs:
-      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" .Release.Namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" $namespace | quote }}
+    verbs: [get]
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" $namespace | quote }}
     verbs: [post]
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
+    verbs: [delete]
+  {{- end }}
+{{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
+---
+# Native caller rights are deliberately unbound and separate from the owner SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.fullname" $ }}-serving-manager
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chill.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [batchenergyoptimizations]
+    verbs: [get, list, create, delete]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -204,6 +245,11 @@ rules:
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
   - nonResourceURLs: ["/chill/api/v1/scheduler/profiles"]
     verbs: [post]
+  {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/scheduler/profiles/%s/*" $namespace | quote }}
+    verbs: [delete]
+  {{- end }}
 {{- end }}
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
 ---

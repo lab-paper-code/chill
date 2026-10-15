@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -30,12 +31,18 @@ import (
 )
 
 func schedulerSettingsForTest() serving.SchedulerSettings {
-	return serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second, MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1, MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 1}
+	return serving.SchedulerSettings{
+		ObservationWindow: time.Second, ControlInterval: time.Second, Horizon: time.Second,
+		MaxObservationAge: time.Second, Replays: 1, MaxCandidates: 1, MaxReplicas: 1,
+		MaxInstances: 1, MaxReplayRequests: 1, MaxCPUs: 1,
+	}
 }
 
 type settingsArchive struct{ directory string }
 
-func (a settingsArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader) (evidencestore.Receipt, error) {
+func (a settingsArchive) PutImmutable(
+	_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader,
+) (evidencestore.Receipt, error) {
 	output := filepath.Join(a.directory, identity.Key)
 	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
 		return evidencestore.Receipt{}, err
@@ -49,10 +56,14 @@ func (a settingsArchive) PutImmutable(_ context.Context, identity evidencestore.
 	if err != nil || n != identity.Size {
 		return evidencestore.Receipt{}, errors.Join(err, errors.New("archive incomplete"))
 	}
-	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: evidencestore.CreateOutcomeCreated}, nil
+	return evidencestore.Receipt{
+		SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: evidencestore.CreateOutcomeCreated,
+	}, nil
 }
 
-func settingsControllerForTest(t *testing.T, kube kubernetes.Interface, journal *serving.Journal, settings serving.SchedulerSettings) *servingkube.SchedulerController {
+func settingsControllerForTest(
+	t *testing.T, kube kubernetes.Interface, journal *serving.Journal, settings serving.SchedulerSettings,
+) *servingkube.SchedulerController {
 	t.Helper()
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected REST request while changing settings: %s", r.URL.Path)
@@ -78,7 +89,8 @@ func settingsControllerForTest(t *testing.T, kube kubernetes.Interface, journal 
 			t.Error(err)
 		}
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
+	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
+		servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +99,13 @@ func settingsControllerForTest(t *testing.T, kube kubernetes.Interface, journal 
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
+		servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := servingkube.NewSchedulerController(store, kube, execution, observer, operations, journal, servingkube.SchedulerControllerConfig{Settings: settings})
+	controller, err := servingkube.NewSchedulerController(store, kube, execution, observer, operations, journal,
+		servingkube.SchedulerControllerConfig{Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,16 +115,34 @@ func settingsControllerForTest(t *testing.T, kube kubernetes.Interface, journal 
 
 func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                            string
-		resourceAllowed, updateFailure, journalFailure, invalidSettings bool
-		want                                                            int
+		name                                                                                            string
+		resourceAllowed, updateFailure, journalFailure, invalidSettings, refreshFailure, missingRefresh bool
+		want                                                                                            int
 	}{
-		{name: "persist and apply", resourceAllowed: true, want: http.StatusOK}, {name: "resource denial", want: http.StatusForbidden}, {name: "write failure", resourceAllowed: true, updateFailure: true, want: http.StatusServiceUnavailable}, {name: "journal failure prevents write", resourceAllowed: true, journalFailure: true, want: http.StatusServiceUnavailable}, {name: "validation prevents write", resourceAllowed: true, invalidSettings: true, want: http.StatusBadRequest},
+		{name: "persist and apply", resourceAllowed: true, want: http.StatusOK},
+		{name: "resource denial", want: http.StatusForbidden},
+		{name: "write failure", resourceAllowed: true, updateFailure: true, want: http.StatusServiceUnavailable},
+		{
+			name: "journal failure prevents write", resourceAllowed: true,
+			journalFailure: true, want: http.StatusServiceUnavailable,
+		},
+		{name: "validation prevents write", resourceAllowed: true, invalidSettings: true, want: http.StatusBadRequest},
+		{
+			name: "refresh failure does not enable stale catalog", resourceAllowed: true,
+			refreshFailure: true, want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "missing owner refresh prevents persistence", resourceAllowed: true,
+			missingRefresh: true, want: http.StatusServiceUnavailable,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := schedulerSettingsForTest()
 			after := before
 			after.Seed = 99
+			if tc.refreshFailure {
+				after.Controls.Enabled = true
+			}
 			if tc.invalidSettings {
 				after.ObservationWindow = 0
 			}
@@ -118,15 +150,26 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			configRaw := `{"settings":` + string(beforeRaw) + `,"cpuInventory":{"node":[0]},"gpuInventory":{"node":["GPU-real"]},"reserved":{"node":{"cpus":[0]}}}`
-			kube := fake.NewSimpleClientset(&core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"}, Data: map[string]string{"scheduler.json": configRaw, "other": "untouched"}})
+			configRaw := `{"settings":` + string(beforeRaw) + `,"cpuInventory":{"node":[0]},` +
+				`"gpuInventory":{"node":["GPU-real"]},"reserved":{"node":{"cpus":[0]}}}`
+			kube := fake.NewSimpleClientset(&core.ConfigMap{
+				ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
+				Data:       map[string]string{"scheduler.json": configRaw, "other": "untouched"},
+			})
 			kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
-				return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{Authenticated: true, User: authenticationv1.UserInfo{Username: "operator", UID: "actor-uid", Groups: []string{"scheduler-writers"}}}}, nil
+				return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
+					Authenticated: true,
+					User: authenticationv1.UserInfo{
+						Username: actorUsername, UID: "actor-uid", Groups: []string{"scheduler-writers"},
+					},
+				}}, nil
 			})
 			kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 				sar := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
 				allowed := sar.Spec.NonResourceAttributes != nil || tc.resourceAllowed
-				return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
+				return true, &authorizationv1.SubjectAccessReview{
+					Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed},
+				}, nil
 			})
 			updates := 0
 			kube.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
@@ -154,7 +197,30 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, journal: journal, config: HandlerConfig{Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20}}
+			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, journal: journal, config: HandlerConfig{
+				Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
+				SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20,
+			}}
+			refreshes := 0
+			if !tc.missingRefresh {
+				handler.config.RefreshScheduler = func(ctx context.Context) error {
+					refreshes++
+					if tc.refreshFailure {
+						return errors.New("removed profile catalog refresh still fails")
+					}
+					cm, err := kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
+					if err != nil {
+						return err
+					}
+					var configuration struct {
+						Settings serving.SchedulerSettings `json:"settings"`
+					}
+					if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &configuration); err != nil {
+						return err
+					}
+					return controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings})
+				}
+			}
 			raw, err := json.Marshal(after)
 			if err != nil {
 				t.Fatal(err)
@@ -171,15 +237,18 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.Code != http.StatusOK {
-				if controller.Settings() != before || persisted.Data["scheduler.json"] != configRaw {
-					t.Fatal("failed settings change altered running or persisted policy")
+				wantDesired := before
+				if tc.refreshFailure {
+					wantDesired = after
+					assertSchedulerSettingsRefreshFailed(t, journal, controller, refreshes)
 				}
-				if (tc.journalFailure || !tc.resourceAllowed || tc.invalidSettings) && updates != 0 {
-					t.Fatal("denied/unrecorded/invalid settings performed CM write")
+				assertSchedulerSettingsUnapplied(t, persisted, controller, before, wantDesired)
+				if (tc.journalFailure || !tc.resourceAllowed || tc.invalidSettings || tc.missingRefresh) && updates != 0 {
+					t.Fatal("denied/unrecorded/invalid/unrefreshable settings performed CM write")
 				}
 				return
 			}
-			if controller.Settings() != after || updates != 1 || persisted.Data["other"] != "untouched" {
+			if controller.Settings() != after || updates != 1 || refreshes != 1 || persisted.Data["other"] != "untouched" {
 				t.Fatal("settings not durably applied or unrelated CM data altered")
 			}
 			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), journal, before, after)
@@ -187,24 +256,58 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 	}
 }
 
+func assertSchedulerSettingsUnapplied(
+	t *testing.T, persisted *core.ConfigMap, controller *servingkube.SchedulerController,
+	before, wantDesired serving.SchedulerSettings,
+) {
+	t.Helper()
+	var desired struct {
+		Settings serving.SchedulerSettings `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &desired); err != nil {
+		t.Fatal(err)
+	}
+	if controller.Settings() != before || desired.Settings != wantDesired {
+		t.Fatal("failed settings change lost desired-versus-accepted policy separation")
+	}
+}
+
+func assertSchedulerSettingsRefreshFailed(
+	t *testing.T, journal *serving.Journal, controller *servingkube.SchedulerController, refreshes int,
+) {
+	t.Helper()
+	if refreshes != 1 || controller.Settings().Controls.Enabled {
+		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
+	}
+	records, _, err := journal.SchedulerObservationPage(
+		time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0)
+	if err != nil || len(records) != 2 || records[1].Settings.AppliedAt != nil || records[1].Settings.Error == "" {
+		t.Fatalf("refresh failure audit claimed application: %+v %v", records, err)
+	}
+}
+
 func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, response []byte,
 	journal *serving.Journal, before, after serving.SchedulerSettings,
 ) {
 	t.Helper()
-	var saved map[string]json.RawMessage
+	var saved struct {
+		CPUInventory map[string][]int                       `json:"cpuInventory"`
+		GPUInventory map[string][]string                    `json:"gpuInventory"`
+		Reserved     map[string]serving.SchedulerAllocation `json:"reserved"`
+	}
 	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &saved); err != nil {
 		t.Fatal(err)
 	}
-	if string(saved["reserved"]) != `{"node":{"cpus":[0]}}` ||
-		string(saved["gpuInventory"]) != `{"node":["GPU-real"]}` ||
-		string(saved["cpuInventory"]) != `{"node":[0]}` {
+	if !reflect.DeepEqual(saved.CPUInventory, map[string][]int{"node": {0}}) ||
+		!reflect.DeepEqual(saved.GPUInventory, map[string][]string{"node": {"GPU-real"}}) ||
+		!reflect.DeepEqual(saved.Reserved, map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0}}}) {
 		t.Fatal("operator configuration lost")
 	}
 	var applied serving.SchedulerSettingsChange
 	if err := json.Unmarshal(response, &applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied.ActorUsername != "operator" || applied.ActorUID != "actor-uid" ||
+	if applied.ActorUsername != actorUsername || applied.ActorUID != "actor-uid" ||
 		applied.Before != before || applied.After != after || applied.AppliedAt == nil {
 		t.Fatalf("missing actual audit result: %+v", applied)
 	}

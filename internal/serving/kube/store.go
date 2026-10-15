@@ -33,6 +33,9 @@ func NewStore(config *rest.Config, scheme *runtime.Scheme) (*Store, error) {
 	return &Store{client: c}, nil
 }
 
+// Client shares the owner's direct native client at its composition root.
+func (s *Store) Client() client.Client { return s.client }
+
 func (s *Store) GetWorkload(ctx context.Context, name string) (*edgev1alpha1.Workload, error) {
 	obj := &edgev1alpha1.Workload{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: name}, obj); err != nil {

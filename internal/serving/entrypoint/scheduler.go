@@ -38,8 +38,13 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if h.config.RefreshScheduler == nil {
+		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler configuration refresh is not enabled"})
+		return
+	}
 	principal := servingkube.PrincipalFromContext(r.Context())
-	if err := h.authorizer.AuthorizeConfigMapUpdate(r.Context(), principal, h.config.SchedulerNamespace, h.config.SchedulerConfigMap); err != nil {
+	if err := h.authorizer.AuthorizeConfigMapUpdate(r.Context(), principal,
+		h.config.SchedulerNamespace, h.config.SchedulerConfigMap); err != nil {
 		sendError(w, err)
 		return
 	}
@@ -56,7 +61,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	defer h.config.SchedulerLock.Unlock()
 	username, uid := principal.Actor()
 	now := time.Now().UTC()
-	change := serving.SchedulerSettingsChange{ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings, ValidatedAt: now, Affected: []serving.NodeReference{}}
+	change := serving.SchedulerSettingsChange{
+		ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings,
+		ValidatedAt: now, Affected: []serving.NodeReference{},
+	}
 	for _, node := range h.config.Scheduler.State().Snapshot.Nodes {
 		change.Affected = append(change.Affected, node.Node)
 	}
@@ -65,9 +73,13 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	err := persistSchedulerSettings(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace, h.config.SchedulerConfigMap, h.config.SchedulerConfigKey, settings)
+	err := persistSchedulerSettings(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey, settings)
 	if err == nil {
-		err = h.config.Scheduler.SetSettings(settings)
+		// Only the owner's full refresh can accept a configuration. Applying
+		// settings alone could enable a catalog whose selection was removed by
+		// a previously persisted change that has not refreshed successfully.
+		err = h.config.RefreshScheduler(r.Context())
 	}
 	if err != nil {
 		change.Error = err.Error()
@@ -83,7 +95,9 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, change)
 }
 
-func persistSchedulerSettings(ctx context.Context, kube kubernetes.Interface, namespace, name, key string, settings serving.SchedulerSettings) error {
+func persistSchedulerSettings(
+	ctx context.Context, kube kubernetes.Interface, namespace, name, key string, settings serving.SchedulerSettings,
+) error {
 	if err := settings.Validate(); err != nil {
 		return err
 	}
