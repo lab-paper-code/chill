@@ -112,6 +112,55 @@ export function MeasurementCheckPage() {
   </Screen>
 }
 
+// Fields the passport carries but the shared read type leaves open.
+type RunSpec = {candidate?:{modelSpec?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;inputGenerator?:string}}
+type Thermal = {samples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:number}
+type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number}
+const num=(value:number,digits=1)=>value.toLocaleString("ko-KR",{maximumFractionDigits:digits})
+const providers:Record<string,string>={CUDAExecutionProvider:"GPU (CUDA)",CPUExecutionProvider:"CPU",TensorrtExecutionProvider:"GPU (TensorRT)"}
+const conditionTrue=(data:Passport,type:string)=>data.run.conditions?.find(condition=>condition.type===type)?.status==="True"
+const verified=(data:Passport)=>conditionTrue(data,"ExecutionComplete")&&conditionTrue(data,"EvidenceVerified")&&data.measurement.runtime.outputValidation.passed
+function measuredWhat(data:Passport) {
+  const spec=data.run.spec as RunSpec, r=data.measurement.runtime
+  const at=new Date(r.measurementStartedAt).toLocaleString("ko-KR",{dateStyle:"medium",timeStyle:"short"})
+  return [spec.candidate?.modelSpec, spec.targetNode ?? data.measurement.power.source.nodeName, providers[r.provider] ?? r.provider, `${at}에 ${num(r.elapsedSeconds)}초 동안`].filter(Boolean).join(" · ")
+}
+// One measurement, read top to bottom: how fast, how much power, under what conditions, and whether to trust it.
+function PassportSummary({data}:{data:Passport}) {
+  const r=data.measurement.runtime, p=data.measurement.power, l=r.latencyMilliseconds
+  const spec=data.run.spec as RunSpec, thermal=data.measurement.thermal as Thermal|undefined, pods=data.measurement.workload as Coresidence|undefined
+  const throttled=(thermal?.activeSamples??0)+(thermal?.latchedSamples??0)
+  const podsChanged=!!pods&&((pods.materialEvents??0)>0||pods.initialActivePods!==pods.finalActivePods)
+  return <>
+    <Facts label="처리 성능" items={[
+      ["처리량",`초당 ${num(r.throughputItemsPerSecond)}건`],
+      ["응답 시간 (절반)",`${num(l.p50)}ms 이하`],
+      ["응답 시간 (95%)",`${num(l.p95)}ms 이하`],
+      ["응답 시간 (99%)",`${num(l.p99)}ms 이하`],
+      ["처리한 요청",`${r.completedCalls.toLocaleString("ko-KR")}건 · 한 번에 ${r.batch}건씩`],
+    ]}/>
+    <Facts label="전력 (노드 전체)" items={[
+      ["평균",p.watts?`${num(p.watts.mean)} W`:"값 없음"],
+      ["가장 낮을 때 – 높을 때",p.watts?`${num(p.watts.minimum)} – ${num(p.watts.maximum)} W`:"값 없음"],
+      ["계측",`${p.source.nodeName ?? "노드"} 전원 계측기 · ${p.samples}번 측정${p.failures?`, ${p.failures}번 실패`:""}`],
+    ]}/>
+    <p className="-mt-4 px-1 text-sm text-muted-foreground">{pods?.initialActivePods!==undefined?`같은 노드에서 함께 돌던 Pod ${pods.initialActivePods}개를 포함한 값이에요. `:""}지금 운영 중 소비와는 달라요.</p>
+    <Facts label="측정 조건" items={[
+      ["모델",spec.candidate?.modelSpec ?? "정보 없음"],
+      ["장비",`${spec.targetNode ?? p.source.nodeName ?? "정보 없음"}${spec.candidate?.deviceClass?` · ${spec.candidate.deviceClass}`:""}`],
+      ["실행 방식",`${providers[r.provider] ?? r.provider} · ${r.family} ${r.version}`],
+      ["CPU",spec.measurement?.cpuQuota?`${spec.measurement.cpuQuota}개${spec.measurement.cpuAffinity?.length?` (코어 ${spec.measurement.cpuAffinity.join(", ")})`:""}`:"제한 없음"],
+      ["예열",`${r.warmupIterations}번 실행 후 측정`],
+    ]}/>
+    <Facts label="믿을 수 있는지" items={[
+      ["실행과 근거",verified(data)?<StatusBadge tone="ok">검증 완료</StatusBadge>:<StatusBadge tone="warn">확인 필요</StatusBadge>],
+      ["출력 확인",r.outputValidation.passed?"모든 응답이 올바른 형태였어요":"올바르지 않은 응답이 있었어요"],
+      ["발열",thermal?throttled?`성능 제한이 ${throttled}번 걸렸어요`:`성능 제한 없음${thermal.maximumTemperatureCelsius?.maximum!==undefined?` · 최고 ${thermal.maximumTemperatureCelsius.maximum}°C`:""}`:"관측 없음"],
+      ["다른 작업",pods?podsChanged?"측정 중 같은 노드의 Pod가 바뀌었어요":"측정 중 같은 노드의 Pod 변화가 없었어요":"관측 없음"],
+    ]}/>
+  </>
+}
+
 export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:string;name:string}) {
   const expectedUID=useSearchParams().get("uid")
   const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:kind==="profiling-runs"})
@@ -119,16 +168,15 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
   const back:[string,string]=[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정 결과"]
   if(kind==="profiling-runs"){
     const data=passport.data,other=!!data&&!!expectedUID&&data.run.uid!==expectedUID
-    return <Screen back={back} status={other?<StatusBadge tone="fail">다른 측정</StatusBadge>:undefined}
-      title={!data?`${name} 측정 결과`:other?"같은 이름으로 다시 등록된 다른 측정이에요":`요청 ${data.measurement.runtime.completedCalls}건을 처리하며 쟀어요`}
-      lede={other?"이전 자료로 사용할 수 없어요.":`${name} · 측정 중 전력은 지금 운영 중 소비와 달라요.`}>
-      <QueryGate query={passport}>{data&&<>
-        <Facts items={[["완료 요청",`${data.measurement.runtime.completedCalls}건`],["처리량",`${data.measurement.runtime.throughputItemsPerSecond}건/초`],["측정 중 평균 전력",`${data.measurement.power.watts?.mean??"값 없음"} W`]]}/>
-        <Rows><RowDialog label="측정 조건과 근거" hint="실행 조건, 검증, 지연, 전력" title="측정 조건과 근거" description="측정 전력은 현재 운영 소비가 아니에요.">
+    return <Screen back={back} status={other?<StatusBadge tone="fail">다른 측정</StatusBadge>:data?<StatusBadge tone={verified(data)?"ok":"warn"}>{verified(data)?"검증된 측정":"검증 확인 필요"}</StatusBadge>:undefined}
+      title={!data?`${name} 측정 결과`:other?"같은 이름으로 다시 등록된 다른 측정이에요":`요청 1건을 평균 ${num(data.measurement.runtime.latencyMilliseconds.mean)}ms에 처리했어요`}
+      lede={other?"이전 자료로 사용할 수 없어요.":data?measuredWhat(data):name}>
+      <QueryGate query={passport}>{data&&!other&&<PassportSummary data={data}/>}
+        {data&&<Rows><RowDialog label="원본 자료" hint="실행 조건, 검증, 지연, 전력의 원래 값" title="측정 원본 자료" description="측정 전력은 현재 운영 소비가 아니에요.">
           <SourceExport value={{conditions:{kind,namespace,name,expectedUID},source:data}} filename={`chill-passport-${name}.json`}/>
           <SourceJSON inline title="실행 조건·검증·지연·전력 원본" value={data}/>
-        </RowDialog></Rows>
-      </>}</QueryGate>
+        </RowDialog></Rows>}
+      </QueryGate>
     </Screen>
   }
   if(kind==="batch-energy-optimizations"){

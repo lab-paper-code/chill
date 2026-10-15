@@ -45,8 +45,9 @@ export function RowDialog({label,hint,value,title,description,children,open,onOp
 }
 
 // Read-only label/value pairs, one per line.
-export function Facts({items}:{items:[label:React.ReactNode,value:React.ReactNode][]}) {
-  return <dl className="facts-list">{items.map(([label,value],index) => <div key={index}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+export function Facts({label,items}:{label?:string;items:[label:React.ReactNode,value:React.ReactNode][]}) {
+  const list = <dl className="facts-list">{items.map(([name,value],index) => <div key={index}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>
+  return label ? <section className="rows-group" aria-label={label}><h2 className="rows-label">{label}</h2>{list}</section> : list
 }
 
 // Nothing to show yet: say why and what to do next.
