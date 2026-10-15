@@ -54,6 +54,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
+  // ponytail: the owner verifies every selected campaign on read (13-30 s observed), so this read gets the mutation bound; drop when the owner caches verification.
   else if (route === "v1/scheduler/profiles") methods = ["GET", "POST"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
@@ -86,7 +87,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   }
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
-  return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }
+  return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" || route === "v1/scheduler/profiles" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }
 }
 
 export async function boundedBody(stream: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal): Promise<Buffer> {
