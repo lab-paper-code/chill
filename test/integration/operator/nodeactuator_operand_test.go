@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
@@ -103,10 +104,15 @@ func nodeActuatorIntegrationConfig() operatornodeactuator.Config {
 	runAsUser := int64(0)
 	runAsNonRoot, privileged := false, false
 	noEscalation, readOnlyRoot := false, true
+	maxUnavailable := intstr.FromInt(1)
 	return operatornodeactuator.Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
 		LeaseDurationSeconds: 30, AllowedNamespaces: []string{"kube-system"},
+		UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
+			Type:          appsv1.RollingUpdateDaemonSetStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},
+		},
 		KubeAPITokenFile: kubeconfig.DefaultServiceAccountTokenFile,
 		KubeAPICAFile:    kubeconfig.DefaultServiceAccountCAFile,
 		ActuationPolicies: []actuatorcore.ActuationPolicySpec{{

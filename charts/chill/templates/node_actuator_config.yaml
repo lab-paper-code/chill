@@ -16,6 +16,8 @@ data:
     metricsBindAddress: {{ .Values.nodeActuator.metricsBindAddress | quote }}
     healthProbePort: {{ .Values.nodeActuator.healthProbePort }}
     leaseDurationSeconds: {{ .Values.nodeActuator.leaseDurationSeconds }}
+    updateStrategy:
+{{- toYaml .Values.nodeActuator.updateStrategy | nindent 6 }}
     kubeAPIServer: {{ $kubeAPIServer | quote }}
     kubeAPITokenFile: {{ .Values.nodeActuator.kubernetesClient.tokenFile | quote }}
     kubeAPICAFile: {{ .Values.nodeActuator.kubernetesClient.caFile | quote }}

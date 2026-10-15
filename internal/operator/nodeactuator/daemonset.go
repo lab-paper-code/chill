@@ -42,7 +42,7 @@ func buildDaemonSet(options Options, config Config) (*appsv1.DaemonSet, error) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: options.Namespace, Name: options.DaemonSetName, Labels: labels},
 		Spec: appsv1.DaemonSetSpec{
 			Selector:       &metav1.LabelSelector{MatchLabels: selectorLabels},
-			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: appsv1.RollingUpdateDaemonSetStrategyType},
+			UpdateStrategy: config.UpdateStrategy,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: selectorLabels},
 				Spec: corev1.PodSpec{

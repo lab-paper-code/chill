@@ -216,6 +216,10 @@ nodeActuator:
   metricsBindAddress: "0"
   healthProbePort: 8081
   leaseDurationSeconds: 30
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
   kubernetesClient:
     apiServer: ""
     discoverFromDefaultEndpoint: true

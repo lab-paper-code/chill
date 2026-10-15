@@ -197,6 +197,34 @@ measurements in those namespaces; an empty list defaults to the serving
 namespace. The owner is fixed to one replica with `Recreate`, exposes HTTPS on
 port `8080`, and keeps a private RWO journal plus immutable Evidence Store windows.
 
+### Targeted NodeActuator replacement
+
+`nodeActuator.updateStrategy` renders the native DaemonSet strategy into the
+authoritative NodeActuator ConfigMap. The default is `RollingUpdate` with
+`maxUnavailable: 1`. For operator-elected replacement, use `type: OnDelete`
+and remove `rollingUpdate` entirely (a Helm override can set it to `null`).
+The full reconciler remains active; this is not a pause.
+
+For the first upgrade introducing this required field, build the operator with
+`make docker-build IMG=<reviewed-operator-image>` (Dockerfile:
+`build/docker/operator.Dockerfile`). Stage a new, unreferenced ConfigMap containing
+`updateStrategy`, deploy the new operator image, then switch the `ChillSystem`
+NodeActuator `configRef` to that ConfigMap. The old strict decoder rejects the new
+field; the new operator rejects an old config without it. During this cutover,
+the new operator may report a config error until the reference is switched.
+Do not modify the operand template until the new operator has reconciled
+`OnDelete`.
+
+Record the original config and Pod UIDs first. With `OnDelete` observed on the
+DaemonSet, change the authoritative template config and delete only the
+operator-selected target NodeActuator Pod; wait for its replacement to be ready.
+Never delete or restart the excluded AGX Pod or change its Node configuration.
+After the approved operation and power-mode restoration, restore the original
+template config while retaining `OnDelete`, replace only the selected target Pod
+again, and confirm the excluded AGX Pod UID is unchanged. Restore `RollingUpdate`
+only after every eligible Pod already matches the restored template; otherwise
+retain `OnDelete` until replacing the excluded AGX is separately authorized.
+
 `make helm-uninstall` separates responsibilities: it first deletes the root
 `ChillSystem` and waits for CHILL finalizers through the Kubernetes API, then
 removes the Helm release with hooks disabled. The chart still includes a

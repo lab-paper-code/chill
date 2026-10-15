@@ -9,6 +9,7 @@ import (
 	actuatorcore "github.com/lab-paper-code/chill/internal/nodeactuator"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
@@ -18,6 +19,9 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	daemonSet, err := buildDaemonSet(options, config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(daemonSet.Spec.UpdateStrategy, config.UpdateStrategy) {
+		t.Fatalf("DaemonSet update strategy = %#v, want %#v", daemonSet.Spec.UpdateStrategy, config.UpdateStrategy)
 	}
 	if daemonSet.Name != options.DaemonSetName || daemonSet.Namespace != options.Namespace ||
 		daemonSet.Spec.Template.Spec.ServiceAccountName != config.ServiceAccountName ||
@@ -49,6 +53,37 @@ func TestBuildDaemonSetRetainsOnlyControlPlaneInputs(t *testing.T) {
 	if !hasHostMount(daemonSet, "host-sys", "/sys", "/sys", false) ||
 		!hasHostMount(daemonSet, "host-nvpmodel", "/usr/sbin/nvpmodel", "/host/usr/sbin/nvpmodel", true) {
 		t.Fatalf("NodeActuator host mounts = volumes:%#v mounts:%#v", daemonSet.Spec.Template.Spec.Volumes, container.VolumeMounts)
+	}
+}
+
+func TestBuildDaemonSetUpdateStrategy(t *testing.T) {
+	t.Parallel()
+	for name, strategy := range map[string]appsv1.DaemonSetUpdateStrategy{
+		"OnDelete": {Type: appsv1.OnDeleteDaemonSetStrategyType},
+		"missing":  {},
+		"unknown":  {Type: "Paused"},
+		"OnDelete with rolling options": {
+			Type:          appsv1.OnDeleteDaemonSetStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDaemonSet{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := validConfig()
+			config.UpdateStrategy = strategy
+			daemonSet, err := buildDaemonSet(validOptions(), config)
+			if name != "OnDelete" {
+				if err == nil || !strings.Contains(err.Error(), "updateStrategy") {
+					t.Fatalf("invalid strategy returned %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(daemonSet.Spec.UpdateStrategy, strategy) || daemonSet.Spec.UpdateStrategy.RollingUpdate != nil {
+				t.Fatalf("OnDelete strategy changed: %#v", daemonSet.Spec.UpdateStrategy)
+			}
+		})
 	}
 }
 
@@ -109,10 +144,15 @@ func validConfig() Config {
 	runAsUser := int64(0)
 	runAsNonRoot, privileged := false, false
 	noEscalation, readOnlyRoot := false, true
+	maxUnavailable := intstr.FromInt(1)
 	return Config{
 		Image: "daclab/chill-node-actuator:test", ImagePullPolicy: corev1.PullIfNotPresent,
 		ServiceAccountName: "chill-node-actuator", MetricsBindAddress: "0", HealthProbePort: 8081,
 		LeaseDurationSeconds: 30, AllowedNamespaces: []string{"kube-system"},
+		UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
+			Type:          appsv1.RollingUpdateDaemonSetStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable},
+		},
 		KubeAPIServer:    "https://kubernetes.example:6443",
 		KubeAPITokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		KubeAPICAFile:    "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",

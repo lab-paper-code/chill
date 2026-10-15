@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
@@ -39,6 +40,7 @@ type Config struct {
 	Resources            corev1.ResourceRequirements        `json:"resources,omitempty"`
 	PodSecurityContext   *corev1.PodSecurityContext         `json:"podSecurityContext,omitempty"`
 	SecurityContext      *corev1.SecurityContext            `json:"securityContext,omitempty"`
+	UpdateStrategy       appsv1.DaemonSetUpdateStrategy     `json:"updateStrategy"`
 }
 
 type JetsonNVPModelConfig struct {
@@ -78,6 +80,15 @@ func (c Config) Validate() error {
 	}
 	if len(c.NodeSelector) == 0 {
 		problems = append(problems, "nodeSelector must explicitly select eligible Nodes")
+	}
+	switch c.UpdateStrategy.Type {
+	case appsv1.RollingUpdateDaemonSetStrategyType:
+	case appsv1.OnDeleteDaemonSetStrategyType:
+		if c.UpdateStrategy.RollingUpdate != nil {
+			problems = append(problems, "updateStrategy.rollingUpdate must not be set with OnDelete")
+		}
+	default:
+		problems = append(problems, "updateStrategy.type must be RollingUpdate or OnDelete")
 	}
 	if err := validateAllowedNamespaces(c.AllowedNamespaces); err != nil {
 		problems = append(problems, err.Error())
