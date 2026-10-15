@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted.
+Accepted. Its requirement that every artifact declare `input.tensors` and that
+the curve plan carry that contract is narrowed to RKNN artifacts by
+[0021 Raw-Sample Preprocessing Boundary](0021-raw-sample-preprocessing-boundary.md).
+Declared batch sizes and the batch-set rules are unchanged.
 
 ## Context
 

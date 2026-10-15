@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. Its one-file artifact and its execution identity of artifact and
+runtime path are superseded by
+[0021 Raw-Sample Preprocessing Boundary](0021-raw-sample-preprocessing-boundary.md):
+an artifact carries one or more model files, and a measured execution state
+also includes the preprocessor artifact and dataset. The rest is unchanged.
 
 ## Context
 
