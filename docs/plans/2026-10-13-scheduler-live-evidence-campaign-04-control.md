@@ -586,3 +586,18 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   근거: `/tmp/chill-completion-cpu-cost-assembly/admission-diagnostic-{plan,results}.json`,
   `admission-diagnostic-phases.log`, `completion-calibration-declared-{observations,spans,selector,loaded}.json`;
   benchmark·경계 회귀는 `internal/serving/input_test.go`에 있다.
+
+## 판단 구현 배포와 입력 검증 수정의 실제 재측정 — 2026-10-15
+
+- 입력 검증 `84374e4f`, 판단 통합 `4bf8be28`을 별도 커밋했다. lint·test·arch-check·gopls-check와
+  serving/kube race가 모두 통과했다(`artifact://2789`). 다른 세션의 미커밋 코드는 배포에서 제외했다.
+- 해당 커밋의 깨끗한 소스로 owner `e37fdde8…`를 빌드·배포했고 HTTPS ready를 확인했다.
+  임시 진단 이미지는 교체했다. 설정은 필수 `algorithm`을 명시하며 자동제어 9개는 모두 OFF다.
+- 같은 조건의 24건을 11:57:02.977–54.977Z에 재측정해 전부 HTTP200·executionComplete였다.
+  relaxed p90은 `796.633320ms < 1500ms`, tight p95는 `1869.227867ms > 1000ms`다.
+  최악 tight 요청의 admission `1278.546938ms`, exchange `590.339165ms`, native `182.696078ms`를
+  보존한다. 개선된 중앙 성능을 전체 SLO 통과로 바꾸지 않으며 남은 admission tail은 원인 확인 중이다.
+- 실제 owner에서 `projected-work-history` 설정 수락과 `policy.selection=ControlsOff`, 실행 동작 0개를
+  확인했다(CM RV `353274534`). 이는 구현·설정 smoke이며 history 선택·자동 전환·에너지 비교 통과가 아니다.
+- 근거: `/tmp/chill-completion-cpu-cost-assembly/input-validation-live-after-{plan,results,observations,spans}.json`,
+  `clean-policy-owner-ready.json`, `projected-policy-controls-off-{config,smoke}.json`.

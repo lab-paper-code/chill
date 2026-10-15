@@ -59,16 +59,17 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 SLO feasibility·fresh observed energy gate는 별도로 충족해야 한다.
 Dashboard 수정·배포는 별도 Main 세션에 인계했으며 이 작업의 완료로 세지 않는다.
 
-1. **판단 알고리즘 — 현재 GO:** 검증된 Latte/Rpi CPU 노드·동작으로 설계·구현한다.
+1. **판단 알고리즘 — 구현·배포 완료, 폐루프 비교 미완료:** 검증된 Latte/Rpi CPU 노드·동작으로 구현했다.
    전 노드나 외부 조율 중인 power/GPU 완료를 기다리지 않으며 미검증 동작은 후보에서 제외한다.
    조사 문헌과 현재 구현을 대조해 워크로드/SLO·부하/큐·evidence·가용 자원·실제 전환 상태
    입력에서 유지/목표 구성·제어 동작·실행 시점과 계속/취소/재선택 규칙을 확정한다.
    비중첩 receipt interval의 실제 방향별 measured DAG kernel과 min-plus history를
-   `projected-work-history`로 연결한다. 고정 H는 `fixed-horizon` 비교 기준으로 유지하며,
+   `projected-work-history`로 연결했다. 고정 H는 `fixed-horizon` 비교 기준으로 유지하며,
    queue-reset projection은 실제 queue 이력/고전 WFA 보장이 아니다. 구현과 live 비교 통과를 구분한다.
 2. **자동 실행 gate:** decision origin에서 실제 source freshness ≤5초는 live 한 iteration을
    통과했다. 지속 부하 중 freshness·SLO feasibility와 fresh observed energy는 계속 검증해야 한다.
    무부하 KeepFeasible·부분 전력 누락을 통과로 대체하지 않으며, gate 전까지 자동 제어는 OFF다.
+   입력 검증 최적화 후 실제 24건은 모두 완료했지만 tight p95 1.869초로 1초 SLO는 미충족이다.
 3. **폐루프 검증:** 짧은 부하·지속 부하·반복 변동에서 판단 → 실제 실행 → 피드백과
    SLO·전환 포함 전체 POOL 에너지를 확인한다. 평가기·배처 검증은 판단 정책 설계를 대신하지 않는다.
 4. **FULL·Dashboard:** 남은 개별 제어를 검증·통합하고 완료 기준의 실제 시나리오를 수행한다.
