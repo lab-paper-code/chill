@@ -278,6 +278,10 @@ baseline 소비를 **대체**하고, 실제 serving execution의 incremental ene
 이 quota 합계는 OS affinity/exclusivity 관측의 증거가 아니다. 명시적 exclusive CPU
 예약이 전체 millicore 합계를 덮지 못하면 Node는 ready가 아니며, 비서빙 Pod의
 물리 GPU 소유권 미관측도 계속 차단한다. 현재 native 서빙 인스턴스는 이 합계에서 제외한다.
+GPU 소유권의 미관측은 해당 Node의 `ready=false`와 사유로 남기며 그 Node를
+사용하는 후보를 Pending으로 둔다. 다른 확인된 CPU Node의 후보를 전역 오류로
+막지 않는다. 격리된 Node도 전체 POOL 에너지·meter 범위에서 제외하지 않고,
+실제 자원 예산 및 전역 native/profile 관측 공백의 차단은 유지한다.
 
 전환 eta를 사용할 때에는 원래 target baseline subtraction 의미를 맞춘다.
 서로 독립된 meter의 Node만 합산한다. 시간 단위의 readiness와 joules를 구별한다.

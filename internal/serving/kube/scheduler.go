@@ -494,7 +494,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		if gpu {
 			sn.Ready = false
 			sn.Reason = "non-serving physical GPU ownership unobserved"
-			s.Reasons = append(s.Reasons, n.Name+": "+sn.Reason)
+			// Placement uncertainty quarantines this Node, not unrelated candidates.
 		}
 		nonServingMilliCPU += milliCPU
 		if math.MaxUint64-nonServingMemory < uint64(memory) {

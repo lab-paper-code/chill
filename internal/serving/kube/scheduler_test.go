@@ -350,3 +350,30 @@ func TestObservedOverheadReusesRemovedExecutorForCompatibleSLO(t *testing.T) {
 		t.Fatalf("removed calibration retained usable facts: %+v", target)
 	}
 }
+
+func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
+	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "quarantined-gpu", UID: "gpu-node"}}
+	state := serving.SchedulerNode{
+		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Pool: "pool", Ready: true,
+		CPUs: []int{0, 1}, Reserved: serving.SchedulerAllocation{CPUs: []int{0}}, MemoryBytes: 4096,
+	}
+	pods := &core.PodList{Items: []core.Pod{{
+		ObjectMeta: meta.ObjectMeta{Name: "foreign-gpu"},
+		Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{
+			Name: "foreign", Resources: core.ResourceRequirements{Requests: core.ResourceList{
+				core.ResourceCPU: resource.MustParse("100m"), core.ResourceMemory: resource.MustParse("1Ki"),
+				core.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
+			}},
+		}}},
+		Status: core.PodStatus{Phase: core.PodRunning},
+	}}}
+	snapshot := serving.SchedulerSnapshot{}
+	captureNodePods(&snapshot, &state, node, pods, nil, nil)
+	if state.Ready || state.Reason == "" || len(snapshot.Reasons) != 0 {
+		t.Fatalf("node-local GPU uncertainty became a global evaluation gap: node=%+v reasons=%v", state, snapshot.Reasons)
+	}
+	if len(state.NonServing) != 1 || state.NonServing[0].CPUCount != 1 ||
+		state.NonServing[0].MemoryBytes != 1024 || !state.NonServing[0].CPUReserved {
+		t.Fatalf("quarantine discarded actual non-serving resource budget: %+v", state.NonServing)
+	}
+}

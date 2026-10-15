@@ -767,3 +767,34 @@ func TestSchedulerCompletionProofMustRemainBoundToConsumedQuantityAndCondition(t
 		})
 	}
 }
+
+func TestSchedulerQuarantinedUnusedNodeDoesNotBlockKnownCPU(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.Controls.Enabled = false
+	snapshot.Options = nil
+	quarantined := snapshot.Nodes[0]
+	quarantined.Node = NodeReference{Name: "quarantined-gpu", UID: "gpu-node"}
+	quarantined.Ready, quarantined.Reason = false, "non-serving physical GPU ownership unobserved"
+	snapshot.Nodes = append(snapshot.Nodes, quarantined)
+	baseline := snapshot.Baselines[0]
+	baseline.ID, baseline.Node, baseline.Meter, baseline.Watts = "gpu-idle", quarantined.Node, "wall-gpu-node", 20
+	baseline.Reference.Key = baseline.ID
+	snapshot.Baselines = append(snapshot.Baselines, baseline)
+	known := EvaluateScheduler(settings, snapshot)
+	if known.Keep.Status == schedulerStatusPending || known.Keep.ExpectedJoules == nil ||
+		math.Abs(*known.Keep.ExpectedJoules-3.2) > 1e-9 {
+		t.Fatalf("unused quarantined node blocked known CPU or lost whole-POOL energy: %+v", known.Keep)
+	}
+	if known.Keep.Nodes[1].Ready || known.Keep.Nodes[1].Reason == "" {
+		t.Fatal("evaluation hid the quarantined Node's actual eligibility")
+	}
+	instance := snapshot.Instances[0]
+	profile := *instance.Profile
+	profile.ID, profile.NodeName, profile.Condition.NodeUID = "gpu-node-profile", quarantined.Node.Name, quarantined.Node.UID
+	instance.Node, instance.Profile, instance.IdleMeter = quarantined.Node, &profile, baseline.Meter
+	snapshot.Instances[0] = schedulerMeasuredInstance(instance, snapshot.Workloads[0], 0)
+	selected := EvaluateScheduler(settings, snapshot)
+	if selected.Keep.Status != schedulerStatusPending || selected.Keep.ExpectedJoules != nil {
+		t.Fatalf("candidate using the quarantined Node became evaluable: %+v", selected.Keep)
+	}
+}
