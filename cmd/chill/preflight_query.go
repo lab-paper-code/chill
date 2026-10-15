@@ -6,24 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 )
 
 const maximumBatchEnergyOptimizationPreflightBytes int64 = 4 << 20
 
-type serviceProxyBatchEnergyOptimizationPreflightQuery struct {
-	restClient rest.Interface
-	namespace  string
-	service    string
-	manifest   []byte
+type ownerBatchEnergyOptimizationPreflightQuery struct {
+	*ownerClient
+	manifest []byte
 }
 
-func newBatchEnergyOptimizationPreflightQuery(opts preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+func newBatchEnergyOptimizationPreflightQuery(opts operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 	manifest, manifestNamespace, err := readBatchEnergyOptimizationManifest(opts.file)
 	if err != nil {
 		return nil, err
@@ -32,21 +30,17 @@ func newBatchEnergyOptimizationPreflightQuery(opts preflightOptions) (batchEnerg
 	if err != nil {
 		return nil, err
 	}
-	namespace := opts.namespace
-	if namespace == "" {
-		namespace = manifestNamespace
+	if opts.namespace == "" {
+		opts.namespace = manifestNamespace
 	}
-	if namespace == "" {
-		namespace = defaultNamespace
+	if opts.namespace == "" {
+		opts.namespace = defaultNamespace
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	owner, err := newOwnerHTTPSClient(opts, config)
 	if err != nil {
-		return nil, fmt.Errorf("construct Kubernetes Service proxy client: %w", err)
+		return nil, err
 	}
-	return &serviceProxyBatchEnergyOptimizationPreflightQuery{
-		restClient: clientset.CoreV1().RESTClient(), namespace: namespace,
-		service: opts.consoleService, manifest: manifest,
-	}, nil
+	return &ownerBatchEnergyOptimizationPreflightQuery{ownerClient: owner, manifest: manifest}, nil
 }
 
 func readBatchEnergyOptimizationManifest(path string) ([]byte, string, error) {
@@ -77,47 +71,18 @@ func readBatchEnergyOptimizationManifest(path string) ([]byte, string, error) {
 	return manifest, identity.Metadata.Namespace, nil
 }
 
-func (q *serviceProxyBatchEnergyOptimizationPreflightQuery) Read(
+func (q *ownerBatchEnergyOptimizationPreflightQuery) Read(
 	ctx context.Context,
 ) (operatorconsole.BatchEnergyOptimizationPreflight, error) {
-	stream, err := q.restClient.Post().
-		Namespace(q.namespace).
-		Resource("services").
-		Name(q.service+":http").
-		SubResource("proxy").
-		Suffix("api", "v1", "namespaces", q.namespace, "batch-energy-optimizations", "preflight").
-		SetHeader("Content-Type", "application/json").
-		Body(q.manifest).
-		Stream(ctx)
-	if err != nil {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf(
-			"read BatchEnergyOptimization preflight through Console Service: %w", err,
-		)
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, maximumBatchEnergyOptimizationPreflightBytes+1))
-	closeErr := stream.Close()
-	if readErr != nil {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf("read Console response: %w", readErr)
-	}
-	if closeErr != nil {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf("close Console response: %w", closeErr)
-	}
-	if int64(len(payload)) > maximumBatchEnergyOptimizationPreflightBytes {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, errors.New(
-			"Console response exceeds the BatchEnergyOptimization preflight size limit",
-		)
-	}
 	var preflight operatorconsole.BatchEnergyOptimizationPreflight
-	if err := json.Unmarshal(payload, &preflight); err != nil {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, fmt.Errorf(
-			"decode Console BatchEnergyOptimization preflight: %w", err,
-		)
+	path := "/api/v1/namespaces/" + url.PathEscape(q.opts.namespace) + "/batch-energy-optimizations/preflight"
+	if err := q.read(ctx, http.MethodPost, path, q.manifest, "",
+		maximumBatchEnergyOptimizationPreflightBytes, &preflight); err != nil {
+		return preflight, err
 	}
 	if preflight.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
-		preflight.Kind != "BatchEnergyOptimizationPreflight" || preflight.Campaign.Namespace != q.namespace {
-		return operatorconsole.BatchEnergyOptimizationPreflight{}, errors.New(
-			"Console returned an unexpected preflight identity",
-		)
+		preflight.Kind != "BatchEnergyOptimizationPreflight" || preflight.Campaign.Namespace != q.opts.namespace {
+		return preflight, errors.New("owner returned an unexpected preflight identity")
 	}
 	return preflight, nil
 }

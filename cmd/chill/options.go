@@ -39,13 +39,6 @@ type profilingRunShowOptions struct {
 	consoleService string
 }
 
-type preflightOptions struct {
-	readOptions
-	namespace      string
-	file           string
-	consoleService string
-}
-
 func parseInventoryOptions(args []string, stderr io.Writer) (inventoryOptions, error) {
 	return parseReadOptions("inventory", args, stderr)
 }
@@ -112,40 +105,6 @@ func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRun
 	for label, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return profilingRunShowOptions{}, fmt.Errorf("%w: %s is required without surrounding whitespace", errUsage, label)
-		}
-	}
-	return opts, nil
-}
-
-func parsePreflightOptions(args []string, stderr io.Writer) (preflightOptions, error) {
-	opts := preflightOptions{}
-	flags := pflag.NewFlagSet("kubectl chill preflight", pflag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
-	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
-	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
-	flags.StringVarP(&opts.namespace, "namespace", "n", "", "BatchEnergyOptimization and Console Service namespace")
-	flags.StringVarP(&opts.file, "file", "f", "", "BatchEnergyOptimization manifest file")
-	flags.StringVar(&opts.consoleService, "console-service", "chill-console", "CHILL Console ClusterIP Service name")
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			return preflightOptions{}, flag.ErrHelp
-		}
-		return preflightOptions{}, fmt.Errorf("%w: %v", errUsage, err)
-	}
-	if flags.NArg() != 0 {
-		return preflightOptions{}, fmt.Errorf("%w: preflight accepts no positional arguments", errUsage)
-	}
-	if opts.output != outputFormatTable && opts.output != outputFormatJSON {
-		return preflightOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
-	}
-	values := map[string]string{
-		"BatchEnergyOptimization manifest file": opts.file,
-		"Console Service name":                  opts.consoleService,
-	}
-	for label, value := range values {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return preflightOptions{}, fmt.Errorf("%w: %s is required without surrounding whitespace", errUsage, label)
 		}
 	}
 	return opts, nil

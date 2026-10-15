@@ -32,7 +32,7 @@ type dependencies struct {
 	newSystemQuery    func(systemOptions) (systemQuery, error)
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
 	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
-	newPreflightQuery func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error)
+	newPreflightQuery func(operationOptions) (batchEnergyOptimizationPreflightQuery, error)
 	newMeasurements   func(operationOptions) (measurementOperations, error)
 	newProfiles       func(operationOptions) (profileOperations, error)
 }
@@ -63,7 +63,7 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer, deps 
 		return executeSystem(ctx, args[1:], stdout, stderr, deps)
 	case "runs":
 		return executeProfilingRuns(ctx, args[1:], stdout, stderr, deps)
-	case "preflight":
+	case preflightCommand:
 		return executePreflight(ctx, args[1:], stdout, stderr, deps)
 	case "measurements":
 		return executeMeasurements(ctx, args[1:], stdout, stderr, deps)
@@ -166,7 +166,7 @@ func executeProfilingRunShow(ctx context.Context, args []string, stdout, stderr 
 }
 
 func executePreflight(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
-	opts, err := parsePreflightOptions(args, stderr)
+	opts, err := parseOperationOptions(preflightCommand, "", args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -183,6 +183,9 @@ func executePreflight(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	if err := writeBatchEnergyOptimizationPreflight(stdout, opts.output, preflight); err != nil {
 		return fmt.Errorf("write BatchEnergyOptimization preflight: %w", err)
+	}
+	if !preflight.Resolves {
+		return fmt.Errorf("measurement preflight rejected: %s", preflight.Reason)
 	}
 	return nil
 }
@@ -209,14 +212,19 @@ func writeUsage(writer io.Writer) error {
 	}
 	if _, err := fmt.Fprintln(writer,
 		"  kubectl chill measurements submit -f FILE [--dry-run=server] [-n NAMESPACE] [-o table|json]\n"+
-			"  kubectl chill measurements list [-n NAMESPACE|-A] [-o table|json]\n"+
-			"  kubectl chill measurements show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]\n"+
-			"  kubectl chill profiles list [-n NAMESPACE] [--serving-service NAME] [-o table|json]\n"+
-			"  kubectl chill profiles adopt NAME [-n NAMESPACE] [--serving-service NAME] [-o table|json]"); err != nil {
+			"  kubectl chill measurements list [-n NAMESPACE] [-o table|json]\n"+
+			"  kubectl chill measurements show NAME [-n NAMESPACE] [-o table|json]\n"+
+			"  kubectl chill measurements delete NAME --uid UID --if-match RESOURCE_VERSION [-n NAMESPACE] [-o table|json]\n"+
+			"    Permanently deletes the measurement's owned raw evidence/results; no automatic retry.\n"+
+			"  kubectl chill profiles list [-n NAMESPACE] [-o table|json]\n"+
+			"  kubectl chill profiles adopt NAME [-n NAMESPACE] [-o table|json]\n"+
+			"  kubectl chill profiles unadopt NAME --if-match CONFIG_VERSION [-n NAMESPACE] [-o table|json]\n"+
+			"  Owner commands: [--serving-url HTTPS_ORIGIN] [--serving-ca-file PATH] "+
+			"[--token-file PATH] [--serving-service NAME]"); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(writer,
-		"  kubectl chill preflight -f FILE [-n NAMESPACE] [--console-service NAME] [-o table|json]")
+		"  kubectl chill preflight -f FILE [-n NAMESPACE] [owner connection flags] [-o table|json]")
 	return err
 }
 

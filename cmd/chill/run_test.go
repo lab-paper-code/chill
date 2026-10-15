@@ -237,7 +237,7 @@ func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
 			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
-			newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+			newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 				calls++
 				return nil, nil
 			},
@@ -251,14 +251,14 @@ func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
 
 func TestExecuteHelpDoesNotConstructQuery(t *testing.T) {
 	for _, args := range [][]string{
-		{"--help"}, {"inventory", "--help"}, {"system", "--help"}, {"runs", "--help"}, {"preflight", "--help"},
+		{"--help"}, {"inventory", "--help"}, {"system", "--help"}, {"runs", "--help"}, {preflightCommand, "--help"},
 	} {
 		calls := 0
 		deps := dependencies{
 			newInventoryQuery: func(inventoryOptions) (inventoryQuery, error) { calls++; return nil, nil },
 			newSystemQuery:    func(systemOptions) (systemQuery, error) { calls++; return nil, nil },
 			newRunsQuery:      func(profilingRunsOptions) (profilingRunsQuery, error) { calls++; return nil, nil },
-			newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+			newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 				calls++
 				return nil, nil
 			},

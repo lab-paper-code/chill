@@ -52,23 +52,73 @@ kubectl chill measurements submit -f measurement.yaml -n chill-system
 kubectl chill measurements submit -f measurement.yaml -n chill-system --dry-run=server -o json
 kubectl chill measurements list -n chill-system
 kubectl chill measurements show TASK_NAME -n chill-system -o json
+kubectl chill measurements delete TASK_NAME -n chill-system --uid OBJECT_UID --if-match RESOURCE_VERSION -o json
 kubectl chill profiles list -n chill-system -o json
 kubectl chill profiles adopt TASK_NAME -n chill-system -o json
+kubectl chill profiles unadopt TASK_NAME -n chill-system --if-match CONFIG_VERSION -o json
 ```
 
-Submit resolves the existing Console preflight before issuing one native Kubernetes
-create. A rejected or unavailable preflight does not create anything. Normal submit
-returns the accepted identity immediately; it does not wait for trials or retry the
-request. `--dry-run=server` still runs preflight, then asks Kubernetes to validate the
-create without persistence and reports `NOT_SUBMITTED`. It starts no measurement.
-List reads native measurement resources; show uses the existing result projection,
-including pending and failed tasks. `-o json` retains complete conditions, reasons,
-result details and evidence references; table output summarizes progress.
+Measurements and profiles use the same verified owner HTTPS API as Dashboard.
+Submit sends the native manifest to the owner, which resolves the production Console
+preflight before one native Kubernetes create. Rejected or unavailable preflight
+creates nothing. Normal submit returns `202` with `request:"Accepted"` and the native
+task immediately; it does not wait for trials or retry the request.
+`--dry-run=server` uses `?dryRun=All`: preflight and native server validation still run,
+but the response is `200` with `request:"NOT_SUBMITTED"`. It starts no measurement.
+List returns native measurement resources in the requested namespace, including pending,
+failed and complete tasks; `-A` is not supported. Show preserves the existing Console
+result projection through the owner gateway. Its response limit remains 64 MiB plus
+4 MiB for the task/status envelope. JSON retains conditions, reasons, result details
+and evidence references; table output summarizes progress.
 
-Profile adoption is a separate, explicit scheduler-owner request. A pending or
-rejected selection prints the owner's actual reason and exits nonzero. A persisted
-selection is not a claim of physical readiness: `loaded`, the owner state, profile ID
-and config version remain separately observable through `profiles list -o json`.
+| Owner route | Contract |
+|---|---|
+| `GET /api/v1/namespaces/{namespace}/batch-energy-optimizations` | Native `BatchEnergyOptimizationList`, including UID and resourceVersion |
+| `POST /api/v1/namespaces/{namespace}/batch-energy-optimizations` | Native BEO manifest; production preflight then native create; `dryRun=All` validates without persistence |
+| `DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}?uid={uid}` | Required native resourceVersion in `If-Match`; `202` with `request:"DeletionRequested"`, native task, `evidenceDeleted:true` and exact `{store,key}` locations in `deletedEvidence` |
+| `DELETE /api/v1/scheduler/profiles/{namespace}/{name}` | Required scheduler ConfigMap resourceVersion (`configVersion`) in `If-Match`; `ProfileSelectionResult` |
+
+Measurement deletion **irreversibly removes the measurement's owned Evidence Store/S3
+raw objects and results**, then requests native measurement object deletion.
+Shared/current references must be cleared first; safely unadopt an unused selected
+profile before deletion. This is not an atomic transaction across S3 and Kubernetes:
+an error may leave some evidence already removed while the native object remains.
+The CLI preserves the owner's partial-failure reason and exits nonzero; it never
+retries automatically or reports preserved evidence. Native finalizers and garbage
+collection still govern object lifecycle; `DeletionRequested` does not claim final
+disappearance. `measurements delete` requires both `--uid` and `--if-match` from
+`measurements list -o json`; it never refreshes or overrides a stale caller version.
+`deletedEvidence`/the table's `OWNED_KEYS` identify exact cleanup keys, not a count of
+objects that previously existed: already-missing owned keys are idempotently handled.
+Only current terminal, source-defined tasks may be deleted: completed measurements
+with `MeasurementComplete=True`/`ResultWritten`, a stored result and current observed
+generation, or terminal `TransitionFailed`/`RetryLimitExhausted` failures. Pending,
+Measuring and recoverable `CurvePlanResolutionFailed` tasks cannot be cancelled by delete.
+Global/shared artifacts and images are outside this owned-key cleanup. No S3 caller
+credentials or new broad caller Kubernetes grants are required; the caller's authorized
+BEO delete covers this operation.
+
+Partial failures exit nonzero and are not automatically retried:
+- `503 MeasurementEvidenceDeletionIncomplete`: some exact evidence keys may already
+  be gone; the native object remains. Retrying the same UID/resourceVersion is safe.
+- `503 MeasurementDeletionIncomplete`: owned-key cleanup finished, but native deletion
+  failed, conflicted or could not be confirmed. Query the identity before retrying.
+- `503 MeasurementAuditIncomplete`: the mutation may have been accepted, but its final
+  audit record could not be confirmed. Inspect current state before another mutation.
+
+Profile adoption/unadoption are separate, explicit scheduler-owner requests.
+`profiles unadopt` requires `--if-match` from `profiles list -o json`'s `configVersion`.
+The owner requires all controls OFF in persisted and accepted settings and rejects
+active instances or frozen/in-progress transitions. It removes the selection and unused
+associated preparation, preserving unrelated configuration, evidence and serving Pods.
+`Removed` and already-absent `Unselected` succeed only with `persisted:false` and
+`loaded:false`; they do not claim a physical serving instance was stopped.
+If the ConfigMap removal commits but catalog refresh fails, `Pending` with
+`code:"ProfileUnloadFailed"` retains the actual `loaded` state and exits nonzero.
+A pending/rejected adoption also prints the owner's reason and exits nonzero.
+A persisted adoption is not a physical-readiness claim: loaded state, profile ID and
+config version remain separate. HTTP success with a rejected/invalid semantic result
+is a command failure, not successful submission or unadoption.
 Owner commands use direct, verified HTTPS and caller bearer authentication:
 
 ```sh
@@ -87,9 +137,12 @@ The CLI does not forward API-server client certificates, impersonation or auth p
 does not disable TLS verification and does not follow redirects with credentials.
 An owner HTTP 401 is a command failure, not an empty successful list.
 
-Console reads/preflight continue using the existing Kubernetes Service proxy and
-default to `--console-service chill-console`. All commands honor `--kubeconfig`,
-`--context`, `-n` and `-o table|json`. With no namespace override, submit uses the
-manifest namespace then the kubeconfig namespace; other commands use the kubeconfig
-namespace.
+All measurement/profile commands and standalone `preflight -f FILE` accept these owner
+connection flags; none accept `--console-service` or mutate Kubernetes directly.
+Standalone preflight retains its structured resolving/rejected plan and reason;
+`resolves:false` prints that result and exits nonzero without submitting anything.
+Only the separate `runs show` command retains its existing Console Service-proxy transport.
+Commands honor `--kubeconfig`, `--context`, `-n` and `-o table|json`. Without a namespace
+override, submit/preflight use the manifest namespace then the kubeconfig namespace;
+other commands use the kubeconfig namespace.
 

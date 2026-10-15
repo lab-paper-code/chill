@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // Stream large JSON strings without allocating a second full response fixture.
@@ -34,7 +32,10 @@ func TestMeasurementResultResponseSizeBoundary(t *testing.T) {
 		{"above-measurement-result-limit", maximumMeasurementResultBytes + 1, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/namespaces/ns/batch-energy-optimizations/task/result" {
+					t.Errorf("unexpected owner path %s", r.URL.Path)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = fmt.Fprintf(w, `{"apiVersion":%q,"kind":"BatchEnergyOptimizationResult",`+
 					`"campaign":{"namespace":"ns","name":"task","phase":"Complete"},`+
@@ -44,17 +45,13 @@ func TestMeasurementResultResponseSizeBoundary(t *testing.T) {
 				_, _ = io.WriteString(w, `"}}`)
 			}))
 			defer server.Close()
-			kube, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
-			if err != nil {
-				t.Fatal(err)
-			}
-			q := &measurementClient{
-				opts:  operationOptions{namespace: "ns", name: "task", consoleService: "console"},
-				proxy: kube.CoreV1().RESTClient(),
-			}
+			q := &measurementClient{ownerClient: &ownerClient{
+				opts:       operationOptions{namespace: "ns", name: "task"},
+				httpClient: server.Client(), origin: server.URL,
+			}}
 			result, err := q.Show(context.Background())
 			if test.wantError {
-				if err == nil || !strings.Contains(err.Error(), "measurement task result response exceeds size limit") {
+				if err == nil || !strings.Contains(err.Error(), "response exceeds size limit") {
 					t.Fatalf("oversized response error = %v", err)
 				}
 				return

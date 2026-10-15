@@ -19,11 +19,11 @@ const preflightTestNamespace = "chill-system"
 
 func TestExecutePreflightRequiresFile(t *testing.T) {
 	calls := 0
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+	deps := dependencies{newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		calls++
 		return nil, nil
 	}}
-	err := execute(context.Background(), []string{"preflight"}, io.Discard, io.Discard, deps)
+	err := execute(context.Background(), []string{preflightCommand}, io.Discard, io.Discard, deps)
 	if !errors.Is(err, errUsage) || calls != 0 {
 		t.Fatalf("execute() error = %v, query constructions = %d", err, calls)
 	}
@@ -48,7 +48,7 @@ func TestExecutePreflightRejectsUnreadableAndUndecodableManifests(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			deps := dependencies{newPreflightQuery: newBatchEnergyOptimizationPreflightQuery}
-			err := execute(context.Background(), []string{"preflight", "-f", test.path}, io.Discard, io.Discard, deps)
+			err := execute(context.Background(), []string{preflightCommand, "-f", test.path}, io.Discard, io.Discard, deps)
 			if err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("execute() error = %v, want %q", err, test.match)
 			}
@@ -58,16 +58,16 @@ func TestExecutePreflightRejectsUnreadableAndUndecodableManifests(t *testing.T) 
 
 func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 	query := &fakeBatchEnergyOptimizationPreflightQuery{preflight: testBatchEnergyOptimizationPreflight(true)}
-	deps := dependencies{newPreflightQuery: func(opts preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+	deps := dependencies{newPreflightQuery: func(opts operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		if opts.file != "campaign.yaml" || opts.namespace != preflightTestNamespace ||
-			opts.consoleService != "console" || opts.output != outputFormatTable {
+			opts.servingURL != "https://owner.example" || opts.output != outputFormatTable {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
 	}}
 	var stdout strings.Builder
 	err := execute(context.Background(), []string{
-		"preflight", "-f", "campaign.yaml", "-n", preflightTestNamespace, "--console-service", "console",
+		preflightCommand, "-f", "campaign.yaml", "-n", preflightTestNamespace, "--serving-url", "https://owner.example",
 	}, &stdout, io.Discard, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -90,14 +90,14 @@ func TestExecutePreflightWritesResolvingTable(t *testing.T) {
 func TestExecutePreflightWritesNonResolvingReason(t *testing.T) {
 	preflight := testBatchEnergyOptimizationPreflight(false)
 	query := &fakeBatchEnergyOptimizationPreflightQuery{preflight: preflight}
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+	deps := dependencies{newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		return query, nil
 	}}
 	var stdout strings.Builder
 	if err := execute(context.Background(), []string{
-		"preflight", "-f", "campaign.yaml", "-n", preflightTestNamespace,
-	}, &stdout, io.Discard, deps); err != nil {
-		t.Fatal(err)
+		preflightCommand, "-f", "campaign.yaml", "-n", preflightTestNamespace,
+	}, &stdout, io.Discard, deps); err == nil || !strings.Contains(err.Error(), preflight.Reason) {
+		t.Fatalf("non-resolving preflight error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "RESOLVES") || !strings.Contains(stdout.String(), "no") ||
 		!strings.Contains(stdout.String(), preflight.Reason) {
@@ -107,12 +107,12 @@ func TestExecutePreflightWritesNonResolvingReason(t *testing.T) {
 
 func TestExecutePreflightWritesJSONRoundTrip(t *testing.T) {
 	want := testBatchEnergyOptimizationPreflight(true)
-	deps := dependencies{newPreflightQuery: func(preflightOptions) (batchEnergyOptimizationPreflightQuery, error) {
+	deps := dependencies{newPreflightQuery: func(operationOptions) (batchEnergyOptimizationPreflightQuery, error) {
 		return &fakeBatchEnergyOptimizationPreflightQuery{preflight: want}, nil
 	}}
 	var stdout strings.Builder
 	if err := execute(context.Background(), []string{
-		"preflight", "-f", "campaign.yaml", "-o", "json",
+		preflightCommand, "-f", "campaign.yaml", "-o", "json",
 	}, &stdout, io.Discard, deps); err != nil {
 		t.Fatal(err)
 	}

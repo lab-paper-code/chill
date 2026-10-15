@@ -13,100 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	"github.com/lab-paper-code/chill/internal/serving/entrypoint"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
-
-const (
-	submitRejected       = "rejected"
-	submitPreflightError = "preflight-error"
-)
-
-func TestMeasurementSubmitPreflightAndNativeCreate(t *testing.T) {
-	for _, mode := range []string{submitRejected, submitPreflightError, "accepted", dryRunServer, "create-error"} {
-		t.Run(mode, func(t *testing.T) {
-			creates, preflights := 0, 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if strings.HasSuffix(r.URL.Path, "/preflight") {
-					preflights++
-					if r.Method != http.MethodPost {
-						t.Errorf("preflight method %s", r.Method)
-					}
-					if mode == submitPreflightError {
-						http.Error(w, "forbidden", http.StatusForbidden)
-						return
-					}
-					_ = json.NewEncoder(w).Encode(operatorconsole.BatchEnergyOptimizationPreflight{
-						APIVersion: operatorconsole.BatchEnergyOptimizationPreflightAPIVersion,
-						Kind:       "BatchEnergyOptimizationPreflight",
-						Campaign:   operatorconsole.BatchEnergyOptimizationPreflightCampaign{Namespace: "ns", Name: "task"},
-						Resolves:   mode != submitRejected, Reason: "ineligible artifact",
-					})
-					return
-				}
-				creates++
-				const createPath = "/apis/edge.dacs.io/v1alpha1/namespaces/ns/batchenergyoptimizations"
-				if preflights != 1 || r.Method != http.MethodPost || r.URL.Path != createPath {
-					t.Errorf("unexpected native request %s %s after %d preflights", r.Method, r.URL, preflights)
-				}
-				if (r.URL.Query().Get("dryRun") == "All") != (mode == dryRunServer) {
-					t.Errorf("dryRun = %q", r.URL.Query().Get("dryRun"))
-				}
-				if mode == "create-error" {
-					http.Error(w, "conflict", http.StatusConflict)
-					return
-				}
-				var task map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-					t.Error(err)
-				}
-				if task["spec"].(map[string]any)["marker"] != "retained" {
-					t.Errorf("manifest changed: %#v", task)
-				}
-				w.WriteHeader(http.StatusCreated)
-				_ = json.NewEncoder(w).Encode(task)
-			}))
-			defer server.Close()
-			config := &rest.Config{Host: server.URL}
-			kube, err := kubernetes.NewForConfig(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			dyn, err := dynamic.NewForConfig(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			q := &measurementClient{
-				opts:  operationOptions{namespace: "ns", consoleService: "console", dryRun: mode},
-				proxy: kube.CoreV1().RESTClient(),
-				resource: dyn.Resource(schema.GroupVersionResource{
-					Group: edgev1alpha1.GroupVersion.Group, Version: edgev1alpha1.GroupVersion.Version,
-					Resource: "batchenergyoptimizations",
-				}).Namespace("ns"),
-				manifest: []byte(`{"apiVersion":"edge.dacs.io/v1alpha1","kind":"BatchEnergyOptimization",` +
-					`"metadata":{"name":"task"},"spec":{"marker":"retained"}}`),
-			}
-			_, err = q.Submit(context.Background())
-			wantError := mode == submitRejected || mode == submitPreflightError || mode == "create-error"
-			if (err != nil) != wantError {
-				t.Fatalf("Submit error = %v", err)
-			}
-			wantCreates := 1
-			if mode == submitRejected || mode == submitPreflightError {
-				wantCreates = 0
-			}
-			if preflights != 1 || creates != wantCreates {
-				t.Fatalf("preflights=%d creates=%d", preflights, creates)
-			}
-		})
-	}
-}
 
 type fakeProfileOperations struct {
 	result entrypoint.ProfileSelectionResult
@@ -117,6 +26,9 @@ func (f fakeProfileOperations) List(context.Context) (entrypoint.ProfileSelectio
 	return entrypoint.ProfileSelectionsView{}, f.err
 }
 func (f fakeProfileOperations) Adopt(context.Context) (entrypoint.ProfileSelectionResult, error) {
+	return f.result, f.err
+}
+func (f fakeProfileOperations) Unadopt(context.Context) (entrypoint.ProfileSelectionResult, error) {
 	return f.result, f.err
 }
 
@@ -225,10 +137,11 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 			Insecure: true, CertData: []byte("never-forward"), KeyData: []byte("never-forward"),
 		},
 	}
-	q, err := newProfileHTTPSClient(opts, kubeConfig)
+	owner, err := newOwnerHTTPSClient(opts, kubeConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
+	q := &profileClient{owner}
 	list, err := q.List(context.Background())
 	if err != nil || list.ConfigVersion != "rv1" {
 		t.Fatalf("list %#v error %v", list, err)
@@ -243,15 +156,16 @@ func TestProfileOwnerHTTPSCredentialsAndTrust(t *testing.T) {
 	}
 	reject = false
 	opts.tokenFile = ""
-	if _, err := newProfileHTTPSClient(opts, &rest.Config{}); err == nil ||
+	if _, err := newOwnerHTTPSClient(opts, &rest.Config{}); err == nil ||
 		!strings.Contains(err.Error(), "bearer credentials required") {
 		t.Fatalf("certificate-only credentials error = %v", err)
 	}
 	opts.servingCAFile = ""
-	untrusted, err := newProfileHTTPSClient(opts, &rest.Config{BearerToken: "caller-token"})
+	untrustedOwner, err := newOwnerHTTPSClient(opts, &rest.Config{BearerToken: "caller-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	untrusted := &profileClient{untrustedOwner}
 	if _, err := untrusted.List(context.Background()); err == nil {
 		t.Fatal("accepted untrusted owner TLS")
 	}
