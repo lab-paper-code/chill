@@ -53,24 +53,19 @@ FULL의 노드 범위는 genesis2·자비에·나노·오린나노·라떼판다
 
 ## 작업 순서
 
-**현재 우선:** 최신 SDK·새 GPU 근거의 bounded CLI prepare와 owner 실제 routing·요청을 검증한 뒤 FULL·최종 Dashboard e2e로 진행한다.
-CPU OFF/`fixed-horizon`/`projected-work-history` 동일 150초 trace는 arm별 190건 전부 완료·SLO 통과다.
-자동 Latte → Rpi prepare·route·stop·drain·remove와 이전 Pod 소멸, 비중첩 두 구간의
-min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 둔다.
-현재 제어는 모두 OFF이며 Rpi가 서빙한다. owner limit CPU1/512Mi·evidence-store PVC 8Gi를 유지한다.
+**현재 우선:** FULL 실측 판단·제어 이력이 실제 Dashboard에 연결되도록 조회 응답의 반복 데이터를 줄이고 종단 대조를 마친다.
 
-1. **CPU 비교 완료의 경계:** 원래 150초 trace를 보존했다. projected 정리가 150초 뒤까지
-   이어져 세 arm 모두 무부하 tail을 포함한 210초 공통 구간을 **사후 선언**했다.
-   10개 meter의 전체 wall energy는 완전하지만 에너지 절감·통계적·인과적 주장은 하지 않는다.
-   queue-reset projection은 실제 queue 이력이나 고전 WFA 보장이 아니다.
-2. **GPU·Jetson:** CUDA ABI12·ORT1.26 최신 SDK의 실제 GPU 6 trial을 새 profile로 채택했다.
-   현재 profiler의 의미 계약으로 같은 원시 Run을 봉인했으며 재측정·과거 raw 수정은 없다.
-   bounded CLI 수정은 gate를 통과했지만 새 GPU prepare·owner routing 완료는 아직 확인 전이다.
-   승인된 Jetson 3대의 서로 다른 target→restore 6동작은 Ready다. 설정·RollingUpdate를 복원하고
-   AGX UID를 보존했다. 물리 cap·전체 POOL 계측 한계와 자동 후보 채택은 별개다.
-3. **FULL·Dashboard:** Main `103506d` 전달을 받았고 실제 UI 알고리즘 변경→다음 판단→복원과
-   변경 이력을 API와 대조했다(9개 제어 OFF·설정 의미상 복원). 이는 부분 e2e 통과이며,
-   남은 제어 통합·FULL 시나리오·최종 실제 Dashboard e2e는 미완료다.
+1. **FULL 통합 실적:** 새 CUDA profile·실제 owner 요청·GPU prepare/remove 비용을 연결했다.
+   동일 초기 3실행기·동일 190건 부하의 OFF/FULL 비교에서 모두 완료·두 SLO를 통과했고,
+   FULL 판단이 Rpi를 선택해 route·stop·drain·remove 8동작을 완료했다.
+   전체 10 meter의 사전 선언 240초 wall energy는 FULL이 6.23% 높았다. 절감 성공은 아니다.
+   후보 탐색 제한과 일시 Pending/Overload, 앞선 실패도 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
+2. **현재 차단:** Dashboard 알고리즘 변경·다음 판단·전후 이력·복원은 실제 UI로 통과했다.
+   다만 FULL 판단의 기본 이력 50건이 19.45MB여서 BFF가 거절한다.
+   원시 근거·후보 평가를 보존하고 불필요한 반복 표현을 줄인다. 제한 상향으로 우회하지 않는다.
+3. **남은 종단:** 부하 반전·실패·부분 적용·격리·복구의 실제 근거 누락만 보완하고,
+   Dashboard에서 판단→실제 완료→서빙·SLO·전력을 대조한다. 이후 놓친 운영 흐름만 회고한다.
+   개별 Jetson 전력 왕복 검증은 완료했지만 고정 전력 profile 통합이 자동 전력모드 최적화의 입증은 아니다.
 
 ### 단계 경계의 운영 API·UX 고도화
 
@@ -101,17 +96,13 @@ min-plus history 전진을 확인했다. 세부 수치·실패·경계는 [제�
 
 ## 현재 상태·다음 작업
 
-- CPU 세 arm의 동일 초기 Latte·동일 trace 비교와 실제 Rpi 전환을 완료했다. 모든 제어는 OFF다.
-- placement/resources/replicas/routing/sharing/membership의 개별 수동 실적과 측정 운영 API·CLI,
-  기존 GPU profile 채택 근거는 [제어 기록](2026-10-13-scheduler-live-evidence-campaign-04-control.md)에 보존한다.
-  GPU profile 채택은 실제 CUDA 준비·자동 선택 증거가 아니며 batch2 자동 선택도 미입증이다.
-- 이전 통신 장애·OOM·freshness 정지·SLO 초과·전력 누락은 원시 기록과 함께 남긴다.
-  최신 비교의 완전한 전력 구간으로 과거 실패를 덮지 않으며 연구적 개선을 주장하지 않는다.
-- GPU 새 profile은 Persisted·Loaded다. CPU route·ModelSpec은 유지했다. 다음은 fresh bounded
-  GPU prepare·owner route·실제 요청 증거이며, profile 채택만으로 자동 GPU 적격성을 주장하지 않는다.
-- Jetson 3대 실제 power 왕복과 복원은 완료했다. cap read-back·불완전 전체 전력 구간을 숨기지 않는다.
-- Dashboard Main 전달과 알고리즘 선택 부분 e2e는 확인했다. CPU 부분집합·개별 power·UI 설정
-  성공을 FULL·최종 Dashboard e2e 완료로 확대하지 않는다.
+- 모든 제어 OFF·`projected-work-history`, Rpi가 현재 두 workload를 서빙한다. 진행 중 동작·요청은 없다.
+- owner `6d9cc7c`의 limit CPU2/512Mi·evidence PVC 8Gi다. 새 OFF/FULL 두 arm 모두 같은 조건이다.
+  CPU 변경과 meter binding 수정을 함께 적용했으므로 앞선 SLO 실패의 단일 원인으로 CPU를 지목하지 않는다.
+- placement/resources/replicas/routing/sharing/membership 개별 실적, firstfloor 배칭 책임,
+  Jetson 전력 6동작과 복원, CUDA 실제 완료·전환 비용은 제어 기록에 둔다.
+- FULL 통합 성공을 에너지 절감·자동 전력모드 선택·최종 Dashboard 종단 완료로 확대하지 않는다.
+  Dashboard Main 소유 파일은 수정하지 않고 필요한 연결 계약만 전달한다.
 
 ## 진행 기록 찾아보기
 

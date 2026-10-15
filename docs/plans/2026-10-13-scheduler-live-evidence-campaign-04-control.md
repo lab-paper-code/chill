@@ -773,3 +773,40 @@ ClusterIP `10.97.177.19:9000` HTTP403 도달, 직접 Pod IP timeout을 확인했
   앞선 190건 trace 성공과 구분하고 자동 과부하 대응·통계적 개선으로 세지 않는다.
   다음 의존성은 fresh GPU prepare·owner routing/요청 완료, 남은 FULL 통합과 최종 Dashboard e2e다.
   알고리즘 선택 UI 부분 통과·개별 Jetson 수동 왕복으로 FULL Dashboard 완료를 선언하지 않는다.
+
+## CUDA 실제 완료·비용 연결과 3 profile FULL 통합 — 2026-10-15
+
+- `644c7122`는 SDK 초기화 domain `[1,2]`와 실제 측정·dispatch domain `[1]`을 구분했다.
+  측정하지 않은 batch2 dispatch를 허용한 것이 아니다. 새 GPU prepare와 owner 실제 24건은
+  모두 GPU 할당·executionComplete였다. 첫 4건 catch-up burst를 보존했으며 정밀 고정 간격을 주장하지 않는다.
+- GPU remove/prepare 실측 1쌍을 기존 경계로 채택했다: 각각 3.843947756s·209.3917868505J,
+  7.473265159s·582.9832510703J다. n=1이며 분산·미래 지연 보장은 없다.
+  측정 격리 중 두 CHILL workload를 정상 해제·재등록해 UID는 변경됐고 이름·SLO·ModelSpec은 보존했다.
+  원시 과거 UID를 고치거나 호환 reader를 만들지 않았다.
+  근거: `current-cuda-measurement/gpu-cost-actual-pair/result.json`과 `owner-route-proof/owner-gpu-final-summary.json`.
+- 최초 3 profile 통합은 FULL tight p95 1142.160ms로 실패했고 실제 제어가 없었다.
+  같은 벽전력 source에 추가된 thermal 관측 metadata 때문에 GPU idle meter 연결이 누락됐다.
+  `6d9cc7cd`는 기존 power-series 의미 비교를 재사용하되 Node·scope를 계속 검증한다.
+  thermal 원시 관측·이전 실패는 보존했다. focused kube와 `make lint test arch-check gopls-check` 통과(`artifact://3495`).
+- 새 비교는 owner `6d9cc7cd` / image `sha256:8c976eeb0e751a15dcb0a754da531130a03e6cb6bcf7d2f7fc7acaeb04615047`,
+  CPU2/512Mi다. 두 arm 모두 동일 조건이며 앞선 CPU1 실패의 단일 원인을 CPU로 단정하지 않는다.
+  동일 3 ready 실행기·Latte 초기 routing·190건/150초 trace와 공통 lead-in30초·tail60초를
+  **실행 전에 선언**했다. 실제 설정 ACK는 첫 요청보다 빨랐고 전체 10 meter의 240초가 complete다.
+
+|조건|완료|tight p95 / 목표 1000ms|relaxed p90 / 목표 1500ms|전체 POOL wall J|
+|---|---:|---:|---:|---:|
+|OFF|190/190|258.711ms|243.321ms|54123.251|
+|FULL|190/190|425.123ms|270.998ms|57495.104|
+
+- FULL은 스스로 Rpi를 선택해 route·stop·drain·remove 8동작을 완료했다. 기존 Latte/GPU의
+  실제 Pod/native source 소멸까지 확인했다. 판단 17건은 9개 controls ON이며 Keep10·Feasible5·
+  Overload1·Pending1이다. 모든 판단의 후보 탐색 truncation과 연속 비중첩 projected history를 보존한다.
+  전환 포함 gross energy는 증가했으며 고립된 CHILL 에너지·절감·인과·통계적 개선을 주장하지 않는다.
+  고정 전력 profile의 제어 통합이 자동 전력모드 최적화 증거는 아니다.
+  종료 후 9개 OFF/projected·Rpi 두 workload route ACK RV353571935·미완료 요청/동작 없음이다.
+- 근거 루트: `/tmp/chill-completion-cpu-cost-assembly/integrated-three-profile-cpu2-rootfixed/`.
+  `comparison-summary.json`, `full-operation-results.json`, `full-policy-history-summary.json`,
+  frozen plans·원시 client/server/history·power·native snapshot을 함께 보존한다.
+- 실제 Dashboard의 같은 FULL 이력 기본 limit50 요청은 owner200/19447961B지만
+  BFF502 `DashboardResponseTooLarge`다. 후보마다 반복된 실행기 자료를 포함해 단일 판단이 약9.68MB다.
+  `dashboard-default-page-size-proof.json`에 크기 근거를 남겼다. 최종 Dashboard 종단은 이 차단 해소 전 미완료다.
